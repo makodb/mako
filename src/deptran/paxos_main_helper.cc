@@ -189,12 +189,10 @@ void submit(const char* log, int len, uint32_t par_id) {
     // worker->Submit(log, len);
     if (!worker->IsLeader(par_id)) continue;
     verify(worker->submit_pool != nullptr);
-    if (worker->submit_pool->add(
-            [=, &worker]() {
-              worker->Submit(log, len, par_id);
-            }) != 0) {
-      Log_fatal("paxos submit_pool error!");
-    }
+    auto sp_job = std::make_shared<OneTimeJob>([&worker,log,len,par_id] () {
+             worker->Submit(log,len, par_id);
+          });
+    worker->GetPollMgr()->add(sp_job);
   }
 }
 
@@ -204,6 +202,15 @@ void wait_for_submit(uint32_t par_id) {
     verify(worker->submit_pool != nullptr);
     worker->submit_pool->wait_for_all();
     worker->WaitForSubmit();
+  }
+}
+
+void pre_shutdown_step(){
+  Log_info("shutdown Server Control Service after task finish");
+  for (auto& worker : pxs_workers_g) {
+    if (worker->hb_rpc_server_ != nullptr) {
+      worker->scsi_->server_shutdown(nullptr);
+    }
   }
 }
 
@@ -287,10 +294,5 @@ void microbench_paxos_queue() {
   for (int i = 0; i < concurrent; i++) {
     delete message[i];
   }
-  Log_info("shutdown Server Control Service after task finish");
-  for (auto& worker : pxs_workers_g) {
-    if (worker->hb_rpc_server_ != nullptr) {
-      worker->scsi_->server_shutdown(nullptr);
-    }
-  }
+  pre_shutdown_step();
 }

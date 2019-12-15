@@ -504,7 +504,7 @@ ServerListener::ServerListener(Server* server, string addr) {
 }
 
 int Server::start(const char* bind_addr) {
-  string addr(bind_addr);
+  string addr(bind_addr,strlen(bind_addr));
   up_server_listener_ = std::make_unique<ServerListener>(this, addr);
   pollmgr_->add(up_server_listener_.get());
   return 0;

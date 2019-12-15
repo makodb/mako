@@ -184,7 +184,11 @@ public:
   bool IsPartition(uint32_t);
 
   void Submit(const char*, int, uint32_t);
+  void Submit(std::string&, int, uint32_t);
   void register_apply_callback(std::function<void(const char*, int)>);
+  rrr::PollMgr * GetPollMgr(){
+      return svr_poll_mgr_;
+  }
 };
 
 } // namespace janus
