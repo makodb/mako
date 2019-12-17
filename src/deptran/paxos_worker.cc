@@ -178,25 +178,11 @@ void PaxosWorker::WaitForSubmit() {
   Log_debug("finish task.");
 }
 
-void PaxosWorker::Submit(std::string& log_entry, int length, uint32_t par_id) {
-  if (!IsLeader(par_id)) return;
-  auto sp_cmd = make_shared<LogEntry>();
-  sp_cmd->log_entry = log_entry;
-//  Log_info("PaxosWorker::Submit Log=%s",log_entry.c_str());
-  sp_cmd->length = length;
-  auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
-  _Submit(sp_m);
-}
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!IsLeader(par_id)) return;
   auto sp_cmd = make_shared<LogEntry>();
-  // sp_cmd->operation_ = new char[length];
-  // strcpy(sp_cmd->operation_, log_entry);
-  char *operation_ = new char[length+10];
-  memset(operation_,'\0',length+10);
-  strncpy(operation_,log_entry,length);
-  sp_cmd->log_entry = string(operation_,length);
+  sp_cmd->log_entry = string(log_entry,length);
 //  Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);

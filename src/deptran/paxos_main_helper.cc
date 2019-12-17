@@ -186,11 +186,26 @@ void register_for_leader(std::function<void(const char*, int)> cb, uint32_t par_
 
 void submit(const char* log, int len, uint32_t par_id) {
   for (auto& worker : pxs_workers_g) {
-    // worker->Submit(log, len);
     if (!worker->IsLeader(par_id)) continue;
     verify(worker->submit_pool != nullptr);
-    auto sp_job = std::make_shared<OneTimeJob>([&worker,log,len,par_id] () {
-             worker->Submit(log,len, par_id);
+	string log_str;
+    std::copy(log, log + len, std::back_inserter(log_str));
+
+//    unsigned long long int cid_pre=0;
+//    memcpy ((char *) &cid_pre, log_str.data(), sizeof (unsigned long long int));
+//    std::cout << "pre-check entry Check 0 : " << cid_pre << std::endl;
+//    if(cid_pre==0){
+//               exit(-1);
+//    }
+    
+    auto sp_job = std::make_shared<OneTimeJob>([&worker,log_str,len,par_id] () {
+//             unsigned long long int cid=0;
+//             memcpy ((char *) &cid, log_str.data(), sizeof (unsigned long long int));
+//             std::cout << "First entry Check 1 : " << cid << std::endl;
+//             if(cid==0){
+//               exit(-1);
+//             }
+             worker->Submit(log_str.data(),len, par_id);
           });
     worker->GetPollMgr()->add(sp_job);
   }
@@ -219,7 +234,7 @@ void microbench_paxos_queue() {
   for (auto& worker : pxs_workers_g) {
     if (worker->IsLeader(worker->site_info_->partition_id_))
       worker->register_apply_callback([&worker](const char* log, int len) {
-        Log_debug("submit callback enter in");
+        Log_info("submit callback enter in");
         if (worker->submit_num >= worker->tot_num) return;
         worker->submit_num++;
         submit(log, len, worker->site_info_->partition_id_);
