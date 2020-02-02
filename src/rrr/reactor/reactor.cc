@@ -171,10 +171,9 @@ class PollMgr::PollThread {
       auto sp_job = *it;
       if (sp_job->Ready()) {
         Coroutine::CreateRun([sp_job]() {sp_job->Work();});
+	it = set_sp_jobs_.erase(it);
       }
-      if (sp_job->Done()) {
-        it = set_sp_jobs_.erase(it);
-      } else {
+      else {
         it++;
       }
     }
