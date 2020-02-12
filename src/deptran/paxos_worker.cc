@@ -168,8 +168,12 @@ void PaxosWorker::ShutDown() {
   }
 }
 
+void PaxosWorker::IncSubmit(){
+    n_submit++;
+}
+
 void PaxosWorker::WaitForSubmit() {
-  while (n_current > 0) {
+  while (n_current > 0 && n_submit > 0) {
     finish_mutex.lock();
     // Log_debug("wait for task, amount: %d", n_current);
     finish_cond.wait(finish_mutex);
@@ -192,6 +196,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   // finish_mutex.lock();
   n_current++;
+  n_submit--;
   // finish_mutex.unlock();
   static cooid_t cid = 1;
   static id_t id = 1;

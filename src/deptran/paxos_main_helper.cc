@@ -190,7 +190,7 @@ void submit(const char* log, int len, uint32_t par_id) {
     verify(worker->submit_pool != nullptr);
 	string log_str;
     std::copy(log, log + len, std::back_inserter(log_str));
-
+    worker->IncSubmit();
 //    unsigned long long int cid_pre=0;
 //    memcpy ((char *) &cid_pre, log_str.data(), sizeof (unsigned long long int));
 //    std::cout << "pre-check entry Check 0 : " << cid_pre << std::endl;

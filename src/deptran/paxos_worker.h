@@ -143,6 +143,7 @@ private:
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
   std::atomic<int> n_current{0};
+  std::atomic<int> n_submit{0};
   std::function<void(const char*, int)> callback_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
   struct timeval t1;
@@ -177,6 +178,7 @@ public:
   void ShutDown();
   void Next(Marshallable&);
   void WaitForSubmit();
+  void IncSubmit();
 
   static const uint32_t CtrlPortDelta = 10000;
   void WaitForShutdown();
