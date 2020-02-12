@@ -168,12 +168,12 @@ void PaxosWorker::ShutDown() {
   }
 }
 
-void PaxosWorker::IncSubmit(){
+void PaxosWorker::IncSubmit(){	
     n_submit++;
 }
 
 void PaxosWorker::WaitForSubmit() {
-  while (n_current > 0 && n_submit > 0) {
+  while (n_current + n_submit > 0) {
     finish_mutex.lock();
     // Log_debug("wait for task, amount: %d", n_current);
     finish_cond.wait(finish_mutex);
