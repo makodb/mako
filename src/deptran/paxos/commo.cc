@@ -107,4 +107,33 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
   }
 }
 
+void MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
+                                          shared_ptr<Marshallable> cmd,
+                                          const function<void(Future*)> &callback){
+
+  auto proxies = rpc_par_proxies_[par_id];
+  vector<Future*> fus;
+  for (auto& p : proxies) {
+      auto proxy = (MultiPaxosProxy*) p.second;
+      FutureAttr fuattr;
+      fuattr.callback = cb;
+      MarshallDeputy md(cmd);
+      auto f = proxy->async_BulkAccept(slot_id, ballot, md, fuattr);
+      Future::safe_release(f);
+  }
+}
+
+
+void MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, shared_ptr<Marshallable> cmd){
+    auto proxies = rpc_par_proxies_[par_id];
+    vector<Future*> fus;
+    for (auto& p : proxies) {
+        auto proxy = (MultiPaxosProxy*) p.second;
+        FutureAttr fuattr;
+        fuattr.callback = [](Future* fu) {};
+        auto f = proxy->async_BulkDecide(slot_id, ballot, entries, fuattr);
+        Future::safe_release(f);
+    }
+}
+
 } // namespace janus

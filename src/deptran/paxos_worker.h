@@ -136,6 +136,56 @@ public:
   virtual Marshal& FromMarshal(Marshal&) override;
 };
 
+class BulkPaxosCmd : public  Marshallable {
+public:
+  vector<slotid_t> slots{};
+  vector<ballot_t> ballots{};
+  vector<shared_ptr<LogEntry> > cmds{};
+
+  BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {}
+  virtual ~BulkPaxos() {
+      slots.clear();
+      ballots.clear();
+  }
+  Marshal& ToMarshal(Marshal& m) const override {
+      m << (int32_t) slots.size();
+      for(auto i : slots){
+          m << i;
+      }
+      m << (int32_t) ballots.size();
+      for(auto i : ballots){
+          m << i;
+      }
+      m << (int32_t) cmds.size();
+      for (auto sp : cmds) {
+          m << *sp;
+      }
+      return m;
+  }
+
+  Marshal& FromMarshal(Marshal& m) override {
+      int32_t szs, szb, szc;
+      m >> szs;
+      for (int i = 0; i < szs; i++) {
+          slotid_t x;
+          m >> x;
+          slots.push_back(x);
+      }
+      m >> szb;
+      for (int i = 0; i < szs; i++) {
+          ballot_t x;
+          m >> x;
+          ballots.push_back(x);
+      }
+      for (int i = 0; i < szs; i++) {
+          auto x = std::make_shared<LogEntry>();
+          m >> *x;
+          cmds.push_back(x);
+      }
+      return m;
+  }
+};
+
 class PaxosWorker {
 private:
   inline void _Submit(shared_ptr<Marshallable>);
@@ -179,6 +229,7 @@ public:
   void Next(Marshallable&);
   void WaitForSubmit();
   void IncSubmit();
+  void BulkSubmit(vector<int*>&)
 
   static const uint32_t CtrlPortDelta = 10000;
   void WaitForShutdown();

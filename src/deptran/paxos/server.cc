@@ -69,15 +69,56 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
       break;
     }
   }
+  FreeSlots();
+}
 
-  // TODO should support snapshot for freeing memory.
-  // for now just free anything 1000 slots before.
-  int i = min_active_slot_;
-  while (i + 1000 < max_executed_slot_) {
-    logs_.erase(i);
-    i++;
+void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
+                           const function<void()> &cb) {
+  *cmd->MarshallTo(cmd)
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  for(int i = 0; i < *cmd->slots.size(); i++){
+      slotid_t slot_id = *cmd->slots[i];
+      ballot_t ballot_id = *cmd->ballots[i];
+      auto instance = GetInstance(slot_id);
+      verify(instance->max_ballot_accepted_ < ballot);
+      if (instance->max_ballot_seen_ <= ballot) {
+          instance->max_ballot_seen_ = ballot;
+          instance->max_ballot_accepted_ = ballot;
+      } else {
+          // TODO
+          verify(0);
+      }
+
   }
-  min_active_slot_ = i;
+  n_accept_++;
+  cb();
+}
+
+void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd) {
+  *cmd->MarshallTo(cmd)
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  //Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
+  for(int i = 0; i < *cmd->slots.size(); i++){
+      slotid_t slot_id = *cmd->slots[i];
+      ballot_t ballot_id = *cmd->ballots[i];
+      instance->committed_cmd_ = *cmd->cmds[i];
+      if (slot_id > max_committed_slot_) {
+          max_committed_slot_ = slot_id;
+      }
+  }
+  for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
+      auto next_instance = GetInstance(id);
+      if (next_instance->committed_cmd_) {
+          app_next_(*next_instance->committed_cmd_);
+          //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+          max_executed_slot_++;
+          n_commit_++;
+      } else {
+          break;
+      }
+  }
+
+  FreeSlots();
 }
 
 } // namespace janus

@@ -71,4 +71,15 @@ class CoordinatorMultiPaxos : public Coordinator {
   void GotoNextPhase();
 };
 
+class BulkCoordinatorMultiPaxos : public MultiPaxosCommo {
+private:
+  shared_ptr<Marshallable> cmd_{nullptr};
+public:
+    void BulkAccept();
+    void BulkCommit();
+    void BulkSubmit(vector<int*>& entries;s
+                    const std::function<void()> &func = []() {},
+                    const std::function<void()> &exe_callback = []() {});
+};
+
 } //namespace janus

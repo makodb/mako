@@ -32,6 +32,21 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
   GotoNextPhase();
 }
 
+void BulkCoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
+                                       const function<void()>& func,
+                                       const function<void()>& exe_callback) {
+    if (!IsLeader()) {
+        Log_fatal("i am not the leader; site %d; locale %d",
+                  frame_->site_info_->id, loc_id_);
+    }
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    verify(!in_submission_);
+    in_submission_ = true;
+    cmd_ = cmd;
+    commit_callback_ = func;
+    GotoNextPhase();
+}
+
 ballot_t CoordinatorMultiPaxos::PickBallot() {
   return curr_ballot_ + 1;
 }
@@ -191,6 +206,29 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
     default:
       verify(0);
   }
+}
+
+void BulkCoordinatorMultiPaxos::BulkAccept() {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    verify(!in_accept);
+    in_accept = true;
+    auto sp_quorum = commo()->BroadcastBulkAccept(cmd_);
+    sp_quorum->Wait();
+    if (sp_quorum->Yes()) {
+        committed_ = true;
+    } else if (sp_quorum->No()) {
+        verify(0);
+    } else {
+        verify(0);
+    }
+}
+
+void CoordinatorMultiPaxos::BulkCommit() {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    commit_callback_();
+    commo()->BroadcastBulkDecide(cmd_);
+    verify(phase_ == Phase::COMMIT);
+    GotoNextPhase();
 }
 
 } // namespace janus

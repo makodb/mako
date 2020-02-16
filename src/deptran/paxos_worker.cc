@@ -8,6 +8,12 @@ static int volatile xx =
                                    []() -> Marshallable* {
                                      return new LogEntry;
                                    });
+static int volatile xxx =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_BLK_PXS,
+                                     []() -> Marshallable* {
+                                       return new BulkPaxosCmd;
+                                     });
+
 
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
@@ -170,6 +176,33 @@ void PaxosWorker::ShutDown() {
 
 void PaxosWorker::IncSubmit(){	
     n_submit++;
+}
+
+void PaxosWorker::BulkSubmit(vector<MultiPaxosCoordinator*>& entries){
+    if (!IsLeader(par_id)) return;
+
+    auto sp_cmd = make_shared<BulkPaxosCmd>();
+    for(auto mpc : entries){
+        sp_cmd->slots.push_back(*mpc->slot_id_);
+        sp_cmd->ballots.push_back(*mpc->curr_ballot_);
+        sp_cmd->cmds.push_back(*mpc->cmd_);
+    }
+    auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+    n_current += (int)entries.size();
+    n_submit -= (int)entries.size();
+    _BulkSubmit(sp_m);
+}
+
+void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
+    Coordinator* coord = rep_frame_->CreateBulkCoordinator(0,
+                                                       Config::GetConfig(),
+                                                       0,
+                                                       nullptr,
+                                                       0,
+                                                       nullptr);
+    coord->par_id_ = site_info_->partition_id_;
+    coord->loc_id_ = site_info_->locale_id;
+    coord->Submit(sp_m);
 }
 
 void PaxosWorker::WaitForSubmit() {
