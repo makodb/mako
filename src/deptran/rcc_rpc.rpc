@@ -16,6 +16,10 @@ abstract service MultiPaxos {
   defer Decide(uint64_t slot,
                ballot_t ballot,
                MarshallDeputy cmd);
+
+  defer BulkAccept(MarshallDeputy cmd);
+
+  defer BulkDecide(MarshallDeputy cmd);
 }
 
 // below is for 2PL and OCC
