@@ -3,6 +3,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../scheduler.h"
+#include "../paxos_worker.h"
 
 namespace janus {
 class Command;
@@ -51,6 +52,12 @@ class PaxosServer : public TxLogServer {
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
                 shared_ptr<Marshallable> &cmd);
+
+  void OnBulkAccept(shared_ptr<Marshallable> &cmd,
+                    i32 *valid,
+                    const function<void()> &cb);
+
+  void OnBulkCommit(shared_ptr<Marshallable> &cmd);
 
   void FreeSlots(){
     // TODO should support snapshot for freeing memory.

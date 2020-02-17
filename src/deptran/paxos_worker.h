@@ -7,6 +7,7 @@
 #include "scheduler.h"
 #include "communicator.h"
 #include "config.h"
+#include "./paxos/coordinator.h"
 
 namespace janus {
 
@@ -136,6 +137,18 @@ public:
   virtual Marshal& FromMarshal(Marshal&) override;
 };
 
+inline rrr::Marshal& operator<<(rrr::Marshal &m, const LogEntry &cmd) {
+  m << cmd.length;
+  m << cmd.log_entry;
+  return m;
+}
+
+inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
+  m >> cmd.length;
+  m >> cmd.log_entry;
+  return m;
+}
+
 class BulkPaxosCmd : public  Marshallable {
 public:
   vector<slotid_t> slots{};
@@ -143,7 +156,7 @@ public:
   vector<shared_ptr<LogEntry> > cmds{};
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {}
-  virtual ~BulkPaxos() {
+  virtual ~BulkPaxosCmd() {
       slots.clear();
       ballots.clear();
   }
@@ -189,6 +202,7 @@ public:
 class PaxosWorker {
 private:
   inline void _Submit(shared_ptr<Marshallable>);
+  inline void _BulkSubmit(shared_ptr<Marshallable>);
 
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
@@ -229,7 +243,7 @@ public:
   void Next(Marshallable&);
   void WaitForSubmit();
   void IncSubmit();
-  void BulkSubmit(vector<int*>&)
+  void BulkSubmit(vector<Coordinator*>&);
 
   static const uint32_t CtrlPortDelta = 10000;
   void WaitForShutdown();

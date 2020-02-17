@@ -41,6 +41,7 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                   rrr::DeferredReply* defer) override;
 
   void BulkAccept(const MarshallDeputy& cmd,
+                  i32* valid,
                   rrr::DeferredReply* defer) override;
 
 };

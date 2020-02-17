@@ -73,18 +73,21 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 }
 
 void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
-                           const function<void()> &cb) {
-  *cmd->MarshallTo(cmd)
+                               i32* valid,
+                               const function<void()> &cb) {
+  auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  for(int i = 0; i < *cmd->slots.size(); i++){
-      slotid_t slot_id = *cmd->slots[i];
-      ballot_t ballot_id = *cmd->ballots[i];
+  for(int i = 0; i < bcmd->slots.size(); i++){
+      slotid_t slot_id = bcmd->slots[i];
+      ballot_t ballot_id = bcmd->ballots[i];
       auto instance = GetInstance(slot_id);
-      verify(instance->max_ballot_accepted_ < ballot);
-      if (instance->max_ballot_seen_ <= ballot) {
-          instance->max_ballot_seen_ = ballot;
-          instance->max_ballot_accepted_ = ballot;
+      verify(instance->max_ballot_accepted_ < ballot_id);
+      if (instance->max_ballot_seen_ <= ballot_id) {
+          instance->max_ballot_seen_ = ballot_id;
+          instance->max_ballot_accepted_ = ballot_id;
+          *valid &= 1;
       } else {
+          *valid &= 0;
           // TODO
           verify(0);
       }
@@ -95,13 +98,14 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
 }
 
 void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd) {
-  *cmd->MarshallTo(cmd)
+  auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
-  for(int i = 0; i < *cmd->slots.size(); i++){
-      slotid_t slot_id = *cmd->slots[i];
-      ballot_t ballot_id = *cmd->ballots[i];
-      instance->committed_cmd_ = *cmd->cmds[i];
+  for(int i = 0; i < bcmd->slots.size(); i++){
+      slotid_t slot_id = bcmd->slots[i];
+      ballot_t ballot_id = bcmd->ballots[i];
+      auto instance = GetInstance(slot_id);
+      instance->committed_cmd_ = bcmd->cmds[i];
       if (slot_id > max_committed_slot_) {
           max_committed_slot_ = slot_id;
       }
