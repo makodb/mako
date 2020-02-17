@@ -105,7 +105,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd) {
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
       auto instance = GetInstance(slot_id);
-      instance->committed_cmd_ = bcmd->cmds[i];
+      instance->committed_cmd_ = bcmd->cmds[i]->sp_data_;
       if (slot_id > max_committed_slot_) {
           max_committed_slot_ = slot_id;
       }

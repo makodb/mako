@@ -13,6 +13,13 @@ CoordinatorMultiPaxos::CoordinatorMultiPaxos(uint32_t coo_id,
     : Coordinator(coo_id, benchmark, ccsi, thread_id) {
 }
 
+BulkCoordinatorMultiPaxos::BulkCoordinatorMultiPaxos(uint32_t coo_id,
+                                             int32_t benchmark,
+                                             ClientControlServiceImpl* ccsi,
+                                             uint32_t thread_id)
+  : CoordinatorMultiPaxos(coo_id, benchmark, ccsi, thread_id) {
+}
+
 void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
                                    const function<void()>& func,
                                    const function<void()>& exe_callback) {

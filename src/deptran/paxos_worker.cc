@@ -184,7 +184,7 @@ void PaxosWorker::BulkSubmit(vector<Coordinator*>& entries){
         auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
         sp_cmd->slots.push_back(mpc->slot_id_);
         sp_cmd->ballots.push_back(mpc->curr_ballot_);
-        sp_cmd->cmds.push_back(mpc->cmd_);
+        sp_cmd->cmds.push_back(dynamic_pointer_cast<MarshallDeputy>(mpc->cmd_));
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
     n_current += (int)entries.size();
