@@ -54,12 +54,13 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
 }
 
 void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
+                                       i32* valid,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
-    sched_->OnBulkAccept(slot,
-                     ballot,
-                     const_cast<MarshallDeputy&>(md_cmd).sp_data_);
+    sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         valid,
+                        std::bind(&rrr::DeferredReply::reply, defer));
     defer->reply();
   });
 }
@@ -68,9 +69,7 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
-    sched_->OnBulkCommit(slot,
-                     ballot,
-                     const_cast<MarshallDeputy&>(md_cmd).sp_data_);
+    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_);
     defer->reply();
   });
 }
