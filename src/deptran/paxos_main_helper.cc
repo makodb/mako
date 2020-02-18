@@ -17,7 +17,7 @@
 using namespace janus;
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
-static vector<unique_ptr<PaxosWorker>> pxs_workers_g = {};
+static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 // vector<unique_ptr<ClientWorker>> client_workers_g = {};
 const int len = 5;
 
@@ -31,7 +31,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
   Log_info("server enabled, number of sites: %d", server_sites.size());
   for (int i = server_sites.size(); i; --i) {
     PaxosWorker* worker = new PaxosWorker();
-    pxs_workers_g.push_back(std::unique_ptr<PaxosWorker>(worker));
+    pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
   }
 
   int i = 0;
@@ -43,7 +43,6 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
                site_info.GetBindAddress().c_str());
       auto& worker = pxs_workers_g[i++];
       worker->site_info_ = const_cast<Config::SiteInfo*>(&config->SiteById(site_info.id));
-
       // setup frame and scheduler
       worker->SetupBase();
       // start server service
