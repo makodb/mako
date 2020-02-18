@@ -235,6 +235,12 @@ public:
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
 
+  std::vector<Coordinator*> accept{};
+  rrr::SpinLock acc_;
+  const unsigned int cnt = 100;
+  pthread_t bulkops_th_;
+  bool stop_flag = true;
+
   void SetupHeartbeat();
   void SetupBase();
   void SetupService();
@@ -243,7 +249,11 @@ public:
   void Next(Marshallable&);
   void WaitForSubmit();
   void IncSubmit();
-  void BulkSubmit(vector<Coordinator*>&);
+  void BulkSubmit(const vector<Coordinator*>&);
+  void AddAccept(Coordinator*);
+  static void* StartReadAccept(void*);
+  PaxosWorker();
+  ~PaxosWorker();
 
   static const uint32_t CtrlPortDelta = 10000;
   void WaitForShutdown();
