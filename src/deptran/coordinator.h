@@ -133,6 +133,10 @@ class Coordinator {
                       const std::function<void()>& exe_callback = [](){}) {
     verify(0);
   }
+
+  virtual  void assignCmd(shared_ptr<Marshallable>& cmd){
+    verify(0);
+  }
   virtual void Reset() {
     committed_ = false;
     aborted_ = false;
