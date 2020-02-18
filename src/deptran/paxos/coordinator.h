@@ -76,8 +76,9 @@ class CoordinatorMultiPaxos : public Coordinator {
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {
 public:
     shared_ptr<Marshallable> cmd_{nullptr};
-    void BulkAccept();
-    void BulkCommit();
+    void Accept();
+    void Commit();
+    void GotoNextPhase();
     BulkCoordinatorMultiPaxos(uint32_t coo_id,
                           int32_t benchmark,
                           ClientControlServiceImpl *ccsi,

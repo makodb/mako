@@ -122,6 +122,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       fu->get_reply() >> valid;
       e->FeedResponse(valid);
     };
+    verify(cmd != nullptr);
     MarshallDeputy md(cmd);
     auto f = proxy->async_BulkAccept(md, fuattr);
     Future::safe_release(f);

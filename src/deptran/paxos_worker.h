@@ -170,6 +170,7 @@ public:
           m << i;
       }
       m << (int32_t) cmds.size();
+      verify(cmds[0] != nullptr);
       for (auto sp : cmds) {
           m << *sp;
       }

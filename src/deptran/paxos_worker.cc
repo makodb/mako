@@ -182,12 +182,12 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
     Log_info("Obtaining bulk submit through coro %d\n", (int)entries.size());
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     for(auto coo : entries){
-	verify(coo->cmd_ != nullptr);
         auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
         sp_cmd->slots.push_back(mpc->slot_id_);
         sp_cmd->ballots.push_back(mpc->curr_ballot_);
         verify(mpc->cmd_ != nullptr);
-        sp_cmd->cmds.push_back(dynamic_pointer_cast<MarshallDeputy>(mpc->cmd_));
+        MarshallDeputy md(mpc->cmd_);
+        sp_cmd->cmds.push_back(make_shared<MarshallDeputy>(md));
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
     n_current += (int)entries.size();
@@ -199,7 +199,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
     Coordinator* coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
     coord->par_id_ = site_info_->partition_id_;
     coord->loc_id_ = site_info_->locale_id;
-    coord->Submit(sp_m);
+    coord->BulkSubmit(sp_m);
 }
 
 void PaxosWorker::AddAccept(Coordinator* coord) {
