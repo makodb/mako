@@ -179,11 +179,14 @@ void PaxosWorker::IncSubmit(){
 }
 
 void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
+    Log_info("Obtaining bulk submit through coro %d\n", (int)entries.size());
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     for(auto coo : entries){
+	verify(coo->cmd_ != nullptr);
         auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
         sp_cmd->slots.push_back(mpc->slot_id_);
         sp_cmd->ballots.push_back(mpc->curr_ballot_);
+        verify(mpc->cmd_ != nullptr);
         sp_cmd->cmds.push_back(dynamic_pointer_cast<MarshallDeputy>(mpc->cmd_));
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
@@ -200,6 +203,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
 }
 
 void PaxosWorker::AddAccept(Coordinator* coord) {
+  Log_debug("Collecting coordinators here\n");
   acc_.lock();
   accept.push_back(coord);
   acc_.unlock();
@@ -218,10 +222,12 @@ void* PaxosWorker::StartReadAccept(void* arg){
     std::vector<Coordinator*> current(pw->accept.begin(), it);
     pw->accept.erase(pw->accept.begin(), it);
     pw->acc_.unlock();
-
+    if((int)current.size() <= 0)continue;
+    Log_info("Pushing coordinators for bulk accept coordinators here %d", (int)current.size());
     auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
       pw->BulkSubmit(current);
     });
+    pw->GetPollMgr()->add(sp_job);
   }
   pthread_exit(nullptr);
   return nullptr;
@@ -274,6 +280,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   created_coordinators_.push_back(coord);
+  coord->cmd_ = sp_m;
   if(stop_flag != true) {
     AddAccept(coord);
   } else{
