@@ -40,6 +40,10 @@ class CoordinatorMultiPaxos : public Coordinator {
     return this->loc_id_ == 0;
   }
 
+  void assignCmd(shared_ptr<Marshallable>& cmd){
+    cmd_ = cmd;
+  }
+
   slotid_t GetNextSlot() {
     verify(0);
     verify(slot_hint_ != nullptr);

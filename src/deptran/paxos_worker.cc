@@ -280,7 +280,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   created_coordinators_.push_back(coord);
-  coord->cmd_ = sp_m;
+  coord->assignCmd(sp_m);
   if(stop_flag != true) {
     AddAccept(coord);
   } else{
