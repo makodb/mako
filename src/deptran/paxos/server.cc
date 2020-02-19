@@ -95,7 +95,6 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
       }
 
   }
-  Log_info("Reached hereeeeee.... %d", *valid);
   n_accept_++;
   cb();
 }
