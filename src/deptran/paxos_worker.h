@@ -191,7 +191,8 @@ public:
           m >> x;
           ballots.push_back(x);
       }
-      for (int i = 0; i < szs; i++) {
+      m >> szc;
+      for (int i = 0; i < szc; i++) {
           auto x = std::make_shared<MarshallDeputy>();
           m >> *x;
           cmds.push_back(x);
