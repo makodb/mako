@@ -265,8 +265,8 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   // finish_mutex.lock();
-  n_current++;
-  n_submit--;
+  //n_current++;
+  //n_submit--;
   // finish_mutex.unlock();
   static cooid_t cid = 1;
   static id_t id = 1;

@@ -61,7 +61,6 @@ void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
     sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          valid,
                         std::bind(&rrr::DeferredReply::reply, defer));
-    defer->reply();
   });
 }
 
