@@ -210,6 +210,7 @@ private:
   rrr::CondVar finish_cond{};
   std::atomic<int> n_current{0};
   std::atomic<int> n_submit{0};
+  std::atomic<int> n_tot{0};
   std::function<void(const char*, int)> callback_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
   struct timeval t1;
@@ -239,7 +240,7 @@ public:
 
   std::vector<Coordinator*> accept{};
   rrr::SpinLock acc_;
-  const unsigned int cnt = 100;
+  const unsigned int cnt = 10000;
   pthread_t bulkops_th_;
   bool stop_flag = true;
 

@@ -179,7 +179,8 @@ void PaxosWorker::IncSubmit(){
 }
 
 void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
-    Log_info("Obtaining bulk submit through coro %d\n", (int)entries.size());
+    Log_debug("Obtaining bulk submit of size %d through coro", (int)entries.size());
+    Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     for(auto coo : entries){
         auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
@@ -190,8 +191,10 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
         sp_cmd->cmds.push_back(make_shared<MarshallDeputy>(md));
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+    //n_tot += (int)entries.size();
     n_current += (int)entries.size();
     n_submit -= (int)entries.size();
+    Log_info("Current n_submit and n_current and n_tot is %d %d %d", (int)n_submit, (int)n_current);
     _BulkSubmit(sp_m);
 }
 
@@ -223,11 +226,12 @@ void* PaxosWorker::StartReadAccept(void* arg){
     pw->accept.erase(pw->accept.begin(), it);
     pw->acc_.unlock();
     if((int)current.size() <= 0)continue;
-    Log_info("Pushing coordinators for bulk accept coordinators here %d", (int)current.size());
+    Log_info("Pushing coordinators for bulk accept coordinators here having size %d", (int)current.size());
     auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
       pw->BulkSubmit(current);
     });
     pw->GetPollMgr()->add(sp_job);
+    sleep(1);
   }
   pthread_exit(nullptr);
   return nullptr;
@@ -246,6 +250,7 @@ void PaxosWorker::WaitForSubmit() {
 PaxosWorker::PaxosWorker() {
   stop_flag = false;
   Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAccept, this);
+  //pthread_detach(bulkops_th_);
 }
 
 PaxosWorker::~PaxosWorker() {
@@ -267,6 +272,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   // finish_mutex.lock();
   //n_current++;
   //n_submit--;
+  //n_tot++;
   // finish_mutex.unlock();
   static cooid_t cid = 1;
   static id_t id = 1;

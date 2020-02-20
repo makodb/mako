@@ -87,6 +87,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
       if (instance->max_ballot_seen_ <= ballot_id) {
           instance->max_ballot_seen_ = ballot_id;
           instance->max_ballot_accepted_ = ballot_id;
+	  n_accept_++;
           *valid &= 1;
       } else {
           *valid &= 0;
@@ -95,7 +96,6 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
       }
 
   }
-  n_accept_++;
   cb();
 }
 
