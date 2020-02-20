@@ -146,6 +146,7 @@ int setup(int argc, char* argv[]) {
 }
 
 int shutdown_paxos() {
+  sleep(3);
   for (auto& worker : pxs_workers_g) {
     worker->WaitForShutdown();
   }

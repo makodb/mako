@@ -53,12 +53,13 @@ void PaxosWorker::Next(Marshallable& cmd) {
   } else {
     verify(0);
   }
-  if (n_current > 0) {
-    n_current--;
-    if (n_current == 0) {
+  //if (n_current > n_tot) {
+    n_current++;
+    if (n_current >= n_tot && IsLeader(site_info_->partition_id_)) {
+      Log_info("Current pair id %d n_current and n_tot is %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot);
       finish_cond.bcast();
     }
-  }
+  //}
 }
 
 void PaxosWorker::SetupService() {
@@ -175,12 +176,12 @@ void PaxosWorker::ShutDown() {
 }
 
 void PaxosWorker::IncSubmit(){	
-    n_submit++;
+    n_tot++;
 }
 
 void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
-    Log_debug("Obtaining bulk submit of size %d through coro", (int)entries.size());
-    Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
+    //Log_debug("Obtaining bulk submit of size %d through coro", (int)entries.size());
+    //Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     for(auto coo : entries){
         auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
@@ -191,10 +192,9 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
         sp_cmd->cmds.push_back(make_shared<MarshallDeputy>(md));
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
-    //n_tot += (int)entries.size();
-    n_current += (int)entries.size();
-    n_submit -= (int)entries.size();
-    Log_info("Current n_submit and n_current and n_tot is %d %d %d", (int)n_submit, (int)n_current);
+    //n_current += (int)entries.size();
+    //n_submit -= (int)entries.size();
+    //Log_info("Current pair id %d n_current and n_tot is %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot);
     _BulkSubmit(sp_m);
 }
 
@@ -226,7 +226,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
     pw->accept.erase(pw->accept.begin(), it);
     pw->acc_.unlock();
     if((int)current.size() <= 0)continue;
-    Log_info("Pushing coordinators for bulk accept coordinators here having size %d", (int)current.size());
+    Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)current.size(), (int)pw->n_current, (int)pw->n_tot, pw->site_info_->locale_id);
     auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
       pw->BulkSubmit(current);
     });
@@ -238,9 +238,9 @@ void* PaxosWorker::StartReadAccept(void* arg){
 }
 
 void PaxosWorker::WaitForSubmit() {
-  while (n_current + n_submit > 0) {
+  while (n_current < n_tot) {
     finish_mutex.lock();
-    // Log_debug("wait for task, amount: %d", n_current);
+    Log_info("wait for task, amount: %d", (int)n_tot);
     finish_cond.wait(finish_mutex);
     finish_mutex.unlock();
   }
