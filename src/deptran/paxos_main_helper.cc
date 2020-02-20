@@ -183,6 +183,8 @@ void register_for_leader(std::function<void(const char*, int)> cb, uint32_t par_
   }
 }
 
+static int submit_tot = 0;
+
 void submit(const char* log, int len, uint32_t par_id) {
   for (auto& worker : pxs_workers_g) {
     if (!worker->IsLeader(par_id)) continue;
@@ -207,6 +209,7 @@ void submit(const char* log, int len, uint32_t par_id) {
              worker->Submit(log_str.data(),len, par_id);
           });
     worker->GetPollMgr()->add(sp_job);
+    submit_tot++;
   }
 }
 
@@ -220,7 +223,7 @@ void wait_for_submit(uint32_t par_id) {
 }
 
 void pre_shutdown_step(){
-  Log_info("shutdown Server Control Service after task finish");
+  Log_info("shutdown Server Control Service after task finish total submit %d", submit_tot);
   for (auto& worker : pxs_workers_g) {
     if (worker->hb_rpc_server_ != nullptr) {
       worker->scsi_->server_shutdown(nullptr);
