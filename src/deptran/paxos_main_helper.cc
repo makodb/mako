@@ -215,10 +215,18 @@ void submit(const char* log, int len, uint32_t par_id) {
 }
 
 void wait_for_submit(uint32_t par_id) {
+  int total_submits = 0;
   for (auto& worker : pxs_workers_g) {
     if (!worker->IsLeader(par_id)) continue;
     verify(worker->submit_pool != nullptr);
     worker->submit_pool->wait_for_all();
+    worker->WaitForSubmit();
+    total_submits = worker->n_tot;
+  }
+  for (auto& worker : pxs_workers_g) {
+    if (worker->IsLeader(par_id)) continue;
+    if (!worker->IsPartition(par_id)) continue;
+    worker->n_tot = total_submits;
     worker->WaitForSubmit();
   }
 }

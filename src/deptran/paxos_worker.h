@@ -208,15 +208,15 @@ private:
 
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
-  std::atomic<int> n_current{0};
-  std::atomic<int> n_submit{0};
-  std::atomic<int> n_tot{0};
   std::function<void(const char*, int)> callback_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
   struct timeval t1;
   struct timeval t2;
 
 public:
+  std::atomic<int> n_current{0};
+  std::atomic<int> n_submit{0};
+  std::atomic<int> n_tot{0};
   SubmitPool* submit_pool = nullptr;
   rrr::PollMgr* svr_poll_mgr_ = nullptr;
   vector<rrr::Service*> services_ = {};

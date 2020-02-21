@@ -68,7 +68,8 @@ class MultiPaxosCommo : public Communicator {
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkAccept(parid_t par_id,
                         shared_ptr<Marshallable> cmd);
-  void BroadcastBulkDecide(parid_t par_id,
+  shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastBulkDecide(parid_t par_id,
                            const shared_ptr<Marshallable> cmd);
 };
 

@@ -57,7 +57,9 @@ class PaxosServer : public TxLogServer {
                     i32 *valid,
                     const function<void()> &cb);
 
-  void OnBulkCommit(shared_ptr<Marshallable> &cmd);
+  void OnBulkCommit(shared_ptr<Marshallable> &cmd,
+                    i32 *valid,
+                    const function<void()> &cb);
 
   void FreeSlots(){
     // TODO should support snapshot for freeing memory.

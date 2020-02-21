@@ -55,8 +55,8 @@ void PaxosWorker::Next(Marshallable& cmd) {
   }
   //if (n_current > n_tot) {
     n_current++;
-    if (n_current >= n_tot && IsLeader(site_info_->partition_id_)) {
-      Log_info("Current pair id %d n_current and n_tot is %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot);
+    if (n_current >= n_tot) {
+      //Log_info("Current pair id %d n_current and n_tot and accept size is %d %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot, (int)accept.size());
       finish_cond.bcast();
     }
   //}
@@ -159,7 +159,7 @@ void PaxosWorker::WaitForShutdown() {
 }
 
 void PaxosWorker::ShutDown() {
-  Log_debug("site %s deleting services, num: %d", site_info_->name.c_str(), services_.size());
+  Log_info("site %s deleting services, num: %d %d %d", site_info_->name.c_str(), services_.size(), (int)accept.size(), (int)n_current);
   verify(rpc_server_ != nullptr);
   delete rpc_server_;
   rpc_server_ = nullptr;
@@ -176,7 +176,7 @@ void PaxosWorker::ShutDown() {
 }
 
 void PaxosWorker::IncSubmit(){	
-    n_tot++;
+    //n_tot++;
 }
 
 void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
@@ -250,10 +250,11 @@ void PaxosWorker::WaitForSubmit() {
 PaxosWorker::PaxosWorker() {
   stop_flag = false;
   Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAccept, this);
-  //pthread_detach(bulkops_th_);
+  pthread_detach(bulkops_th_);
 }
 
 PaxosWorker::~PaxosWorker() {
+  Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
   stop_flag = true;
 }
 
@@ -272,7 +273,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   // finish_mutex.lock();
   //n_current++;
   //n_submit--;
-  //n_tot++;
+  n_tot++;
   // finish_mutex.unlock();
   static cooid_t cid = 1;
   static id_t id = 1;
@@ -285,7 +286,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
                                                      nullptr);
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
-  created_coordinators_.push_back(coord);
+  //created_coordinators_.push_back(coord);
   coord->assignCmd(sp_m);
   if(stop_flag != true) {
     AddAccept(coord);

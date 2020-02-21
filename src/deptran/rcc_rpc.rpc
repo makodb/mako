@@ -19,7 +19,7 @@ abstract service MultiPaxos {
 
   defer BulkAccept(MarshallDeputy cmd | i32 val);
 
-  defer BulkDecide(MarshallDeputy cmd);
+  defer BulkDecide(MarshallDeputy cmd | i32 val);
 }
 
 // below is for 2PL and OCC
