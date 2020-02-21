@@ -130,17 +130,25 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   return e;
 }
 
-void MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, shared_ptr<Marshallable> cmd){
+shared_ptr<PaxosAcceptQuorumEvent>
+MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, shared_ptr<Marshallable> cmd){
     auto proxies = rpc_par_proxies_[par_id];
+    int n = Config::GetConfig()->GetPartitionSize(par_id);
+    auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
     vector<Future*> fus;
     for (auto& p : proxies) {
         auto proxy = (MultiPaxosProxy*) p.second;
         FutureAttr fuattr;
-        fuattr.callback = [](Future* fu) {};
+        fuattr.callback = [e] (Future* fu) {
+          i32 valid;
+          fu->get_reply() >> valid;
+          e->FeedResponse(true);
+        };
         MarshallDeputy md(cmd);
         auto f = proxy->async_BulkDecide(md, fuattr);
         Future::safe_release(f);
     }
+    return e;
 }
 
 } // namespace janus

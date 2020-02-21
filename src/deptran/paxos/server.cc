@@ -87,7 +87,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
       if (instance->max_ballot_seen_ <= ballot_id) {
           instance->max_ballot_seen_ = ballot_id;
           instance->max_ballot_accepted_ = ballot_id;
-	  n_accept_++;
+	        n_accept_++;
           *valid &= 1;
       } else {
           *valid &= 0;
@@ -99,7 +99,9 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   cb();
 }
 
-void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd) {
+void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
+                               i32* valid,
+                               const function<void()> &cb) {
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
@@ -125,6 +127,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd) {
   }
 
   FreeSlots();
+  cb();
 }
 
 } // namespace janus

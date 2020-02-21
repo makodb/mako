@@ -65,11 +65,13 @@ void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
 }
 
 void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
+                                       i32* valid,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
-    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_);
-    defer->reply();
+    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         valid,
+                         std::bind(&rrr::DeferredReply::reply, defer));
   });
 }
 
