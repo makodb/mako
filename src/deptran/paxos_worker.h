@@ -240,7 +240,7 @@ public:
 
   std::vector<Coordinator*> accept{};
   rrr::SpinLock acc_;
-  const unsigned int cnt = 10000;
+  const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
   bool stop_flag = true;
 
