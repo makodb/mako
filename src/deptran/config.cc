@@ -72,7 +72,7 @@ int Config::CreateConfig(int argc, char **argv) {
   int c;
   optind = 1;
   string filename;
-  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:r:s:S:t:H:T:n:K:")) != -1) {
+  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:r:s:S:t:H:T:n:k:")) != -1) {
     switch (c) {
       case 'b': // heartbeat to controller
         heart_beat = true;
