@@ -1,5 +1,6 @@
 #include "paxos_worker.h"
 #include "service.h"
+#include "chrono"
 
 namespace janus {
 
@@ -231,7 +232,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
       pw->BulkSubmit(current);
     });
     pw->GetPollMgr()->add(sp_job);
-    sleep(1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   pthread_exit(nullptr);
   return nullptr;
