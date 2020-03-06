@@ -127,7 +127,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   }
 
   FreeSlots();
-  cb();
+  //cb();
 }
 
 } // namespace janus

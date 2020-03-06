@@ -72,6 +72,7 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
     sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          valid,
                          std::bind(&rrr::DeferredReply::reply, defer));
+    defer->reply();
   });
 }
 
