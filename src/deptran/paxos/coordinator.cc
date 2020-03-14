@@ -59,7 +59,7 @@ ballot_t CoordinatorMultiPaxos::PickBallot() {
 }
 
 void CoordinatorMultiPaxos::Prepare() {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  //std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(0); // for debug;
   verify(!in_prepare_);
   in_prepare_ = true;
@@ -118,7 +118,7 @@ void CoordinatorMultiPaxos::Prepare() {
 }
 
 void CoordinatorMultiPaxos::Accept() {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  //std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_accept);
   in_accept = true;
   Log_debug("multi-paxos coordinator broadcasts accept, "
@@ -170,7 +170,7 @@ void CoordinatorMultiPaxos::Accept() {
 }
 
 void CoordinatorMultiPaxos::Commit() {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  //std::lock_guard<std::recursive_mutex> lock(mtx_);
   commit_callback_();
   Log_debug("multi-paxos broadcast commit for partition: %d, slot %d",
             (int) par_id_, (int) slot_id_);
@@ -252,7 +252,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
 }
 
 void BulkCoordinatorMultiPaxos::Accept() {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    //std::lock_guard<std::recursive_mutex> lock(mtx_);
     auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_);
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
@@ -265,7 +265,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
 }
 
 void BulkCoordinatorMultiPaxos::Commit() {
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    //std::lock_guard<std::recursive_mutex> lock(mtx_);
     commit_callback_();
     auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_);
     sp_quorum->Wait();

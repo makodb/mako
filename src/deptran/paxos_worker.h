@@ -238,7 +238,9 @@ public:
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
 
-  std::vector<Coordinator*> accept{};
+  std::vector<Coordinator*> accept{vector<Coordinator*>(1000000, nullptr)};
+  int bulk_writer = 0;
+  int bulk_reader = -1;
   rrr::SpinLock acc_;
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;

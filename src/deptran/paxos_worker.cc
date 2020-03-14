@@ -177,7 +177,7 @@ void PaxosWorker::ShutDown() {
 }
 
 void PaxosWorker::IncSubmit(){	
-    //n_tot++;
+	n_tot++;
 }
 
 void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
@@ -208,26 +208,26 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
 
 void PaxosWorker::AddAccept(Coordinator* coord) {
   Log_debug("Collecting coordinators here\n");
-  acc_.lock();
-  accept.push_back(coord);
-  acc_.unlock();
+  accept[bulk_writer] = coord;
+  bulk_writer++;
 }
 
 void* PaxosWorker::StartReadAccept(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   while (!pw->stop_flag) {
-    pw->acc_.lock();
-    auto it = pw->accept.begin();
-    if ((int) pw->accept.size() < pw->cnt) {
-      it = pw->accept.end();
-    } else {
-      it += pw->cnt;
+    std::vector<Coordinator*> current;
+    int i = pw->bulk_reader + 1;
+    while(i < pw->bulk_writer){
+      if(pw->accept[i] != nullptr){
+        current.push_back(pw->accept[i]);
+        pw->bulk_reader = i;
+      } else {
+        break;
+      }
+      i++;
     }
-    std::vector<Coordinator*> current(pw->accept.begin(), it);
-    pw->accept.erase(pw->accept.begin(), it);
-    pw->acc_.unlock();
     if((int)current.size() <= 0)continue;
-    Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)current.size(), (int)pw->n_current, (int)pw->n_tot, pw->site_info_->locale_id);
+    Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)current.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
     auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
       pw->BulkSubmit(current);
     });
@@ -241,7 +241,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
 void PaxosWorker::WaitForSubmit() {
   while (n_current < n_tot) {
     finish_mutex.lock();
-    Log_info("wait for task, amount: %d", (int)n_tot);
+    //Log_info("wait for task, amount: %d", (int)n_tot-(int)n_current);
     finish_cond.wait(finish_mutex);
     finish_mutex.unlock();
   }
@@ -255,7 +255,7 @@ PaxosWorker::PaxosWorker() {
 }
 
 PaxosWorker::~PaxosWorker() {
-  Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
+  Log_debug("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
   stop_flag = true;
 }
 
@@ -274,7 +274,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   // finish_mutex.lock();
   //n_current++;
   //n_submit--;
-  n_tot++;
+  //n_tot++;
   // finish_mutex.unlock();
   static cooid_t cid = 1;
   static id_t id = 1;
