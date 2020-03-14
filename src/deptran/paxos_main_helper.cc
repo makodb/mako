@@ -7,6 +7,7 @@
 #include "command_marshaler.h"
 #include "benchmark_control_rpc.h"
 #include "server_worker.h"
+#include "concurrentqueue.h"
 
 #ifdef CPU_PROFILE
 # include <gperftools/profiler.h>
@@ -19,6 +20,7 @@ using namespace janus;
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
 static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
+static moodycamel::ConcurrentQueue<pair<string, pair<int,uint32_t>>> submit_queue;
 static atomic<int> producer{0}, consumer{0};
 static int submit_tot = 0;
 pthread_t submit_poll_th_;
@@ -133,29 +135,27 @@ void microbench_paxos() {
 }
 
 void submit_logger() {
-    int len = submit_loggers[consumer].second.first;
-    uint32_t par_id = submit_loggers[consumer].second.second;
-    string log_str = submit_loggers[consumer].first;
-    for (auto& worker : pxs_workers_g) {
-        if (!worker->IsLeader(par_id)) continue;
+  pair<string, pair<int,uint32_t>> paxos_entry;
+  bool found = q.try_dequeue(paxos_entry);
+  if(!found){
+    return;
+  }
+  int len = paxos_entry.second.first;
+  uint32_t par_id = paxos_entry.second.second;
+  string log_str = paxos_entry.first;
+  for (auto& worker : pxs_workers_g) {
+    if (!worker->IsLeader(par_id)) continue;
         //verify(worker->submit_pool != nullptr);
-	worker->IncSubmit();
         auto sp_job = std::make_shared<OneTimeJob>([&worker, log_str, len, par_id] () {
             worker->Submit(log_str.data(),len, par_id);
         });
         worker->GetPollMgr()->add(sp_job);
-	submit_tot++;
     }
 }
 
 void* PollSubmitLog(void* arg){
     while(producer >= 0){
-        if(consumer < producer){
-            submit_logger();
-            consumer++;
-        } else{
-            //sleep(0.001);
-        }
+      submit_logger();
     }
     pthread_exit(nullptr);
     return nullptr;
@@ -247,16 +247,16 @@ void submit(const char* log, int len, uint32_t par_id) {
 }
 
 void add_log(const char* log, int len, uint32_t par_id){
+    for (auto& worker : pxs_workers_g) {
+      if (!worker->IsLeader(par_id)) continue;
+      worker->IncSubmit();
+      break;
+    }
     string log_str;
     std::copy(log, log + len, std::back_inserter(log_str));
-    submit_loggers[producer] = make_pair(log_str, make_pair(len, par_id));
-    producer++;
+    auto paxos_entry = make_pair(log_str, make_pair(len, par_id));
+    submit_queue.enqueue(paxos_entry);
     submit_tot++;
-    for (auto& worker : pxs_workers_g) {
-        if (!worker->IsLeader(par_id)) continue;
-        worker->IncSubmit();
-        break;
-    }
 }
 
 void wait_for_submit(uint32_t par_id) {
