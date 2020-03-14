@@ -8,6 +8,7 @@
 #include "communicator.h"
 #include "config.h"
 #include "./paxos/coordinator.h"
+#include "concurrentqueue.h"
 
 namespace janus {
 
@@ -238,7 +239,7 @@ public:
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
 
-  std::vector<Coordinator*> accept{vector<Coordinator*>(1000000, nullptr)};
+  moodycamel::ConcurrentQueue<Coordinator*> coo_queue;
   int bulk_writer = 0;
   int bulk_reader = -1;
   rrr::SpinLock acc_;

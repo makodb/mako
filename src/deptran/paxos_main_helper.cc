@@ -136,7 +136,7 @@ void microbench_paxos() {
 
 void submit_logger() {
   pair<string, pair<int,uint32_t>> paxos_entry;
-  bool found = q.try_dequeue(paxos_entry);
+  bool found = submit_queue.try_dequeue(paxos_entry);
   if(!found){
     return;
   }

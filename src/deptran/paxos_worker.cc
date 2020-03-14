@@ -160,7 +160,7 @@ void PaxosWorker::WaitForShutdown() {
 }
 
 void PaxosWorker::ShutDown() {
-  Log_info("site %s deleting services, num: %d %d %d", site_info_->name.c_str(), services_.size(), (int)accept.size(), (int)n_current);
+  Log_info("site %s deleting services, num: %d %d %d %d", site_info_->name.c_str(), services_.size(), 0, (int)n_current, (int)n_tot);
   verify(rpc_server_ != nullptr);
   delete rpc_server_;
   rpc_server_ = nullptr;
@@ -207,26 +207,17 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
 }
 
 void PaxosWorker::AddAccept(Coordinator* coord) {
-  Log_debug("Collecting coordinators here\n");
-  accept[bulk_writer] = coord;
-  bulk_writer++;
+  //Log_info("current batch cnt %d", cnt);
+  coo_queue.enqueue(coord);
 }
 
 void* PaxosWorker::StartReadAccept(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   while (!pw->stop_flag) {
-    std::vector<Coordinator*> current;
-    int i = pw->bulk_reader + 1;
-    while(i < pw->bulk_writer){
-      if(pw->accept[i] != nullptr){
-        current.push_back(pw->accept[i]);
-        pw->bulk_reader = i;
-      } else {
-        break;
-      }
-      i++;
-    }
-    if((int)current.size() <= 0)continue;
+    std::vector<Coordinator*> current(pw->cnt, nullptr);
+    int cnt = pw->coo_queue.try_dequeue_bulk(&current[0], pw->cnt);
+    if(cnt <= 0)continue;
+    current.resize(cnt);
     Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)current.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
     auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
       pw->BulkSubmit(current);
