@@ -56,8 +56,8 @@ void PaxosWorker::Next(Marshallable& cmd) {
   }
   //if (n_current > n_tot) {
     n_current++;
-    if (n_current >= n_tot) {
-      //Log_info("Current pair id %d n_current and n_tot and accept size is %d %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot, (int)accept.size());
+    if (n_current >= n_tot && site_info_->locale_id == 0) {
+      Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
       finish_cond.bcast();
     }
   //}

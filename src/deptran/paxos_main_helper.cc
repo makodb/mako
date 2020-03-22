@@ -22,7 +22,7 @@ static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
 static moodycamel::ConcurrentQueue<pair<string, pair<int,uint32_t>>> submit_queue;
 static atomic<int> producer{0}, consumer{0};
-static int submit_tot = 0;
+static atomic<int> submit_tot{0};
 pthread_t submit_poll_th_;
 // vector<unique_ptr<ClientWorker>> client_workers_g = {};
 const int len = 5;
@@ -277,7 +277,7 @@ void wait_for_submit(uint32_t par_id) {
 }
 
 void pre_shutdown_step(){
-    Log_info("shutdown Server Control Service after task finish total submit %d", submit_tot);
+    Log_info("shutdown Server Control Service after task finish total submit %d", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {
         if (worker->hb_rpc_server_ != nullptr) {
             worker->scsi_->server_shutdown(nullptr);

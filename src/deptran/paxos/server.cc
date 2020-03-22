@@ -103,7 +103,8 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                const function<void()> &cb) {
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  vector<shared_ptr<PaxosData>> commit_exec;
+  mtx_.lock();
   //Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
@@ -117,16 +118,20 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       auto next_instance = GetInstance(id);
       if (next_instance->committed_cmd_) {
-          app_next_(*next_instance->committed_cmd_);
-          //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+          //app_next_(*next_instance->committed_cmd_);
+	  commit_exec.push_back(next_instance);
+	  //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
       } else {
           break;
       }
   }
-
   FreeSlots();
+  mtx_.unlock();
+  for(int i = 0; i < commit_exec.size(); i++){
+      app_next_(*commit_exec[i]->committed_cmd_);
+  }
   //cb();
 }
 
