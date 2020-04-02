@@ -249,6 +249,7 @@ public:
 
   void SetupHeartbeat();
   void SetupBase();
+  int  deq_from_coo(vector<Coordinator*>&);
   void SetupService();
   void SetupCommo();
   void ShutDown();

@@ -211,19 +211,24 @@ void PaxosWorker::AddAccept(Coordinator* coord) {
   coo_queue.enqueue(coord);
 }
 
+int PaxosWorker::deq_from_coo(vector<Coordinator*>& current){
+	int qcnt = coo_queue.try_dequeue_bulk(&current[0], cnt);
+	return qcnt;
+}
+
 void* PaxosWorker::StartReadAccept(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
+  std::vector<Coordinator*> current(pw->cnt, nullptr);
   while (!pw->stop_flag) {
-    std::vector<Coordinator*> current(pw->cnt, nullptr);
-    int cnt = pw->coo_queue.try_dequeue_bulk(&current[0], pw->cnt);
+    int cnt = pw->deq_from_coo(current);
     if(cnt <= 0)continue;
-    current.resize(cnt);
-    Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)current.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
-    auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
-      pw->BulkSubmit(current);
+    std::vector<Coordinator*> sub(current.begin(), current.begin() + cnt);
+    //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
+    auto sp_job = std::make_shared<OneTimeJob>([&pw, sub]() {
+      pw->BulkSubmit(sub);
     });
     pw->GetPollMgr()->add(sp_job);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    //std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   pthread_exit(nullptr);
   return nullptr;
