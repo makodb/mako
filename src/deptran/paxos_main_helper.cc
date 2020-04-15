@@ -20,7 +20,7 @@ using namespace janus;
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
 static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
-static moodycamel::ConcurrentQueue<pair<string, pair<int,uint32_t>>> submit_queue;
+static moodycamel::ConcurrentQueue<pair<const char*, pair<int,uint32_t>>> submit_queue;
 static atomic<int> producer{0}, consumer{0};
 static atomic<int> submit_tot{0};
 pthread_t submit_poll_th_;
@@ -142,27 +142,29 @@ void microbench_paxos() {
 }*/
 
 void submit_logger() {
-  pair<string, pair<int,uint32_t>> paxos_entry;
+  pair<const char*, pair<int,uint32_t>> paxos_entry;
   auto res = submit_queue.try_dequeue(paxos_entry);
   if(!res){
     return;
   }
-  
+  //consumer++;
+  char* nlog = (char*)paxos_entry.first;
   int len = paxos_entry.second.first;
   uint32_t par_id = paxos_entry.second.second;
-  string log_str = paxos_entry.first;
-  //char *log = paxos_entry.first.get();
+  string log_str;
+  //char *nlog = (char*)malloc((len * sizeof(char))+1);
+  // memset(nlog, 'a', len);
   //std::copy(log, log + len, std::back_inserter(log_str));
- 
- // string log_str = std::copy(*paxos_entry.first, len));
+
+  //log_str = std::string(nlog);
   for (auto& worker : pxs_workers_g) {
     if (!worker->IsLeader(par_id)) continue;
         //verify(worker->submit_pool != nullptr);
-        auto sp_job = std::make_shared<OneTimeJob>([&worker, log_str, len, par_id] () {
-            worker->Submit(log_str.data(),len, par_id);
+        auto sp_job = std::make_shared<OneTimeJob>([&worker, nlog, len, par_id] () {
+            worker->Submit(nlog,len, par_id);
         });
         worker->GetPollMgr()->add(sp_job);
-	break;
+	      break;
     }
 }
 
@@ -277,14 +279,14 @@ void add_log(const char* log, int len, uint32_t par_id){
       worker->IncSubmit();
       break;
     }
-    string log_str;
+    //string log_str;
     //auto log2 = make_shared<char>(*log);
     //std::copy(log.get(), log.get() + len, std::back_inserter(log_str));
-     std::copy(log, log+ len, std::back_inserter(log_str));
+    //std::copy(log, log+ len, std::back_inserter(log_str));
     auto endTime = std::chrono::high_resolution_clock::now();
-    add_time("copy_log_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
-    startTime = std::chrono::high_resolution_clock::now();   
-    auto paxos_entry = make_pair(log_str, make_pair(len, par_id));
+    //add_time("copy_log_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
+    //startTime = std::chrono::high_resolution_clock::now();   
+    auto paxos_entry = make_pair(log, make_pair(len, par_id));
     submit_queue.enqueue(paxos_entry);
     endTime = std::chrono::high_resolution_clock::now();
     submit_tot++;

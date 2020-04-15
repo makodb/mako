@@ -46,7 +46,7 @@ void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
         Log_fatal("i am not the leader; site %d; locale %d",
                   frame_->site_info_->id, loc_id_);
     }
-    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    //std::lock_guard<std::recursive_mutex> lock(mtx_);
     verify(!in_submission_);
     in_submission_ = true;
     cmd_ = cmd;

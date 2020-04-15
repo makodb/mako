@@ -228,7 +228,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
       pw->BulkSubmit(sub);
     });
     pw->GetPollMgr()->add(sp_job);
-    //std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   pthread_exit(nullptr);
   return nullptr;
@@ -264,6 +264,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
+  free((char*)log_entry);
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
