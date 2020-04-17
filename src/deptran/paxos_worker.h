@@ -239,7 +239,7 @@ public:
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
 
-  moodycamel::ConcurrentQueue<Coordinator*> coo_queue;
+  static moodycamel::ConcurrentQueue<Coordinator*> coo_queue;
   int bulk_writer = 0;
   int bulk_reader = -1;
   rrr::SpinLock acc_;
@@ -248,6 +248,7 @@ public:
   bool stop_flag = true;
 
   void SetupHeartbeat();
+  void InitQueueRead();
   void SetupBase();
   int  deq_from_coo(vector<Coordinator*>&);
   void SetupService();

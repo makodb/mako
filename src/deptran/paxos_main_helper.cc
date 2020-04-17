@@ -56,6 +56,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
             worker->SetupService();
             // setup communicator
             worker->SetupCommo();
+            worker->InitQueueRead();
             Log_info("site %d launched!", (int)site_info.id);
         }));
     }
@@ -302,6 +303,7 @@ void wait_for_submit(uint32_t par_id) {
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
+    return;
     for (auto& worker : pxs_workers_g) {
         if (worker->IsLeader(par_id)) continue;
         if (!worker->IsPartition(par_id)) continue;

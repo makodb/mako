@@ -4,6 +4,9 @@
 
 namespace janus {
 
+
+moodycamel::ConcurrentQueue<Coordinator*> PaxosWorker::coo_queue;
+
 static int volatile xx =
     MarshallDeputy::RegInitializer(MarshallDeputy::CONTAINER_CMD,
                                    []() -> Marshallable* {
@@ -208,11 +211,11 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
 
 void PaxosWorker::AddAccept(Coordinator* coord) {
   //Log_info("current batch cnt %d", cnt);
-  coo_queue.enqueue(coord);
+  PaxosWorker::coo_queue.enqueue(coord);
 }
 
 int PaxosWorker::deq_from_coo(vector<Coordinator*>& current){
-	int qcnt = coo_queue.try_dequeue_bulk(&current[0], cnt);
+	int qcnt = PaxosWorker::coo_queue.try_dequeue_bulk(&current[0], cnt);
 	return qcnt;
 }
 
@@ -244,10 +247,15 @@ void PaxosWorker::WaitForSubmit() {
   Log_debug("finish task.");
 }
 
+void PaxosWorker::InitQueueRead(){
+  if(IsLeader(site_info_->partition_id_)){
+    stop_flag = false;
+    Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAccept, this);
+    pthread_detach(bulkops_th_);
+  }
+}
+
 PaxosWorker::PaxosWorker() {
-  stop_flag = false;
-  Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAccept, this);
-  pthread_detach(bulkops_th_);
 }
 
 PaxosWorker::~PaxosWorker() {
