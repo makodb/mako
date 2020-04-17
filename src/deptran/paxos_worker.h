@@ -240,12 +240,15 @@ public:
   Communicator* rep_commo_ = nullptr;
 
   static moodycamel::ConcurrentQueue<Coordinator*> coo_queue;
+  moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
   int bulk_writer = 0;
   int bulk_reader = -1;
   rrr::SpinLock acc_;
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
+  pthread_t replay_th_;
   bool stop_flag = true;
+  bool stop_replay_flag = true;
 
   void SetupHeartbeat();
   void InitQueueRead();
@@ -259,7 +262,9 @@ public:
   void IncSubmit();
   void BulkSubmit(const vector<Coordinator*>&);
   void AddAccept(Coordinator*);
+  void AddReplayEntry(Marshallable&);
   static void* StartReadAccept(void*);
+  static void* StartReplayRead(void*);
   PaxosWorker();
   ~PaxosWorker();
 

@@ -255,12 +255,31 @@ void PaxosWorker::InitQueueRead(){
   }
 }
 
+void PaxosWorker::AddReplayEntry(Marshallable& entry){
+  Marshallable *p = &entry;
+  replay_queue.enqueue(p);
+}
+
+void* PaxosWorker::StartReplayRead(void* arg){
+  PaxosWorker* pw = (PaxosWorker*)arg;
+  while(!pw->stop_replay_flag){
+    Marshallable* p;
+    auto res = pw->replay_queue.try_dequeue(p);
+    if(!res)continue;
+    pw->Next(*p);
+  }
+}
+
 PaxosWorker::PaxosWorker() {
+  stop_replay_flag = false;
+  Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
+  pthread_detach(replay_th_);
 }
 
 PaxosWorker::~PaxosWorker() {
   Log_debug("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
   stop_flag = true;
+  stop_replay_flag = true;
 }
 
 
@@ -317,7 +336,7 @@ bool PaxosWorker::IsPartition(uint32_t par_id) {
 void PaxosWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
   this->callback_ = cb;
   verify(rep_sched_ != nullptr);
-  rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
+  rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::AddReplayEntry,
                                          this,
                                          std::placeholders::_1));
 }
