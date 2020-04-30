@@ -154,7 +154,7 @@ class BulkPaxosCmd : public  Marshallable {
 public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
-  vector<shared_ptr<MarshallDeputy> > cmds{};
+  vector<MarshallDeputy> cmds{};
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {}
   virtual ~BulkPaxosCmd() {
@@ -171,9 +171,9 @@ public:
           m << i;
       }
       m << (int32_t) cmds.size();
-      verify(cmds[0] != nullptr);
+      //verify(cmds[0] != nullptr);
       for (auto sp : cmds) {
-          m << *sp;
+          m << sp;
       }
       return m;
   }
@@ -194,9 +194,9 @@ public:
       }
       m >> szc;
       for (int i = 0; i < szc; i++) {
-          auto x = std::make_shared<MarshallDeputy>();
+          auto x = new MarshallDeputy;
           m >> *x;
-          cmds.push_back(x);
+          cmds.push_back(*x);
       }
       return m;
   }

@@ -193,7 +193,7 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
         sp_cmd->ballots.push_back(mpc->curr_ballot_);
         verify(mpc->cmd_ != nullptr);
         MarshallDeputy md(mpc->cmd_);
-        sp_cmd->cmds.push_back(make_shared<MarshallDeputy>(md));
+        sp_cmd->cmds.push_back(md);
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
     //n_current += (int)entries.size();
