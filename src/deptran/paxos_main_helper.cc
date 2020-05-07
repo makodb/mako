@@ -35,12 +35,7 @@ void check_current_path() {
 
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     auto config = Config::GetConfig();
-    Log_info("server enabled, number of sites: %d", server_sites.size());
-    for (int i = server_sites.size(); i; --i) {
-        PaxosWorker* worker = new PaxosWorker();
-        pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
-    }
-
+    
     int i = 0;
     vector<std::thread> setup_ths;
     for (auto& site_info : server_sites) {
@@ -49,9 +44,9 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
                      site_info.id,
                      site_info.GetBindAddress().c_str());
             auto& worker = pxs_workers_g[i++];
-            worker->site_info_ = const_cast<Config::SiteInfo*>(&config->SiteById(site_info.id));
+            //worker->site_info_ = const_cast<Config::SiteInfo*>(&config->SiteById(site_info.id));
             // setup frame and scheduler
-            worker->SetupBase();
+            //worker->SetupBase();
             // start server service
             worker->SetupService();
             // setup communicator
@@ -188,12 +183,27 @@ int setup(int argc, char* argv[]) {
     }
 
     auto server_infos = Config::GetConfig()->GetMyServers();
-    if (server_infos.size() > 0) {
-        server_launch_worker(server_infos);
+    Log_info("server enabled, number of sites: %d", server_infos.size());
+    for (int i = server_infos.size()-1; i >=0; i--) {
+      PaxosWorker* worker = new PaxosWorker();
+      pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
+      //std::cout << i << endl;
+      pxs_workers_g.back()->site_info_ = const_cast<Config::SiteInfo*>(&(Config::GetConfig()->SiteById(server_infos[i].id)));
+      // setup frame and scheduler
+      pxs_workers_g.back()->SetupBase();
     }
-    Pthread_create(&submit_poll_th_, nullptr, PollSubmitLog, nullptr);
-    pthread_detach(submit_poll_th_);
     return 0;
+}
+
+// to be called after setup 1; needed for multiprocess setup
+int setup2(){
+  auto server_infos = Config::GetConfig()->GetMyServers();
+  if (server_infos.size() > 0) {
+    server_launch_worker(server_infos);
+  }
+  Pthread_create(&submit_poll_th_, nullptr, PollSubmitLog, nullptr);
+  pthread_detach(submit_poll_th_);
+  return 0;
 }
 
 int shutdown_paxos() {

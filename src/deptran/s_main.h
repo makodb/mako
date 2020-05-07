@@ -4,6 +4,7 @@
 #include <memory>
 
 int setup(int argc, char* argv[]);
+int setup2();
 int shutdown_paxos();
 void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);

@@ -291,7 +291,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
-  free((char*)log_entry);
+  //free((char*)log_entry);
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
