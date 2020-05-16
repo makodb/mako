@@ -306,10 +306,12 @@ void add_log(const char* log, int len, uint32_t par_id){
 
 void wait_for_submit(uint32_t par_id) {
     int total_submits = 0;
+    //Log_info("The number of completed submits %ld", (int)worker->n_current);
     for (auto& worker : pxs_workers_g) {
         if (!worker->IsLeader(par_id)) continue;
         verify(worker->submit_pool != nullptr);
         worker->submit_pool->wait_for_all();
+	Log_info("The number of completed submits %ld", (int)worker->n_current + (int)worker->replay_queue.size_approx());
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
