@@ -92,6 +92,7 @@ class OneTimeJob : public Job {
     func_();
     done_ = true;
   }
+  virtual ~OneTimeJob(){};
 };
 
 class FrequentJob : public Job {
