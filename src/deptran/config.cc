@@ -39,7 +39,8 @@
 
 namespace janus {
 Config *Config::config_s = nullptr;
-size_t bulkBatchCount=100;
+size_t bulkBatchCount=10000;
+
 
 Config * Config::GetConfig() {
   verify(config_s != nullptr);
@@ -67,7 +68,7 @@ int Config::CreateConfig(int argc, char **argv) {
   int server_or_client          = -1;
   int32_t tot_req_num           = 10000;
   int16_t n_concurrent          = 1;
-  bulkBatchCount = 100;
+  bulkBatchCount = 10000;
 
   int c;
   optind = 1;
