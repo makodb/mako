@@ -156,10 +156,10 @@ void submit_logger() {
   for (auto& worker : pxs_workers_g) {
     if (!worker->IsLeader(par_id)) continue;
         //verify(worker->submit_pool != nullptr);
-        auto sp_job = std::make_shared<OneTimeJob>([&worker, nlog, len, par_id] () {
+        //auto sp_job = std::make_shared<OneTimeJob>([&worker, nlog, len, par_id] () {
             worker->Submit(nlog,len, par_id);
-        });
-        worker->GetPollMgr()->add(sp_job);
+        //});
+        //worker->GetPollMgr()->add(sp_job);
 	      break;
     }
 }
@@ -311,13 +311,14 @@ void wait_for_submit(uint32_t par_id) {
         if (!worker->IsLeader(par_id)) continue;
         verify(worker->submit_pool != nullptr);
         worker->submit_pool->wait_for_all();
-	Log_info("The number of completed submits %ld", (int)worker->n_current + (int)worker->replay_queue.size_approx());
+	Log_info("The number of completed submits %ld %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx());
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
     for (auto& worker : pxs_workers_g) {
         if (worker->IsLeader(par_id)) continue;
         if (!worker->IsPartition(par_id)) continue;
+	Log_info("The number of completed submits %ld %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx());
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
