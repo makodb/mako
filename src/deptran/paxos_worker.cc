@@ -21,18 +21,18 @@ static int volatile xxx =
 
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
-  // m << std::string(operation_);
+  //m << std::string(operation_);
   m << log_entry;
   return m;
 };
 
 Marshal& LogEntry::FromMarshal(Marshal& m) {
   m >> length;
-  // std::string str;
-  // m >> str;
-  // operation_ = new char[length];
-  // strcpy(operation_, str.c_str());
-  m >> log_entry;
+  std::string str;
+  m >> str;
+  operation_ = new char[length];
+  strcpy(operation_, str.c_str());
+  //m >> log_entry;
   return m;
 };
 
@@ -57,6 +57,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   } else {
     verify(0);
   }
+  
   //if (n_current > n_tot) {
     n_current++;
     if (n_current >= n_tot) {
@@ -187,6 +188,7 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
     //Log_debug("Obtaining bulk submit of size %d through coro", (int)entries.size());
     //Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
     auto sp_cmd = make_shared<BulkPaxosCmd>();
+    Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
         auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
         sp_cmd->slots.push_back(mpc->slot_id_);
@@ -200,6 +202,7 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
     //n_submit -= (int)entries.size();
     //Log_info("Current pair id %d n_current and n_tot is %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot);
     _BulkSubmit(sp_m);
+    Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
 }
 
 inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
@@ -271,7 +274,7 @@ void* PaxosWorker::StartReplayRead(void* arg){
 }
 
 PaxosWorker::PaxosWorker() {
-  stop_replay_flag = false;
+  stop_replay_flag = true;
   Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
   pthread_detach(replay_th_);
 }
@@ -286,8 +289,9 @@ PaxosWorker::~PaxosWorker() {
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!IsLeader(par_id)) return;
   auto sp_cmd = make_shared<LogEntry>();
-  sp_cmd->log_entry = string(log_entry,length);
-//  Log_info("PaxosWorker::Submit Log=%s",operation_);
+  //sp_cmd->log_entry = string(log_entry,length);
+  sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
+  //Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
@@ -312,6 +316,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //created_coordinators_.push_back(coord);
+  //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);
   if(stop_flag != true) {
     AddAccept(coord);
@@ -336,7 +341,7 @@ bool PaxosWorker::IsPartition(uint32_t par_id) {
 void PaxosWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
   this->callback_ = cb;
   verify(rep_sched_ != nullptr);
-  rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::AddReplayEntry,
+  rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
                                          this,
                                          std::placeholders::_1));
 }

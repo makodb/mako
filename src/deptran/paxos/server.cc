@@ -115,11 +115,12 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           max_committed_slot_ = slot_id;
       }
   }
+  //Log_info("The commit batch size is %d", bcmd->slots.size());
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       auto next_instance = GetInstance(id);
       if (next_instance->committed_cmd_) {
-          //app_next_(*next_instance->committed_cmd_);
-	  commit_exec.push_back(next_instance);
+          app_next_(*next_instance->committed_cmd_);
+	  //commit_exec.push_back(next_instance);
 	  //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
@@ -127,11 +128,11 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           break;
       }
   }
-  //FreeSlots();
+  FreeSlots();
   mtx_.unlock();
-  for(int i = 0; i < commit_exec.size(); i++){
-      app_next_(*commit_exec[i]->committed_cmd_);
-  }
+  //for(int i = 0; i < commit_exec.size(); i++){
+  //    app_next_(*commit_exec[i]->committed_cmd_);
+  //}
   //cb();
 }
 
