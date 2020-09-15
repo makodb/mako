@@ -128,9 +128,11 @@ public:
   char* operation_ = nullptr;
   int length = 0;
   std::string log_entry;
+  shared_ptr<char> operation_test;
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD) {}
   virtual ~LogEntry() {
+    Log_info("oh lord jetson destroyed another one");
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
   }
@@ -138,6 +140,7 @@ public:
   virtual Marshal& FromMarshal(Marshal&) override;
 };
 
+/*
 inline rrr::Marshal& operator<<(rrr::Marshal &m, const LogEntry &cmd) {
   m << cmd.length;
   m << cmd.log_entry;
@@ -149,6 +152,7 @@ inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
   m >> cmd.log_entry;
   return m;
 }
+*/
 
 class BulkPaxosCmd : public  Marshallable {
 public:
@@ -160,6 +164,7 @@ public:
   virtual ~BulkPaxosCmd() {
       slots.clear();
       ballots.clear();
+      cmds.clear();
   }
   Marshal& ToMarshal(Marshal& m) const override {
       m << (int32_t) slots.size();

@@ -48,6 +48,7 @@ std::shared_ptr<Coroutine>
 Reactor::CreateRunCoroutine(const std::function<void()> func) {
   std::shared_ptr<Coroutine> sp_coro;
   if (REUSING_CORO && available_coros_.size() > 0) {
+    //Log_info("Reusing stuff");
     sp_coro = available_coros_.back();
     available_coros_.pop_back();
     sp_coro->func_ = func;

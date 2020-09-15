@@ -18,21 +18,29 @@ static int volatile xxx =
                                        return new BulkPaxosCmd;
                                      });
 
-
+static int shared_ptr_apprch = 0;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
-  //m << std::string(operation_);
-  m << log_entry;
+  if(shared_ptr_apprch){
+	  m << std::string(operation_test.get());
+  } else{
+	  m << log_entry;
+  }
+  //m << std::string(operation_test.get());
+  //m << log_entry;
   return m;
 };
 
 Marshal& LogEntry::FromMarshal(Marshal& m) {
   m >> length;
-  std::string str;
-  m >> str;
-  operation_ = new char[length];
-  strcpy(operation_, str.c_str());
-  //m >> log_entry;
+  if(shared_ptr_apprch){
+	  std::string str;
+	  m >> str;
+	  operation_test = shared_ptr<char>(new char[length]);
+	  strcpy(operation_test.get(), str.c_str());
+  }else{
+ 	 m >> log_entry;
+  }
   return m;
 };
 
@@ -47,10 +55,15 @@ void PaxosWorker::SetupBase() {
 }
 
 void PaxosWorker::Next(Marshallable& cmd) {
+  //return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
-      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+      if(!shared_ptr_apprch){
+	      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+      }else{
+	      callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
+      }
     } else {
       verify(0);
     }
@@ -289,8 +302,12 @@ PaxosWorker::~PaxosWorker() {
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!IsLeader(par_id)) return;
   auto sp_cmd = make_shared<LogEntry>();
-  //sp_cmd->log_entry = string(log_entry,length);
-  sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
+  if(!shared_ptr_apprch){
+	  sp_cmd->log_entry = string(log_entry,length);
+  }else{
+  //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
+          sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
+  }
   //Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
