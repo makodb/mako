@@ -21,8 +21,8 @@ static int volatile xxx =
 
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
-  //m << std::string(operation_);
-  m << log_entry;
+  m << std::string(operation_test.get());
+  //m << log_entry;
   return m;
 };
 
@@ -30,8 +30,8 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
   m >> length;
   std::string str;
   m >> str;
-  operation_ = new char[length];
-  strcpy(operation_, str.c_str());
+  operation_test = shared_ptr<char>(new char[length]);
+  strcpy(operation_test.get(), str.c_str());
   //m >> log_entry;
   return m;
 };
@@ -47,6 +47,7 @@ void PaxosWorker::SetupBase() {
 }
 
 void PaxosWorker::Next(Marshallable& cmd) {
+  return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
@@ -290,7 +291,8 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!IsLeader(par_id)) return;
   auto sp_cmd = make_shared<LogEntry>();
   //sp_cmd->log_entry = string(log_entry,length);
-  sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
+  //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
+  sp_cmd->operation_test = make_shared<char>((char*)string(log_entry,length).c_str());
   //Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
