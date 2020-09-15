@@ -47,11 +47,11 @@ void PaxosWorker::SetupBase() {
 }
 
 void PaxosWorker::Next(Marshallable& cmd) {
-  return;
+  //return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
-      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+      callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
     } else {
       verify(0);
     }
@@ -292,7 +292,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   auto sp_cmd = make_shared<LogEntry>();
   //sp_cmd->log_entry = string(log_entry,length);
   //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
-  sp_cmd->operation_test = make_shared<char>((char*)string(log_entry,length).c_str());
+  sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
   //Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);

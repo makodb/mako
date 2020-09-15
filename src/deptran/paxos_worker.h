@@ -132,6 +132,7 @@ public:
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD) {}
   virtual ~LogEntry() {
+    Log_info("oh lord jetson destroyed another one");
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
   }
@@ -163,6 +164,7 @@ public:
   virtual ~BulkPaxosCmd() {
       slots.clear();
       ballots.clear();
+      cmds.clear();
   }
   Marshal& ToMarshal(Marshal& m) const override {
       m << (int32_t) slots.size();
