@@ -26,8 +26,6 @@ Marshal& LogEntry::ToMarshal(Marshal& m) const {
   } else{
 	  m << log_entry;
   }
-  //m << std::string(operation_test.get());
-  //m << log_entry;
   return m;
 };
 
