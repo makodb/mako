@@ -5,7 +5,7 @@
 namespace janus {
 
 
-moodycamel::ConcurrentQueue<Coordinator*> PaxosWorker::coo_queue;
+moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 
 static int volatile xx =
     MarshallDeputy::RegInitializer(MarshallDeputy::CONTAINER_CMD,
@@ -18,7 +18,7 @@ static int volatile xxx =
                                        return new BulkPaxosCmd;
                                      });
 
-static int shared_ptr_apprch = 0;
+static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
   if(shared_ptr_apprch){
@@ -195,18 +195,18 @@ void PaxosWorker::IncSubmit(){
 	n_tot++;
 }
 
-void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
+void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
     //Log_debug("Obtaining bulk submit of size %d through coro", (int)entries.size());
     //Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
-        auto mpc = dynamic_cast<CoordinatorMultiPaxos*>(coo);
-        sp_cmd->slots.push_back(mpc->slot_id_);
-        sp_cmd->ballots.push_back(mpc->curr_ballot_);
-        verify(mpc->cmd_ != nullptr);
-        MarshallDeputy md(mpc->cmd_);
-        sp_cmd->cmds.push_back(md);
+        auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
+        sp_cmd->slots.push_back(mpc.get()->slot_id_);
+        sp_cmd->ballots.push_back(mpc.get()->curr_ballot_);
+        verify(mpc.get()->cmd_ != nullptr);
+        MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
+        sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
     //n_current += (int)entries.size();
@@ -217,29 +217,29 @@ void PaxosWorker::BulkSubmit(const vector<Coordinator*>& entries){
 }
 
 inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
-    Coordinator* coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-    coord->par_id_ = site_info_->partition_id_;
-    coord->loc_id_ = site_info_->locale_id;
-    coord->BulkSubmit(sp_m);
+    auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
+    coord.get()->par_id_ = site_info_->partition_id_;
+    coord.get()->loc_id_ = site_info_->locale_id;
+    coord.get()->BulkSubmit(sp_m);
 }
 
-void PaxosWorker::AddAccept(Coordinator* coord) {
+void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
   //Log_info("current batch cnt %d", cnt);
   PaxosWorker::coo_queue.enqueue(coord);
 }
 
-int PaxosWorker::deq_from_coo(vector<Coordinator*>& current){
+int PaxosWorker::deq_from_coo(vector<shared_ptr<Coordinator>>& current){
 	int qcnt = PaxosWorker::coo_queue.try_dequeue_bulk(&current[0], cnt);
 	return qcnt;
 }
 
 void* PaxosWorker::StartReadAccept(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
-  std::vector<Coordinator*> current(pw->cnt, nullptr);
+  std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
   while (!pw->stop_flag) {
     int cnt = pw->deq_from_coo(current);
     if(cnt <= 0)continue;
-    std::vector<Coordinator*> sub(current.begin(), current.begin() + cnt);
+    std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
     //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
     auto sp_job = std::make_shared<OneTimeJob>([&pw, sub]() {
       pw->BulkSubmit(sub);
@@ -322,7 +322,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   static cooid_t cid = 1;
   static id_t id = 1;
   verify(rep_frame_ != nullptr);
-  Coordinator* coord = rep_frame_->CreateCoordinator(cid++,
+  auto coord = rep_frame_->CreateCoordinator(cid++,
                                                      Config::GetConfig(),
                                                      0,
                                                      nullptr,
@@ -334,7 +334,9 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);
   if(stop_flag != true) {
-    AddAccept(coord);
+    auto sp_coo = shared_ptr<Coordinator>(coord);
+    created_coordinators_shrd.push_back(sp_coo);
+    AddAccept(sp_coo);
   } else{
     coord->Submit(sp_m);
   }

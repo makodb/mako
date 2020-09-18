@@ -110,7 +110,12 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
       auto instance = GetInstance(slot_id);
-      instance->committed_cmd_ = bcmd->cmds[i].sp_data_;
+      //verify(bcmd->cmds[i].get()->sp_data_.get() != nullptr);
+      instance->committed_cmd_ = bcmd->cmds[i].get()->sp_data_;
+      auto x = dynamic_pointer_cast<LogEntry>(instance->committed_cmd_);
+      read_log(x.get()->log_entry.c_str(), x.get()->length, "server");
+      //Log_info("length of log received %d", x.get()->length);
+      //Log_info("length is %d slot id %d ballot id %d use count of cmd is %d", x.get()->length, slot_id, ballot_id, instance->committed_cmd_.use_count());
       if (slot_id > max_committed_slot_) {
           max_committed_slot_ = slot_id;
       }
@@ -127,7 +132,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       } else {
           break;
       }
-  }
+   }
   FreeSlots();
   mtx_.unlock();
   //for(int i = 0; i < commit_exec.size(); i++){

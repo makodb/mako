@@ -19,6 +19,7 @@ using namespace janus;
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
 static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
+//static vector<shared_ptr<Coordinator>> bulk_coord_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
 static moodycamel::ConcurrentQueue<pair<const char*, pair<int,uint32_t>>> submit_queue;
 static atomic<int> producer{0}, consumer{0};
@@ -285,6 +286,7 @@ void add_time(std::string key, long double value,long double denom){
 
 void add_log(const char* log, int len, uint32_t par_id){
     auto startTime = std::chrono::high_resolution_clock::now();
+    read_log(log, len, "silo");
     for (auto& worker : pxs_workers_g) {
       if (!worker->IsLeader(par_id)) continue;
       worker->IncSubmit();

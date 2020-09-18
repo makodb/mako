@@ -132,7 +132,7 @@ public:
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD) {}
   virtual ~LogEntry() {
-    Log_info("oh lord jetson destroyed another one");
+    //Log_info("oh lord jetson destroyed another one %d", length);
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
   }
@@ -158,7 +158,7 @@ class BulkPaxosCmd : public  Marshallable {
 public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
-  vector<MarshallDeputy> cmds{};
+  vector<shared_ptr<MarshallDeputy>> cmds{};
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {}
   virtual ~BulkPaxosCmd() {
@@ -178,7 +178,7 @@ public:
       m << (int32_t) cmds.size();
       //verify(cmds[0] != nullptr);
       for (auto sp : cmds) {
-          m << sp;
+          m << *sp.get();
       }
       return m;
   }
@@ -199,14 +199,18 @@ public:
       }
       m >> szc;
       for (int i = 0; i < szc; i++) {
-          auto x = new MarshallDeputy;
-          m >> *x;
-          cmds.push_back(*x);
+          auto x = shared_ptr<MarshallDeputy>(new MarshallDeputy);
+          m >> *x.get();
+          cmds.push_back(x);
       }
       return m;
   }
 };
-
+inline void read_log(const char* log, int length, const char* custom){
+        unsigned long long int cid = 0;
+        memcpy(&cid, log, sizeof(unsigned long long int));
+        Log_info("commit id %d and length %d from %s", cid, length, custom);
+}
 class PaxosWorker {
 private:
   inline void _Submit(shared_ptr<Marshallable>);
@@ -216,6 +220,7 @@ private:
   rrr::CondVar finish_cond{};
   std::function<void(const char*, int)> callback_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
+  vector<shared_ptr<Coordinator>> created_coordinators_shrd{};
   struct timeval t1;
   struct timeval t2;
 
@@ -244,7 +249,7 @@ public:
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
 
-  static moodycamel::ConcurrentQueue<Coordinator*> coo_queue;
+  static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
   int bulk_writer = 0;
   int bulk_reader = -1;
@@ -258,15 +263,15 @@ public:
   void SetupHeartbeat();
   void InitQueueRead();
   void SetupBase();
-  int  deq_from_coo(vector<Coordinator*>&);
+  int  deq_from_coo(vector<shared_ptr<Coordinator>>&);
   void SetupService();
   void SetupCommo();
   void ShutDown();
   void Next(Marshallable&);
   void WaitForSubmit();
   void IncSubmit();
-  void BulkSubmit(const vector<Coordinator*>&);
-  void AddAccept(Coordinator*);
+  void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
+  void AddAccept(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
