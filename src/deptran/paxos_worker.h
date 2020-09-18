@@ -12,6 +12,12 @@
 
 namespace janus {
 
+inline void read_log(const char* log, int length, const char* custom){
+        unsigned long long int cid = 0;
+        memcpy(&cid, log, sizeof(unsigned long long int));
+        Log_info("commit id %lld and length %d from %s", cid, length, custom);
+}
+
 class SubmitPool {
 private:
   struct start_submit_pool_args {
@@ -133,8 +139,10 @@ public:
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD) {}
   virtual ~LogEntry() {
     //Log_info("oh lord jetson destroyed another one %d", length);
+    //read_log(operation_test.get(), length, "while destroying");
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
+    //free(operation_test.get());
   }
   virtual Marshal& ToMarshal(Marshal&) const override;
   virtual Marshal& FromMarshal(Marshal&) override;
@@ -153,7 +161,6 @@ inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
   return m;
 }
 */
-
 class BulkPaxosCmd : public  Marshallable {
 public:
   vector<slotid_t> slots{};
@@ -178,7 +185,12 @@ public:
       m << (int32_t) cmds.size();
       //verify(cmds[0] != nullptr);
       for (auto sp : cmds) {
-          m << *sp.get();
+	  auto p = sp.get();
+	  //auto tmp = dynamic_pointer_cast<LogEntry>(p->sp_data_);
+	  //read_log(tmp.get()->operation_test.get(), tmp.get()->length, "serializing");
+          m << *p;
+	  //tmp = dynamic_pointer_cast<LogEntry>(p->sp_data_);
+	 // read_log(tmp.get()->operation_test.get(), tmp.get()->length, "post-serializing");
       }
       return m;
   }
@@ -199,18 +211,20 @@ public:
       }
       m >> szc;
       for (int i = 0; i < szc; i++) {
-          auto x = shared_ptr<MarshallDeputy>(new MarshallDeputy);
-          m >> *x.get();
-          cmds.push_back(x);
+          auto x = new MarshallDeputy;
+          m >> *x;
+	  //auto tmp = dynamic_pointer_cast<LogEntry>(x->sp_data_);
+	 // read_log(tmp.get()->operation_test.get(), tmp.get()->length, "deserializing");
+	  //auto tmp = dynamic_pointer_cast<LogEntry>(x);
+	  //read_log(tmp->operation_test.get(), tmp->length, "deserializing");
+	  auto sp_md = shared_ptr<MarshallDeputy>(x);
+	  //auto tmp = dynamic_cast<LogEntry*>(x->sp_data_);
+	  //read_log(tmp->operation_test.get(), tmp->length, "deserializing");
+          cmds.push_back(sp_md);
       }
       return m;
   }
 };
-inline void read_log(const char* log, int length, const char* custom){
-        unsigned long long int cid = 0;
-        memcpy(&cid, log, sizeof(unsigned long long int));
-        Log_info("commit id %d and length %d from %s", cid, length, custom);
-}
 class PaxosWorker {
 private:
   inline void _Submit(shared_ptr<Marshallable>);

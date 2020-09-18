@@ -22,7 +22,7 @@ static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
   if(shared_ptr_apprch){
-	  m << std::string(operation_test.get());
+	  m << std::string(operation_test.get(), length);
   } else{
 	  m << log_entry;
   }
@@ -35,7 +35,7 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
 	  std::string str;
 	  m >> str;
 	  operation_test = shared_ptr<char>(new char[length]);
-	  strcpy(operation_test.get(), str.c_str());
+	  memcpy(operation_test.get(), str.c_str(), length);
   }else{
  	 m >> log_entry;
   }
@@ -56,11 +56,11 @@ void PaxosWorker::Next(Marshallable& cmd) {
   //return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_ != nullptr) {
-      auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
+      //auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(!shared_ptr_apprch){
-	      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+	      //callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
       }else{
-	      callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
+	      //callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
       }
     } else {
       verify(0);
@@ -204,11 +204,17 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
         sp_cmd->ballots.push_back(mpc.get()->curr_ballot_);
-        verify(mpc.get()->cmd_ != nullptr);
+        verify(mpc->cmd_ != nullptr);
+	//auto x = dynamic_pointer_cast<LogEntry>(mpc->cmd_);
+        //read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
         MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
         sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
+	//auto x = dynamic_pointer_cast<LogEntry>(md->sp_data_);
+       // read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+    //return;
+    //return;
     //n_current += (int)entries.size();
     //n_submit -= (int)entries.size();
     //Log_info("Current pair id %d n_current and n_tot is %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot);
@@ -235,8 +241,9 @@ int PaxosWorker::deq_from_coo(vector<shared_ptr<Coordinator>>& current){
 
 void* PaxosWorker::StartReadAccept(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
-  std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
+  //std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
   while (!pw->stop_flag) {
+    std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);	  
     int cnt = pw->deq_from_coo(current);
     if(cnt <= 0)continue;
     std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
@@ -299,18 +306,21 @@ PaxosWorker::~PaxosWorker() {
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (!IsLeader(par_id)) return;
+  //read_log(log_entry, length, "silo");
   auto sp_cmd = make_shared<LogEntry>();
   if(!shared_ptr_apprch){
 	  sp_cmd->log_entry = string(log_entry,length);
   }else{
   //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
-          sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
+          //sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
+	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));
+    memcpy(sp_cmd->operation_test.get(), log_entry, length);
   }
   //Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
-  //free((char*)log_entry);
+  free((char*)log_entry);
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
@@ -335,7 +345,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->assignCmd(sp_m);
   if(stop_flag != true) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
-    created_coordinators_shrd.push_back(sp_coo);
+    //created_coordinators_shrd.push_back(sp_coo);
     AddAccept(sp_coo);
   } else{
     coord->Submit(sp_m);

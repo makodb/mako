@@ -113,7 +113,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       //verify(bcmd->cmds[i].get()->sp_data_.get() != nullptr);
       instance->committed_cmd_ = bcmd->cmds[i].get()->sp_data_;
       auto x = dynamic_pointer_cast<LogEntry>(instance->committed_cmd_);
-      read_log(x.get()->log_entry.c_str(), x.get()->length, "server");
+      //read_log(x.get()->operation_test.get(), x.get()->length, "server");
       //Log_info("length of log received %d", x.get()->length);
       //Log_info("length is %d slot id %d ballot id %d use count of cmd is %d", x.get()->length, slot_id, ballot_id, instance->committed_cmd_.use_count());
       if (slot_id > max_committed_slot_) {
@@ -124,20 +124,22 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       auto next_instance = GetInstance(id);
       if (next_instance->committed_cmd_) {
-          app_next_(*next_instance->committed_cmd_);
-	  //commit_exec.push_back(next_instance);
+          //app_next_(*next_instance->committed_cmd_);
+	  commit_exec.push_back(next_instance);
 	  //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
       } else {
           break;
       }
-   }
+   } 
+  mtx_.unlock();
+  for(int i = 0; i < commit_exec.size(); i++){
+      app_next_(*commit_exec[i]->committed_cmd_);
+  }
+  mtx_.lock();
   FreeSlots();
   mtx_.unlock();
-  //for(int i = 0; i < commit_exec.size(); i++){
-  //    app_next_(*commit_exec[i]->committed_cmd_);
-  //}
   //cb();
 }
 

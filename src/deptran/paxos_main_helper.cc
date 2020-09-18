@@ -286,7 +286,7 @@ void add_time(std::string key, long double value,long double denom){
 
 void add_log(const char* log, int len, uint32_t par_id){
     auto startTime = std::chrono::high_resolution_clock::now();
-    read_log(log, len, "silo");
+    //read_log(log, len, "silo");
     for (auto& worker : pxs_workers_g) {
       if (!worker->IsLeader(par_id)) continue;
       worker->IncSubmit();

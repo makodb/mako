@@ -66,7 +66,7 @@ class PaxosServer : public TxLogServer {
     // for now just free anything 1000 slots before.
     int i = min_active_slot_;
     while (i + 1000 < max_executed_slot_) {
-      Log_info("Erasing entry number %d", i);
+      //Log_info("Erasing entry number %d", i);
       logs_.erase(i);
       i++;
     }
