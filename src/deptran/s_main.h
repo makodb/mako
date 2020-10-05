@@ -11,6 +11,8 @@ void register_for_follower(std::function<void(const char*, int)>, uint32_t);
 void register_for_leader(std::function<void(const char*, int)>, uint32_t);
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
+void add_log_without_queue(const char*, int, uint32_t);
+void add_log_to_nc(const char*, int, uint32_t);
 void wait_for_submit(uint32_t);
 void microbench_paxos_queue();
 void pre_shutdown_step();

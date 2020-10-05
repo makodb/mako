@@ -262,7 +262,7 @@ public:
   Frame* rep_frame_ = nullptr;
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
-
+  std::recursive_mutex mtx_worker_submit{};
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
   int bulk_writer = 0;

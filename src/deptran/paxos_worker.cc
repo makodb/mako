@@ -71,6 +71,9 @@ void PaxosWorker::Next(Marshallable& cmd) {
   
   //if (n_current > n_tot) {
     n_current++;
+    if(site_info_->locale_id == 0){
+	    //if((int)n_current%10000 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
+    }
     if (n_current >= n_tot) {
       //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
       finish_cond.bcast();
@@ -305,6 +308,7 @@ PaxosWorker::~PaxosWorker() {
 
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
+  //Log_info("Entering PaxosWorker::Submit  here\n");
   if (!IsLeader(par_id)) return;
   //read_log(log_entry, length, "silo");
   auto sp_cmd = make_shared<LogEntry>();
@@ -324,13 +328,14 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
+  mtx_worker_submit.lock();	
   // finish_mutex.lock();
   //n_current++;
   //n_submit--;
   //n_tot++;
   // finish_mutex.unlock();
-  static cooid_t cid = 1;
-  static id_t id = 1;
+  static cooid_t cid{1};
+  static id_t id{1};
   verify(rep_frame_ != nullptr);
   auto coord = rep_frame_->CreateCoordinator(cid++,
                                                      Config::GetConfig(),
@@ -338,6 +343,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
                                                      nullptr,
                                                      id++,
                                                      nullptr);
+  mtx_worker_submit.unlock();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //created_coordinators_.push_back(coord);

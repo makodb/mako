@@ -21,7 +21,12 @@ vector<unique_ptr<ClientWorker>> client_workers_g = {};
 static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 //static vector<shared_ptr<Coordinator>> bulk_coord_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
-static moodycamel::ConcurrentQueue<pair<const char*, pair<int,uint32_t>>> submit_queue;
+typedef std::chrono::high_resolution_clock::time_point tp;
+typedef pair<const char*, pair<int,tp>> queue_entry;
+typedef pair<const char*, pair<int,int>> queue_entry_par;
+static moodycamel::ConcurrentQueue<queue_entry> submit_queue;
+static std::queue<queue_entry_par> submit_queue_nc;
+static rrr::SpinLock l_;
 static atomic<int> producer{0}, consumer{0};
 static atomic<int> submit_tot{0};
 pthread_t submit_poll_th_;
@@ -138,36 +143,50 @@ void microbench_paxos() {
   return make_pair(paxos_entry, found);
 }*/
 
+void add_log_without_queue(const char* log, int len, uint32_t par_id){
+  char* nlog = (char*)log;
+  for (auto& worker : pxs_workers_g) {
+    if (!worker->IsLeader(par_id)) continue;
+    	    worker->IncSubmit();
+             worker->Submit(log,len, par_id);
+             break;
+    }
+
+}
+static bool wait = false;
+static int count_free = 0;
 void submit_logger() {
-  pair<const char*, pair<int,uint32_t>> paxos_entry;
+  auto endTime = std::chrono::high_resolution_clock::now(); 
+  pair<const char*, pair<int,tp>> paxos_entry;
   auto res = submit_queue.try_dequeue(paxos_entry);
   if(!res){
     return;
   }
+  auto time_in_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - paxos_entry.second.second).count();
+  free((char*)paxos_entry.first);
+  //Log_info("Time spent in queue for this entry is %d", time_in_queue);
+  if(time_in_queue < (int64_t)100*1000*1000){
+	  wait = true;
+  }else{
+	wait = false;
+  }
+  count_free++;
+  return;
   //consumer++;
-  char* nlog = (char*)paxos_entry.first;
+  const char* nlog = paxos_entry.first;
   int len = paxos_entry.second.first;
-  uint32_t par_id = paxos_entry.second.second;
-  string log_str;
-  //char *nlog = (char*)malloc((len * sizeof(char))+1);
-  // memset(nlog, 'a', len);
-  //std::copy(log, log + len, std::back_inserter(log_str));
-
-  //log_str = std::string(nlog);
-  for (auto& worker : pxs_workers_g) {
-    if (!worker->IsLeader(par_id)) continue;
-        //verify(worker->submit_pool != nullptr);
-        //auto sp_job = std::make_shared<OneTimeJob>([&worker, nlog, len, par_id] () {
-            worker->Submit(nlog,len, par_id);
-        //});
-        //worker->GetPollMgr()->add(sp_job);
-	      break;
-    }
+  uint32_t par_id = 0; //paxos_entry.second.second;
+  add_log_without_queue(nlog, len, par_id);
 }
 
 void* PollSubmitLog(void* arg){
     while(producer >= 0){
       submit_logger();
+      if(wait){
+	      //Log_info("The number of entries freed are %d, size of the queue is %d", count_free, submit_queue.size_approx());
+	      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	      count_free = 0;
+      }
     }
     pthread_exit(nullptr);
     return nullptr;
@@ -194,17 +213,6 @@ int setup(int argc, char* argv[]) {
       pxs_workers_g.back()->SetupBase();
     }
     return 0;
-}
-
-// to be called after setup 1; needed for multiprocess setup
-int setup2(){
-  auto server_infos = Config::GetConfig()->GetMyServers();
-  if (server_infos.size() > 0) {
-    server_launch_worker(server_infos);
-  }
-  Pthread_create(&submit_poll_th_, nullptr, PollSubmitLog, nullptr);
-  pthread_detach(submit_poll_th_);
-  return 0;
 }
 
 int shutdown_paxos() {
@@ -249,6 +257,7 @@ void register_for_leader(std::function<void(const char*, int)> cb, uint32_t par_
 }
 
 void submit(const char* log, int len, uint32_t par_id) {
+    return;
     for (auto& worker : pxs_workers_g) {
         if (!worker->IsLeader(par_id)) continue;
         verify(worker->submit_pool != nullptr);
@@ -284,7 +293,54 @@ void add_time(std::string key, long double value,long double denom){
   }
 }
 
+static tp firstTime;
+static tp endTime;
+void add_log_to_nc(const char* log, int len, uint32_t par_id){
+	l_.lock();
+	submit_tot++;	
+	//endTime = std::chrono::high_resolution_clock::now();
+	auto paxos_entry = make_pair(log, make_pair(len, par_id));
+	submit_queue_nc.push(paxos_entry);
+	l_.unlock();
+}
+
+void* PollSubQNc(void* arg){
+   while(true){
+     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+     l_.lock();
+     //Log_info("Clearing queue of size %d", submit_queue_nc.size());
+     int deleted = 0;
+     while(!submit_queue_nc.empty()){
+	     auto edt = std::chrono::high_resolution_clock::now();
+	     auto x = submit_queue_nc.front();
+	     //auto time_in_queue = std::chrono::duration_cast<std::chrono::nanoseconds>(edt - x.second.second).count();
+	     //if(time_in_queue < 100.0)break;
+	     submit_queue_nc.pop();
+	     //free((char*)x.first);
+	     //deleted++;
+	     add_log_without_queue((char*)x.first, x.second.first, x.second.second);
+	     
+     }
+     //Log_info("Cleared %d entries", deleted);
+     l_.unlock();
+  }
+    pthread_exit(nullptr);
+    return nullptr;
+}
+
+// to be called after setup 1; needed for multiprocess setup
+int setup2(){
+  auto server_infos = Config::GetConfig()->GetMyServers();
+  if (server_infos.size() > 0) {
+    server_launch_worker(server_infos);
+  }
+  Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
+  pthread_detach(submit_poll_th_);
+  return 0;
+}
+
 void add_log(const char* log, int len, uint32_t par_id){
+    return;
     auto startTime = std::chrono::high_resolution_clock::now();
     //read_log(log, len, "silo");
     for (auto& worker : pxs_workers_g) {
@@ -292,23 +348,21 @@ void add_log(const char* log, int len, uint32_t par_id){
       worker->IncSubmit();
       break;
     }
-    //string log_str;
-    //auto log2 = make_shared<char>(*log);
-    //std::copy(log.get(), log.get() + len, std::back_inserter(log_str));
-    //std::copy(log, log+ len, std::back_inserter(log_str));
-    auto endTime = std::chrono::high_resolution_clock::now();
-    //add_time("copy_log_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
-    //startTime = std::chrono::high_resolution_clock::now();   
-    auto paxos_entry = make_pair(log, make_pair(len, par_id));
+    auto endTime = std::chrono::high_resolution_clock::now();   
+    auto paxos_entry = make_pair(log, make_pair(len, startTime));
     submit_queue.enqueue(paxos_entry);
     endTime = std::chrono::high_resolution_clock::now();
     submit_tot++;
-    add_time("enqueue_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
+    //add_time("enqueue_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
 }
 
 void wait_for_submit(uint32_t par_id) {
     int total_submits = 0;
     //Log_info("The number of completed submits %ld", (int)worker->n_current);
+    //clear_queue = 1;
+    //while(submit_queue_nc.size() > 0){}
+    Log_info("The number of completed submits %ld", (int)submit_queue.size_approx());
+ 
     for (auto& worker : pxs_workers_g) {
         if (!worker->IsLeader(par_id)) continue;
         verify(worker->submit_pool != nullptr);
@@ -324,8 +378,7 @@ void wait_for_submit(uint32_t par_id) {
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
-}
-
+} 
 void pre_shutdown_step(){
     Log_info("shutdown Server Control Service after task finish total submit %d", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {
