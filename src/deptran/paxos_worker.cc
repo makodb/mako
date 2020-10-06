@@ -6,6 +6,7 @@ namespace janus {
 
 
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
+std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
 
 static int volatile xx =
     MarshallDeputy::RegInitializer(MarshallDeputy::CONTAINER_CMD,
@@ -208,11 +209,11 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
         sp_cmd->ballots.push_back(mpc.get()->curr_ballot_);
         verify(mpc->cmd_ != nullptr);
-	//auto x = dynamic_pointer_cast<LogEntry>(mpc->cmd_);
+        //auto x = dynamic_pointer_cast<LogEntry>(mpc->cmd_);
         //read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
         MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
         sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
-	//auto x = dynamic_pointer_cast<LogEntry>(md->sp_data_);
+        //auto x = dynamic_pointer_cast<LogEntry>(md->sp_data_);
        // read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
@@ -234,25 +235,59 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
 
 void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
   //Log_info("current batch cnt %d", cnt);
-  PaxosWorker::coo_queue.enqueue(coord);
+  nc_submit_l_.lock();
+  PaxosWorker::coo_queue_nc.push(coord);
+  nc_submit_l_.unlock();
 }
 
 int PaxosWorker::deq_from_coo(vector<shared_ptr<Coordinator>>& current){
-	int qcnt = PaxosWorker::coo_queue.try_dequeue_bulk(&current[0], cnt);
-	return qcnt;
+  int qcnt = PaxosWorker::coo_queue.try_dequeue_bulk(&current[0], cnt);
+  return qcnt;
 }
 
 void* PaxosWorker::StartReadAccept(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   //std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
   while (!pw->stop_flag) {
-    std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);	  
+    std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
     int cnt = pw->deq_from_coo(current);
     if(cnt <= 0)continue;
     std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
     //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
     auto sp_job = std::make_shared<OneTimeJob>([&pw, sub]() {
       pw->BulkSubmit(sub);
+    });
+    pw->GetPollMgr()->add(sp_job);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  pthread_exit(nullptr);
+  return nullptr;
+}
+
+void PaxosWorker::AddAcceptNc(shared_ptr<Coordinator> coord) {
+  nc_submit_l_.lock();
+  PaxosWorker::coo_queue_nc.push(coord);
+  nc_submit_l_.unlock();
+}
+
+void* PaxosWorker::StartReadAcceptNc(void* arg){
+  PaxosWorker* pw = (PaxosWorker*)arg;
+  while (!pw->stop_flag) {
+    std::vector<shared_ptr<Coordinator>> current;
+    int cur_req = pw->cnt;
+    nc_submit_l_.lock();
+    while(!PaxosWorker::coo_queue_nc.empty() && cur_req > 0){
+      auto x = PaxosWorker::coo_queue_nc.top();
+      PaxosWorker::coo_queue_nc.pop()
+      current.push_back(x);
+      cur_req--;
+    }
+    nc_submit_l_.unlock();
+    int cnt = current.size();
+    if(cnt == 0)continue;
+    //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
+    auto sp_job = std::make_shared<OneTimeJob>([&pw, current]() {
+      pw->BulkSubmit(current);
     });
     pw->GetPollMgr()->add(sp_job);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -274,7 +309,7 @@ void PaxosWorker::WaitForSubmit() {
 void PaxosWorker::InitQueueRead(){
   if(IsLeader(site_info_->partition_id_)){
     stop_flag = false;
-    Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAccept, this);
+    Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAcceptNc, this);
     pthread_detach(bulkops_th_);
   }
 }
@@ -315,8 +350,8 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if(!shared_ptr_apprch){
 	  sp_cmd->log_entry = string(log_entry,length);
   }else{
-  //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
-          //sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
+    //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
+    // sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
 	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));
     memcpy(sp_cmd->operation_test.get(), log_entry, length);
   }
@@ -352,7 +387,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   if(stop_flag != true) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
     //created_coordinators_shrd.push_back(sp_coo);
-    AddAccept(sp_coo);
+    AddAcceptNc(sp_coo);
   } else{
     coord->Submit(sp_m);
   }

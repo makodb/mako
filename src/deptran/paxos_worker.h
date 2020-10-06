@@ -264,10 +264,11 @@ public:
   Communicator* rep_commo_ = nullptr;
   std::recursive_mutex mtx_worker_submit{};
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
+  static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
   int bulk_writer = 0;
   int bulk_reader = -1;
-  rrr::SpinLock acc_;
+  rrr::SpinLock nc_submit_l_;
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
   pthread_t replay_th_;
@@ -286,9 +287,11 @@ public:
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
   void AddAccept(shared_ptr<Coordinator>);
+  void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
+  static void* StartReadAcceptNc(void*);
   PaxosWorker();
   ~PaxosWorker();
 
