@@ -157,7 +157,7 @@ static bool wait = false;
 static int count_free = 0;
 void submit_logger() {
   auto endTime = std::chrono::high_resolution_clock::now(); 
-  pair<const char*, pair<int,tp>> paxos_entry;
+  pair<const char*, pair<int,int>> paxos_entry;
   auto res = submit_queue.try_dequeue(paxos_entry);
   if(!res){
     return;
@@ -286,14 +286,15 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 	l_.lock();
 	submit_tot++;	
 	//endTime = std::chrono::high_resolution_clock::now();
-	auto paxos_entry = make_pair(log, make_pair(len, par_id));
-	submit_queue_nc.push(paxos_entry);
+	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
+	//submit_queue_nc.push(paxos_entry);
+	add_log_without_queue((char*)log, len, par_id);
 	l_.unlock();
 }
 
 void* PollSubQNc(void* arg){
    while(true){
-     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+     std::this_thread::sleep_for(std::chrono::milliseconds(10));
      l_.lock();
      //Log_info("Clearing queue of size %d", submit_queue_nc.size());
      int deleted = 0;

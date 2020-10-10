@@ -235,9 +235,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m){
 
 void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
   //Log_info("current batch cnt %d", cnt);
-  nc_submit_l_.lock();
-  PaxosWorker::coo_queue_nc.push(coord);
-  nc_submit_l_.unlock();
+  PaxosWorker::coo_queue.enqueue(coord);
 }
 
 int PaxosWorker::deq_from_coo(vector<shared_ptr<Coordinator>>& current){
@@ -275,14 +273,14 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
   while (!pw->stop_flag) {
     std::vector<shared_ptr<Coordinator>> current;
     int cur_req = pw->cnt;
-    nc_submit_l_.lock();
+    pw->nc_submit_l_.lock();
     while(!PaxosWorker::coo_queue_nc.empty() && cur_req > 0){
-      auto x = PaxosWorker::coo_queue_nc.top();
-      PaxosWorker::coo_queue_nc.pop()
+      auto x = PaxosWorker::coo_queue_nc.front();
+      PaxosWorker::coo_queue_nc.pop();
       current.push_back(x);
       cur_req--;
     }
-    nc_submit_l_.unlock();
+    pw->nc_submit_l_.unlock();
     int cnt = current.size();
     if(cnt == 0)continue;
     //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
@@ -359,7 +357,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
-  free((char*)log_entry);
+  //free((char*)log_entry);
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
