@@ -35,10 +35,11 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
   if(shared_ptr_apprch){
 	  std::string str;
 	  m >> str;
-	  std::cout << str << " " << length << std::endl;
+	  // marker:ansh check here
+	  // std::cout << str << " " << length << std::endl;
 	  operation_test = shared_ptr<char>(new char[length]);
 	  memcpy(operation_test.get(), str.c_str(), str.length());
-	  fprintf(stderr, "%s\n", operation_test.get()); 
+	  //fprintf(stderr, "%s\n", operation_test.get());
   }else{
  	 m >> log_entry;
   }

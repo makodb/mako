@@ -1,5 +1,4 @@
 #include "deptran/s_main.h"
-#include <gperftools/heap-profiler.h>
 #include <iostream>
 #include <assert.h>
 #include<cstring>
