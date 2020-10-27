@@ -172,6 +172,13 @@ def build(bld):
                 uselib="YAML-CPP BOOST",
                 use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
 
+    bld.program(source=bld.path.ant_glob("src/bench/paxos_lib/network_bench.cc"),
+                target="microbench_paxos_network",
+                includes="src src/rrr src/deptran ",
+                uselib="YAML-CPP BOOST",
+                use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+
+
     bld.add_post_fun(post)
 
 def post(conf):
