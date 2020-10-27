@@ -26,7 +26,7 @@ typedef pair<const char*, pair<int,tp>> queue_entry;
 typedef pair<const char*, pair<int,int>> queue_entry_par;
 static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;
 static std::queue<queue_entry_par> submit_queue_nc;
-static rrr::SpinLock l_;
+static rrr::Mutex l_;
 static atomic<int> producer{0}, consumer{0};
 static atomic<int> submit_tot{0};
 pthread_t submit_poll_th_;
@@ -148,8 +148,9 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
   for (auto& worker : pxs_workers_g) {
     if (!worker->IsLeader(par_id)) continue;
     	    worker->IncSubmit();
-             worker->Submit(log,len, par_id);
-             break;
+            worker->Submit(log,len, par_id);
+	    //worker->n_current++;
+	    break;
     }
 
 }
@@ -284,7 +285,7 @@ static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
 	l_.lock();
-	submit_tot++;	
+	submit_tot++;
 	//endTime = std::chrono::high_resolution_clock::now();
 	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
 	//submit_queue_nc.push(paxos_entry);
@@ -294,7 +295,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 
 void* PollSubQNc(void* arg){
    while(true){
-     std::this_thread::sleep_for(std::chrono::milliseconds(10));
+     std::this_thread::sleep_for(std::chrono::milliseconds(100));
      l_.lock();
      //Log_info("Clearing queue of size %d", submit_queue_nc.size());
      int deleted = 0;

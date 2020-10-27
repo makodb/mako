@@ -228,7 +228,7 @@ public:
 class PaxosWorker {
 private:
   inline void _Submit(shared_ptr<Marshallable>);
-  inline void _BulkSubmit(shared_ptr<Marshallable>);
+  inline void _BulkSubmit(shared_ptr<Marshallable>, int);
 
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
@@ -266,9 +266,10 @@ public:
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
+  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(100000, nullptr);
   int bulk_writer = 0;
-  int bulk_reader = -1;
-  rrr::SpinLock nc_submit_l_;
+  int bulk_reader = 0;
+  rrr::Mutex nc_submit_l_;
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
   pthread_t replay_th_;
@@ -289,6 +290,7 @@ public:
   void AddAccept(shared_ptr<Coordinator>);
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
+  void submitJob(std::shared_ptr<Job>);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);
