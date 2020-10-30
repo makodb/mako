@@ -167,18 +167,20 @@ class PollMgr::PollThread {
 
   void TriggerJob() {
     lock_job_.lock();
-    auto it = set_sp_jobs_.begin();
-    while (it != set_sp_jobs_.end()) {
+    auto jobs_exec = set_sp_jobs_;
+    set_sp_jobs_.clear();
+    lock_job_.unlock();
+    auto it = jobs_exec.begin();
+    while (it != jobs_exec.end()) {
       auto sp_job = *it;
       if (sp_job->Ready()) {
         Coroutine::CreateRun([sp_job]() {sp_job->Work();});
-	it = set_sp_jobs_.erase(it);
+        it = jobs_exec.erase(it);
       }
       else {
         it++;
       }
     }
-    lock_job_.unlock();
   }
 
  public:
@@ -226,6 +228,7 @@ void PollMgr::PollThread::poll_loop() {
     TriggerJob();
     poll_.Wait();
     TriggerJob();
+    //poll_.Wait();
     // after each poll loop, remove uninterested pollables
     pending_remove_l_.lock();
     std::list<Pollable*> remove_poll(pending_remove_.begin(), pending_remove_.end());
@@ -246,6 +249,7 @@ void PollMgr::PollThread::poll_loop() {
       poll->release();
     }
     TriggerJob();
+    //poll_.Wait();
     Reactor::GetReactor()->Loop();
   }
 }

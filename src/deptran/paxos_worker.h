@@ -266,7 +266,7 @@ public:
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
-  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(100000, nullptr);
+  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(1000000, nullptr);
   int bulk_writer = 0;
   int bulk_reader = 0;
   rrr::Mutex nc_submit_l_;

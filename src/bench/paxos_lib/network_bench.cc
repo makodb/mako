@@ -2,6 +2,9 @@
 #include <iostream>
 #include <vector>
 #include <sys/time.h>
+#include <thread>
+#include <string>
+#include <cstring>
 
 
 int setup_paxos_default(){
@@ -24,6 +27,10 @@ int setup_paxos_default(){
   argv_paxos[14] = "-P";
   argv_paxos[15] = "localhost";
   int ret = setup(16, argv_paxos);
+  register_for_leader([](const char* log, int len) {
+  }, 0);
+  register_for_follower([](const char* log, int len) {
+  }, 0);
   ret = setup2();
   if (ret != 0) {
     exit(-1);
@@ -31,7 +38,7 @@ int setup_paxos_default(){
   return 0;
 }
 
-int shutdown_paxos(){
+int shutdown(){
   pre_shutdown_step();
   int ret = shutdown_paxos();
   if(ret != 0){
@@ -41,14 +48,14 @@ int shutdown_paxos(){
 
 int main(int argc, char* argv[]){
   setup_paxos_default();
-  int sz = 75*1024*1024;
-  int times = 10000;
+  int sz = 25*100*100;
+  int times = 100*2000;
   char *log = (char*)malloc(sz*sizeof(char)); //simulating batching in paxos
-  memset(log, 'a', sizeof(log));
+  std::memset(log, 'a', sizeof(log));
   for(int i = 0; i < times; i++){
     add_log_to_nc(log, sz, 0);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    //std::this_thread::sleep_for(std::chrono::nanoseconds(1));
   }
   wait_for_submit(0);
-  shutdown_paxos();
+  shutdown();
 }
