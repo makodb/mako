@@ -251,7 +251,7 @@ public:
       sz += cmdsp.get()->WriteToFd(fd);
     }
     verify(sz == EntitySize());
-    return m;
+    return sz;
   }
 };
 class PaxosWorker {
