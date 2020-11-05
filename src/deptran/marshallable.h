@@ -6,6 +6,7 @@ namespace janus {
 class Marshallable {
  public:
   int32_t kind_{0};
+  bool bypass_to_socket_ = false;
 //  int32_t __debug_{10};
   Marshallable() = delete;
   explicit Marshallable(int32_t k): kind_(k) {};
@@ -18,6 +19,14 @@ class Marshallable {
   };
   virtual Marshal& ToMarshal(Marshal& m) const;
   virtual Marshal& FromMarshal(Marshal& m);
+  virtual size_t EntitySize() {
+    verify(0);
+    return 0;
+  }
+  virtual size_t WriteToFd(int fd) {
+    verify(0);
+    return 0;
+  }
 };
 
 class MarshallDeputy {

@@ -182,6 +182,27 @@ size_t Marshal::write(const void* p, size_t n) {
     return n;
 }
 
+size_t Marshal::bypass_copying(shared_ptr<Marshallable> data, size_t sz) {
+  assert(data->data_size() == sz);
+  assert(tail_ == nullptr || tail_->next == nullptr);
+
+  if(head_ == nullptr){
+    head_ = new chunk(data, sz);
+    tail_ = head_;
+  } else if (tail_->fully_written()){
+    tail_->next = new chunk(data, sz);
+    tail_ = tail_->next;
+  } else{
+    tail_->resize_to_current();
+    tail_->next = new chunk(data, sz);
+    tail_ = tail_->next;
+  }
+  write_cnt_ += sz;
+  content_size_ += sz;
+  assert(content_size_ == content_size_slow());
+  return sz;
+}
+
 size_t Marshal::read(void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
     assert(empty() || (head_ != nullptr && !head_->fully_read()));

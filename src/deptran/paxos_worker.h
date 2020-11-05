@@ -136,7 +136,9 @@ public:
   std::string log_entry;
   shared_ptr<char> operation_test;
 
-  LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD) {}
+  LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
+    bypass_to_socket_ = true
+  }
   virtual ~LogEntry() {
     //Log_info("oh lord jetson destroyed another one %d", length);
     //read_log(operation_test.get(), length, "while destroying");
@@ -146,6 +148,9 @@ public:
   }
   virtual Marshal& ToMarshal(Marshal&) const override;
   virtual Marshal& FromMarshal(Marshal&) override;
+  size_t EntitySize() override {
+    return sizeof(int) + length;
+  }
 };
 
 /*
@@ -167,7 +172,9 @@ public:
   vector<ballot_t> ballots{};
   vector<shared_ptr<MarshallDeputy>> cmds{};
 
-  BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {}
+  BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
+    bypass_to_socket_ = true
+  }
   virtual ~BulkPaxosCmd() {
       slots.clear();
       ballots.clear();
@@ -183,14 +190,9 @@ public:
           m << i;
       }
       m << (int32_t) cmds.size();
-      //verify(cmds[0] != nullptr);
       for (auto sp : cmds) {
-	  auto p = sp.get();
-	  //auto tmp = dynamic_pointer_cast<LogEntry>(p->sp_data_);
-	  //read_log(tmp.get()->operation_test.get(), tmp.get()->length, "serializing");
+        auto p = sp.get();
           m << *p;
-	  //tmp = dynamic_pointer_cast<LogEntry>(p->sp_data_);
-	 // read_log(tmp.get()->operation_test.get(), tmp.get()->length, "post-serializing");
       }
       return m;
   }
@@ -211,18 +213,45 @@ public:
       }
       m >> szc;
       for (int i = 0; i < szc; i++) {
-          auto x = new MarshallDeputy;
-          m >> *x;
-	  //auto tmp = dynamic_pointer_cast<LogEntry>(x->sp_data_);
-	 // read_log(tmp.get()->operation_test.get(), tmp.get()->length, "deserializing");
-	  //auto tmp = dynamic_pointer_cast<LogEntry>(x);
-	  //read_log(tmp->operation_test.get(), tmp->length, "deserializing");
-	  auto sp_md = shared_ptr<MarshallDeputy>(x);
-	  //auto tmp = dynamic_cast<LogEntry*>(x->sp_data_);
-	  //read_log(tmp->operation_test.get(), tmp->length, "deserializing");
-          cmds.push_back(sp_md);
+        auto x = new MarshallDeputy;
+        m >> *x;
+	      auto sp_md = shared_ptr<MarshallDeputy>(x);
+	      cmds.push_back(sp_md);
       }
       return m;
+  }
+
+  size_t EntitySize() override {
+    size_t sz = 0;
+    sz += 3*sizeof((int32_t));
+    for(int i = 0; i < slots.size(); i++){
+      sz += sizeof(slotid_t);
+      sz += sizeof(ballot_t);
+      sz += sp.get()->EntitySize();
+    }
+    return sz;
+  }
+
+  size_t WriteToFd(int fd) override {
+    int32_t batch = slots.size();
+    char *p = (char*)malloc(3*sizeof((int32_t)) + batch*(sizeof(slotid_t) + sizeof(ballot_t)));
+    int wrt = 0;
+    size_t sz = 0;
+    wrt += memcpy(p + wrt, &batch, sizeof(int32_t));
+    for(auto i : slots){
+      wrt += memcpy(p + wrt, &i, sizeof(slotid_t));
+    }
+    wrt += memcpy(p + wrt, &batch, sizeof(int32_t));
+    for(auto i : ballots){
+      wrt += memcpy(p + wrt, &i, sizeof(ballot_t));
+    }
+    memcpy(p + wrt, &batch, sizeof(int32_t));
+    sz += std::write(fd, p, wrt);
+    for (auto cmdsp : cmds) {
+      sz += cmdsp.get()->WriteToFd(fd);
+    }
+    verify(sz == EntitySize());
+    return m;
   }
 };
 class PaxosWorker {
