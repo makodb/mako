@@ -12,8 +12,10 @@
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
+#include <memory>
 
 #include "base/all.hpp"
+
 
 namespace rrr {
 
@@ -23,12 +25,40 @@ void stat_marshal_out(int fd, const void* buf, size_t nbytes, ssize_t ret);
 #endif // RPC_STATISTICS
 
 // not thread safe, for better performance
+class Marshal;
+
+class Marshallable {
+ public:
+  int32_t kind_{0};
+  bool bypass_to_socket_ = false;
+//  int32_t __debug_{10};
+  Marshallable() = delete;
+  explicit Marshallable(int32_t k): kind_(k) {};
+  virtual ~Marshallable() {
+//    if (__debug_ != 10) {
+//      verify(0);
+//    }
+//    __debug_ = 30;
+//    Log_debug("destruct marshallable.");
+  };
+  virtual Marshal& ToMarshal(Marshal& m) const;
+  virtual Marshal& FromMarshal(Marshal& m);
+  virtual size_t EntitySize() {
+    verify(0);
+    return 0;
+  }
+  virtual size_t WriteToFd(int fd) {
+    verify(0);
+    return 0;
+  }
+};
+
 class Marshal: public NoCopy {
   struct raw_bytes: public RefCounted {
     char *ptr = nullptr;
     size_t size = 0;
     static const size_t min_size;
-    shared_ptr<Marshallable> marshallable_entity;
+    std::shared_ptr<rrr::Marshallable> marshallable_entity;
     bool shared_data = false;
 
     raw_bytes(size_t sz = min_size) {
@@ -41,7 +71,7 @@ class Marshal: public NoCopy {
       memcpy(ptr, p, n);
     }
 
-    raw_bytes(shared_ptr<Marshallable> ptr, size_t sz){
+    raw_bytes(std::shared_ptr<Marshallable> ptr, size_t sz){
       marshallable_entity = ptr;
       size = sz;
       shared_data = true;
@@ -80,7 +110,7 @@ class Marshal: public NoCopy {
     chunk *next;
 
     chunk() : data(new raw_bytes), read_idx(0), write_idx(0), next(nullptr) { }
-    chunk(shared_ptr<Marshallable> p, size_t sz) : data(new raw_bytes(p, sz)), read_idx(0),
+    chunk(std::shared_ptr<rrr::Marshallable> p, size_t sz) : data(new raw_bytes(p, sz)), read_idx(0),
                                            write_idx(sz), next(nullptr){}
     chunk(const void *p, size_t n)
         : data(new raw_bytes(p, n)), read_idx(0),
@@ -297,7 +327,7 @@ class Marshal: public NoCopy {
     return cnt;
   }
 
-  size_t bypass_copying(shared_ptr<Marshallable>, size_t);
+  size_t bypass_copying(std::shared_ptr<rrr::Marshallable>, size_t);
 };
 
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {
@@ -605,6 +635,62 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
     m >> key >> value;
     insert_into_map(v, key, value);
   }
+  return m;
+}
+
+class MarshallDeputy {
+ public:
+  typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
+  static MarContainer& Initializers();
+  static int RegInitializer(int32_t, std::function<Marshallable*()>);
+  static std::function<Marshallable*()> GetInitializer(int32_t);
+
+ public:
+  std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
+  int32_t kind_{0};
+  enum Kind {
+    UNKNOWN=0,
+    EMPTY_GRAPH=1,
+    RCC_GRAPH=2,
+    CONTAINER_CMD=3,
+    CMD_TPC_PREPARE=4,
+    CMD_TPC_COMMIT=5,
+    CMD_VEC_PIECE=6,
+    CMD_BLK_PXS=7
+  };
+  /**
+   * This should be called by the rpc layer.
+   */
+  MarshallDeputy() : kind_(UNKNOWN){}
+  /**
+   * This should be called by inherited class as instructor.
+   * @param kind
+   */
+  explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
+    kind_ = sp_data_->kind_;
+  }
+
+  rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
+  void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
+    verify(sp_data_ == nullptr);
+    sp_data_ = m;
+    kind_ = m->kind_;
+  }
+
+  ~MarshallDeputy() = default;
+};
+
+inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
+  m >> rhs.kind_;
+  rhs.CreateActualObjectFrom(m);
+  return m;
+}
+
+inline rrr::Marshal& operator<<(rrr::Marshal& m, const rrr::MarshallDeputy& rhs) {
+  verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
+  m << rhs.kind_;
+  verify(rhs.sp_data_); // must be non-empty
+  rhs.sp_data_->ToMarshal(m);
   return m;
 }
 

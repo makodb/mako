@@ -75,7 +75,6 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                const function<void()> &cb) {
-
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   *valid = 1;
@@ -138,7 +137,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       app_next_(*commit_exec[i]->committed_cmd_);
   }
   mtx_.lock();
-  //FreeSlots();
+  FreeSlots();
   mtx_.unlock();
   //cb();
 }

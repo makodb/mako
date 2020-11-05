@@ -137,7 +137,7 @@ public:
   shared_ptr<char> operation_test;
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = true
+    bypass_to_socket_ = true;
   }
   virtual ~LogEntry() {
     //Log_info("oh lord jetson destroyed another one %d", length);
@@ -173,7 +173,7 @@ public:
   vector<shared_ptr<MarshallDeputy>> cmds{};
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = true
+    bypass_to_socket_ = true;
   }
   virtual ~BulkPaxosCmd() {
       slots.clear();
@@ -223,11 +223,11 @@ public:
 
   size_t EntitySize() override {
     size_t sz = 0;
-    sz += 3*sizeof((int32_t));
+    sz += 3*sizeof(int32_t);
     for(int i = 0; i < slots.size(); i++){
       sz += sizeof(slotid_t);
       sz += sizeof(ballot_t);
-      sz += sp.get()->EntitySize();
+      sz += cmds[i].get()->EntitySize();
     }
     return sz;
   }

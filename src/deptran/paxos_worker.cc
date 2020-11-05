@@ -73,9 +73,9 @@ void PaxosWorker::Next(Marshallable& cmd) {
     if (this->callback_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(!shared_ptr_apprch){
-	      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+	      //callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
       }else{
-	      callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
+	      //callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
       }
     } else {
       verify(0);
@@ -87,7 +87,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   //if (n_current > n_tot) {
     n_current++;
     if(site_info_->locale_id == 0){
-	    if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
+	    //if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
     }
     if (n_current >= n_tot) {
       //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
@@ -245,7 +245,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
     coord.get()->loc_id_ = site_info_->locale_id;
     coord.get()->BulkSubmit(sp_m, [this, cnt]() {
       this->n_current += cnt;
-      if((int)n_current%2 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
+      //if((int)n_current%2 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
       if(this->n_current >= this->n_tot)this->finish_cond.bcast();
     });
 }
@@ -333,7 +333,7 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
     //pw->n_current+= cnt;
     auto secs = std::chrono::duration_cast<std::chrono::nanoseconds>(endt - strt).count();
     //if(sent % 2 == 0)Log_info("Time spent is submitting the job %f", secs/(1000.0*1000.0*1000.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
   pthread_exit(nullptr);
   return nullptr;
