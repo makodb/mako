@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "base/all.hpp"
+#include "../../deptran/marshallable.h"
 
 namespace rrr {
 
@@ -47,7 +48,7 @@ class Marshal: public NoCopy {
       shared_data = true;
     }
 
-    size_t resize_to(int new_sz){
+    size_t resize_to(size_t new_sz){
       size = std::min(size, new_sz);
       char *x = new char[size];
       memcpy(x, ptr, size);
@@ -175,7 +176,7 @@ class Marshal: public NoCopy {
       assert(write_idx <= data->size);
       int cnt;
       if(data->shared_data){
-        cnt = data->marshallable_entity.get().WriteToFd(fd);
+        cnt = data->marshallable_entity.get()->WriteToFd(fd);
       }
       else{
         cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
