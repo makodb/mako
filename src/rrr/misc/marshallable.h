@@ -1,7 +1,7 @@
 #pragma once
-#include "__dep__.h"
+#include "marshal.hpp"
 
-namespace janus {
+namespace rrr {
 
 class Marshallable {
  public:
@@ -85,4 +85,4 @@ inline Marshal& operator<<(Marshal& m, const MarshallDeputy& rhs) {
   return m;
 }
 
-} // namespace janus;
+} // namespace rrr;

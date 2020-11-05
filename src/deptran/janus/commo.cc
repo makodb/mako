@@ -2,7 +2,7 @@
 #include "../rcc/tx.h"
 #include "../rcc/graph_marshaler.h"
 #include "commo.h"
-#include "marshallable.h"
+#include "__dep__.h"
 
 namespace janus {
 

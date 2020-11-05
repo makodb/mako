@@ -87,6 +87,8 @@ using rrr::TimeoutALock;
 using rrr::ScopedLock;
 using rrr::PollMgr;
 using rrr::Marshal;
+using rrr::Marshallable;
+using rrr::MarshallDeputy;
 
 // User include files
 //

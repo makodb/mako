@@ -3,7 +3,6 @@
 #include <unordered_map>
 #include <mutex>
 #include "marshallable.h"
-#include "rcc/dep_graph.h"
 
 namespace janus {
 
@@ -52,12 +51,6 @@ Marshal &Marshallable::FromMarshal(Marshal &m) {
 Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
   verify(sp_data_ == nullptr);
   switch (kind_) {
-    case RCC_GRAPH:
-      sp_data_.reset(new RccGraph());
-      break;
-    case EMPTY_GRAPH:
-      sp_data_.reset(new EmptyGraph());
-      break;
     case UNKNOWN:
       verify(0);
       break;

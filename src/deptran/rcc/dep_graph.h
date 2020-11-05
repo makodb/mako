@@ -5,7 +5,7 @@
 #include "marshal-value.h"
 #include "command.h"
 #include "command_marshaler.h"
-#include "../marshallable.h"
+#include "__dep__.h"
 
 /**
  * This is NOT thread safe!!!
