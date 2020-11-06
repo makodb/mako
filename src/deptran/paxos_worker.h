@@ -241,13 +241,13 @@ public:
     memcpy(p + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
     for(auto i : slots){
-      wrt += memcpy(p + wrt, &i, sizeof(slotid_t));
+      memcpy(p + wrt, &i, sizeof(slotid_t));
       wrt += sizeof(slotid_t);
     }
-    wrt += memcpy(p + wrt, &batch, sizeof(int32_t));
+    memcpy(p + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
     for(auto i : ballots){
-      wrt += memcpy(p + wrt, &i, sizeof(ballot_t));
+      memcpy(p + wrt, &i, sizeof(ballot_t));
       wrt += sizeof(ballot_t);
     }
     memcpy(p + wrt, &batch, sizeof(int32_t));
