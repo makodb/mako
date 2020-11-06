@@ -170,6 +170,7 @@ public:
     } else{
       sz += ::write(fd, log_entry.c_str(), length);
     }
+    //Log_info("written bytes %d", sz);
     return sz;
   }
 };
@@ -202,7 +203,6 @@ public:
       cmds.clear();
   }
   Marshal& ToMarshal(Marshal& m) const override {
-      return m;
       m << (int32_t) slots.size();
       for(auto i : slots){
           m << i;
@@ -255,7 +255,7 @@ public:
   }
 
   size_t WriteToFd(int fd) override {
-    Log_info("writing to file desc");	  
+    //Log_info("writing to file desc");	  
     int32_t batch = slots.size();
     size_t total_sz = 3*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
     char *p = (char*)malloc(total_sz*sizeof(char));
@@ -279,7 +279,7 @@ public:
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
     }
-    Log_info("Written bytes of size %d", sz); 
+    //Log_info("Written bytes of size %d", sz); 
     verify(sz == EntitySize());
     return sz;
   }

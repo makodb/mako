@@ -48,12 +48,11 @@ int shutdown(){
 
 int main(int argc, char* argv[]){
   setup_paxos_default();
-  int sz = 25*100*100;
-  int times = 100*2000;
-  char *log = (char*)malloc(sz*sizeof(char)); //simulating batching in paxos
-  std::memset(log, 'a', sizeof(log));
+  int times = 1;
+  std::string s = std::to_string(times);
+  char *log = (char*)s.c_str(); //simulating batching in paxos
   for(int i = 0; i < times; i++){
-    add_log_to_nc(log, sz, 0);
+    add_log_to_nc(log, (int)s.size(), 0);
     //std::this_thread::sleep_for(std::chrono::nanoseconds(1));
   }
   wait_for_submit(0);

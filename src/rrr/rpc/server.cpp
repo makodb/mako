@@ -139,7 +139,7 @@ void ServerConnection::handle_read() {
     }
 
     int bytes_read = in_.read_from_fd(socket_);
-    Log_info("bytes read from socket %d", bytes_read);
+    //Log_info("bytes read from socket %d", bytes_read);
     if (bytes_read == 0) {
         return;
     }
@@ -152,7 +152,7 @@ void ServerConnection::handle_read() {
         if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
             // consume the packet size
             verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
-            Log_info("packet size is %d", packet_size);
+            //Log_info("packet size is %d", packet_size);
             Request* req = new Request;
             verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
              

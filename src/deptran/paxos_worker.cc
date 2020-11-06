@@ -21,7 +21,6 @@ static int volatile xxx =
 
 static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
-  return m;
   m << length;
   if(shared_ptr_apprch){
 	  m << std::string(operation_test.get(), length);
@@ -37,8 +36,9 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
 	  std::string str;
 	  m >> str;
 	  // marker:ansh check here
-	  // std::cout << str << " " << length << std::endl;
-	  operation_test = shared_ptr<char>(new char[length]);
+	  //std::cout << str << " " << length << std::endl;
+	  operation_test = shared_ptr<char>(new char[length+1]);
+	  operation_test.get()[length] = '\0';
 	  memcpy(operation_test.get(), str.c_str(), str.length());
 	  //fprintf(stderr, "%s\n", operation_test.get());
   }else{
@@ -63,8 +63,10 @@ void PaxosWorker::Next(Marshallable& cmd) {
     if (this->callback_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(!shared_ptr_apprch){
+	      //std::cout << sp_log_entry.log_entry << endl;
 	      //callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
       }else{
+	      //std::cout << sp_log_entry.operation_test.get() << std::endl;
 	      //callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
       }
     } else {

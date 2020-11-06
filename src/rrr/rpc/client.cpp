@@ -295,7 +295,7 @@ void Client::end_request() {
   // set reply size in packet
   if (bmark_ != nullptr) {
     i32 request_size = out_.get_and_reset_write_cnt();
-    Log_info("client request size is %d", request_size);
+    //Log_info("client request size is %d", request_size);
     out_.write_bookmark(bmark_, &request_size);
     delete bmark_;
     bmark_ = nullptr;
