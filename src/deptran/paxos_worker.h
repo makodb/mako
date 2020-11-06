@@ -151,7 +151,7 @@ public:
   size_t EntitySize() override {
     return sizeof(int) + length;
   }
-  size_t LogEntry::WriteToFd(int fd) override {
+  size_t WriteToFd(int fd) override {
     size_t sz = 0;
     sz += ::write(fd, &length, sizeof(int));
     if(shared_ptr_apprch){
