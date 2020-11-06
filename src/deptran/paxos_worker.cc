@@ -46,7 +46,7 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
   return m;
 };
 
-size_t LogEntry::WriteToFd(int fd) override {
+size_t LogEntry::WriteToFd(int fd) {
   size_t sz = 0;
   sz += ::write(fd, &length, sizeof(int));
   if(shared_ptr_apprch){
