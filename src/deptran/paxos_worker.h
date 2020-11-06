@@ -154,7 +154,7 @@ public:
   size_t WriteToFd(int fd) override {
     size_t sz = 0;
     sz += ::write(fd, &length, sizeof(int));
-    if(shared_ptr_apprch){
+    if(true){
       sz += ::write(fd, operation_test.get(), length);
     } else{
       sz += ::write(fd, log_entry.c_str(), length);
