@@ -59,9 +59,9 @@ class MarshallDeputy {
     static MarContainer& Initializers();
     static int RegInitializer(int32_t, std::function<Marshallable*()>);
     static std::function<Marshallable*()> GetInitializer(int32_t);
-    bool bypass_to_socket = false;
 
   public:
+    bool bypass_to_socket_ = false;
     std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
     int32_t kind_{0};
     enum Kind {
@@ -84,8 +84,8 @@ class MarshallDeputy {
      */
     explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
       kind_ = sp_data_->kind_;
-      if(sp_data_.get()->bypass_to_socket){
-        bypass_to_socket = true;
+      if(sp_data_.get()->bypass_to_socket_){
+        bypass_to_socket_ = true;
       }
     }
 
@@ -114,7 +114,7 @@ class Marshal: public NoCopy {
     char *ptr = nullptr;
     size_t size = 0;
     static const size_t min_size;
-    std::shared_ptr<rrr::Marshallable> marshallable_entity;
+    MarshallDeputy marshallable_entity;
     bool shared_data = false;
 
     raw_bytes(size_t sz = min_size) {
@@ -127,8 +127,8 @@ class Marshal: public NoCopy {
       memcpy(ptr, p, n);
     }
 
-    raw_bytes(std::shared_ptr<Marshallable> ptr, size_t sz){
-      marshallable_entity = ptr;
+    raw_bytes(MarshallDeputy md, size_t sz){
+      marshallable_entity = md;
       size = sz;
       shared_data = true;
     }
@@ -166,7 +166,7 @@ class Marshal: public NoCopy {
     chunk *next;
 
     chunk() : data(new raw_bytes), read_idx(0), write_idx(0), next(nullptr) { }
-    chunk(std::shared_ptr<rrr::Marshallable> p, size_t sz) : data(new raw_bytes(p, sz)), read_idx(0),
+    chunk(MarshallDeputy md, size_t sz) : data(new raw_bytes(md, sz)), read_idx(0),
                                            write_idx(sz), next(nullptr){}
     chunk(const void *p, size_t n)
         : data(new raw_bytes(p, n)), read_idx(0),
@@ -261,14 +261,13 @@ class Marshal: public NoCopy {
       assert(write_idx <= data->size);
       int cnt;
       if(data->shared_data){
-        cnt = data->marshallable_entity.get()->WriteToFd(fd);
+        cnt = data->marshallable_entity.WriteToFd(fd);
       }
       else{
         cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
       }
 
 #ifdef RPC_STATISTICS
-      //if(data->shared_data)stat_marshal_out(fd, data->marshallable_entity.get() + write_idx, data->size - write_idx, cnt);
       if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
       else{
         Log_debug("Missed RPC stats, shared data used in raw_bytes");
@@ -383,7 +382,7 @@ class Marshal: public NoCopy {
     return cnt;
   }
 
-  size_t bypass_copying(std::shared_ptr<rrr::Marshallable>, size_t);
+  size_t bypass_copying(rrr::MarshallDeputy, size_t);
 };
 
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {

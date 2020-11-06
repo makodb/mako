@@ -183,8 +183,8 @@ size_t Marshal::write(const void* p, size_t n) {
     return n;
 }
 
-size_t Marshal::bypass_copying(std::shared_ptr<Marshallable> data, size_t sz) {
-  assert(data->data_size() == sz);
+size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
+  assert(data.EntitySize() == sz);
   assert(tail_ == nullptr || tail_->next == nullptr);
 
   if(head_ == nullptr){
