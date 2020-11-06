@@ -46,17 +46,6 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
   return m;
 };
 
-size_t LogEntry::WriteToFd(int fd) {
-  size_t sz = 0;
-  sz += ::write(fd, &length, sizeof(int));
-  if(shared_ptr_apprch){
-    sz += ::write(fd, operation_test.get(), length);
-  } else{
-    sz += ::write(fd, log_entry.c_str(), length);
-  }
-  return sz;
-}
-
 void PaxosWorker::SetupBase() {
   auto config = Config::GetConfig();
   rep_frame_ = Frame::GetFrame(config->replica_proto_);
