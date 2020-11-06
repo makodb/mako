@@ -152,21 +152,21 @@ public:
   }
 
   size_t length_as_v64(bool write = false, int fd = -1){
-	v64 v_len = length;
-	char buf[9];
-        size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
-	if(!write)return bsize;
-	while(::write(fd, buf, bsize)!=-1){}
-	//verify(wt == bsize);
-	return bsize;
+    v64 v_len = length;
+	  char buf[9];
+	  size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
+	  if(!write)return bsize;
+	  Marshal::blocking_write(fd, buf, bsize);
+	  //verify(wt == bsize);
+	  return bsize;
   }
 
   size_t WriteToFd(int fd) override {
     size_t sz = 0;
-    sz += ::write(fd, &length, sizeof(int));
+    sz += Marshal::blocking_write(fd, &length, sizeof(int));
     sz += length_as_v64(true, fd);
     if(true){
-      sz += ::write(fd, operation_test.get(), length);
+      sz += Marshal::blocking_write(fd, operation_test.get(), length);
     } else{
       sz += ::write(fd, log_entry.c_str(), length);
     }
@@ -275,7 +275,7 @@ public:
     }
     memcpy(p + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
-    sz += ::write(fd, p, wrt);
+    sz += Marshal::blocking_write(fd, p, wrt);
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
     }
