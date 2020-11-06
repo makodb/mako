@@ -18,6 +18,12 @@ inline void read_log(const char* log, int length, const char* custom){
         Log_info("commit id %lld and length %d from %s", cid, length, custom);
 }
 
+inline size_t blocking_write(int fd, const void* p, size_t len){
+  size_t sz = 0;
+  while((sz = ::write(fd, p, len)) != -1){}
+  return sz;
+}
+
 class SubmitPool {
 private:
   struct start_submit_pool_args {
@@ -156,7 +162,7 @@ public:
 	  char buf[9];
 	  size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
 	  if(!write)return bsize;
-	  blocking_write(fd, buf, bsize);
+	  verify(blocking_write(fd, buf, bsize) == bsize);
 	  //verify(wt == bsize);
 	  return bsize;
   }

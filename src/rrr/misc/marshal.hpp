@@ -100,9 +100,10 @@ class MarshallDeputy {
       return sizeof(int32_t) + sp_data_.get()->EntitySize();
     }
 
+
   virtual size_t WriteToFd(int fd) {
       size_t sz = 0;
-      sz += blocking_write(fd, &kind_, sizeof(kind_));
+      while((sz = ::write(fd, p, len)) != -1){}
       sz =  sz + sp_data_.get()->WriteToFd(fd);
       //Log_info("Written bytes %d", sz);
       return sz;
@@ -354,12 +355,6 @@ class Marshal: public NoCopy {
   size_t content_size() const {
     assert(content_size_ == content_size_slow());
     return content_size_;
-  }
-
-  static size_t blocking_write(int fd, const void* p, size_t len){
-	size_t sz = 0;
-	while((sz = ::write(fd, p, len)) != -1){}
-	return sz;
   }
 
   size_t write(const void *p, size_t n);

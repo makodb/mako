@@ -4,12 +4,6 @@
 
 namespace janus {
 
-static size_t blocking_write(int fd, const void* p, size_t len){
-  size_t sz = 0;
-  while((sz = ::write(fd, p, len)) != -1){}
-  return sz;
-}
-
 
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
