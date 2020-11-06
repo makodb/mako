@@ -102,7 +102,7 @@ class MarshallDeputy {
 
   virtual size_t WriteToFd(int fd) {
       size_t sz = 0;
-      sz += Marshal::blocking_write(fd, &kind_, sizeof(kind_));
+      sz += rrr::blocking_write(fd, &kind_, sizeof(kind_));
       sz =  sz + sp_data_.get()->WriteToFd(fd);
       //Log_info("Written bytes %d", sz);
       return sz;
@@ -356,7 +356,7 @@ class Marshal: public NoCopy {
     return content_size_;
   }
 
-  static blocking_write(int fd, const void* p, size_t len){
+  static size_t blocking_write(int fd, const void* p, size_t len){
 	size_t sz = 0;
 	while((sz = ::write(fd, p, len)) != -1){}
 	return sz;

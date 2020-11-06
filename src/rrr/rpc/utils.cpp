@@ -18,6 +18,12 @@ using namespace std;
 
 namespace rrr {
 
+size_t blocking_write(int fd, const void* p, size_t len){
+  size_t sz = 0;
+  while((sz = ::write(fd, p, len)) != -1){}
+  return sz;
+}
+
 int set_nonblocking(int fd, bool nonblocking) {
     int ret = fcntl(fd, F_GETFL, 0);
     if (ret != -1) {
