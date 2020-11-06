@@ -234,19 +234,24 @@ public:
 
   size_t WriteToFd(int fd) override {
     int32_t batch = slots.size();
-    size_t total_sz = 3*sizeof((int32_t)) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
+    size_t total_sz = 3*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
     char *p = (char*)malloc(total_sz*sizeof(char));
     int wrt = 0;
     size_t sz = 0;
-    wrt += memcpy(p + wrt, &batch, sizeof(int32_t));
+    memcpy(p + wrt, &batch, sizeof(int32_t));
+    wrt += sizeof(int32_t);
     for(auto i : slots){
       wrt += memcpy(p + wrt, &i, sizeof(slotid_t));
+      wrt += sizeof(slotid_t);
     }
     wrt += memcpy(p + wrt, &batch, sizeof(int32_t));
+    wrt += sizeof(int32_t);
     for(auto i : ballots){
       wrt += memcpy(p + wrt, &i, sizeof(ballot_t));
+      wrt += sizeof(ballot_t);
     }
     memcpy(p + wrt, &batch, sizeof(int32_t));
+    wrt += sizeof(int32_t);
     sz += ::write(fd, p, wrt);
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
