@@ -53,6 +53,62 @@ class Marshallable {
   }
 };
 
+class MarshallDeputy {
+  public:
+    typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
+    static MarContainer& Initializers();
+    static int RegInitializer(int32_t, std::function<Marshallable*()>);
+    static std::function<Marshallable*()> GetInitializer(int32_t);
+    bool bypass_to_socket = false;
+
+  public:
+    std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
+    int32_t kind_{0};
+    enum Kind {
+      UNKNOWN=0,
+      EMPTY_GRAPH=1,
+      RCC_GRAPH=2,
+      CONTAINER_CMD=3,
+      CMD_TPC_PREPARE=4,
+      CMD_TPC_COMMIT=5,
+      CMD_VEC_PIECE=6,
+      CMD_BLK_PXS=7
+    };
+    /**
+     * This should be called by the rpc layer.
+     */
+    MarshallDeputy() : kind_(UNKNOWN){}
+    /**
+     * This should be called by inherited class as instructor.
+     * @param kind
+     */
+    explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
+      kind_ = sp_data_->kind_;
+      if(sp_data_.get()->bypass_to_socket){
+        bypass_to_socket = true;
+      }
+    }
+
+    rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
+    void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
+      verify(sp_data_ == nullptr);
+      sp_data_ = m;
+      kind_ = m->kind_;
+    }
+
+    virtual size_t EntitySize() {
+      return sizeof(int32_t) + sp_data_.get()->EntitySize();
+    }
+
+  virtual size_t WriteToFd(int fd) {
+      size_t sz = 0;
+      sz += ::write(fd, &kind_, sizeof(kind_));
+      return sz + sp_data_.get()->WriteToFd(fd);
+  }
+
+    ~MarshallDeputy() = default;
+};
+
 class Marshal: public NoCopy {
   struct raw_bytes: public RefCounted {
     char *ptr = nullptr;
@@ -638,48 +694,6 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
   return m;
 }
 
-class MarshallDeputy {
- public:
-  typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
-  static MarContainer& Initializers();
-  static int RegInitializer(int32_t, std::function<Marshallable*()>);
-  static std::function<Marshallable*()> GetInitializer(int32_t);
-
- public:
-  std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
-  int32_t kind_{0};
-  enum Kind {
-    UNKNOWN=0,
-    EMPTY_GRAPH=1,
-    RCC_GRAPH=2,
-    CONTAINER_CMD=3,
-    CMD_TPC_PREPARE=4,
-    CMD_TPC_COMMIT=5,
-    CMD_VEC_PIECE=6,
-    CMD_BLK_PXS=7
-  };
-  /**
-   * This should be called by the rpc layer.
-   */
-  MarshallDeputy() : kind_(UNKNOWN){}
-  /**
-   * This should be called by inherited class as instructor.
-   * @param kind
-   */
-  explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
-    kind_ = sp_data_->kind_;
-  }
-
-  rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
-  void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
-    verify(sp_data_ == nullptr);
-    sp_data_ = m;
-    kind_ = m->kind_;
-  }
-
-  ~MarshallDeputy() = default;
-};
-
 inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
   m >> rhs.kind_;
   rhs.CreateActualObjectFrom(m);
@@ -688,9 +702,14 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
 
 inline rrr::Marshal& operator<<(rrr::Marshal& m, const rrr::MarshallDeputy& rhs) {
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
-  m << rhs.kind_;
-  verify(rhs.sp_data_); // must be non-empty
-  rhs.sp_data_->ToMarshal(m);
+  verify(rhs.sp_data_);
+  if(rhs.bypass_to_socket){
+    m.bypass_copying(rhs, rhs.EntitySize());
+  }else{
+    m << rhs.kind_;
+    verify(rhs.sp_data_); // must be non-empty
+    rhs.sp_data_->ToMarshal(m);
+  }
   return m;
 }
 

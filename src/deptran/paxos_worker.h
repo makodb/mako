@@ -234,7 +234,8 @@ public:
 
   size_t WriteToFd(int fd) override {
     int32_t batch = slots.size();
-    char *p = (char*)malloc(3*sizeof((int32_t)) + batch*(sizeof(slotid_t) + sizeof(ballot_t)));
+    size_t total_sz = 3*sizeof((int32_t)) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
+    char *p = (char*)malloc(total_sz*sizeof(char));
     int wrt = 0;
     size_t sz = 0;
     wrt += memcpy(p + wrt, &batch, sizeof(int32_t));
@@ -246,7 +247,7 @@ public:
       wrt += memcpy(p + wrt, &i, sizeof(ballot_t));
     }
     memcpy(p + wrt, &batch, sizeof(int32_t));
-    sz += std::write(fd, p, wrt);
+    sz += ::write(fd, p, wrt);
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
     }

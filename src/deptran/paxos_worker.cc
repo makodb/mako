@@ -46,13 +46,13 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
   return m;
 };
 
-size_t WriteToFd(int fd) override {
+size_t LogEntry::WriteToFd(int fd) override {
   size_t sz = 0;
-  sz += std::write(fd, &length, sizeof(int));
+  sz += ::write(fd, &length, sizeof(int));
   if(shared_ptr_apprch){
-    sz += std::write(fd, operation_test.get(), length);
+    sz += ::write(fd, operation_test.get(), length);
   } else{
-    sz += std::write(fd, log_entry.c_str(), length);
+    sz += ::write(fd, log_entry.c_str(), length);
   }
   return sz;
 }
