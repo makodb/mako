@@ -268,7 +268,7 @@ class Marshal: public NoCopy {
       }
       else{
         cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-	//Log_info("wrote %d bytes of normal %d", cnt, fd);
+	Log_info("wrote %d bytes of normal %d", cnt, fd);
       }
 #ifdef RPC_STATISTICS
       if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
@@ -276,7 +276,7 @@ class Marshal: public NoCopy {
         Log_debug("Missed RPC stats, shared data used in raw_bytes");
       }
 #endif // RPC_STATISTICS
-
+      if(cnt == -1)verify(0);
       if (cnt > 0) {
         read_idx += cnt;
       }
@@ -354,6 +354,12 @@ class Marshal: public NoCopy {
   size_t content_size() const {
     assert(content_size_ == content_size_slow());
     return content_size_;
+  }
+
+  static blocking_write(int fd, const void* p, size_t len){
+	size_t sz = 0;
+	while((sz = ::write(fd, p, len)) != -1){}
+	return sz;
   }
 
   size_t write(const void *p, size_t n);

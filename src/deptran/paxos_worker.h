@@ -137,10 +137,9 @@ public:
   shared_ptr<char> operation_test;
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = true;
+    bypass_to_socket_ = false;
   }
   virtual ~LogEntry() {
-    //Log_info("oh lord jetson destroyed another one %d", length);
     //read_log(operation_test.get(), length, "while destroying");
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
@@ -157,7 +156,8 @@ public:
 	char buf[9];
         size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
 	if(!write)return bsize;
-	verify(::write(fd, buf, bsize) == bsize);
+	while(::write(fd, buf, bsize)!=-1){}
+	//verify(wt == bsize);
 	return bsize;
   }
 
@@ -195,7 +195,7 @@ public:
   vector<shared_ptr<MarshallDeputy>> cmds{};
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = true;
+    bypass_to_socket_ = false;
   }
   virtual ~BulkPaxosCmd() {
       slots.clear();
