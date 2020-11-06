@@ -96,7 +96,7 @@ class MarshallDeputy {
       kind_ = m->kind_;
     }
 
-    virtual size_t EntitySize() {
+    virtual size_t EntitySize() const {
       return sizeof(int32_t) + sp_data_.get()->EntitySize();
     }
 
@@ -702,7 +702,7 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
 inline rrr::Marshal& operator<<(rrr::Marshal& m, const rrr::MarshallDeputy& rhs) {
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
   verify(rhs.sp_data_);
-  if(rhs.bypass_to_socket){
+  if(rhs.bypass_to_socket_){
     m.bypass_copying(rhs, rhs.EntitySize());
   }else{
     m << rhs.kind_;
