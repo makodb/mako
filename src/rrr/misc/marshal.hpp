@@ -104,6 +104,7 @@ class MarshallDeputy {
   size_t sz = 0;
   const char* x = (const char*)p;
   while(sz < len){
+	  Log_info("akdkskka");
           int wrt = ::write(fd, x + sz, len-sz);
           if(wrt == -1)continue;
           sz += wrt;

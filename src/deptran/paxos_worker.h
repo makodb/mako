@@ -22,8 +22,10 @@ inline size_t blocking_write(int fd, const void* p, size_t len){
   size_t sz = 0;
   const char* x = (const char*)p;
   while(sz < len){
+	  Log_info("Saksakkas %d %d", sz, len);
 	  int wrt = ::write(fd, x + sz, len-sz);
-	  if(wrt == -1)continue;
+	  Log_info("error is %d", errno);
+	  if(wrt == -1){sleep(5);continue;}
 	  sz += wrt;
   }
   verify(sz == len);

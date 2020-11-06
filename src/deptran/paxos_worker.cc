@@ -78,6 +78,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   
   //if (n_current > n_tot) {
     n_current++;
+    Log_info("reached here %d", (int)n_current);
     if(site_info_->locale_id == 0){
 	   if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
     }
