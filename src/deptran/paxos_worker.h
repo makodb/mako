@@ -149,11 +149,22 @@ public:
   virtual Marshal& ToMarshal(Marshal&) const override;
   virtual Marshal& FromMarshal(Marshal&) override;
   size_t EntitySize() override {
-    return sizeof(int) + length;
+    return sizeof(int) + length_as_v64() +  length;
   }
+
+  size_t length_as_v64(bool write = false, int fd = -1){
+	v64 v_len = length;
+	char buf[9];
+        size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
+	if(!write)return bsize;
+	verify(::write(fd, buf, bsize) == bsize);
+	return bsize;
+  }
+
   size_t WriteToFd(int fd) override {
     size_t sz = 0;
     sz += ::write(fd, &length, sizeof(int));
+    sz += length_as_v64(true, fd);
     if(true){
       sz += ::write(fd, operation_test.get(), length);
     } else{
@@ -191,6 +202,7 @@ public:
       cmds.clear();
   }
   Marshal& ToMarshal(Marshal& m) const override {
+      return m;
       m << (int32_t) slots.size();
       for(auto i : slots){
           m << i;
@@ -243,6 +255,7 @@ public:
   }
 
   size_t WriteToFd(int fd) override {
+    Log_info("writing to file desc");	  
     int32_t batch = slots.size();
     size_t total_sz = 3*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
     char *p = (char*)malloc(total_sz*sizeof(char));
@@ -266,6 +279,7 @@ public:
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
     }
+    Log_info("Written bytes of size %d", sz); 
     verify(sz == EntitySize());
     return sz;
   }

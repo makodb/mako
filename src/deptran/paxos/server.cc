@@ -78,6 +78,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   *valid = 1;
+  Log_info("here");
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];

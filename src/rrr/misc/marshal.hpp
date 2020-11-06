@@ -103,7 +103,9 @@ class MarshallDeputy {
   virtual size_t WriteToFd(int fd) {
       size_t sz = 0;
       sz += ::write(fd, &kind_, sizeof(kind_));
-      return sz + sp_data_.get()->WriteToFd(fd);
+      sz =  sz + sp_data_.get()->WriteToFd(fd);
+      Log_info("Written bytes %d", sz);
+      return sz;
   }
 
     ~MarshallDeputy() = default;
@@ -131,6 +133,7 @@ class Marshal: public NoCopy {
       marshallable_entity = md;
       size = sz;
       shared_data = true;
+      Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
     }
 
     size_t resize_to(size_t new_sz){
@@ -236,8 +239,7 @@ class Marshal: public NoCopy {
     size_t peek(void *p, size_t n) const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
-
-      size_t n_peek = std::min(n, write_idx - read_idx);
+      size_t n_peek = std::min(n, write_idx - read_idx);      
       if (n_peek > 0) {
         memcpy(p, data->ptr + read_idx, n_peek);
       }
@@ -262,11 +264,12 @@ class Marshal: public NoCopy {
       int cnt;
       if(data->shared_data){
         cnt = data->marshallable_entity.WriteToFd(fd);
+	Log_info("wrote %d bytes of ghost %d", cnt, fd);
       }
       else{
         cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
+	Log_info("wrote %d bytes of normal %d", cnt, fd);
       }
-
 #ifdef RPC_STATISTICS
       if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
       else{
@@ -561,6 +564,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
 
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   char byte0;
+  Log_info("peeking data of %d", m.peek(&byte0, 1));
   verify(m.peek(&byte0, 1) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[9];
@@ -705,6 +709,7 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m, const rrr::MarshallDeputy& rhs)
   if(rhs.bypass_to_socket_){
     m.bypass_copying(rhs, rhs.EntitySize());
   }else{
+    //Log_info("size is %d", rhs.EntitySize());
     m << rhs.kind_;
     verify(rhs.sp_data_); // must be non-empty
     rhs.sp_data_->ToMarshal(m);

@@ -21,6 +21,7 @@ static int volatile xxx =
 
 static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
+  return m;
   m << length;
   if(shared_ptr_apprch){
 	  m << std::string(operation_test.get(), length);

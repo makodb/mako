@@ -184,6 +184,7 @@ size_t Marshal::write(const void* p, size_t n) {
 }
 
 size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
+  Log_info("bypassing copying %d", sz);
   assert(data.EntitySize() == sz);
   assert(tail_ == nullptr || tail_->next == nullptr);
 
@@ -194,13 +195,16 @@ size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
     tail_->next = new chunk(data, sz);
     tail_ = tail_->next;
   } else{
-    tail_->resize_to_current();
+    Log_info("resizing current chunk %d", tail_->write_idx);
+    //tail_->resize_to_current();
+    //verify(tail_->fully_written());
     tail_->next = new chunk(data, sz);
     tail_ = tail_->next;
   }
   write_cnt_ += sz;
   content_size_ += sz;
   assert(content_size_ == content_size_slow());
+  //Log_info("final size is %d", write_cnt_);
   return sz;
 }
 
@@ -241,7 +245,7 @@ size_t Marshal::read(void* p, size_t n) {
 size_t Marshal::peek(void* p, size_t n) const {
     assert(tail_ == nullptr || tail_->next == nullptr);
     assert(empty() || (head_ != nullptr && !head_->fully_read()));
-
+    Log_info("is peeking empty %d %d", empty(), n);
     char* pc = (char *) p;
     size_t n_peek = 0;
     chunk* chnk = head_;

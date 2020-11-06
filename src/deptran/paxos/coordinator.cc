@@ -280,7 +280,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
       verify(0);
     }
     verify(phase_ == Phase::COMMIT);
-    commit_callback_();
+    //commit_callback_();
     GotoNextPhase();
 }
 
