@@ -156,17 +156,17 @@ public:
 	  char buf[9];
 	  size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
 	  if(!write)return bsize;
-	  rrr::blocking_write(fd, buf, bsize);
+	  blocking_write(fd, buf, bsize);
 	  //verify(wt == bsize);
 	  return bsize;
   }
 
   size_t WriteToFd(int fd) override {
     size_t sz = 0;
-    sz += rrr::blocking_write(fd, &length, sizeof(int));
+    sz += blocking_write(fd, &length, sizeof(int));
     sz += length_as_v64(true, fd);
     if(true){
-      sz += rrr::blocking_write(fd, operation_test.get(), length);
+      sz += blocking_write(fd, operation_test.get(), length);
     } else{
       sz += ::write(fd, log_entry.c_str(), length);
     }
@@ -275,7 +275,7 @@ public:
     }
     memcpy(p + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
-    sz += rrr::blocking_write(fd, p, wrt);
+    sz += blocking_write(fd, p, wrt);
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
     }

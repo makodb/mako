@@ -102,7 +102,7 @@ class MarshallDeputy {
 
   virtual size_t WriteToFd(int fd) {
       size_t sz = 0;
-      sz += rrr::blocking_write(fd, &kind_, sizeof(kind_));
+      sz += blocking_write(fd, &kind_, sizeof(kind_));
       sz =  sz + sp_data_.get()->WriteToFd(fd);
       //Log_info("Written bytes %d", sz);
       return sz;

@@ -15,8 +15,6 @@
 
 namespace rrr {
 
-size_t blocking_write(int fd, const void* p, size_t len);
-
 int set_nonblocking(int fd, bool nonblocking);
 
 int find_open_port();
