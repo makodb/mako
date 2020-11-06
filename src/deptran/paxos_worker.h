@@ -20,7 +20,14 @@ inline void read_log(const char* log, int length, const char* custom){
 
 inline size_t blocking_write(int fd, const void* p, size_t len){
   size_t sz = 0;
-  while((sz = ::write(fd, p, len)) != -1){}
+  const char* x = (const char*)p;
+  while(sz < len){
+	  int wrt = ::write(fd, x + sz, len-sz);
+	  if(wrt == -1)continue;
+	  sz += wrt;
+  }
+  verify(sz == len);
+  //while((sz = ::write(fd, p, len)) != -1){}
   return sz;
 }
 
@@ -143,7 +150,7 @@ public:
   shared_ptr<char> operation_test;
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = false;
+    bypass_to_socket_ = true;
   }
   virtual ~LogEntry() {
     //read_log(operation_test.get(), length, "while destroying");
@@ -169,13 +176,16 @@ public:
 
   size_t WriteToFd(int fd) override {
     size_t sz = 0;
+    //Log_info("length is %d", length);
     sz += blocking_write(fd, &length, sizeof(int));
     sz += length_as_v64(true, fd);
+    //Log_info("length is %d and written is %d", length, sz);
     if(true){
       sz += blocking_write(fd, operation_test.get(), length);
     } else{
-      sz += ::write(fd, log_entry.c_str(), length);
+      sz += blocking_write(fd, log_entry.c_str(), length);
     }
+    verify(sz == EntitySize());
     //Log_info("written bytes %d", sz);
     return sz;
   }
@@ -201,7 +211,7 @@ public:
   vector<shared_ptr<MarshallDeputy>> cmds{};
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = false;
+    bypass_to_socket_ = true;
   }
   virtual ~BulkPaxosCmd() {
       slots.clear();
@@ -281,11 +291,14 @@ public:
     }
     memcpy(p + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
+    //Log_info("total size is %d %d", wrt, batch);
     sz += blocking_write(fd, p, wrt);
+    verify(sz == wrt);
     for (auto cmdsp : cmds) {
       sz += cmdsp.get()->WriteToFd(fd);
     }
-    //Log_info("Written bytes of size %d", sz); 
+    free(p);
+    Log_info("Written bytes of size %d %d", sz, EntitySize()); 
     verify(sz == EntitySize());
     return sz;
   }

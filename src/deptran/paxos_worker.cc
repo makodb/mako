@@ -79,7 +79,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   //if (n_current > n_tot) {
     n_current++;
     if(site_info_->locale_id == 0){
-	    //if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
+	   if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
     }
     if (n_current >= n_tot) {
       //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);

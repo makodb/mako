@@ -100,10 +100,21 @@ class MarshallDeputy {
       return sizeof(int32_t) + sp_data_.get()->EntitySize();
     }
 
-
+  size_t blocking_write_2(int fd, const void* p, size_t len){
+  size_t sz = 0;
+  const char* x = (const char*)p;
+  while(sz < len){
+          int wrt = ::write(fd, x + sz, len-sz);
+          if(wrt == -1)continue;
+          sz += wrt;
+  }
+  verify(sz == len);
+  //while((sz = ::write(fd, p, len)) != -1){}
+  return sz;
+}
   virtual size_t WriteToFd(int fd) {
       size_t sz = 0;
-      while((sz = ::write(fd, p, len)) != -1){}
+      sz = blocking_write_2(fd, &kind_, sizeof(kind_));
       sz =  sz + sp_data_.get()->WriteToFd(fd);
       //Log_info("Written bytes %d", sz);
       return sz;
@@ -277,7 +288,7 @@ class Marshal: public NoCopy {
         Log_debug("Missed RPC stats, shared data used in raw_bytes");
       }
 #endif // RPC_STATISTICS
-      if(cnt == -1)verify(0);
+      //if(cnt == -1)verify(0);
       if (cnt > 0) {
         read_idx += cnt;
       }
