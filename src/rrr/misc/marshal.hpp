@@ -107,7 +107,7 @@ class MarshallDeputy {
     }
 
     size_t track_write_2(int fd, const void* p, size_t len, int offset){
-      sz = ::write(fd, p + offset, len - offset);
+      size_t sz = ::write(fd, p + offset, len - offset);
       if(sz == -1){
         return 0;
       }
