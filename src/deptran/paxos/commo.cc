@@ -124,6 +124,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
+    md.reset_write_offsets();
     auto f = proxy->async_BulkAccept(md, fuattr);
     Future::safe_release(f);
   }
@@ -145,6 +146,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, shared_ptr<Marshallable> cm
           e->FeedResponse(true);
         };
         MarshallDeputy md(cmd);
+	md.reset_write_offsets();
         auto f = proxy->async_BulkDecide(md, fuattr);
         Future::safe_release(f);
     }

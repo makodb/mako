@@ -56,6 +56,10 @@ class Marshallable {
   virtual size_t need_to_write(){
     return EntitySize() - written_to_socket;
   }
+
+  virtual void reset_write_offsets(){
+     written_to_socket = 0;
+  }
 };
 
 class MarshallDeputy {
@@ -93,6 +97,12 @@ class MarshallDeputy {
       if(sp_data_.get()->bypass_to_socket_){
         bypass_to_socket_ = true;
       }
+      //written_to_socket = 0;
+    }
+
+    virtual void reset_write_offsets(){
+	written_to_socket = 0;
+	sp_data_->reset_write_offsets();
     }
 
     rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
@@ -125,13 +135,14 @@ class MarshallDeputy {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
-	  if(sz > 0){
-	     written_to_socket += sz;
-	  }
-	  if(written_to_socket < sizeof(kind_))return sz;
+          if(written_to_socket < sizeof(kind_))return sz;
         }
-        written_to_socket += sp_data_.get()->WriteToFd(fd);
-        //Log_info("Written bytes %d", sz);
+	//Log_info("Written to socket kind_ %d %d", sz, kind_);
+	//sp_data_.get()->reset_write_offset();
+        sz = sp_data_.get()->WriteToFd(fd);
+        //Log_info("Written bytes of ghost chunk 1 %d %d", written_to_socket, kind_); 
+	written_to_socket += sz;
+        //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
 
@@ -295,7 +306,7 @@ class Marshal: public NoCopy {
       }
       else{
         cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-	Log_info("wrote %d bytes of normal %d", cnt, fd);
+	//Log_info("wrote %d bytes of normal %d", cnt, fd);
       }
 #ifdef RPC_STATISTICS
       if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
@@ -730,7 +741,7 @@ inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
   return m;
 }
 
-inline rrr::Marshal& operator<<(rrr::Marshal& m, const rrr::MarshallDeputy& rhs) {
+inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) {
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
   verify(rhs.sp_data_);
   if(rhs.bypass_to_socket_){

@@ -75,9 +75,11 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                const function<void()> &cb) {
+  //Log_info("here accept");
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   *valid = 1;
+  //Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
@@ -101,10 +103,12 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                const function<void()> &cb) {
+  //Log_info("here");
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   vector<shared_ptr<PaxosData>> commit_exec;
   mtx_.lock();
-  //Log_debug("multi-paxos scheduler decide for slot: %lx", slot_id);
+  //Log_info("here");
+  //Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];

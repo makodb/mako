@@ -172,7 +172,7 @@ public:
   }
 
   size_t WriteToFd(int fd) override {
-    size_t sz = 0;
+    size_t sz = 0, prev = written_to_socket;
     if(written_to_socket < sizeof(int)){
       sz = track_write(fd, &length, sizeof(int), written_to_socket);
       if(sz > 0)written_to_socket += sz;
@@ -195,7 +195,7 @@ public:
       if(written_to_socket < sizeof(int) + to_write + length)return sz;
     }
     verify(written_to_socket == EntitySize());
-    return sz;
+    return written_to_socket - prev;
   }
 };
 
@@ -306,6 +306,7 @@ public:
 
   size_t WriteToFd(int fd) override {
     size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
+    //Log_info("written here %d %d", to_write, written_to_socket);
     if(written_to_socket < to_write){
       sz = track_write(fd, serialized_slots, to_write, written_to_socket);
       if(sz > 0){
@@ -313,20 +314,27 @@ public:
       }
       if(written_to_socket < to_write)return written_to_socket - prev;
     }
-    Log_info("written here %d", written_to_socket);
+    //Log_info("written here %d", written_to_socket);
     for (auto cmdsp : cmds) {
       if(cmdsp.get()->need_to_write() == 0)continue;
       sz = cmdsp.get()->WriteToFd(fd);
       if(sz > 0){
         written_to_socket += sz;
       }
-      Log_info("written here %d", written_to_socket);
+      //Log_info("written here %d %d", written_to_socket, EntitySize());
       if(cmdsp.get()->need_to_write() != 0)return written_to_socket - prev;
     }
-    free(serialized_slots);
-    Log_info("written to socket %d  and size is %d", written_to_socket, EntitySize());
+    //free(serialized_slots);
+    //Log_info("written to socket %d  and size is %d", written_to_socket, EntitySize());
     verify(written_to_socket == EntitySize());
     return written_to_socket - prev;
+  }
+
+  void reset_write_offsets() override {
+	written_to_socket = 0;
+	for(auto cmdsp : cmds){
+	   cmdsp.get()->reset_write_offsets();
+	}
   }
 };
 
