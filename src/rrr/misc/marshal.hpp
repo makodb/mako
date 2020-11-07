@@ -31,6 +31,7 @@ class Marshallable {
  public:
   int32_t kind_{0};
   bool bypass_to_socket_ = false;
+  size_t written_to_socket = 0;
 //  int32_t __debug_{10};
   Marshallable() = delete;
   explicit Marshallable(int32_t k): kind_(k) {};
@@ -51,6 +52,10 @@ class Marshallable {
     verify(0);
     return 0;
   }
+
+  virtual size_t need_to_write(){
+    return EntitySize() - written_to_socket;
+  }
 };
 
 class MarshallDeputy {
@@ -62,6 +67,7 @@ class MarshallDeputy {
 
   public:
     bool bypass_to_socket_ = false;
+    size_t written_to_socket = 0;
     std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
     int32_t kind_{0};
     enum Kind {
@@ -100,26 +106,32 @@ class MarshallDeputy {
       return sizeof(int32_t) + sp_data_.get()->EntitySize();
     }
 
-  size_t blocking_write_2(int fd, const void* p, size_t len){
-  size_t sz = 0;
-  const char* x = (const char*)p;
-  while(sz < len){
-	  Log_info("akdkskka");
-          int wrt = ::write(fd, x + sz, len-sz);
-          if(wrt == -1)continue;
-          sz += wrt;
-  }
-  verify(sz == len);
-  //while((sz = ::write(fd, p, len)) != -1){}
-  return sz;
-}
-  virtual size_t WriteToFd(int fd) {
-      size_t sz = 0;
-      sz = blocking_write_2(fd, &kind_, sizeof(kind_));
-      sz =  sz + sp_data_.get()->WriteToFd(fd);
-      //Log_info("Written bytes %d", sz);
+    size_t track_write_2(int fd, const void* p, size_t len, int offset){
+      sz = ::write(fd, p + offset, len - offset);
+      if(sz == -1){
+        return 0;
+      }
+      written_to_socket += sz;
       return sz;
-  }
+    }
+
+    virtual size_t need_to_write(){
+      // for marshalldeputy we only write headers. The rest is handled by Marshallable
+      return sizeof(kind_) - written_to_socket;
+    }
+
+    virtual size_t WriteToFd(int fd) {
+        size_t sz = 0;
+        if(need_to_write() > 0){
+          sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
+        }
+        if(need_to_write() > 0){
+          return sz;
+        }
+        sz =  sz + sp_data_.get()->WriteToFd(fd);
+        //Log_info("Written bytes %d", sz);
+        return sz;
+    }
 
     ~MarshallDeputy() = default;
 };

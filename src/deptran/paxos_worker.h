@@ -18,18 +18,12 @@ inline void read_log(const char* log, int length, const char* custom){
         Log_info("commit id %lld and length %d from %s", cid, length, custom);
 }
 
-inline size_t blocking_write(int fd, const void* p, size_t len){
-  size_t sz = 0;
-  const char* x = (const char*)p;
-  while(sz < len){
-	  Log_info("Saksakkas %d %d", sz, len);
-	  int wrt = ::write(fd, x + sz, len-sz);
-	  Log_info("error is %d", errno);
-	  if(wrt == -1){sleep(5);continue;}
-	  sz += wrt;
+inline size_t track_write(int fd, const void* p, size_t len, int offset){
+  if(offset == len)return 0;
+  sz = ::write(fd, p + offset, len - offset);
+  if(sz == -1){
+    return 0;
   }
-  verify(sz == len);
-  //while((sz = ::write(fd, p, len)) != -1){}
   return sz;
 }
 
@@ -150,45 +144,57 @@ public:
   int length = 0;
   std::string log_entry;
   shared_ptr<char> operation_test;
+  char *len_v64 = nullptr;
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
     bypass_to_socket_ = true;
   }
+
   virtual ~LogEntry() {
-    //read_log(operation_test.get(), length, "while destroying");
     if (operation_ != nullptr) delete operation_;
     operation_ = nullptr;
     //free(operation_test.get());
   }
+
   virtual Marshal& ToMarshal(Marshal&) const override;
   virtual Marshal& FromMarshal(Marshal&) override;
   size_t EntitySize() override {
-    return sizeof(int) + length_as_v64() +  length;
+    return sizeof(int) + length_as_v64() + length;
   }
 
-  size_t length_as_v64(bool write = false, int fd = -1){
+  size_t length_as_v64(){
+    if(!len_v64){
+      len_v64 = (char*)malloc(9* sizeof(char));
+    }
     v64 v_len = length;
-	  char buf[9];
-	  size_t bsize = rrr::SparseInt::dump(v_len.get(), buf);
-	  if(!write)return bsize;
-	  verify(blocking_write(fd, buf, bsize) == bsize);
-	  //verify(wt == bsize);
+	  size_t bsize = rrr::SparseInt::dump(v_len.get(), len_v64);
 	  return bsize;
   }
 
   size_t WriteToFd(int fd) override {
     size_t sz = 0;
-    //Log_info("length is %d", length);
-    sz += blocking_write(fd, &length, sizeof(int));
-    sz += length_as_v64(true, fd);
-    //Log_info("length is %d and written is %d", length, sz);
-    if(true){
-      sz += blocking_write(fd, operation_test.get(), length);
-    } else{
-      sz += blocking_write(fd, log_entry.c_str(), length);
+    if(written_to_socket < sizeof(int)){
+      sz = track_write(fd, &length, sizeof(int), written_to_socket);
+      if(sz > 0)written_to_socket += sz;
+      if(written_to_socket < sizeof(int))return sz;
     }
-    verify(sz == EntitySize());
-    //Log_info("written bytes %d", sz);
+    size_t to_write = length_as_v64();
+    if(written_to_socket < sizeof(int) + to_write){
+      sz = track_write(fd, len_v64, to_write, written_to_socket - sizeof(int));
+      if(sz > 0)written_to_socket += sz;
+      if(written_to_socket < sizeof(int) + to_write)return sz;
+    }
+    if(written_to_socket < sizeof(int) + to_write + length) {
+      if (true) {
+        sz = track_write(fd, operation_test.get(), length, written_to_socket - sizeof(int) - to_write);
+      } else {
+        sz = track_write(fd, log_entry.c_str(), length, written_to_socket - sizeof(int) - to_write);
+        //sz += blocking_write(fd, log_entry.c_str(), length);
+      }
+      if(sz > 0)written_to_socket += sz;
+      if(written_to_socket < sizeof(int) + to_write + length)return sz;
+    }
+    verify(written_to_socket == EntitySize());
     return sz;
   }
 };
@@ -211,6 +217,7 @@ public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   vector<shared_ptr<MarshallDeputy>> cmds{};
+  char *serialized_slots = nullptr;
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
     bypass_to_socket_ = true;
@@ -272,39 +279,54 @@ public:
     return sz;
   }
 
-  size_t WriteToFd(int fd) override {
-    //Log_info("writing to file desc");	  
+  size_t serialize_slots_ballots(){
     int32_t batch = slots.size();
     size_t total_sz = 3*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
-    char *p = (char*)malloc(total_sz*sizeof(char));
+    if(serialized_slots){
+      return total_sz;
+    }
+    serialized_slots = (char*)malloc(total_sz*sizeof(char));
     int wrt = 0;
-    size_t sz = 0;
-    memcpy(p + wrt, &batch, sizeof(int32_t));
+    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
     for(auto i : slots){
-      memcpy(p + wrt, &i, sizeof(slotid_t));
+      memcpy(serialized_slots + wrt, &i, sizeof(slotid_t));
       wrt += sizeof(slotid_t);
     }
-    memcpy(p + wrt, &batch, sizeof(int32_t));
+    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
     for(auto i : ballots){
-      memcpy(p + wrt, &i, sizeof(ballot_t));
+      memcpy(serialized_slots + wrt, &i, sizeof(ballot_t));
       wrt += sizeof(ballot_t);
     }
-    memcpy(p + wrt, &batch, sizeof(int32_t));
+    memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
-    //Log_info("total size is %d %d", wrt, batch);
-    sz += blocking_write(fd, p, wrt);
-    verify(sz == wrt);
-    for (auto cmdsp : cmds) {
-      sz += cmdsp.get()->WriteToFd(fd);
+    return total_sz;
+  }
+
+  size_t WriteToFd(int fd) override {
+    size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
+    if(written_to_socket < to_write){
+      sz = track_write(fd, serialized_slots, to_write, written_to_socket);
+      if(sz > 0){
+        written_to_socket += sz;
+      }
+      if(written_to_socket < to_write)return written_to_socket - prev;
     }
-    free(p);
-    Log_info("Written bytes of size %d %d", sz, EntitySize()); 
-    verify(sz == EntitySize());
-    return sz;
+    for (auto cmdsp : cmds) {
+      if(cmdsp.get()->need_to_write() == 0)continue;
+      sz = cmdsp.get()->WriteToFd(fd);
+      if(sz > 0){
+        written_to_socket += sz;
+      }
+      if(cmdsp.get()->need_to_write() != 0)return written_to_socket - prev;
+    }
+    free(serialized_slots);
+    verify(written_to_socket == EntitySize());
+    return written_to_socket - prev;
   }
 };
+
 class PaxosWorker {
 private:
   inline void _Submit(shared_ptr<Marshallable>);
