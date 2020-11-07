@@ -313,15 +313,18 @@ public:
       }
       if(written_to_socket < to_write)return written_to_socket - prev;
     }
+    Log_info("written here %d", written_to_socket);
     for (auto cmdsp : cmds) {
       if(cmdsp.get()->need_to_write() == 0)continue;
       sz = cmdsp.get()->WriteToFd(fd);
       if(sz > 0){
         written_to_socket += sz;
       }
+      Log_info("written here %d", written_to_socket);
       if(cmdsp.get()->need_to_write() != 0)return written_to_socket - prev;
     }
     free(serialized_slots);
+    Log_info("written to socket %d  and size is %d", written_to_socket, EntitySize());
     verify(written_to_socket == EntitySize());
     return written_to_socket - prev;
   }

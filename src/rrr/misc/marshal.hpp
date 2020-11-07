@@ -118,20 +118,21 @@ class MarshallDeputy {
 
     virtual size_t need_to_write(){
       // for marshalldeputy we only write headers. The rest is handled by Marshallable
-      return sizeof(kind_) - written_to_socket;
+      return EntitySize() - written_to_socket;
     }
 
     virtual size_t WriteToFd(int fd) {
-        size_t sz = 0;
-        if(need_to_write() > 0){
+        size_t sz = 0, prev = written_to_socket;
+        if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
+	  if(sz > 0){
+	     written_to_socket += sz;
+	  }
+	  if(written_to_socket < sizeof(kind_))return sz;
         }
-        if(need_to_write() > 0){
-          return sz;
-        }
-        sz =  sz + sp_data_.get()->WriteToFd(fd);
+        written_to_socket += sp_data_.get()->WriteToFd(fd);
         //Log_info("Written bytes %d", sz);
-        return sz;
+        return written_to_socket - prev;
     }
 
     ~MarshallDeputy() = default;
