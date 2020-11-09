@@ -136,6 +136,7 @@ const size_t Marshal::raw_bytes::min_size = 8192;
 Marshal::~Marshal() {
     chunk* chnk = head_;
     while (chnk != nullptr) {
+	//Log_info("wkwkakakak");
         chunk* next = chnk->next;
         delete chnk;
         chnk = next;
@@ -148,6 +149,7 @@ size_t Marshal::content_size_slow() const {
     size_t sz = 0;
     chunk* chnk = head_;
     while (chnk != nullptr) {
+	//Log_info("wkwkakakak");
         sz += chnk->content_size();
         chnk = chnk->next;
     }
@@ -215,6 +217,7 @@ size_t Marshal::read(void* p, size_t n) {
     char* pc = (char *) p;
     size_t n_read = 0;
     while (n_read < n && head_ != nullptr && head_->content_size() > 0) {
+	//Log_info("wkwkakakak");
         size_t cnt = head_->read(pc + n_read, n - n_read);
         if (head_->fully_read()) {
             if (tail_ == head_) {
@@ -250,6 +253,7 @@ size_t Marshal::peek(void* p, size_t n) const {
     size_t n_peek = 0;
     chunk* chnk = head_;
     while (chnk != nullptr && n - n_peek > 0) {
+	//Log_info("wkwkakakak");
         size_t cnt = chnk->peek(pc + n_peek, n - n_peek);
         if (cnt == 0) {
             // no more data to peek, quit
@@ -298,6 +302,7 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
     if ((head_ == nullptr && tail_ == nullptr) || tail_->fully_written()) {
         // efficiently copy data by only copying pointers
         while (n_fetch < n) {
+	   //Log_info("wkwkakakak");
             // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
             //       that only one Marshal should be able to write to it! For the
             //       given 2 use cases, it works.
@@ -356,6 +361,7 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
 size_t Marshal::write_to_fd(int fd) {
     size_t n_write = 0;
     while (!empty()) {
+	Log_info("blaslallalla");
         int cnt = head_->write_to_fd(fd);
         if (head_->fully_read()) {
             if (head_ == tail_) {

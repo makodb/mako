@@ -142,7 +142,7 @@ class MarshallDeputy {
         sz = sp_data_.get()->WriteToFd(fd);
         //Log_info("Written bytes of ghost chunk 1 %d %d", written_to_socket, kind_); 
 	written_to_socket += sz;
-        //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
+        Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
 
@@ -171,7 +171,7 @@ class Marshal: public NoCopy {
       marshallable_entity = md;
       size = sz;
       shared_data = true;
-      //Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
+      Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
     }
 
     size_t resize_to(size_t new_sz){

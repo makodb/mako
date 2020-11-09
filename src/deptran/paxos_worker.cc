@@ -78,7 +78,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   
   //if (n_current > n_tot) {
     n_current++;
-    //Log_info("reached here %d", (int)n_current);
+    Log_info("reached here %d", (int)n_current);
     if(site_info_->locale_id == 0){
 	   if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
     }
@@ -270,7 +270,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
     pw->GetPollMgr()->add(sp_job);
     sent += cnt;
     if(sent % 2 == 0)Log_info("Total submits %d", sent);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   pthread_exit(nullptr);
   return nullptr;
