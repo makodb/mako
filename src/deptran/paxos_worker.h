@@ -21,7 +21,7 @@ inline void read_log(const char* log, int length, const char* custom){
 inline size_t track_write(int fd, const void* p, size_t len, int offset){
   const char* x = (const char*)p;
   size_t sz = ::write(fd, x + offset, len - offset);
-  if(sz == -1){
+  if(sz <= 0){
     return 0;
   }
   return sz;
@@ -331,10 +331,10 @@ public:
   }
 
   void reset_write_offsets() override {
-	written_to_socket = 0;
-	for(auto cmdsp : cmds){
-	   cmdsp.get()->reset_write_offsets();
-	}
+	  written_to_socket = 0;
+	  for(auto cmdsp : cmds){
+	     cmdsp.get()->reset_write_offsets();
+	  }
   }
 };
 

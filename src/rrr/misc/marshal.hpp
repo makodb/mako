@@ -119,10 +119,9 @@ class MarshallDeputy {
     size_t track_write_2(int fd, const void* p, size_t len, int offset){
       const char* x = (const char*)p;
       size_t sz = ::write(fd, x + offset, len - offset);
-      if(sz == -1){
+      if(sz <= 0){
         return 0;
       }
-      written_to_socket += sz;
       return sz;
     }
 
@@ -135,14 +134,16 @@ class MarshallDeputy {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
+          written_to_socket += sz;
           if(written_to_socket < sizeof(kind_))return sz;
         }
-	//Log_info("Written to socket kind_ %d %d", sz, kind_);
-	//sp_data_.get()->reset_write_offset();
+        //Log_info("Written to socket kind_ %d %d", sz, kind_);
+        // sp_data_.get()->reset_write_offset();
         sz = sp_data_.get()->WriteToFd(fd);
-        //Log_info("Written bytes of ghost chunk 1 %d %d", written_to_socket, kind_); 
-	written_to_socket += sz;
+        //Log_info("Written bytes of ghost chunk 1 %d %d", written_to_socket, kind_);
+	      written_to_socket += sz;
         Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
+        //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
 
