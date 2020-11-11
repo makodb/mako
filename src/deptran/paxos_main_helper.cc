@@ -286,6 +286,10 @@ static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
 	l_.lock();
 	submit_tot++;
+	if(false && submit_tot != 1000){
+		l_.unlock();
+		return;	
+	}
 	//endTime = std::chrono::high_resolution_clock::now();
 	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
 	//submit_queue_nc.push(paxos_entry);

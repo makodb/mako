@@ -22,6 +22,7 @@ inline size_t track_write(int fd, const void* p, size_t len, int offset){
   const char* x = (const char*)p;
   size_t sz = ::write(fd, x + offset, len - offset);
   if(sz <= 0){
+    Log_info("Gahdamn, speed it");
     return 0;
   }
   return sz;
@@ -144,7 +145,7 @@ public:
   int length = 0;
   std::string log_entry;
   shared_ptr<char> operation_test;
-  char *len_v64 = nullptr;
+  char len_v64[9];
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
     bypass_to_socket_ = true;
@@ -163,12 +164,10 @@ public:
   }
 
   size_t length_as_v64(){
-    if(!len_v64){
-      len_v64 = (char*)malloc(9* sizeof(char));
-    }
     v64 v_len = length;
-	  size_t bsize = rrr::SparseInt::dump(v_len.get(), len_v64);
-	  return bsize;
+    size_t bsize = rrr::SparseInt::dump(v_len.get(), len_v64);
+    //Log_info("size of v64 obj is %d", bsize);
+    return bsize;
   }
 
   size_t WriteToFd(int fd) override {
@@ -176,12 +175,14 @@ public:
     if(written_to_socket < sizeof(int)){
       sz = track_write(fd, &length, sizeof(int), written_to_socket);
       if(sz > 0)written_to_socket += sz;
+      assert(sz >= 0);
       if(written_to_socket < sizeof(int))return sz;
     }
     size_t to_write = length_as_v64();
     if(written_to_socket < sizeof(int) + to_write){
       sz = track_write(fd, len_v64, to_write, written_to_socket - sizeof(int));
       if(sz > 0)written_to_socket += sz;
+      assert(sz >= 0);
       if(written_to_socket < sizeof(int) + to_write)return sz;
     }
     if(written_to_socket < sizeof(int) + to_write + length) {
@@ -192,10 +193,17 @@ public:
         //sz += blocking_write(fd, log_entry.c_str(), length);
       }
       if(sz > 0)written_to_socket += sz;
+      assert(sz >= 0);
       if(written_to_socket < sizeof(int) + to_write + length)return sz;
     }
-    verify(written_to_socket == EntitySize());
+    assert(written_to_socket == EntitySize());
+    assert(written_to_socket - prev >= 0);
     return written_to_socket - prev;
+  }
+
+  void reset_write_offsets() override {
+          written_to_socket = 0;
+          
   }
 };
 
@@ -282,7 +290,7 @@ public:
   size_t serialize_slots_ballots(){
     int32_t batch = slots.size();
     size_t total_sz = 3*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
-    if(serialized_slots){
+    if(serialized_slots != nullptr){
       return total_sz;
     }
     serialized_slots = (char*)malloc(total_sz*sizeof(char));
@@ -312,6 +320,7 @@ public:
       if(sz > 0){
         written_to_socket += sz;
       }
+      verify(sz >= 0);
       if(written_to_socket < to_write)return written_to_socket - prev;
     }
     //Log_info("written here %d", written_to_socket);
@@ -321,7 +330,9 @@ public:
       if(sz > 0){
         written_to_socket += sz;
       }
+      verify(sz >= 0);
       //Log_info("written here %d %d", written_to_socket, EntitySize());
+      verify(written_to_socket - prev >= 0);
       if(cmdsp.get()->need_to_write() != 0)return written_to_socket - prev;
     }
     //free(serialized_slots);

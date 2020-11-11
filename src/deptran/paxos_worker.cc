@@ -326,7 +326,7 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
     //pw->n_current+= cnt;
     auto secs = std::chrono::duration_cast<std::chrono::nanoseconds>(endt - strt).count();
     //if(sent % 2 == 0)Log_info("Time spent is submitting the job %f", secs/(1000.0*1000.0*1000.0));
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   pthread_exit(nullptr);
   return nullptr;

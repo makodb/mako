@@ -9,7 +9,7 @@ namespace janus {
 CoordinatorMultiPaxos::CoordinatorMultiPaxos(uint32_t coo_id,
                                              int32_t benchmark,
                                              ClientControlServiceImpl* ccsi,
-                                             uint32_t thread_id)
+                                            uint32_t thread_id)
     : Coordinator(coo_id, benchmark, ccsi, thread_id) {
 }
 
@@ -268,9 +268,9 @@ void BulkCoordinatorMultiPaxos::Accept() {
 
 void BulkCoordinatorMultiPaxos::Commit() {
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
-    //commit_callback_();
-    //GotoNextPhase();
-    //return;
+    commit_callback_();
+    GotoNextPhase();
+    return;
     auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_);
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {

@@ -120,6 +120,7 @@ class MarshallDeputy {
       const char* x = (const char*)p;
       size_t sz = ::write(fd, x + offset, len - offset);
       if(sz <= 0){
+        Log_info("Gahdamn, speed it");
         return 0;
       }
       return sz;
@@ -137,12 +138,12 @@ class MarshallDeputy {
           written_to_socket += sz;
           if(written_to_socket < sizeof(kind_))return sz;
         }
-        //Log_info("Written to socket kind_ %d %d", sz, kind_);
+        Log_info("Written bytes of ghost chunk 1 %d %d", sz, kind_);
         // sp_data_.get()->reset_write_offset();
         sz = sp_data_.get()->WriteToFd(fd);
-        //Log_info("Written bytes of ghost chunk 1 %d %d", written_to_socket, kind_);
+        Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
 	      written_to_socket += sz;
-        Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
+        Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, need_to_write());
         //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
