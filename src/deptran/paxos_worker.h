@@ -20,9 +20,10 @@ inline void read_log(const char* log, int length, const char* custom){
 
 inline size_t track_write(int fd, const void* p, size_t len, int offset){
   const char* x = (const char*)p;
-  size_t sz = ::write(fd, x + offset, len - offset);
-  if(sz <= 0){
-    Log_info("Gahdamn, speed it");
+  ssize_t sz = ::write(fd, x + offset, len - offset);
+  if(sz > len - offset || sz <= 0){
+    std::cout << "gahdamn " <<  sz << std::endl;
+    //Log_info("Gahdamn, speed it %lld", sz);
     return 0;
   }
   return sz;
@@ -148,7 +149,7 @@ public:
   char len_v64[9];
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = true;
+    bypass_to_socket_ = false;
   }
 
   virtual ~LogEntry() {
@@ -228,7 +229,7 @@ public:
   char *serialized_slots = nullptr;
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = true;
+    bypass_to_socket_ = false;
   }
   virtual ~BulkPaxosCmd() {
       slots.clear();

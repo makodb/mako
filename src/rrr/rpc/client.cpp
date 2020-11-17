@@ -187,8 +187,8 @@ void Client::handle_write() {
 
   out_l_.lock();
   out_.write_to_fd(sock_);
-  Log_info("Written here...");
   if (out_.empty()) {
+    Log_info("Client handle_write setting read mode here...");
     pollmgr_->update_mode(this, Pollable::READ);
   }
   out_l_.unlock();
@@ -205,6 +205,7 @@ void Client::handle_read() {
   }
 
   for (;;) {
+    Log_info("stuck in client handle_read loop");
     i32 packet_size;
     int n_peek = in_.peek(&packet_size, sizeof(i32));
     if (n_peek == sizeof(i32)
@@ -303,6 +304,7 @@ void Client::end_request() {
 
   // always enable write events since the code above gauranteed there
   // will be some data to send
+  Log_info("Client end_request setting write mode here....");
   pollmgr_->update_mode(this, Pollable::READ | Pollable::WRITE);
 
   out_l_.unlock();

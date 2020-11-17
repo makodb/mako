@@ -201,18 +201,24 @@ class Epoll {
     struct epoll_event evlist[max_nev];
     int timeout = 1; // milli, 0.001 sec
 //    int timeout = 0; // busy loop
+    //Log_info("epoll::wait entering here....");
     int nev = epoll_wait(poll_fd_, evlist, max_nev, timeout);
+    //Log_info("epoll::wait exiting here.....");
+    //Log_info("number of events are %d", nev);
     for (int i = 0; i < nev; i++) {
+      Log_info("number of events are %d", nev);
       Pollable* poll = (Pollable *) evlist[i].data.ptr;
       verify(poll != nullptr);
-
-      if (evlist[i].events & EPOLLIN) {
-          poll->handle_read();
-      }
       if (evlist[i].events & EPOLLOUT) {
+	  //Log_info("write needed");
           poll->handle_write();
       }
-
+      
+      if (evlist[i].events & EPOLLIN) {
+	  //Log_info("read needed");
+          poll->handle_read();
+      }
+      
       // handle error after handle IO, so that we can at least process something
       if (evlist[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
           poll->handle_error();

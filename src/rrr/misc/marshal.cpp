@@ -360,6 +360,7 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
 
 size_t Marshal::write_to_fd(int fd) {
     size_t n_write = 0;
+    bool ok = false;
     while (!empty()) {
 	Log_info("blaslallalla");
         int cnt = head_->write_to_fd(fd);
@@ -371,6 +372,7 @@ size_t Marshal::write_to_fd(int fd) {
             chunk* chnk = head_;
             head_ = head_->next;
             delete chnk;
+	    ok = true;
         }
         if (cnt <= 0) {
 	    Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
@@ -380,6 +382,8 @@ size_t Marshal::write_to_fd(int fd) {
         assert(content_size_ >= (size_t) cnt);
         content_size_ -= cnt;
         n_write += cnt;
+	//if(ok) break;
+
     }
     assert(content_size_ == content_size_slow());
     return n_write;
@@ -395,7 +399,7 @@ Marshal::bookmark* Marshal::set_bookmark(size_t n) {
         if (head_ == nullptr) {
             head_ = new chunk;
             tail_ = head_;
-        } else if (tail_->fully_written()) {
+        } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
             tail_->next = new chunk;
             tail_ = tail_->next;
         }

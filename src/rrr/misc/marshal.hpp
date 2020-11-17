@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <limits>
-
+#include<iostream>
 #include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
@@ -116,10 +116,10 @@ class MarshallDeputy {
       return sizeof(int32_t) + sp_data_.get()->EntitySize();
     }
 
-    size_t track_write_2(int fd, const void* p, size_t len, int offset){
+    size_t track_write_2(int fd, const void* p, size_t len, size_t offset){
       const char* x = (const char*)p;
       size_t sz = ::write(fd, x + offset, len - offset);
-      if(sz <= 0){
+      if(sz > len - offset || sz <= 0){
         Log_info("Gahdamn, speed it");
         return 0;
       }
@@ -141,8 +141,9 @@ class MarshallDeputy {
         Log_info("Written bytes of ghost chunk 1 %d %d", sz, kind_);
         // sp_data_.get()->reset_write_offset();
         sz = sp_data_.get()->WriteToFd(fd);
-        Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
-	      written_to_socket += sz;
+	//std::cout << sz << std::endl;
+        //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
+	written_to_socket += sz;
         Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, need_to_write());
         //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
@@ -274,6 +275,10 @@ class Marshal: public NoCopy {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
       return n_read;
+    }
+
+    bool is_shared_data_chunk(){
+	return data->shared_data;
     }
 
     size_t peek(void *p, size_t n) const {
