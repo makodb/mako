@@ -206,19 +206,15 @@ class Epoll {
     //Log_info("epoll::wait exiting here.....");
     //Log_info("number of events are %d", nev);
     for (int i = 0; i < nev; i++) {
-      Log_info("number of events are %d", nev);
+      //Log_info("number of events are %d", nev);
       Pollable* poll = (Pollable *) evlist[i].data.ptr;
       verify(poll != nullptr);
-      if (evlist[i].events & EPOLLOUT) {
-	  //Log_info("write needed");
-          poll->handle_write();
-      }
-      
       if (evlist[i].events & EPOLLIN) {
-	  //Log_info("read needed");
           poll->handle_read();
       }
-      
+      if (evlist[i].events & EPOLLOUT) {
+          poll->handle_write();
+      }     
       // handle error after handle IO, so that we can at least process something
       if (evlist[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
           poll->handle_error();

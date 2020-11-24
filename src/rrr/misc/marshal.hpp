@@ -120,8 +120,7 @@ class MarshallDeputy {
       const char* x = (const char*)p;
       size_t sz = ::write(fd, x + offset, len - offset);
       if(sz > len - offset || sz <= 0){
-        Log_info("Gahdamn, speed it");
-        return 0;
+         return 0;
       }
       return sz;
     }
@@ -135,16 +134,17 @@ class MarshallDeputy {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
+	  //Log_info("Writing the kind of MarshallDeputy %d %d", sz, written_to_socket);
           written_to_socket += sz;
           if(written_to_socket < sizeof(kind_))return sz;
         }
-        Log_info("Written bytes of ghost chunk 1 %d %d", sz, kind_);
+        //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
         // sp_data_.get()->reset_write_offset();
         sz = sp_data_.get()->WriteToFd(fd);
 	//std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
 	written_to_socket += sz;
-        Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, need_to_write());
+        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, EntitySize());
         //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
@@ -174,7 +174,7 @@ class Marshal: public NoCopy {
       marshallable_entity = md;
       size = sz;
       shared_data = true;
-      Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
+      //Log_info("Creating a ghost chunk here of size %d of kind %d", sz, md.kind_);
     }
 
     size_t resize_to(size_t new_sz){
@@ -224,9 +224,11 @@ class Marshal: public NoCopy {
       return new chunk(data, read_idx, write_idx);
     }
 
-    int resize_to_current() {
+    size_t resize_to_current() {
       verify(data->shared_data == false);
-      return data->resize_to(write_idx);
+      size_t sz = data->resize_to(write_idx);
+      verify(data->size == write_idx);
+      return sz;
     }
 
     size_t content_size() const {
@@ -363,6 +365,7 @@ class Marshal: public NoCopy {
     bool fully_read() const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
+      //Log_info("fully read %d %d", read_idx, data->size);
       return read_idx == data->size;
     }
   };

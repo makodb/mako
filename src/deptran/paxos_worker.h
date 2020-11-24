@@ -22,7 +22,7 @@ inline size_t track_write(int fd, const void* p, size_t len, int offset){
   const char* x = (const char*)p;
   ssize_t sz = ::write(fd, x + offset, len - offset);
   if(sz > len - offset || sz <= 0){
-    std::cout << "gahdamn " <<  sz << std::endl;
+    //std::cout << "gahdamn " <<  sz << std::endl;
     //Log_info("Gahdamn, speed it %lld", sz);
     return 0;
   }
@@ -149,7 +149,7 @@ public:
   char len_v64[9];
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = false;
+    bypass_to_socket_ = true;
   }
 
   virtual ~LogEntry() {
@@ -173,19 +173,22 @@ public:
 
   size_t WriteToFd(int fd) override {
     size_t sz = 0, prev = written_to_socket;
+    //Log_info("stepping here, writing length");
     if(written_to_socket < sizeof(int)){
       sz = track_write(fd, &length, sizeof(int), written_to_socket);
       if(sz > 0)written_to_socket += sz;
       assert(sz >= 0);
-      if(written_to_socket < sizeof(int))return sz;
+      if(written_to_socket < sizeof(int))return written_to_socket - prev;
     }
+    //Log_info("stepping here, writing length_as_v64");
     size_t to_write = length_as_v64();
     if(written_to_socket < sizeof(int) + to_write){
       sz = track_write(fd, len_v64, to_write, written_to_socket - sizeof(int));
       if(sz > 0)written_to_socket += sz;
       assert(sz >= 0);
-      if(written_to_socket < sizeof(int) + to_write)return sz;
+      if(written_to_socket < sizeof(int) + to_write)return written_to_socket - prev;
     }
+    //Log_info("stepping here, writing data");
     if(written_to_socket < sizeof(int) + to_write + length) {
       if (true) {
         sz = track_write(fd, operation_test.get(), length, written_to_socket - sizeof(int) - to_write);
@@ -195,8 +198,9 @@ public:
       }
       if(sz > 0)written_to_socket += sz;
       assert(sz >= 0);
-      if(written_to_socket < sizeof(int) + to_write + length)return sz;
+      if(written_to_socket < sizeof(int) + to_write + length)return written_to_socket - prev;
     }
+    //Log_info("stepping here, written data entirely %lld, %lld", written_to_socket, EntitySize());
     assert(written_to_socket == EntitySize());
     assert(written_to_socket - prev >= 0);
     return written_to_socket - prev;
@@ -229,7 +233,7 @@ public:
   char *serialized_slots = nullptr;
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = false;
+    bypass_to_socket_ = true;
   }
   virtual ~BulkPaxosCmd() {
       slots.clear();
@@ -254,6 +258,7 @@ public:
   }
 
   Marshal& FromMarshal(Marshal& m) override {
+      return m;
       int32_t szs, szb, szc;
       m >> szs;
       for (int i = 0; i < szs; i++) {
@@ -328,6 +333,7 @@ public:
     for (auto cmdsp : cmds) {
       if(cmdsp.get()->need_to_write() == 0)continue;
       sz = cmdsp.get()->WriteToFd(fd);
+      //std::cout << "should have written bytes "<< sz << std::endl;
       if(sz > 0){
         written_to_socket += sz;
       }

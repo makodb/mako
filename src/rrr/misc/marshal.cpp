@@ -362,23 +362,24 @@ size_t Marshal::write_to_fd(int fd) {
     size_t n_write = 0;
     bool ok = false;
     while (!empty()) {
-	Log_info("blaslallalla");
         int cnt = head_->write_to_fd(fd);
+	//Log_info("written %d bytes of %d", head_->read_idx, head_->write_idx);
         if (head_->fully_read()) {
             if (head_ == tail_) {
                 tail_ = nullptr;
             }
-	    Log_info("fully read a chunk");
+	    //Log_info("fully read a chunk of size %d %d", head_->data->size, head_->write_idx);
             chunk* chnk = head_;
             head_ = head_->next;
             delete chnk;
 	    ok = true;
         }
         if (cnt <= 0) {
-	    Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
-            // currently there's no data available, so stop
+	    //Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
             break;
-        }
+        } else {
+	    //Log_info("written %lld bytes of %lld", head_->read_idx, head_->write_idx);	
+	}
         assert(content_size_ >= (size_t) cnt);
         content_size_ -= cnt;
         n_write += cnt;

@@ -188,7 +188,7 @@ void Client::handle_write() {
   out_l_.lock();
   out_.write_to_fd(sock_);
   if (out_.empty()) {
-    Log_info("Client handle_write setting read mode here...");
+    //Log_info("Client handle_write setting read mode here...");
     pollmgr_->update_mode(this, Pollable::READ);
   }
   out_l_.unlock();
@@ -205,7 +205,7 @@ void Client::handle_read() {
   }
 
   for (;;) {
-    Log_info("stuck in client handle_read loop");
+    //Log_info("stuck in client handle_read loop");
     i32 packet_size;
     int n_peek = in_.peek(&packet_size, sizeof(i32));
     if (n_peek == sizeof(i32)
@@ -269,7 +269,7 @@ Future* Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   pending_fu_l_.lock();
   pending_fu_[fu->xid_] = fu;
   pending_fu_l_.unlock();
-
+  //Log_info("Starting a new request with rpc_id %ld", rpc_id); 
   // check if the client gets closed in the meantime
   if (status_ != CONNECTED) {
     pending_fu_l_.lock();
@@ -296,7 +296,7 @@ void Client::end_request() {
   // set reply size in packet
   if (bmark_ != nullptr) {
     i32 request_size = out_.get_and_reset_write_cnt();
-    Log_info("client request size is %d", request_size);
+    //Log_info("client request size is %d", request_size);
     out_.write_bookmark(bmark_, &request_size);
     delete bmark_;
     bmark_ = nullptr;
@@ -304,7 +304,7 @@ void Client::end_request() {
 
   // always enable write events since the code above gauranteed there
   // will be some data to send
-  Log_info("Client end_request setting write mode here....");
+  //Log_info("Client end_request setting write mode here....");
   pollmgr_->update_mode(this, Pollable::READ | Pollable::WRITE);
 
   out_l_.unlock();

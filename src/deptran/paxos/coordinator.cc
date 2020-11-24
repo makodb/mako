@@ -268,9 +268,9 @@ void BulkCoordinatorMultiPaxos::Accept() {
 
 void BulkCoordinatorMultiPaxos::Commit() {
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
-    commit_callback_();
-    GotoNextPhase();
-    return;
+    //commit_callback_();
+    //GotoNextPhase();
+    //return;
     auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_);
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
@@ -280,7 +280,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
       verify(0);
     }
     verify(phase_ == Phase::COMMIT);
-    //commit_callback_();
+    commit_callback_();
     GotoNextPhase();
 }
 
