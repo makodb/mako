@@ -226,7 +226,7 @@ size_t Marshal::read(void* p, size_t n) {
             }
             chunk* chnk = head_;
             head_ = head_->next;
-            delete chnk;
+            //delete chnk;
         }
         if (cnt == 0) {
             // currently there's no data available, so stop

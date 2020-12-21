@@ -31,7 +31,7 @@ Marshal& LogEntry::ToMarshal(Marshal& m) const {
 };
 
 Marshal& LogEntry::FromMarshal(Marshal& m) {
-  return m;
+  //return m;
   m >> length;
   if(shared_ptr_apprch){
 	  std::string str;

@@ -258,7 +258,7 @@ public:
   }
 
   Marshal& FromMarshal(Marshal& m) override {
-      return m;
+      //return m;
       int32_t szs, szb, szc;
       m >> szs;
       for (int i = 0; i < szs; i++) {
@@ -266,6 +266,7 @@ public:
           m >> x;
           slots.push_back(x);
       }
+      //return m;
       m >> szb;
       for (int i = 0; i < szs; i++) {
           ballot_t x;
