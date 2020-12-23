@@ -114,6 +114,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
+  //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
   for (auto& p : proxies) {
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
@@ -124,7 +125,6 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    md.reset_write_offsets();
     auto f = proxy->async_BulkAccept(md, fuattr);
     Future::safe_release(f);
   }
@@ -146,8 +146,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, shared_ptr<Marshallable> cm
           e->FeedResponse(true);
         };
         MarshallDeputy md(cmd);
-	md.reset_write_offsets();
-        auto f = proxy->async_BulkDecide(md, fuattr);
+	auto f = proxy->async_BulkDecide(md, fuattr);
         Future::safe_release(f);
     }
     return e;

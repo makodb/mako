@@ -171,7 +171,7 @@ public:
     return bsize;
   }
 
-  size_t WriteToFd(int fd) override {
+  size_t WriteToFd(int fd, size_t written_to_socket) override {
     size_t sz = 0, prev = written_to_socket;
     //Log_info("stepping here, writing length");
     if(written_to_socket < sizeof(int)){
@@ -206,10 +206,10 @@ public:
     return written_to_socket - prev;
   }
 
-  void reset_write_offsets() override {
-          written_to_socket = 0;
+  // void reset_write_offsets() override {
+  //         written_to_socket = 0;
           
-  }
+  // }
 };
 
 /*
@@ -319,7 +319,7 @@ public:
     return total_sz;
   }
 
-  size_t WriteToFd(int fd) override {
+  size_t WriteToFd(int fd, size_t written_to_socket) override {
     size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
     //Log_info("written here %d %d", to_write, written_to_socket);
     if(written_to_socket < to_write){
@@ -332,8 +332,9 @@ public:
     }
     //Log_info("written here %d", written_to_socket);
     for (auto cmdsp : cmds) {
-      if(cmdsp.get()->need_to_write() == 0)continue;
-      sz = cmdsp.get()->WriteToFd(fd);
+      to_write += cmdsp.get()->EntitySize();
+      if(written_to_socket >= to_write)continue;
+      sz = cmdsp.get()->WriteToFd(fd, written_to_socket - (to_write - cmdsp.get()->EntitySize()));
       //std::cout << "should have written bytes "<< sz << std::endl;
       if(sz > 0){
         written_to_socket += sz;
@@ -341,7 +342,7 @@ public:
       verify(sz >= 0);
       //Log_info("written here %d %d", written_to_socket, EntitySize());
       verify(written_to_socket - prev >= 0);
-      if(cmdsp.get()->need_to_write() != 0)return written_to_socket - prev;
+      if(written_to_socket < to_write)return written_to_socket - prev;
     }
     //free(serialized_slots);
     //Log_info("written to socket %d  and size is %d", written_to_socket, EntitySize());
@@ -349,12 +350,12 @@ public:
     return written_to_socket - prev;
   }
 
-  void reset_write_offsets() override {
-	  written_to_socket = 0;
-	  for(auto cmdsp : cmds){
-	     cmdsp.get()->reset_write_offsets();
-	  }
-  }
+  // void reset_write_offsets() override {
+	 //  written_to_socket = 0;
+	 //  for(auto cmdsp : cmds){
+	 //     cmdsp.get()->reset_write_offsets();
+	 //  }
+  // }
 };
 
 class PaxosWorker {

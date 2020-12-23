@@ -48,18 +48,18 @@ class Marshallable {
     verify(0);
     return 0;
   }
-  virtual size_t WriteToFd(int fd) {
+  virtual size_t WriteToFd(int fd, size_t written_to_socket) {
     verify(0);
     return 0;
   }
 
-  virtual size_t need_to_write(){
-    return EntitySize() - written_to_socket;
-  }
+  // virtual size_t need_to_write(){
+  //   return EntitySize() ; - written_to_socket;
+  // }
 
-  virtual void reset_write_offsets(){
-     written_to_socket = 0;
-  }
+  // virtual void reset_write_offsets(){
+  //    written_to_socket = 0;
+  // }
 };
 
 class MarshallDeputy {
@@ -71,7 +71,7 @@ class MarshallDeputy {
 
   public:
     bool bypass_to_socket_ = false;
-    size_t written_to_socket = 0;
+    // size_t written_to_socket = 0;
     std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
     int32_t kind_{0};
     enum Kind {
@@ -100,10 +100,10 @@ class MarshallDeputy {
       //written_to_socket = 0;
     }
 
-    virtual void reset_write_offsets(){
-	written_to_socket = 0;
-	sp_data_->reset_write_offsets();
-    }
+    // virtual void reset_write_offsets(){
+    //   written_to_socket = 0;
+    //   sp_data_->reset_write_offsets();
+    // }
 
     rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
     void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
@@ -125,25 +125,25 @@ class MarshallDeputy {
       return sz;
     }
 
-    virtual size_t need_to_write(){
-      // for marshalldeputy we only write headers. The rest is handled by Marshallable
-      return EntitySize() - written_to_socket;
-    }
+    // virtual size_t need_to_write(){
+    //   // for marshalldeputy we only write headers. The rest is handled by Marshallable
+    //   return EntitySize() - written_to_socket;
+    // }
 
-    virtual size_t WriteToFd(int fd) {
+    virtual size_t WriteToFd(int fd, int written_to_socket) {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
-	  //Log_info("Writing the kind of MarshallDeputy %d %d", sz, written_to_socket);
+          //Log_info("Writing the kind of MarshallDeputy %d %d", sz, written_to_socket);
           written_to_socket += sz;
           if(written_to_socket < sizeof(kind_))return sz;
         }
         //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
         // sp_data_.get()->reset_write_offset();
-        sz = sp_data_.get()->WriteToFd(fd);
-	//std::cout << sz << std::endl;
+        sz = sp_data_.get()->WriteToFd(fd, written_to_socket - sizeof(kind_));
+	      //std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
-	written_to_socket += sz;
+        written_to_socket += sz;
         //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, EntitySize());
         //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
@@ -159,6 +159,7 @@ class Marshal: public NoCopy {
     static const size_t min_size;
     MarshallDeputy marshallable_entity;
     bool shared_data = false;
+    size_t written_to_socket = 0;
 
     raw_bytes(size_t sz = min_size) {
       size = std::max(sz, min_size);
@@ -310,7 +311,8 @@ class Marshal: public NoCopy {
       assert(write_idx <= data->size);
       int cnt;
       if(data->shared_data){
-        cnt = data->marshallable_entity.WriteToFd(fd);
+        cnt = data->marshallable_entity.WriteToFd(fd, data->written_to_socket);
+        data->written_to_socket += cnt;
 	//Log_info("wrote %d bytes of ghost %d", cnt, fd);
       }
       else{
