@@ -65,10 +65,10 @@ void PaxosWorker::Next(Marshallable& cmd) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(!shared_ptr_apprch){
 	      //std::cout << sp_log_entry.log_entry << endl;
-	      //callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+	      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
       }else{
 	      //std::cout << sp_log_entry.operation_test.get() << std::endl;
-	      //callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
+	      callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
       }
     } else {
       verify(0);
