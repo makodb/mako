@@ -277,8 +277,8 @@ public:
       for (int i = 0; i < szc; i++) {
         auto x = new MarshallDeputy;
         m >> *x;
-	      auto sp_md = shared_ptr<MarshallDeputy>(x);
-	      cmds.push_back(sp_md);
+	auto sp_md = shared_ptr<MarshallDeputy>(x);
+	cmds.push_back(sp_md);
       }
       return m;
   }

@@ -33,11 +33,12 @@ Marshal& LogEntry::ToMarshal(Marshal& m) const {
 Marshal& LogEntry::FromMarshal(Marshal& m) {
   //return m;
   m >> length;
-  if(shared_ptr_apprch){
+  if(false && shared_ptr_apprch){
 	  std::string str;
 	  m >> str;
 	  // marker:ansh check here
 	  //std::cout << str << " " << length << std::endl;
+	  Log_info("FromMarshal %d", length);
 	  operation_test = shared_ptr<char>(new char[length+1]);
 	  operation_test.get()[length] = '\0';
 	  memcpy(operation_test.get(), str.c_str(), str.length());
@@ -63,7 +64,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
-      if(!shared_ptr_apprch){
+      if(true || !shared_ptr_apprch){
 	      //std::cout << sp_log_entry.log_entry << endl;
 	      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
       }else{
