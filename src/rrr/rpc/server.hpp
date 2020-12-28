@@ -74,6 +74,8 @@ class ServerConnection: public Pollable {
     Marshal in_, out_;
     SpinLock out_l_;
 
+    Marshal block_read_in;
+
     Server* server_;
     int socket_;
 

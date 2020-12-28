@@ -213,6 +213,9 @@ class Marshal: public NoCopy {
     chunk() : data(new raw_bytes), read_idx(0), write_idx(0), next(nullptr) { }
     chunk(MarshallDeputy md, size_t sz) : data(new raw_bytes(md, sz)), read_idx(0),
                                            write_idx(sz), next(nullptr){}
+
+    chunk(size_t sz) : data(new raw_bytes(sz)), read_idx(0), write_idx(0), next(nullptr){}
+
     chunk(const void *p, size_t n)
         : data(new raw_bytes(p, n)), read_idx(0),
           write_idx(n), next(nullptr) { }
@@ -281,7 +284,7 @@ class Marshal: public NoCopy {
     }
 
     bool is_shared_data_chunk(){
-	return data->shared_data;
+      return data->shared_data;
     }
 
     size_t peek(void *p, size_t n) const {
@@ -334,16 +337,17 @@ class Marshal: public NoCopy {
       return cnt;
     }
 
-    int read_from_fd(int fd) {
+    int read_from_fd(int fd, size_t bytes = -1) {
+      if(bytes == -1)bytes = data->size - write_idx;
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
       int cnt = 0;
       if (write_idx < data->size) {
-        cnt = ::read(fd, data->ptr + write_idx, data->size - write_idx);
+        cnt = ::read(fd, data->ptr + write_idx, bytes);
 
 #ifdef RPC_STATISTICS
-        stat_marshal_in(fd, data->ptr + write_idx, data->size - write_idx, cnt);
+        stat_marshal_in(fd, data->ptr + write_idx, bytes, cnt);
 #endif // RPC_STATISTICS
 
         if (cnt > 0) {
@@ -369,6 +373,10 @@ class Marshal: public NoCopy {
       assert(read_idx <= write_idx);
       //Log_info("fully read %d %d", read_idx, data->size);
       return read_idx == data->size;
+    }
+
+    void reset() {
+      read_idx = write_idx = 0;
     }
   };
 
@@ -397,6 +405,10 @@ class Marshal: public NoCopy {
   Marshal &operator=(const Marshal &) = delete;
   ~Marshal();
 
+  void init_block_read(size_t block_size){
+    head_ = tail_ = new chunk(block_size);
+  }
+
   bool empty() const {
     assert(content_size_ == content_size_slow());
     return content_size_ == 0;
@@ -412,6 +424,12 @@ class Marshal: public NoCopy {
 
   size_t read_from_fd(int fd);
 
+  size_t chnk_read_from_fd(int fd, size_t bytes);
+
+  size_t read_reuse_chnk(Marshal& m, size_t nbytes);
+
+  size_t read_chnk(void* p, size_t n);
+
   // NOTE: This function is only used *internally* to chop a slice of marshal object.
   // Use case 1: In C++ server io thread, when a compelete packet is received, read it off
   //             into a Marshal object and hand over to worker threads.
@@ -419,6 +437,12 @@ class Marshal: public NoCopy {
   size_t read_from_marshal(Marshal &m, size_t n);
 
   size_t write_to_fd(int fd);
+
+  void reset(){
+    head_->reset();
+    content_size_ = 0;
+    write_cnt_ = 0;
+  }
 
   bookmark *set_bookmark(size_t n);
   void write_bookmark(bookmark *bm, const void *p) {

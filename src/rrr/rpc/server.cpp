@@ -90,6 +90,7 @@ ServerConnection::ServerConnection(Server* server, int socket)
         : server_(server), socket_(socket), bmark_(nullptr), status_(CONNECTED) {
     // increase number of open connections
     server_->sconns_ctr_.next(1);
+    block_read_in.init_block_read(50000000);
 }
 
 ServerConnection::~ServerConnection() {
@@ -138,34 +139,56 @@ void ServerConnection::handle_read() {
         return;
     }
 
-    int bytes_read = in_.read_from_fd(socket_);
-    //Log_info("bytes read from socket %d", bytes_read);
-    if (bytes_read == 0) {
+    //read packet size first
+    i32 packet_size;
+    int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
+    if(n_peek < sizeof(i32)){
+      int bytes_read = block_read_in.chnk_read_from_fd(socket_, sizeof(i32)-n_peek);
+    
+      //Log_info("bytes read from socket %d", bytes_read);
+       if (block_read_in.content_size() < sizeof(i32)) {
+          return;
+       }
+    }
+
+    list<Request*> complete_requests; 
+    n_peek = block_read_in.peek(&packet_size, sizeof(i32));
+    if(n_peek == sizeof(i32)){
+      int pckt_bytes = block_read_in.chnk_read_from_fd(socket_, packet_size + sizeof(i32) - block_read_in.content_size());
+      if(block_read_in.content_size() < packet_size + sizeof(i32)){
         return;
+      }
+      verify(block_read_in.read(&packet_size, sizeof(i32)) == sizeof(i32));
+      Request* req = new Request;
+      verify(req->m.read_reuse_chnk(block_read_in, packet_size) == (size_t) packet_size);
+      //Log_info("server handle read: packet size %d and packet bytes %d and content size %d", packet_size, pckt_bytes, block_read_in.content_size());
+      v64 v_xid;
+      req->m >> v_xid;
+      req->xid = v_xid.get();
+      complete_requests.push_back(req);
+
     }
 
-    list<Request*> complete_requests;
-
-    for (;;) {
-        i32 packet_size;
-        int n_peek = in_.peek(&packet_size, sizeof(i32));
-        if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
-            // consume the packet size
-            verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
-            //Log_info("packet size is %d", packet_size);
-            Request* req = new Request;
-            verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
+    // for (;;) {
+    //     i32 packet_size;
+    //     int n_peek = in_.peek(&packet_size, sizeof(i32));
+    //     if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
+    //         // consume the packet size
+    //         verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
+    //         //Log_info("packet size is %d", packet_size);
+    //         Request* req = new Request;
+    //         verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
              
-            v64 v_xid;
-            req->m >> v_xid;
-            req->xid = v_xid.get();
-            complete_requests.push_back(req);
+    //         v64 v_xid;
+    //         req->m >> v_xid;
+    //         req->xid = v_xid.get();
+    //         complete_requests.push_back(req);
 
-        } else {
-            // packet not complete or there's no more packet to process
-            break;
-        }
-    }
+    //     } else {
+    //         // packet not complete or there's no more packet to process
+    //         break;
+    //     }
+    // }
 
 #ifdef RPC_STATISTICS
     stat_server_batching(complete_requests.size());
@@ -191,9 +214,10 @@ void ServerConnection::handle_read() {
         auto it = server_->handlers_.find(rpc_id);
         if (it != server_->handlers_.end()) {
             // the handler should delete req, and release server_connection refcopy.
-            Coroutine::CreateRun([&it, &req, this] () {
-              it->second(req, (ServerConnection *) this->ref_copy());
-            });
+            //Coroutine::CreateRun([&it, &req, this] () {
+            it->second(req, (ServerConnection *) this->ref_copy());
+            block_read_in.reset();
+            //});
         } else {
             rpc_id_missing_l_s.lock();
             bool surpress_warning = false;

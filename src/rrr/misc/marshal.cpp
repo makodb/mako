@@ -210,6 +210,13 @@ size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
   return sz;
 }
 
+size_t Marshal::read_chnk(void* p, size_t n){
+    char* pc = (char *) p;
+    size_t n_read = head_->read(pc, n);
+    content_size_ -= n_read;
+    return n_read;
+}
+
 size_t Marshal::read(void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
     assert(empty() || (head_ != nullptr && !head_->fully_read()));
@@ -293,6 +300,48 @@ size_t Marshal::read_from_fd(int fd) {
 
     assert(empty() || (head_ != nullptr && !head_->fully_read()));
     return n_bytes;
+}
+
+// the marshal object should have a chunk allocated with necessary size
+size_t Marshal::chnk_read_from_fd(int fd, size_t bytes){
+    size_t read_bytes = 0;
+    read_bytes += head_->read_from_fd(fd, bytes);
+    content_size_ += read_bytes;
+    write_cnt_ += read_bytes;
+    if(read_bytes <= 0)return 0;
+    return read_bytes;
+}
+
+size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
+    assert(m.content_size() >= n);   // require m.content_size() >= n > 0
+    size_t n_fetch = 0;
+
+    while (n_fetch < n) {
+        // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
+        //       that only one Marshal should be able to write to it! For the
+        //       given 2 use cases, it works.
+        chunk* chnk = m.head_->shared_copy();
+        if (n_fetch + chnk->content_size() > n) {
+            // only fetch enough bytes we need
+            chnk->write_idx -= (n_fetch + chnk->content_size()) - n;
+        }
+        size_t cnt = chnk->content_size();
+        assert(cnt > 0);
+        n_fetch += cnt;
+        verify(m.head_->discard(cnt) == cnt);
+        if (head_ == nullptr) {
+            head_ = tail_ = chnk;
+        } else {
+            tail_->next = chnk;
+            tail_ = chnk;
+        }
+    }
+
+    write_cnt_ += n_fetch;
+    content_size_ += n_fetch;
+    verify(m.content_size_ >= n_fetch);
+    m.content_size_ -= n_fetch;
+    return n_fetch;
 }
 
 size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
