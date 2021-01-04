@@ -337,7 +337,7 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
 void PaxosWorker::WaitForSubmit() {
   while (n_current < n_tot) {
     finish_mutex.lock();
-    //Log_info("wait for task, amount: %d", (int)n_tot-(int)n_current);
+    Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
     finish_cond.wait(finish_mutex);
     finish_mutex.unlock();
   }
