@@ -66,10 +66,10 @@ void PaxosWorker::Next(Marshallable& cmd) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(true || !shared_ptr_apprch){
 	      //std::cout << sp_log_entry.log_entry << endl;
-	      callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
+	      //callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
       }else{
 	      //std::cout << sp_log_entry.operation_test.get() << std::endl;
-	      callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
+	      //callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
       }
     } else {
       verify(0);
@@ -272,7 +272,7 @@ void* PaxosWorker::StartReadAccept(void* arg){
     pw->GetPollMgr()->add(sp_job);
     sent += cnt;
     if(sent % 2 == 0)Log_info("Total submits %d", sent);
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
   pthread_exit(nullptr);
   return nullptr;
