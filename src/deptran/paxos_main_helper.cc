@@ -363,6 +363,7 @@ void worker_info_stats(size_t nthreads) {
           } else {
               Log_info("    work_index: %d, par_id: %d - Is not Partition", wIdx, par_id);
           };
+          wIdx += 1 ;
       }
     }
 }
