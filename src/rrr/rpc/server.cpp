@@ -90,7 +90,7 @@ ServerConnection::ServerConnection(Server* server, int socket)
         : server_(server), socket_(socket), bmark_(nullptr), status_(CONNECTED) {
     // increase number of open connections
     server_->sconns_ctr_.next(1);
-    block_read_in.init_block_read(50000000);
+    block_read_in.init_block_read(100000000);
 }
 
 ServerConnection::~ServerConnection() {
@@ -214,10 +214,10 @@ void ServerConnection::handle_read() {
         auto it = server_->handlers_.find(rpc_id);
         if (it != server_->handlers_.end()) {
             // the handler should delete req, and release server_connection refcopy.
-            //Coroutine::CreateRun([&it, &req, this] () {
+            Coroutine::CreateRun([&it, &req, this] () {
             it->second(req, (ServerConnection *) this->ref_copy());
             block_read_in.reset();
-            //});
+            });
         } else {
             rpc_id_missing_l_s.lock();
             bool surpress_warning = false;

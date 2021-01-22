@@ -26,7 +26,7 @@ typedef pair<const char*, pair<int,tp>> queue_entry;
 typedef pair<const char*, pair<int,int>> queue_entry_par;
 static moodycamel::ConcurrentQueue<queue_entry_par> submit_queue;
 static std::queue<queue_entry_par> submit_queue_nc;
-static rrr::Mutex l_;
+static rrr::SpinLock l_;
 static atomic<int> producer{0}, consumer{0};
 static atomic<int> submit_tot{0};
 pthread_t submit_poll_th_;
@@ -284,7 +284,11 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
+        //if(submit_tot > 1)return;
+	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
+	//return;
 	l_.lock();
+	len = len;
 	submit_tot++;
 	//endTime = std::chrono::high_resolution_clock::now();
 	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
@@ -352,7 +356,7 @@ void wait_for_submit(uint32_t par_id) {
         if (!worker->IsLeader(par_id)) continue;
         //verify(worker->submit_pool != nullptr);
         //worker->submit_pool->wait_for_all();
-	Log_info("The number of completed submits %ld %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx());
+	Log_info("The number of completed submits n_current: %ld replay_queue: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx(), par_id, (int)worker->n_tot);
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
