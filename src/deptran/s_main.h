@@ -16,3 +16,6 @@ void add_log_to_nc(const char*, int, uint32_t);
 void wait_for_submit(uint32_t);
 void microbench_paxos_queue();
 void pre_shutdown_step();
+
+// auxiliary functions
+void worker_info_stats(size_t);

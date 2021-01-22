@@ -348,6 +348,30 @@ void add_log(const char* log, int len, uint32_t par_id){
     //add_time("enqueue_time",std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime).count(),1000.0*1000.0);
 }
 
+
+void worker_info_stats(size_t nthreads) {
+    Log_info("# of paxos_workers is %d", pxs_workers_g.size());
+    
+    for (size_t par_id=0; par_id<nthreads; par_id++) {
+      Log_info("par_id %d", par_id);
+      size_t wIdx = 0;
+      for (auto& worker : pxs_workers_g) {
+          if (worker->IsLeader(par_id)) {
+              Log_info("    work_index: %d, par_id: %d - IsLeader", wIdx, par_id);
+          } else {
+              Log_info("    work_index: %d, par_id: %d - Is not Leader", wIdx, par_id);
+          };
+
+          if (worker->IsPartition(par_id)) {
+              Log_info("    work_index: %d, par_id: %d - IsPartition", wIdx, par_id);
+          } else {
+              Log_info("    work_index: %d, par_id: %d - Is not Partition", wIdx, par_id);
+          };
+          wIdx += 1 ;
+      }
+    }
+}
+
 void wait_for_submit(uint32_t par_id) {
     int total_submits = 0;
     //Log_info("The number of completed submits %ld", (int)submit_queue.size_approx());
@@ -363,7 +387,7 @@ void wait_for_submit(uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {
         if (worker->IsLeader(par_id)) continue;
         if (!worker->IsPartition(par_id)) continue;
-	Log_info("The number of completed submits %ld %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx());
+	Log_info("Par_id %ld [partition], the number of completed submits %ld %ld", par_id, (int)worker->n_current, (int)worker->replay_queue.size_approx());
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
