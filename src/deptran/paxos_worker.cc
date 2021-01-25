@@ -67,19 +67,21 @@ void PaxosWorker::Next(Marshallable& cmd) {
       if(sp_log_entry.length == 0){
 	 Log_info("Recieved a zero length log");
       }
-      if(true || !shared_ptr_apprch){
-	      //std::cout << sp_log_entry.log_entry << endl;
-	      //callback_(sp_log_entry.log_entry.c_str(), sp_log_entry.length);
-      }else{
-	      //std::cout << sp_log_entry.operation_test.get() << std::endl;
-	      //callback_(sp_log_entry.operation_test.get(), sp_log_entry.length);
+      	if(true || !shared_ptr_apprch){
+              //std::cout << sp_log_entry.log_entry << endl;
+              //callback_par_id_(sp_log_entry.log_entry.c_str(), sp_log_entry.length, site_info_->partition_id_);
+          }else{
+              //std::cout << sp_log_entry.operation_test.get() << std::endl;
+              //callback_par_id_(sp_log_entry.operation_test.get(), sp_log_entry.length, site_info_->partition_id_);
+          }
+      } else {
+          verify(0);
       }
-    } else {
-      verify(0);
-    }
   } else {
     verify(0);
   }
+
+  //n_current++;
 
   //Log_info("abc %d", site_info_->partition_id_);
   
@@ -464,6 +466,14 @@ void PaxosWorker::register_apply_callback(std::function<void(const char*, int)> 
   rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
                                          this,
                                          std::placeholders::_1));
+}
+
+void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *, int, int)> cb) {
+    this->callback_par_id_ = cb;
+    verify(rep_sched_ != nullptr);
+    rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
+                                           this,
+                                           std::placeholders::_1));
 }
 
 } // namespace janus

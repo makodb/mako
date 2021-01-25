@@ -366,6 +366,7 @@ private:
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
   std::function<void(const char*, int)> callback_ = nullptr;
+  std::function<void(const char*, int, int)> callback_par_id_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
   vector<shared_ptr<Coordinator>> created_coordinators_shrd{};
   struct timeval t1;
@@ -437,6 +438,7 @@ public:
 
   void Submit(const char*, int, uint32_t);
   void register_apply_callback(std::function<void(const char*, int)>);
+  void register_apply_callback_par_id(std::function<void(const char*, int, int)>);
   rrr::PollMgr * GetPollMgr(){
       return svr_poll_mgr_;
   }
