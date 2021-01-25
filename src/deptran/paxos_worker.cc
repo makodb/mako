@@ -62,7 +62,7 @@ void PaxosWorker::SetupBase() {
 void PaxosWorker::Next(Marshallable& cmd) {
   //return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
-    if (this->callback_ != nullptr) {
+    if (this->callback_par_id_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(sp_log_entry.length == 0){
 	 Log_info("Recieved a zero length log");
