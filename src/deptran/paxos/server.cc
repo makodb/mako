@@ -146,6 +146,8 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       //auto x = new PaxosData();
       app_next_(*commit_exec[i]->committed_cmd_);
   }
+  *valid = 1;
+  cb();
   mtx_.lock();
   FreeSlots();
   mtx_.unlock();

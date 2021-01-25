@@ -142,8 +142,8 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, shared_ptr<Marshallable> cm
         FutureAttr fuattr;
         fuattr.callback = [e] (Future* fu) {
           i32 valid;
-          //fu->get_reply() >> valid;
-          e->FeedResponse(true);
+          fu->get_reply() >> valid;
+          e->FeedResponse(valid);
         };
         MarshallDeputy md(cmd);
 	auto f = proxy->async_BulkDecide(md, fuattr);
