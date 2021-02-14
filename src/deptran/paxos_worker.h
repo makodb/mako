@@ -366,7 +366,8 @@ private:
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
   std::function<void(const char*, int)> callback_ = nullptr;
-  std::function<void(const char*, int, int)> callback_par_id_ = nullptr;
+  std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
+  std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> callback_par_id_return_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
   vector<shared_ptr<Coordinator>> created_coordinators_shrd{};
   struct timeval t1;
@@ -393,6 +394,7 @@ public:
   base::ThreadPool* hb_thread_pool_g = nullptr;
 
   Config::SiteInfo* site_info_ = nullptr;
+  std::queue<std::tuple<unsigned long long int, int, int, const char *>> un_replay_logs_ ;  // latest_commit_id, status, len, log
   Frame* rep_frame_ = nullptr;
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
@@ -438,7 +440,8 @@ public:
 
   void Submit(const char*, int, uint32_t);
   void register_apply_callback(std::function<void(const char*, int)>);
-  void register_apply_callback_par_id(std::function<void(const char*, int, int)>);
+  void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
+  void register_apply_callback_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>);
   rrr::PollMgr * GetPollMgr(){
       return svr_poll_mgr_;
   }

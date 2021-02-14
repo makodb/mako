@@ -249,10 +249,18 @@ void register_for_follower(std::function<void(const char*, int)> cb, uint32_t pa
     }
 }
 
-void register_for_follower_par_id(std::function<void(const char*, int, int)> cb, uint32_t par_id) {
+void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {
         if (worker->IsPartition(par_id) && !worker->IsLeader(par_id)) {
             worker->register_apply_callback_par_id(cb);
+        }
+    }
+}
+
+void register_for_follower_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {
+        if (worker->IsPartition(par_id) && !worker->IsLeader(par_id)) {
+            worker->register_apply_callback_par_id_return(cb);
         }
     }
 }
@@ -265,10 +273,18 @@ void register_for_leader(std::function<void(const char*, int)> cb, uint32_t par_
     }
 }
 
-void register_for_leader_par_id(std::function<void(const char*, int, int)> cb, uint32_t par_id) {
+void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {
         if (worker->IsLeader(par_id)) {
             worker->register_apply_callback_par_id(cb);
+        }
+    }
+}
+
+void register_for_leader_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {
+        if (worker->IsLeader(par_id)) {
+            worker->register_apply_callback_par_id_return(cb);
         }
     }
 }
