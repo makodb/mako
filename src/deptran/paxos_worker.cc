@@ -68,17 +68,21 @@ void PaxosWorker::Next(Marshallable& cmd) {
 	 Log_info("Recieved a zero length log");
       }
       	if(true || !shared_ptr_apprch){
-              const char *log = sp_log_entry.log_entry.c_str() ;
-              //callback_par_id_(log, sp_log_entry.length, site_info_->partition_id_);
-              unsigned long long int r = callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_) ;
-              unsigned long long int latest_commit_id = r / 10;
-              // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
-              int status = r % 10;
-              if (status == 3) {
-                  // we do a memory copy on log intentionally in case this log is freed by paxos
-                  un_replay_logs_.push(std::make_tuple(latest_commit_id, status, sp_log_entry.length, log)) ;
-              } else if (status == 1) {
-                  std::cout << "this should never happen!!!" << std::endl;
+              if (sp_log_entry.length > 0) {
+                  const char *log = sp_log_entry.log_entry.c_str() ;
+                  //callback_par_id_(log, sp_log_entry.length, site_info_->partition_id_);
+                  unsigned long long int r = callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_) ;
+                  unsigned long long int latest_commit_id = r / 10;
+                  // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
+                  int status = r % 10;
+                  if (status == 3) {
+                      // we do a memory copy on log intentionally in case this log is freed by paxos
+                      char *dest = (char *)malloc(sp_log_entry.length) ;
+                      memcpy(dest, log, sp_log_entry.length) ;
+                      un_replay_logs_.push(std::make_tuple(latest_commit_id, status, sp_log_entry.length, (const char*)dest)) ;
+                  } else if (status == 1) {
+                      std::cout << "this should never happen!!!" << std::endl;
+                  }
               }
           } else {
               //std::cout << sp_log_entry.operation_test.get() << std::endl;
