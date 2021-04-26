@@ -136,7 +136,7 @@ MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
-                                 const std::function<void(MarshallDeputy, ballot_t, int)>& func) {
+                                 const std::function<void(MarshallDeputy, ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
