@@ -110,7 +110,7 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
                                       shared_ptr<Marshallable> cmd,
-                                      const function<void(ballot_t, int)>& cb) {
+                                      const function<void(ballot_t, int)> cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
@@ -164,7 +164,7 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
                                     shared_ptr<Marshallable> cmd,
-                                    const function<void(ballot_t, int)>& cb) {
+                                    const function<void(ballot_t, int)> cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
@@ -190,7 +190,7 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
-                                 const function<void(ballot_t, int)>& cb) {
+                                 const function<void(ballot_t, int)> cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
@@ -217,7 +217,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, 
                                      shared_ptr<Marshallable> cmd,
-                                     const function<void(ballot_t, int)>& cb){
+                                     const function<void(ballot_t, int)> cb){
     auto proxies = rpc_par_proxies_[par_id];
     int n = Config::GetConfig()->GetPartitionSize(par_id);
     auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);

@@ -18,7 +18,7 @@
 using namespace janus;
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
-vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
+//vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 //static vector<shared_ptr<Coordinator>> bulk_coord_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
 typedef std::chrono::high_resolution_clock::time_point tp;
