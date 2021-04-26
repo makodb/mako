@@ -387,7 +387,7 @@ void send_no_ops_to_all_workers(int epoch){
 void send_bulk_prep(int send_epoch){
   auto pw = pxs_workers_g.back();
   auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
-  auto sp_job = std::make_shared<OneTimeJob>([&pw, &bp_log, &es]() {
+  auto sp_job = std::make_shared<OneTimeJob>([&pw, &bp_log, es]() {
       int val = pw->SendBulkPrepare(bp_log);
       if(val != -1){
         es->state_lock();
@@ -449,7 +449,7 @@ void* heartbeatMonitor(void* arg){
      es->state_unlock();
      auto pw = pxs_workers_g.back();
      auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
-     auto sp_job = std::make_shared<OneTimeJob>([&pw, &hb_log, &es]() {
+     auto sp_job = std::make_shared<OneTimeJob>([&pw, &hb_log, es]() {
         int val = pw->SendHeartBeat(hb_log);
         if(val != -1){
           es->state_lock();

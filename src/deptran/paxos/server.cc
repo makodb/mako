@@ -115,10 +115,10 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
     slotid_t slot_id_min = bp_log->min_prepared_slots[i].second;
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     BulkPrepare* bp = &ps->bulk_prepares[make_pair(ps->cur_min_prepared_slot_, ps->max_possible_slot_)];
-    ps->bulk_prepares.erase[make_pair(ps->cur_min_prepared_slot_, ps->max_possible_slot_)];
+    ps->bulk_prepares.erase(make_pair(ps->cur_min_prepared_slot_, ps->max_possible_slot_));
     bp->seen_ballot = bp_log->epoch;
     bp->leader_id = bp_log->leader_id;
-    ps->bulk_prepares[make_pair(slot_id_min, max_possible_slot_)] = bp;
+    ps->bulk_prepares[make_pair(slot_id_min, max_possible_slot_)] = *bp;
     ps->cur_min_prepared_slot_ = slot_id_min;
     ps->cur_epoch = bp_log->epoch;
     // ps->clear_accepted_entries(); // pending bulk-prepare-return

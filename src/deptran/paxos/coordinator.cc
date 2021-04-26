@@ -300,7 +300,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     if(!in_submission_){
       return;
     }
-    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, es_cc](ballot_t ballot, int valid){
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this](ballot_t ballot, int valid){
       if(!valid){
         es_cc->step_down(ballot);
         this->in_submission_ = false;

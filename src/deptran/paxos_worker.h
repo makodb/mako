@@ -518,9 +518,9 @@ public:
 
 class ElectionState {
   ElectionState();
+public: 
   rrr::Mutex election_mutex{};
   rrr::CondVar election_cond{};
-public: 
   pthread_t election_th_;
   pthread_t heartbeat_th_;
   int timeout = rand()%4 + 1; // in seconds
