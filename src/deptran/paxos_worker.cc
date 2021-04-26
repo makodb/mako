@@ -1,4 +1,4 @@
-#include "server.h"
+#include "paxos/server.h"
 #include "service.h"
 #include "chrono"
 

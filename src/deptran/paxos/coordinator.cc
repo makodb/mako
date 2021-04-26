@@ -7,7 +7,7 @@
 
 namespace janus {
 
-shared_ptr<ElectionState> es = ElectionState::instance();
+std::shared_ptr<ElectionState> es = ElectionState::instance();
 
 CoordinatorMultiPaxos::CoordinatorMultiPaxos(uint32_t coo_id,
                                              int32_t benchmark,
@@ -277,9 +277,9 @@ void BulkCoordinatorMultiPaxos::Prepare() {
       }
     }
     if(candidate_val){
-      cmd_ = candidate_val->sp_data;
-      cmd_->slots = candidate_val->sp_data->slots;
-      cmd_->cmds = candidate_val->sp_data->cmds;
+      cmd_ = candidate_val->sp_data_;
+      cmd_->slots = candidate_val->sp_data_->slots;
+      cmd_->cmds = candidate_val->sp_data_->cmds;
     }
 
   } else if (sp_quorum->No()) {

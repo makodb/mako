@@ -361,7 +361,7 @@ shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
     int32_t par_id = pxs_workers_g[i]->site_info_->par_id;
     slotid_t slot = pxs_workers_g[i]->n_current+1;
-    bulk_prepare->min_prepare_slots.push_back(make_pair(par_id, slot));
+    bulk_prepare->min_prepared_slots.push_back(make_pair(par_id, slot));
    }
    bulk_prepare->epoch = epoch;
    bulk_prepare->leader_id = machine_id;

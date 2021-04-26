@@ -144,7 +144,7 @@ public:
 
 class BulkPrepareLog : public Marshallable {
   public:
-  vector<pair<uint32_t,slotid_t>> min_prep_slots;
+  vector<pair<uint32_t,slotid_t>> min_prepared_slots;
   uint32_t leader_id;
   int epoch;
 
@@ -153,8 +153,8 @@ class BulkPrepareLog : public Marshallable {
   }
 
   Marshal& ToMarshal(Marshal& m) const override {
-      m << (int32_t) min_prep_slots.size();
-      for(auto i : min_prep_slots){
+      m << (int32_t) min_prepared_slots.size();
+      for(auto i : min_prepared_slots){
           m << i;
       }
       m << leader_id;
@@ -168,7 +168,7 @@ class BulkPrepareLog : public Marshallable {
     for(int i = 0; i < sz; i++){
       pair<uint32_t,slotid_t> pr;
       m >> pr;
-      min_prep_slots.push_back(pr);
+      min_prepared_slots.push_back(pr);
     }
     m >> leader_id;
     m >> epoch;
@@ -535,7 +535,6 @@ public:
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
 
   void operator=(const ElectionState &) = delete;
-  ElectionState(ElectionState &other) = delete;
 
   static shared_ptr<ElectionState> instance(){
     static ElectionState instance;
@@ -614,13 +613,13 @@ public:
   bool did_not_see_leader(){
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end-lastseen;
-    return (double)timeout < diff.count;
+    return (double)timeout < diff.count();
   }
 
   bool did_not_send_prep(){
     auto end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> diff = end-last_prep_sent;
-    return (double)send_prep_anyway_timeout < diff.count;
+    return (double)send_prep_anyway_timeout < diff.count();
   }
 
   void step_down(int epoch){

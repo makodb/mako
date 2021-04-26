@@ -19,7 +19,7 @@ struct PaxosData {
 struct BulkPrepare{
   ballot_t seen_ballot;
   int leader_id;
-}
+};
 
 class PaxosServer : public TxLogServer {
  public:
