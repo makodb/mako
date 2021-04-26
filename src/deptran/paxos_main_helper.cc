@@ -359,7 +359,7 @@ void* PollSubQNc(void* arg){
 shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
   auto bulk_prepare = make_shared<BulkPrepareLog>();
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
-    int32_t par_id = pxs_workers_g[i]->site_info_->par_id;
+    int32_t par_id = pxs_workers_g[i]->site_info_->partition_id_;
     slotid_t slot = pxs_workers_g[i]->n_current+1;
     bulk_prepare->min_prepared_slots.push_back(make_pair(par_id, slot));
    }
@@ -380,7 +380,7 @@ void send_no_ops_to_all_workers(int epoch){
   static char* s = "no-ops";
   int len = strlen(s);
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
-    add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->par_id);
+    add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->partition_id_);
   }
 }
 
@@ -406,7 +406,7 @@ void* electionMonitor(void* arg){
     es->state_lock();
     if(es->cur_state == 1){
       if(es->did_not_send_prep()){
-       send_bulk_prep(send_epoch);
+       send_bulk_prep(es->get_epoch());
        es->set_bulkprep_time();
       }
       es->state_unlock();
@@ -428,7 +428,7 @@ void* electionMonitor(void* arg){
       continue;
     }
     es->set_state(1);
-    send_no_ops_to_all_workers();
+    send_no_ops_to_all_workers(es->get_epoch());
     //marker:ansh signal to silo here.
     es->state_unlock();
   }
@@ -472,7 +472,7 @@ int setup2(){
   if (server_infos.size() > 0) {
     server_launch_worker(server_infos);
   }
-  es->machine_id = paxos_workers_g.back()->site_info_->locale_id;
+  es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
   Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);

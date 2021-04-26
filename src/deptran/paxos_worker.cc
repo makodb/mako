@@ -283,7 +283,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
   ballot_t received_epoch = -1;
-  auto sp_quorum = rep_frame_->commo_->BroadcastBulkPrepare(par_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
+  auto sp_quorum = rep_frame_->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
     if(!valid){
       received_epoch = max(received_epoch, ballot);
     }
@@ -299,7 +299,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
 int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog>& hb_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
-  auto sp_quorum = rep_frame_->commo_->BroadcastHeartBeat(par_id_, sp_m, &received_epoch, &validity](ballot_t ballot, int resp_type) {
+  auto sp_quorum = rep_frame_->commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
     if(!resp_type)
       received_epoch = ballot;
   });
@@ -485,7 +485,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
-  coord->set_slot((PaxosServer*)rep_sched_->get_open_slot());
+  coord->set_slot(((PaxosServer*)rep_sched_)->get_open_slot());
   //created_coordinators_.push_back(coord);
   //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);

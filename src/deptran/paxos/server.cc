@@ -99,7 +99,7 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
 
   /*verify possibility before modification*/
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
-    slotid_t slot_id_min = bp_log->min_prepared_slots[i];
+    slotid_t slot_id_min = bp_log->min_prepared_slots[i].second;
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     BulkPrepare* bp = &ps->bulk_prepares[make_pair(ps->cur_min_prepared_slot_, ps->max_possible_slot_)];
     if(ps->bulk_prepares.size() != 0 && bp->seen_ballot > bp_log->epoch){
@@ -112,7 +112,7 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
   }
 
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
-    slotid_t slot_id_min = bp_log->min_prepared_slots[i];
+    slotid_t slot_id_min = bp_log->min_prepared_slots[i].second;
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     BulkPrepare* bp = &ps->bulk_prepares[make_pair(ps->cur_min_prepared_slot_, ps->max_possible_slot_)];
     ps->bulk_prepares.erase[make_pair(ps->cur_min_prepared_slot_, ps->max_possible_slot_)];
@@ -208,7 +208,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-  auto bcmd = make_shared<BulkPaxosCmd>();
+  auto rbcmd = make_shared<BulkPaxosCmd>();
   auto instance = GetInstance(cur_slot);
   es->set_lastseen();
   es->set_state(0);
@@ -235,10 +235,10 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     return;
   }
   es->state_unlock();
-  bcmd->ballots.push_back(instance->max_ballot_accepted_);
-  bcmd->slots.push_back(instance->cur_slot);
-  bcmd->cmds.push_back(instance->accepted_cmd_);
-  ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(bcmd));
+  rbcmd->ballots.push_back(instance->max_ballot_accepted_);
+  rbcmd->slots.push_back(cur_slot);
+  rbcmd->cmds.push_back(make_shared<MarshallDeputy>(instance->accepted_cmd_));
+  ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
   cb();
 }
 
@@ -250,8 +250,8 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   *valid = 1;
-  ballot_t cur_b = bcm->ballots[0];
-  slotid_t cur_slot = bcm->slots[0];
+  ballot_t cur_b = bcmd->ballots[0];
+  slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
   es->state_lock();
   if(cur_b < es->cur_epoch){
@@ -387,7 +387,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   *valid = 1;
   cb();
 
-  mtx_.lock()
+  mtx_.lock();
   FreeSlots();
   mtx_.unlock();
   //cb();

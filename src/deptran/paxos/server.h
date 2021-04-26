@@ -30,6 +30,7 @@ class PaxosServer : public TxLogServer {
   slotid_t max_accepted_slot_ = 0;
   slotid_t max_possible_slot_ = INT_MAX;
   slotid_t cur_open_slot_ = 0;
+  int leader_id;
   map<pair<slotid_t, slotid_t>, BulkPrepare> bulk_prepares{};  // saves all the prepare ranges.
   map<slotid_t, shared_ptr<PaxosData>> logs_{};
   ballot_t cur_epoch;

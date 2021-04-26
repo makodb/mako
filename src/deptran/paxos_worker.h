@@ -518,6 +518,8 @@ public:
 
 class ElectionState {
   ElectionState();
+  rrr::Mutex election_mutex{};
+  rrr::CondVar election_cond{};
 public: 
   pthread_t election_th_;
   pthread_t heartbeat_th_;
@@ -525,8 +527,6 @@ public:
   int heartbeat_timeout = 300; // in milliseconds
   int send_prep_anyway_timeout = 1;
   int cur_epoch = 0;
-  rrr::Mutex election_mutex{};
-  rrr::CondVar election_cond{};
   int cur_state = 0; // 0 Follower, 1 Leader
   int machine_id = -1;
   int leader_id = -1;
