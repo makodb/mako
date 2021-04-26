@@ -53,7 +53,51 @@ void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
   });
 }
 
+
+void MultiPaxosServiceImpl::BulkPrepare(const MarshallDeputy& md_cmd,
+                                       i32* ballot,
+                                       i32* valid,
+                                       rrr::DeferredReply* defer) {
+  verify(sched_ != nullptr);
+  Coroutine::CreateRun([&] () {
+    sched_->OnBulkPrepare(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                          ballot,
+                          valid,
+                          std::bind(&rrr::DeferredReply::reply, defer));
+  });
+}
+
+//marker:ansh complete, basic skeleton, add rpc definition in rcc_rpc.rpc
+void MultiPaxosServiceImpl::Heartbeat(const MarshallDeputy& md_cmd,
+                                       i32* ballot,
+                                       i32* valid,
+                                       rrr::DeferredReply* defer) {
+  verify(sched_ != nullptr);
+  Coroutine::CreateRun([&] () {
+    sched_->OnHeartbeat(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                          valid,
+                          ballot,
+                          std::bind(&rrr::DeferredReply::reply, defer));
+  });
+}
+
+void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
+                                       i32* ballot,
+                                       i32* valid,
+                                       MarshallDeputy* ret,
+                                       rrr::DeferredReply* defer) {
+  verify(sched_ != nullptr);
+  Coroutine::CreateRun([&] () {
+    sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                          valid,
+                          ballot,
+                          ret,
+                          std::bind(&rrr::DeferredReply::reply, defer));
+  });
+}
+
 void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
+                                       i32* ballot,
                                        i32* valid,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
@@ -65,6 +109,7 @@ void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
 }
 
 void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
+                                       i32* ballot,
                                        i32* valid,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);

@@ -8,6 +8,8 @@ namespace janus {
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
 
+shared_ptr<ElectionState> es = ElectionState::instance();
+
 static int volatile xx =
     MarshallDeputy::RegInitializer(MarshallDeputy::CONTAINER_CMD,
                                    []() -> Marshallable* {
@@ -17,6 +19,16 @@ static int volatile xxx =
       MarshallDeputy::RegInitializer(MarshallDeputy::CMD_BLK_PXS,
                                      []() -> Marshallable* {
                                        return new BulkPaxosCmd;
+                                     });
+static int volatile x4 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_BLK_PREP_PXS,
+                                     []() -> Marshallable* {
+                                       return new BulkPrepareLog;
+                                     });
+static int volatile x5 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_HRTBT_PXS,
+                                     []() -> Marshallable* {
+                                       return new HeartBeatLog;
                                      });
 
 static int shared_ptr_apprch = 1;
@@ -229,12 +241,15 @@ void PaxosWorker::IncSubmit(){
 void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
     //Log_info("Obtaining bulk submit of size %d through coro", (int)entries.size());
     //Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
+    //marker:ansh use per thread stuff for optimization
     auto sp_cmd = make_shared<BulkPaxosCmd>();
+    ballot_t send_epoch = es->get_consistent_epoch();
+    sp_cmd->leader_id = es->get_machine_id();
     //Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
-        sp_cmd->ballots.push_back(mpc.get()->curr_ballot_);
+        sp_cmd->ballots.push_back(send_epoch);
         verify(mpc->cmd_ != nullptr);
         //auto x = dynamic_pointer_cast<LogEntry>(mpc->cmd_);
         //read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
@@ -262,6 +277,37 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
       //if((int)n_current%2 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
       if(this->n_current >= this->n_tot)this->finish_cond.bcast();
     });
+}
+
+// marker:ansh
+int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
+  auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
+  ballot_t received_epoch = -1;
+  auto sp_quorum = rep_frame_->commo_->BroadcastBulkPrepare(par_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
+    if(!valid){
+      received_epoch = max(received_epoch, ballot);
+    }
+  });
+  sp_quorum->Wait();
+  if (sp_quorum->Yes()) {
+    return -1;
+  }
+  return received_epoch;
+}
+
+// marker:ansh
+int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog>& hb_log){
+  auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
+  ballot_t received_epoch = -1;
+  auto sp_quorum = rep_frame_->commo_->BroadcastHeartBeat(par_id_, sp_m, &received_epoch, &validity](ballot_t ballot, int resp_type) {
+    if(!resp_type)
+      received_epoch = ballot;
+  });
+  sp_quorum->Wait();
+  if (sp_quorum->Yes()) {
+    return -1;
+  }
+  return received_epoch;
 }
 
 void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
@@ -438,6 +484,8 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   //mtx_worker_submit.unlock();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
+  //marker:ansh slot_hint not being used anymore.
+  coord->slot_id_ = ((PaxosServer*)rep_sched_)->get_open_slot();
   //created_coordinators_.push_back(coord);
   //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);

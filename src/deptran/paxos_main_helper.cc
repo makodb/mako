@@ -18,7 +18,7 @@
 using namespace janus;
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
-static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
+vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 //static vector<shared_ptr<Coordinator>> bulk_coord_g = {};
 //static vector<pair<string, pair<int,uint32_t>>> submit_loggers(10000000);
 typedef std::chrono::high_resolution_clock::time_point tp;
@@ -30,9 +30,12 @@ static rrr::SpinLock l_;
 static atomic<int> producer{0}, consumer{0};
 static atomic<int> submit_tot{0};
 pthread_t submit_poll_th_;
-// vector<unique_ptr<ClientWorker>> client_workers_g = {};
 const int len = 5;
 static std::map<std::string,long double> timer;
+
+shared_ptr<ElectionState> es = ElectionState::instance();
+
+
 
 void check_current_path() {
     auto path = boost::filesystem::current_path();
@@ -353,14 +356,129 @@ void* PollSubQNc(void* arg){
    return nullptr;
 }
 
+shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
+  auto bulk_prepare = make_shared<BulkPrepareLog>();
+  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    int32_t par_id = pxs_workers_g[i]->site_info_->par_id;
+    slotid_t slot = pxs_workers_g[i]->n_current+1;
+    bulk_prepare->min_prepare_slots.push_back(make_pair(par_id, slot));
+   }
+   bulk_prepare->epoch = epoch;
+   bulk_prepare->leader_id = machine_id;
+   return bulk_prepare;
+}
+
+shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
+  auto heart_beat = make_shared<HeartBeatLog>();
+  heart_beat->epoch = epoch;
+  heart_beat->leader_id = machine_id;
+  return heart_beat;
+}
+
+
+void send_no_ops_to_all_workers(int epoch){
+  static char* s = "no-ops";
+  int len = strlen(s);
+  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->par_id);
+  }
+}
+
+void send_bulk_prep(int send_epoch){
+  auto pw = pxs_workers_g.back();
+  auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
+  auto sp_job = std::make_shared<OneTimeJob>([&pw, &bp_log, &es]() {
+      int val = pw->SendBulkPrepare(bp_log);
+      if(val != -1){
+        es->state_lock();
+        es->set_epoch(val);
+        es->state_unlock();
+      }
+      es->election_cond.bcast();
+  });
+  pxs_workers_g.back()->GetPollMgr()->add(sp_job);
+}
+
+// marker:ansh 
+void* electionMonitor(void* arg){
+   while(true){
+
+    es->state_lock();
+    if(es->cur_state == 1){
+      if(es->did_not_send_prep()){
+       send_bulk_prep(send_epoch);
+       es->set_bulkprep_time();
+      }
+      es->state_unlock();
+      continue;
+    }
+    if(!es->did_not_see_leader()){
+      es->sleep_timeout();
+      continue;
+    }
+    int send_epoch = es->set_epoch();
+    es->state_unlock();
+    send_bulk_prep(send_epoch);
+    es->election_mutex.lock();
+    es->election_cond.wait(es->election_mutex);
+    es->election_mutex.unlock();
+    es->state_lock();
+    if(send_epoch != es->cur_epoch){
+      es->state_unlock();
+      continue;
+    }
+    es->set_state(1);
+    send_no_ops_to_all_workers();
+    //marker:ansh signal to silo here.
+    es->state_unlock();
+  }
+  pthread_exit(nullptr);
+  return nullptr;
+}
+
+//marker:ansh
+void* heartbeatMonitor(void* arg){
+   while(true){
+     es->sleep_heartbeat();
+     es->state_lock();
+     if(es->cur_state == 0){
+      es->state_unlock();
+      continue;
+     }
+     int send_epoch = es->get_epoch();
+     es->state_unlock();
+     auto pw = pxs_workers_g.back();
+     auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
+     auto sp_job = std::make_shared<OneTimeJob>([&pw, &hb_log, &es]() {
+        int val = pw->SendHeartBeat(hb_log);
+        if(val != -1){
+          es->state_lock();
+          es->set_state(0);
+          es->set_epoch(val);
+          es->state_unlock();
+        }
+    });
+    pxs_workers_g.back()->GetPollMgr()->add(sp_job);
+  }
+   pthread_exit(nullptr);
+   return nullptr;
+}
+
+
+
 // to be called after setup 1; needed for multiprocess setup
 int setup2(){
   auto server_infos = Config::GetConfig()->GetMyServers();
   if (server_infos.size() > 0) {
     server_launch_worker(server_infos);
   }
+  es->machine_id = paxos_workers_g.back()->site_info_->locale_id;
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
+  Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
+  pthread_detach(es->election_th_);
+  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
+  pthread_detach(es->heartbeat_th_);
   return 0;
 }
 

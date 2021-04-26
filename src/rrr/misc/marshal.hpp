@@ -82,7 +82,9 @@ class MarshallDeputy {
       CMD_TPC_PREPARE=4,
       CMD_TPC_COMMIT=5,
       CMD_VEC_PIECE=6,
-      CMD_BLK_PXS=7
+      CMD_BLK_PXS=7,
+      CMD_BLK_PREP_PXS=8,
+      CMD_HRTBT_PXS=9
     };
     /**
      * This should be called by the rpc layer.

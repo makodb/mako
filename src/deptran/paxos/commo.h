@@ -66,11 +66,26 @@ class MultiPaxosCommo : public Communicator {
                        const ballot_t ballot,
                        const shared_ptr<Marshallable> cmd);
   shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastBulkPrepare(parid_t par_id,
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(ballot_t, int)> func);
+  shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastHeartBeat(parid_t par_id,
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(ballot_t, int)> func);
+  shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkAccept(parid_t par_id,
-                        shared_ptr<Marshallable> cmd);
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(ballot_t, int)> func);
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkDecide(parid_t par_id,
-                           const shared_ptr<Marshallable> cmd);
+                           const shared_ptr<Marshallable> cmd,
+                           const std::function<void(ballot_t, int)> func);
+
+  shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastPrepare2(parid_t par_id,
+                      const shared_ptr<Marshallable> cmd,
+                      const std::function<void(MarshallDeputy, ballot_t, int)> func);
 };
 
 } // namespace janus

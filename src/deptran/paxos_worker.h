@@ -12,6 +12,8 @@
 
 namespace janus {
 
+typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
+
 inline void read_log(const char* log, int length, const char* custom){
         unsigned long long int cid = 0;
         memcpy(&cid, log, sizeof(unsigned long long int));
@@ -140,6 +142,64 @@ public:
   }
 };
 
+class BulkPrepareLog : public Marshallable {
+  public:
+  vector<pair<uint32_t,slotid_t>> min_prep_slots;
+  uint32_t leader_id;
+  int epoch;
+
+  BulkPrepareLog(): Marshallable(MarshallDeputy::CMD_BLK_PREP_PXS){
+
+  }
+
+  Marshal& ToMarshal(Marshal& m) const override {
+      m << (int32_t) min_prep_slots.size();
+      for(auto i : min_prep_slots){
+          m << i;
+      }
+      m << leader_id;
+      m << epoch;
+      return m;
+  }
+
+  Marshal& FromMarshal(Marshal& m) override {
+    int32_t sz;
+    m >> sz;
+    for(int i = 0; i < sz; i++){
+      pair<uint32_t,slotid_t> pr;
+      m >> pr;
+      min_prep_slots.push_back(pr);
+    }
+    m >> leader_id;
+    m >> epoch;
+    return m;
+  }
+
+};
+
+class HeartBeatLog : public Marshallable {
+  public:
+  uint32_t leader_id;
+  int epoch;
+
+  HeartBeatLog(): Marshallable(MarshallDeputy::CMD_HRTBT_PXS){
+
+  }
+
+  Marshal& ToMarshal(Marshal& m) const override {
+      m << leader_id;
+      m << epoch;
+      return m;
+  }
+
+  Marshal& FromMarshal(Marshal& m) override {
+    m >> leader_id;
+    m >> epoch;
+    return m;
+  }
+
+};
+
 class LogEntry : public Marshallable {
 public:
   char* operation_ = nullptr;
@@ -227,6 +287,7 @@ inline rrr::Marshal& operator>>(rrr::Marshal &m, LogEntry &cmd) {
 */
 class BulkPaxosCmd : public  Marshallable {
 public:
+  int32_t leader_id;
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   vector<shared_ptr<MarshallDeputy>> cmds{};
@@ -241,6 +302,7 @@ public:
       cmds.clear();
   }
   Marshal& ToMarshal(Marshal& m) const override {
+      m << (int32_t) leader_id;
       m << (int32_t) slots.size();
       for(auto i : slots){
           m << i;
@@ -260,6 +322,7 @@ public:
   Marshal& FromMarshal(Marshal& m) override {
       //return m;
       int32_t szs, szb, szc;
+      m >> leader_id;
       m >> szs;
       for (int i = 0; i < szs; i++) {
           slotid_t x;
@@ -277,15 +340,15 @@ public:
       for (int i = 0; i < szc; i++) {
         auto x = new MarshallDeputy;
         m >> *x;
-	auto sp_md = shared_ptr<MarshallDeputy>(x);
-	cmds.push_back(sp_md);
+        auto sp_md = shared_ptr<MarshallDeputy>(x);
+        cmds.push_back(sp_md);
       }
       return m;
   }
 
   size_t EntitySize() override {
     size_t sz = 0;
-    sz += 3*sizeof(int32_t);
+    sz += 4*sizeof(int32_t);
     for(int i = 0; i < slots.size(); i++){
       sz += sizeof(slotid_t);
       sz += sizeof(ballot_t);
@@ -296,12 +359,14 @@ public:
 
   size_t serialize_slots_ballots(){
     int32_t batch = slots.size();
-    size_t total_sz = 3*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
+    size_t total_sz = 4*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
     if(serialized_slots != nullptr){
       return total_sz;
     }
     serialized_slots = (char*)malloc(total_sz*sizeof(char));
     int wrt = 0;
+    memcpy(serialized_slots + wrt, &leader_id, sizeof(int32_t));
+    wrt += sizeof(int32_t);
     memcpy(serialized_slots + wrt, &batch, sizeof(int32_t));
     wrt += sizeof(int32_t);
     for(auto i : slots){
@@ -427,6 +492,8 @@ public:
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
   void submitJob(std::shared_ptr<Job>);
+  void SendBulkPrepare(shared_ptr<BulkPrepareLog>&);
+  void SendHeartBeat(shared_ptr<HeartBeatLog>&);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);
@@ -444,6 +511,123 @@ public:
   void register_apply_callback_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>);
   rrr::PollMgr * GetPollMgr(){
       return svr_poll_mgr_;
+  }
+};
+
+extern vector<shared_ptr<PaxosWorker>> pxs_workers_g;
+
+class ElectionState {
+  ElectionState();
+public: 
+  pthread_t election_th_;
+  pthread_t heartbeat_th_;
+  int timeout = rand()%4 + 1; // in seconds
+  int heartbeat_timeout = 300; // in milliseconds
+  int send_prep_anyway_timeout = 1;
+  int cur_epoch = 0;
+  rrr::Mutex election_mutex{};
+  rrr::CondVar election_cond{};
+  int cur_state = 0; // 0 Follower, 1 Leader
+  int machine_id = -1;
+  int leader_id = -1;
+  rrr::Mutex election_state;
+  timepoint lastseen = std::chrono::high_resolution_clock::now();
+  timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
+
+  void operator=(const ElectionState &) = delete;
+  ElectionState(ElectionState &other) = delete;
+
+  static shared_ptr<ElectionState> instance(){
+    static ElectionState instance;
+    static shared_ptr<ElectionState> instance_ptr = nullptr;
+    if(!instance_ptr){
+      instance_ptr = make_shared<ElectionState>(instance);
+    }
+    return instance_ptr;
+  }
+
+  void get_machine_id(){
+    return machine_id;
+  }
+
+  // not to be called while state lock acquired.
+  void get_consistent_epoch(){
+    int x;
+    state_lock();
+    x = cur_epoch;
+    state_unlock();
+    return x;
+  }
+
+  void get_epoch(){
+    return cur_epoch;
+  }
+
+  void state_lock(){
+    election_mutex.lock();
+  }
+
+  void state_unlock(bool sleep = false){
+    election_mutex.unlock();
+    if(sleep)
+        sleepTimeout();
+  }
+
+  int set_epoch(int val = -1){
+    if(val == -1){
+      return ++cur_epoch;
+    } else{
+      cur_epoch = val;
+    }
+    assert(val >= cur_epoch);
+    return cur_epoch;
+  }
+
+  void reset_timeout(){
+    timeout = rand()%4;
+  }
+
+  void sleep_timeout(){
+    std::this_thread::sleep_for(std::chrono::seconds(timeout));
+  }
+
+  void sleep_heartbeat(){
+    std::this_thread::sleep_for(std::chrono::milliseconds(heartbeat_timeout));
+  }
+
+  void set_state(int val){
+    cur_state = val;
+  }
+
+  void set_leader(int val){
+    leader_id = val;
+  }
+
+  void set_lastseen(){
+    lastseen = std::chrono::high_resolution_clock::now();
+  }
+
+  void set_bulkprep_time(){
+    last_prep_sent = std::chrono::high_resolution_clock::now();
+  }
+
+  bool did_not_see_leader(){
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end-lastseen;
+    return (double)timeout < diff.count;
+  }
+
+  bool did_not_send_prep(){
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> diff = end-last_prep_sent;
+    return (double)send_prep_anyway_timeout < diff.count;
+  }
+
+  void step_down(int epoch){
+    es->state_lock();
+    es->set_state(0);
+    leader_id = -1;
+    es->state_unlock();
   }
 };
 

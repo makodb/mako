@@ -216,38 +216,76 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
 }
 
 void BulkCoordinatorMultiPaxos::GotoNextPhase() {
-  int n_phase = 4;
-  int current_phase = phase_ % n_phase;
-  phase_++;
-  switch (current_phase) {
-    case Phase::INIT_END:
-      if (IsLeader()) {
-        phase_++; // skip prepare phase for "leader"
-        verify(phase_ % n_phase == Phase::ACCEPT);
-        Accept();
-        phase_++;
-        verify(phase_ % n_phase == Phase::COMMIT);
-      } else {
-        // TODO
-        verify(0);
+  while(true){
+    int n_phase = 4;
+    int current_phase = phase_ % n_phase;
+    phase_++;
+    if(current_phase == Phase::INIT_END){
+      if(phase_ > 3){
+        break;
       }
-    case Phase::ACCEPT:
-      verify(phase_ % n_phase == Phase::COMMIT);
-      if (committed_) {
-        Commit();
-      } else {
-        verify(0);
+      Prepare();
+      if(!in_submission_){
+        break;
       }
-      break;
-    case Phase::PREPARE:
-      verify(phase_ % n_phase == Phase::ACCEPT);
+      phase_++; // need to do this because Phase::Dispatch = 1
+    } else if(current_phase == Phase::ACCEPT){
       Accept();
-      break;
-    case Phase::COMMIT:
-      // do nothing.
-      break;
-    default:
-      verify(0);
+      if(!in_submission_){
+        break;
+      }
+    } else if(current_phase == Phase::COMMIT){
+      Commit();
+      if(!in_submission_){
+        break;
+      }
+    }
+  }
+}
+
+void BulkCoordinatorMultiPaxos::Prepare() {
+  //std::lock_guard<std::recursive_mutex> lock(mtx_);
+  // in_prepare_ = true;
+  // curr_ballot_ = PickBallot();
+  // verify(slot_id_ > 0);
+  // Log_debug("multi-paxos coordinator broadcasts prepare, "
+  //               "par_id_: %lx, slot_id: %llx",
+  //           par_id_,
+  //           slot_id_);
+  // verify(n_prepare_ack_ == 0);
+  // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
+  std::vector<pair<ballot_t, MarshallDeputy*>> vec_md;
+  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, &es, &in_submission_](MarshallDeputy md, ballot_t bt, int valid){
+    if(!valid){
+      es->step_down(bt);
+      in_submission_ = false;
+    } else{
+      vec_md.push_back(make_pair(bt, md));
+    }
+  });
+  sp_quorum->Wait();
+  if (sp_quorum->Yes()) {
+    ballot_t candidate_b = 0;
+    MarshallDeputy* candidate_val = nullptr;
+    for(int i = 0; i < vec_md.size(); i++){
+      if(vec_md[i].first > candidate_b){
+        candidate_b = vec_md[i].first;
+        candidate_val = vec_md[i].second;
+      }
+    }
+    if(candidate_val){
+      cmd_ = candidate_val->sp_data;
+      cmd_->slots = candidate_val->sp_data->slots;
+      cmd_->cmds = candidate_val->sp_data->cmds;
+    }
+
+  } else if (sp_quorum->No()) {
+    // TODO restart prepare?
+    // verify(0);
+    //.. not a leader anymore, exit.
+  } else {
+    // TODO timeout
+    verify(0);
   }
 }
 
@@ -255,12 +293,21 @@ void BulkCoordinatorMultiPaxos::Accept() {
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
     //committed_ = true;
     //return;
-    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_);
+    if(!in_submission_){
+      return;
+    }
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [&in_submission_, &es](ballot_t ballot, int valid)(
+      if(!valid){
+        es->step_down(ballot);
+        in_submission_ = false;
+      }
+    ));
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
         committed_ = true;
     } else if (sp_quorum->No()) {
-        verify(0);
+        in_submission_ = false;
+        return;
     } else {
         verify(0);
     }
@@ -271,11 +318,20 @@ void BulkCoordinatorMultiPaxos::Commit() {
     //commit_callback_();
     //GotoNextPhase();
     //return;
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_);
+    if(!in_submission_){
+      return;
+    }
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_, [&in_submission_, &es](ballot_t ballot, int valid)(
+      if(!valid){
+        es->step_down(ballot);
+        in_submission_ = false;
+      }
+    ));
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
     } else if (sp_quorum->No()) {
-      verify(0);
+      in_submission_ = false;
+      return;
     } else {
       verify(0);
     }

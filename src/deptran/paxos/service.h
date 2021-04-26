@@ -38,12 +38,30 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
               rrr::DeferredReply* defer) override;
 
   void BulkDecide(const MarshallDeputy& cmd,
+                  i32* ballot,
                   i32* valid,
                   rrr::DeferredReply* defer) override;
 
   void BulkAccept(const MarshallDeputy& cmd,
+                  i32* ballot,
                   i32* valid,
                   rrr::DeferredReply* defer) override;
+
+  void BulkPrepare(const MarshallDeputy& cmd,
+                  i32* ballot,
+                  i32* valid,
+                  rrr::DeferredReply* defer) override;
+
+  void Heartbeat(const MarshallDeputy& cmd,
+                  i32* ballot,
+                  i32* valid,
+                  rrr::DeferredReply* defer) override;
+
+  void BulkPrepare2(const MarshallDeputy& md_cmd,
+                     i32* ballot,
+                     i32* valid,
+                     MarshallDeputy* ret,
+                     rrr::DeferredReply* defer) override;
 
 };
 

@@ -76,6 +76,7 @@ class CoordinatorMultiPaxos : public Coordinator {
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {
 public:
     shared_ptr<Marshallable> cmd_{nullptr};
+    void Prepare();
     void Accept();
     void Commit();
     void GotoNextPhase();

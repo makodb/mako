@@ -16,12 +16,24 @@ struct PaxosData {
   shared_ptr<Marshallable> committed_cmd_{nullptr};
 };
 
+struct BulkPrepare{
+  ballot_t seen_ballot;
+  int leader_id;
+}
+
 class PaxosServer : public TxLogServer {
  public:
   slotid_t min_active_slot_ = 0; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;
   slotid_t max_committed_slot_ = 0;
+  slotid_t cur_min_prepared_slot_ = 0;
+  slotid_t max_accepted_slot_ = 0;
+  slotid_t max_possible_slot_ = INT_MAX;
+  slotid_t cur_open_slot_ = 0;
+  map<pair<slotid_t, slotid_t>, BulkPrepare> bulk_prepares{};  // saves all the prepare ranges.
   map<slotid_t, shared_ptr<PaxosData>> logs_{};
+  ballot_t cur_epoch;
+
   int n_prepare_ = 0;
   int n_accept_ = 0;
   int n_commit_ = 0;
@@ -53,13 +65,35 @@ class PaxosServer : public TxLogServer {
                 const ballot_t ballot,
                 shared_ptr<Marshallable> &cmd);
 
+  void OnBulkPrepare(shared_ptr<Marshallable> &cmd,
+                    i32 *ballot,
+                    i32* valid,
+                    const function<void()> &cb);
+
+  void OnHeartbeat(shared_ptr<Marshallable> &cmd,
+                    i32 *ballot,
+                    i32* valid,
+                    const function<void()> &cb);
+
   void OnBulkAccept(shared_ptr<Marshallable> &cmd,
+                    i32* ballot,
                     i32 *valid,
                     const function<void()> &cb);
 
   void OnBulkCommit(shared_ptr<Marshallable> &cmd,
+                    i32* ballot,
                     i32 *valid,
                     const function<void()> &cb);
+
+  void OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
+                      i32* ballot,
+                      i32 *valid,
+                      MarshallDeputy* ret,
+                      const function<void()> &cb);
+
+  void get_open_slot(){
+    return ++cur_open_slot_;
+  }
 
   void FreeSlots(){
     // TODO should support snapshot for freeing memory.
@@ -71,6 +105,13 @@ class PaxosServer : public TxLogServer {
       i++;
     }
     min_active_slot_ = i;
+  }
+
+  // should be called from locked state.
+  void clear_accepted_entries(){
+    for(int i = max_committed_slot_; i <= max_accepted_slot_; i++){
+      logs_.erase(i);
+    }
   }
 
   virtual bool HandleConflicts(Tx& dtxn,
