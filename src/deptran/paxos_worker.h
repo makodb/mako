@@ -12,90 +12,90 @@
 
 namespace janus {
 
-typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
+	typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
 
-inline void read_log(const char* log, int length, const char* custom){
-        unsigned long long int cid = 0;
-        memcpy(&cid, log, sizeof(unsigned long long int));
-        Log_info("commit id %lld and length %d from %s", cid, length, custom);
-}
+	inline void read_log(const char* log, int length, const char* custom){
+		unsigned long long int cid = 0;
+		memcpy(&cid, log, sizeof(unsigned long long int));
+		Log_info("commit id %lld and length %d from %s", cid, length, custom);
+	}
 
-inline size_t track_write(int fd, const void* p, size_t len, int offset){
-  const char* x = (const char*)p;
-  ssize_t sz = ::write(fd, x + offset, len - offset);
-  if(sz > len - offset || sz <= 0){
-    //std::cout << "gahdamn " <<  sz << std::endl;
-    //Log_info("Gahdamn, speed it %lld", sz);
-    return 0;
-  }
-  return sz;
-}
+	inline size_t track_write(int fd, const void* p, size_t len, int offset){
+		const char* x = (const char*)p;
+		ssize_t sz = ::write(fd, x + offset, len - offset);
+		if(sz > len - offset || sz <= 0){
+			//std::cout << "gahdamn " <<  sz << std::endl;
+			//Log_info("Gahdamn, speed it %lld", sz);
+			return 0;
+		}
+		return sz;
+	}
 
-class SubmitPool {
-private:
-  struct start_submit_pool_args {
-    SubmitPool* subpool;
-  };
+	class SubmitPool {
+		private:
+			struct start_submit_pool_args {
+				SubmitPool* subpool;
+			};
 
-  int n_;
-  std::list<std::function<void()>*>* q_;
-  pthread_cond_t not_empty_;
-  pthread_mutex_t m_;
-  pthread_mutex_t run_;
-  pthread_t th_;
-  bool should_stop_{false};
+			int n_;
+			std::list<std::function<void()>*>* q_;
+			pthread_cond_t not_empty_;
+			pthread_mutex_t m_;
+			pthread_mutex_t run_;
+			pthread_t th_;
+			bool should_stop_{false};
 
-  static void* start_thread_pool(void* args) {
-    start_submit_pool_args* t_args = (start_submit_pool_args *) args;
-    t_args->subpool->run_thread();
-    delete t_args;
-    pthread_exit(nullptr);
-    return nullptr;
-  }
-  void run_thread() {
-    for (;;) {
-      function<void()>* job = nullptr;
-      Pthread_mutex_lock(&m_);
-      while (q_->empty()) {
-        Pthread_cond_wait(&not_empty_, &m_);
-      }
-      Pthread_mutex_lock(&run_);
-      job = q_->front();
-      q_->pop_front();
-      Pthread_mutex_unlock(&m_);
-      if (job == nullptr) {
-        Pthread_mutex_unlock(&run_);
-        break;
-      }
-      (*job)();
-      delete job;
-      Pthread_mutex_unlock(&run_);
-    }
-  }
-  bool try_pop(std::function<void()>** t) {
-    bool ret = false;
-    if (!q_->empty()) {
-        ret = true;
-        *t = q_->front();
-        q_->pop_front();
-    }
-    return ret;
-  }
+			static void* start_thread_pool(void* args) {
+				start_submit_pool_args* t_args = (start_submit_pool_args *) args;
+				t_args->subpool->run_thread();
+				delete t_args;
+				pthread_exit(nullptr);
+				return nullptr;
+			}
+			void run_thread() {
+				for (;;) {
+					function<void()>* job = nullptr;
+					Pthread_mutex_lock(&m_);
+					while (q_->empty()) {
+						Pthread_cond_wait(&not_empty_, &m_);
+					}
+					Pthread_mutex_lock(&run_);
+					job = q_->front();
+					q_->pop_front();
+					Pthread_mutex_unlock(&m_);
+					if (job == nullptr) {
+						Pthread_mutex_unlock(&run_);
+						break;
+					}
+					(*job)();
+					delete job;
+					Pthread_mutex_unlock(&run_);
+				}
+			}
+			bool try_pop(std::function<void()>** t) {
+				bool ret = false;
+				if (!q_->empty()) {
+					ret = true;
+					*t = q_->front();
+					q_->pop_front();
+				}
+				return ret;
+			}
 
-public:
-  SubmitPool()
-  : n_(1), th_(0), q_(new std::list<std::function<void()>*>), not_empty_(), m_(), run_() {
-    verify(n_ >= 0);
-    Pthread_mutex_init(&m_, nullptr);
-    Pthread_mutex_init(&run_, nullptr);
-    Pthread_cond_init(&not_empty_, nullptr);
-    for (int i = 0; i < n_; i++) {
-      start_submit_pool_args* args = new start_submit_pool_args();
-      args->subpool = this;
-      Pthread_create(&th_, nullptr, SubmitPool::start_thread_pool, args);
-    }
-  }
-  SubmitPool(const SubmitPool&) = delete;
+		public:
+			SubmitPool()
+				: n_(1), th_(0), q_(new std::list<std::function<void()>*>), not_empty_(), m_(), run_() {
+					verify(n_ >= 0);
+					Pthread_mutex_init(&m_, nullptr);
+					Pthread_mutex_init(&run_, nullptr);
+					Pthread_cond_init(&not_empty_, nullptr);
+					for (int i = 0; i < n_; i++) {
+						start_submit_pool_args* args = new start_submit_pool_args();
+						args->subpool = this;
+						Pthread_create(&th_, nullptr, SubmitPool::start_thread_pool, args);
+					}
+				}
+			SubmitPool(const SubmitPool&) = delete;
   SubmitPool& operator=(const SubmitPool&) = delete;
   ~SubmitPool() {
     should_stop_ = true;
@@ -534,14 +534,10 @@ public:
   timepoint lastseen = std::chrono::high_resolution_clock::now();
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
 
-  void operator=(const ElectionState &) = delete;
+  //void operator=(const ElectionState &) = delete;
 
   static shared_ptr<ElectionState> instance(){
-    static ElectionState instance;
-    static shared_ptr<ElectionState> instance_ptr = nullptr;
-    if(!instance_ptr){
-      instance_ptr = make_shared<ElectionState>(instance);
-    }
+    static shared_ptr<ElectionState> instance_ptr(new ElectionState);
     return instance_ptr;
   }
 
