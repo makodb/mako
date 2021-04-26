@@ -492,8 +492,8 @@ public:
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
   void submitJob(std::shared_ptr<Job>);
-  void SendBulkPrepare(shared_ptr<BulkPrepareLog>&);
-  void SendHeartBeat(shared_ptr<HeartBeatLog>&);
+  int SendBulkPrepare(shared_ptr<BulkPrepareLog>&);
+  int SendHeartBeat(shared_ptr<HeartBeatLog>&);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);
@@ -546,12 +546,12 @@ public:
     return instance_ptr;
   }
 
-  void get_machine_id(){
+  int get_machine_id(){
     return machine_id;
   }
 
   // not to be called while state lock acquired.
-  void get_consistent_epoch(){
+  int get_consistent_epoch(){
     int x;
     state_lock();
     x = cur_epoch;
@@ -559,7 +559,7 @@ public:
     return x;
   }
 
-  void get_epoch(){
+  int get_epoch(){
     return cur_epoch;
   }
 
@@ -570,7 +570,7 @@ public:
   void state_unlock(bool sleep = false){
     election_mutex.unlock();
     if(sleep)
-        sleepTimeout();
+        sleep_timeout();
   }
 
   int set_epoch(int val = -1){
@@ -624,10 +624,11 @@ public:
   }
 
   void step_down(int epoch){
-    es->state_lock();
-    es->set_state(0);
+    state_lock();
+    set_state(0);
     leader_id = -1;
-    es->state_unlock();
+    set_epoch(epoch);
+    state_unlock();
   }
 };
 

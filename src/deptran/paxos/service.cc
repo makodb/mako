@@ -75,8 +75,8 @@ void MultiPaxosServiceImpl::Heartbeat(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnHeartbeat(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
-                          valid,
                           ballot,
+                          valid,
                           std::bind(&rrr::DeferredReply::reply, defer));
   });
 }
@@ -89,8 +89,8 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
-                          valid,
                           ballot,
+                          valid,
                           ret,
                           std::bind(&rrr::DeferredReply::reply, defer));
   });
@@ -103,6 +103,7 @@ void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         ballot,
                          valid,
                         std::bind(&rrr::DeferredReply::reply, defer));
   });
@@ -115,6 +116,7 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         ballot,
                          valid,
                          std::bind(&rrr::DeferredReply::reply, defer));
     //defer->reply();

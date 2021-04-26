@@ -1,4 +1,4 @@
-#include "paxos_worker.h"
+#include "server.h"
 #include "service.h"
 #include "chrono"
 
@@ -485,7 +485,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
-  coord->slot_id_ = ((PaxosServer*)rep_sched_)->get_open_slot();
+  coord->set_slot((PaxosServer*)rep_sched_->get_open_slot());
   //created_coordinators_.push_back(coord);
   //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);

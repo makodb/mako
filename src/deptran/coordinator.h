@@ -173,6 +173,9 @@ class Coordinator {
   }
   virtual void restart(TxData *ch) {verify(0);};
   virtual void Restart() = 0;
+  virtual void set_slot(int slot){
+    verify(0);
+  }
 };
 
 } // namespace janus

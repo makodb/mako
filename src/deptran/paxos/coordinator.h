@@ -71,6 +71,10 @@ class CoordinatorMultiPaxos : public Coordinator {
   void Restart() override { verify(0); }
 
   void GotoNextPhase();
+
+  void set_slot(int slot) override {
+    slot_id_ = slot;
+  }
 };
 
 class BulkCoordinatorMultiPaxos : public CoordinatorMultiPaxos {

@@ -91,7 +91,7 @@ class PaxosServer : public TxLogServer {
                       MarshallDeputy* ret,
                       const function<void()> &cb);
 
-  void get_open_slot(){
+  int get_open_slot(){
     return ++cur_open_slot_;
   }
 

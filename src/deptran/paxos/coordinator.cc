@@ -3,8 +3,11 @@
 #include "../constants.h"
 #include "coordinator.h"
 #include "commo.h"
+#include "paxos_worker.h"
 
 namespace janus {
+
+shared_ptr<ElectionState> es = ElectionState::instance();
 
 CoordinatorMultiPaxos::CoordinatorMultiPaxos(uint32_t coo_id,
                                              int32_t benchmark,
@@ -254,11 +257,11 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   //           slot_id_);
   // verify(n_prepare_ack_ == 0);
   // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
-  std::vector<pair<ballot_t, MarshallDeputy*>> vec_md;
-  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, &es, &in_submission_](MarshallDeputy md, ballot_t bt, int valid){
+  std::vector<pair<ballot_t, MarshallDeputy>> vec_md;
+  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, &es, this](MarshallDeputy md, ballot_t bt, int valid){
     if(!valid){
       es->step_down(bt);
-      in_submission_ = false;
+      this->in_submission_ = false;
     } else{
       vec_md.push_back(make_pair(bt, md));
     }
@@ -270,7 +273,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
     for(int i = 0; i < vec_md.size(); i++){
       if(vec_md[i].first > candidate_b){
         candidate_b = vec_md[i].first;
-        candidate_val = vec_md[i].second;
+        candidate_val = &vec_md[i].second;
       }
     }
     if(candidate_val){
@@ -296,12 +299,12 @@ void BulkCoordinatorMultiPaxos::Accept() {
     if(!in_submission_){
       return;
     }
-    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [&in_submission_, &es](ballot_t ballot, int valid)(
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, &es](ballot_t ballot, int valid){
       if(!valid){
         es->step_down(ballot);
-        in_submission_ = false;
+        this->in_submission_ = false;
       }
-    ));
+    });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
         committed_ = true;
@@ -321,12 +324,12 @@ void BulkCoordinatorMultiPaxos::Commit() {
     if(!in_submission_){
       return;
     }
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_, [&in_submission_, &es](ballot_t ballot, int valid)(
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_, [this, &es](ballot_t ballot, int valid){
       if(!valid){
         es->step_down(ballot);
-        in_submission_ = false;
+        this->in_submission_ = false;
       }
-    ));
+    });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
     } else if (sp_quorum->No()) {
