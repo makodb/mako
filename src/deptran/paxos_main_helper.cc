@@ -377,7 +377,7 @@ shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
 
 
 void send_no_ops_to_all_workers(int epoch){
-  static char* s = "no-ops";
+  static char s[] = "no-ops";
   int len = strlen(s);
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
     add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->partition_id_);

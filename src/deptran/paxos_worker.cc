@@ -9,7 +9,7 @@ namespace janus {
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
 
-shared_ptr<ElectionState> es = ElectionState::instance();
+shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
 static int volatile xx =
     MarshallDeputy::RegInitializer(MarshallDeputy::CONTAINER_CMD,
@@ -244,8 +244,8 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
     //Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
     //marker:ansh use per thread stuff for optimization
     auto sp_cmd = make_shared<BulkPaxosCmd>();
-    ballot_t send_epoch = es->get_consistent_epoch();
-    sp_cmd->leader_id = es->get_machine_id();
+    ballot_t send_epoch = es_pw->get_consistent_epoch();
+    sp_cmd->leader_id = es_pw->get_machine_id();
     //Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
