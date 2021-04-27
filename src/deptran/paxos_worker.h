@@ -519,8 +519,7 @@ static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 class ElectionState {
   ElectionState(){}
 public: 
-  rrr::Mutex election_mutex{};
-  rrr::CondVar election_cond{};
+  std::recursive_mutex election_mutex{};
   pthread_t election_th_;
   pthread_t heartbeat_th_;
   int timeout = rand()%4 + 1; // in seconds
@@ -531,6 +530,7 @@ public:
   int machine_id = -1;
   int leader_id = -1;
   rrr::Mutex election_state;
+  rrr::CondVar election_cond{};
   timepoint lastseen = std::chrono::high_resolution_clock::now();
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
 

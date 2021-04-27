@@ -430,9 +430,9 @@ void* electionMonitor(void* arg){
     int send_epoch = es->set_epoch();
     es->state_unlock();
     send_bulk_prep(send_epoch);
-    es->election_mutex.lock();
-    es->election_cond.wait(es->election_mutex);
-    es->election_mutex.unlock();
+    es->election_state.lock();
+    es->election_cond.wait(es->election_state);
+    es->election_state.unlock();
     es->state_lock();
     if(send_epoch != es->cur_epoch){
       es->state_unlock();
