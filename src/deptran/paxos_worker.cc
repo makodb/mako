@@ -81,6 +81,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
 	 Log_info("Recieved a zero length log");
       }
       	if(true || !shared_ptr_apprch){
+               if (sp_log_entry.length > 0) {
                   const char *log = sp_log_entry.log_entry.c_str() ;
                   //callback_par_id_(log, sp_log_entry.length, site_info_->partition_id_);
                   unsigned long long int r = callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_) ;
@@ -95,6 +96,11 @@ void PaxosWorker::Next(Marshallable& cmd) {
                   } else if (status == 1) {
                       std::cout << "this should never happen!!!" << std::endl;
                   }
+               } else {
+                 // the ending signal
+                 const char *log = sp_log_entry.log_entry.c_str() ;
+                 callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_) ;
+               }
           } else {
               //std::cout << sp_log_entry.operation_test.get() << std::endl;
               //callback_par_id_(sp_log_entry.operation_test.get(), sp_log_entry.length, site_info_->partition_id_);
