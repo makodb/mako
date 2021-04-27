@@ -33,9 +33,16 @@ pthread_t submit_poll_th_;
 const int len = 5;
 static std::map<std::string,long double> timer;
 
+function<void()> leader_callback_{}; 
+
+
+
 shared_ptr<ElectionState> es = ElectionState::instance();
 
 
+int get_epoch(){
+  return es->get_consistent_epoch();
+}
 
 void check_current_path() {
     auto path = boost::filesystem::current_path();
@@ -244,6 +251,10 @@ int shutdown_paxos() {
     return 0;
 }
 
+void register_leader_election_callback(std::function<void()> cb){
+  leader_callback_ = cb;
+}
+
 void register_for_follower(std::function<void(const char*, int)> cb, uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {
         if (worker->IsPartition(par_id) && !worker->IsLeader(par_id)) {
@@ -431,6 +442,7 @@ void* electionMonitor(void* arg){
     send_no_ops_to_all_workers(es->get_epoch());
     //marker:ansh signal to silo here.
     es->state_unlock();
+    leader_callback_();
   }
   pthread_exit(nullptr);
   return nullptr;
