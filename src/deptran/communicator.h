@@ -32,6 +32,37 @@ class MessageEvent : public IntEvent {
   }
 };
 
+class PaxosPrepareQuorumEvent: public QuorumEvent {
+ public:
+  using QuorumEvent::QuorumEvent;
+//  ballot_t max_ballot_{0};
+  bool HasAcceptedValue() {
+    // TODO implement this
+    return false;
+  }
+  void FeedResponse(bool y) {
+    if (y) {
+      n_voted_yes_++;
+    } else {
+      n_voted_no_++;
+    }
+  }
+
+
+};
+
+class PaxosAcceptQuorumEvent: public QuorumEvent {
+ public:
+  using QuorumEvent::QuorumEvent;
+  void FeedResponse(bool y) {
+    if (y) {
+      n_voted_yes_++;
+    } else {
+      n_voted_no_++;
+    }
+  }
+};
+
 
 class Communicator {
  public:
@@ -112,6 +143,19 @@ class Communicator {
   void AddMessageHandler(std::function<bool(const string&, string&)>);
   void AddMessageHandler(std::function<bool(const MarshallDeputy&,
                                             MarshallDeputy&)>);
+
+  virtual shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastBulkPrepare(parid_t par_id,
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(ballot_t, int)>& cb){
+      verify(0);
+    }
+  virtual shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastHeartBeat(parid_t par_id,
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(ballot_t, int)>& cb){
+      verify(0);
+    }
 };
 
 } // namespace janus
