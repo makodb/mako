@@ -287,12 +287,17 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 }
 
 // marker:ansh
-int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
+int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
   ballot_t received_epoch = -1;
-  if(rep_commo_)
-    Log_info("SendBulkPrepare: Not empty commo_");
-  auto sp_quorum = rep_commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [](ballot_t ballot, int valid) {});
+  auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
+  coord.get()->par_id_ = site_info_->partition_id_;
+  coord.get()->loc_id_ = site_info_->locale_id;
+  auto sp_quorum = coord.get()->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
+    if(!valid){
+      received_epoch = max(received_epoch, ballot);
+    }
+  });
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     return -1;
@@ -301,10 +306,11 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
 }
 
 // marker:ansh
-int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
+int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog>& hb_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
-  auto sp_quorum = rep_commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
+  auto pxs_commo_ = reinterpret_cast<MultiPaxosCommo*>(rep_commo_);
+  auto sp_quorum = pxs_commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
     if(!resp_type)
       received_epoch = ballot;
   });
