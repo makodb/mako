@@ -292,11 +292,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
   ballot_t received_epoch = -1;
   if(rep_commo_)
     Log_info("SendBulkPrepare: Not empty commo_");
-  auto sp_quorum = rep_commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
-    if(!valid){
-      received_epoch = max(received_epoch, ballot);
-    }
-  });
+  auto sp_quorum = rep_commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [](ballot_t ballot, int valid) {});
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     return -1;

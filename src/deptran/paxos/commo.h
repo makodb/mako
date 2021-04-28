@@ -37,7 +37,7 @@ class MultiPaxosCommo : public Communicator {
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkPrepare(parid_t par_id,
                         shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb) override;
+                        std::function<void(ballot_t, int)> cb) override;
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastHeartBeat(parid_t par_id,
                         shared_ptr<Marshallable> cmd,

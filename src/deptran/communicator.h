@@ -147,7 +147,7 @@ class Communicator {
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkPrepare(parid_t par_id,
                         shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb){
+                        std::function<void(ballot_t, int)> cb){
       verify(0);
     }
   virtual shared_ptr<PaxosAcceptQuorumEvent>
