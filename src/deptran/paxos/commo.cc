@@ -110,7 +110,7 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
                                       shared_ptr<Marshallable> cmd,
-                                      const function<void(ballot_t, int)>& cb) override {
+                                      const function<void(ballot_t, int)>& cb) {
   Log_info("BroadcastBulkPrepare: i am here");
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
@@ -165,7 +165,7 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
                                     shared_ptr<Marshallable> cmd,
-                                    const function<void(ballot_t, int)>& cb) override {
+                                    const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
