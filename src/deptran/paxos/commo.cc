@@ -110,7 +110,7 @@ void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
                                       shared_ptr<Marshallable> cmd,
-                                      function<void(ballot_t, int)>& cb) {
+                                      function<void(ballot_t, int)> cb) {
   Log_info("BroadcastBulkPrepare: i am here");
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);

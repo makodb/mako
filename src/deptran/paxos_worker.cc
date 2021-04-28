@@ -287,7 +287,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 }
 
 // marker:ansh
-int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
+int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
   ballot_t received_epoch = -1;
   if(rep_commo_)
@@ -301,7 +301,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
 }
 
 // marker:ansh
-int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog>& hb_log){
+int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
   auto sp_quorum = rep_commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {

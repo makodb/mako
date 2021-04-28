@@ -492,8 +492,8 @@ public:
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
   void submitJob(std::shared_ptr<Job>);
-  int SendBulkPrepare(shared_ptr<BulkPrepareLog>&);
-  int SendHeartBeat(shared_ptr<HeartBeatLog>&);
+  int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
+  int SendHeartBeat(shared_ptr<HeartBeatLog>);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);
