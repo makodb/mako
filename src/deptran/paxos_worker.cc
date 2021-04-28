@@ -290,7 +290,9 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
   ballot_t received_epoch = -1;
-  auto pxs_commo_ = (MultiPaxosCommo*)rep_frame_->commo_;
+  if(rep_commo_)
+	Log_info("SendBulkPrepare: Not empty commo_");
+  auto pxs_commo_ = (MultiPaxosCommo*)rep_commo_;
   auto sp_quorum = pxs_commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
     if(!valid){
       received_epoch = max(received_epoch, ballot);
@@ -307,7 +309,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
 int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog>& hb_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
-  auto pxs_commo_ = (MultiPaxosCommo*)rep_frame_->commo_;
+  auto pxs_commo_ = reinterpret_cast<MultiPaxosCommo*>(rep_commo_);
   auto sp_quorum = pxs_commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
     if(!resp_type)
       received_epoch = ballot;
