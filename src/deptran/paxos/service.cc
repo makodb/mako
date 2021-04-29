@@ -1,6 +1,7 @@
 
 #include "service.h"
 #include "server.h"
+#include "../paxos_worker.h"
 
 namespace janus {
 
@@ -87,11 +88,13 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
                                        MarshallDeputy* ret,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
+  ret->SetMarshallable(std::make_shared<BulkPaxosCmd>());
+  auto p = dynamic_pointer_cast<BulkPaxosCmd>(ret->sp_data_);
   Coroutine::CreateRun([&] () {
     sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                           ballot,
                           valid,
-                          &ret,
+                          p,
                           std::bind(&rrr::DeferredReply::reply, defer));
   });
 }

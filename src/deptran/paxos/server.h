@@ -89,7 +89,7 @@ class PaxosServer : public TxLogServer {
   void OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                       i32* ballot,
                       i32 *valid,
-                      MarshallDeputy** ret,
+                      shared_ptr<BulkPaxosCmd> ret_cmd,
                       const function<void()> &cb);
 
   int get_open_slot(){

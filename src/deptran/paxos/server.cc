@@ -209,7 +209,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               MarshallDeputy** ret,
+                               shared_ptr<BulkPaxosCmd> ret_cmd,
                                const function<void()> &cb){
 
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
@@ -224,7 +224,6 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     *ballot = es->cur_epoch;
     es->state_unlock();
     *valid = 0;
-    *ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
     cb();
     return;
   }
@@ -249,7 +248,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   Log_info("OnBulkPrepare2: Checks successfull preparing response");
   if(!instance || !instance->accepted_cmd_){
     *ballot = cur_b;
-    *ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(bcmd));
+    *ret_cmd = bcmd;
     Log_info("OnBulkPrepare2: the kind_ of the response object is %d", (*ret)->kind_);
     es->state_unlock();
     cb();
@@ -258,10 +257,9 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   }
   es->state_unlock();
   Log_info("OnBulkPrepare2: instance found, Preparing response");
-  rbcmd->ballots.push_back(instance->max_ballot_accepted_);
-  rbcmd->slots.push_back(cur_slot);
-  rbcmd->cmds.push_back(make_shared<MarshallDeputy>(instance->accepted_cmd_));
-  *ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
+  ret_cmd->ballots.push_back(instance->max_ballot_accepted_);
+  ret_cmd->slots.push_back(cur_slot);
+  ret_cmd->cmds.push_back(make_shared<MarshallDeputy>(instance->accepted_cmd_));
   cb();
 }
 
