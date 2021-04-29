@@ -4,7 +4,7 @@
 #include "chrono"
 
 namespace janus {
-
+vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
 
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
@@ -287,26 +287,31 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 }
 
 // marker:ansh
-int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog>& bp_log){
-  auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
+int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
+    auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
   ballot_t received_epoch = -1;
-  auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
-  coord.get()->par_id_ = site_info_->partition_id_;
-  coord.get()->loc_id_ = site_info_->locale_id;
-  auto sp_quorum = coord.get()->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  auto sp_quorum = coord->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
+    Log_info("BulkPrepare: response received %d", valid);
     if(!valid){
+      //Log_info("BulkPrepare: response received");
       received_epoch = max(received_epoch, ballot);
     }
   });
+  Log_info("BulkPrepare: waiting for response");
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
+    Log_info("SendBulkPrepare: Leader election successfull");
     return -1;
   }
+  Log_info("SendBulkPrepare: Rpc unsucessfull");
   return received_epoch;
 }
 
 // marker:ansh
-int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog>& hb_log){
+int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
   auto pxs_commo_ = reinterpret_cast<MultiPaxosCommo*>(rep_commo_);

@@ -92,8 +92,11 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
   }
 
   /* acquire all other server locks one by one */
+  Log_info("Paxos workers size %d %d", pxs_workers_g.size(), bp_log->leader_id);
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
-    PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    if(pxs_workers_g[i])
+	Log_info("cast successfull %d", i);
+    PaxosServer* ps = (PaxosServer*)(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
   }
 
@@ -137,8 +140,9 @@ unlock_and_return:
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.unlock();
   }
+  *ballot = es->cur_epoch;
   es->state_unlock();
-
+  Log_info("BulkPrepare: Terminating RPC here");
   *valid = 1;
   cb();
 }

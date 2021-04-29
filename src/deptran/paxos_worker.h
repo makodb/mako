@@ -514,7 +514,7 @@ public:
   }
 };
 
-static vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
+extern vector<shared_ptr<PaxosWorker>> pxs_workers_g;
 
 class ElectionState {
   ElectionState(){}

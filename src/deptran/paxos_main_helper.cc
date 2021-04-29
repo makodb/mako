@@ -330,6 +330,8 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
+	//Log_info("add_log_to_nc: Called here for some reason");
+	return;
         //if(submit_tot > 1)return;
 	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
 	//return;
@@ -391,21 +393,22 @@ void send_no_ops_to_all_workers(int epoch){
   static char s[] = "no-ops";
   int len = strlen(s);
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
-    add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->partition_id_);
+    //add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->partition_id_);
   }
 }
 
 void send_bulk_prep(int send_epoch){
   auto pw = pxs_workers_g.back();
   auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
-  auto sp_job = std::make_shared<OneTimeJob>([&pw, &bp_log]() {
+  auto ess = es;
+  auto sp_job = std::make_shared<OneTimeJob>([&pw, bp_log, ess]() {
       int val = pw->SendBulkPrepare(bp_log);
       if(val != -1){
-        es->state_lock();
-        es->set_epoch(val);
-        es->state_unlock();
+        ess->state_lock();
+        ess->set_epoch(val);
+        ess->state_unlock();
       }
-      es->election_cond.bcast();
+      ess->election_cond.bcast();
   });
   pxs_workers_g.back()->GetPollMgr()->add(sp_job);
 }
@@ -424,6 +427,7 @@ void* electionMonitor(void* arg){
       continue;
     }
     if(!es->did_not_see_leader()){
+      es->state_unlock();
       es->sleep_timeout();
       continue;
     }
@@ -461,7 +465,7 @@ void* heartbeatMonitor(void* arg){
      es->state_unlock();
      auto pw = pxs_workers_g.back();
      auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
-     auto sp_job = std::make_shared<OneTimeJob>([&pw, &hb_log]() {
+     auto sp_job = std::make_shared<OneTimeJob>([&pw, hb_log]() {
         int val = pw->SendHeartBeat(hb_log);
         if(val != -1){
           es->state_lock();

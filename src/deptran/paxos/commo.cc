@@ -111,9 +111,10 @@ shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
                                       shared_ptr<Marshallable> cmd,
                                       function<void(ballot_t, int)> cb) {
-  Log_info("BroadcastBulkPrepare: i am here");
+  //Log_info("BroadcastBulkPrepare: i am here");
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
+  Log_info("BroadcastBulkPrepare: i am here partition size %d", n);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
   for (auto& p : proxies) {
@@ -121,14 +122,15 @@ MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
       i32 valid;
-      ballot_t ballot;
+      i32 ballot;
       fu->get_reply() >> ballot >> valid;
+      Log_info("Received response %d %d", ballot, valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_BulkPrepare(md);
+    auto f = proxy->async_BulkPrepare(md, fuattr);
     Future::safe_release(f);
   }
   return e;
@@ -182,7 +184,7 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_Heartbeat(md);
+    auto f = proxy->async_Heartbeat(md, fuattr);
     Future::safe_release(f);
   }
   return e;
