@@ -229,7 +229,8 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   }
   auto instance = GetInstance(cur_slot);
   es->set_lastseen();
-  es->set_state(0);
+  if(req_leader != es->machine_id)
+	es->set_state(0);
   if(cur_b > es->cur_epoch){
     es->set_epoch(cur_b);
     es->set_leader(req_leader); // marker:ansh send leader in every request.
@@ -285,7 +286,8 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-  es->set_state(0);
+  if(es->machine_id != req_leader)
+	es->set_state(0);
   es->set_lastseen();
   //cb();
   //return;
@@ -346,7 +348,8 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-  es->set_state(0);
+  if(es->machine_id != req_leader)
+	es->set_state(0);
   es->set_lastseen();
   vector<shared_ptr<PaxosData>> commit_exec;
   for(int i = 0; i < bcmd->slots.size(); i++){

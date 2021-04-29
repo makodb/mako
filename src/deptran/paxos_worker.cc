@@ -32,11 +32,15 @@ static int volatile x5 =
                                        return new HeartBeatLog;
                                      });
 
-static int shared_ptr_apprch = 0;
+static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
+  //Log_info("The legnth of the log is %d", length);
   if(shared_ptr_apprch){
-	  m << std::string(operation_test.get(), length);
+	 if(operation_test.get())
+	   m << std::string(operation_test.get(), length);
+         else
+	   m << log_entry;
   } else{
 	  m << log_entry;
   }

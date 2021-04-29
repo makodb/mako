@@ -333,7 +333,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   if(!es->is_leader()){
     return;
   }
-  //if(submit_tot > 1)return;
+  if(submit_tot > 2)return;
 	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
 	//return;
 	l_.lock();
@@ -418,12 +418,16 @@ void send_bulk_prep(int send_epoch){
 // marker:ansh 
 void* electionMonitor(void* arg){
    while(true){
-
+    
     es->state_lock();
+    if(es->machine_id == 1){
+	es->state_unlock();
+	break;
+    }
     if(es->cur_state == 1){
       if(es->did_not_send_prep()){
-       send_bulk_prep(es->get_epoch());
-       es->set_bulkprep_time();
+       //send_bulk_prep(es->get_epoch());
+       //es->set_bulkprep_time();
       }
       es->state_unlock();
       continue;
