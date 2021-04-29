@@ -258,9 +258,11 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   // verify(n_prepare_ack_ == 0);
   // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
   std::vector<pair<ballot_t, MarshallDeputy>> vec_md;
-  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, this](MarshallDeputy md, ballot_t bt, int valid){
+  auto ess_cc = es_cc;
+  Log_info("Sending paxos prepare request");
+  auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!valid){
-      es_cc->step_down(bt);
+      ess_cc->step_down(bt);
       this->in_submission_ = false;
     } else{
       vec_md.push_back(make_pair(bt, md));

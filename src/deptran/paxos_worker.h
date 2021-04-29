@@ -555,6 +555,7 @@ public:
   }
 
   bool is_leader(){
+    int x;
     state_lock();
     x = cur_state;
     state_unlock();

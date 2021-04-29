@@ -84,17 +84,19 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
   auto bp_log = dynamic_pointer_cast<BulkPrepareLog>(cmd);
   es->state_lock();
   if(bp_log->epoch < es->cur_epoch){
-    es->state_unlock();
+    //es->state_unlock();
     *valid = 0;
     *ballot = es->cur_epoch;
+    es->state_unlock();
     cb();
     return;
   }
 
   if(bp_log->epoch == es->cur_epoch && bp_log->leader_id != es->machine_id){
-    es->state_unlock();
+    //es->state_unlock();
     *valid = 0;
     *ballot = es->cur_epoch;
+    es->state_unlock();
     cb();
     return;
   }
@@ -169,7 +171,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-
+  Log_info("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
   if(hb_log->epoch == es->cur_epoch){
     if(hb_log->leader_id != es->leader_id){
       es->state_unlock();
@@ -179,6 +181,9 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
       es->set_epoch(hb_log->epoch);
       es->set_lastseen();
       es->state_unlock();
+      *valid = 1;
+       cb();
+       return;
     }
   } else{
     // in this case reply needs to be that it needs a prepare.
@@ -204,7 +209,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               MarshallDeputy* ret,
+                               MarshallDeputy** ret,
                                const function<void()> &cb){
 
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
@@ -213,12 +218,13 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
   auto rbcmd = make_shared<BulkPaxosCmd>();
+  Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   es->state_lock();
   if(cur_b < es->cur_epoch){
     *ballot = es->cur_epoch;
     es->state_unlock();
     *valid = 0;
-    ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
+    *ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
     cb();
     return;
   }
@@ -240,18 +246,22 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
-  if(!instance){
-    *ballot = 0;
-    ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(bcmd));
-    cb();
+  Log_info("OnBulkPrepare2: Checks successfull preparing response");
+  if(!instance || !instance->accepted_cmd_){
+    *ballot = cur_b;
+    *ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(bcmd));
+    Log_info("OnBulkPrepare2: the kind_ of the response object is %d", (*ret)->kind_);
     es->state_unlock();
+    cb();
+    //es->state_unlock();
     return;
   }
   es->state_unlock();
+  Log_info("OnBulkPrepare2: instance found, Preparing response");
   rbcmd->ballots.push_back(instance->max_ballot_accepted_);
   rbcmd->slots.push_back(cur_slot);
   rbcmd->cmds.push_back(make_shared<MarshallDeputy>(instance->accepted_cmd_));
-  ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
+  *ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
   cb();
 }
 

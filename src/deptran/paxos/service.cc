@@ -91,7 +91,7 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
     sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                           ballot,
                           valid,
-                          ret,
+                          &ret,
                           std::bind(&rrr::DeferredReply::reply, defer));
   });
 }
