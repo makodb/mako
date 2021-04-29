@@ -32,7 +32,7 @@ static int volatile x5 =
                                        return new HeartBeatLog;
                                      });
 
-static int shared_ptr_apprch = 1;
+static int shared_ptr_apprch = 0;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
   if(shared_ptr_apprch){

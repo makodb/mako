@@ -90,13 +90,13 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
   verify(sched_ != nullptr);
   ret->SetMarshallable(std::make_shared<BulkPaxosCmd>());
   auto p = dynamic_pointer_cast<BulkPaxosCmd>(ret->sp_data_);
-  Coroutine::CreateRun([&] () {
+  //Coroutine::CreateRun([&] () {
     sched_->OnBulkPrepare2(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                           ballot,
                           valid,
                           p,
                           std::bind(&rrr::DeferredReply::reply, defer));
-  });
+  //});
 }
 
 void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,

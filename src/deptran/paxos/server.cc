@@ -248,8 +248,11 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   Log_info("OnBulkPrepare2: Checks successfull preparing response");
   if(!instance || !instance->accepted_cmd_){
     *ballot = cur_b;
-    *ret_cmd = bcmd;
-    Log_info("OnBulkPrepare2: the kind_ of the response object is %d", (*ret)->kind_);
+    //*ret_cmd = *bcmd;
+    ret_cmd->ballots.push_back(bcmd->ballots[0]);
+    ret_cmd->slots.push_back(bcmd->slots[0]);
+    ret_cmd->cmds.push_back(bcmd->cmds[0]);
+    //Log_info("OnBulkPrepare2: the kind_ of the response object is");
     es->state_unlock();
     cb();
     //es->state_unlock();

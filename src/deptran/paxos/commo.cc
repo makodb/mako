@@ -150,9 +150,10 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
       i32 valid;
-      ballot_t ballot;
+      i32 ballot;
       MarshallDeputy response_val;
       fu->get_reply() >> ballot >> valid >> response_val;
+      Log_info("BroadcastPrepare2: received response: %d %d", ballot, valid);
       cb(response_val, ballot, valid);
       e->FeedResponse(valid);
     };
