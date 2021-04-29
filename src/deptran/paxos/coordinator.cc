@@ -307,7 +307,8 @@ void BulkCoordinatorMultiPaxos::Accept() {
     if(!in_submission_){
       return;
     }
-    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this](ballot_t ballot, int valid){
+    auto ess_cc = es_cc;
+    auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
       if(!valid){
         es_cc->step_down(ballot);
         this->in_submission_ = false;
@@ -315,7 +316,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
-	Log_info("Accept: some slot is committed"); 
+	      Log_info("Accept: some slot is committed"); 
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;

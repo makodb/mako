@@ -199,13 +199,14 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
+  Log_info("Sending bulk accept for some slot");
   //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
   for (auto& p : proxies) {
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
       i32 valid;
-      ballot_t ballot;
+      i32 ballot;
       fu->get_reply() >> ballot >> valid;
       cb(ballot, valid);
       e->FeedResponse(valid);
