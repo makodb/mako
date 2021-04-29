@@ -278,6 +278,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
+  Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
   es->state_lock();
   if(cur_b < es->cur_epoch){
     *ballot = es->cur_epoch;
@@ -291,7 +292,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   es->set_lastseen();
   //cb();
   //return;
-  //Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
+  Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];

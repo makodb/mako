@@ -199,7 +199,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
-  Log_info("Sending bulk accept for some slot");
+  //Log_info("Sending bulk accept for some slot");
   //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
   for (auto& p : proxies) {
     auto proxy = (MultiPaxosProxy*) p.second;
@@ -213,6 +213,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
+    Log_info("Sending bulk accept for some slot");
     auto f = proxy->async_BulkAccept(md, fuattr);
     Future::safe_release(f);
   }

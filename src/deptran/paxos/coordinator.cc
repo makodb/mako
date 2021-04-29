@@ -285,8 +285,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
     if(candidate_val){
       auto cmd_temp = dynamic_pointer_cast<BulkPaxosCmd>(candidate_val->sp_data_);
       auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-      cmd_temp->ballots = cmd_temp1->ballots;
-      cmd_ = dynamic_pointer_cast<Marshallable>(cmd_temp);
+      cmd_temp1->cmds[0] = cmd_temp->cmds[0];
+      //cmd_ = dynamic_pointer_cast<Marshallable>(cmd_temp);
     }
     Log_info("in submission ? %d", in_submission_);
     Log_info("Should be in accept now");
