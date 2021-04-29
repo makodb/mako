@@ -91,6 +91,14 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
     return;
   }
 
+  if(bp_log->epoch == es->cur_epoch && bp_log->leader_id != es->machine_id){
+    es->state_unlock();
+    *valid = 0;
+    *ballot = es->cur_epoch;
+    cb();
+    return;
+  }
+
   /* acquire all other server locks one by one */
   Log_info("Paxos workers size %d %d", pxs_workers_g.size(), bp_log->leader_id);
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
@@ -204,15 +212,16 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
+  auto rbcmd = make_shared<BulkPaxosCmd>();
   es->state_lock();
   if(cur_b < es->cur_epoch){
     *ballot = es->cur_epoch;
     es->state_unlock();
     *valid = 0;
+    ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(rbcmd));
     cb();
     return;
   }
-  auto rbcmd = make_shared<BulkPaxosCmd>();
   auto instance = GetInstance(cur_slot);
   es->set_lastseen();
   es->set_state(0);
@@ -233,8 +242,8 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   }
   if(!instance){
     *ballot = 0;
-    cb();
     ret = new MarshallDeputy(dynamic_pointer_cast<Marshallable>(bcmd));
+    cb();
     es->state_unlock();
     return;
   }

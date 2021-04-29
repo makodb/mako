@@ -554,6 +554,13 @@ public:
     return x;
   }
 
+  bool is_leader(){
+    state_lock();
+    x = cur_state;
+    state_unlock();
+    return x;
+  }
+
   int get_epoch(){
     return cur_epoch;
   }
