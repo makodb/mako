@@ -334,9 +334,10 @@ void BulkCoordinatorMultiPaxos::Commit() {
     if(!in_submission_){
       return;
     }
-    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_, [this](ballot_t ballot, int valid){
+    auto ess_cc = es_cc;
+    auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
       if(!valid){
-        es_cc->step_down(ballot);
+        ess_cc->step_down(ballot);
         this->in_submission_ = false;
       }
     });
@@ -350,7 +351,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     }
     //verify(phase_ == Phase::COMMIT);
     commit_callback_();
-    GotoNextPhase();
+    //GotoNextPhase();
 }
 
 } // namespace janus
