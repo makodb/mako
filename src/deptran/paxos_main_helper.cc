@@ -496,6 +496,14 @@ int setup2(){
     server_launch_worker(server_infos);
   }
   es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
+  if(es->machine_id == 0){
+    es->set_state(1);
+    es->set_epoch(2);
+  } else{
+    es->set_state(0);
+    es->set_epoch(0);
+    es->set_leader(0);
+  }
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
   Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
