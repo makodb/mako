@@ -177,13 +177,20 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
       es->state_unlock();
       verify(0); // should not happen, means there are two leaders with different in the same epoch.
     } else if(hb_log->leader_id == es->leader_id){
-      es->set_state(0);
+      if(hb_log->leader_id != es->machine_id)
+        es->set_state(0);
       es->set_epoch(hb_log->epoch);
       es->set_lastseen();
       es->state_unlock();
       *valid = 1;
        cb();
        return;
+    } else{
+      es->set_lastseen();
+      es->state_unlock();
+      *valid = 1;
+      cb();
+      return;
     }
   } else{
     // in this case reply needs to be that it needs a prepare.

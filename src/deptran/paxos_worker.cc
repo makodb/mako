@@ -319,8 +319,10 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
 int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
-  auto pxs_commo_ = dynamic_cast<MultiPaxosCommo*>(rep_commo_);
-  auto sp_quorum = pxs_commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  auto sp_quorum = coord->commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
     if(!resp_type)
       received_epoch = ballot;
   });

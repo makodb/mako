@@ -420,9 +420,9 @@ void* electionMonitor(void* arg){
    while(true){
     
     es->state_lock();
-    if(es->machine_id == 1){
-	es->state_unlock();
-	break;
+    if(es->machine_id == 1){ // marker:ansh for debug
+      es->state_unlock();
+      break;
     }
     if(es->cur_state == 1){
       if(es->did_not_send_prep()){
@@ -472,7 +472,7 @@ void* heartbeatMonitor(void* arg){
      auto pw = pxs_workers_g.back();
      auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
      auto ess = es;
-     auto sp_job = std::make_shared<OneTimeJob>([&pw, hb_log, ess]() {
+     auto sp_job = std::make_shared<OneTimeJob>([pw, hb_log, ess]() {
         int val = pw->SendHeartBeat(hb_log);
         if(val != -1){
           ess->state_lock();
@@ -500,8 +500,8 @@ int setup2(){
   pthread_detach(submit_poll_th_);
   Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
   pthread_detach(es->election_th_);
-  //Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
-  //pthread_detach(es->heartbeat_th_);
+  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
+  pthread_detach(es->heartbeat_th_);
   return 0;
 }
 
