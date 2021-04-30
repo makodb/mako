@@ -114,7 +114,7 @@ MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
   //Log_info("BroadcastBulkPrepare: i am here");
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
-  Log_info("BroadcastBulkPrepare: i am here partition size %d", n);
+  //Log_info("BroadcastBulkPrepare: i am here partition size %d", n);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
   for (auto& p : proxies) {
@@ -124,7 +124,7 @@ MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
       i32 valid;
       i32 ballot;
       fu->get_reply() >> ballot >> valid;
-      Log_info("Received response %d %d", ballot, valid);
+      //Log_info("Received response %d %d", ballot, valid);
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
@@ -153,7 +153,7 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
       i32 ballot;
       MarshallDeputy response_val;
       fu->get_reply() >> ballot >> valid >> response_val;
-      Log_info("BroadcastPrepare2: received response: %d %d", ballot, valid);
+      //Log_info("BroadcastPrepare2: received response: %d %d", ballot, valid);
       cb(response_val, ballot, valid);
       e->FeedResponse(valid);
     };
@@ -213,7 +213,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    Log_info("Sending bulk accept for some slot");
+    //Log_info("Sending bulk accept for some slot");
     auto f = proxy->async_BulkAccept(md, fuattr);
     Future::safe_release(f);
   }

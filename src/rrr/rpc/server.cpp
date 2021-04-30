@@ -214,10 +214,10 @@ void ServerConnection::handle_read() {
         auto it = server_->handlers_.find(rpc_id);
         if (it != server_->handlers_.end()) {
             // the handler should delete req, and release server_connection refcopy.
-            //Coroutine::CreateRun([&it, &req, this] () {
+            Coroutine::CreateRun([&it, &req, this] () {
             it->second(req, (ServerConnection *) this->ref_copy());
             block_read_in.reset();
-            //});
+            });
         } else {
             rpc_id_missing_l_s.lock();
             bool surpress_warning = false;

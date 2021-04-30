@@ -233,7 +233,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
       }
       phase_++;// need to do this because Phase::Dispatch = 1
     } else if(current_phase == Phase::ACCEPT){
-      Log_info("In accept mode");
+      //Log_info("In accept mode");
       Accept();
       if(!in_submission_){
         break;
@@ -263,17 +263,17 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   //Log_info("Sending paxos prepare request");
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!valid){
-      Log_info("Invalid value received for prepare and leader steps down");
+      //Log_info("Invalid value received for prepare and leader steps down");
       ess_cc->step_down(bt);
       this->in_submission_ = false;
     } else{
-      Log_info("Valid value received for prepare %d", bt);
+      //Log_info("Valid value received for prepare %d", bt);
       vec_md.push_back(make_pair(bt, md));
     }
   });
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
-    Log_info("The prepare is successfull");
+    //Log_info("The prepare is successfull");
     ballot_t candidate_b = 0;
     MarshallDeputy* candidate_val = nullptr;
     for(int i = 0; i < vec_md.size(); i++){
@@ -288,8 +288,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
       cmd_temp1->cmds[0] = cmd_temp->cmds[0];
       //cmd_ = dynamic_pointer_cast<Marshallable>(cmd_temp);
     }
-    Log_info("in submission ? %d", in_submission_);
-    Log_info("Should be in accept now");
+    //Log_info("in submission ? %d", in_submission_);
+    //Log_info("Should be in accept now");
   } else if (sp_quorum->No()) {
     // TODO restart prepare?
     // verify(0);
@@ -316,7 +316,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
-	      Log_info("Accept: some slot is committed"); 
+	      //Log_info("Accept: some slot is committed"); 
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;
@@ -343,7 +343,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
-	Log_info("Commit: some stuff is committed");
+	//Log_info("Commit: some stuff is committed");
     } else if (sp_quorum->No()) {
       in_submission_ = false;
       return;
