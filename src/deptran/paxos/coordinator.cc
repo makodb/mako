@@ -348,7 +348,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     } else {
       verify(0);
     }
-    verify(phase_ == Phase::COMMIT);
+    //verify(phase_ == Phase::COMMIT);
     commit_callback_();
     GotoNextPhase();
 }

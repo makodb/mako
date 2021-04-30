@@ -209,7 +209,7 @@ public:
   char len_v64[9];
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
-    bypass_to_socket_ = true;
+    bypass_to_socket_ = false;
   }
 
   virtual ~LogEntry() {
@@ -294,7 +294,7 @@ public:
   char *serialized_slots = nullptr;
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
-    bypass_to_socket_ = true;
+    bypass_to_socket_ = false;
   }
   virtual ~BulkPaxosCmd() {
       slots.clear();

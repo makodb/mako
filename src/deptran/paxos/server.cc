@@ -278,7 +278,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
-  Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
+  Log_info("multi-paxos scheduler accept for slot: %lx", bcmd->slots.size());
   es->state_lock();
   if(cur_b < es->cur_epoch){
     *ballot = es->cur_epoch;
@@ -292,7 +292,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   es->set_lastseen();
   //cb();
   //return;
-  Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
+  //Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
@@ -374,7 +374,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
         es->set_leader(req_leader);
         mtx_.lock();
         auto instance = GetInstance(slot_id);
-        verify(instance->max_ballot_accepted_ < ballot_id);
+        verify(instance->max_ballot_accepted_ <= ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
         instance->committed_cmd_ = bcmd->cmds[i].get()->sp_data_;
