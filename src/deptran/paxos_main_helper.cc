@@ -333,7 +333,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   if(!es->is_leader()){
     return;
   }
-  if(submit_tot > 2)return;
+  //if(submit_tot > 2)return;
 	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
 	//return;
 	l_.lock();
@@ -500,8 +500,8 @@ int setup2(){
   pthread_detach(submit_poll_th_);
   Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
   pthread_detach(es->election_th_);
-  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
-  pthread_detach(es->heartbeat_th_);
+  //Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
+  //pthread_detach(es->heartbeat_th_);
   return 0;
 }
 

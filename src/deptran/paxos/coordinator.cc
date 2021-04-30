@@ -343,6 +343,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
+	Log_info("Commit: some stuff is committed");
     } else if (sp_quorum->No()) {
       in_submission_ = false;
       return;
