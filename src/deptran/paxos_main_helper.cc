@@ -330,10 +330,13 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
+  //printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
   if(!es->is_leader()){
     return;
   }
-  //if(submit_tot > 2)return;
+  //len = 2;
+  //printf("YYYYYYY:XXXXXXX: par_id: %d, len: %d\n", par_id, len);
+  //if(submit_tot > 100000)return;
 	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
 	//return;
 	l_.lock();
@@ -420,16 +423,17 @@ void* electionMonitor(void* arg){
    while(true){
     
     es->state_lock();
-    if(es->machine_id == 1){ // marker:ansh for debug
+    /*if(es->machine_id == 1){ // marker:ansh for debug
       es->state_unlock();
       break;
-    }
+    }*/
     if(es->cur_state == 1){
       if(es->did_not_send_prep()){
        //send_bulk_prep(es->get_epoch());
        //es->set_bulkprep_time();
       }
       es->state_unlock();
+      es->sleep_timeout();
       continue;
     }
     if(!es->did_not_see_leader()){
@@ -499,6 +503,7 @@ int setup2(){
   if(es->machine_id == 0){
     es->set_state(1);
     es->set_epoch(2);
+    es->set_leader(0);
   } else{
     es->set_state(0);
     es->set_epoch(0);

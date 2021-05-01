@@ -258,12 +258,15 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   //           slot_id_);
   // verify(n_prepare_ack_ == 0);
   // int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
+  //return;
+  auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
   std::vector<pair<ballot_t, MarshallDeputy>> vec_md;
   auto ess_cc = es_cc;
-  //Log_info("Sending paxos prepare request");
+  Log_info("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!valid){
       //Log_info("Invalid value received for prepare and leader steps down");
+      verify(0);
       ess_cc->step_down(bt);
       this->in_submission_ = false;
     } else{
@@ -282,14 +285,15 @@ void BulkCoordinatorMultiPaxos::Prepare() {
         candidate_val = &vec_md[i].second;
       }
     }
+    //auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
     if(candidate_val){
       auto cmd_temp = dynamic_pointer_cast<BulkPaxosCmd>(candidate_val->sp_data_);
-      auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-      cmd_temp1->cmds[0] = cmd_temp->cmds[0];
+      //auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+      //cmd_temp1->cmds[0] = cmd_temp->cmds[0];
       //cmd_ = dynamic_pointer_cast<Marshallable>(cmd_temp);
     }
     //Log_info("in submission ? %d", in_submission_);
-    //Log_info("Should be in accept now");
+    Log_info("Should be in accept now for slot %d", cmd_temp1->slots[0]);
   } else if (sp_quorum->No()) {
     // TODO restart prepare?
     // verify(0);
@@ -304,6 +308,9 @@ void BulkCoordinatorMultiPaxos::Accept() {
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
     //committed_ = true;
     //return;
+    auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+    Log_info("Sending paxos accept request for slot %d", cmd_temp1->slots[0]);
+    //Log_info("Accept: some slot is committed");
     if(!in_submission_){
       return;
     }
@@ -316,7 +323,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
-	      //Log_info("Accept: some slot is committed"); 
+	      Log_info("Accept: slot %d  is committed", cmd_temp1->slots[0]); 
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;
@@ -329,7 +336,6 @@ void BulkCoordinatorMultiPaxos::Accept() {
 void BulkCoordinatorMultiPaxos::Commit() {
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
     //commit_callback_();
-    //GotoNextPhase();
     //return;
     if(!in_submission_){
       return;

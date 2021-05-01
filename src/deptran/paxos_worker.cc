@@ -80,6 +80,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
   //return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
+      //printf("a log is committed, par_id: %d\n", site_info_->partition_id_);
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(sp_log_entry.length == 0){
 	 Log_info("Recieved a zero length log");

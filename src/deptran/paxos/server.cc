@@ -218,14 +218,17 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                shared_ptr<BulkPaxosCmd> ret_cmd,
                                const function<void()> &cb){
-
+  pthread_setname_np(pthread_self(), "Follower server thread");
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
-  *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
+  Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
+  *valid = 1;
+  //cb();
+  //return;
   auto rbcmd = make_shared<BulkPaxosCmd>();
-  Log_debug("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
+  //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   es->state_lock();
   if(cur_b < es->cur_epoch){
     *ballot = es->cur_epoch;
@@ -253,7 +256,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
-  Log_debug("OnBulkPrepare2: Checks successfull preparing response");
+  //Log_info("OnBulkPrepare2: Checks successfull preparing response for slot %d %d", cur_slot, partition_id_);
   if(!instance || !instance->accepted_cmd_){
     *ballot = cur_b;
     //*ret_cmd = *bcmd;
@@ -266,7 +269,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     //es->state_unlock();
     return;
   }
-  es->state_unlock();
+  //es->state_unlock();
   Log_debug("OnBulkPrepare2: instance found, Preparing response");
   ret_cmd->ballots.push_back(instance->max_ballot_accepted_);
   ret_cmd->slots.push_back(cur_slot);
@@ -285,7 +288,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
-  Log_debug("multi-paxos scheduler accept for slot: %lx", bcmd->slots.size());
+  //Log_debug("multi-paxos scheduler accept for slot: %lx", bcmd->slots.size());
   es->state_lock();
   if(cur_b < es->cur_epoch){
     *ballot = es->cur_epoch;
@@ -299,7 +302,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   es->set_lastseen();
   //cb();
   //return;
-  //Log_info("multi-paxos scheduler decide for slot: %lx", bcmd->slots.size());
+  //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
@@ -309,6 +312,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         break;
       } else{
         if(es->cur_epoch < ballot_id){
+          //Log_info("I am here");
           for(int i = 0; i < pxs_workers_g.size()-1; i++){
             PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
             ps->mtx_.lock();
@@ -320,7 +324,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         mtx_.lock();
         es->set_leader(req_leader);
         auto instance = GetInstance(slot_id);
-        verify(instance->max_ballot_accepted_ < ballot_id);
+        //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
         instance->accepted_cmd_ = bcmd->cmds[i].get()->sp_data_;
@@ -328,10 +332,13 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         n_accept_++;
         mtx_.unlock();
         *valid &= 1;
+	*ballot = ballot_id;
       }
   }
+  Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);  
   es->state_unlock();
   cb();
+  //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
 }
 
 void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
@@ -347,6 +354,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
+  //Log_info("multi-paxos scheduler decide for slot: %ld", cur_slot);
   int req_leader = bcmd->leader_id;
   es->state_lock();
   if(cur_b < es->cur_epoch){
@@ -420,12 +428,12 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   }
 
   *valid = 1;
-  cb();
+  //cb();
 
   mtx_.lock();
   FreeSlots();
   mtx_.unlock();
-  //cb();
+  cb();
 }
 
 } // namespace janus

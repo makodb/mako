@@ -162,6 +162,7 @@ class PollMgr::PollThread {
   void poll_loop();
 
   void start(PollMgr* poll_mgr) {
+    pthread_setname_np(th_, "Follower server thread"); 
     Pthread_create(&th_, nullptr, PollMgr::PollThread::start_poll_loop, this);
   }
 

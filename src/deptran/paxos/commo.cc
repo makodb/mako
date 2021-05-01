@@ -32,7 +32,7 @@ MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
                                   slotid_t slot_id,
                                   ballot_t ballot) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<PaxosPrepareQuorumEvent>(n, n/2+1);
+  auto e = Reactor::CreateSpEvent<PaxosPrepareQuorumEvent>(n, n/2); //marker:ansh debug
   auto proxies = rpc_par_proxies_[par_id];
   for (auto& p : proxies) {
     auto proxy = (MultiPaxosProxy*) p.second;
@@ -113,7 +113,7 @@ MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
                                       function<void(ballot_t, int)> cb) {
   //Log_info("BroadcastBulkPrepare: i am here");
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
+  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n/2); // marker:debug
   //Log_info("BroadcastBulkPrepare: i am here partition size %d", n);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
@@ -141,7 +141,7 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
                                  const std::function<void(MarshallDeputy, ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
+  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n/2); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
   //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
@@ -196,7 +196,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
                                  const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
+  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n/2); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
   //Log_info("Sending bulk accept for some slot");
@@ -226,7 +226,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
                                      const function<void(ballot_t, int)>& cb){
     auto proxies = rpc_par_proxies_[par_id];
     int n = Config::GetConfig()->GetPartitionSize(par_id);
-    auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
+    auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n/2); //marker:debug 
     vector<Future*> fus;
     for (auto& p : proxies) {
         auto proxy = (MultiPaxosProxy*) p.second;
