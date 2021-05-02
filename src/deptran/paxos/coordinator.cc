@@ -271,7 +271,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
       this->in_submission_ = false;
     } else{
       //Log_info("Valid value received for prepare %d", bt);
-      vec_md.push_back(make_pair(bt, md));
+      //vec_md.push_back(make_pair(bt, md));
     }
   });
   sp_quorum->Wait();
@@ -293,7 +293,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
       //cmd_ = dynamic_pointer_cast<Marshallable>(cmd_temp);
     }
     //Log_info("in submission ? %d", in_submission_);
-    Log_info("Should be in accept now for slot %d", cmd_temp1->slots[0]);
+    // Log_info("Should be in accept now for slot %d", cmd_temp1->slots[0]);
   } else if (sp_quorum->No()) {
     // TODO restart prepare?
     // verify(0);
@@ -309,7 +309,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     //committed_ = true;
     //return;
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-    Log_info("Sending paxos accept request for slot %d", cmd_temp1->slots[0]);
+    // Log_info("Sending paxos accept request for slot %d", cmd_temp1->slots[0]);
     //Log_info("Accept: some slot is committed");
     if(!in_submission_){
       return;

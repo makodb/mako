@@ -118,9 +118,10 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
     if(ps->bulk_prepares.size() != 0 && bp->seen_ballot > bp_log->epoch){
       verify(0); // should not happen, should have been caught bp_log->epoch.
     } else{
-      if(slot_id_min <= ps->max_committed_slot_){
-        verify(0); // marker:ansh to handle. // handle later
-      }
+      // debug
+      //if(slot_id_min <= ps->max_committed_slot_){
+      //  verify(0); // marker:ansh to handle. // handle later
+      //}
     }
   }
 
@@ -335,7 +336,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
 	*ballot = ballot_id;
       }
   }
-  Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);  
+  // Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);  
   es->state_unlock();
   cb();
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
