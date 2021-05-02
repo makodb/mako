@@ -45,10 +45,10 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
 void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
                                        const function<void()>& func,
                                        const function<void()>& exe_callback) {
-    if (!IsLeader()) {
+    /*if (!IsLeader()) {
         Log_fatal("i am not the leader; site %d; locale %d",
                   frame_->site_info_->id, loc_id_);
-    }
+    }*/
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
     verify(!in_submission_);
     in_submission_ = true;
@@ -266,7 +266,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!valid){
       //Log_info("Invalid value received for prepare and leader steps down");
-      verify(0);
+      //verify(0);
       ess_cc->step_down(bt);
       this->in_submission_ = false;
     } else{

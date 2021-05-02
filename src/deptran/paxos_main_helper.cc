@@ -156,14 +156,21 @@ void microbench_paxos() {
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
   for (auto& worker : pxs_workers_g) {
-    if (!worker->IsLeader(par_id)) continue;
+    if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
             worker->Submit(log,len, par_id);
+	    if(es->machine_id == 1 || es->machine_id == 2){
+		Log_info("Submitted on behalf on new leader");
+	    }
+            break;
+          }
 	    //worker->n_current++;
-	    break;
+	    //break;
     }
 
 }
+
+
 static bool wait = false;
 static int count_free = 0;
 void submit_logger() {
@@ -330,9 +337,13 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
-  //printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
+  printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
   if(!es->is_leader()){
     return;
+  }
+  if(es->machine_id == 1 || es->machine_id == 2){
+    Log_info("Submitting on behalf of new leader to worker");
+    //return;
   }
   //len = 2;
   //printf("YYYYYYY:XXXXXXX: par_id: %d, len: %d\n", par_id, len);
@@ -345,7 +356,9 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 	//endTime = std::chrono::high_resolution_clock::now();
 	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
 	//submit_queue_nc.push(paxos_entry);
+        Log_info("Add log enters here");
 	add_log_without_queue((char*)log, len, par_id);
+	Log_info("Add log exits here");
 	l_.unlock();
 }
 

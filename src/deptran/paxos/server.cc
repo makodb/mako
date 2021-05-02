@@ -104,8 +104,8 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
   /* acquire all other server locks one by one */
   Log_debug("Paxos workers size %d %d", pxs_workers_g.size(), bp_log->leader_id);
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
-    if(pxs_workers_g[i])
-	Log_info("cast successfull %d", i);
+    //if(pxs_workers_g[i])
+    //	Log_info("cast successfull %d", i);
     PaxosServer* ps = (PaxosServer*)(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
   }
@@ -254,6 +254,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     }
   } else{
     if(req_leader != es->leader_id){
+      Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
@@ -270,7 +271,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     //es->state_unlock();
     return;
   }
-  //es->state_unlock();
+  es->state_unlock();
   Log_debug("OnBulkPrepare2: instance found, Preparing response");
   ret_cmd->ballots.push_back(instance->max_ballot_accepted_);
   ret_cmd->slots.push_back(cur_slot);
@@ -432,7 +433,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   //cb();
 
   mtx_.lock();
-  FreeSlots();
+  //FreeSlots();
   mtx_.unlock();
   cb();
 }

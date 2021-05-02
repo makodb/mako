@@ -474,7 +474,7 @@ public:
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
   pthread_t replay_th_;
-  bool stop_flag = true;
+  bool stop_flag = false;
   bool stop_replay_flag = true;
 
   void SetupHeartbeat();
