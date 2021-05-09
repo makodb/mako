@@ -438,9 +438,17 @@ shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
 void send_no_ops_to_all_workers(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
-   //auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
-  int val = pw->SendSyncNoOpLog(syncNoOpLog);
-   //});
+  auto ess = es;
+  auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
+    int val = pw->SendSyncNoOpLog(syncNoOpLog);
+    if(val == -1){
+      ess->election_cond.bcast();
+    }
+  });
+  pxs_workers_g.back()->GetPollMgr()->add(sp_job);
+  es->election_state.lock();
+  es->election_cond.wait(es->election_state);
+  es->election_state.unlock();
 }
 
 /*
@@ -452,9 +460,17 @@ send synch rpc to followers.
 void send_sync_logs(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncLog = createSyncLog(epoch, es->machine_id);
-   //auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
+  auto ess = es;
+  auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
-   //});
+  if(val == -1){
+    ess->election_cond.bcast();
+  }
+ });
+ pxs_workers_g.back()->GetPollMgr()->add(sp_job);
+ es->election_state.lock();
+ es->election_cond.wait(es->election_state);
+ es->election_state.unlock();
 }
 
 void stuff_todo_leader_election(){
