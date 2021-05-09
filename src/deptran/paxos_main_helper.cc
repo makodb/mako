@@ -392,10 +392,10 @@ shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
     int32_t par_id = pxs_workers_g[i]->site_info_->partition_id_;
     slotid_t slot = pxs_workers_g[i]->n_current+1;
     bulk_prepare->min_prepared_slots.push_back(make_pair(par_id, slot));
-   }
-   bulk_prepare->epoch = epoch;
-   bulk_prepare->leader_id = machine_id;
-   return bulk_prepare;
+  }
+  bulk_prepare->epoch = epoch;
+  bulk_prepare->leader_id = machine_id;
+  return bulk_prepare;
 }
 
 shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
@@ -405,13 +405,73 @@ shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
   return heart_beat;
 }
 
+shared_ptr<SyncLogSend> createSyncLog(int epoch, int machine_id){
+  auto syncLog = make_shared<SyncLogRequest>();
+  syncLog->leader_id = machine_id;
+  syncLog->epoch = epoch;
+  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    pw->mtx_.lock()
+    slotid_t min_slot = pw->max_executed_slot_+1;
+    pw->mtx_.unlock()
+    syncLog->sync_commit_slot.push_back(min_slot);
+  }
+  return syncLog;
+}
+
+shared_ptr<SyncLogSend> createSyncNoOpLog(int epoch, int machine_id){
+  auto syncNoOpLog = make_shared<SyncNoOpRequest>();
+  syncNoOpLog->leader_id = machine_id;
+  syncNoOpLog->epoch = epoch;
+  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    pw->mtx_.lock()
+    slotid_t min_slot = pw->max_executed_slot_+1;
+    pw->mtx_.unlock()
+    syncNoOpLog->sync_slots.push_back(min_slot);
+  }
+  return syncNoOpLog;
+}
+
 
 void send_no_ops_to_all_workers(int epoch){
-  static char s[] = "no-ops";
-  int len = strlen(s);
-  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
-    //add_log_to_nc(s, len, pxs_workers_g[i]->site_info_->partition_id_);
+  auto pw = pxs_workers_g.back();
+  auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
+   //auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
+  int val = pw->SendSyncNoOpLog(syncNoOpLog);
+   //});
+}
+
+/*
+change state to 1,
+set epochs for workers
+send synch rpc to followers.
+*/
+
+void send_sync_logs(int epoch){
+  auto pw = pxs_workers_g.back();
+  auto syncLog = createSyncLog(epoch, es->machine_id);
+   //auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
+  int val = pw->SendSyncLog(syncLog);
+   //});
+}
+
+void stuff_todo_leader_election(){
+  es->state_lock();
+  es->set_state(1);
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    pxs_workers_g[i]->epoch_lock.lock();
+    pxs_workers_g[i]->cur_epoch = es->get_epoch();
+    pxs_workers_g[i]->epoch_lock.unlock();
+    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    ps->mtx_.lock();
+    ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_touched_slot+1); // reset open slot counter
+    ps->mtx_.unlock();
   }
+  int epoch = es->get_epoch();
+  es->state_unlock();
+  send_sync_logs(epoch);
+  send_no_ops_to_all_workers(epoch);
 }
 
 void send_bulk_prep(int send_epoch){
@@ -465,10 +525,8 @@ void* electionMonitor(void* arg){
       es->state_unlock();
       continue;
     }
-    es->set_state(1);
-    send_no_ops_to_all_workers(es->get_epoch());
-    //marker:ansh signal to silo here.
     es->state_unlock();
+    stuff_todo_leader_election();
     leader_callback_();
   }
   pthread_exit(nullptr);

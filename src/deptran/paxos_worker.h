@@ -14,6 +14,8 @@ namespace janus {
 
 	typedef std::chrono::time_point<std::chrono::high_resolution_clock> timepoint;
 
+  class BulkPaxosCmd;
+
 	inline void read_log(const char* log, int length, const char* custom){
 		unsigned long long int cid = 0;
 		memcpy(&cid, log, sizeof(unsigned long long int));
@@ -199,6 +201,99 @@ class HeartBeatLog : public Marshallable {
   }
 
 };
+
+class SyncLogRequest : public Marshallable {
+  public:
+    int leader_id;
+    ballot_t epoch;
+    vector<slotid_t> sync_commit_slot;
+    SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCREQ_PXS){
+
+    }
+
+    Marshal& ToMarshal(Marshal& m) const override {
+      m << leader_id;
+      m << epoch;
+      m << (int32_t)sync_commit_slot.size();
+      for(int i = 0; i < sync_commit_slot.size(); i++){
+        m << sync_commit_slot[i];
+      }
+      return m;
+    }
+
+    Marshal& FromMarshal(Marshal& m) override {
+      m >> leader_id;
+      m >> epoch;
+      int32_t sz;
+      m >> sz;
+      for(int i = 0; i < sz; i++){
+        slotid_t x;
+        m >> x;
+        sync_commit_slot.push_back(x);
+      }
+      return m;
+    }
+}
+
+class SyncLogResponse : public Marshallable {
+  public:
+    vector<shared_ptr<MarshallDeputy>> sync_data;
+    SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCRESP_PXS){
+
+    }
+
+    Marshal& ToMarshal(Marshal& m) const override {
+      m << (int32_t)sync_data.size();
+      for(int i = 0; i < sync_data.size(); i++){
+        m << sync_data[i];
+      }
+    }
+
+    Marshal& FromMarshal(Marshal& m) override {
+      int32_t sz;
+      m >> sz;
+      for(int i = 0; i < sz; i++){
+        MarshallDeputy x = new MarshallDeputy;
+        m >> *x;
+        auto shrd_ptr = shared_ptr<MarshallDeputy>(x);
+        sync_commit_slot.push_back(x);
+      }
+      return m;
+    }
+}
+
+class SyncNoOpRequest : public Marshallable{
+  int leader_id;
+  ballot_t epoch;
+  vector<slotid_t> sync_slots;
+  SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCNOOP_PXS){
+
+  }
+
+  Marshal& ToMarshal(Marshal& m) const override {
+    m << leader_id;
+    m << epoch;
+    m << (int32_t)sync_slots.size();
+    for(int i = 0; i < sync_slots.size(); i++){
+      m << sync_slots[i];
+    }
+    return m;
+  }
+
+  Marshal& FromMarshal(Marshal& m) override {
+    m >> leader_id;
+    m >> epoch;
+    int32_t sz;
+    m >> sz;
+    for(int i = 0; i < sz; i++){
+      slotid_t x;
+      m >> x;
+      sync_slots.push_back(x);
+    }
+    return m;
+  }
+}
+
 
 class LogEntry : public Marshallable {
 public:
@@ -447,6 +542,8 @@ public:
   vector<rrr::Service*> services_ = {};
   rrr::Server* rpc_server_ = nullptr;
   base::ThreadPool* thread_pool_g = nullptr;
+  int cur_epoch;
+  std::recursive_mutex epoch_lock;
   // for microbench
   std::atomic<int> submit_num{0};
   int tot_num = 0;
@@ -494,6 +591,8 @@ public:
   void submitJob(std::shared_ptr<Job>);
   int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
   int SendHeartBeat(shared_ptr<HeartBeatLog>);
+  int SendSyncLog(shared_ptr<SyncLogSend>);
+  int SendSyncNoOpLog(shared_ptr<SyncLogSend>);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);

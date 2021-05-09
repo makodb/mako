@@ -63,6 +63,22 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                      MarshallDeputy* ret,
                      rrr::DeferredReply* defer) override;
 
+  void SyncLog(const MarshallDeputy& md_cmd,
+                     i32* ballot,
+                     i32* valid,
+                     MarshallDeputy* ret,
+                     rrr::DeferredReply* defer) override;
+
+  void SyncCommit(const MarshallDeputy& md_cmd,
+                     i32* ballot,
+                     i32* valid,
+                     rrr::DeferredReply* defer) override;
+
+  void SyncNoOps(const MarshallDeputy& md_cmd,
+                 i32* ballot,
+                 i32* valid,
+                 rrr::DeferredReply* defer) override;
+
 };
 
 } // namespace janus

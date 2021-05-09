@@ -336,6 +336,102 @@ int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   return received_epoch;
 }
 
+int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
+  auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
+  ballot_t received_epoch = -1;
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  bool done = false;
+  auto es_pww = es_pw;
+  vector<shared_ptr<SyncLogResponse>> responses;
+  auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_, 
+                                                   sp_m, 
+                                                   [&received_epoch, &done, es_pww](shared_ptr<MarshallDeputy> md, 
+                                                                                    ballot_t ballot, 
+                                                                                    int resp_type) {
+    if(!resp_type)
+      es->step_down(ballot);
+    else{
+      if(!done){
+        responses.push_back(dynamic_pointer_cast<SyncLogResponse>(md->sp_data_));
+      } else{
+        return;
+      }
+    }
+  });
+  sp_quorum->Wait();
+  done = true;
+  if (sp_quorum->Yes()) {
+    map<pair<int,slot_id_>, shared_ptr<Marshallable>> commited_slots;
+    for(int i = 0; i < responses.size(); i++){
+      for(int j = 0; j < responses[i]->sync_data.size(); j++){
+        auto bp_cmd = dynamic_pointer_cast<BulkPaxosCmd>(responses[i]->sync_data[j]->sp_data_);
+        for(int k = 0; k < bp_cmd->slots.size(); k++){
+          commited_slots[make_pair(j, bp_cmd->slots[k])] = bp_cmd->cmds[k];
+        }
+      }
+    }
+    vector<shared_ptr<BulkPaxosCmd>> sync_cmds;
+    for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+      auto bp_cmd = make_shared<BulkPaxosCmd>();
+      sync_cmds.push_back(bp_cmd);
+    }
+    for(auto const& x : commited_slots){
+      sync_cmds[x.first.first]->slots.push_back(x.first.second);
+      sync_cmds[x.first.first]->cmds.push_back(x.second);
+      sync_cmds[x.first.first]->ballots.push_back(sync_log_req->epoch);
+    }
+    vector<shared_ptr<PaxosAcceptQuorumEvent>> events;
+    for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+      auto pw = pxs_workers_g[i];
+      auto send_cmd = dynamic_pointer_cast<Marshallable>(sync_cmds[i]);
+      auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
+                                                           send_cmd,
+                                                           [es_pww](ballot_t ballot, int valid){
+          if(!valid){
+            es_pww->step_down(ballot);
+          }
+      });
+      events.push_back(sp_quorum);
+    }
+    for(int i = 0; i < events.size(); i++){
+      events[i]->Wait();
+    }
+    return -1;
+  }
+  return received_epoch;
+}
+
+int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
+  auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
+  ballot_t received_epoch = -1;
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  bool done = false;
+  auto es_pww = es_pw;
+  auto sp_quorum = coord->commo_->BroadcastSyncNoOps(site_info_->partition_id_, 
+                                                   sp_m, 
+                                                   [&received_epoch, &done, es_pww](ballot_t ballot, 
+                                                                                    int resp_type) {
+    if(!resp_type)
+      es->step_down(ballot);
+    else{
+      if(!done){
+      } else{
+        return;
+      }
+    }
+  });
+  sp_quorum->Wait();
+  done = true;
+  if(sp_quorum->Yes()){
+    return -1;
+  }
+  return received_epoch;
+}
+
 void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
   //Log_info("current batch cnt %d", cnt);
   PaxosWorker::coo_queue.enqueue(coord);

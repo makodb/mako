@@ -42,6 +42,18 @@ class MultiPaxosCommo : public Communicator {
     BroadcastHeartBeat(parid_t par_id,
                         shared_ptr<Marshallable> cmd,
                         const std::function<void(ballot_t, int)>& cb) override;
+
+  virtual shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastSyncLog(parid_t par_id,
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb) override;
+
+
+  virtual shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastSyncCommit(parid_t par_id,
+                        shared_ptr<Marshallable> cmd,
+                        const std::function<void(ballot_t, int)>& cb) override;
+
   shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastBulkAccept(parid_t par_id,
                         shared_ptr<Marshallable> cmd,

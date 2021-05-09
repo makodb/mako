@@ -25,6 +25,12 @@ abstract service MultiPaxos {
 
   defer BulkPrepare2(MarshallDeputy cmd | i32 ballot, i32 val, MarshallDeputy ret);
 
+  defer SyncLog(MarshallDeputy cmd | i32 ballot, i32 val, MarshallDeputy ret);
+
+  defer SyncCommit(MarshallDeputy cmd | i32 ballot, i32 val);
+
+  defer SyncNoOps(MarshallDeputy cmd | i32 ballot, i32 val);
+
   defer BulkDecide(MarshallDeputy cmd | i32 ballot, i32 val);
 }
 

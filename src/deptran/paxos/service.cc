@@ -127,5 +127,52 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
   });
 }
 
+void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
+                                     i32* ballot,
+                                     i32* valid,
+                                     MarshallDeputy* ret,
+                                     rrr::DeferredReply* defer) {
+  verify(sched_ != nullptr);
+  ret->SetMarshallable(std::make_shared<SyncLogResponse>());
+  auto response = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
+  Coroutine::CreateRun([&] () {
+    sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         ballot,
+                         valid,
+                         response,
+                         std::bind(&rrr::DeferredReply::reply, defer));
+    //defer->reply();
+  });
+
+}
+
+void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
+                                     i32* ballot,
+                                     i32* valid,
+                                     rrr::DeferredReply* defer) {
+  verify(sched_ != nullptr);
+  Coroutine::CreateRun([&] () {
+    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         ballot,
+                         valid,
+                         std::bind(&rrr::DeferredReply::reply, defer));
+    //defer->reply();
+  });
+}
+
+void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
+                                      i32* ballot,
+                                      i32* valid,
+                                      rrr::DeferredReply* defer) {
+  verify(sched_ != nullptr);
+  Coroutine::CreateRun([&] () {
+    sched_->OnSyncNoOps(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+                         ballot,
+                         valid,
+                         std::bind(&rrr::DeferredReply::reply, defer));
+    //defer->reply();
+  });
+}
+
 
 } // namespace janus;

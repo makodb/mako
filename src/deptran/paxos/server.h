@@ -30,6 +30,7 @@ class PaxosServer : public TxLogServer {
   slotid_t max_accepted_slot_ = 0;
   slotid_t max_possible_slot_ = INT_MAX;
   slotid_t cur_open_slot_ = 0;
+  slotid_t max_touched_slot = 0;
   int leader_id;
   map<pair<slotid_t, slotid_t>, BulkPrepare> bulk_prepares{};  // saves all the prepare ranges.
   map<slotid_t, shared_ptr<PaxosData>> logs_{};
@@ -91,6 +92,23 @@ class PaxosServer : public TxLogServer {
                       i32 *valid,
                       shared_ptr<BulkPaxosCmd> ret_cmd,
                       const function<void()> &cb);
+
+  void OnSyncLog(shared_ptr<Marshallable> &cmd,
+                      i32* ballot,
+                      i32 *valid,
+                      shared_ptr<SyncLogResponse> ret_cmd,
+                      const function<void()> &cb);
+
+  void OnSyncCommit(shared_ptr<Marshallable> &cmd,
+                      i32* ballot,
+                      i32 *valid,
+                      const function<void()> &cb);
+
+
+  void OnSyncNoOps(shared_ptr<Marshallable> &cmd,
+                  i32* ballot,
+                  i32 *valid,
+                  const function<void()> &cb);
 
   int get_open_slot(){
     return ++cur_open_slot_;

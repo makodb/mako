@@ -230,19 +230,29 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   //return;
   auto rbcmd = make_shared<BulkPaxosCmd>();
   //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
-  es->state_lock();
-  if(cur_b < es->cur_epoch){
-    *ballot = es->cur_epoch;
-    es->state_unlock();
+  //es->state_lock();
+  mtx_.lock();
+  if(cur_b < cur_epoch){
+    *ballot = cur_epoch;
+    //es->state_unlock();
     *valid = 0;
+    mtx_.unlock();
     cb();
     return;
   }
-  auto instance = GetInstance(cur_slot);
+  mtx_.unlock();
+
+  es->state_lock();
   es->set_lastseen();
   if(req_leader != es->machine_id)
 	es->set_state(0);
-  if(cur_b > es->cur_epoch){
+  es->state_unlock();
+
+  mtx_.lock();
+  max_touched_slot = max(max_touched_slot, cur_slot);
+  if(cur_b > cur_epoch){
+    mtx_.unlock();
+    es->state_lock();
     es->set_epoch(cur_b);
     es->set_leader(req_leader); // marker:ansh send leader in every request.
     for(int i = 0; i < pxs_workers_g.size()-1; i++){
@@ -252,6 +262,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
       ps->leader_id = req_leader;
       ps->mtx_.unlock();
     }
+    es->state_unlock();
   } else{
     if(req_leader != es->leader_id){
       Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
@@ -266,16 +277,52 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     ret_cmd->slots.push_back(bcmd->slots[0]);
     ret_cmd->cmds.push_back(bcmd->cmds[0]);
     //Log_info("OnBulkPrepare2: the kind_ of the response object is");
-    es->state_unlock();
+    //es->state_unlock();
     cb();
     //es->state_unlock();
     return;
   }
-  es->state_unlock();
+  //es->state_unlock();
   Log_debug("OnBulkPrepare2: instance found, Preparing response");
   ret_cmd->ballots.push_back(instance->max_ballot_accepted_);
   ret_cmd->slots.push_back(cur_slot);
   ret_cmd->cmds.push_back(make_shared<MarshallDeputy>(instance->accepted_cmd_));
+  cb();
+}
+
+void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
+                               i32* ballot,
+                               i32* valid,
+                               shared_ptr<SyncLogResponse> ret_cmd,
+                               const function<void()> &cb){
+
+  auto bcmd = dynamic_pointer_cast<SyncLogRequest>(cmd);
+  es->state_lock();
+  if(bp_log->epoch < es->cur_epoch){
+    //es->state_unlock();
+    *valid = 0;
+    *ballot = es->cur_epoch;
+    es->state_unlock();
+    cb();
+    return;
+  }
+  es->state_unlock();
+  *valid = 1;
+  for(int i = 0; i < pxs_workers_g.size()-1; i++){
+    PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    auto bp_cmd = make_shared<BulkPaxosCmd>();
+    ps->mtx_.lock();
+    for(int j = cmd->sync_commit_slot[i]+1; j <= ps->max_committed_slot_; j++){
+      auto inst = ps->GetInstance(j);
+      if(inst->committed_cmd_){
+        bp_cmd->slots.push_back(j);
+        bp_cmd->ballots.push_back(inst->max_ballot_accepted_);
+        bp_cmd->cmds.push_back(inst->committed_cmd_);
+      }
+    }
+    ret_cmd->sync_data.push_back(bp_cmd);
+    ps->mtx_.unlock();
+  }
   cb();
 }
 
@@ -291,29 +338,37 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
   //Log_debug("multi-paxos scheduler accept for slot: %lx", bcmd->slots.size());
-  es->state_lock();
-  if(cur_b < es->cur_epoch){
-    *ballot = es->cur_epoch;
-    es->state_unlock();
+  //es->state_lock();
+  mtx_.lock();
+  if(cur_b < cur_epoch){
+    *ballot = cur_epoch;
+    //es->state_unlock();
     *valid = 0;
+    mtx_.unlock();
     cb();
     return;
   }
-  if(es->machine_id != req_leader)
-	es->set_state(0);
+  
+  es->state_lock();
   es->set_lastseen();
+  if(req_leader != es->machine_id)
+  es->set_state(0);
+  es->state_unlock();
   //cb();
   //return;
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
-      if(es->cur_epoch > ballot_id){
+      mtx_.lock();
+      if(cur_epoch > ballot_id){
         *valid = 0;
-        *ballot = es->cur_epoch;
+        *ballot = cur_epoch;
+        mtx_.unlock();
         break;
       } else{
-        if(es->cur_epoch < ballot_id){
+        if(cur_epoch < ballot_id){
+          mtx_.unlock();
           //Log_info("I am here");
           for(int i = 0; i < pxs_workers_g.size()-1; i++){
             PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
@@ -323,8 +378,9 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
             ps->mtx_.unlock();
           }
         }
-        mtx_.lock();
+        es->state_lock();
         es->set_leader(req_leader);
+        es->state_unlock();
         auto instance = GetInstance(slot_id);
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
@@ -332,13 +388,12 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         instance->accepted_cmd_ = bcmd->cmds[i].get()->sp_data_;
         max_accepted_slot_ = slot_id;
         n_accept_++;
-        mtx_.unlock();
         *valid &= 1;
-	*ballot = ballot_id;
+	      *ballot = ballot_id;
       }
   }
   // Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);  
-  es->state_unlock();
+  //es->state_unlock();
   cb();
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
 }
@@ -358,28 +413,36 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   slotid_t cur_slot = bcmd->slots[0];
   //Log_info("multi-paxos scheduler decide for slot: %ld", cur_slot);
   int req_leader = bcmd->leader_id;
-  es->state_lock();
-  if(cur_b < es->cur_epoch){
-    *ballot = es->cur_epoch;
-    es->state_unlock();
+  //es->state_lock();
+  mtx_.lock();
+  if(cur_b < cur_epoch){
+    *ballot = cur_epoch;
+    //es->state_unlock();
     *valid = 0;
+    mtx_.unlock();
     cb();
     return;
   }
-  if(es->machine_id != req_leader)
-	es->set_state(0);
+  mtx_.unlock();
+  es->state_lock();
   es->set_lastseen();
+  if(req_leader != es->machine_id)
+  es->set_state(0);
+  es->state_unlock();
   vector<shared_ptr<PaxosData>> commit_exec;
   for(int i = 0; i < bcmd->slots.size(); i++){
       //break;
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
-      if(es->cur_epoch > ballot_id){
+      mtx_.lock();
+      if(cur_epoch > ballot_id){
         *valid = 0;
-        *ballot = es->cur_epoch;
+        *ballot = cur_epoch;
+        mtx_.unlock();
         break;
       } else{
-        if(es->cur_epoch < ballot_id){
+        if(cur_epoch < ballot_id){
+          mtx_.unlock();
           for(int i = 0; i < pxs_workers_g.size()-1; i++){
             PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
             ps->mtx_.lock();
@@ -388,8 +451,10 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
             ps->mtx_.unlock();
           }
         }
+        es->state_lock();
         es->set_leader(req_leader);
-        mtx_.lock();
+        es->state_unlock();
+        
         auto instance = GetInstance(slot_id);
         verify(instance->max_ballot_accepted_ <= ballot_id);
         instance->max_ballot_seen_ = ballot_id;
@@ -399,15 +464,15 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;
         }
-        mtx_.unlock();
+        
       }
   }
-  es->state_unlock();
+  //es->state_unlock();
   if(*valid == 0){
     cb();
     return;
   }
-  mtx_.lock();
+  //mtx_.lock();
   //Log_info("The commit batch size is %d", bcmd->slots.size());
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       //break;
@@ -422,7 +487,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           break;
       }
    } 
-  mtx_.unlock();
+  //mtx_.unlock();
   //Log_info("Committing %d", commit_exec.size());
   for(int i = 0; i < commit_exec.size(); i++){
       //auto x = new PaxosData();
@@ -432,10 +497,61 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   *valid = 1;
   //cb();
 
-  mtx_.lock();
+  //mtx_.lock();
   //FreeSlots();
-  mtx_.unlock();
+  //mtx_.unlock();
   cb();
+}
+
+void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
+                               i32* ballot,
+                               i32* valid,
+                               const function<void()> &cb){
+
+  auto cmd = dynamic_pointer_cast<SyncNoOpRequest>(cmd);
+  *valid = 1;
+  ballot_t cur_b = cmd->epoch;
+  int req_leader = cmd->leader_id;
+  //es->state_lock();
+  mtx_.lock();
+  if(cur_b < cur_epoch){
+    *ballot = cur_epoch;
+    //es->state_unlock();
+    *valid = 0;
+    mtx_.unlock();
+    cb();
+    return;
+  }
+
+  for(int i = 0; i < pxs_workers_g.size()-1; i++){
+    PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    ps->mtx_.lock();
+    if(cmd->snyc_slots[i] <= ps->max_committed_slot_){
+      verify(0);
+    }
+    for(int j = cmd->snyc_slots[i]+1; j <= ps->cur_open_slot_; j++){
+      auto inst = ps->GetInstance(j);
+      instance->committed_cmd_ = make_shared<LogEntry>();
+      instance->max_ballot_accepted_ = cur_b;
+    }
+    for (slotid_t id = ps->max_executed_slot_ + 1; id <= ps->max_committed_slot_; id++) {
+      auto next_instance = GetInstance(id);
+      if (next_instance->committed_cmd_) {
+          //ps->app_next_(*commit_exec[i]->committed_cmd_);
+          ps->max_executed_slot_++;
+          //ps->n_commit_++;
+      } else {
+          verify(0);
+      }
+    }
+    ps->max_committed_slot_ = ps->cur_open_slot_;
+    ps->max_executed_slot_ = ps->cur_open_slot_;
+    ps->mtx_.unlock();
+  }
+
+  *valid = 1;
+  cb();
+
 }
 
 } // namespace janus

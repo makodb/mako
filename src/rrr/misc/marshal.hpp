@@ -84,7 +84,10 @@ class MarshallDeputy {
       CMD_VEC_PIECE=6,
       CMD_BLK_PXS=7,
       CMD_BLK_PREP_PXS=8,
-      CMD_HRTBT_PXS=9
+      CMD_HRTBT_PXS=9,
+      CMD_SYNCREQ_PXS=10,
+      CMD_SYNCRESP_PXS=11,
+      CMD_SYNCNOOP_PXS=12
     };
     /**
      * This should be called by the rpc layer.
