@@ -233,19 +233,19 @@ class SyncLogRequest : public Marshallable {
       }
       return m;
     }
-}
+};
 
 class SyncLogResponse : public Marshallable {
   public:
     vector<shared_ptr<MarshallDeputy>> sync_data;
-    SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCRESP_PXS){
+    SyncLogResponse(): Marshallable(MarshallDeputy::CMD_SYNCRESP_PXS){
 
     }
 
     Marshal& ToMarshal(Marshal& m) const override {
       m << (int32_t)sync_data.size();
       for(int i = 0; i < sync_data.size(); i++){
-        m << sync_data[i];
+        m << *sync_data[i];
       }
     }
 
@@ -253,20 +253,21 @@ class SyncLogResponse : public Marshallable {
       int32_t sz;
       m >> sz;
       for(int i = 0; i < sz; i++){
-        MarshallDeputy x = new MarshallDeputy;
+        MarshallDeputy* x = new MarshallDeputy;
         m >> *x;
         auto shrd_ptr = shared_ptr<MarshallDeputy>(x);
-        sync_commit_slot.push_back(x);
+        sync_data.push_back(shrd_ptr);
       }
       return m;
     }
-}
+};
 
 class SyncNoOpRequest : public Marshallable{
+  public:
   int leader_id;
   ballot_t epoch;
   vector<slotid_t> sync_slots;
-  SyncLogRequest(): Marshallable(MarshallDeputy::CMD_SYNCNOOP_PXS){
+  SyncNoOpRequest(): Marshallable(MarshallDeputy::CMD_SYNCNOOP_PXS){
 
   }
 
@@ -292,7 +293,7 @@ class SyncNoOpRequest : public Marshallable{
     }
     return m;
   }
-}
+};
 
 
 class LogEntry : public Marshallable {
@@ -591,8 +592,8 @@ public:
   void submitJob(std::shared_ptr<Job>);
   int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
   int SendHeartBeat(shared_ptr<HeartBeatLog>);
-  int SendSyncLog(shared_ptr<SyncLogSend>);
-  int SendSyncNoOpLog(shared_ptr<SyncLogSend>);
+  int SendSyncLog(shared_ptr<SyncLogRequest>);
+  int SendSyncNoOpLog(shared_ptr<SyncNoOpRequest>);
   static void* StartReadAccept(void*);
   static void* StartReplayRead(void*);
   static void* StartReadAcceptNc(void*);

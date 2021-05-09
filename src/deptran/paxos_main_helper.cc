@@ -14,6 +14,7 @@
 #endif // ifdef CPU_PROFILE
 #include "config.h"
 #include "s_main.h"
+#include "paxos/server.h"
 
 using namespace janus;
 
@@ -405,29 +406,29 @@ shared_ptr<HeartBeatLog> createHeartBeat(int epoch, int machine_id){
   return heart_beat;
 }
 
-shared_ptr<SyncLogSend> createSyncLog(int epoch, int machine_id){
+shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   auto syncLog = make_shared<SyncLogRequest>();
   syncLog->leader_id = machine_id;
   syncLog->epoch = epoch;
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
     auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    pw->mtx_.lock()
+    pw->mtx_.lock();
     slotid_t min_slot = pw->max_executed_slot_+1;
-    pw->mtx_.unlock()
+    pw->mtx_.unlock();
     syncLog->sync_commit_slot.push_back(min_slot);
   }
   return syncLog;
 }
 
-shared_ptr<SyncLogSend> createSyncNoOpLog(int epoch, int machine_id){
+shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
   auto syncNoOpLog = make_shared<SyncNoOpRequest>();
   syncNoOpLog->leader_id = machine_id;
   syncNoOpLog->epoch = epoch;
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
     auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    pw->mtx_.lock()
+    pw->mtx_.lock();
     slotid_t min_slot = pw->max_executed_slot_+1;
-    pw->mtx_.unlock()
+    pw->mtx_.unlock();
     syncNoOpLog->sync_slots.push_back(min_slot);
   }
   return syncNoOpLog;

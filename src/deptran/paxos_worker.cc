@@ -347,11 +347,11 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   vector<shared_ptr<SyncLogResponse>> responses;
   auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_, 
                                                    sp_m, 
-                                                   [&received_epoch, &done, es_pww](shared_ptr<MarshallDeputy> md, 
+                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<MarshallDeputy> md, 
                                                                                     ballot_t ballot, 
                                                                                     int resp_type) {
     if(!resp_type)
-      es->step_down(ballot);
+      es_pww->step_down(ballot);
     else{
       if(!done){
         responses.push_back(dynamic_pointer_cast<SyncLogResponse>(md->sp_data_));
@@ -363,7 +363,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   sp_quorum->Wait();
   done = true;
   if (sp_quorum->Yes()) {
-    map<pair<int,slot_id_>, shared_ptr<Marshallable>> commited_slots;
+    map<pair<int,slotid_t>, shared_ptr<MarshallDeputy>> commited_slots;
     for(int i = 0; i < responses.size(); i++){
       for(int j = 0; j < responses[i]->sync_data.size(); j++){
         auto bp_cmd = dynamic_pointer_cast<BulkPaxosCmd>(responses[i]->sync_data[j]->sp_data_);
@@ -416,7 +416,7 @@ int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
                                                    [&received_epoch, &done, es_pww](ballot_t ballot, 
                                                                                     int resp_type) {
     if(!resp_type)
-      es->step_down(ballot);
+      es_pww->step_down(ballot);
     else{
       if(!done){
       } else{

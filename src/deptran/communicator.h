@@ -161,14 +161,22 @@ class Communicator {
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
                       shared_ptr<Marshallable> cmd,
-                      const std::function<void(MarshallDeputy, ballot_t, int)>& cb){
+                      const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb){
       verify(0);
     }
+
+   virtual shared_ptr<PaxosAcceptQuorumEvent>
+    BroadcastSyncNoOps(parid_t par_id,
+                    shared_ptr<Marshallable> cmd,
+                    const std::function<void(ballot_t, int)>& cb){
+
+	verify(0);
+   }
 
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncCommit(parid_t par_id,
                       shared_ptr<Marshallable> cmd,
-                      const std::function<void(MarshallDeputy, ballot_t, int)>& cb){
+                      const std::function<void(ballot_t, int)>& cb){
       verify(0);
     }
 };

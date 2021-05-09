@@ -194,7 +194,7 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
 shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
                                   shared_ptr<Marshallable> cmd,
-                                  const std::function<void(MarshallDeputy, ballot_t, int)>& cb) {
+                                  const std::function<void(shared_ptr<MarshallDeputy>, ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n/2+1);
   auto proxies = rpc_par_proxies_[par_id];
@@ -207,7 +207,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
       i32 ballot;
       MarshallDeputy response_val;
       fu->get_reply() >> ballot >> valid >> response_val;
-      auto sp_md = shared_ptr<MarshallDeputy>(response_val);
+      auto sp_md = make_shared<MarshallDeputy>(response_val);
       cb(sp_md, ballot, valid);
       e->FeedResponse(valid);
     };
@@ -239,7 +239,7 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_SyncNoOp(md, fuattr);
+    auto f = proxy->async_SyncNoOps(md, fuattr);
     Future::safe_release(f);
   }
   return e;
@@ -265,7 +265,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_SyncLog(md, fuattr);
+    auto f = proxy->async_SyncCommit(md, fuattr);
     Future::safe_release(f);
   }
   return e;
