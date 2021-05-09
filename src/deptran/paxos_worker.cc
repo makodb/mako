@@ -32,6 +32,23 @@ static int volatile x5 =
                                        return new HeartBeatLog;
                                      });
 
+static int volatile x6 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SYNCREQ_PXS,
+                                     []() -> Marshallable* {
+                                       return new SyncLogRequest;
+                                     });
+
+static int volatile x7 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SYNCRESP_PXS,
+                                     []() -> Marshallable* {
+                                       return new SyncLogResponse;
+                                     });
+static int volatile x8 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SYNCNOOP_PXS,
+                                     []() -> Marshallable* {
+                                       return new SyncNoOpRequest;
+                                     });
+
 static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
   m << length;
