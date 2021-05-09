@@ -264,11 +264,14 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
     }
     es->state_unlock();
   } else{
+    mtx_.unlock();
     if(req_leader != es->leader_id){
       Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
+
+  mtx_.lock();
   auto instance = GetInstance(cur_slot);
   //Log_info("OnBulkPrepare2: Checks successfull preparing response for slot %d %d", cur_slot, partition_id_);
   if(!instance || !instance->accepted_cmd_){
@@ -320,8 +323,8 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
       if(inst->committed_cmd_){
         bp_cmd->slots.push_back(j);
         bp_cmd->ballots.push_back(inst->max_ballot_accepted_);
-	MarshallDeputy md(inst->committed_cmd_);
-	auto shrd_ptr = make_shared<MarshallDeputy>(md);
+      	MarshallDeputy md(inst->committed_cmd_);
+      	auto shrd_ptr = make_shared<MarshallDeputy>(md);
         bp_cmd->cmds.push_back(shrd_ptr);
       }
     }
@@ -356,7 +359,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-  
+  mtx_.unlock();
   es->state_lock();
   es->set_lastseen();
   if(req_leader != es->machine_id)
@@ -385,6 +388,8 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
             ps->leader_id = req_leader;
             ps->mtx_.unlock();
           }
+        } else{
+          mtx_.unlock();
         }
         es->state_lock();
         es->set_leader(req_leader);
@@ -458,6 +463,8 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
             ps->leader_id = req_leader;
             ps->mtx_.unlock();
           }
+        } else{
+          mtx_.unlock();
         }
         es->state_lock();
         es->set_leader(req_leader);
@@ -530,6 +537,7 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
+  mtx_.unlock();
 
   for(int i = 0; i < pxs_workers_g.size()-1; i++){
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
