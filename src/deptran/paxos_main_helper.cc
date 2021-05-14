@@ -486,7 +486,7 @@ void stuff_todo_leader_election(){
     pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
     pxs_workers_g[i]->is_leader = 1;
-    pxs_workers_g[i]->epoch_lock.unlock();
+    pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_touched_slot+1); // reset open slot counter

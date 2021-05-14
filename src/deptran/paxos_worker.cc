@@ -274,8 +274,8 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     election_state_lock.lock();
     ballot_t send_epoch = this->cur_epoch;
-    sp_cmd->leader_id = this->leader_id;
     election_state_lock.unlock();
+    sp_cmd->leader_id = es->machine_id;
     //Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);

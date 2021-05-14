@@ -737,7 +737,7 @@ public:
       pxs_workers_g[i]->election_state_lock.lock();
       pxs_workers_g[i]->cur_epoch = epoch;
       pxs_workers_g[i]->is_leader = 1;
-      pxs_workers_g[i]->epoch_lock.unlock();
+      pxs_workers_g[i]->election_state_lock.unlock();
     }
     state_unlock();
   }
