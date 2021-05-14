@@ -543,13 +543,16 @@ public:
   vector<rrr::Service*> services_ = {};
   rrr::Server* rpc_server_ = nullptr;
   base::ThreadPool* thread_pool_g = nullptr;
-  int cur_epoch;
-  std::recursive_mutex epoch_lock;
   // for microbench
   std::atomic<int> submit_num{0};
   int tot_num = 0;
   int submit_tot_sec_ = 0;
   int submit_tot_usec_ = 0;
+  int cur_epoch;
+  int is_leader;
+  int bulk_writer = 0;
+  int bulk_reader = 0;
+  
 
   rrr::PollMgr* svr_hb_poll_mgr_g = nullptr;
   ServerControlServiceImpl* scsi_ = nullptr;
@@ -566,9 +569,8 @@ public:
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
   vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(1000000, nullptr);
-  int bulk_writer = 0;
-  int bulk_reader = 0;
   rrr::Mutex nc_submit_l_;
+  std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
   pthread_t replay_th_;
@@ -731,6 +733,12 @@ public:
     set_state(0);
     leader_id = -1;
     set_epoch(epoch);
+    for(int i = 0 ; i < pxs_workers_g.size(); i++){
+      pxs_workers_g[i]->election_state_lock.lock();
+      pxs_workers_g[i]->cur_epoch = epoch;
+      pxs_workers_g[i]->is_leader = 1;
+      pxs_workers_g[i]->epoch_lock.unlock();
+    }
     state_unlock();
   }
 };

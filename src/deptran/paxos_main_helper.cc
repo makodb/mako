@@ -159,12 +159,12 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
   for (auto& worker : pxs_workers_g) {
     if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
-            worker->Submit(log,len, par_id);
-	    if(es->machine_id == 1 || es->machine_id == 2){
-		Log_info("Submitted on behalf on new leader");
-	    }
-            break;
-          }
+          worker->Submit(log,len, par_id);
+	 //    if(es->machine_id == 1 || es->machine_id == 2){
+		// Log_info("Submitted on behalf on new leader");
+	 //    }
+          break;
+      }
 	    //worker->n_current++;
 	    //break;
     }
@@ -339,9 +339,15 @@ static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
   printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
-  if(!es->is_leader()){
+  
+  pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
+  if(!pxs_workers_g[par_id]->is_leader){
+    pxs_workers_g[par_id]->election_state_lock.unlock();
     return;
   }
+  pxs_workers_g[par_id]->election_state_lock.unlock();
+
+
   if(es->machine_id == 1 || es->machine_id == 2){
     Log_info("Submitting on behalf of new leader to worker");
     //return;
@@ -351,16 +357,16 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   //if(submit_tot > 100000)return;
 	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
 	//return;
-	l_.lock();
+	//l_.lock();
 	len = len;
-	submit_tot++;
+	// submit_tot++;
 	//endTime = std::chrono::high_resolution_clock::now();
 	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
 	//submit_queue_nc.push(paxos_entry);
-        Log_info("Add log enters here");
+  Log_info("Add log enters here");
 	add_log_without_queue((char*)log, len, par_id);
 	Log_info("Add log exits here");
-	l_.unlock();
+	//l_.unlock();
 }
 
 void* PollSubQNc(void* arg){
@@ -477,8 +483,9 @@ void stuff_todo_leader_election(){
   es->state_lock();
   es->set_state(1);
   for(int i = 0; i < pxs_workers_g.size(); i++){
-    pxs_workers_g[i]->epoch_lock.lock();
+    pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
+    pxs_workers_g[i]->is_leader = 1;
     pxs_workers_g[i]->epoch_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
