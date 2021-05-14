@@ -439,7 +439,7 @@ void send_no_ops_to_all_workers(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
   auto ess = es;
-  auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
+  auto sp_job = std::make_shared<OneTimeJob>([pw, syncNoOpLog, ess](){
     int val = pw->SendSyncNoOpLog(syncNoOpLog);
     if(val == -1){
       ess->election_cond.bcast();
