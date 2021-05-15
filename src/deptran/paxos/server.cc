@@ -224,7 +224,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
-  Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
+  //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   *valid = 1;
   //cb();
   //return;
@@ -266,7 +266,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   } else{
     mtx_.unlock();
     if(req_leader != es->leader_id){
-      Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
+      //Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }

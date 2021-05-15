@@ -262,7 +262,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
   std::vector<pair<ballot_t, MarshallDeputy>> vec_md;
   auto ess_cc = es_cc;
-  Log_info("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
+  //Log_info("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, cmd_, [&vec_md, this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!valid){
       //Log_info("Invalid value received for prepare and leader steps down");
@@ -323,7 +323,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
-	      Log_info("Accept: slot %d  is committed", cmd_temp1->slots[0]); 
+	      //Log_info("Accept: slot %d  is committed", cmd_temp1->slots[0]); 
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;
