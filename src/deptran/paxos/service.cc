@@ -152,7 +152,7 @@ void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
                                      rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
-    sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
+    sched_->OnSyncCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          ballot,
                          valid,
                          std::bind(&rrr::DeferredReply::reply, defer));

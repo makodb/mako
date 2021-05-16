@@ -179,6 +179,49 @@ class BulkPrepareLog : public Marshallable {
 
 };
 
+class PaxosPrepCmd : public Marshallable {
+  public:
+  vector<slotid_t> slots{};
+  vector<ballot_t> ballots{};
+  int leader_id;
+
+  PaxosPrepCmd(): Marshallable(MarshallDeputy::CMD_PREP_PXS){
+
+  }
+
+  Marshal& ToMarshal(Marshal& m) const override {
+      m << (int32_t) min_prepared_slots.size();
+      for(auto i : slots){
+          m << i;
+      }
+      m << (int32_t) min_prepared_slots.size();
+      for(auto i : ballots){
+          m << i;
+      }
+      m << leader_id;
+      return m;
+  }
+
+  Marshal& FromMarshal(Marshal& m) override {
+    int32_t sz;
+    m >> sz;
+    for(int i = 0; i < sz; i++){
+      slotid_t x;
+      m >> x;
+      slots.push_back(x);
+    }
+    m >> sz;
+    for(int i = 0; i < sz; i++){
+      ballot_t x;
+      m >> x;
+      ballots.push_back(x);
+    }
+    m >> leader_id;
+    return m;
+  }
+
+};
+
 class HeartBeatLog : public Marshallable {
   public:
   uint32_t leader_id;

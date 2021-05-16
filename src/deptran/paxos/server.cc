@@ -220,7 +220,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                shared_ptr<BulkPaxosCmd> ret_cmd,
                                const function<void()> &cb){
   pthread_setname_np(pthread_self(), "Follower server thread");
-  auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
+  auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
@@ -276,11 +276,12 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   //Log_info("OnBulkPrepare2: Checks successfull preparing response for slot %d %d", cur_slot, partition_id_);
   if(!instance || !instance->accepted_cmd_){
     mtx_.unlock();
+    *valid = 2;
     *ballot = cur_b;
     //*ret_cmd = *bcmd;
-    ret_cmd->ballots.push_back(bcmd->ballots[0]);
-    ret_cmd->slots.push_back(bcmd->slots[0]);
-    ret_cmd->cmds.push_back(bcmd->cmds[0]);
+    // ret_cmd->ballots.push_back(bcmd->ballots[0]);
+    // ret_cmd->slots.push_back(bcmd->slots[0]);
+    // ret_cmd->cmds.push_back(bcmd->cmds[0]);
     //Log_info("OnBulkPrepare2: the kind_ of the response object is");
     //es->state_unlock();
     cb();
@@ -411,7 +412,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
 }
 
-void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
+void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                const function<void()> &cb) {
@@ -496,6 +497,113 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           //app_next_(*next_instance->committed_cmd_);
 	        commit_exec.push_back(next_instance);
 	        //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+          max_executed_slot_++;
+          n_commit_++;
+      } else {
+          break;
+      }
+   } 
+  //mtx_.unlock();
+  //Log_info("Committing %d", commit_exec.size());
+  for(int i = 0; i < commit_exec.size(); i++){
+      //auto x = new PaxosData();
+      app_next_(*commit_exec[i]->committed_cmd_);
+  }
+
+  *valid = 1;
+  //cb();
+
+  //mtx_.lock();
+  //FreeSlots();
+  //mtx_.unlock();
+  cb();
+}
+
+void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
+                               i32* ballot,
+                               i32* valid,
+                               const function<void()> &cb) {
+  //Log_info("here");
+  //std::lock_guard<std::recursive_mutex> lock(mtx_);
+  //mtx_.lock();
+  //Log_info("here");
+  //Log_info("multi-paxos scheduler decide for slot: %ld", bcmd->slots.size());
+  auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
+  *valid = 1;
+  ballot_t cur_b = bcmd->ballots[0];
+  slotid_t cur_slot = bcmd->slots[0];
+  //Log_info("multi-paxos scheduler decide for slot: %ld", cur_slot);
+  int req_leader = bcmd->leader_id;
+  //es->state_lock();
+  mtx_.lock();
+  if(cur_b < cur_epoch){
+    *ballot = cur_epoch;
+    //es->state_unlock();
+    *valid = 0;
+    mtx_.unlock();
+    cb();
+    return;
+  }
+  mtx_.unlock();
+  es->state_lock();
+  es->set_lastseen();
+  if(req_leader != es->machine_id)
+  es->set_state(0);
+  es->state_unlock();
+  vector<shared_ptr<PaxosData>> commit_exec;
+  for(int i = 0; i < bcmd->slots.size(); i++){
+      //break;
+      slotid_t slot_id = bcmd->slots[i];
+      ballot_t ballot_id = bcmd->ballots[i];
+      mtx_.lock();
+      if(cur_epoch > ballot_id){
+        *valid = 0;
+        *ballot = cur_epoch;
+        mtx_.unlock();
+        break;
+      } else{
+        if(cur_epoch < ballot_id){
+          mtx_.unlock();
+          for(int i = 0; i < pxs_workers_g.size()-1; i++){
+            PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+            ps->mtx_.lock();
+            ps->cur_epoch = ballot_id;
+            ps->leader_id = req_leader;
+            ps->mtx_.unlock();
+          }
+        } else{
+          mtx_.unlock();
+        }
+        es->state_lock();
+        es->set_leader(req_leader);
+        es->state_unlock();
+        
+        auto instance = GetInstance(slot_id);
+        verify(instance->max_ballot_accepted_ == ballot_id); //todo: for correctness, if a new commit comes, sync accept.
+        instance->max_ballot_seen_ = ballot_id;
+        instance->max_ballot_accepted_ = ballot_id;
+        instance->committed_cmd_ = instance->accepted_cmd_;
+        *valid &= 1;
+        if (slot_id > max_committed_slot_) {
+            max_committed_slot_ = slot_id;
+        }
+        
+      }
+  }
+  //es->state_unlock();
+  if(*valid == 0){
+    cb();
+    return;
+  }
+  //mtx_.lock();
+  //Log_info("The commit batch size is %d", bcmd->slots.size());
+  for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
+      //break;
+      auto next_instance = GetInstance(id);
+      if (next_instance->committed_cmd_) {
+          //app_next_(*next_instance->committed_cmd_);
+          commit_exec.push_back(next_instance);
+          //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
       } else {

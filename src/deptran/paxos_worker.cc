@@ -48,6 +48,11 @@ static int volatile x8 =
                                      []() -> Marshallable* {
                                        return new SyncNoOpRequest;
                                      });
+static int volatile x9 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_PREP_PXS,
+                                     []() -> Marshallable* {
+                                       return new PaxosPrepCmd;
+                                     });
 
 static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
