@@ -338,7 +338,7 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 void add_log_to_nc(const char* log, int len, uint32_t par_id){
-  printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
+  //printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
   
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
   if(!pxs_workers_g[par_id]->is_leader){
@@ -349,7 +349,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 
 
   if(es->machine_id == 1 || es->machine_id == 2){
-    Log_info("Submitting on behalf of new leader to worker");
+    //Log_info("Submitting on behalf of new leader to worker");
     //return;
   }
   //len = 2;
@@ -363,9 +363,9 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 	//endTime = std::chrono::high_resolution_clock::now();
 	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
 	//submit_queue_nc.push(paxos_entry);
-  Log_info("Add log enters here");
+        //Log_info("Add log enters here");
 	add_log_without_queue((char*)log, len, par_id);
-	Log_info("Add log exits here");
+	//Log_info("Add log exits here");
 	//l_.unlock();
 }
 
@@ -599,6 +599,10 @@ int setup2(){
     es->set_state(1);
     es->set_epoch(2);
     es->set_leader(0);
+    for(int i = 0; i < pxs_workers_g.size(); i++){
+	pxs_workers_g[i]->is_leader = 1;
+	pxs_workers_g[i]->cur_epoch = 2;
+    }
   } else{
     es->set_state(0);
     es->set_epoch(0);

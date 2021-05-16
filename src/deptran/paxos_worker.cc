@@ -48,6 +48,11 @@ static int volatile x8 =
                                      []() -> Marshallable* {
                                        return new SyncNoOpRequest;
                                      });
+static int volatile x9 =
+      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_PREP_PXS,
+                                     []() -> Marshallable* {
+                                       return new PaxosPrepCmd;
+                                     });
 
 static int shared_ptr_apprch = 1;
 Marshal& LogEntry::ToMarshal(Marshal& m) const {
@@ -275,7 +280,7 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
     election_state_lock.lock();
     ballot_t send_epoch = this->cur_epoch;
     election_state_lock.unlock();
-    sp_cmd->leader_id = es->machine_id;
+    sp_cmd->leader_id = es_pw->machine_id;
     //Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
@@ -320,19 +325,19 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   auto sp_quorum = coord->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
-    Log_info("BulkPrepare: response received %d", valid);
+    Log_debug("BulkPrepare: response received %d", valid);
     if(!valid){
       //Log_info("BulkPrepare: response received");
       received_epoch = max(received_epoch, ballot);
     }
   });
-  Log_info("BulkPrepare: waiting for response");
+  Log_debug("BulkPrepare: waiting for response");
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
-    Log_info("SendBulkPrepare: Leader election successfull");
+    Log_debug("SendBulkPrepare: Leader election successfull");
     return -1;
   } else{
-    Log_info("SendBulkPrepare: Leader election unsuccessfull");
+    Log_debug("SendBulkPrepare: Leader election unsuccessfull");
   }
   return received_epoch;
 }
