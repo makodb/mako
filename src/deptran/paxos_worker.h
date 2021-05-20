@@ -773,6 +773,10 @@ public:
 
   void step_down(int epoch){
     state_lock();
+    if(cur_epoch > epoch){
+      state_unlock();
+      return;
+    }
     set_state(0);
     leader_id = -1;
     set_epoch(epoch);
