@@ -408,6 +408,8 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     }
     vector<shared_ptr<PaxosAcceptQuorumEvent>> events;
     for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+      if(sync_cmds[i]->ballots.size() == 0)
+	continue;
       auto pw = pxs_workers_g[i];
       auto send_cmd = dynamic_pointer_cast<Marshallable>(sync_cmds[i]);
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
