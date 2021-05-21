@@ -190,11 +190,11 @@ class PaxosPrepCmd : public Marshallable {
   }
 
   Marshal& ToMarshal(Marshal& m) const override {
-      m << (int32_t) min_prepared_slots.size();
+      m << (int32_t) slots.size();
       for(auto i : slots){
           m << i;
       }
-      m << (int32_t) min_prepared_slots.size();
+      m << (int32_t) slots.size();
       for(auto i : ballots){
           m << i;
       }
