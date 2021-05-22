@@ -249,7 +249,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
 
 void BulkCoordinatorMultiPaxos::Prepare() {
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // in_prepare_ = true;
+   in_prepare_ = true;
   // curr_ballot_ = PickBallot();
   // verify(slot_id_ > 0);
   // Log_debug("multi-paxos coordinator broadcasts prepare, "
@@ -263,6 +263,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   auto prep_cmd = make_shared<PaxosPrepCmd>();
   prep_cmd->slots = cmd_temp1->slots;
   prep_cmd->ballots = cmd_temp1->ballots;
+  prep_cmd->leader_id = cmd_temp1->leader_id;
 
   auto prep_cmd_marshallable = dynamic_pointer_cast<Marshallable>(prep_cmd);
 
@@ -270,6 +271,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   auto ess_cc = es_cc;
   //Log_info("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, prep_cmd_marshallable, [this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
+    if(!this->in_prepare_)
+	return;
     if(!valid){
       //Log_info("Invalid value received for prepare and leader steps down");
       //verify(0);
@@ -311,12 +314,14 @@ void BulkCoordinatorMultiPaxos::Prepare() {
     // TODO timeout
     verify(0);
   }
+  in_prepare_ = false;
 }
 
 void BulkCoordinatorMultiPaxos::Accept() {
     //std::lock_guard<std::recursive_mutex> lock(mtx_);
     //committed_ = true;
     //return;
+    in_accept = true;
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
     // Log_info("Sending paxos accept request for slot %d", cmd_temp1->slots[0]);
     //Log_info("Accept: some slot is committed");
@@ -325,6 +330,8 @@ void BulkCoordinatorMultiPaxos::Accept() {
     }
     auto ess_cc = es_cc;
     auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
+      if(!this->in_accept)
+	return;
       if(!valid){
         es_cc->step_down(ballot);
         this->in_submission_ = false;
@@ -340,6 +347,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     } else {
         verify(0);
     }
+    in_accept = false;
 }
 
 void BulkCoordinatorMultiPaxos::Commit() {
@@ -354,6 +362,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     auto commit_cmd = make_shared<PaxosPrepCmd>();
     commit_cmd->slots = cmd_temp1->slots;
     commit_cmd->ballots = cmd_temp1->ballots;
+    commit_cmd->leader_id = cmd_temp1->leader_id;
 
     auto commit_cmd_marshallable = dynamic_pointer_cast<Marshallable>(commit_cmd);
 

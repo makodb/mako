@@ -325,7 +325,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   auto sp_quorum = coord->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
-    Log_debug("BulkPrepare: response received %d", valid);
+    Log_info("BulkPrepare: response received %d", valid);
     if(!valid){
       //Log_info("BulkPrepare: response received");
       received_epoch = max(received_epoch, ballot);
@@ -334,7 +334,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
   Log_debug("BulkPrepare: waiting for response");
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
-    Log_debug("SendBulkPrepare: Leader election successfull");
+    Log_info("SendBulkPrepare: Leader election successfull");
     return -1;
   } else{
     Log_debug("SendBulkPrepare: Leader election unsuccessfull");

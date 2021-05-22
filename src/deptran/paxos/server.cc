@@ -172,7 +172,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-  Log_debug("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
+  Log_info("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
   if(hb_log->epoch == es->cur_epoch){
     if(hb_log->leader_id != es->leader_id){
       es->state_unlock();

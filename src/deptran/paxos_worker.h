@@ -748,6 +748,8 @@ public:
   }
 
   void set_leader(int val){
+    if(val != 0)
+	Log_info("Leader being set %d", val);
     leader_id = val;
   }
 
