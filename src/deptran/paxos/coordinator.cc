@@ -333,6 +333,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
       if(!this->in_accept)
 	return;
       if(!valid){
+	verify(0);
         es_cc->step_down(ballot);
         this->in_submission_ = false;
       }

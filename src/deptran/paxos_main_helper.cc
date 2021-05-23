@@ -342,6 +342,8 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
   if(!pxs_workers_g[par_id]->is_leader){
+    if(es->machine_id != 0)
+	Log_info("Did not find to be leader");
     pxs_workers_g[par_id]->election_state_lock.unlock();
     return;
   }
@@ -350,7 +352,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 
   if(es->machine_id == 1 || es->machine_id == 2){
     //Log_info("Submitting on behalf of new leader to worker");
-    //return;
+    return;
   }
   //len = 2;
   //printf("YYYYYYY:XXXXXXX: par_id: %d, len: %d\n", par_id, len);
@@ -494,8 +496,8 @@ void stuff_todo_leader_election(){
   }
   int epoch = es->get_epoch();
   es->state_unlock();
-  send_sync_logs(epoch);
-  send_no_ops_to_all_workers(epoch);
+  //send_sync_logs(epoch);
+  //send_no_ops_to_all_workers(epoch);
 }
 
 void send_bulk_prep(int send_epoch){

@@ -102,7 +102,7 @@ void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
   }
 
   /* acquire all other server locks one by one */
-  Log_debug("Paxos workers size %d %d", pxs_workers_g.size(), bp_log->leader_id);
+  Log_info("Paxos workers size %d %d %d", pxs_workers_g.size(), bp_log->leader_id, bp_log->epoch, es->cur_epoch);
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
     //if(pxs_workers_g[i])
     //	Log_info("cast successfull %d", i);
@@ -153,7 +153,7 @@ unlock_and_return:
   }
   *ballot = es->cur_epoch;
   es->state_unlock();
-  Log_debug("BulkPrepare: Terminating RPC here");
+  Log_info("BulkPrepare: Terminating RPC here");
   *valid = 1;
   cb();
 }
@@ -172,6 +172,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
+  if(hb_log->leader_id == 1 && es->machine_id == 2)
   Log_info("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
   if(hb_log->epoch == es->cur_epoch){
     if(hb_log->leader_id != es->leader_id){
@@ -224,12 +225,14 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
+  if(req_leader == 1 && es->machine_id != 1)
+	Log_debug("Prepare Received from new leader");
   //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   *valid = 1;
   //cb();
   //return;
   auto rbcmd = make_shared<BulkPaxosCmd>();
-  //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
+  Log_debug("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   //es->state_lock();
   mtx_.lock();
   if(cur_b < cur_epoch){
@@ -266,14 +269,14 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   } else{
     mtx_.unlock();
     if(req_leader != es->leader_id){
-      //Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
+      Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
 
   mtx_.lock();
   auto instance = GetInstance(cur_slot);
-  //Log_info("OnBulkPrepare2: Checks successfull preparing response for slot %d %d", cur_slot, partition_id_);
+  Log_debug("OnBulkPrepare2: Checks successfull preparing response for slot %d %d", cur_slot, partition_id_);
   if(!instance || !instance->accepted_cmd_){
     mtx_.unlock();
     *valid = 2;
@@ -349,6 +352,8 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
+  if(req_leader == 1 && es->machine_id != 1)
+        Log_info("Accept Received from new leader");
   //Log_debug("multi-paxos scheduler accept for slot: %lx", bcmd->slots.size());
   //es->state_lock();
   mtx_.lock();
@@ -651,6 +656,7 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     if(bcmd->sync_slots[i] <= ps->max_committed_slot_){
+      Log_info("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_committed_slot_);
       verify(0);
     }
     for(int j = bcmd->sync_slots[i]+1; j <= ps->cur_open_slot_; j++){

@@ -331,7 +331,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
       received_epoch = max(received_epoch, ballot);
     }
   });
-  Log_debug("BulkPrepare: waiting for response");
+  Log_info("BulkPrepare: waiting for response");
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     Log_info("SendBulkPrepare: Leader election successfull");
