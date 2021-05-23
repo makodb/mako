@@ -550,8 +550,9 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
-  if(req_leader != 0)
-	Log_debug("Stuff in getting committed on machine %d", es->machine_id);
+  /*if(req_leader != 0 && es->machine_id == 2)
+	Log_info("Stuff in getting committed on machine %d", bcmd->slots[0]);
+  */
   mtx_.unlock();
   es->state_lock();
   es->set_lastseen();
@@ -615,8 +616,13 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           max_executed_slot_++;
           n_commit_++;
       } else {
+	  if(req_leader != 0)
+		Log_debug("Some slot is stopping commit %d %d", id, bcmd->slots[0]);
           break;
       }
+   }
+   if(commit_exec.size() > 0){
+	Log_debug("Something is getting committed %d", commit_exec.size());
    } 
   //mtx_.unlock();
   //Log_info("Committing %d", commit_exec.size());

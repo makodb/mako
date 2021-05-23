@@ -111,7 +111,7 @@ class PaxosServer : public TxLogServer {
                   const function<void()> &cb);
 
   int get_open_slot(){
-    return ++cur_open_slot_;
+    return cur_open_slot_++;
   }
 
   void FreeSlots(){
