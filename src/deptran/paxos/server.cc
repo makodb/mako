@@ -153,7 +153,7 @@ unlock_and_return:
   }
   *ballot = es->cur_epoch;
   es->state_unlock();
-  Log_info("BulkPrepare: Terminating RPC here");
+  Log_debug("BulkPrepare: Terminating RPC here");
   *valid = 1;
   cb();
 }
@@ -173,7 +173,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
     return;
   }
   if(hb_log->leader_id == 1 && es->machine_id == 2)
-  Log_info("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
+  Log_debug("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
   if(hb_log->epoch == es->cur_epoch){
     if(hb_log->leader_id != es->leader_id){
       es->state_unlock();
@@ -269,7 +269,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   } else{
     mtx_.unlock();
     if(req_leader != es->leader_id){
-      Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
+      Log_debug("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
@@ -353,7 +353,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
   if(req_leader == 1 && es->machine_id != 1)
-        Log_info("Accept Received from new leader");
+        Log_debug("Accept Received from new leader");
   //Log_debug("multi-paxos scheduler accept for slot: %lx", bcmd->slots.size());
   //es->state_lock();
   mtx_.lock();
@@ -411,7 +411,8 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
 	      *ballot = ballot_id;
       }
   }
-  // Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);  
+  if(req_leader != 0)
+	Log_debug("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);  
   //es->state_unlock();
   cb();
   //Log_info("multi-paxos scheduler accept for slot: %ld, par_id: %d", cur_slot, partition_id_);
@@ -549,6 +550,8 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
     cb();
     return;
   }
+  if(req_leader != 0)
+	Log_debug("Stuff in getting committed on machine %d", es->machine_id);
   mtx_.unlock();
   es->state_lock();
   es->set_lastseen();
@@ -656,7 +659,7 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     if(bcmd->sync_slots[i] <= ps->max_committed_slot_){
-      Log_info("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_committed_slot_);
+      Log_debug("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_committed_slot_);
       verify(0);
     }
     for(int j = bcmd->sync_slots[i]+1; j <= ps->cur_open_slot_; j++){

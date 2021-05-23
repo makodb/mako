@@ -269,7 +269,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
 
   //std::vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md;
   auto ess_cc = es_cc;
-  //Log_info("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
+  if(es_cc->machine_id == 1)
+  	Log_debug("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, prep_cmd_marshallable, [this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!this->in_prepare_)
 	return;

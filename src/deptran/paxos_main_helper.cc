@@ -352,7 +352,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
 
   if(es->machine_id == 1 || es->machine_id == 2){
     //Log_info("Submitting on behalf of new leader to worker");
-    return;
+    //return;
   }
   //len = 2;
   //printf("YYYYYYY:XXXXXXX: par_id: %d, len: %d\n", par_id, len);
@@ -522,7 +522,7 @@ void* electionMonitor(void* arg){
    while(true){
     
     es->state_lock();
-    /*if(es->machine_id == 1){ // marker:ansh for debug
+    /*if(es->machine_id == 2){ // marker:ansh for debug
       es->state_unlock();
       break;
     }*/
