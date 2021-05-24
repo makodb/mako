@@ -634,11 +634,17 @@ int setup2(){
     for(int i = 0; i < pxs_workers_g.size(); i++){
     	pxs_workers_g[i]->is_leader = 1;
     	pxs_workers_g[i]->cur_epoch = 2;
+      int p_id = worker->site_info_->partition_id_;
+      worker->register_apply_callback_par_id_return(leader_replay_cb[p_id]);
     }
   } else{
     es->set_state(0);
     es->set_epoch(0);
     es->set_leader(0);
+    for (auto& worker : pxs_workers_g) {
+      int p_id = worker->site_info_->partition_id_;
+      worker->register_apply_callback_par_id_return(follower_replay_cb[p_id]);
+    }
   }
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
