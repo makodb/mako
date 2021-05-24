@@ -629,6 +629,10 @@ int setup2(){
     es->set_state(1);
     es->set_epoch(2);
     es->set_leader(0);
+    for(int i = 0; i < pxs_workers_g.size(); i++){
+      pxs_workers_g[i]->is_leader = 1;
+      pxs_workers_g[i]->cur_epoch = 2;
+    }
   } else{
     es->set_state(0);
     es->set_epoch(0);
