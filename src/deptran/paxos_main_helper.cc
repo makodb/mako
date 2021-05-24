@@ -286,8 +286,8 @@ void register_for_follower_par_id_return(std::function<unsigned long long int(co
     follower_replay_cb[par_id] = cb;
     if(es->machine_id != 0){
       for (auto& worker : pxs_workers_g) {
-        if(worker->isPartition(par_id))
-          worker->register_apply_callback_par_id_return(follower_replay_cb[p_id]);
+        if(worker->IsPartition(par_id))
+          worker->register_apply_callback_par_id_return(cb);
       }
     }
 }
@@ -312,8 +312,8 @@ void register_for_leader_par_id_return(std::function<unsigned long long int(cons
     leader_replay_cb[par_id] = cb; 
     if(es->machine_id == 0){
       for (auto& worker : pxs_workers_g) {
-        if(worker->isPartition(par_id))
-          worker->register_apply_callback_par_id_return(follower_replay_cb[p_id]);
+        if(worker->IsPartition(par_id))
+          worker->register_apply_callback_par_id_return(cb);
       }
     }
 }
