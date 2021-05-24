@@ -36,6 +36,8 @@ static std::map<std::string,long double> timer;
 
 function<void()> leader_callback_{}; 
 
+std::map<int, std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>> leader_replay_cb;
+std::map<int, std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>> follower_replay_cb{};
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
@@ -280,10 +282,13 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
 }
 
 void register_for_follower_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {
-        if (worker->IsPartition(par_id) && !worker->IsLeader(par_id)) {
-            worker->register_apply_callback_par_id_return(cb);
-        }
+    follower_replay_cb[par_id] = cb;
+    if(es->machine_id != 0){
+      for (auto& worker : pxs_workers_g) {
+          if (worker->IsPartition(par_id)) {
+              worker->register_apply_callback_par_id_return(cb);
+          }
+      }
     }
 }
 
@@ -304,9 +309,12 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
 }
 
 void register_for_leader_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {
-        if (worker->IsLeader(par_id)) {
-            worker->register_apply_callback_par_id_return(cb);
+    leader_replay_cb[par_id] = cb;
+    if(es->machine_id == 0){
+        for (auto& worker : pxs_workers_g) {
+          if (worker->IsPartition(par_id)) {
+              worker->register_apply_callback_par_id_return(cb);
+          }
         }
     }
 }
@@ -344,7 +352,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
-	Log_info("Did not find to be leader");
+	     Log_info("Did not find to be leader");
     pxs_workers_g[par_id]->election_state_lock.unlock();
     return;
   }
@@ -485,6 +493,21 @@ void send_sync_logs(int epoch){
  es->election_state.unlock();
 }
 
+void sync_callbacks_for_new_leader(){
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    auto pw = pxs_workers_g[i];
+    int partition_id_ = site_info_->partition_id_;
+    pw->register_for_leader_par_id_return(leader_replay_cb[partition_id_]);
+  }
+}
+
+void send_no_ops_for_mark(int epoch){
+  string log = "no-ops:" + to_string(epoch);
+  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    add_log_to_nc(log.c_str(), log.size(), i);
+  }
+}
+
 void stuff_todo_leader_election(){
   es->state_lock();
   es->set_state(1);
@@ -501,8 +524,10 @@ void stuff_todo_leader_election(){
   }
   int epoch = es->get_epoch();
   es->state_unlock();
+  sync_callbacks_for_new_leader();
   //send_sync_logs(epoch);
   //send_no_ops_to_all_workers(epoch);
+  send_no_ops_for_mark(epoch);
 }
 
 void send_bulk_prep(int send_epoch){
@@ -607,8 +632,8 @@ int setup2(){
     es->set_epoch(2);
     es->set_leader(0);
     for(int i = 0; i < pxs_workers_g.size(); i++){
-	pxs_workers_g[i]->is_leader = 1;
-	pxs_workers_g[i]->cur_epoch = 2;
+    	pxs_workers_g[i]->is_leader = 1;
+    	pxs_workers_g[i]->cur_epoch = 2;
     }
   } else{
     es->set_state(0);
