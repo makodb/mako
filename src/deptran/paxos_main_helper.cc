@@ -233,6 +233,7 @@ int setup(int argc, char* argv[]) {
       // setup frame and scheduler
       pxs_workers_g.back()->SetupBase();
     }
+    es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
     return 0;
 }
 
@@ -282,7 +283,13 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
 }
 
 void register_for_follower_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
-    follower_replay_cb[par_id] = cb; 
+    follower_replay_cb[par_id] = cb;
+    if(es->machine_id != 0){
+      for (auto& worker : pxs_workers_g) {
+        if(worker->isPartition(par_id))
+          worker->register_apply_callback_par_id_return(follower_replay_cb[p_id]);
+      }
+    }
 }
 
 void register_for_leader(std::function<void(const char*, int)> cb, uint32_t par_id) {
@@ -303,6 +310,12 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
 
 void register_for_leader_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
     leader_replay_cb[par_id] = cb; 
+    if(es->machine_id == 0){
+      for (auto& worker : pxs_workers_g) {
+        if(worker->isPartition(par_id))
+          worker->register_apply_callback_par_id_return(follower_replay_cb[p_id]);
+      }
+    }
 }
 
 void submit(const char* log, int len, uint32_t par_id) {
@@ -612,25 +625,14 @@ int setup2(){
   if (server_infos.size() > 0) {
     server_launch_worker(server_infos);
   }
-  es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
   if(es->machine_id == 0){
     es->set_state(1);
     es->set_epoch(2);
     es->set_leader(0);
-    for(int i = 0; i < pxs_workers_g.size(); i++){
-    	pxs_workers_g[i]->is_leader = 1;
-    	pxs_workers_g[i]->cur_epoch = 2;
-	int p_id = pxs_workers_g[i]->site_info_->partition_id_;
-        pxs_workers_g[i]->register_apply_callback_par_id_return(leader_replay_cb[p_id]);
-    }
   } else{
     es->set_state(0);
     es->set_epoch(0);
     es->set_leader(0);
-    for (auto& worker : pxs_workers_g) {
-      int p_id = worker->site_info_->partition_id_;
-      worker->register_apply_callback_par_id_return(follower_replay_cb[p_id]);
-    }
   }
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
