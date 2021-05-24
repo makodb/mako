@@ -496,8 +496,8 @@ void send_sync_logs(int epoch){
 void sync_callbacks_for_new_leader(){
   for(int i = 0; i < pxs_workers_g.size(); i++){
     auto pw = pxs_workers_g[i];
-    int partition_id_ = site_info_->partition_id_;
-    pw->register_for_leader_par_id_return(leader_replay_cb[partition_id_]);
+    int partition_id_ = pw->site_info_->partition_id_;
+    pw->register_apply_callback_par_id_return(leader_replay_cb[partition_id_]);
   }
 }
 
