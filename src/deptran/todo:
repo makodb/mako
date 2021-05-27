@@ -1,0 +1,11 @@
+todo:
+	1. done: 
+		cannot figure out the reason why it is not receiving entries, not even heartbeats
+		election_count
+	2. fix syncing and no-ops
+	3. microbenchmark
+		1. y-tscb
+	4. comparison
+		1. DrTM
+		2. MongoDB
+

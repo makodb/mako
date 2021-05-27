@@ -322,7 +322,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     auto bp_cmd = make_shared<BulkPaxosCmd>();
     ps->mtx_.lock();
-    for(int j = bcmd->sync_commit_slot[i]+1; j <= ps->max_committed_slot_; j++){
+    for(int j = bcmd->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
       auto inst = ps->GetInstance(j);
       if(inst->committed_cmd_){
         bp_cmd->slots.push_back(j);

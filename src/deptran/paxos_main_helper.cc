@@ -430,10 +430,10 @@ shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   syncLog->leader_id = machine_id;
   syncLog->epoch = epoch;
   for(int i = 0; i < pxs_workers_g.size() - 1; i++){
-    auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
-    pw->mtx_.lock();
-    slotid_t min_slot = pw->max_executed_slot_+1;
-    pw->mtx_.unlock();
+    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    ps->mtx_.lock();
+    slotid_t min_slot = ps->max_executed_slot_+1;
+    ps->mtx_.unlock();
     syncLog->sync_commit_slot.push_back(min_slot);
   }
   return syncLog;
@@ -461,13 +461,13 @@ void send_no_ops_to_all_workers(int epoch){
   auto sp_job = std::make_shared<OneTimeJob>([pw, syncNoOpLog, ess](){
     int val = pw->SendSyncNoOpLog(syncNoOpLog);
     if(val == -1){
-      ess->election_cond.bcast();
+      ess->stuff_after_election_cond_.bcast();
     }
   });
   pxs_workers_g.back()->GetPollMgr()->add(sp_job);
-  es->election_state.lock();
-  es->election_cond.wait(es->election_state);
-  es->election_state.unlock();
+  es->stuff_after_election_mutex_.lock();
+  es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
+  es->stuff_after_election_mutex_.unlock();
 }
 
 /*
@@ -483,13 +483,13 @@ void send_sync_logs(int epoch){
   auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
   if(val == -1){
-    ess->election_cond.bcast();
+    ess->stuff_after_election_cond_.bcast();
   }
  });
  pxs_workers_g.back()->GetPollMgr()->add(sp_job);
- es->election_state.lock();
- es->election_cond.wait(es->election_state);
- es->election_state.unlock();
+ es->stuff_after_election_mutex_.lock();
+ es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
+ es->stuff_after_election_mutex_.unlock();
 }
 
 void sync_callbacks_for_new_leader(){
@@ -524,8 +524,8 @@ void stuff_todo_leader_election(){
   int epoch = es->get_epoch();
   es->state_unlock();
   sync_callbacks_for_new_leader();
-  //send_sync_logs(epoch);
-  //send_no_ops_to_all_workers(epoch);
+  send_sync_logs(epoch);
+  // send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
 }
 
@@ -692,17 +692,23 @@ void wait_for_submit(uint32_t par_id) {
     //Log_info("The number of completed submits %ld", (int)submit_queue.size_approx());
  
     for (auto& worker : pxs_workers_g) {
-        if (!worker->IsLeader(par_id)) continue;
+        if(!worker->IsPartition(par_id))
+          continue;
+        worker->election_state.lock();
+        if (!worker->is_leader){
+          worker->election_state.unlock();
+          continue;
+        }
+        worker->election_state.unlock();
         //verify(worker->submit_pool != nullptr);
         //worker->submit_pool->wait_for_all();
-	Log_info("The number of completed submits n_current: %ld replay_queue: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx(), par_id, (int)worker->n_tot);
+	      Log_info("The number of completed submits n_current: %ld replay_queue: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx(), par_id, (int)worker->n_tot);
         worker->WaitForSubmit();
         total_submits = worker->n_tot;
     }
     for (auto& worker : pxs_workers_g) {
-        if (worker->IsLeader(par_id)) continue;
         if (!worker->IsPartition(par_id)) continue;
-	Log_info("Par_id %ld [partition], the number of completed submits %ld %ld", par_id, (int)worker->n_current, (int)worker->replay_queue.size_approx());
+	      Log_info("Par_id %ld [partition], the number of completed submits %ld %ld", par_id, (int)worker->n_current, (int)worker->replay_queue.size_approx());
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }

@@ -676,6 +676,8 @@ public:
   int leader_id = -1;
   rrr::Mutex election_state;
   rrr::CondVar election_cond{};
+  rrr::Mutex stuff_after_election_mutex_;
+  rrr::CondVar stuff_after_election_cond_{};
   timepoint lastseen = std::chrono::high_resolution_clock::now();
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
 
