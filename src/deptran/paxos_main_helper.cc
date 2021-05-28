@@ -694,12 +694,12 @@ void wait_for_submit(uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {
         if(!worker->IsPartition(par_id))
           continue;
-        worker->election_state.lock();
+        worker->election_state_lock.lock();
         if (!worker->is_leader){
-          worker->election_state.unlock();
+          worker->election_state_lock.unlock();
           continue;
         }
-        worker->election_state.unlock();
+        worker->election_state_lock.unlock();
         //verify(worker->submit_pool != nullptr);
         //worker->submit_pool->wait_for_all();
 	      Log_info("The number of completed submits n_current: %ld replay_queue: %ld par_id: %ld submit_tot: %ld", (int)worker->n_current, (int)worker->replay_queue.size_approx(), par_id, (int)worker->n_tot);
