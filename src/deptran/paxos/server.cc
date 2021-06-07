@@ -145,6 +145,7 @@ unlock_and_return:
     es->set_state(0);
   es->set_leader(bp_log->leader_id);
   es->set_lastseen();
+  Log_info("Leader set to %d", bp_log->leader_id);
   es->set_epoch(bp_log->epoch);
 
   for(int i = 0; i < bp_log->min_prepared_slots.size(); i++){
@@ -176,6 +177,7 @@ void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
   Log_debug("OnHeartbeat: received heartbeat from machine is %d %d", hb_log->leader_id, es->leader_id);
   if(hb_log->epoch == es->cur_epoch){
     if(hb_log->leader_id != es->leader_id){
+      Log_info("Req leader is %d while machine leader is %d", hb_log->leader_id, es->leader_id);
       es->state_unlock();
       verify(0); // should not happen, means there are two leaders with different in the same epoch.
     } else if(hb_log->leader_id == es->leader_id){
@@ -226,7 +228,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
   if(req_leader == 1 && es->machine_id != 1)
-	Log_debug("Prepare Received from new leader");
+	Log_info("Prepare Received from new leader");
   //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   *valid = 1;
   //cb();
@@ -269,7 +271,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   } else{
     mtx_.unlock();
     if(req_leader != es->leader_id){
-      Log_debug("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
+      Log_info("Req leader is %d and prev leader is %d", req_leader, es->leader_id);
       verify(0); //more than one leader in a term, should not send prepare if not leader.
     }
   }
@@ -612,12 +614,13 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       if (next_instance->committed_cmd_) {
           //app_next_(*next_instance->committed_cmd_);
           commit_exec.push_back(next_instance);
-          //Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+          if(req_leader == 0)
+		Log_debug("multi-paxos par:%d loc:%d executed slot %ld now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
       } else {
 	  if(req_leader != 0)
-		Log_debug("Some slot is stopping commit %d %d", id, bcmd->slots[0]);
+		Log_info("Some slot is stopping commit %d %d", id, bcmd->slots[0]);
           break;
       }
    }
@@ -664,18 +667,19 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
   for(int i = 0; i < pxs_workers_g.size()-1; i++){
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    if(bcmd->sync_slots[i] <= ps->max_committed_slot_){
-      Log_debug("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_committed_slot_);
+    if(bcmd->sync_slots[i] <= ps->max_executed_slot_){
+      Log_debug("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_executed_slot_);
       verify(0);
     }
     for(int j = bcmd->sync_slots[i]+1; j <= ps->cur_open_slot_; j++){
       auto instance = ps->GetInstance(j);
       instance->committed_cmd_ = make_shared<LogEntry>();
+      instance->is_no_op = true;
       instance->max_ballot_accepted_ = cur_b;
     }
     for (slotid_t id = ps->max_executed_slot_ + 1; id <= ps->max_committed_slot_; id++) {
       auto next_instance = GetInstance(id);
-      if (next_instance->committed_cmd_) {
+      if (next_instance->committed_cmd_ && !next_instance->is_no_op) {
           //ps->app_next_(*commit_exec[i]->committed_cmd_);
           ps->max_executed_slot_++;
           //ps->n_commit_++;

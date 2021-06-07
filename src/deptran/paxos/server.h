@@ -12,6 +12,7 @@ class CmdData;
 struct PaxosData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
+  bool is_no_op = false;
   shared_ptr<Marshallable> accepted_cmd_{nullptr};
   shared_ptr<Marshallable> committed_cmd_{nullptr};
 };
@@ -29,7 +30,7 @@ class PaxosServer : public TxLogServer {
   slotid_t cur_min_prepared_slot_ = 0;
   slotid_t max_accepted_slot_ = 0;
   slotid_t max_possible_slot_ = INT_MAX;
-  slotid_t cur_open_slot_ = 0;
+  slotid_t cur_open_slot_ = 1;
   slotid_t max_touched_slot = 0;
   int leader_id;
   map<pair<slotid_t, slotid_t>, BulkPrepare> bulk_prepares{};  // saves all the prepare ranges.

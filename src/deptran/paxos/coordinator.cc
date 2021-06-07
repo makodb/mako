@@ -269,11 +269,11 @@ void BulkCoordinatorMultiPaxos::Prepare() {
 
   //std::vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md;
   auto ess_cc = es_cc;
-  if(es_cc->machine_id == 1)
-  	Log_debug("Sending paxos prepare request for slot %d", cmd_temp1->slots[0]);
+  if(es_cc->machine_id == 0)
+	Log_debug("Sending paxos prepare request for slot %d and parition %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, prep_cmd_marshallable, [this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!this->in_prepare_)
-	return;
+	     return;
     if(!valid){
       //Log_info("Invalid value received for prepare and leader steps down");
       //verify(0);
@@ -283,8 +283,9 @@ void BulkCoordinatorMultiPaxos::Prepare() {
       //Log_info("Valid value received for prepare %d", bt);
       if(valid == 1)
         this->vec_md.push_back(make_pair(bt, md.sp_data_));
-      else
-        this->vec_md.push_back(make_pair(bt, cmd_));
+      // Weihai: comment, this line will cause an seg fault
+      //else
+      //  this->vec_md.push_back(make_pair(bt, cmd_));
     }
   });
   sp_quorum->Wait();
@@ -332,16 +333,17 @@ void BulkCoordinatorMultiPaxos::Accept() {
     auto ess_cc = es_cc;
     auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_accept)
-	return;
+	       return;
       if(!valid){
-	verify(0);
-        es_cc->step_down(ballot);
+	         verify(0);
+        ess_cc->step_down(ballot);
         this->in_submission_ = false;
       }
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
-	      //Log_info("Accept: slot %d  is committed", cmd_temp1->slots[0]); 
+	      if(ess_cc->machine_id == 0)
+			Log_debug("Accept: slot %d  is committed, parition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;
@@ -360,6 +362,8 @@ void BulkCoordinatorMultiPaxos::Commit() {
       return;
     }
 
+    in_commit = true;
+
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
     auto commit_cmd = make_shared<PaxosPrepCmd>();
     commit_cmd->slots = cmd_temp1->slots;
@@ -371,6 +375,9 @@ void BulkCoordinatorMultiPaxos::Commit() {
 
     auto ess_cc = es_cc;
     auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd_marshallable, [this, ess_cc](ballot_t ballot, int valid){
+      if(!this->in_commit){
+        return;
+      }
       if(!valid){
         ess_cc->step_down(ballot);
         this->in_submission_ = false;
@@ -385,6 +392,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     } else {
       verify(0);
     }
+    in_commit = false;
     //verify(phase_ == Phase::COMMIT);
     commit_callback_();
     //GotoNextPhase();

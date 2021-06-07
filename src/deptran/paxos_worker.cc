@@ -115,6 +115,7 @@ void PaxosWorker::Next(Marshallable& cmd) {
                   unsigned long long int latest_commit_id = r / 10;
                   // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
                   int status = r % 10;
+		  //Log_info("status: %d\n", status);
                   if (status == 3) {
                       // we do a memory copy on log intentionally in case this log is freed by paxos
                       char *dest = (char *)malloc(sp_log_entry.length) ;
@@ -144,8 +145,10 @@ void PaxosWorker::Next(Marshallable& cmd) {
   //Log_info("abc %d", site_info_->partition_id_);
   
   //if (n_current > n_tot) {
+    //if(es_pw->machine_id == 0)
     //n_current++;
-    //Log_info("reached here %d", (int)n_current);
+    //if(es_pw->machine_id == 0)
+    //	Log_info("n_current increased here %d", (int)n_current);
     if(site_info_->locale_id == 0){
 	   //if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
     }
@@ -548,10 +551,15 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
 }
 
 void PaxosWorker::WaitForSubmit() {
+  /*while(true){
+	sleep(1);
+        Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
+  }*/
   while (n_current < n_tot) {
     finish_mutex.lock();
     Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
     finish_cond.wait(finish_mutex);
+    //Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
     finish_mutex.unlock();
   }
   Log_debug("finish task.");
@@ -633,10 +641,12 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
-  coord->set_slot(((PaxosServer*)rep_sched_)->get_open_slot());
+  slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
+  coord->set_slot(x);
   //created_coordinators_.push_back(coord);
   //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);
+  Log_debug("PaxosWorker: job submitted for slot %d", x);
   if(stop_flag != true) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
     //created_coordinators_shrd.push_back(sp_coo);
@@ -644,6 +654,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
     //PaxosWorker* pw = this;
+    //Log_info("PaxosWorker: job submitted for slot %d", x);
     auto sp_job = std::make_shared<OneTimeJob>([this, curr2]() {
       this->BulkSubmit(curr2);
     });

@@ -21,6 +21,7 @@ class CoordinatorMultiPaxos : public Coordinator {
   bool in_submission_ = false; // debug;
   bool in_prepare_ = false; // debug
   bool in_accept = false; // debug
+  bool in_commit = false;
   shared_ptr<Marshallable> cmd_{nullptr};
   vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
   CoordinatorMultiPaxos(uint32_t coo_id,

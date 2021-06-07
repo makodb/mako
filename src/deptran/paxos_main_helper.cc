@@ -162,9 +162,9 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
     if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
-	 //    if(es->machine_id == 1 || es->machine_id == 2){
-		// Log_info("Submitted on behalf on new leader");
-	 //    }
+	    if(es->machine_id == 1){
+		Log_info("Submitted on behalf on new leader %d", (int)worker->n_tot);
+	    }
           break;
       }
 	    //worker->n_current++;
@@ -370,7 +370,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   //if(submit_tot > 100000)return;
 	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
 	//return;
-	//l_.lock();
+	l_.lock();
 	len = len;
 	// submit_tot++;
 	//endTime = std::chrono::high_resolution_clock::now();
@@ -379,7 +379,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
         //Log_info("Add log enters here");
 	add_log_without_queue((char*)log, len, par_id);
 	//Log_info("Add log exits here");
-	//l_.unlock();
+	l_.unlock();
 }
 
 void* PollSubQNc(void* arg){
@@ -517,15 +517,16 @@ void stuff_todo_leader_election(){
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_executed_slot_+1); // reset open slot counter
+    //ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_executed_slot_+1); // reset open slot counter
+    ps->cur_open_slot_ = ps->max_executed_slot_+1;
     Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
   es->state_unlock();
   sync_callbacks_for_new_leader();
-  send_sync_logs(epoch);
-  // send_no_ops_to_all_workers(epoch);
+  //send_sync_logs(epoch);
+  send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
 }
 
