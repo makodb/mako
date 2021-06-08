@@ -228,7 +228,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
   slotid_t cur_slot = bcmd->slots[0];
   int req_leader = bcmd->leader_id;
   if(req_leader == 1 && es->machine_id != 1)
-	Log_info("Prepare Received from new leader");
+	Log_debug("Prepare Received from new leader");
   //Log_info("Received paxos Prepare for slot %d ballot %d machine %d",cur_slot, cur_b, req_leader);
   *valid = 1;
   //cb();
@@ -668,7 +668,7 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     if(bcmd->sync_slots[i] <= ps->max_executed_slot_){
-      Log_debug("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_executed_slot_);
+      Log_info("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_executed_slot_);
       verify(0);
     }
     for(int j = bcmd->sync_slots[i]+1; j <= ps->cur_open_slot_; j++){

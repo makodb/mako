@@ -402,6 +402,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     vector<shared_ptr<BulkPaxosCmd>> sync_cmds;
     for(int i = 0; i < pxs_workers_g.size() - 1; i++){
       auto bp_cmd = make_shared<BulkPaxosCmd>();
+      bp_cmd->leader_id = es_pw->machine_id;
       sync_cmds.push_back(bp_cmd);
     }
     for(auto const& x : commited_slots){
@@ -413,6 +414,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     for(int i = 0; i < pxs_workers_g.size() - 1; i++){
       if(sync_cmds[i]->ballots.size() == 0)
         continue;
+      Log_info("Should receive some uncommitted slots here %d", i);
       auto pw = pxs_workers_g[i];
       auto send_cmd = dynamic_pointer_cast<Marshallable>(sync_cmds[i]);
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
@@ -422,11 +424,12 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
             es_pww->step_down(ballot);
           }
       });
-      events.push_back(sp_quorum);
+      //events.push_back(sp_quorum);
+      sp_quorum->Wait();
     }
-    for(int i = 0; i < events.size(); i++){
+    /*for(int i = 0; i < events.size(); i++){
       events[i]->Wait();
-    }
+    }*/
     return -1;
   }
   return received_epoch;

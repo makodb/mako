@@ -163,7 +163,7 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
 	    if(es->machine_id == 1){
-		Log_info("Submitted on behalf on new leader %d", (int)worker->n_tot);
+		Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
 	    }
           break;
       }
@@ -230,9 +230,11 @@ int setup(int argc, char* argv[]) {
       pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
       //std::cout << i << endl;
       pxs_workers_g.back()->site_info_ = const_cast<Config::SiteInfo*>(&(Config::GetConfig()->SiteById(server_infos[i].id)));
+      Log_info("parition id of each is %d", pxs_workers_g.back()->site_info_->partition_id_);
       // setup frame and scheduler
       pxs_workers_g.back()->SetupBase();
     }
+    reverse(pxs_workers_g.begin(), pxs_workers_g.end());
     es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
     return 0;
 }
@@ -518,14 +520,14 @@ void stuff_todo_leader_election(){
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     //ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_executed_slot_+1); // reset open slot counter
-    ps->cur_open_slot_ = ps->max_executed_slot_+1;
+    //ps->cur_open_slot_ = ps->max_executed_slot_+1;
     Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
   es->state_unlock();
   sync_callbacks_for_new_leader();
-  //send_sync_logs(epoch);
+  send_sync_logs(epoch);
   send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
 }
