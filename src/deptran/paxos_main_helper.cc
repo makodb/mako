@@ -520,7 +520,7 @@ void stuff_todo_leader_election(){
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     //ps->cur_open_slot_ = max(ps->cur_open_slot_, ps->max_executed_slot_+1); // reset open slot counter
-    //ps->cur_open_slot_ = ps->max_executed_slot_+1;
+    ps->cur_open_slot_ = ps->max_touched_slot;
     Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
     ps->mtx_.unlock();
   }

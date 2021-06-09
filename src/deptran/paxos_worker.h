@@ -281,6 +281,7 @@ class SyncLogRequest : public Marshallable {
 class SyncLogResponse : public Marshallable {
   public:
     vector<shared_ptr<MarshallDeputy>> sync_data;
+    vector<vector<slotid_t>> missing_slots;
     SyncLogResponse(): Marshallable(MarshallDeputy::CMD_SYNCRESP_PXS){
 
     }
@@ -289,6 +290,13 @@ class SyncLogResponse : public Marshallable {
       m << (int32_t)sync_data.size();
       for(int i = 0; i < sync_data.size(); i++){
         m << *sync_data[i];
+      }
+      m << (int32_t)missing_slots.size();
+      for(int i = 0; i < missing_slots.size(); i++){
+        m << (int32_t)missing_slots[i].size();
+        for(int j = 0; j < missing_slots[i].size(); j++){
+          m << missing_slots[i][j];
+        }
       }
     }
 

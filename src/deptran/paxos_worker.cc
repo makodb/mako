@@ -399,6 +399,20 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
         }
       }
     }
+
+    for(int i = 0; i < responses.size(); i++){
+      for(int j = 0; j < responses[i]->missing_slots.size(); j++){
+        auto ps_j = dynamic_cast<PaxosServer*>(pxs_workers_g[j]->rep_sched_);
+        for(int k = 0; k < responses[i][j].size(); k++){
+          auto inst = ps_j->GetInstance(responses[i][j][k]);
+          if(inst->committed_cmd_){
+            auto tmp = inst->committed_cmd_;
+            commited_slots[make_pair(j, responses[i][j][k])] = make_shared<MarshallDeputy>(MarshallDeputy(tmp));
+          }
+        }
+      }
+    }
+
     vector<shared_ptr<BulkPaxosCmd>> sync_cmds;
     for(int i = 0; i < pxs_workers_g.size() - 1; i++){
       auto bp_cmd = make_shared<BulkPaxosCmd>();

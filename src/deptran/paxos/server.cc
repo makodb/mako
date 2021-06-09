@@ -321,17 +321,26 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
   es->state_unlock();
   *valid = 1;
   for(int i = 0; i < pxs_workers_g.size()-1; i++){
+    ret_cmd->missing_slots.push_back(vector<slotid_t>{});
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     auto bp_cmd = make_shared<BulkPaxosCmd>();
     ps->mtx_.lock();
+
     for(int j = bcmd->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
       auto inst = ps->GetInstance(j);
       if(inst->committed_cmd_){
         bp_cmd->slots.push_back(j);
         bp_cmd->ballots.push_back(inst->max_ballot_accepted_);
-      	MarshallDeputy md(inst->committed_cmd_);
+        auto temp_cmd = inst->committed_cmd_;
+      	MarshallDeputy md(temp_cmd);
       	auto shrd_ptr = make_shared<MarshallDeputy>(md);
         bp_cmd->cmds.push_back(shrd_ptr);
+      }
+    }
+    for(int j = ps->max_executed_slot_; j <= bcmd->sync_commit_slot[i]; j++){
+      auto inst = ps->GetInstance(j);
+      if(!inst->committed_cmd_){
+        ret_cmd->missing_slot[i].push_back(j);
       }
     }
     auto sp_marshallable = dynamic_pointer_cast<Marshallable>(bp_cmd);
