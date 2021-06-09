@@ -337,12 +337,14 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
         bp_cmd->cmds.push_back(shrd_ptr);
       }
     }
-    for(int j = ps->max_executed_slot_; j <= bcmd->sync_commit_slot[i]; j++){
+    Log_info("The partition %d, and max executed slot is %d and sync commit is %d", i, ps->max_executed_slot_, bcmd->sync_commit_slot[i]);
+    for(int j = ps->max_executed_slot_; j < bcmd->sync_commit_slot[i]; j++){
       auto inst = ps->GetInstance(j);
       if(!inst->committed_cmd_){
-        ret_cmd->missing_slot[i].push_back(j);
+        ret_cmd->missing_slots[i].push_back(j);
       }
     }
+    Log_info("The partition %d has missing slots size %d", i, ret_cmd->missing_slots[i].size());
     auto sp_marshallable = dynamic_pointer_cast<Marshallable>(bp_cmd);
     MarshallDeputy bp_md_cmd(sp_marshallable);
     auto bp_sp_md = make_shared<MarshallDeputy>(bp_md_cmd);
@@ -629,7 +631,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           n_commit_++;
       } else {
 	  if(req_leader != 0)
-		Log_info("Some slot is stopping commit %d %d", id, bcmd->slots[0]);
+		Log_info("Some slot is stopping commit %d %d and partition %d", id, bcmd->slots[0], partition_id_);
           break;
       }
    }
@@ -680,24 +682,28 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
       Log_info("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_executed_slot_);
       verify(0);
     }
-    for(int j = bcmd->sync_slots[i]+1; j <= ps->cur_open_slot_; j++){
+    Log_info("NoOps sync slot is %d for partition %d", bcmd->sync_slots[i], i);
+    for(int j = bcmd->sync_slots[i]; j <= ps->max_committed_slot_; j++){
       auto instance = ps->GetInstance(j);
+      if(instance->committed_cmd_)
+	      continue;
       instance->committed_cmd_ = make_shared<LogEntry>();
       instance->is_no_op = true;
       instance->max_ballot_accepted_ = cur_b;
     }
     for (slotid_t id = ps->max_executed_slot_ + 1; id <= ps->max_committed_slot_; id++) {
-      auto next_instance = GetInstance(id);
+      auto next_instance = ps->GetInstance(id);
       if (next_instance->committed_cmd_ && !next_instance->is_no_op) {
-          //ps->app_next_(*commit_exec[i]->committed_cmd_);
+          ps->app_next_(*next_instance->committed_cmd_);
           ps->max_executed_slot_++;
-          //ps->n_commit_++;
+          ps->n_commit_++;
       } else {
           verify(0);
       }
     }
-    ps->max_committed_slot_ = ps->cur_open_slot_;
-    ps->max_executed_slot_ = ps->cur_open_slot_;
+    ps->max_committed_slot_ = ps->max_committed_slot_;
+    ps->max_executed_slot_ = ps->max_committed_slot_;
+    ps->cur_open_slot_ = ps->max_committed_slot_+1;
     ps->mtx_.unlock();
   }
 

@@ -399,15 +399,16 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
         }
       }
     }
-
+    Log_info("Responses size is %d", responses.size());
     for(int i = 0; i < responses.size(); i++){
       for(int j = 0; j < responses[i]->missing_slots.size(); j++){
         auto ps_j = dynamic_cast<PaxosServer*>(pxs_workers_g[j]->rep_sched_);
-        for(int k = 0; k < responses[i][j].size(); k++){
-          auto inst = ps_j->GetInstance(responses[i][j][k]);
+        for(int k = 0; k < responses[i]->missing_slots[j].size(); k++){
+          auto inst = ps_j->GetInstance(responses[i]->missing_slots[j][k]);
           if(inst->committed_cmd_){
+	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
             auto tmp = inst->committed_cmd_;
-            commited_slots[make_pair(j, responses[i][j][k])] = make_shared<MarshallDeputy>(MarshallDeputy(tmp));
+            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<MarshallDeputy>(MarshallDeputy(tmp));
           }
         }
       }
@@ -428,7 +429,10 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     for(int i = 0; i < pxs_workers_g.size() - 1; i++){
       if(sync_cmds[i]->ballots.size() == 0)
         continue;
-      Log_info("Should receive some uncommitted slots here %d", i);
+      //Log_info("Should receive some uncommitted slots here %d", i);
+      //for(int kk = 0; kk < sync_cmds[i]->slots.size(); kk++)
+      //      std::cout << sync_cmds[i]->slots[kk] << " ";
+      //std::cout << std::endl;
       auto pw = pxs_workers_g[i];
       auto send_cmd = dynamic_pointer_cast<Marshallable>(sync_cmds[i]);
       auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
@@ -438,12 +442,12 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
             es_pww->step_down(ballot);
           }
       });
-      //events.push_back(sp_quorum);
-      sp_quorum->Wait();
+      events.push_back(sp_quorum);
+      //sp_quorum->Wait();
     }
-    /*for(int i = 0; i < events.size(); i++){
+    for(int i = 0; i < events.size(); i++){
       events[i]->Wait();
-    }*/
+    }
     return -1;
   }
   return received_epoch;

@@ -309,6 +309,18 @@ class SyncLogResponse : public Marshallable {
         auto shrd_ptr = shared_ptr<MarshallDeputy>(x);
         sync_data.push_back(shrd_ptr);
       }
+      m >> sz;
+      for(int i = 0; i < sz; i++){
+        int32_t sz1;
+        m >> sz1;
+        vector<slotid_t> cur;
+        for(int j = 0; j < sz1; j++){
+          slotid_t x;
+          m >> x;
+          cur.push_back(x);
+        }
+        missing_slots.push_back(cur);
+      } 
       return m;
     }
 };
