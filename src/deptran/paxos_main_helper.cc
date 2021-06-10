@@ -44,7 +44,11 @@ shared_ptr<ElectionState> es = ElectionState::instance();
 
 
 int get_epoch(){
-  return es->get_consistent_epoch();
+  int x;
+  pxs_workers_g.back()->election_state_lock.lock();
+  x = pxs_workers_g.back()->cur_epoch;
+  pxs_workers_g.back()->election_state_lock.unlock();
+  return x;
 }
 
 void check_current_path() {
