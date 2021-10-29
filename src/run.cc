@@ -49,10 +49,10 @@ int main(int argc, char* argv[]) {
   argv_paxos[13] = "32";
   argv_paxos[14] = "-P";
   argv_paxos[15] = "localhost";
-  int ret = setup(16, argv_paxos);
-  ret = setup2();
-    if (ret != 0) {
-    return ret;
+  std::vector<std::string> ret = setup(16, argv_paxos);
+  int ret2 = setup2();
+  if (ret.empty() || ret2 != 0) {
+    return 1;
   }
   int cnt = 0;
   register_for_leader([&cnt](const char* log, int len) {
@@ -73,11 +73,11 @@ int main(int argc, char* argv[]) {
   //HeapProfilerStop();
   while(true){}
   pre_shutdown_step();
-  ret = shutdown_paxos();
+  ret2 = shutdown_paxos();
   //while(true){}
   std::cout << "Submitted " << logs_to_commit << std::endl;
   std::cout << "Committed " << cnt << std::endl;
 //  // microbench_paxos();
 //  microbench_paxos_queue();
-  return ret;
+  return ret2;
 }

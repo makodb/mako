@@ -4,9 +4,11 @@
 #include <memory>
 #include <queue>
 #include <tuple>
+#include <map>
 
-int setup(int argc, char* argv[]);
-int setup2();
+std::vector<std::string> setup(int argc, char* argv[]);  // return proc_name on the same machine, s101, s102
+int setup2(int = 0);
+std::map<std::string, std::string> getHosts(std::string) ;  // return hosts map
 int shutdown_paxos();
 void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);

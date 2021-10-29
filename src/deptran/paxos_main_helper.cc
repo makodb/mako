@@ -34,7 +34,7 @@ pthread_t submit_poll_th_;
 const int len = 5;
 static std::map<std::string,long double> timer;
 
-function<void()> leader_callback_{}; 
+function<void()> leader_callback_{};
 
 std::map<int, std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>> leader_replay_cb;
 std::map<int, std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>> follower_replay_cb{};
@@ -162,7 +162,7 @@ void microbench_paxos() {
 
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
-  for (auto& worker : pxs_workers_g) {
+  for (auto& worker : pxs_workers_g) {  // submit a transaction
     if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
@@ -217,19 +217,39 @@ void* PollSubmitLog(void* arg){
     return nullptr;
 }
 
-int setup(int argc, char* argv[]) {
+map<string, string> getHosts(std::string filename) {
+    map<string, string> proc_host_map_;
+    YAML::Node config = YAML::LoadFile(filename);
+
+    if (config["host"]) {
+        auto node = config["host"];
+        for (auto it = node.begin(); it != node.end(); it++) {
+            auto proc_name = it->first.as<string>();
+            auto host_name = it->second.as<string>();
+            proc_host_map_[proc_name] = host_name ;
+        }
+    } else {
+        std::cout << "there is no host attribute in the XML: " << filename << std::endl;
+        exit(1) ;
+    }
+    return proc_host_map_;
+}
+
+std::vector<std::string> setup(int argc, char* argv[]) {
+    vector<string> retVector;
     check_current_path();
     Log_info("starting process %ld", getpid());
 
     int ret = Config::CreateConfig(argc, argv);
     if (ret != SUCCESS) {
         Log_fatal("Read config failed");
-        return ret;
+        return retVector;
     }
 
     auto server_infos = Config::GetConfig()->GetMyServers();
     Log_info("server enabled, number of sites: %d", server_infos.size());
     for (int i = server_infos.size()-1; i >=0; i--) {
+      retVector.push_back(Config::GetConfig()->SiteById(server_infos[i].id).name) ;
       PaxosWorker* worker = new PaxosWorker();
       pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
       //std::cout << i << endl;
@@ -240,7 +260,7 @@ int setup(int argc, char* argv[]) {
     }
     reverse(pxs_workers_g.begin(), pxs_workers_g.end());
     es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
-    return 0;
+    return retVector;
 }
 
 int shutdown_paxos() {
@@ -318,7 +338,7 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
 }
 
 void register_for_leader_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
-    leader_replay_cb[par_id] = cb; 
+    leader_replay_cb[par_id] = cb;
     if(es->machine_id == 0){
       for (auto& worker : pxs_workers_g) {
         if(worker->IsPartition(par_id))
@@ -328,7 +348,7 @@ void register_for_leader_par_id_return(std::function<unsigned long long int(cons
 }
 
 void submit(const char* log, int len, uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {
+    for (auto& worker : pxs_workers_g) {  // submit a transaction
         if (!worker->IsLeader(par_id)) continue;
         verify(worker->submit_pool != nullptr);
         string log_str;
@@ -406,7 +426,7 @@ void* PollSubQNc(void* arg){
 	     //free((char*)x.first);
 	     //deleted++;
 	     add_log_without_queue((char*)x.first, x.second.first, x.second.second);
-	     
+
      }
      //Log_info("Cleared %d entries", deleted);
      l_.unlock();
@@ -535,7 +555,7 @@ void stuff_todo_leader_election(){
   int epoch = es->get_epoch();
   es->state_unlock();
   sync_callbacks_for_new_leader();
-  //send_sync_logs(epoch);
+  send_sync_logs(epoch);
   send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
 }
@@ -557,7 +577,7 @@ void send_bulk_prep(int send_epoch){
   pxs_workers_g.back()->GetPollMgr()->add(sp_job);
 }
 
-// marker:ansh 
+// marker:ansh
 void* electionMonitor(void* arg){
    // we need to take two situations into consideration: 1) startup; 2) exit
    // startup: sleep 5 seconds for the startup
@@ -635,12 +655,12 @@ void* heartbeatMonitor(void* arg){
 
 
 // to be called after setup 1; needed for multiprocess setup
-int setup2(){
+int setup2(int action){  // action == 0 is default, action == 1 is forced to be follower
   auto server_infos = Config::GetConfig()->GetMyServers();
   if (server_infos.size() > 0) {
     server_launch_worker(server_infos);
   }
-  if(es->machine_id == 0){
+  if(action == 0 && es->machine_id == 0){
     es->set_state(1);
     es->set_epoch(2);
     es->set_leader(0);
@@ -655,8 +675,10 @@ int setup2(){
   }
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
-  Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
-  pthread_detach(es->election_th_);
+  if (action != 1) {
+      Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
+      pthread_detach(es->election_th_);
+  }
   Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
   pthread_detach(es->heartbeat_th_);
   return 0;
@@ -670,7 +692,7 @@ void add_log(const char* log, int len, uint32_t par_id){
       worker->IncSubmit();
       break;
     }
-    auto endTime = std::chrono::high_resolution_clock::now();   
+    auto endTime = std::chrono::high_resolution_clock::now();
     auto paxos_entry = make_pair(log, make_pair(len, par_id));
     submit_queue.enqueue(paxos_entry);
     endTime = std::chrono::high_resolution_clock::now();
@@ -681,7 +703,7 @@ void add_log(const char* log, int len, uint32_t par_id){
 
 void worker_info_stats(size_t nthreads) {
     Log_info("# of paxos_workers is %d", pxs_workers_g.size());
-    
+
     for (size_t par_id=0; par_id<nthreads; par_id++) {
       Log_info("par_id %d", par_id);
       size_t wIdx = 0;
@@ -727,7 +749,7 @@ void wait_for_submit(uint32_t par_id) {
         worker->n_tot = total_submits;
         worker->WaitForSubmit();
     }
-} 
+}
 void pre_shutdown_step(){
     Log_info("shutdown Server Control Service after task finish total submit %d", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {

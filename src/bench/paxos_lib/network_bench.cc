@@ -26,13 +26,13 @@ int setup_paxos_default(){
   argv_paxos[13] = "32";
   argv_paxos[14] = "-P";
   argv_paxos[15] = "localhost";
-  int ret = setup(16, argv_paxos);
+  std::vector<std::string> ret = setup(16, argv_paxos);
   register_for_leader([](const char* log, int len) {
   }, 0);
   register_for_follower([](const char* log, int len) {
   }, 0);
-  ret = setup2();
-  if (ret != 0) {
+  int ret2 = setup2();
+  if (ret.empty() || ret2 != 0) {
     exit(-1);
   }
   return 0;

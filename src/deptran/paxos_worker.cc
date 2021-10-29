@@ -182,9 +182,11 @@ void PaxosWorker::SetupService() {
 
   // start rpc server
   Log_debug("starting server at %s", bind_addr.c_str());
+  std::cout << "starting server at " << bind_addr.c_str() << std::endl;
   int ret = rpc_server_->start(bind_addr.c_str());
   if (ret != 0) {
     Log_fatal("server launch failed.");
+    std::cout << "server launch failed.\n";
   }
 
   Log_info("Server %s ready at %s",
@@ -363,7 +365,7 @@ int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   return received_epoch;
 }
 
-int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
+int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){  // what's we need
   auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);

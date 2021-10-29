@@ -1,1 +1,0 @@
-g++ rpc_test.cpp -g -lpthread -Wall -O0 -o run
