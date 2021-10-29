@@ -1,9 +1,6 @@
 site:
   server: # each line is a partition, the first is the master site_name:port
-    - ["s101:8001", "s201:8101"] #, "s301:8002"]
-    - ["s102:8002", "s202:8102"] #, "s302:8012"]
-  nodes:
-    - ["127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4", "127.0.0.5"]
+    - ["s101:8001", "s201:8101", "s301:8201"]
 
 process:
   s101: localhost
@@ -30,6 +27,14 @@ process:
   s122: localhost
   s123: localhost
   s124: localhost
+  s125: localhost
+  s126: localhost
+  s127: localhost
+  s128: localhost
+  s129: localhost
+  s130: localhost
+  s131: localhost
+  s132: localhost
 
   s201: p1
   s202: p1
@@ -55,8 +60,50 @@ process:
   s222: p1
   s223: p1
   s224: p1
+  s225: p1
+  s226: p1
+  s227: p1
+  s228: p1
+  s229: p1
+  s230: p1
+  s231: p1
+  s232: p1
+
+  s301: p2
+  s302: p2
+  s303: p2
+  s304: p2
+  s305: p2
+  s306: p2
+  s307: p2
+  s308: p2
+  s309: p2
+  s310: p2
+  s311: p2
+  s312: p2
+  s313: p2
+  s314: p2
+  s315: p2
+  s316: p2
+  s317: p2
+  s318: p2
+  s319: p2
+  s320: p2
+  s321: p2
+  s322: p2
+  s323: p2
+  s324: p2
+  s325: p2
+  s326: p2
+  s327: p2
+  s328: p2
+  s329: p2
+  s330: p2
+  s331: p2
+  s332: p2
 
 # process_name - host_addr map
 host:
-  localhost: 10.1.0.7 
-  p1: 10.1.0.8
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
+  p2: 127.0.0.1

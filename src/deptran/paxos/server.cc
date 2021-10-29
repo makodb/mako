@@ -307,7 +307,6 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                shared_ptr<SyncLogResponse> ret_cmd,
                                const function<void()> &cb){
-
   auto bcmd = dynamic_pointer_cast<SyncLogRequest>(cmd);
   es->state_lock();
   if(bcmd->epoch < es->cur_epoch){

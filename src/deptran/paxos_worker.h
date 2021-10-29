@@ -687,7 +687,8 @@ public:
   std::recursive_mutex election_mutex{};
   pthread_t election_th_;
   pthread_t heartbeat_th_;
-  int timeout = rand()%4 + 1; // in seconds
+  bool running = true;
+  int timeout = 1; // in seconds
   int heartbeat_timeout = 300; // in milliseconds
   int send_prep_anyway_timeout = 1;
   int cur_epoch = 0;

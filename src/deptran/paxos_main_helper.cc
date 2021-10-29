@@ -244,6 +244,9 @@ int setup(int argc, char* argv[]) {
 }
 
 int shutdown_paxos() {
+    // kill the election thread
+    es->running = false;
+
     for(auto kv : timer){
    	 std::cout << "Key=" << kv.first << " Val=" << kv.second/1000.0 << std::endl;
     }
@@ -532,7 +535,7 @@ void stuff_todo_leader_election(){
   int epoch = es->get_epoch();
   es->state_unlock();
   sync_callbacks_for_new_leader();
-  send_sync_logs(epoch);
+  //send_sync_logs(epoch);
   send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
 }
@@ -556,8 +559,12 @@ void send_bulk_prep(int send_epoch){
 
 // marker:ansh 
 void* electionMonitor(void* arg){
-   while(true){
-    
+   // we need to take two situations into consideration: 1) startup; 2) exit
+   // startup: sleep 5 seconds for the startup
+   usleep(5 * 1000 * 1000);
+
+   while(es->running){
+
     es->state_lock();
     /*if(es->machine_id == 2){ // marker:ansh for debug
       es->state_unlock();
@@ -598,7 +605,7 @@ void* electionMonitor(void* arg){
 
 //marker:ansh
 void* heartbeatMonitor(void* arg){
-   while(true){
+   while(es->running){
      es->sleep_heartbeat();
      es->state_lock();
      if(es->cur_state == 0){

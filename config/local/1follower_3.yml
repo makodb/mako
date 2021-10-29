@@ -2,8 +2,7 @@ site:
   server: # each line is a partition, the first is the master site_name:port
     - ["s101:8001", "s201:8101"] #, "s301:8002"]
     - ["s102:8002", "s202:8102"] #, "s302:8012"]
-  nodes:
-    - ["127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4", "127.0.0.5"]
+    - ["s103:8003", "s203:8103"] #, "s303:8023"]
 
 process:
   s101: localhost
@@ -58,5 +57,5 @@ process:
 
 # process_name - host_addr map
 host:
-  localhost: 10.1.0.7 
-  p1: 10.1.0.8
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
