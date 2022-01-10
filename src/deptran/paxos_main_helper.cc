@@ -235,6 +235,50 @@ map<string, string> getHosts(std::string filename) {
     return proc_host_map_;
 }
 
+int get_outstanding_logs(uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {  // submit a transaction
+        if (worker->site_info_->partition_id_ == par_id){
+            //if(es->machine_id == 1) {  //  if leader
+            return (int)worker->n_tot - (int)worker->n_current ;
+            //}
+        }
+    }
+    return -1;
+}
+
+int get_outstanding_logs_cur(uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {  // submit a transaction
+        if (worker->site_info_->partition_id_ == par_id){
+            //if(es->machine_id == 1) {  //  if leader
+            return (int)worker->n_current ;
+            //}
+        }
+    }
+    return -1;
+}
+
+int get_outstanding_logs_tol(uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {  // submit a transaction
+        if (worker->site_info_->partition_id_ == par_id){
+            //if(es->machine_id == 1) {  //  if leader
+            return (int)worker->n_tot ;
+            //}
+        }
+    }
+    return -1;
+}
+
+int get_outstanding_logs_que(uint32_t par_id) {
+    for (auto& worker : pxs_workers_g) {  // submit a transaction
+        if (worker->site_info_->partition_id_ == par_id){
+            //if(es->machine_id == 1) {  //  if leader
+            return (int)worker->replay_queue.size_approx() ;
+            //}
+        }
+    }
+    return -1;
+}
+
 std::vector<std::string> setup(int argc, char* argv[]) {
     vector<string> retVector;
     check_current_path();
