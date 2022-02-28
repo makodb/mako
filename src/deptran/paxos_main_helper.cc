@@ -15,8 +15,15 @@
 #include "config.h"
 #include "s_main.h"
 #include "paxos/server.h"
+#include "network_client/network_impl.h"
 
 using namespace janus;
+using namespace network_client;
+
+// network client
+network_client::NetworkClientProxy *nc_client_proxy;
+network_client::NetworkClientServiceImpl *impl;
+// end of network client
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
 //vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
@@ -884,4 +891,72 @@ void microbench_paxos_queue() {
         delete message[i];
     }
     pre_shutdown_step();
+}
+
+void *nc_start_server(void *) {
+    // s.cpp
+    impl = new NetworkClientServiceImpl();
+    rrr::PollMgr *pm = new rrr::PollMgr(1);
+    base::ThreadPool *tp = new base::ThreadPool(1);
+    rrr::Server *server = new rrr::Server(pm, tp);
+    server->reg(impl);
+    server->start((std::string("0.0.0.0:10010")).c_str());
+    pm->release();
+    tp->release();
+    while (1) {
+      sleep(1);
+      std::cout << "current counter: " << impl->counter << ", # of requests: " << impl->requests.size() << std::endl;
+    }
+    delete server;
+    delete impl;
+}
+
+void nc_setup_server() {
+  pthread_t ph_s;
+  pthread_create(&ph_s, NULL, nc_start_server, NULL);
+  pthread_detach(ph_s);
+}
+
+void *nc_ycsb_thread(void *) {
+  std::vector<std::tuple<int,int,int,int>> *requests = nc_get_request_vector();
+  while (1) {
+    sleep(1);
+    std::cout << "obtain # of requests: " << requests->size() << std::endl;
+  }
+}
+
+void nc_mimic_obtain_requests() {
+  pthread_t ph_m;
+  pthread_create(&ph_m, NULL, nc_ycsb_thread, NULL);
+  pthread_detach(ph_m);
+}
+
+void nc_setup_bench(int nkeys) {
+  rrr::PollMgr **pm = (rrr::PollMgr **)malloc(sizeof(rrr::PollMgr *) * 1);
+  pm[0] = new rrr::PollMgr();
+  rrr::Client *client = new rrr::Client(pm[0]);
+  client->connect((char*)"0.0.0.0:10010");
+  nc_client_proxy = new NetworkClientProxy(client);
+
+  while (1) {
+    uint64_t k0=rand()%nkeys, k1=rand()%nkeys, k2=rand()%nkeys, k3=rand()%nkeys;
+    usleep(10 * 1000); // 10ms
+    if (rand() % 100 + 1 <= 50) {
+      int ret = nc_client_proxy->txn_rmw(k0, k1, k2, k3);
+      if (ret!=0) {
+        std::cout << "can't submit a request to server\n";
+        exit(0);
+      }
+    } else {
+      int ret = nc_client_proxy->txn_read(k0, k1, k2, k3);
+      if (ret!=0) {
+        std::cout << "can't submit a request to server\n";
+        exit(0);
+      }
+    }
+  }
+}
+
+std::vector<std::tuple<int,int,int,int>>* nc_get_request_vector() {
+  return &impl->requests;
 }

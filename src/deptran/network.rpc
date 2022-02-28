@@ -1,0 +1,9 @@
+namespace network_client;
+
+abstract service NetworkClient {
+    // fast or defer
+    // a | b in the parameter
+
+    fast txn_rmw(uint64_t k0, uint64_t k1, uint64_t k2, uint64_t k3);
+    fast txn_read(uint64_t k0, uint64_t k1, uint64_t k2, uint64_t k3);
+}

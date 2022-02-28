@@ -33,3 +33,9 @@ int get_epoch();
 
 // auxiliary functions
 void worker_info_stats(size_t);
+
+// network client
+void nc_setup_server();
+void nc_setup_bench(int);
+void nc_mimic_obtain_requests();
+std::vector<std::tuple<int,int,int,int>>* nc_get_request_vector();
