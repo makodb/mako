@@ -16,11 +16,26 @@ namespace network_client {
     public: 
         NetworkClientServiceImpl() ;
         
+        // YCSB++ benchmark
         void txn_rmw(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) override;
         void txn_read(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) override;
         
+        // TPC-C bencmark
+        void txn_new_order(const std::vector<int32_t>& _req) override;
+        void txn_payment() override;
+        void txn_delivery() override;
+        void txn_order_status() override;
+        void txn_stock_level() override;
+
     public:
         int counter = 0;
-        std::vector<std::tuple<int,int,int,int>> requests;
+
+        int counter_new_order=0;
+        int counter_payement=0;
+        int counter_delivery=0;
+        int counter_order_status=0;
+        int counter_stock_level=0;
+
+        std::vector<std::vector<int>> new_order_requests;
     } ;
 } // namespace network_client

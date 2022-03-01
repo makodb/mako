@@ -35,7 +35,7 @@ int get_epoch();
 void worker_info_stats(size_t);
 
 // network client
-void nc_setup_server();
-void nc_setup_bench(int);
-void nc_mimic_obtain_requests();
-std::vector<std::tuple<int,int,int,int>>* nc_get_request_vector();
+void nc_setup_server(int);  // start a server accepting requests on the leader replica
+void nc_setup_bench(int,int,int);
+void nc_mimic_obtain_requests(int);
+std::vector<std::vector<int>>* nc_get_new_order_requests(int); 

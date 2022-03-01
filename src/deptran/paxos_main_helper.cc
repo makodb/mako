@@ -21,8 +21,8 @@ using namespace janus;
 using namespace network_client;
 
 // network client
-network_client::NetworkClientProxy *nc_client_proxy;
-network_client::NetworkClientServiceImpl *impl;
+std::vector<shared_ptr<network_client::NetworkClientProxy>> nc_clients = {} ;
+std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
 // end of network client
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
@@ -893,70 +893,128 @@ void microbench_paxos_queue() {
     pre_shutdown_step();
 }
 
-void *nc_start_server(void *) {
-    // s.cpp
-    impl = new NetworkClientServiceImpl();
+// ----------------------------------- network-client -------------------------------------------------------
+void *nc_start_server(void *port) {
+    NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
     rrr::PollMgr *pm = new rrr::PollMgr(1);
     base::ThreadPool *tp = new base::ThreadPool(1);
     rrr::Server *server = new rrr::Server(pm, tp);
     server->reg(impl);
-    server->start((std::string("0.0.0.0:10010")).c_str());
-    pm->release();
-    tp->release();
+    server->start((std::string("127.0.0.1:")+std::string((char*)port)).c_str());
+    nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
     while (1) {
       sleep(1);
-      std::cout << "current counter: " << impl->counter << ", # of requests: " << impl->requests.size() << std::endl;
+      std::cout << "new_order_counter: " << impl->counter_new_order << "\n"
+                << "counter_payement:" << impl->counter_payement << "\n"
+                << "counter_delivery:" << impl->counter_delivery << "\n"
+                << "counter_order_status:" << impl->counter_order_status << "\n"
+                << "counter_stock_level:" << impl->counter_stock_level << "\n\n" ;
     }
-    delete server;
-    delete impl;
 }
 
-void nc_setup_server() {
-  pthread_t ph_s;
-  pthread_create(&ph_s, NULL, nc_start_server, NULL);
-  pthread_detach(ph_s);
+// setup nthreads servers
+void nc_setup_server(int nthreads) {
+  for (int i=0; i<nthreads; i++) {
+    pthread_t ph_s;
+    auto port_s=std::to_string(10010+i);
+    pthread_create(&ph_s, NULL, nc_start_server, (void*)port_s.c_str());
+    pthread_detach(ph_s);
+    usleep(10 * 1000); // wait for 10ms
+  }
 }
 
-void *nc_ycsb_thread(void *) {
-  std::vector<std::tuple<int,int,int,int>> *requests = nc_get_request_vector();
+void *nc_ycsb_thread(void *par_id) {
+  int par_id_int = atoi((char*)par_id);
+  std::vector<std::vector<int>> *requests = nc_get_new_order_requests(par_id_int);
   while (1) {
     sleep(1);
-    std::cout << "obtain # of requests: " << requests->size() << std::endl;
+    std::cout << "obtain # of new order requests: " << requests->size() << std::endl;
   }
 }
 
-void nc_mimic_obtain_requests() {
-  pthread_t ph_m;
-  pthread_create(&ph_m, NULL, nc_ycsb_thread, NULL);
-  pthread_detach(ph_m);
+void nc_mimic_obtain_requests(int nthreads) {
+  for (int i=0; i<nthreads; i++) {
+    pthread_t ph_m;
+    pthread_create(&ph_m, NULL, nc_ycsb_thread, (char*)std::to_string(i).c_str());
+    pthread_detach(ph_m);
+  }
 }
 
-void nc_setup_bench(int nkeys) {
-  rrr::PollMgr **pm = (rrr::PollMgr **)malloc(sizeof(rrr::PollMgr *) * 1);
-  pm[0] = new rrr::PollMgr();
-  rrr::Client *client = new rrr::Client(pm[0]);
-  client->connect((char*)"0.0.0.0:10010");
-  nc_client_proxy = new NetworkClientProxy(client);
+std::vector<int> nc_generate_new_order(int par_id) {
+  std::vector<int> ret;
+  uint warehouse_id=par_id+1; // 1 warehouse per thread
+  uint districtID=rand()%10+1; // [1,10]
+  uint customerID=rand()%3000+1; // [1,3000]
+  uint numItems=rand()%11+5;  // [5,15]
+  ret.push_back(warehouse_id);
+  ret.push_back(districtID);
+  ret.push_back(customerID);
+  ret.push_back(numItems);
+  return ret;
+}
 
+void *nc_start_client(void *par_id) {
+  int par_id_int = atoi((char*)par_id);
+  int counter = 0;
   while (1) {
-    uint64_t k0=rand()%nkeys, k1=rand()%nkeys, k2=rand()%nkeys, k3=rand()%nkeys;
-    usleep(10 * 1000); // 10ms
-    if (rand() % 100 + 1 <= 50) {
-      int ret = nc_client_proxy->txn_rmw(k0, k1, k2, k3);
-      if (ret!=0) {
-        std::cout << "can't submit a request to server\n";
-        exit(0);
-      }
+    //usleep(10 * 1000);
+    int r = rand() % 100 + 1; // [1, 100]
+    int ret=0;
+    if (r<=45) {
+      vector<int> _req = nc_generate_new_order(par_id_int);
+      rrr::Future *rt = nc_clients[par_id_int]->async_txn_new_order(_req);
+      std::cout << "1-0\n";
+      rt->wait();
+      std::cout << "1-1\n";
+    } else if (r <= 88) {
+      rrr::Future *rt = nc_clients[par_id_int]->async_txn_payment();
+      std::cout << "2-0\n";
+      rt->wait();
+      std::cout << "2-1\n";
+    } else if (r <= 92) {
+      rrr::Future *rt = nc_clients[par_id_int]->async_txn_delivery();
+      std::cout << "3-0\n";
+      rt->wait();
+      std::cout << "3-1\n";
+    } else if (r <= 96) {
+      rrr::Future *rt = nc_clients[par_id_int]->async_txn_order_status();
+      std::cout << "4-0\n";
+      rt->wait();
+      std::cout << "4-1\n";
     } else {
-      int ret = nc_client_proxy->txn_read(k0, k1, k2, k3);
-      if (ret!=0) {
-        std::cout << "can't submit a request to server\n";
-        exit(0);
-      }
+      rrr::Future *rt = nc_clients[par_id_int]->async_txn_stock_level();
+      std::cout << "5-0\n";
+      rt->wait();
+      std::cout << "5-1\n";
     }
+
+    counter += 1;
+    if (counter % 100==0) std::cout << counter << std::endl;
   }
 }
 
-std::vector<std::tuple<int,int,int,int>>* nc_get_request_vector() {
-  return &impl->requests;
+void nc_setup_bench(int nkeys, int nthreads, int run) {
+  for (int i=0; i<nthreads; i++) {
+    rrr::PollMgr *pm = new rrr::PollMgr(1);
+    rrr::Client *client = new rrr::Client(pm);
+    auto port_s=std::to_string(10010+i);
+    verify(client->connect((std::string("127.0.0.1:")+port_s).c_str())==0);
+    NetworkClientProxy *nc_client_proxy = new NetworkClientProxy(client);
+    nc_clients.push_back(std::shared_ptr<NetworkClientProxy>(nc_client_proxy));
+  }
+
+  // using different threads to issue transactions independently
+  for (int i=0; i<nthreads; i++) {
+    pthread_t ph_c;
+    pthread_create(&ph_c, NULL, nc_start_client, (char*)std::to_string(i).c_str());
+    pthread_detach(ph_c);
+    usleep(10 * 1000);
+  }
+
+  sleep(run);  // sleep 30 seconds
 }
+
+std::vector<std::vector<int>> *nc_get_new_order_requests(int par_id) {
+  return &nc_services[par_id]->new_order_requests;
+}
+// ----------------------------------- END network-client -------------------------------------------------------

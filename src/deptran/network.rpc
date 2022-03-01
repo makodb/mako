@@ -3,7 +3,15 @@ namespace network_client;
 abstract service NetworkClient {
     // fast or defer
     // a | b in the parameter
+    // structured data
 
     fast txn_rmw(uint64_t k0, uint64_t k1, uint64_t k2, uint64_t k3);
     fast txn_read(uint64_t k0, uint64_t k1, uint64_t k2, uint64_t k3);
+
+    // five transaction categories
+    fast txn_new_order(vector<int32_t> _req);
+    fast txn_payment();
+    fast txn_delivery();
+    fast txn_order_status();
+    fast txn_stock_level();
 }
