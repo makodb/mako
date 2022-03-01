@@ -10,13 +10,13 @@ namespace network_client {
 class NetworkClientService: public rrr::Service {
 public:
     enum {
-        TXN_RMW = 0x3ef55827,
-        TXN_READ = 0x644037a1,
-        TXN_NEW_ORDER = 0x448cdf1a,
-        TXN_PAYMENT = 0x2865aa25,
-        TXN_DELIVERY = 0x495dee37,
-        TXN_ORDER_STATUS = 0x36d7d6a9,
-        TXN_STOCK_LEVEL = 0x5073df0f,
+        TXN_RMW = 0x3da2afa2,
+        TXN_READ = 0x6f4fb877,
+        TXN_NEW_ORDER = 0x215d9020,
+        TXN_PAYMENT = 0x1d04b2bd,
+        TXN_DELIVERY = 0x24799656,
+        TXN_ORDER_STATUS = 0x2dd6e268,
+        TXN_STOCK_LEVEL = 0x3548a06f,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -56,11 +56,11 @@ public:
     // for 'raw' handlers, remember to reply req, delete req, and sconn->release(); use sconn->run_async for heavy job
     virtual void txn_rmw(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) = 0;
     virtual void txn_read(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) = 0;
-    virtual void txn_new_order(const std::vector<int32_t>& _req) = 0;
-    virtual void txn_payment() = 0;
-    virtual void txn_delivery() = 0;
-    virtual void txn_order_status() = 0;
-    virtual void txn_stock_level() = 0;
+    virtual void txn_new_order(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) = 0;
+    virtual void txn_payment(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) = 0;
+    virtual void txn_delivery(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) = 0;
+    virtual void txn_order_status(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) = 0;
+    virtual void txn_stock_level(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) = 0;
 private:
     void __txn_rmw__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
         uint64_t in_0;
@@ -93,41 +93,59 @@ private:
         sconn->release();
     }
     void __txn_new_order__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        std::vector<int32_t> in_0;
-        req->m >> in_0;
-        this->txn_new_order(in_0);
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        std::vector<int32_t>* in_0 = new std::vector<int32_t>;
+        req->m >> *in_0;
+        auto __marshal_reply__ = [=] {
+        };
+        auto __cleanup__ = [=] {
+            delete in_0;
+        };
+        rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, sconn, __marshal_reply__, __cleanup__);
+        this->txn_new_order(*in_0, __defer__);
     }
     void __txn_payment__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        this->txn_payment();
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        std::vector<int32_t>* in_0 = new std::vector<int32_t>;
+        req->m >> *in_0;
+        auto __marshal_reply__ = [=] {
+        };
+        auto __cleanup__ = [=] {
+            delete in_0;
+        };
+        rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, sconn, __marshal_reply__, __cleanup__);
+        this->txn_payment(*in_0, __defer__);
     }
     void __txn_delivery__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        this->txn_delivery();
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        std::vector<int32_t>* in_0 = new std::vector<int32_t>;
+        req->m >> *in_0;
+        auto __marshal_reply__ = [=] {
+        };
+        auto __cleanup__ = [=] {
+            delete in_0;
+        };
+        rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, sconn, __marshal_reply__, __cleanup__);
+        this->txn_delivery(*in_0, __defer__);
     }
     void __txn_order_status__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        this->txn_order_status();
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        std::vector<int32_t>* in_0 = new std::vector<int32_t>;
+        req->m >> *in_0;
+        auto __marshal_reply__ = [=] {
+        };
+        auto __cleanup__ = [=] {
+            delete in_0;
+        };
+        rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, sconn, __marshal_reply__, __cleanup__);
+        this->txn_order_status(*in_0, __defer__);
     }
     void __txn_stock_level__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        this->txn_stock_level();
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        std::vector<int32_t>* in_0 = new std::vector<int32_t>;
+        req->m >> *in_0;
+        auto __marshal_reply__ = [=] {
+        };
+        auto __cleanup__ = [=] {
+            delete in_0;
+        };
+        rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, sconn, __marshal_reply__, __cleanup__);
+        this->txn_stock_level(*in_0, __defer__);
     }
 };
 
@@ -193,13 +211,16 @@ public:
         __fu__->release();
         return __ret__;
     }
-    rrr::Future* async_txn_payment(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+    rrr::Future* async_txn_payment(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         rrr::Future* __fu__ = __cl__->begin_request(NetworkClientService::TXN_PAYMENT, __fu_attr__);
+        if (__fu__ != nullptr) {
+            *__cl__ << _req;
+        }
         __cl__->end_request();
         return __fu__;
     }
-    rrr::i32 txn_payment() {
-        rrr::Future* __fu__ = this->async_txn_payment();
+    rrr::i32 txn_payment(const std::vector<int32_t>& _req) {
+        rrr::Future* __fu__ = this->async_txn_payment(_req);
         if (__fu__ == nullptr) {
             return ENOTCONN;
         }
@@ -207,13 +228,16 @@ public:
         __fu__->release();
         return __ret__;
     }
-    rrr::Future* async_txn_delivery(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+    rrr::Future* async_txn_delivery(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         rrr::Future* __fu__ = __cl__->begin_request(NetworkClientService::TXN_DELIVERY, __fu_attr__);
+        if (__fu__ != nullptr) {
+            *__cl__ << _req;
+        }
         __cl__->end_request();
         return __fu__;
     }
-    rrr::i32 txn_delivery() {
-        rrr::Future* __fu__ = this->async_txn_delivery();
+    rrr::i32 txn_delivery(const std::vector<int32_t>& _req) {
+        rrr::Future* __fu__ = this->async_txn_delivery(_req);
         if (__fu__ == nullptr) {
             return ENOTCONN;
         }
@@ -221,13 +245,16 @@ public:
         __fu__->release();
         return __ret__;
     }
-    rrr::Future* async_txn_order_status(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+    rrr::Future* async_txn_order_status(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         rrr::Future* __fu__ = __cl__->begin_request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__);
+        if (__fu__ != nullptr) {
+            *__cl__ << _req;
+        }
         __cl__->end_request();
         return __fu__;
     }
-    rrr::i32 txn_order_status() {
-        rrr::Future* __fu__ = this->async_txn_order_status();
+    rrr::i32 txn_order_status(const std::vector<int32_t>& _req) {
+        rrr::Future* __fu__ = this->async_txn_order_status(_req);
         if (__fu__ == nullptr) {
             return ENOTCONN;
         }
@@ -235,13 +262,16 @@ public:
         __fu__->release();
         return __ret__;
     }
-    rrr::Future* async_txn_stock_level(const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+    rrr::Future* async_txn_stock_level(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         rrr::Future* __fu__ = __cl__->begin_request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__);
+        if (__fu__ != nullptr) {
+            *__cl__ << _req;
+        }
         __cl__->end_request();
         return __fu__;
     }
-    rrr::i32 txn_stock_level() {
-        rrr::Future* __fu__ = this->async_txn_stock_level();
+    rrr::i32 txn_stock_level(const std::vector<int32_t>& _req) {
+        rrr::Future* __fu__ = this->async_txn_stock_level(_req);
         if (__fu__ == nullptr) {
             return ENOTCONN;
         }

@@ -36,6 +36,8 @@ void worker_info_stats(size_t);
 
 // network client
 void nc_setup_server(int);  // start a server accepting requests on the leader replica
-void nc_setup_bench(int,int,int);
-void nc_mimic_obtain_requests(int);
 std::vector<std::vector<int>>* nc_get_new_order_requests(int); 
+std::vector<std::vector<int>>* nc_get_payment_requests(int); 
+std::vector<std::vector<int>>* nc_get_delivery_requests(int); 
+std::vector<std::vector<int>>* nc_get_order_status_requests(int); 
+std::vector<std::vector<int>>* nc_get_stock_level_requests(int); 

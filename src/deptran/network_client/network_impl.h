@@ -21,11 +21,11 @@ namespace network_client {
         void txn_read(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) override;
         
         // TPC-C bencmark
-        void txn_new_order(const std::vector<int32_t>& _req) override;
-        void txn_payment() override;
-        void txn_delivery() override;
-        void txn_order_status() override;
-        void txn_stock_level() override;
+        void txn_new_order(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
+        void txn_payment(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
+        void txn_delivery(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
+        void txn_order_status(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
+        void txn_stock_level(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
 
     public:
         int counter = 0;
@@ -37,5 +37,9 @@ namespace network_client {
         int counter_stock_level=0;
 
         std::vector<std::vector<int>> new_order_requests;
+        std::vector<std::vector<int>> payment_requests;
+        std::vector<std::vector<int>> delivery_requests;
+        std::vector<std::vector<int>> order_status_requests;
+        std::vector<std::vector<int>> stock_level_requests;
     } ;
 } // namespace network_client

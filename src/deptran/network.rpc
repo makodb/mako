@@ -9,9 +9,9 @@ abstract service NetworkClient {
     fast txn_read(uint64_t k0, uint64_t k1, uint64_t k2, uint64_t k3);
 
     // five transaction categories
-    fast txn_new_order(vector<int32_t> _req);
-    fast txn_payment();
-    fast txn_delivery();
-    fast txn_order_status();
-    fast txn_stock_level();
+    defer txn_new_order(vector<int32_t> _req);
+    defer txn_payment(vector<int32_t> _req);
+    defer txn_delivery(vector<int32_t> _req);
+    defer txn_order_status(vector<int32_t> _req);
+    defer txn_stock_level(vector<int32_t> _req);
 }

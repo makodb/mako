@@ -21,7 +21,6 @@ using namespace janus;
 using namespace network_client;
 
 // network client
-std::vector<shared_ptr<network_client::NetworkClientProxy>> nc_clients = {} ;
 std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
 // end of network client
 
@@ -893,11 +892,10 @@ void microbench_paxos_queue() {
     pre_shutdown_step();
 }
 
-// ----------------------------------- network-client -------------------------------------------------------
 void *nc_start_server(void *port) {
     NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
-    rrr::PollMgr *pm = new rrr::PollMgr(1);
-    base::ThreadPool *tp = new base::ThreadPool(1);
+    rrr::PollMgr *pm = new rrr::PollMgr();
+    base::ThreadPool *tp = new base::ThreadPool();
     rrr::Server *server = new rrr::Server(pm, tp);
     server->reg(impl);
     server->start((std::string("127.0.0.1:")+std::string((char*)port)).c_str());
@@ -923,98 +921,22 @@ void nc_setup_server(int nthreads) {
   }
 }
 
-void *nc_ycsb_thread(void *par_id) {
-  int par_id_int = atoi((char*)par_id);
-  std::vector<std::vector<int>> *requests = nc_get_new_order_requests(par_id_int);
-  while (1) {
-    sleep(1);
-    std::cout << "obtain # of new order requests: " << requests->size() << std::endl;
-  }
-}
-
-void nc_mimic_obtain_requests(int nthreads) {
-  for (int i=0; i<nthreads; i++) {
-    pthread_t ph_m;
-    pthread_create(&ph_m, NULL, nc_ycsb_thread, (char*)std::to_string(i).c_str());
-    pthread_detach(ph_m);
-  }
-}
-
-std::vector<int> nc_generate_new_order(int par_id) {
-  std::vector<int> ret;
-  uint warehouse_id=par_id+1; // 1 warehouse per thread
-  uint districtID=rand()%10+1; // [1,10]
-  uint customerID=rand()%3000+1; // [1,3000]
-  uint numItems=rand()%11+5;  // [5,15]
-  ret.push_back(warehouse_id);
-  ret.push_back(districtID);
-  ret.push_back(customerID);
-  ret.push_back(numItems);
-  return ret;
-}
-
-void *nc_start_client(void *par_id) {
-  int par_id_int = atoi((char*)par_id);
-  int counter = 0;
-  while (1) {
-    //usleep(10 * 1000);
-    int r = rand() % 100 + 1; // [1, 100]
-    int ret=0;
-    if (r<=45) {
-      vector<int> _req = nc_generate_new_order(par_id_int);
-      rrr::Future *rt = nc_clients[par_id_int]->async_txn_new_order(_req);
-      std::cout << "1-0\n";
-      rt->wait();
-      std::cout << "1-1\n";
-    } else if (r <= 88) {
-      rrr::Future *rt = nc_clients[par_id_int]->async_txn_payment();
-      std::cout << "2-0\n";
-      rt->wait();
-      std::cout << "2-1\n";
-    } else if (r <= 92) {
-      rrr::Future *rt = nc_clients[par_id_int]->async_txn_delivery();
-      std::cout << "3-0\n";
-      rt->wait();
-      std::cout << "3-1\n";
-    } else if (r <= 96) {
-      rrr::Future *rt = nc_clients[par_id_int]->async_txn_order_status();
-      std::cout << "4-0\n";
-      rt->wait();
-      std::cout << "4-1\n";
-    } else {
-      rrr::Future *rt = nc_clients[par_id_int]->async_txn_stock_level();
-      std::cout << "5-0\n";
-      rt->wait();
-      std::cout << "5-1\n";
-    }
-
-    counter += 1;
-    if (counter % 100==0) std::cout << counter << std::endl;
-  }
-}
-
-void nc_setup_bench(int nkeys, int nthreads, int run) {
-  for (int i=0; i<nthreads; i++) {
-    rrr::PollMgr *pm = new rrr::PollMgr(1);
-    rrr::Client *client = new rrr::Client(pm);
-    auto port_s=std::to_string(10010+i);
-    verify(client->connect((std::string("127.0.0.1:")+port_s).c_str())==0);
-    NetworkClientProxy *nc_client_proxy = new NetworkClientProxy(client);
-    nc_clients.push_back(std::shared_ptr<NetworkClientProxy>(nc_client_proxy));
-  }
-
-  // using different threads to issue transactions independently
-  for (int i=0; i<nthreads; i++) {
-    pthread_t ph_c;
-    pthread_create(&ph_c, NULL, nc_start_client, (char*)std::to_string(i).c_str());
-    pthread_detach(ph_c);
-    usleep(10 * 1000);
-  }
-
-  sleep(run);  // sleep 30 seconds
-}
-
 std::vector<std::vector<int>> *nc_get_new_order_requests(int par_id) {
   return &nc_services[par_id]->new_order_requests;
 }
-// ----------------------------------- END network-client -------------------------------------------------------
+
+std::vector<std::vector<int>>* nc_get_payment_requests(int par_id) {
+  return &nc_services[par_id]->payment_requests;
+}; 
+
+std::vector<std::vector<int>>* nc_get_delivery_requests(int par_id) {
+  return &nc_services[par_id]->delivery_requests;
+}; 
+
+std::vector<std::vector<int>>* nc_get_order_status_requests(int par_id) {
+  return &nc_services[par_id]->order_status_requests;
+}; 
+
+std::vector<std::vector<int>>* nc_get_stock_level_requests(int par_id) {
+  return &nc_services[par_id]->stock_level_requests;
+}; 
