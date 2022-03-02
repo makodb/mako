@@ -892,30 +892,38 @@ void microbench_paxos_queue() {
     pre_shutdown_step();
 }
 
-void *nc_start_server(void *port) {
+// http://www.cse.cuhk.edu.hk/~ericlo/teaching/os/lab/9-PThread/Pass.html
+struct args {
+    int port;
+};
+
+void *nc_start_server(void *input) {
     NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
     rrr::PollMgr *pm = new rrr::PollMgr();
     base::ThreadPool *tp = new base::ThreadPool();
     rrr::Server *server = new rrr::Server(pm, tp);
     server->reg(impl);
-    server->start((std::string("127.0.0.1:")+std::string((char*)port)).c_str());
+    server->start((std::string("127.0.0.1:")+std::to_string(((struct args*)input)->port)).c_str());
     nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
     while (1) {
       sleep(1);
-      std::cout << "new_order_counter: " << impl->counter_new_order << "\n"
-                << "counter_payement:" << impl->counter_payement << "\n"
-                << "counter_delivery:" << impl->counter_delivery << "\n"
-                << "counter_order_status:" << impl->counter_order_status << "\n"
-                << "counter_stock_level:" << impl->counter_stock_level << "\n\n" ;
+      std::cout << "received on port: " << std::string("127.0.0.1:")+std::to_string(((struct args*)input)->port) << "\n";
+      std::cout << "  new_order_counter:" << impl->counter_new_order << "\n"
+                << "  counter_payement:" << impl->counter_payement << "\n"
+                << "  counter_delivery:" << impl->counter_delivery << "\n"
+                << "  counter_order_status:" << impl->counter_order_status << "\n"
+                << "  counter_stock_level:" << impl->counter_stock_level << "\n"
+                << "  in total:" << (impl->counter_new_order+impl->counter_payement+impl->counter_delivery+impl->counter_order_status+impl->counter_stock_level) << "\n\n" ;
     }
 }
 
 // setup nthreads servers
 void nc_setup_server(int nthreads) {
   for (int i=0; i<nthreads; i++) {
+    struct args *ps = (struct args *)malloc(sizeof(struct args));
+    ps->port=10010+i;
     pthread_t ph_s;
-    auto port_s=std::to_string(10010+i);
-    pthread_create(&ph_s, NULL, nc_start_server, (void*)port_s.c_str());
+    pthread_create(&ph_s, NULL, nc_start_server, (void *)ps);
     pthread_detach(ph_s);
     usleep(10 * 1000); // wait for 10ms
   }

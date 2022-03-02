@@ -151,61 +151,79 @@ std::vector<int> nc_generate_stock_level(int par_id) {
 }
 
 
-void *nc_start_client(void *par_id) { // benchmark implementation in the client
-  int par_id_int = atoi((char*)par_id);
-  int counter = 0;
+struct args {
+    int par_id;
+};
+
+void *nc_start_client(void *input) { // benchmark implementation in the client
+  int par_id = ((struct args*)input)->par_id;
+  std::atomic<int64_t> done(0);
+  int64_t t_counter=0;
   // mix of the workload: [45, 43, 4, 4, 4]
   while (1) {
-    usleep(5 * 1000);
+    t_counter ++;
+    while (t_counter - done > 1) { usleep(1000 * 10); }
+    //usleep(10 * 1000);
     int r = rand() % 100 + 1; // [1, 100]
     int ret=0;
-    auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(10, 1); 
-    if (r<=45) {  // communicator.cc
-      FutureAttr fuattr;  // fuattr
-      fuattr.callback = [e] (Future* fu) {
-        std::cout << "invoke async_txn_new_order callback\n" ;
-        e->FeedResponse(true);
-      };
-      vector<int> _req = nc_generate_new_order(par_id_int);
-      Future::safe_release(nc_clients[par_id_int]->async_txn_new_order(_req, fuattr));
-      // e->Wait();
-      // if (!e->Yes()) {
-      //   std::cout << "stop running\n";
-      // }
+    auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1, 1); 
+    if (r<=100) {  // communicator.cc
+      //Coroutine::CreateRun([&] () {
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [&done] (Future* fu) {
+          //e->FeedResponse(true);
+          done.fetch_add(1);
+        };
+        vector<int> _req = nc_generate_new_order(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_new_order(_req, fuattr));
+        //e->Wait();
+      //});
     } else if (r <= 88) {
-      FutureAttr fuattr;  // fuattr
-      fuattr.callback = [] (Future* fu) {
-        std::cout << "invoke async_txn_payment callback\n" ;
-      };
-      vector<int> _req = nc_generate_payment(par_id_int);
-      Future::safe_release(nc_clients[par_id_int]->async_txn_payment(_req, fuattr));
+      Coroutine::CreateRun([&] () {
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [e] (Future* fu) {
+          e->FeedResponse(true);
+        };
+        vector<int> _req = nc_generate_payment(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_payment(_req, fuattr));
+        e->Wait();
+      });
     } else if (r <= 92) {
-      FutureAttr fuattr;  // fuattr
-      fuattr.callback = [] (Future* fu) {
-        std::cout << "invoke async_txn_delivery callback\n" ;
-      };
-      vector<int> _req = nc_generate_delivery(par_id_int);
-      Future::safe_release(nc_clients[par_id_int]->async_txn_delivery(_req, fuattr));
+      Coroutine::CreateRun([&] () {
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [e] (Future* fu) {
+          e->FeedResponse(true);
+        };
+        vector<int> _req = nc_generate_delivery(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_delivery(_req, fuattr));
+        e->Wait();
+      });
     } else if (r <= 96) {
-      FutureAttr fuattr;  // fuattr
-      fuattr.callback = [] (Future* fu) {
-        std::cout << "invoke async_txn_order_status callback\n" ;
-      };
-      vector<int> _req = nc_generate_order_status(par_id_int);
-      Future::safe_release(nc_clients[par_id_int]->async_txn_order_status(_req, fuattr));
+      Coroutine::CreateRun([&] () {
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [e] (Future* fu) {
+          e->FeedResponse(true);
+        };
+        vector<int> _req = nc_generate_order_status(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_order_status(_req, fuattr));
+        e->Wait();
+      });
     } else {
-      FutureAttr fuattr;  // fuattr
-      fuattr.callback = [] (Future* fu) {
-        std::cout << "invoke async_txn_stock_level callback\n" ;
-      };
-      vector<int> _req = nc_generate_stock_level(par_id_int);
-      Future::safe_release(nc_clients[par_id_int]->async_txn_stock_level(_req, fuattr));
+      Coroutine::CreateRun([&] () {
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [e] (Future* fu) {
+          e->FeedResponse(true);
+        };
+        vector<int> _req = nc_generate_stock_level(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_stock_level(_req, fuattr));
+        e->Wait();
+      });
     }
 
-    counter += 1;
-    if (counter % 100==0) std::cout << "issue # of transactions[par-id:" << par_id_int << "]: " << counter << std::endl;
+    if (t_counter % 100==0) std::cout << "issue # of transactions[par-id:" << par_id << "]: " << t_counter << std::endl;
   }
 }
+
 
 void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
   for (int i=0; i<nthreads; i++) {
@@ -220,9 +238,11 @@ void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
   }
 
   // using different threads to issue transactions independently
-  for (int i=0; i<nthreads; i++) {
+  for (int par_id=0; par_id<nthreads; par_id++) {
     pthread_t ph_c;
-    pthread_create(&ph_c, NULL, nc_start_client, (char*)std::to_string(i).c_str());
+    struct args *ps = (struct args *)malloc(sizeof(struct args));
+    ps->par_id=par_id;
+    pthread_create(&ph_c, NULL, nc_start_client, (void *)ps);
     pthread_detach(ph_c);
     usleep(10 * 1000);
   }
@@ -241,10 +261,10 @@ int main(int argc, char* argv[]){
         nc_setup_server(nthreads);
         while (1) { 
             sleep(1); 
-            for (int i=0; i<nthreads; i++) {
-                std::vector<std::vector<int>> *requests = nc_get_new_order_requests(i);
-                std::cout << "# of new order requests[par_id-" << i << "]: "<< requests->size() << std::endl;
-            }
+            // for (int i=0; i<nthreads; i++) {
+            //     std::vector<std::vector<int>> *requests = nc_get_new_order_requests(i);
+            //     std::cout << "# of new order requests[par_id-" << i << "]: "<< requests->size() << std::endl;
+            // }
         }
     } else {
         sleep(1) ; // wait for server start
