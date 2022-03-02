@@ -895,6 +895,7 @@ void microbench_paxos_queue() {
 // http://www.cse.cuhk.edu.hk/~ericlo/teaching/os/lab/9-PThread/Pass.html
 struct args {
     int port;
+    char* server_ip;
 };
 
 void *nc_start_server(void *input) {
@@ -903,11 +904,11 @@ void *nc_start_server(void *input) {
     base::ThreadPool *tp = new base::ThreadPool();
     rrr::Server *server = new rrr::Server(pm, tp);
     server->reg(impl);
-    server->start((std::string("127.0.0.1:")+std::to_string(((struct args*)input)->port)).c_str());
+    server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
     while (1) {
       sleep(1);
-      std::cout << "received on port: " << std::string("127.0.0.1:")+std::to_string(((struct args*)input)->port) << "\n";
+      std::cout << "received on port: " << ((struct args*)input)->server_ip+std::to_string(((struct args*)input)->port) << "\n";
       std::cout << "  new_order_counter:" << impl->counter_new_order << "\n"
                 << "  counter_payement:" << impl->counter_payement << "\n"
                 << "  counter_delivery:" << impl->counter_delivery << "\n"
@@ -918,10 +919,12 @@ void *nc_start_server(void *input) {
 }
 
 // setup nthreads servers
-void nc_setup_server(int nthreads) {
+void nc_setup_server(int nthreads, std::string filename) {
+  std::map<std::string, std::string> hosts = getHosts(filename) ;
   for (int i=0; i<nthreads; i++) {
     struct args *ps = (struct args *)malloc(sizeof(struct args));
     ps->port=10010+i;
+    ps->server_ip=(char*)hosts["localhost"].c_str();
     pthread_t ph_s;
     pthread_create(&ph_s, NULL, nc_start_server, (void *)ps);
     pthread_detach(ph_s);

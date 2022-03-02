@@ -35,7 +35,7 @@ int get_epoch();
 void worker_info_stats(size_t);
 
 // network client
-void nc_setup_server(int);  // start a server accepting requests on the leader replica
+void nc_setup_server(int, std::string);  // start a server accepting requests on the leader replica
 std::vector<std::vector<int>>* nc_get_new_order_requests(int); 
 std::vector<std::vector<int>>* nc_get_payment_requests(int); 
 std::vector<std::vector<int>>* nc_get_delivery_requests(int); 

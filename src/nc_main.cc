@@ -18,6 +18,8 @@ using namespace network_client;
 std::vector<shared_ptr<network_client::NetworkClientProxy>> nc_clients = {} ;
 fast_random r(0);
 int nthreads=1;
+int batch_size=1000;
+char *server_ip="127.0.0.1";
 
 int NumWarehouses() { return nthreads; }
 
@@ -33,35 +35,36 @@ std::vector<int> nc_generate_new_order(int par_id) {
       orderQuantity
   */
   std::vector<int> ret;
-  uint warehouse_id=par_id+1; // 1 warehouse per thread
-  ret.push_back(warehouse_id);
+  for (int i=0; i<batch_size; i++) {
+    uint warehouse_id=par_id+1; // 1 warehouse per thread
+    ret.push_back(warehouse_id);
 
-  uint districtID=RandomNumber(r, 1, NumDistrictsPerWarehouse()); // [1,10]
-  ret.push_back(districtID);
+    uint districtID=RandomNumber(r, 1, NumDistrictsPerWarehouse()); // [1,10]
+    ret.push_back(districtID);
 
-  uint customerID=GetCustomerId(r); // [1,3000]
-  ret.push_back(customerID);
+    uint customerID=GetCustomerId(r); // [1,3000]
+    ret.push_back(customerID);
 
-  uint numItems=rand()%11+5;  // [5,15]
-  ret.push_back(numItems);
-  
-  // uint itemIDs[numItems], supplierWarehouseIDs[numItems], orderQuantities[numItems]
-  for (uint i=0; i<numItems; i++) {
-      ret.push_back(GetItemId(r));  // g_uniform_item_dist == 0
+    uint numItems=rand()%11+5;  // [5,15]
+    ret.push_back(numItems);
+    
+    // uint itemIDs[numItems], supplierWarehouseIDs[numItems], orderQuantities[numItems]
+    for (uint i=0; i<numItems; i++) {
+        ret.push_back(GetItemId(r));  // g_uniform_item_dist == 0
 
-      // g_disable_xpartition_txn == 0, g_new_order_remote_item_pct == 1
-      if (likely(NumWarehouses() == 1 || RandomNumber(r, 1, 100) > 1)) {
-          ret.push_back(warehouse_id) ;
-      } else {
-          int remote_id=warehouse_id;
-          do {
+        // g_disable_xpartition_txn == 0, g_new_order_remote_item_pct == 1
+        if (likely(NumWarehouses() == 1 || RandomNumber(r, 1, 100) > 1)) {
+            ret.push_back(warehouse_id) ;
+        } else {
+            int remote_id=warehouse_id;
+            do {
                 remote_id = RandomNumber(r, 1, NumWarehouses());
-          } while (remote_id == warehouse_id);
-          ret.push_back(remote_id);
-      }
-      ret.push_back(RandomNumber(r, 1, 10)) ;
+            } while (remote_id == warehouse_id);
+            ret.push_back(remote_id);
+        }
+        ret.push_back(RandomNumber(r, 1, 10)) ;
+    }
   }
-  
   return ret;
 }
 
@@ -74,25 +77,28 @@ std::vector<int> nc_generate_payment(int par_id) {
         paymentAmount
     */
     std::vector<int> ret;
-    uint warehouse_id=par_id+1; // 1 warehouse per thread
-    ret.push_back(warehouse_id);
+    for (int i=0; i<batch_size; i++) {
+      uint warehouse_id=par_id+1; // 1 warehouse per thread
+      ret.push_back(warehouse_id);
 
-    uint districtID=RandomNumber(r, 1, NumDistrictsPerWarehouse());
-    ret.push_back(districtID);
+      uint districtID=RandomNumber(r, 1, NumDistrictsPerWarehouse());
+      ret.push_back(districtID);
 
-    if (likely(NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85)) {
-        ret.push_back(districtID);
-        ret.push_back(warehouse_id);
-    } else {
-        ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse()));
-        int remote_id=warehouse_id;
-        do {
-           remote_id = RandomNumber(r, 1, NumWarehouses());
-        } while (remote_id == warehouse_id);
-        ret.push_back(remote_id);
+      if (likely(NumWarehouses() == 1 || RandomNumber(r, 1, 100) <= 85)) {
+          ret.push_back(districtID);
+          ret.push_back(warehouse_id);
+      } else {
+          ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse()));
+          int remote_id=warehouse_id;
+          do {
+            remote_id = RandomNumber(r, 1, NumWarehouses());
+          } while (remote_id == warehouse_id);
+          ret.push_back(remote_id);
+      }
+      
+      ret.push_back(RandomNumber(r, 100, 500000)); // paymentAmount * 100
     }
     
-    ret.push_back(RandomNumber(r, 100, 500000)); // paymentAmount * 100
     return ret;
 }
 
@@ -102,11 +108,12 @@ std::vector<int> nc_generate_delivery(int par_id) {
       carrier_id
     */
     std::vector<int> ret;
-    uint warehouse_id=par_id+1; // 1 warehouse per thread
-    ret.push_back(warehouse_id);
+    for (int i=0; i<batch_size; i++) {
+      uint warehouse_id=par_id+1; // 1 warehouse per thread
+      ret.push_back(warehouse_id);
 
-    ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse()));
-
+      ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse()));
+    }
     return ret;
 }
 
@@ -118,18 +125,21 @@ std::vector<int> nc_generate_order_status(int par_id) {
       customerID
     */
     std::vector<int> ret;
-    uint warehouse_id=par_id+1; // 1 warehouse per thread
-    ret.push_back(warehouse_id);
+    for (int i=0; i<batch_size; i++) {
+      uint warehouse_id=par_id+1; // 1 warehouse per thread
+      ret.push_back(warehouse_id);
 
-    ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse())) ;
+      ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse())) ;
 
-    int threshold = RandomNumber(r, 1, 100) ;
-    ret.push_back(threshold) ;
-    if (threshold <= 60) {
-        ret.push_back(-1);
-    } else {
-        ret.push_back(GetCustomerId(r)) ;
+      int threshold = RandomNumber(r, 1, 100) ;
+      ret.push_back(threshold) ;
+      if (threshold <= 60) {
+          ret.push_back(-1);
+      } else {
+          ret.push_back(GetCustomerId(r)) ;
+      }
     }
+    
     return ret;
 }
 
@@ -140,13 +150,14 @@ std::vector<int> nc_generate_stock_level(int par_id) {
       districtID
     */
     std::vector<int> ret;
-    uint warehouse_id=par_id+1; // 1 warehouse per thread
-    ret.push_back(warehouse_id);
+    for (int i=0; i<batch_size; i++) {
+      uint warehouse_id=par_id+1; // 1 warehouse per thread
+      ret.push_back(warehouse_id);
 
-    ret.push_back(RandomNumber(r, 10, 20));
+      ret.push_back(RandomNumber(r, 10, 20));
 
-    ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse())) ;
-
+      ret.push_back(RandomNumber(r, 1, NumDistrictsPerWarehouse())) ;
+    }
     return ret;
 }
 
@@ -167,57 +178,41 @@ void *nc_start_client(void *input) { // benchmark implementation in the client
     int r = rand() % 100 + 1; // [1, 100]
     int ret=0;
     auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1, 1); 
-    if (r<=100) {  // communicator.cc
-      //Coroutine::CreateRun([&] () {
+    if (r<=45) {  // communicator.cc
         FutureAttr fuattr;  // fuattr
         fuattr.callback = [&done] (Future* fu) {
-          //e->FeedResponse(true);
           done.fetch_add(1);
         };
         vector<int> _req = nc_generate_new_order(par_id);
         Future::safe_release(nc_clients[par_id]->async_txn_new_order(_req, fuattr));
-        //e->Wait();
-      //});
     } else if (r <= 88) {
-      Coroutine::CreateRun([&] () {
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [e] (Future* fu) {
-          e->FeedResponse(true);
+        fuattr.callback = [&done] (Future* fu) {
+          done.fetch_add(1);
         };
         vector<int> _req = nc_generate_payment(par_id);
         Future::safe_release(nc_clients[par_id]->async_txn_payment(_req, fuattr));
-        e->Wait();
-      });
     } else if (r <= 92) {
-      Coroutine::CreateRun([&] () {
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [e] (Future* fu) {
-          e->FeedResponse(true);
+        fuattr.callback = [&done] (Future* fu) {
+          done.fetch_add(1);
         };
         vector<int> _req = nc_generate_delivery(par_id);
         Future::safe_release(nc_clients[par_id]->async_txn_delivery(_req, fuattr));
-        e->Wait();
-      });
     } else if (r <= 96) {
-      Coroutine::CreateRun([&] () {
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [e] (Future* fu) {
-          e->FeedResponse(true);
+        fuattr.callback = [&done] (Future* fu) {
+          done.fetch_add(1);
         };
         vector<int> _req = nc_generate_order_status(par_id);
         Future::safe_release(nc_clients[par_id]->async_txn_order_status(_req, fuattr));
-        e->Wait();
-      });
     } else {
-      Coroutine::CreateRun([&] () {
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [e] (Future* fu) {
-          e->FeedResponse(true);
+        fuattr.callback = [&done] (Future* fu) {
+          done.fetch_add(1);
         };
         vector<int> _req = nc_generate_stock_level(par_id);
         Future::safe_release(nc_clients[par_id]->async_txn_stock_level(_req, fuattr));
-        e->Wait();
-      });
     }
 
     if (t_counter % 100==0) std::cout << "issue # of transactions[par-id:" << par_id << "]: " << t_counter << std::endl;
@@ -230,7 +225,7 @@ void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
     rrr::PollMgr *pm = new rrr::PollMgr();
     rrr::Client *client = new rrr::Client(pm);
     auto port_s=std::to_string(10010+i);
-    while (client->connect((std::string("127.0.0.1:")+port_s).c_str())!=0) {
+    while (client->connect((std::string(server_ip)+":"+port_s).c_str())!=0) {
       usleep(100 * 1000); // retry to connect
     }
     NetworkClientProxy *nc_client_proxy = new NetworkClientProxy(client);
@@ -251,14 +246,17 @@ void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
 }
 
 int main(int argc, char* argv[]){
-    if (argc < 2) return -1;
+    if (argc < 3) return -1;
 
     unsigned int is_server = atoi(argv[1]) ;
     nthreads = atoi(argv[2]);
-    std::cout << "Using nthreads: " << nthreads << std::endl;
+    if (argc > 3)
+      server_ip = argv[3];
+
+    std::cout << "Using nthreads: " << nthreads << ", on server_ip: " << server_ip << std::endl;
     int runningTime=60;
     if (is_server) {  // XXX, this branch should attach to Rolis, we put it here just for testing
-        nc_setup_server(nthreads);
+        nc_setup_server(nthreads, "/home/weihai/silo-sto/third-party/paxos/config/local/1follower_3.yml");
         while (1) { 
             sleep(1); 
             // for (int i=0; i<nthreads; i++) {
