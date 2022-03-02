@@ -45,7 +45,7 @@ std::vector<int> nc_generate_new_order(int par_id) {
     uint customerID=GetCustomerId(r); // [1,3000]
     ret.push_back(customerID);
 
-    uint numItems=rand()%11+5;  // [5,15]
+    uint numItems=RandomNumber(r, 5, 15);  // [5,15]
     ret.push_back(numItems);
     
     // uint itemIDs[numItems], supplierWarehouseIDs[numItems], orderQuantities[numItems]
@@ -134,7 +134,7 @@ std::vector<int> nc_generate_order_status(int par_id) {
       int threshold = RandomNumber(r, 1, 100) ;
       ret.push_back(threshold) ;
       if (threshold <= 60) {
-          ret.push_back(-1);
+          ret.push_back(0);
       } else {
           ret.push_back(GetCustomerId(r)) ;
       }
@@ -177,7 +177,6 @@ void *nc_start_client(void *input) { // benchmark implementation in the client
     //usleep(10 * 1000);
     int r = rand() % 100 + 1; // [1, 100]
     int ret=0;
-    auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1, 1); 
     if (r<=45) {  // communicator.cc
         FutureAttr fuattr;  // fuattr
         fuattr.callback = [&done] (Future* fu) {
@@ -256,7 +255,7 @@ int main(int argc, char* argv[]){
     std::cout << "Using nthreads: " << nthreads << ", on server_ip: " << server_ip << std::endl;
     int runningTime=60;
     if (is_server) {  // XXX, this branch should attach to Rolis, we put it here just for testing
-        nc_setup_server(nthreads, "/home/weihai/silo-sto/third-party/paxos/config/local/1follower_3.yml");
+        nc_setup_server(nthreads, "127.0.0.1");
         while (1) { 
             sleep(1); 
             // for (int i=0; i<nthreads; i++) {

@@ -896,6 +896,7 @@ void microbench_paxos_queue() {
 struct args {
     int port;
     char* server_ip;
+    int par_id;
 };
 
 void *nc_start_server(void *input) {
@@ -906,25 +907,32 @@ void *nc_start_server(void *input) {
     server->reg(impl);
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
+    int c=0;
     while (1) {
+      c++;
       sleep(1);
-      std::cout << "received on port: " << ((struct args*)input)->server_ip+std::to_string(((struct args*)input)->port) << "\n";
+      if (c==40) break;
+      /*
+      std::cout << "received on par_id: " << std::to_string(((struct args*)input)->par_id) << "\n";
       std::cout << "  new_order_counter:" << impl->counter_new_order << "\n"
                 << "  counter_payement:" << impl->counter_payement << "\n"
                 << "  counter_delivery:" << impl->counter_delivery << "\n"
                 << "  counter_order_status:" << impl->counter_order_status << "\n"
                 << "  counter_stock_level:" << impl->counter_stock_level << "\n"
                 << "  in total:" << (impl->counter_new_order+impl->counter_payement+impl->counter_delivery+impl->counter_order_status+impl->counter_stock_level) << "\n\n" ;
+                */
     }
 }
 
 // setup nthreads servers
-void nc_setup_server(int nthreads, std::string filename) {
-  std::map<std::string, std::string> hosts = getHosts(filename) ;
+void nc_setup_server(int nthreads, std::string host) {
+  // std::map<std::string, std::string> hosts = getHosts(filename) ;
+  // (char*)hosts["localhost"]
   for (int i=0; i<nthreads; i++) {
     struct args *ps = (struct args *)malloc(sizeof(struct args));
     ps->port=10010+i;
-    ps->server_ip=(char*)hosts["localhost"].c_str();
+    ps->server_ip=(char*)host.c_str();
+    ps->par_id=i;
     pthread_t ph_s;
     pthread_create(&ph_s, NULL, nc_start_server, (void *)ps);
     pthread_detach(ph_s);
