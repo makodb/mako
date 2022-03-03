@@ -219,6 +219,10 @@ PollMgr::PollMgr(int n_threads /* =... */)
   }
 }
 
+pthread_t* PollMgr::GetPthreads(int i) {
+  return &poll_threads_[i].th_;
+}
+
 PollMgr::~PollMgr() {
   delete[] poll_threads_;
   //Log_debug("rrr::PollMgr: destroyed");

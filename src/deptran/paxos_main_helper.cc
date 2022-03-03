@@ -22,6 +22,7 @@ using namespace network_client;
 
 // network client
 std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
+std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};
 // end of network client
 
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
@@ -899,11 +900,28 @@ struct args {
     int par_id;
 };
 
+static void
+nc_pclock(char *msg, clockid_t cid)
+{
+    struct timespec ts;
+
+    printf("%s", msg);
+    if (clock_gettime(cid, &ts) == -1)
+        std::cout << "clock_gettime error" << std::endl;
+    printf("%4jd.%03ld\n", (intmax_t)ts.tv_sec, ts.tv_nsec / 1000000);
+}
+
 void *nc_start_server(void *input) {
     NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
     rrr::PollMgr *pm = new rrr::PollMgr();
-    base::ThreadPool *tp = new base::ThreadPool();
+    base::ThreadPool *tp = new base::ThreadPool();  // never use it
     rrr::Server *server = new rrr::Server(pm, tp);
+    
+    // We should count the child threads into consideration
+    bool track_cputime=false;
+    pthread_t *ps;
+    if (track_cputime) ps = pm->GetPthreads(0);
+
     server->reg(impl);
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
@@ -912,6 +930,15 @@ void *nc_start_server(void *input) {
       c++;
       sleep(1);
       if (c==40) break;
+
+      if (track_cputime) {
+        clockid_t cid;
+        int s = pthread_getcpuclockid(*ps, &cid);
+        if (s != 0)
+            std::cout << "error\n";
+        nc_pclock("sub threads thread CPU time:   ", cid);
+      }
+      
       /*
       std::cout << "received on par_id: " << std::to_string(((struct args*)input)->par_id) << "\n";
       std::cout << "  new_order_counter:" << impl->counter_new_order << "\n"

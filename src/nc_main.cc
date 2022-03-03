@@ -11,6 +11,7 @@
 #include "network_client/network_impl.h"
 #include "nc_util.h"
 #include "deptran/communicator.h"
+#include <pthread.h>
 
 using namespace janus;
 using namespace network_client;
@@ -256,13 +257,14 @@ int main(int argc, char* argv[]){
     int runningTime=60;
     if (is_server) {  // XXX, this branch should attach to Rolis, we put it here just for testing
         nc_setup_server(nthreads, "127.0.0.1");
-        while (1) { 
-            sleep(1); 
-            // for (int i=0; i<nthreads; i++) {
-            //     std::vector<std::vector<int>> *requests = nc_get_new_order_requests(i);
-            //     std::cout << "# of new order requests[par_id-" << i << "]: "<< requests->size() << std::endl;
-            // }
-        }
+        sleep(runningTime);
+        // while (1) { 
+        //     sleep(1); 
+        //     for (int i=0; i<nthreads; i++) {
+        //         std::vector<std::vector<int>> *requests = nc_get_new_order_requests(i);
+        //         std::cout << "# of new order requests[par_id-" << i << "]: "<< requests->size() << std::endl;
+        //     }
+        // }
     } else {
         sleep(1) ; // wait for server start
         std::cout << "start the benchmark\n";
