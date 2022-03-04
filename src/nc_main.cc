@@ -22,15 +22,15 @@ int nthreads=1;
 int batch_size=1000;
 char *server_ip="127.0.0.1";
 
-int nkeys=100*10000;
+int nkeys=1000000;
 int batch_size_ycsb=10000;
 
 int NumWarehouses() { return nthreads; }
 
 std::vector<int> nc_generate_rmw(int par_id) {
   std::vector<int> ret;
-  for (int i=0; i<batch_size_ycsb; i++) {
-    uint64_t k = r.next() % nkeys;
+  for (int i=0; i<batch_size_ycsb * 4; i++) {
+    int k = r.next() % nkeys;
     ret.push_back(k);
   }
   return ret;
@@ -38,8 +38,8 @@ std::vector<int> nc_generate_rmw(int par_id) {
 
 std::vector<int> nc_generate_read(int par_id) {
   std::vector<int> ret;
-  for (int i=0; i<batch_size_ycsb; i++) {
-    uint64_t k = r.next() % nkeys;
+  for (int i=0; i<batch_size_ycsb * 4; i++) {
+    int k = r.next() % nkeys;
     ret.push_back(k);
   }
   return ret;
