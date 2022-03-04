@@ -986,3 +986,11 @@ std::vector<std::vector<int>>* nc_get_order_status_requests(int par_id) {
 std::vector<std::vector<int>>* nc_get_stock_level_requests(int par_id) {
   return &nc_services[par_id]->stock_level_requests;
 }; 
+
+std::vector<std::vector<int>>* nc_get_read_requests(int par_id) {
+  return &nc_services[par_id]->read_requests;
+}; 
+
+std::vector<std::vector<int>>* nc_get_rmw_requests(int par_id) {
+  return &nc_services[par_id]->rmw_requests;
+}; 

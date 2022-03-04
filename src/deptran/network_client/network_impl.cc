@@ -3,12 +3,16 @@
 namespace network_client {
     NetworkClientServiceImpl::NetworkClientServiceImpl() {  }
 
-    void NetworkClientServiceImpl::txn_rmw(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) {
-        counter += 1;
+    void NetworkClientServiceImpl::txn_rmw(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) {
+        rmw_requests.push_back(_req);
+        counter_rmw += 1;
+        defer->reply();
     }
 
-    void NetworkClientServiceImpl::txn_read(const uint64_t& k0, const uint64_t& k1, const uint64_t& k2, const uint64_t& k3) {
-        counter += 1;
+    void NetworkClientServiceImpl::txn_read(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) {
+        read_requests.push_back(_req);
+        counter_read += 1;
+        defer->reply();
     }
 
     // XXX, using malloc on the heap???

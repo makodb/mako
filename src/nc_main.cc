@@ -22,7 +22,29 @@ int nthreads=1;
 int batch_size=1000;
 char *server_ip="127.0.0.1";
 
+int nkeys=100*10000;
+int batch_size_ycsb=10000;
+
 int NumWarehouses() { return nthreads; }
+
+std::vector<int> nc_generate_rmw(int par_id) {
+  std::vector<int> ret;
+  for (int i=0; i<batch_size_ycsb; i++) {
+    uint64_t k = r.next() % nkeys;
+    ret.push_back(k);
+  }
+  return ret;
+}
+
+std::vector<int> nc_generate_read(int par_id) {
+  std::vector<int> ret;
+  for (int i=0; i<batch_size_ycsb; i++) {
+    uint64_t k = r.next() % nkeys;
+    ret.push_back(k);
+  }
+  return ret;
+}
+
 
 std::vector<int> nc_generate_new_order(int par_id) {
   /*
@@ -219,6 +241,34 @@ void *nc_start_client(void *input) { // benchmark implementation in the client
   }
 }
 
+void *nc_start_client_ycsb(void *input) { // benchmark implementation in the client
+  int par_id = ((struct args*)input)->par_id;
+  std::atomic<int64_t> done(0);
+  int64_t t_counter=0;
+  // mix of the workload: [50, 50]
+  while (1) {
+    t_counter ++;
+    while (t_counter - done > 1) { usleep(1000 * 10); }
+    int r = rand() % 100 + 1; // [1, 100]
+    int ret=0;
+    if (r<=50) {  // communicator.cc
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [&done] (Future* fu) {
+          done.fetch_add(1);
+        };
+        vector<int> _req = nc_generate_read(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_read(_req, fuattr));
+    } else {
+        FutureAttr fuattr;  // fuattr
+        fuattr.callback = [&done] (Future* fu) {
+          done.fetch_add(1);
+        };
+        vector<int> _req = nc_generate_rmw(par_id);
+        Future::safe_release(nc_clients[par_id]->async_txn_rmw(_req, fuattr));
+    }
+    if (t_counter % 100==0) std::cout << "issue # of transactions[par-id:" << par_id << "]: " << t_counter << std::endl;
+  }
+}
 
 void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
   for (int i=0; i<nthreads; i++) {
@@ -237,7 +287,7 @@ void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
     pthread_t ph_c;
     struct args *ps = (struct args *)malloc(sizeof(struct args));
     ps->par_id=par_id;
-    pthread_create(&ph_c, NULL, nc_start_client, (void *)ps);
+    pthread_create(&ph_c, NULL, nc_start_client_ycsb, (void *)ps);
     pthread_detach(ph_c);
     usleep(10 * 1000);
   }

@@ -41,3 +41,5 @@ std::vector<std::vector<int>>* nc_get_payment_requests(int);
 std::vector<std::vector<int>>* nc_get_delivery_requests(int); 
 std::vector<std::vector<int>>* nc_get_order_status_requests(int); 
 std::vector<std::vector<int>>* nc_get_stock_level_requests(int); 
+std::vector<std::vector<int>>* nc_get_read_requests(int); 
+std::vector<std::vector<int>>* nc_get_rmw_requests(int); 
