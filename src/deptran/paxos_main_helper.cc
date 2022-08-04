@@ -173,15 +173,13 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
     if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
-	    if(es->machine_id == 1){
-		Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
-	    }
+        // PPP: ??? why it is the fixed to 1 or 2, it should be flexible
+        if(es->machine_id == 1){
+          Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
+        }
           break;
       }
-	    //worker->n_current++;
-	    //break;
     }
-
 }
 
 
@@ -243,7 +241,7 @@ map<string, string> getHosts(std::string filename) {
 }
 
 int get_outstanding_logs(uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {  // submit a transaction
+    for (auto& worker : pxs_workers_g) {  // PPP: submit a transaction, using map instead of for
         if (worker->site_info_->partition_id_ == par_id){
             //if(es->machine_id == 1) {  //  if leader
             return (int)worker->n_tot - (int)worker->n_current ;
@@ -253,38 +251,6 @@ int get_outstanding_logs(uint32_t par_id) {
     return -1;
 }
 
-int get_outstanding_logs_cur(uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {  // submit a transaction
-        if (worker->site_info_->partition_id_ == par_id){
-            //if(es->machine_id == 1) {  //  if leader
-            return (int)worker->n_current ;
-            //}
-        }
-    }
-    return -1;
-}
-
-int get_outstanding_logs_tol(uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {  // submit a transaction
-        if (worker->site_info_->partition_id_ == par_id){
-            //if(es->machine_id == 1) {  //  if leader
-            return (int)worker->n_tot ;
-            //}
-        }
-    }
-    return -1;
-}
-
-int get_outstanding_logs_que(uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {  // submit a transaction
-        if (worker->site_info_->partition_id_ == par_id){
-            //if(es->machine_id == 1) {  //  if leader
-            return (int)worker->replay_queue.size_approx() ;
-            //}
-        }
-    }
-    return -1;
-}
 
 std::vector<std::string> setup(int argc, char* argv[]) {
     vector<string> retVector;
@@ -298,19 +264,19 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     }
 
     auto server_infos = Config::GetConfig()->GetMyServers();
-    Log_info("server enabled, number of sites: %d", server_infos.size());
+    Log_info("server_infos, number of sites (Paxos groups): %d", server_infos.size());
     for (int i = server_infos.size()-1; i >=0; i--) {
       retVector.push_back(Config::GetConfig()->SiteById(server_infos[i].id).name) ;
       PaxosWorker* worker = new PaxosWorker();
       pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
-      //std::cout << i << endl;
       pxs_workers_g.back()->site_info_ = const_cast<Config::SiteInfo*>(&(Config::GetConfig()->SiteById(server_infos[i].id)));
-      Log_info("parition id of each is %d", pxs_workers_g.back()->site_info_->partition_id_);
+      Log_info("parition id of each Paxos group is %d, site-name: %s, site-id: %d", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
       // setup frame and scheduler
       pxs_workers_g.back()->SetupBase();
     }
     reverse(pxs_workers_g.begin(), pxs_workers_g.end());
     es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
+    Log_info("election (Paxos group) machine-id: %d", es->machine_id);
     return retVector;
 }
 
@@ -425,9 +391,7 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 static bool debug = false;
-void add_log_to_nc(const char* log, int len, uint32_t par_id){
-  //printf("XXXXXXX: par_id: %d, len: %d\n", par_id, len);
-  
+void add_log_to_nc(const char* log, int len, uint32_t par_id) {
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
@@ -437,28 +401,13 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id){
   }
   pxs_workers_g[par_id]->election_state_lock.unlock();
 
-
-  if(es->machine_id == 1 || es->machine_id == 2){
+  if(es->machine_id == 1 || es->machine_id == 2) {  // PPP: fixed for 3 nodes, should provide more flexiblity
      if(debug)
 	return;
-    //Log_info("Submitting on behalf of new leader to worker");
-    //return;
   }
-  //debug = true;
-  //len = 2;
-  //printf("YYYYYYY:XXXXXXX: par_id: %d, len: %d\n", par_id, len);
-  //if(submit_tot > 100000)return;
-	//Log_info("add_log_to_nc: partition_id %d %d", len, par_id);
-	//return;
-	l_.lock();
+	l_.lock();  // PPP: ??? why do we have to have a global spinLock for this?
 	len = len;
-	// submit_tot++;
-	//endTime = std::chrono::high_resolution_clock::now();
-	//auto paxos_entry = make_pair(log, make_pair(len, par_id));
-	//submit_queue_nc.push(paxos_entry);
-        //Log_info("Add log enters here");
 	add_log_without_queue((char*)log, len, par_id);
-	//Log_info("Add log exits here");
 	l_.unlock();
 }
 

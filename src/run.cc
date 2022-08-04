@@ -1,83 +1,85 @@
 #include "deptran/s_main.h"
-#include <iostream>
 #include <assert.h>
-#include<cstring>
-#include <stdio.h>
-#include <thread>
-#include <vector>
 #include <iostream>
-#include <queue>
-#include <sstream>
-#include <iostream>
-#include <sstream>
-#include <fstream>
-#include <string>
-#include <iomanip>
-#include <exception>
-#include <fstream>
-#include <thread>
-#include <vector>
-#include <iostream>
-#include <thread>
-#include <mutex>
-#include <functional>
-#include <stdlib.h>
-#include <unistd.h>
-#include <getopt.h>
-#include <condition_variable>
-#include <glob.h>
-#include <sys/time.h>
+#include <boost/coroutine/all.hpp>
+#include "rrr/rrr.hpp"
+
+using namespace std;
+using namespace rrr;
+
+// copy from ./test/coroutine.cc
+void ASSERT_EQ(bool a) { if (!a) throw; }
+
+void coroutine_basic() {
+  int x = 0;
+  Coroutine::CreateRun([&x] () {
+    x = 1;
+    sleep(2);
+    x = 2;
+  });
+  ASSERT_EQ(x == 2);
+}
+void coroutine_yield() {
+  int x = 0;
+  auto coro1 = Coroutine::CreateRun([&x] () {
+    x = 1;
+    Coroutine::CurrentCoroutine()->Yield();
+    x = 2;
+    Coroutine::CurrentCoroutine()->Yield();
+    x = 3;
+  });
+  ASSERT_EQ(x == 1);
+  Reactor::GetReactor()->ContinueCoro(coro1);
+  ASSERT_EQ(x == 2);
+  Reactor::GetReactor()->ContinueCoro(coro1);
+  ASSERT_EQ(x == 3);
+}
+shared_ptr<Coroutine> coroutine_yield_2_sub() {
+  int x;
+  auto coro1 = Coroutine::CreateRun([&x] () {
+      x = 1;
+      Coroutine::CurrentCoroutine()->Yield();
+  });
+  return coro1;
+}
+void coroutine_yield_2() {
+  shared_ptr<Coroutine> c = coroutine_yield_2_sub();
+  c->Continue();
+}
+void coroutine_wait_die_lock() {
+  WaitDieALock a;
+  auto coro1 = Coroutine::CreateRun([&a] () {
+    uint64_t req_id = a.Lock(0, ALock::WLOCK, 10);
+    ASSERT_EQ(req_id == true);
+    Coroutine::CurrentCoroutine()->Yield();
+    Log_info("aborting lock from coroutine 1.");
+    a.abort(req_id);
+  });
+
+  int x = 0;
+  auto coro2 = Coroutine::CreateRun([&] () {
+    uint64_t req_id = a.Lock(0, ALock::WLOCK, 11);
+    ASSERT_EQ(req_id == false);
+    x = 1;
+  });
+  ASSERT_EQ(x == 1);
+
+  int y = 0;
+  auto coro3 = Coroutine::CreateRun([&] () {
+    uint64_t req_id = a.Lock(0, ALock::WLOCK, 8);  // yield
+    ASSERT_EQ(req_id > 0);
+    Log_info("acquired lock from coroutine 3.");
+    y = 1;
+  });
+  ASSERT_EQ(y == 0);
+  coro1->Continue();
+  Reactor::GetReactor()->Loop();
+  ASSERT_EQ(y == 1);
+}
 
 int main(int argc, char* argv[]) {
-  std::vector<std::string> paxos_config{"config/1c1s1p.yml", "config/occ_paxos.yml"};
-  int logs_to_commit = 1000000, c;
-  char *argv_paxos[16];
-  //HeapProfilerStart("abc");
-  argv_paxos[0] = "build/microbench";
-  argv_paxos[1] = "-b";
-  argv_paxos[2] = "-d";
-  argv_paxos[3] = "60";
-  argv_paxos[4] = "-f";
-  argv_paxos[5] = (char *) paxos_config[0].c_str();
-  argv_paxos[6] = "-f";
-  argv_paxos[7] = (char *) paxos_config[1].c_str();
-  argv_paxos[8] = "-t";
-  argv_paxos[9] = "30";
-  argv_paxos[10] = "-T";
-  argv_paxos[11] = "100000";
-  argv_paxos[12] = "-n";
-  argv_paxos[13] = "32";
-  argv_paxos[14] = "-P";
-  argv_paxos[15] = "localhost";
-  std::vector<std::string> ret = setup(16, argv_paxos);
-  int ret2 = setup2();
-  if (ret.empty() || ret2 != 0) {
-    return 1;
-  }
-  int cnt = 0;
-  register_for_leader([&cnt](const char* log, int len) {
-    cnt++;
-    //std::cout << "committed" << std::endl;
-  }, 0);
-  register_for_follower([](const char* log, int len) {
-  }, 0);
-  char *x = (char *)malloc(4*1024);
-  memset(x, 'a', 4*1024);
-  for(int i = 1; i <= logs_to_commit; i++){
-    add_log(x , strlen(x), 0);
-    //wait_for_submit(0);
-    //std::cout << cnt << std::endl;
-  }
-  wait_for_submit(0);
-  //HeapProfilerDump("abc");
-  //HeapProfilerStop();
-  while(true){}
-  pre_shutdown_step();
-  ret2 = shutdown_paxos();
-  //while(true){}
-  std::cout << "Submitted " << logs_to_commit << std::endl;
-  std::cout << "Committed " << cnt << std::endl;
-//  // microbench_paxos();
-//  microbench_paxos_queue();
-  return ret2;
+  coroutine_basic();
+  coroutine_yield();
+  coroutine_yield_2();
+  coroutine_wait_die_lock();
 }

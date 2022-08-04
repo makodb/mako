@@ -61,7 +61,7 @@ void MultiPaxosServiceImpl::BulkPrepare(const MarshallDeputy& md_cmd,
                                        rrr::DeferredReply* defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
-    std::cout << "send a BulkPrepare\n";
+    //std::cout << "send a BulkPrepare\n";
     sched_->OnBulkPrepare(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                           ballot,
                           valid,

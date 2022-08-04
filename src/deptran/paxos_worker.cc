@@ -98,11 +98,10 @@ void PaxosWorker::SetupBase() {
   this->tot_num = config->get_tot_req();
 }
 
+// PPP: is it really the committed phase?
 void PaxosWorker::Next(Marshallable& cmd) {
-  //return;
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
-      //printf("a log is committed, par_id: %d\n", site_info_->partition_id_);
       auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
       if(sp_log_entry.length == 0){
 	 Log_info("Recieved a zero length log");
@@ -115,7 +114,6 @@ void PaxosWorker::Next(Marshallable& cmd) {
                   unsigned long long int latest_commit_id = r / 10;
                   // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
                   int status = r % 10;
-		  //Log_info("status: %d\n", status);
                   if (status == 3) {
                       // we do a memory copy on log intentionally in case this log is freed by paxos
                       char *dest = (char *)malloc(sp_log_entry.length) ;
@@ -140,23 +138,10 @@ void PaxosWorker::Next(Marshallable& cmd) {
     verify(0);
   }
 
-  //n_current++;
-
-  //Log_info("abc %d", site_info_->partition_id_);
-  
-  //if (n_current > n_tot) {
-    //if(es_pw->machine_id == 0)
-    //n_current++;
-    //if(es_pw->machine_id == 0)
-    //	Log_info("n_current increased here %d", (int)n_current);
-    if(site_info_->locale_id == 0){
-	   //if((int)n_current%100 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
-    }
-    if (n_current >= n_tot) {
-      //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
-      finish_cond.bcast();
-    }
-  //}
+  if (n_current >= n_tot) {
+    //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
+    finish_cond.bcast();
+  }
 }
 
 void PaxosWorker::SetupService() {
@@ -300,11 +285,6 @@ void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
        // read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
-    //return;
-    //return;
-    //n_current += (int)entries.size();
-    //n_submit -= (int)entries.size();
-    //Log_info("Current pair id %d n_current and n_tot is %d %d", site_info_->partition_id_, (int)n_current, (int)n_tot);
     _BulkSubmit(sp_m, entries.size());
     Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
 }
@@ -623,21 +603,16 @@ PaxosWorker::~PaxosWorker() {
   stop_replay_flag = true;
 }
 
-
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
-  //Log_info("Entering PaxosWorker::Submit  here\n");
-  //if (!IsLeader(par_id)) return;
-  //read_log(log_entry, length, "silo");
   auto sp_cmd = make_shared<LogEntry>();
   if(!shared_ptr_apprch){
 	  sp_cmd->log_entry = string(log_entry,length);
   }else{
     //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
-    // sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
-	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));
+    //sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
+	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));  // PPP: using operation_test instead of operation_
     memcpy(sp_cmd->operation_test.get(), log_entry, length);
   }
-  //Log_info("PaxosWorker::Submit Log=%s",operation_);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
@@ -645,45 +620,31 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
-  //mtx_worker_submit.lock();	
-  // finish_mutex.lock();
-  //n_current++;
-  //n_submit--;
-  //n_tot++;
-  // finish_mutex.unlock();
   static cooid_t cid{1};
   static id_t id{1};
   verify(rep_frame_ != nullptr);
   auto coord = rep_frame_->CreateCoordinator(cid++,
-                                                     Config::GetConfig(),
-                                                     0,
-                                                     nullptr,
-                                                     id++,
-                                                     nullptr);
-  //mtx_worker_submit.unlock();
+                                             Config::GetConfig(),
+                                             0,
+                                             nullptr,
+                                             id++,
+                                             nullptr);
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
   coord->set_slot(x);
-  //created_coordinators_.push_back(coord);
-  //coord->cmd_ = sp_m;
   coord->assignCmd(sp_m);
   Log_debug("PaxosWorker: job submitted for slot %d", x);
   if(stop_flag != true) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
-    //created_coordinators_shrd.push_back(sp_coo);
-    //n_current++;
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
-    //PaxosWorker* pw = this;
     //Log_info("PaxosWorker: job submitted for slot %d", x);
     auto sp_job = std::make_shared<OneTimeJob>([this, curr2]() {
       this->BulkSubmit(curr2);
     });
     submitJob(sp_job);
-    //BulkSubmit(vector<shared_ptr<Coordinator>>{sp_coo});
-    //AddAcceptNc(sp_coo);
   } else{
     coord->Submit(sp_m);
   }

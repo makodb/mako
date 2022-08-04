@@ -402,7 +402,6 @@ int Config::GetClientPort(std::string site_name) {
 }
 
 void Config::BuildSiteProcMap(YAML::Node process) {
-  Log_info("%s", __FUNCTION__);
   for (auto it = process.begin(); it != process.end(); it++) {
     auto site_name = it->first.as<string>();
     auto proc_name = it->second.as<string>();

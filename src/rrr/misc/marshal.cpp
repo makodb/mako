@@ -224,7 +224,6 @@ size_t Marshal::read(void* p, size_t n) {
     char* pc = (char *) p;
     size_t n_read = 0;
     while (n_read < n && head_ != nullptr && head_->content_size() > 0) {
-	//Log_info("wkwkakakak");
         size_t cnt = head_->read(pc + n_read, n - n_read);
         if (head_->fully_read()) {
             if (tail_ == head_) {

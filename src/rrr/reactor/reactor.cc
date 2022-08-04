@@ -228,7 +228,7 @@ PollMgr::~PollMgr() {
   //Log_debug("rrr::PollMgr: destroyed");
 }
 
-void PollMgr::PollThread::poll_loop() {
+void PollMgr::PollThread::poll_loop() {  // PPP: start a job, ??? how it works
   while (!stop_flag_) {
     TriggerJob();
     poll_.Wait();

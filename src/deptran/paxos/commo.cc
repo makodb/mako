@@ -142,7 +142,7 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
                                  const std::function<void(MarshallDeputy, ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  int k = (n%2 == 0) ? n/2 : (n/2 + 1);
+  int k = (n%2 == 0) ? n/2 : (n/2 + 1); // PPP: 3 partitions -> 2??? how about the election group
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;

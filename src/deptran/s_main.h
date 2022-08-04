@@ -10,9 +10,6 @@ std::vector<std::string> setup(int argc, char* argv[]);  // return proc_name on 
 int setup2(int = 0);
 std::map<std::string, std::string> getHosts(std::string) ;  // return hosts map
 int get_outstanding_logs(uint32_t);
-int get_outstanding_logs_cur(uint32_t);
-int get_outstanding_logs_tol(uint32_t);
-int get_outstanding_logs_que(uint32_t);
 int shutdown_paxos();
 void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);
