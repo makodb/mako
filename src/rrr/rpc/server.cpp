@@ -504,6 +504,7 @@ ServerListener::ServerListener(Server* server, string addr) {
     if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
       break;
     } else {
+      Log_error("port bind error: %s:%s", host.c_str(), port.c_str());
       verify(0);
     }
     ::close(server_sock_);

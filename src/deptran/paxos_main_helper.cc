@@ -43,8 +43,8 @@ static std::map<std::string,long double> timer;
 
 function<void()> leader_callback_{};
 
-std::map<int, std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>> leader_replay_cb;
-std::map<int, std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)>> follower_replay_cb{};
+std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> leader_replay_cb;
+std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> follower_replay_cb{};
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
@@ -328,7 +328,7 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
     }
 }
 
-void register_for_follower_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
+void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, uint32_t par_id) {
     follower_replay_cb[par_id] = cb;
     if(es->machine_id != 0){
       for (auto& worker : pxs_workers_g) {
@@ -354,7 +354,7 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
     }
 }
 
-void register_for_leader_par_id_return(std::function<unsigned long long int(const char*&, int, int, std::queue<std::tuple<unsigned long long int, int, int, const char *>> &)> cb, uint32_t par_id) {
+void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, uint32_t par_id) {
     leader_replay_cb[par_id] = cb;
     if(es->machine_id == 0){
       for (auto& worker : pxs_workers_g) {
