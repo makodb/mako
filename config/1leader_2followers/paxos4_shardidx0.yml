@@ -1,0 +1,26 @@
+site:
+  server: # each line is a partition (Paxos group), the first is the master site_name:port
+    - ["s101:7001", "s201:7101", "s301:7201"]
+    - ["s102:7002", "s202:7102", "s302:7202"]
+    - ["s103:7003", "s203:7103", "s303:7203"]
+    - ["s104:7004", "s204:7104", "s304:7204"]
+
+process:
+  s101: localhost
+  s102: localhost
+  s103: localhost
+  s104: localhost
+  s201: p1
+  s202: p1
+  s203: p1
+  s204: p1
+  s301: p2
+  s302: p2
+  s303: p2
+  s304: p2
+
+# process_name - host_addr map
+host:
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
+  p2: 127.0.0.1
