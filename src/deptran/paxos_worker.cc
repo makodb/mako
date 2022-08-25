@@ -108,12 +108,13 @@ void PaxosWorker::Next(Marshallable& cmd) {
       }
       if (sp_log_entry.length > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ; // PPP: log_entry(string) affect the performance
-         Log_info("received a message: %d", sp_log_entry.length);
+         //Log_info("received a message: %d", sp_log_entry.length);
          std::vector<uint64_t> latest_commit_id_v;
          callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_).swap(latest_commit_id_v);
+         int status = latest_commit_id_v[0] % 10;
          latest_commit_id_v[0] = latest_commit_id_v[0] / 10;
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
-         int status = latest_commit_id_v[0] % 10;
+         Log_info("par_id: %d, append a log into un_replay_logs, size: %d, status: %d, first-id/10: %llu, received: %d", site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
          if (status == 3) {
              // we do a memory copy on log intentionally in case this log is freed by paxos
              char *dest = (char *)malloc(sp_log_entry.length) ;
