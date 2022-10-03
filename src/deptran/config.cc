@@ -78,7 +78,7 @@ int Config::CreateConfig(int argc, char **argv) {
       case 'b': // heartbeat to controller
         heart_beat = true;
         break;
-      case 'A':
+      case 'A':  // kPaxosBatchSize
         bulkBatchCount = strtoul(optarg, &end_ptr, 10);
 		break;
       case 'd': // duration

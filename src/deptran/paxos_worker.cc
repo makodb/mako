@@ -290,11 +290,10 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
     auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
     coord.get()->par_id_ = site_info_->partition_id_;
     coord.get()->loc_id_ = site_info_->locale_id;
-    //if(es_pw->machine_id == 1 || es_pw->machine_id == 2)
-	//Log_info("Submitting on behalf of new leader");
+	  //Log_info("Submitting on behalf of new leader, bulkBatchCount: %d", cnt);
+
     coord.get()->BulkSubmit(sp_m, [this, cnt]() {
       this->n_current += cnt;
-      //if((int)n_current%2 == 0)Log_info("current commits are progressing, current %d", (int)n_current);
       if(this->n_current >= this->n_tot)this->finish_cond.bcast();
     });
 }
