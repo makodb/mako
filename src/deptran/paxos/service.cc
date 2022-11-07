@@ -175,5 +175,12 @@ void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
   });
 }
 
+void MultiPaxosServiceImpl::SyncToLearner(const MarshallDeputy& md_cmd, 
+                    i32* ballot, 
+                    i32* val, 
+                    rrr::DeferredReply* defer) {
+
+}
+
 
 } // namespace janus;

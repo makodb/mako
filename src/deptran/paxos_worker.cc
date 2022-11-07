@@ -4,7 +4,10 @@
 #include "chrono"
 
 namespace janus {
+// Paxos worker thread
 vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
+// Learner worker thread on the server side
+vector<shared_ptr<PaxosWorker>> ler_workers_g = {};
 
 moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
 std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
@@ -98,7 +101,17 @@ void PaxosWorker::SetupBase() {
   this->tot_num = config->get_tot_req();
 }
 
-// PPP: is it really the committed phase?
+void PaxosWorker::SyncToRemoteLearner(Marshallable& cmd) {
+  // MultiPaxosProxy *proxy = std::get<2>(remoteLearner); 
+  // FutureAttr fuattr;  // fuattr
+  // fuattr.callback = [](Future* fu) {
+  //   Log_info("succeed replicating value to the learner");
+  // };
+  // MarshallDeputy md(cmd);
+  // auto f = proxy->async_SyncToLearner(md, fuattr);
+  // Future::safe_release(f);
+}
+
 void PaxosWorker::Next(Marshallable& cmd) {
   if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
@@ -107,21 +120,25 @@ void PaxosWorker::Next(Marshallable& cmd) {
 	 Log_info("Recieved a zero length log");
       }
       if (sp_log_entry.length > 0) {
-         const char *log = sp_log_entry.log_entry.c_str() ; // PPP: log_entry(string) affect the performance
+         const char *log = sp_log_entry.log_entry.c_str() ;
          //Log_info("received a message: %d", sp_log_entry.length);
          std::vector<uint64_t> latest_commit_id_v;
          callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_).swap(latest_commit_id_v);
          int status = latest_commit_id_v[0] % 10;
          latest_commit_id_v[0] = latest_commit_id_v[0] / 10;
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
-         Log_info("par_id: %d, append a log into un_replay_logs, size: %d, status: %d, first-id/10: %llu, received: %d", site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
+         //Log_info("par_id: %d, append a log into un_replay_logs, size: %d, status: %d, first-id/10: %llu, received: %d", site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
          if (status == 3) {
-             // we do a memory copy on log intentionally in case this log is freed by paxos
+             // SWH: we can remove it later, is this required?
              char *dest = (char *)malloc(sp_log_entry.length) ;
              memcpy(dest, log, sp_log_entry.length) ;
              un_replay_logs_.push(std::make_tuple(latest_commit_id_v, status, sp_log_entry.length, (const char*)dest)) ;
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
+         } 
+         // send the log to the remoteLearner
+         if (!std::get<0>(remoteLearner).empty()) { 
+            SyncToRemoteLearner(cmd);
          }
       } else {
         // the ending signal
@@ -139,6 +156,20 @@ void PaxosWorker::Next(Marshallable& cmd) {
     //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
     finish_cond.bcast();
   }
+}
+
+void PaxosWorker::SetupServerLearner() {
+  // auto impl = new MultiPaxosServiceImpl();
+  // rrr::PollMgr *pm = new rrr::PollMgr();
+  // base::ThreadPool *tp = new base::ThreadPool();
+  // rrr::Server *server = new rrr::Server(pm, tp);
+
+  // server->reg(impl);
+  // int ret = server->start(("127.0.0.1:8090").c_str()); 
+  // if (ret !=0 ) {
+  //   Log_fatal("learner server launch failed.");
+  //   std::cout << "learner server launch failed.\n";
+  // }
 }
 
 void PaxosWorker::SetupService() {
@@ -187,7 +218,18 @@ void PaxosWorker::SetupCommo() {
   //if (IsLeader(site_info_->partition_id_))submit_pool = new SubmitPool();
 }
 
-void PaxosWorker::SetupHeartbeat() {
+void PaxosWorker::SetupCommoLearner() {
+  // if (std::get<0>(remoteLearner).empty()) return;
+
+  // rrr::PollMgr *pm = new rrr::PollMgr();
+  // rrr::Client *client = new rrr::Client(pm);
+  // while (client->connect((std::get<0>(remoteLearner)+":"+std::to_string(std::get<1>(remoteLearner))).c_str())!=0) {}
+  // MultiPaxosProxy *client_proxy = new MultiPaxosProxy(client);
+}
+
+
+
+void PaxosWorker::SetupHeartbeat() {  // SWH: XXXXXXXXXXXXXXXXXXXXXXXX
   bool hb = Config::GetConfig()->do_heart_beat();
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
@@ -599,14 +641,15 @@ PaxosWorker::~PaxosWorker() {
   stop_replay_flag = true;
 }
 
-void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
+void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
+  //Log_info("# of submit: %d", length);
   auto sp_cmd = make_shared<LogEntry>();
   if(!shared_ptr_apprch){
 	  sp_cmd->log_entry = string(log_entry,length);
   }else{
     //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
     //sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
-	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));  // PPP: using operation_test instead of operation_
+	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));
     memcpy(sp_cmd->operation_test.get(), log_entry, length);
   }
   sp_cmd->length = length;
@@ -670,17 +713,17 @@ void PaxosWorker::register_apply_callback(std::function<void(const char*, int)> 
 void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *&, int, int)> cb) {
     this->callback_par_id_ = cb;
     verify(rep_sched_ != nullptr);
-    rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
+    rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,  // the commit entry
                                            this,
                                            std::placeholders::_1));
 }
 
-    void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint64_t>(const char *&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb) {
-        this->callback_par_id_return_ = cb;
-        verify(rep_sched_ != nullptr);
-        rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
-                                               this,
-                                               std::placeholders::_1));
-    }
+void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint64_t>(const char *&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb) {
+    this->callback_par_id_return_ = cb;
+    verify(rep_sched_ != nullptr);
+    rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
+                                           this,
+                                           std::placeholders::_1));
+}
 
 } // namespace janus

@@ -61,9 +61,6 @@ Coordinator *MultiPaxosFrame::CreateBulkCoordinator(Config *config, int benchmar
 }
 
 
-
-
-
 TxLogServer *MultiPaxosFrame::CreateScheduler() {
   TxLogServer *sch = nullptr;
   sch = new PaxosServer();

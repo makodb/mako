@@ -79,6 +79,11 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                  i32* valid,
                  rrr::DeferredReply* defer) override;
 
+  void SyncToLearner(const MarshallDeputy& md_cmd, 
+                    i32* ballot, 
+                    i32* val, 
+                    rrr::DeferredReply* defer) override;
+
 };
 
 } // namespace janus

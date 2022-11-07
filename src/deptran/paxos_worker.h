@@ -598,6 +598,8 @@ private:
   struct timeval t2;
 
 public:
+  // if not empty, send the replied logs to the remote learner;
+  std::tuple<std::string, int, MultiPaxosProxy *> remoteLearner;
   std::atomic<int> n_current{0};
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};
@@ -646,6 +648,8 @@ public:
   int  deq_from_coo(vector<shared_ptr<Coordinator>>&);
   void SetupService();
   void SetupCommo();
+  void SetupCommoLearner();
+  void SetupServerLearner();
   void ShutDown();
   void Next(Marshallable&);
   void WaitForSubmit();
@@ -656,6 +660,7 @@ public:
   void AddReplayEntry(Marshallable&);
   void submitJob(std::shared_ptr<Job>);
   int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
+  void SyncToRemoteLearner(Marshallable&);
   int SendHeartBeat(shared_ptr<HeartBeatLog>);
   int SendSyncLog(shared_ptr<SyncLogRequest>);
   int SendSyncNoOpLog(shared_ptr<SyncNoOpRequest>);
@@ -680,6 +685,7 @@ public:
 };
 
 extern vector<shared_ptr<PaxosWorker>> pxs_workers_g;
+extern vector<shared_ptr<PaxosWorker>> ler_workers_g;
 
 class ElectionState {
   ElectionState(){}

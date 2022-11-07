@@ -182,7 +182,7 @@ void CoordinatorMultiPaxos::Commit() {
   GotoNextPhase();
 }
 
-void CoordinatorMultiPaxos::GotoNextPhase() {
+void CoordinatorMultiPaxos::GotoNextPhase() { // SWH: 
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
   phase_++;
@@ -223,7 +223,19 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
     int n_phase = 4;
     int current_phase = phase_ % n_phase;
     phase_++;
+
+    // SWH: it seems it have to go throug 2 round-trip to commit a request
+    // Log_info("\n\n-----");
+    // auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
+    // for (int i=0;i<cmd_temp1->ballots.size();i++) {
+    //   Log_info(" b: %d", cmd_temp1->ballots[i]);
+    // }
+    // for (int i=0;i<cmd_temp1->slots.size();i++) {
+    //   Log_info(" s: %d", cmd_temp1->slots[i]);
+    // }
+    // Log_info("different phase: %d, cmds size: %d", current_phase, cmd_temp1.get()->cmds.size());
     if(current_phase == Phase::INIT_END){
+      //Log_info("In prepare mode");
       if(phase_ > 3){
         break;
       }

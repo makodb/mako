@@ -21,8 +21,8 @@ static vector<ServerWorker> svr_workers_g = {};
 vector<unique_ptr<ClientWorker>> client_workers_g = {};
 static std::vector<std::thread> client_threads_g = {}; // TODO remove this?
 
-void client_setup_heartbeat(int num_clients) {
-  Log_info("%s", __FUNCTION__);
+void client_setup_heartbeat(int num_clients) {  // HERE!!!
+  Log_info("%s in client_setup_heartbeat", __FUNCTION__);
   std::map<int32_t, std::string> txn_types;
   Frame* f = Frame::GetFrame(Config::GetConfig()->tx_proto_);
   f->GetTxTypes(txn_types);

@@ -222,7 +222,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                shared_ptr<BulkPaxosCmd> ret_cmd,
                                const function<void()> &cb){
-  pthread_setname_np(pthread_self(), "Follower server thread");
+  //pthread_setname_np(pthread_self(), "Follower server thread");
   auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
   ballot_t cur_b = bcmd->ballots[0];
   slotid_t cur_slot = bcmd->slots[0];

@@ -44,7 +44,7 @@ static std::map<std::string,long double> timer;
 function<void()> leader_callback_{};
 
 std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> leader_replay_cb;
-std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> follower_replay_cb{};
+// std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> follower_replay_cb{};
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
@@ -61,6 +61,11 @@ int get_epoch(){
 void check_current_path() {
     auto path = boost::filesystem::current_path();
     Log_info("PWD : %s", path.string().c_str());
+}
+
+// launch Paxos servers for learner threads
+void server_launch_worker_learner() {
+
 }
 
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
@@ -173,7 +178,6 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
     if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
-        // PPP: ??? why it is the fixed to 1 or 2, it should be flexible
         if(es->machine_id == 1){
           Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
         }
@@ -241,7 +245,7 @@ map<string, string> getHosts(std::string filename) {
 }
 
 int get_outstanding_logs(uint32_t par_id) {
-    for (auto& worker : pxs_workers_g) {  // PPP: submit a transaction, using map instead of for
+    for (auto& worker : pxs_workers_g) {
         if (worker->site_info_->partition_id_ == par_id){
             //if(es->machine_id == 1) {  //  if leader
             return (int)worker->n_tot - (int)worker->n_current ;
@@ -258,6 +262,13 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     Log_info("starting process %ld", getpid());
 
     int ret = Config::CreateConfig(argc, argv);
+    if (Config::GetConfig()->proc_name_ == "learner") {
+      for (int i=0; i<32; i++) {
+        PaxosWorker* worker = new PaxosWorker();
+        ler_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
+      }
+      return retVector;
+    }
     if (ret != SUCCESS) {
         Log_fatal("Read config failed");
         return retVector;
@@ -328,12 +339,21 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
     }
 }
 
-void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, uint32_t par_id) {
-    follower_replay_cb[par_id] = cb;
+void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, 
+                                                                             uint32_t par_id,
+                                                                             std::string remoteLearnerHost,
+                                                                             int remoteLearnerPort) {
+    // follower_replay_cb[par_id] = cb;
     if(es->machine_id != 0){
       for (auto& worker : pxs_workers_g) {
         if(worker->IsPartition(par_id))
           worker->register_apply_callback_par_id_return(cb);
+          if (remoteLearnerHost.empty()) continue;
+          rrr::PollMgr *pm = new rrr::PollMgr();
+          rrr::Client *client = new rrr::Client(pm);
+          while (client->connect((remoteLearnerHost+":"+to_string(remoteLearnerPort)).c_str())!=0) { }
+          MultiPaxosProxy *client_proxy = new MultiPaxosProxy(client);
+          worker->remoteLearner = std::make_tuple(remoteLearnerHost, remoteLearnerPort, client_proxy);
       }
     }
 }
@@ -354,12 +374,21 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
     }
 }
 
-void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, uint32_t par_id) {
+void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, 
+                                       uint32_t par_id,
+                                       std::string remoteLearnerHost,
+                                       int remoteLearnerPort) {
     leader_replay_cb[par_id] = cb;
     if(es->machine_id == 0){
       for (auto& worker : pxs_workers_g) {
         if(worker->IsPartition(par_id))
           worker->register_apply_callback_par_id_return(cb);
+          if (remoteLearnerHost.empty()) continue;
+          rrr::PollMgr *pm = new rrr::PollMgr();
+          rrr::Client *client = new rrr::Client(pm);
+          while (client->connect((remoteLearnerHost+":"+to_string(remoteLearnerPort)).c_str())!=0) { }
+          MultiPaxosProxy *client_proxy = new MultiPaxosProxy(client);
+          worker->remoteLearner = std::make_tuple(remoteLearnerHost, remoteLearnerPort, client_proxy);
       }
     }
 }
@@ -401,14 +430,15 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id) {
   }
   pxs_workers_g[par_id]->election_state_lock.unlock();
 
-  if(es->machine_id == 1 || es->machine_id == 2) {  // PPP: fixed for 3 nodes, should provide more flexiblity
+  if(es->machine_id == 1 || es->machine_id == 2) {  // SWH: fixed for 3 nodes, should provide more flexiblity
      if(debug)
 	return;
   }
-	l_.lock();  // PPP: ??? why do we have to have a global spinLock for this?
+  // in our project, one worker thread per partition, so no lock required
+	//l_.lock();
 	len = len;
 	add_log_without_queue((char*)log, len, par_id);
-	l_.unlock();
+	//l_.unlock();
 }
 
 void* PollSubQNc(void* arg){
@@ -578,7 +608,7 @@ void send_bulk_prep(int send_epoch){
 }
 
 // marker:ansh
-void* electionMonitor(void* arg){
+void* electionMonitor(void* arg){  // SWH: XXXXXXX, have to remove it later
    // we need to take two situations into consideration: 1) startup; 2) exit
    // startup: sleep 5 seconds for the startup
    usleep(5 * 1000 * 1000);
@@ -624,7 +654,7 @@ void* electionMonitor(void* arg){
 }
 
 //marker:ansh
-void* heartbeatMonitor(void* arg){
+void* heartbeatMonitor(void* arg){ // HERE
    while(es->running){
      es->sleep_heartbeat();
      es->state_lock();
@@ -656,6 +686,11 @@ void* heartbeatMonitor(void* arg){
 
 // to be called after setup 1; needed for multiprocess setup
 int setup2(int action){  // action == 0 is default, action == 1 is forced to be follower
+  if (Config::GetConfig()->proc_name_ == "learner") {
+    server_launch_worker_learner();
+    return 0;
+  }
+
   auto server_infos = Config::GetConfig()->GetMyServers();
   if (server_infos.size() > 0) {
     server_launch_worker(server_infos);
