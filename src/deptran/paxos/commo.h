@@ -30,6 +30,7 @@ class MultiPaxosCommo : public Communicator {
                        ballot_t ballot,
                        shared_ptr<Marshallable> cmd,
                        const function<void(Future*)> &callback);
+  void ForwardToLearner();
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
                        const ballot_t ballot,

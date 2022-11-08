@@ -136,9 +136,13 @@ void PaxosWorker::Next(Marshallable& cmd) {
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
          } 
-         // send the log to the remoteLearner
-         if (!std::get<0>(remoteLearner).empty()) { 
-            SyncToRemoteLearner(cmd);
+         // if the leader, we forward the cmd to the learner
+         if (es_pw->cur_state==1) {
+          auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+          coord->par_id_ = site_info_->partition_id_;
+          
+          coord->loc_id_ = site_info_->locale_id;
+          coord->commo_->ForwardToLearner();
          }
       } else {
         // the ending signal
@@ -228,8 +232,8 @@ void PaxosWorker::SetupCommoLearner() {
 }
 
 
-
-void PaxosWorker::SetupHeartbeat() {  // SWH: XXXXXXXXXXXXXXXXXXXXXXXX
+// SWH: what's for?
+void PaxosWorker::SetupHeartbeat() {
   bool hb = Config::GetConfig()->do_heart_beat();
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();

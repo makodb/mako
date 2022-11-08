@@ -599,7 +599,6 @@ private:
 
 public:
   // if not empty, send the replied logs to the remote learner;
-  std::tuple<std::string, int, MultiPaxosProxy *> remoteLearner;
   std::atomic<int> n_current{0};
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};

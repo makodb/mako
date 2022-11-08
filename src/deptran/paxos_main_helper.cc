@@ -98,7 +98,7 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
 
     for (auto& worker : pxs_workers_g) {
         // start communicator after all servers are running
-        // setup communication between controller script
+        // setup communication between controller script - log data collection on the run.py
         worker->SetupHeartbeat();
     }
     Log_info("server workers' communicators setup");
@@ -178,9 +178,9 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
     if (worker->site_info_->partition_id_ == par_id){
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
-        if(es->machine_id == 1){
-          Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
-        }
+        // if(es->machine_id == 1){
+        //   Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
+        // }
           break;
       }
     }
@@ -262,13 +262,6 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     Log_info("starting process %ld", getpid());
 
     int ret = Config::CreateConfig(argc, argv);
-    if (Config::GetConfig()->proc_name_ == "learner") {
-      for (int i=0; i<32; i++) {
-        PaxosWorker* worker = new PaxosWorker();
-        ler_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
-      }
-      return retVector;
-    }
     if (ret != SUCCESS) {
         Log_fatal("Read config failed");
         return retVector;
@@ -287,13 +280,13 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     }
     reverse(pxs_workers_g.begin(), pxs_workers_g.end());
     es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
-    Log_info("election (Paxos group) machine-id: %d", es->machine_id);
+    //Log_info("election (Paxos group) machine-id: %d", es->machine_id);
     return retVector;
 }
 
 int shutdown_paxos() {
     // kill the election thread
-    es->running = false;
+    //es->running = false;
 
     for(auto kv : timer){
    	 std::cout << "Key=" << kv.first << " Val=" << kv.second/1000.0 << std::endl;
@@ -340,20 +333,12 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
 }
 
 void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, 
-                                                                             uint32_t par_id,
-                                                                             std::string remoteLearnerHost,
-                                                                             int remoteLearnerPort) {
+                                                                             uint32_t par_id) {
     // follower_replay_cb[par_id] = cb;
     if(es->machine_id != 0){
       for (auto& worker : pxs_workers_g) {
         if(worker->IsPartition(par_id))
           worker->register_apply_callback_par_id_return(cb);
-          if (remoteLearnerHost.empty()) continue;
-          rrr::PollMgr *pm = new rrr::PollMgr();
-          rrr::Client *client = new rrr::Client(pm);
-          while (client->connect((remoteLearnerHost+":"+to_string(remoteLearnerPort)).c_str())!=0) { }
-          MultiPaxosProxy *client_proxy = new MultiPaxosProxy(client);
-          worker->remoteLearner = std::make_tuple(remoteLearnerHost, remoteLearnerPort, client_proxy);
       }
     }
 }
@@ -375,20 +360,12 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
 }
 
 void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, 
-                                       uint32_t par_id,
-                                       std::string remoteLearnerHost,
-                                       int remoteLearnerPort) {
+                                       uint32_t par_id) {
     leader_replay_cb[par_id] = cb;
     if(es->machine_id == 0){
       for (auto& worker : pxs_workers_g) {
         if(worker->IsPartition(par_id))
           worker->register_apply_callback_par_id_return(cb);
-          if (remoteLearnerHost.empty()) continue;
-          rrr::PollMgr *pm = new rrr::PollMgr();
-          rrr::Client *client = new rrr::Client(pm);
-          while (client->connect((remoteLearnerHost+":"+to_string(remoteLearnerPort)).c_str())!=0) { }
-          MultiPaxosProxy *client_proxy = new MultiPaxosProxy(client);
-          worker->remoteLearner = std::make_tuple(remoteLearnerHost, remoteLearnerPort, client_proxy);
       }
     }
 }
@@ -609,6 +586,7 @@ void send_bulk_prep(int send_epoch){
 
 // marker:ansh
 void* electionMonitor(void* arg){  // SWH: XXXXXXX, have to remove it later
+   void(1);
    // we need to take two situations into consideration: 1) startup; 2) exit
    // startup: sleep 5 seconds for the startup
    usleep(5 * 1000 * 1000);
@@ -654,7 +632,8 @@ void* electionMonitor(void* arg){  // SWH: XXXXXXX, have to remove it later
 }
 
 //marker:ansh
-void* heartbeatMonitor(void* arg){ // HERE
+void* heartbeatMonitor(void* arg){
+   void(1);
    while(es->running){
      es->sleep_heartbeat();
      es->state_lock();
@@ -710,12 +689,12 @@ int setup2(int action){  // action == 0 is default, action == 1 is forced to be 
   }
   Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   pthread_detach(submit_poll_th_);
-  if (action != 1) {
-      Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
-      pthread_detach(es->election_th_);
-  }
-  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
-  pthread_detach(es->heartbeat_th_);
+  // if (action != 1) {
+  //      Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
+  //      pthread_detach(es->election_th_);
+  //  }
+  //  Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor, nullptr);
+  //  pthread_detach(es->heartbeat_th_);
   return 0;
 }
 

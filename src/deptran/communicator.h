@@ -158,6 +158,10 @@ class Communicator {
       verify(0);
     }
 
+    virtual void ForwardToLearner() {
+      verify(0);
+    }
+
   virtual shared_ptr<PaxosAcceptQuorumEvent>
     BroadcastSyncLog(parid_t par_id,
                       shared_ptr<Marshallable> cmd,

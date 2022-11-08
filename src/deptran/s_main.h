@@ -15,16 +15,12 @@ void microbench_paxos();
 void register_for_follower(std::function<void(const char*, int)>, uint32_t);
 void register_for_follower_par_id(std::function<void(const char*&, int, int)>, uint32_t);
 void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>, 
-                                         uint32_t,
-                                         std::string,
-                                         int);
+                                         uint32_t);
 void register_for_leader(std::function<void(const char*, int)>, uint32_t);
 void register_leader_election_callback(std::function<void()>);
 void register_for_leader_par_id(std::function<void(const char*&, int, int)>, uint32_t);
 void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>, 
-                                       uint32_t,
-                                       std::string,
-                                       int);
+                                       uint32_t);
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);

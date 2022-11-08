@@ -91,6 +91,10 @@ void MultiPaxosCommo::BroadcastAccept(parid_t par_id,
 //  verify(0);
 }
 
+void MultiPaxosCommo::ForwardToLearner() {
+  Log_info("To be implemented here");
+}
+
 void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
                                       const slotid_t slot_id,
                                       const ballot_t ballot,

@@ -801,7 +801,7 @@ const Config::SiteInfo& Config::SiteById(uint32_t id) {
 }
 
 std::vector<Config::SiteInfo> Config::SitesByPartitionId(
-    parid_t partition_id) {
+    parid_t partition_id, bool removeLearner) {
   std::vector<SiteInfo> result;
   auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
                     [partition_id](const ReplicaGroup& g) {
@@ -811,18 +811,20 @@ std::vector<Config::SiteInfo> Config::SitesByPartitionId(
     for (auto si : it->replicas) {
       result.push_back(*si);
     }
+    if (removeLearner)
+      result.pop_back();
     return result;
   }
   verify(0);
 }
 
-int Config::GetPartitionSize(parid_t partition_id) {
+int Config::GetPartitionSize(parid_t partition_id, bool removeLearner) {
   auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
                     [partition_id](const ReplicaGroup& g) {
                       return g.partition_id == partition_id;
                     });
   if (it != replica_groups_.end()) {
-    return it->replicas.size();
+    return removeLearner? it->replicas.size()-1: it->replicas.size();
   }
   verify(0);
 }
