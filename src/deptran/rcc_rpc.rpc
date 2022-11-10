@@ -19,7 +19,7 @@ abstract service MultiPaxos {
 
   defer Heartbeat(MarshallDeputy cmd | i32 ballot, i32 val);
 
-  defer SyncToLearner(MarshallDeputy cmd | i32 ballot, i32 val);
+  defer ForwardToLearnerI(MarshallDeputy cmd | i32 ballot, i32 val);
 
   defer BulkPrepare(MarshallDeputy cmd | i32 ballot, i32 val);
 

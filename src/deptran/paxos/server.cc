@@ -63,8 +63,8 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
     if (next_instance->committed_cmd_) {
-      app_next_(*next_instance->committed_cmd_);
-      Log_debug("multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
+      app_next_(next_instance->committed_cmd_);
+      Log_info("apply multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
       max_executed_slot_++;
       n_commit_++;
     } else {
@@ -434,7 +434,6 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                const function<void()> &cb) {
-  //Log_info("here");
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   //mtx_.lock();
   //Log_info("here");
@@ -525,7 +524,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   //Log_info("Committing %d", commit_exec.size());
   for(int i = 0; i < commit_exec.size(); i++){
       //auto x = new PaxosData();
-      app_next_(*commit_exec[i]->committed_cmd_);
+      app_next_(commit_exec[i]->committed_cmd_);
   }
 
   *valid = 1;
@@ -537,11 +536,11 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   cb();
 }
 
+// SWH: read carefully this function, so many locks here
 void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                const function<void()> &cb) {
-  //Log_info("here");
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   //mtx_.lock();
   //Log_info("here");
@@ -641,7 +640,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   //Log_info("Committing %d", commit_exec.size());
   for(int i = 0; i < commit_exec.size(); i++){
       //auto x = new PaxosData();
-      app_next_(*commit_exec[i]->committed_cmd_);
+      app_next_(commit_exec[i]->committed_cmd_);
   }
 
   *valid = 1;
@@ -651,6 +650,14 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   //FreeSlots();
   //mtx_.unlock();
   cb();
+}
+
+void PaxosServer::OnForwardToLeader(const slotid_t slot_id,
+                                    const ballot_t ballot,
+                                    shared_ptr<Marshallable> &cmd) {
+  Log_info("receive a message on the learner side: OnForwardToLeader");
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  app_next_(cmd);
 }
 
 void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
@@ -693,7 +700,7 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
     for (slotid_t id = ps->max_executed_slot_ + 1; id <= ps->max_committed_slot_; id++) {
       auto next_instance = ps->GetInstance(id);
       if (next_instance->committed_cmd_ && !next_instance->is_no_op) {
-          ps->app_next_(*next_instance->committed_cmd_);
+          ps->app_next_(next_instance->committed_cmd_);
           ps->max_executed_slot_++;
           ps->n_commit_++;
       } else {

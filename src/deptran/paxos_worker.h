@@ -650,7 +650,7 @@ public:
   void SetupCommoLearner();
   void SetupServerLearner();
   void ShutDown();
-  void Next(Marshallable&);
+  void Next(shared_ptr<Marshallable>);
   void WaitForSubmit();
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);

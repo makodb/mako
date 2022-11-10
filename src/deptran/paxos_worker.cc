@@ -112,12 +112,12 @@ void PaxosWorker::SyncToRemoteLearner(Marshallable& cmd) {
   // Future::safe_release(f);
 }
 
-void PaxosWorker::Next(Marshallable& cmd) {
-  if (cmd.kind_ == MarshallDeputy::CONTAINER_CMD) {
+void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
+  if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
-      auto& sp_log_entry = dynamic_cast<LogEntry&>(cmd);
+      auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
       if(sp_log_entry.length == 0){
-	 Log_info("Recieved a zero length log");
+	      Log_info("Recieved a zero length log");
       }
       if (sp_log_entry.length > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
@@ -142,7 +142,14 @@ void PaxosWorker::Next(Marshallable& cmd) {
           coord->par_id_ = site_info_->partition_id_;
           
           coord->loc_id_ = site_info_->locale_id;
-          coord->commo_->ForwardToLearner();
+          
+          coord->commo_->ForwardToLearner(site_info_->partition_id_,
+                                          coord->slot_id_,
+                                          coord->curr_ballot_,
+                                          cmd,
+                                          [&](ballot_t ballot, int slot_id) {
+                                            // TODO
+                                          });
          }
       } else {
         // the ending signal
@@ -185,6 +192,8 @@ void PaxosWorker::SetupService() {
                                               rep_sched_,
                                               svr_poll_mgr_,
                                               scsi_);
+    Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d", 
+      site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
   }
   uint32_t num_threads = 1;
   thread_pool_g = new base::ThreadPool(num_threads);
@@ -626,10 +635,12 @@ void PaxosWorker::AddReplayEntry(Marshallable& entry){
 void* PaxosWorker::StartReplayRead(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   while(!pw->stop_replay_flag){
+    sleep(1); // this is NOT used again, we sleep here for a cpu saving
     Marshallable* p;
     auto res = pw->replay_queue.try_dequeue(p);
     if(!res)continue;
-    pw->Next(*p);
+    exit(1);
+    //pw->Next(*p);
   }
 }
 

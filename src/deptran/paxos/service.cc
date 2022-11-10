@@ -175,11 +175,12 @@ void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
   });
 }
 
-void MultiPaxosServiceImpl::SyncToLearner(const MarshallDeputy& md_cmd, 
-                    i32* ballot, 
-                    i32* val, 
-                    rrr::DeferredReply* defer) {
-
+void MultiPaxosServiceImpl::ForwardToLearnerI(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* val, rrr::DeferredReply* defer) {
+    verify(sched_ != nullptr);
+    Log_info("received a message for the forwardToLearnerI");
+    Coroutine::CreateRun([&] () {
+      defer->reply();
+    });
 }
 
 

@@ -18,8 +18,6 @@ Communicator::Communicator(PollMgr* poll_mgr) {
     rpc_poll_ = poll_mgr;
   auto config = Config::GetConfig();
   vector<parid_t> partitions = config->GetAllPartitionIds();
-  //int aa = rand();
-  //Log_info("[%d]invoke here", aa);
   for (auto& par_id : partitions) {
     auto site_infos = config->SitesByPartitionId(par_id);
     vector<std::pair<siteid_t, ClassicProxy*>> proxies;
@@ -28,9 +26,18 @@ Communicator::Communicator(PollMgr* poll_mgr) {
           (CONNECT_TIMEOUT_MS));
       verify(result.first == SUCCESS);
       proxies.push_back(std::make_pair(si.id, result.second));
-      //Log_info("  [%d]loc_id: %d, name: %s, proc: %s, id: %d", si.locale_id, si.name.c_str(), si.proc_name.c_str(), si.id);
     }
     rpc_par_proxies_.insert(std::make_pair(par_id, proxies));
+
+    auto site_infos_learner = config->SitesByPartitionId(par_id, true);
+    vector<std::pair<siteid_t, ClassicProxy*>> proxies_learner;
+    for (auto& si : site_infos_learner) {
+      auto result = ConnectToSite(si, std::chrono::milliseconds
+          (CONNECT_TIMEOUT_MS));
+      verify(result.first == SUCCESS);
+      proxies_learner.push_back(std::make_pair(si.id, result.second));
+    }
+    rpc_par_learner_proxies_.insert(std::make_pair(par_id, proxies_learner));
   }
   client_leaders_connected_.store(false);
   if (config->forwarding_enabled_) {

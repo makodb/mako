@@ -801,30 +801,33 @@ const Config::SiteInfo& Config::SiteById(uint32_t id) {
 }
 
 std::vector<Config::SiteInfo> Config::SitesByPartitionId(
-    parid_t partition_id, bool removeLearner) {
+    parid_t partition_id, bool onlyForLearner) {
   std::vector<SiteInfo> result;
+  std::vector<SiteInfo> learners;
   auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
                     [partition_id](const ReplicaGroup& g) {
                       return g.partition_id == partition_id;
                     });
   if (it != replica_groups_.end()) {
-    for (auto si : it->replicas) {
-      result.push_back(*si);
+    for (int i=0; i<it->replicas.size()-1;i++) {
+      result.push_back(*it->replicas[i]);
     }
-    if (removeLearner)
-      result.pop_back();
-    return result;
+
+    if (onlyForLearner) {
+      learners.push_back(*it->replicas[it->replicas.size()-1]);
+    }
+    return onlyForLearner? learners: result;
   }
   verify(0);
 }
 
-int Config::GetPartitionSize(parid_t partition_id, bool removeLearner) {
+int Config::GetPartitionSize(parid_t partition_id) {
   auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
                     [partition_id](const ReplicaGroup& g) {
                       return g.partition_id == partition_id;
                     });
   if (it != replica_groups_.end()) {
-    return removeLearner? it->replicas.size()-1: it->replicas.size();
+    return it->replicas.size()-1; // the last column is the learner, eliminate this for the consensus 
   }
   verify(0);
 }

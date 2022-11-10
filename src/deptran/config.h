@@ -197,11 +197,11 @@ class Config {
 
   int NumSites(SiteInfoType type=SERVER);
   const SiteInfo& SiteById(uint32_t id);
-  vector<SiteInfo> SitesByPartitionId(parid_t partition_id, bool removeLearner=true);
+  vector<SiteInfo> SitesByPartitionId(parid_t partition_id, bool onlyForLearner=false);
   vector<SiteInfo> SitesByLocaleId(uint32_t locale_id, SiteInfoType type=SERVER);
   vector<SiteInfo> SitesByProcessName(string proc_name, SiteInfoType type=SERVER);
   SiteInfo* SiteByName(std::string name);
-  int GetPartitionSize(parid_t par_id, bool removeLearner=true);
+  int GetPartitionSize(parid_t par_id);
   vector<SiteInfo> GetMyServers() { return SitesByProcessName(this->proc_name_, SERVER); }
   vector<SiteInfo> GetMyClients() { return SitesByProcessName(this->proc_name_, CLIENT); }
   int NumClients() {

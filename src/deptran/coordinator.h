@@ -32,6 +32,9 @@ class Coordinator {
   locid_t loc_id_ = -1;
   uint32_t coo_id_;
   parid_t par_id_ = -1;
+  slotid_t slot_id_ = 0;
+  ballot_t curr_ballot_ = 1;
+
   int benchmark_;
   ClientControlServiceImpl *ccsi_ = nullptr;
   uint32_t thread_id_;

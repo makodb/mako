@@ -73,6 +73,7 @@ class Communicator {
   map<siteid_t, rrr::Client *> rpc_clients_{};
   map<siteid_t, ClassicProxy *> rpc_proxies_{};
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
+  map<parid_t, vector<SiteProxyPair>> rpc_par_learner_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
   vector<ClientSiteProxyPair> client_leaders_;
   std::atomic_bool client_leaders_connected_;
@@ -158,7 +159,11 @@ class Communicator {
       verify(0);
     }
 
-    virtual void ForwardToLearner() {
+    virtual void ForwardToLearner(parid_t par_id,
+                                  slotid_t slot_id,
+                                  ballot_t ballot,
+                                  shared_ptr<Marshallable> cmd,
+                                  const std::function<void(ballot_t, int)>& cb) {
       verify(0);
     }
 

@@ -63,10 +63,6 @@ void check_current_path() {
     Log_info("PWD : %s", path.string().c_str());
 }
 
-// launch Paxos servers for learner threads
-void server_launch_worker_learner() {
-
-}
 
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     auto config = Config::GetConfig();
@@ -268,7 +264,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     }
 
     auto server_infos = Config::GetConfig()->GetMyServers();
-    Log_info("server_infos, number of sites (Paxos groups): %d", server_infos.size());
+    Log_info("server_infos, number of sites: %d, proc_name: %s", server_infos.size(), Config::GetConfig()->proc_name_.c_str());
     for (int i = server_infos.size()-1; i >=0; i--) {
       retVector.push_back(Config::GetConfig()->SiteById(server_infos[i].id).name) ;
       PaxosWorker* worker = new PaxosWorker();
@@ -280,7 +276,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
     }
     reverse(pxs_workers_g.begin(), pxs_workers_g.end());
     es->machine_id = pxs_workers_g.back()->site_info_->locale_id;
-    //Log_info("election (Paxos group) machine-id: %d", es->machine_id);
+    Log_info("running machine-id: %d", es->machine_id);
     return retVector;
 }
 
@@ -407,7 +403,7 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id) {
   }
   pxs_workers_g[par_id]->election_state_lock.unlock();
 
-  if(es->machine_id == 1 || es->machine_id == 2) {  // SWH: fixed for 3 nodes, should provide more flexiblity
+  if(es->machine_id == 1 || es->machine_id == 2) {
      if(debug)
 	return;
   }
@@ -585,7 +581,7 @@ void send_bulk_prep(int send_epoch){
 }
 
 // marker:ansh
-void* electionMonitor(void* arg){  // SWH: XXXXXXX, have to remove it later
+void* electionMonitor(void* arg){
    void(1);
    // we need to take two situations into consideration: 1) startup; 2) exit
    // startup: sleep 5 seconds for the startup
@@ -665,10 +661,6 @@ void* heartbeatMonitor(void* arg){
 
 // to be called after setup 1; needed for multiprocess setup
 int setup2(int action){  // action == 0 is default, action == 1 is forced to be follower
-  if (Config::GetConfig()->proc_name_ == "learner") {
-    server_launch_worker_learner();
-    return 0;
-  }
 
   auto server_infos = Config::GetConfig()->GetMyServers();
   if (server_infos.size() > 0) {

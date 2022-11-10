@@ -144,8 +144,6 @@ void ServerWorker::SetupService() {
                                             rep_sched_,
                                             svr_poll_mgr_,
                                             scsi_);
-    Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d", 
-      site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
 
     services_.insert(services_.end(), s2.begin(), s2.end());
   }
