@@ -99,19 +99,18 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
                                        shared_ptr<Marshallable> cmd,
                                        const std::function<void(ballot_t, int)>& cb) {
   auto proxies = rpc_par_learner_proxies_[par_id];
-  Log_info("try to send the result - invoke the defined API, XXX-%d", cmd.get()->kind_);
   verify(proxies.size()==1);
   vector<Future*> fus;
   for (auto& p : proxies) {
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
      fuattr.callback = [cb] (Future* fu) {
-        // i32 valid;
-        // i32 ballot;
-        // fu->get_reply() >> ballot >> valid;
-        // Log_info("Received response %d %d", ballot, valid);
-        // cb(ballot, valid);
-        //Log_info("received a response from API");
+        int slot_id;
+        ballot_t ballot;
+        slot_id=101;
+        ballot=201;
+        //fu->get_reply() >> ballot >> slot_id;
+        cb(ballot, slot_id);
       };
      MarshallDeputy md(cmd);
      auto f = proxy->async_ForwardToLearnerI(md, fuattr);

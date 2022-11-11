@@ -652,12 +652,16 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   cb();
 }
 
-void PaxosServer::OnForwardToLeader(const slotid_t slot_id,
-                                    const ballot_t ballot,
-                                    shared_ptr<Marshallable> &cmd) {
-  Log_info("receive a message on the learner side: OnForwardToLeader");
+void PaxosServer::OnForwardToLeader(shared_ptr<Marshallable> &cmd,
+                                    i32* ballot,
+                                    i32* slot_id,
+                                    const function<void()> &cb) {
+  Log_info("receive a message on the learner side: OnForwardToLeader: ballot: %d, slot_id: %d", ballot, slot_id);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   app_next_(cmd);
+  *ballot = 100;
+  *slot_id = 200;
+  cb();
 }
 
 void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,

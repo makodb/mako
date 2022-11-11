@@ -136,25 +136,24 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
          } 
-         // if the leader, we forward the cmd to the learner
-         if (es_pw->cur_state==1) {
-          auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-          coord->par_id_ = site_info_->partition_id_;
-          
-          coord->loc_id_ = site_info_->locale_id;
-          
-          coord->commo_->ForwardToLearner(site_info_->partition_id_,
-                                          coord->slot_id_,
-                                          coord->curr_ballot_,
-                                          cmd,
-                                          [&](ballot_t ballot, int slot_id) {
-                                            // TODO
-                                          });
-         }
       } else {
         // the ending signal
         const char *log = sp_log_entry.log_entry.c_str() ;
         callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_) ;
+      }
+
+      // if the leader, we forward the cmd to the learner
+      if (es_pw->cur_state==1) {
+       auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+       coord->par_id_ = site_info_->partition_id_;
+       coord->loc_id_ = site_info_->locale_id;
+       coord->commo_->ForwardToLearner(site_info_->partition_id_,
+                                       coord->slot_id_,
+                                       coord->curr_ballot_,
+                                       cmd,
+                                       [&](ballot_t ballot, int slot_id) {
+                                         Log_info("received a ack from the learner, ballot: %d, slot_id: %d", ballot, slot_id); 
+                                       });
       }
     } else {
       verify(0);
