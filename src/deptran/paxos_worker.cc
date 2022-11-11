@@ -147,12 +147,13 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
        auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
        coord->par_id_ = site_info_->partition_id_;
        coord->loc_id_ = site_info_->locale_id;
+       //Log_info("the slot: %d, ballot: %d on the leader side", coord->slot_id_, coord->curr_ballot_);
        coord->commo_->ForwardToLearner(site_info_->partition_id_,
                                        coord->slot_id_,
                                        coord->curr_ballot_,
                                        cmd,
-                                       [&](ballot_t ballot, int slot_id) {
-                                         Log_info("received a ack from the learner, ballot: %d, slot_id: %d", ballot, slot_id); 
+                                       [&](uint64_t slot, ballot_t ballot) {
+                                         Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot); 
                                        });
       }
     } else {

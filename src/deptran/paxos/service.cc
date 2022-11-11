@@ -175,12 +175,13 @@ void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
   });
 }
 
-void MultiPaxosServiceImpl::ForwardToLearnerI(const MarshallDeputy& cmd, rrr::i32* ballot, rrr::i32* slot_id, rrr::DeferredReply* defer) {
+void MultiPaxosServiceImpl::ForwardToLearnerI(const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) {
     verify(sched_ != nullptr);
+    *ret_slot = slot;
+    *ret_ballot = ballot;
+    //Log_info("received slot: %d, ballot: %d", slot, ballot);
     Coroutine::CreateRun([&] () {
       sched_->OnForwardToLeader(const_cast<MarshallDeputy&>(cmd).sp_data_,
-                               ballot,
-                               slot_id,
                                std::bind(&rrr::DeferredReply::reply, defer));
     });
 }

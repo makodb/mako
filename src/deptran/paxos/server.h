@@ -112,8 +112,6 @@ class PaxosServer : public TxLogServer {
                   const function<void()> &cb);
   
   void OnForwardToLeader(shared_ptr<Marshallable> &cmd,
-                         i32* ballot,
-                         i32* valid,
                          const function<void()> &cb);
 
   int get_open_slot(){

@@ -160,10 +160,10 @@ class Communicator {
     }
 
     virtual void ForwardToLearner(parid_t par_id,
-                                  slotid_t slot_id,
+                                  uint64_t slot,
                                   ballot_t ballot,
                                   shared_ptr<Marshallable> cmd,
-                                  const std::function<void(ballot_t, int)>& cb) {
+                                  const std::function<void(uint64_t, ballot_t)>& cb) {
       verify(0);
     }
 

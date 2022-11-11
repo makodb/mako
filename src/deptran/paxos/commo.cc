@@ -94,10 +94,10 @@ void MultiPaxosCommo::BroadcastAccept(parid_t par_id,
  * @brief forward the committed log the learner 
  */
 void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
-                                       slotid_t slot_id,
+                                       uint64_t slot,
                                        ballot_t ballot,
                                        shared_ptr<Marshallable> cmd,
-                                       const std::function<void(ballot_t, int)>& cb) {
+                                       const std::function<void(uint64_t, ballot_t)>& cb) {
   auto proxies = rpc_par_learner_proxies_[par_id];
   verify(proxies.size()==1);
   vector<Future*> fus;
@@ -105,15 +105,13 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
      fuattr.callback = [cb] (Future* fu) {
-        int slot_id;
+        uint64_t slot;
         ballot_t ballot;
-        slot_id=101;
-        ballot=201;
-        //fu->get_reply() >> ballot >> slot_id;
-        cb(ballot, slot_id);
+        fu->get_reply() >> slot >> ballot;
+        cb(slot, ballot);
       };
      MarshallDeputy md(cmd);
-     auto f = proxy->async_ForwardToLearnerI(md, fuattr);
+     auto f = proxy->async_ForwardToLearnerI(slot, ballot, md, fuattr);
      Future::safe_release(f);
   }
 }

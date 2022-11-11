@@ -31,10 +31,10 @@ class MultiPaxosCommo : public Communicator {
                        shared_ptr<Marshallable> cmd,
                        const function<void(Future*)> &callback);
   void ForwardToLearner(parid_t par_id,
-                        slotid_t slot_id,
+                        uint64_t slot,
                         ballot_t ballot,
                         shared_ptr<Marshallable> cmd,
-                        const std::function<void(ballot_t, int)>& cb);
+                        const std::function<void(uint64_t, ballot_t)>& cb);
   void BroadcastDecide(const parid_t par_id,
                        const slotid_t slot_id,
                        const ballot_t ballot,
