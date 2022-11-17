@@ -101,16 +101,6 @@ void PaxosWorker::SetupBase() {
   this->tot_num = config->get_tot_req();
 }
 
-void PaxosWorker::SyncToRemoteLearner(Marshallable& cmd) {
-  // MultiPaxosProxy *proxy = std::get<2>(remoteLearner); 
-  // FutureAttr fuattr;  // fuattr
-  // fuattr.callback = [](Future* fu) {
-  //   Log_info("succeed replicating value to the learner");
-  // };
-  // MarshallDeputy md(cmd);
-  // auto f = proxy->async_SyncToLearner(md, fuattr);
-  // Future::safe_release(f);
-}
 
 void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
@@ -153,7 +143,7 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
                                        coord->curr_ballot_,
                                        cmd,
                                        [&](uint64_t slot, ballot_t ballot) {
-                                         Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot); 
+                                         //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
                                        });
       }
     } else {
@@ -167,20 +157,6 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
     //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
     finish_cond.bcast();
   }
-}
-
-void PaxosWorker::SetupServerLearner() {
-  // auto impl = new MultiPaxosServiceImpl();
-  // rrr::PollMgr *pm = new rrr::PollMgr();
-  // base::ThreadPool *tp = new base::ThreadPool();
-  // rrr::Server *server = new rrr::Server(pm, tp);
-
-  // server->reg(impl);
-  // int ret = server->start(("127.0.0.1:8090").c_str()); 
-  // if (ret !=0 ) {
-  //   Log_fatal("learner server launch failed.");
-  //   std::cout << "learner server launch failed.\n";
-  // }
 }
 
 void PaxosWorker::SetupService() {
@@ -231,17 +207,6 @@ void PaxosWorker::SetupCommo() {
   //if (IsLeader(site_info_->partition_id_))submit_pool = new SubmitPool();
 }
 
-void PaxosWorker::SetupCommoLearner() {
-  // if (std::get<0>(remoteLearner).empty()) return;
-
-  // rrr::PollMgr *pm = new rrr::PollMgr();
-  // rrr::Client *client = new rrr::Client(pm);
-  // while (client->connect((std::get<0>(remoteLearner)+":"+std::to_string(std::get<1>(remoteLearner))).c_str())!=0) {}
-  // MultiPaxosProxy *client_proxy = new MultiPaxosProxy(client);
-}
-
-
-// SWH: what's for?
 void PaxosWorker::SetupHeartbeat() {
   bool hb = Config::GetConfig()->do_heart_beat();
   if (!hb) return;
@@ -632,9 +597,12 @@ void PaxosWorker::AddReplayEntry(Marshallable& entry){
   replay_queue.enqueue(p);
 }
 
+// SWH: (TODO) why pw->stop_replay_flag can work 
 void* PaxosWorker::StartReplayRead(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   while(!pw->stop_replay_flag){
+    // SWH: somehow it throws an error
+    //Log_info("I can't believe it: %d, stop: %d",pw->site_info_->id, pw->stop_replay_flag);
     sleep(1); // this is NOT used again, we sleep here for a cpu saving
     Marshallable* p;
     auto res = pw->replay_queue.try_dequeue(p);
@@ -646,12 +614,14 @@ void* PaxosWorker::StartReplayRead(void* arg){
 
 PaxosWorker::PaxosWorker() {
   stop_replay_flag = true;
+  //std::cout << "I can't believe it-2: " << this->site_info_->id << ", stop: " << this->stop_replay_flag << std::endl;
+  //Log_info("I can't believe it-2: %d, stop: %d",this->site_info_->id, this->stop_replay_flag);
   Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
   pthread_detach(replay_th_);
 }
 
 PaxosWorker::~PaxosWorker() {
-  Log_debug("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
+  Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
   stop_flag = true;
   stop_replay_flag = true;
 }

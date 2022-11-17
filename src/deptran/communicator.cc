@@ -29,15 +29,6 @@ Communicator::Communicator(PollMgr* poll_mgr) {
     }
     rpc_par_proxies_.insert(std::make_pair(par_id, proxies));
 
-    auto site_infos_learner = config->SitesByPartitionId(par_id, true);
-    vector<std::pair<siteid_t, ClassicProxy*>> proxies_learner;
-    for (auto& si : site_infos_learner) {
-      auto result = ConnectToSite(si, std::chrono::milliseconds
-          (CONNECT_TIMEOUT_MS));
-      verify(result.first == SUCCESS);
-      proxies_learner.push_back(std::make_pair(si.id, result.second));
-    }
-    rpc_par_learner_proxies_.insert(std::make_pair(par_id, proxies_learner));
   }
   client_leaders_connected_.store(false);
   if (config->forwarding_enabled_) {

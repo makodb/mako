@@ -182,7 +182,7 @@ void CoordinatorMultiPaxos::Commit() {
   GotoNextPhase();
 }
 
-void CoordinatorMultiPaxos::GotoNextPhase() { // SWH: 
+void CoordinatorMultiPaxos::GotoNextPhase() {
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
   phase_++;
@@ -223,29 +223,21 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
     int n_phase = 4;
     int current_phase = phase_ % n_phase;
     phase_++;
+    if (!IsLeader())
+    verify(1);
 
-    // SWH: it seems it have to go throug 2 round-trip to commit a request
-    // Log_info("\n\n-----");
-    // auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-    // for (int i=0;i<cmd_temp1->ballots.size();i++) {
-    //   Log_info(" b: %d", cmd_temp1->ballots[i]);
-    // }
-    // for (int i=0;i<cmd_temp1->slots.size();i++) {
-    //   Log_info(" s: %d", cmd_temp1->slots[i]);
-    // }
-    // Log_info("different phase: %d, cmds size: %d", current_phase, cmd_temp1.get()->cmds.size());
     if(current_phase == Phase::INIT_END){
       //Log_info("In prepare mode");
       if(phase_ > 3){
         break;
       }
-      Prepare();
+      // SWH: (TODO) it's only required for the leader election, it's ok if the leader is not changed
+      //Prepare();
       if(!in_submission_){
         break;
       }
       phase_++;// need to do this because Phase::Dispatch = 1
     } else if(current_phase == Phase::ACCEPT){
-      //Log_info("In accept mode");
       Accept();
       if(!in_submission_){
         break;
@@ -337,7 +329,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     //return;
     in_accept = true;
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-    // Log_info("Sending paxos accept request for slot %d", cmd_temp1->slots[0]);
+    //Log_info("Sending paxos accept request for slot %d, ballot: %d", cmd_temp1->slots[0], cmd_temp1->ballots[0]);
     //Log_info("Accept: some slot is committed");
     if(!in_submission_){
       return;
@@ -373,7 +365,6 @@ void BulkCoordinatorMultiPaxos::Commit() {
     if(!in_submission_){
       return;
     }
-
     in_commit = true;
 
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
@@ -395,15 +386,16 @@ void BulkCoordinatorMultiPaxos::Commit() {
         this->in_submission_ = false;
       }
     });
-    sp_quorum->Wait();
-    if (sp_quorum->Yes()) {
-	//Log_info("Commit: some stuff is committed");
-    } else if (sp_quorum->No()) {
-      in_submission_ = false;
-      return;
-    } else {
-      verify(0);
-    }
+    // it's not necessary to wait for a majority of commits
+  //   sp_quorum->Wait();
+  //   if (sp_quorum->Yes()) {
+	// //Log_info("Commit: some stuff is committed");
+  //   } else if (sp_quorum->No()) {
+  //     in_submission_ = false;
+  //     return;
+  //   } else {
+  //     verify(0);
+  //   }
     in_commit = false;
     //verify(phase_ == Phase::COMMIT);
     commit_callback_();

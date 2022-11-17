@@ -351,6 +351,13 @@ void Config::LoadSiteYML(YAML::Node config) {
       info.locale_id = locale_id;
       info.type_ = SERVER;
       info.proc_name = site_proc_map_[info.name];
+      if (info.proc_name.compare("localhost")==0) {
+        info.role = 0;
+      } else if (info.proc_name.compare("learner")==0) {
+        info.role = 2;
+      } else {
+        info.role = 1;
+      }
       sites_.push_back(info);
       replica_group.replicas.push_back(&sites_.back());
       locale_id++;
@@ -368,6 +375,13 @@ void Config::LoadSiteYML(YAML::Node config) {
       SiteInfo info(site_id++);
       info.name = site_name;
       info.proc_name = site_proc_map_[info.name];
+      if (info.proc_name.compare("localhost")==0) {
+        info.role = 0;
+      } else if (info.proc_name.compare("learner")==0) {
+        info.role = 2;
+      } else {
+        info.role = 1;
+      }
       info.type_ = CLIENT;
       info.locale_id = locale_id;
       info.port = GetClientPort(site_name);
@@ -800,23 +814,36 @@ const Config::SiteInfo& Config::SiteById(uint32_t id) {
   return *s;
 }
 
+Config::SiteInfo Config::LeaderSiteByPartitionId(parid_t partition_id) {
+  for (SiteInfo& site : sites_) {
+    if (site.partition_id_ == partition_id && site.role == 0) {
+      return site;
+    }
+  }
+  verify(0);
+}
+
+void Config::UpgradeFromLearnerToLeader() {
+  verify(proc_name_.compare("learner")==0); 
+  for (auto &s: sites_) {
+    if (s.proc_name.compare("learner")==0) {
+      s.role=0;
+    }
+  }
+}
+
 std::vector<Config::SiteInfo> Config::SitesByPartitionId(
-    parid_t partition_id, bool onlyForLearner) {
+    parid_t partition_id) {
   std::vector<SiteInfo> result;
-  std::vector<SiteInfo> learners;
   auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
                     [partition_id](const ReplicaGroup& g) {
                       return g.partition_id == partition_id;
                     });
   if (it != replica_groups_.end()) {
-    for (int i=0; i<it->replicas.size()-1;i++) {
+    for (int i=0; i<it->replicas.size();i++) {
       result.push_back(*it->replicas[i]);
     }
-
-    if (onlyForLearner) {
-      learners.push_back(*it->replicas[it->replicas.size()-1]);
-    }
-    return onlyForLearner? learners: result;
+    return result;
   }
   verify(0);
 }
@@ -827,7 +854,7 @@ int Config::GetPartitionSize(parid_t partition_id) {
                       return g.partition_id == partition_id;
                     });
   if (it != replica_groups_.end()) {
-    return it->replicas.size()-1; // the last column is the learner, eliminate this for the consensus 
+    return it->replicas.size(); 
   }
   verify(0);
 }

@@ -84,6 +84,7 @@ class Config {
     uint32_t locale_id; // represents a group of servers, such as those located in same datacenter
     string name;        // site name
     string proc_name;   // proc name
+    int role = 0; // leader=0, follower=1, learner=2
     string host;
     uint32_t port = 0;
     uint32_t n_thread;   // should be 1 for now
@@ -107,13 +108,13 @@ class Config {
       return ret;
     }
 
-    string GetHostAddr() {
+    string GetHostAddr(int delta=0) {
       if (proc_name.empty())
         proc_name = name;
       if (host.empty())
         host = proc_name;
       string ret;
-      ret = ret.append(host).append(":").append(std::to_string(port));
+      ret = ret.append(host).append(":").append(std::to_string(port+delta));
       return ret;
     }
   };
@@ -197,11 +198,13 @@ class Config {
 
   int NumSites(SiteInfoType type=SERVER);
   const SiteInfo& SiteById(uint32_t id);
-  vector<SiteInfo> SitesByPartitionId(parid_t partition_id, bool onlyForLearner=false);
+  vector<SiteInfo> SitesByPartitionId(parid_t partition_id);
+  SiteInfo LeaderSiteByPartitionId(parid_t partition_id);
   vector<SiteInfo> SitesByLocaleId(uint32_t locale_id, SiteInfoType type=SERVER);
   vector<SiteInfo> SitesByProcessName(string proc_name, SiteInfoType type=SERVER);
   SiteInfo* SiteByName(std::string name);
   int GetPartitionSize(parid_t par_id);
+  void UpgradeFromLearnerToLeader();
   vector<SiteInfo> GetMyServers() { return SitesByProcessName(this->proc_name_, SERVER); }
   vector<SiteInfo> GetMyClients() { return SitesByProcessName(this->proc_name_, CLIENT); }
   int NumClients() {

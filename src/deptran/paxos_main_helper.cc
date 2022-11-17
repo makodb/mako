@@ -539,6 +539,29 @@ void send_no_ops_for_mark(int epoch){
   }
 }
 
+void stuff_todo_learner_upgrade(){
+  es->state_lock();
+  es->set_state(1);
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    pxs_workers_g[i]->election_state_lock.lock();
+    pxs_workers_g[i]->cur_epoch = es->get_epoch();
+    pxs_workers_g[i]->is_leader = 1;
+    pxs_workers_g[i]->election_state_lock.unlock();
+    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    ps->mtx_.lock();
+    ps->cur_open_slot_ = ps->max_committed_slot_learner_+1;
+    Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
+    ps->mtx_.unlock();
+  }
+  int epoch = es->get_epoch();
+  es->state_unlock();
+  // set register_for_leader_par_id_return
+  sync_callbacks_for_new_leader();
+  //send_sync_logs(epoch);
+  //send_no_ops_to_all_workers(epoch);
+  //send_no_ops_for_mark(epoch);
+}
+
 void stuff_todo_leader_election(){
   es->state_lock();
   es->set_state(1);
@@ -657,6 +680,33 @@ void* heartbeatMonitor(void* arg){
    return nullptr;
 }
 
+// learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
+void* heartbeatMonitor2(void* arg) {
+  rrr::PollMgr *pm = new rrr::PollMgr(1);
+  rrr::Client* rpc_cli = new rrr::Client(pm);
+  auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
+  // get the leader's host + port
+  auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
+  std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
+  while (rpc_cli->connect(addr_port.c_str())!=0) {
+     usleep(100 * 1000); // retry to connect
+  }
+  ServerControlProxy *client_proxy = new ServerControlProxy(rpc_cli);
+  int counter=0;
+  while (es->running) {
+    auto ret = client_proxy->server_heart_beat();
+    usleep(1*1000); // 1 ms
+    counter = ret>0? counter+1: 0;
+    if (counter>5) { // reach threshold to trigger a failover
+     stuff_todo_learner_upgrade();
+     Config::GetConfig()->UpgradeFromLearnerToLeader();
+     leader_callback_(); // notify the learner that you're the new leader
+     // SWH: (TODO) not sure why this error happens (~SiteInfo())
+     sleep(1000);
+     break;
+    }
+  }
+}
 
 
 // to be called after setup 1; needed for multiprocess setup
@@ -679,8 +729,12 @@ int setup2(int action){  // action == 0 is default, action == 1 is forced to be 
     es->set_epoch(0);
     es->set_leader(0);
   }
-  Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
-  pthread_detach(submit_poll_th_);
+  if (Config::GetConfig()->proc_name_.compare("learner")==0) {
+    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor2, nullptr);
+    pthread_detach(es->heartbeat_th_);
+  }
+  // Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
+  // pthread_detach(submit_poll_th_);
   // if (action != 1) {
   //      Pthread_create(&es->election_th_, nullptr, electionMonitor, nullptr);
   //      pthread_detach(es->election_th_);

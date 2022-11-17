@@ -34,8 +34,10 @@ class PaxosServer : public TxLogServer {
   slotid_t max_touched_slot = 0;
   int leader_id;
   map<pair<slotid_t, slotid_t>, BulkPrepare> bulk_prepares{};  // saves all the prepare ranges.
-  map<slotid_t, shared_ptr<PaxosData>> logs_{};
+  map<slotid_t, shared_ptr<PaxosData>> logs_{}; // the committed values
   ballot_t cur_epoch;
+  // for learner for the later on takeover
+  slotid_t max_committed_slot_learner_ = 0;
 
   int n_prepare_ = 0;
   int n_accept_ = 0;
@@ -111,7 +113,9 @@ class PaxosServer : public TxLogServer {
                   i32 *valid,
                   const function<void()> &cb);
   
-  void OnForwardToLeader(shared_ptr<Marshallable> &cmd,
+  void OnForwardToLeader(const uint64_t& slot, 
+                         const ballot_t& ballot,
+                         shared_ptr<Marshallable> &cmd,
                          const function<void()> &cb);
 
   int get_open_slot(){
