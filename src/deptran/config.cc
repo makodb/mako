@@ -829,6 +829,9 @@ void Config::UpgradeFromLearnerToLeader() {
     if (s.proc_name.compare("learner")==0) {
       s.role=0;
     }
+    if (s.proc_name.compare("localhost")==0) {
+      s.role=2; // to skip old leader if failure occurs
+    }
   }
 }
 

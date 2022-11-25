@@ -111,9 +111,16 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
       }
       if (sp_log_entry.length > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
-         //Log_info("received a message: %d", sp_log_entry.length);
+         
          std::vector<uint64_t> latest_commit_id_v;
-         callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_).swap(latest_commit_id_v);
+         callback_par_id_return_(log, 
+                                 sp_log_entry.length, 
+                                 site_info_->partition_id_,
+                                 un_replay_logs_).swap(latest_commit_id_v);
+         //Log_info("XXXXX: partition_id: %d, id: %d, proc_name: %s, role: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
+         //Log_info("received a message: %d, latest_commit_id_v.size: %d", sp_log_entry.length, latest_commit_id_v.size());
+        //  for (int i=0;i<latest_commit_id_v.size();i++)
+        //   Log_info("  XXXX: i:%d,v:%d", i,latest_commit_id_v[i]);
          int status = latest_commit_id_v[0] % 10;
          latest_commit_id_v[0] = latest_commit_id_v[0] / 10;
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
@@ -133,14 +140,11 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
       }
 
       // if the leader, we forward the cmd to the learner
-      if (es_pw->cur_state==1) {
-       auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-       coord->par_id_ = site_info_->partition_id_;
-       coord->loc_id_ = site_info_->locale_id;
-       //Log_info("the slot: %d, ballot: %d on the leader side", coord->slot_id_, coord->curr_ballot_);
+      if (es_pw->cur_state==1&&site_info_->proc_name.compare("learner")!=0) {
+       auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0); //SWH: (to fix), slot_id is not accruate
        coord->commo_->ForwardToLearner(site_info_->partition_id_,
-                                       coord->slot_id_,
-                                       coord->curr_ballot_,
+                                       ((CoordinatorMultiPaxos*)coord)->slot_id_,
+                                       ((CoordinatorMultiPaxos*)coord)->curr_ballot_,
                                        cmd,
                                        [&](uint64_t slot, ballot_t ballot) {
                                          //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
@@ -345,6 +349,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
 
 // marker:ansh
 int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
+  void(0);
   auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
@@ -361,7 +366,7 @@ int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
   return received_epoch;
 }
 
-int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){  // what's we need
+int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
   ballot_t received_epoch = -1;
   auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
@@ -597,12 +602,9 @@ void PaxosWorker::AddReplayEntry(Marshallable& entry){
   replay_queue.enqueue(p);
 }
 
-// SWH: (TODO) why pw->stop_replay_flag can work 
 void* PaxosWorker::StartReplayRead(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   while(!pw->stop_replay_flag){
-    // SWH: somehow it throws an error
-    //Log_info("I can't believe it: %d, stop: %d",pw->site_info_->id, pw->stop_replay_flag);
     sleep(1); // this is NOT used again, we sleep here for a cpu saving
     Marshallable* p;
     auto res = pw->replay_queue.try_dequeue(p);
@@ -614,10 +616,8 @@ void* PaxosWorker::StartReplayRead(void* arg){
 
 PaxosWorker::PaxosWorker() {
   stop_replay_flag = true;
-  //std::cout << "I can't believe it-2: " << this->site_info_->id << ", stop: " << this->stop_replay_flag << std::endl;
-  //Log_info("I can't believe it-2: %d, stop: %d",this->site_info_->id, this->stop_replay_flag);
-  Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
-  pthread_detach(replay_th_);
+  // Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
+  // pthread_detach(replay_th_);
 }
 
 PaxosWorker::~PaxosWorker() {
@@ -657,9 +657,10 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
+  //Log_info("in the _submit, we open the slot: %d, par_id:%d", x, site_info_->partition_id_);
   coord->set_slot(x);
   coord->assignCmd(sp_m);
-  Log_debug("PaxosWorker: job submitted for slot %d", x);
+  //Log_info("PaxosWorker: job submitted for slot %d, par_id: %d, slot_id: %d, addr: %p", x, coord->par_id_, coord->slot_id_, (void*)coord);
   if(stop_flag != true) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
     vector<shared_ptr<Coordinator>> curr2;

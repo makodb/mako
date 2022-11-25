@@ -48,6 +48,7 @@ class PaxosServer : public TxLogServer {
   }
 
   shared_ptr<PaxosData> GetInstance(slotid_t id) {
+    if(id<min_active_slot_) Log_info("XXXXXX: id: %d, min_active_slot_:%d", id, min_active_slot_);
     verify(id >= min_active_slot_);
     auto& sp_instance = logs_[id];
     if(!sp_instance)

@@ -231,7 +231,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
       if(phase_ > 3){
         break;
       }
-      // SWH: (TODO) it's only required for the leader election, it's ok if the leader is not changed
+      // SWH: (tune it) it's only required for the leader election, it's ok if the leader is not changed
       //Prepare();
       if(!in_submission_){
         break;
@@ -329,7 +329,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     //return;
     in_accept = true;
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-    //Log_info("Sending paxos accept request for slot %d, ballot: %d", cmd_temp1->slots[0], cmd_temp1->ballots[0]);
+    //Log_info("Sending paxos accept request for slot %d, ballot: %d, par_id:%d", cmd_temp1->slots[0], cmd_temp1->ballots[0], par_id_);
     //Log_info("Accept: some slot is committed");
     if(!in_submission_){
       return;
@@ -374,7 +374,6 @@ void BulkCoordinatorMultiPaxos::Commit() {
     commit_cmd->leader_id = cmd_temp1->leader_id;
 
     auto commit_cmd_marshallable = dynamic_pointer_cast<Marshallable>(commit_cmd);
-
 
     auto ess_cc = es_cc;
     auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd_marshallable, [this, ess_cc](ballot_t ballot, int valid){

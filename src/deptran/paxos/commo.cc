@@ -325,7 +325,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   //Log_info("Sending bulk accept for some slot");
   //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
   for (auto& p : proxies) {
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
+    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     int st = p.first;

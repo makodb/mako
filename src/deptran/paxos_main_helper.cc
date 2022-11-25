@@ -395,18 +395,19 @@ static tp endTime;
 static bool debug = false;
 void add_log_to_nc(const char* log, int len, uint32_t par_id) {
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
+  //Log_info("add_log_to_nc, len:%d, par_id:%d, es->mid:%d, isLeader:%d",len,par_id,es->machine_id, pxs_workers_g[par_id]->is_leader);
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
-	     Log_info("Did not find to be leader");
+	     Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
     pxs_workers_g[par_id]->election_state_lock.unlock();
     return;
   }
   pxs_workers_g[par_id]->election_state_lock.unlock();
 
-  if(es->machine_id == 1 || es->machine_id == 2) {
-     if(debug)
-	return;
-  }
+  // if(es->machine_id == 1 || es->machine_id == 2) {
+  //    if(debug)
+	// return;
+  // }
   // in our project, one worker thread per partition, so no lock required
 	//l_.lock();
 	len = len;
@@ -534,7 +535,8 @@ void sync_callbacks_for_new_leader(){
 
 void send_no_ops_for_mark(int epoch){
   string log = "no-ops:" + to_string(epoch);
-  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    //Log_info("send_no_ops-3: %d",i);
     add_log_to_nc(log.c_str(), log.size(), i);
   }
 }
@@ -542,6 +544,7 @@ void send_no_ops_for_mark(int epoch){
 void stuff_todo_learner_upgrade(){
   es->state_lock();
   es->set_state(1);
+  es->set_epoch(); // increase the epoch number for failover
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
@@ -549,17 +552,19 @@ void stuff_todo_learner_upgrade(){
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    ps->cur_open_slot_ = ps->max_committed_slot_learner_+1;
-    Log_info("The last committed slot %d and executed slot %d and open %d and touched %d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot);
+    ps->max_committed_slot_ = ps->max_committed_slot_learner_;
+    ps->max_executed_slot_ = ps->max_committed_slot_;
+    ps->cur_open_slot_ = ps->max_committed_slot_+1;
+    //Log_info("The last committed slot %d and executed slot %d and open %d and touched %d,i:%d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot, i);
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
   es->state_unlock();
-  // set register_for_leader_par_id_return
   sync_callbacks_for_new_leader();
-  //send_sync_logs(epoch);
-  //send_no_ops_to_all_workers(epoch);
-  //send_no_ops_for_mark(epoch);
+  //send_sync_logs(epoch); 
+  // SWH:(todo) pull logs from the followers and push to the followers
+  send_no_ops_to_all_workers(epoch);
+  send_no_ops_for_mark(epoch);
 }
 
 void stuff_todo_leader_election(){
@@ -698,16 +703,14 @@ void* heartbeatMonitor2(void* arg) {
     usleep(1*1000); // 1 ms
     counter = ret>0? counter+1: 0;
     if (counter>5) { // reach threshold to trigger a failover
-     stuff_todo_learner_upgrade();
      Config::GetConfig()->UpgradeFromLearnerToLeader();
+     stuff_todo_learner_upgrade();
      leader_callback_(); // notify the learner that you're the new leader
-     // SWH: (TODO) not sure why this error happens (~SiteInfo())
      sleep(1000);
      break;
     }
   }
 }
-
 
 // to be called after setup 1; needed for multiprocess setup
 int setup2(int action){  // action == 0 is default, action == 1 is forced to be follower
