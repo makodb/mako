@@ -79,7 +79,7 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
                  i32* valid,
                  rrr::DeferredReply* defer) override;
 
-  void ForwardToLearnerI(const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) override;
+  void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) override;
 
 };
 

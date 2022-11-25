@@ -138,10 +138,10 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
   auto response = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
   Coroutine::CreateRun([&] () {
     sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
-                         ballot,
-                         valid,
-                         response,
-                         std::bind(&rrr::DeferredReply::reply, defer));
+                      ballot,
+                      valid,
+                      response,
+                      std::bind(&rrr::DeferredReply::reply, defer));
     //defer->reply();
   });
 
@@ -175,15 +175,16 @@ void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
   });
 }
 
-void MultiPaxosServiceImpl::ForwardToLearnerI(const uint64_t& slot, 
-                                              const ballot_t& ballot, /* slot and ballot from the leader */
-                                              const MarshallDeputy& cmd, 
-                                              uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) {
+void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
+                                                   const uint64_t& slot, 
+                                                   const ballot_t& ballot, /* slot and ballot from the leader */
+                                                   const MarshallDeputy& cmd, 
+                                                   uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) {
     verify(sched_ != nullptr);
     *ret_slot = slot;
     *ret_ballot = ballot;
     Coroutine::CreateRun([&] () {
-      sched_->OnForwardToLeader(slot, ballot, const_cast<MarshallDeputy&>(cmd).sp_data_,
+      sched_->OnForwardToLeader(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).sp_data_,
                                std::bind(&rrr::DeferredReply::reply, defer));
     });
 }

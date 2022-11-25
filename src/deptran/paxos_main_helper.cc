@@ -462,7 +462,7 @@ shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   auto syncLog = make_shared<SyncLogRequest>();
   syncLog->leader_id = machine_id;
   syncLog->epoch = epoch;
-  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+  for(int i = 0; i < pxs_workers_g.size(); i++){
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
     slotid_t min_slot = ps->max_executed_slot_+1;
@@ -536,7 +536,6 @@ void sync_callbacks_for_new_leader(){
 void send_no_ops_for_mark(int epoch){
   string log = "no-ops:" + to_string(epoch);
   for(int i = 0; i < pxs_workers_g.size(); i++){
-    //Log_info("send_no_ops-3: %d",i);
     add_log_to_nc(log.c_str(), log.size(), i);
   }
 }
@@ -561,8 +560,7 @@ void stuff_todo_learner_upgrade(){
   int epoch = es->get_epoch();
   es->state_unlock();
   sync_callbacks_for_new_leader();
-  //send_sync_logs(epoch); 
-  // SWH:(todo) pull logs from the followers and push to the followers
+  //send_sync_logs(epoch); // SWH: pull and update potentially missing logs: sync_commit
   send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
 }

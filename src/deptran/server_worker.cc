@@ -65,7 +65,8 @@ void ServerWorker::SetupBase() {
   if (rep_sched_ && tx_sched_) {
     rep_sched_->RegLearnerAction(std::bind(&TxLogServer::Next,
                                            tx_sched_,
-                                           std::placeholders::_1));
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
   }
 }
 

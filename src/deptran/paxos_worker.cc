@@ -102,19 +102,21 @@ void PaxosWorker::SetupBase() {
 }
 
 
-void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
+void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
+      int len = sp_log_entry.length;
       if(sp_log_entry.length == 0){
 	      Log_info("Recieved a zero length log");
       }
-      if (sp_log_entry.length > 0) {
+      //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
+      if (len > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
          
          std::vector<uint64_t> latest_commit_id_v;
          callback_par_id_return_(log, 
-                                 sp_log_entry.length, 
+                                 len, 
                                  site_info_->partition_id_,
                                  un_replay_logs_).swap(latest_commit_id_v);
          //Log_info("XXXXX: partition_id: %d, id: %d, proc_name: %s, role: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
@@ -126,24 +128,24 @@ void PaxosWorker::Next(shared_ptr<Marshallable> cmd) {
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
          //Log_info("par_id: %d, append a log into un_replay_logs, size: %d, status: %d, first-id/10: %llu, received: %d", site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
          if (status == 3) {
-             // SWH: we can remove it later, is this required?
-             char *dest = (char *)malloc(sp_log_entry.length) ;
-             memcpy(dest, log, sp_log_entry.length) ;
-             un_replay_logs_.push(std::make_tuple(latest_commit_id_v, status, sp_log_entry.length, (const char*)dest)) ;
+             // SWH: we can remove it later and use shared_ptr
+             char *dest = (char *)malloc(len) ;
+             memcpy(dest, log, len) ;
+             un_replay_logs_.push(std::make_tuple(latest_commit_id_v, status, len, (const char*)dest)) ;
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
          } 
       } else {
         // the ending signal
         const char *log = sp_log_entry.log_entry.c_str() ;
-        callback_par_id_return_(log, sp_log_entry.length, site_info_->partition_id_, un_replay_logs_) ;
+        callback_par_id_return_(log, len, site_info_->partition_id_, un_replay_logs_) ;
       }
 
       // if the leader, we forward the cmd to the learner
       if (es_pw->cur_state==1&&site_info_->proc_name.compare("learner")!=0) {
        auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0); //SWH: (to fix), slot_id is not accruate
        coord->commo_->ForwardToLearner(site_info_->partition_id_,
-                                       ((CoordinatorMultiPaxos*)coord)->slot_id_,
+                                       slot_id,
                                        ((CoordinatorMultiPaxos*)coord)->curr_ballot_,
                                        cmd,
                                        [&](uint64_t slot, ballot_t ballot) {
@@ -630,6 +632,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
   //Log_info("# of submit: %d", length);
   auto sp_cmd = make_shared<LogEntry>();
   if(!shared_ptr_apprch){
+    void(0);
 	  sp_cmd->log_entry = string(log_entry,length);
   }else{
     //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
@@ -657,7 +660,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  //Log_info("in the _submit, we open the slot: %d, par_id:%d", x, site_info_->partition_id_);
+  //Log_info("in the _submit, par_id:%d, we open the slot: %d", site_info_->partition_id_, x);
   coord->set_slot(x);
   coord->assignCmd(sp_m);
   //Log_info("PaxosWorker: job submitted for slot %d, par_id: %d, slot_id: %d, addr: %p", x, coord->par_id_, coord->slot_id_, (void*)coord);
@@ -693,7 +696,8 @@ void PaxosWorker::register_apply_callback(std::function<void(const char*, int)> 
   verify(rep_sched_ != nullptr);
   rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
                                          this,
-                                         std::placeholders::_1));
+                                         std::placeholders::_1,
+                                         std::placeholders::_2));
 }
 
 void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *&, int, int)> cb) {
@@ -701,7 +705,8 @@ void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *
     verify(rep_sched_ != nullptr);
     rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,  // the commit entry
                                            this,
-                                           std::placeholders::_1));
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
 }
 
 void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint64_t>(const char *&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb) {
@@ -709,7 +714,8 @@ void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vecto
     verify(rep_sched_ != nullptr);
     rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
                                            this,
-                                           std::placeholders::_1));
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
 }
 
 } // namespace janus

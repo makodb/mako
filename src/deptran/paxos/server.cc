@@ -63,7 +63,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
     if (next_instance->committed_cmd_) {
-      app_next_(next_instance->committed_cmd_);
+      app_next_(slot_id,next_instance->committed_cmd_);
       Log_info("apply multi-paxos par:%d loc:%d executed slot %lx now", partition_id_, loc_id_, id);
       max_executed_slot_++;
       n_commit_++;
@@ -336,7 +336,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
         bp_cmd->cmds.push_back(shrd_ptr);
       }
     }
-    Log_info("The partition %d, and max executed slot is %d and sync commit is %d", i, ps->max_executed_slot_, bcmd->sync_commit_slot[i]);
+    //Log_info("The partition %d, sync commit is %d; max executed-committed slot is [%d-%d] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
     for(int j = ps->max_executed_slot_; j < bcmd->sync_commit_slot[i]; j++){
       auto inst = ps->GetInstance(j);
       if(!inst->committed_cmd_){
@@ -460,7 +460,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   if(req_leader != es->machine_id)
   es->set_state(0);
   es->state_unlock();
-  vector<shared_ptr<PaxosData>> commit_exec;
+  vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
   for(int i = 0; i < bcmd->slots.size(); i++){
       //break;
       slotid_t slot_id = bcmd->slots[i];
@@ -512,7 +512,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
       auto next_instance = GetInstance(id);
       if (next_instance->committed_cmd_) {
           //app_next_(*next_instance->committed_cmd_);
-	        commit_exec.push_back(next_instance);
+	        commit_exec.push_back(std::make_pair(id,next_instance));
 	        //Log_info("multi-paxos par:%d loc:%d executed slot %lld now", partition_id_, loc_id_, id);
           max_executed_slot_++;
           n_commit_++;
@@ -524,7 +524,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
   //Log_info("Committing %d", commit_exec.size());
   for(int i = 0; i < commit_exec.size(); i++){
       //auto x = new PaxosData();
-      app_next_(commit_exec[i]->committed_cmd_);
+      app_next_(commit_exec[i].first,commit_exec[i].second->committed_cmd_);
   }
 
   *valid = 1;
@@ -564,7 +564,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   if(req_leader != es->machine_id)
   es->set_state(0);
   es->state_unlock();
-  vector<shared_ptr<PaxosData>> commit_exec;
+  vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
   for(int i = 0; i < bcmd->slots.size(); i++){
       slotid_t slot_id = bcmd->slots[i];
       ballot_t ballot_id = bcmd->ballots[i];
@@ -615,42 +615,33 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
       auto next_instance = GetInstance(id);
       if (next_instance->committed_cmd_) {
-          commit_exec.push_back(next_instance);
+          commit_exec.push_back(std::make_pair(id,next_instance));
           //if(req_leader >= 0)
 		      //  Log_info("multi-paxos par:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
           //max_executed_slot_++;
           max_executed_slot_=id;//SWH:(double-check)
           n_commit_++;
-      }else{
+      }else{ // SWH: (TODO) no need to consider leader election at this moment
         //Log_info("multi-paxos par-2:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
       }
-    // SWH: (TODO) no need to consider leader election at this moment
-    //   else {
-	  // if(req_leader != 0)
-		// Log_info("Some slot is stopping commit-0 %d %d and partition %d", id, bcmd->slots[0], partition_id_);
-    //       break;
-    //   }
    }
-   if(commit_exec.size() > 0){
-	Log_debug("Something is getting committed-2 %d", commit_exec.size());
-   } 
   for(int i = 0; i < commit_exec.size(); i++){
-	    //Log_info("Something is getting committed-3, par_id: %d, slot-id: %d", partition_id_,i);
-      app_next_(commit_exec[i]->committed_cmd_);
+      app_next_(commit_exec[i].first,commit_exec[i].second->committed_cmd_);
   }
 
   *valid = 1;
   cb();
 }
 
-void PaxosServer::OnForwardToLeader(const uint64_t& slot, 
+void PaxosServer::OnForwardToLeader(const rrr::i32& par_id,
+                                    const uint64_t& slot, 
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
                                     const function<void()> &cb) {
-  //Log_info("receive a message on the learner side: OnForwardToLeader, slot: %d", slot);
+  //Log_info("receive a message on the learner side: OnForwardToLeader, par_id:%d, slot: %d", par_id, slot);
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  app_next_(cmd);
+  app_next_(slot,cmd);
   cb();
 }
 

@@ -647,7 +647,7 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  void Next(shared_ptr<Marshallable>);
+  void Next(int,shared_ptr<Marshallable>);
   void WaitForSubmit();
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);

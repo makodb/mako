@@ -115,7 +115,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         cb(slot, ballot);
       };
      MarshallDeputy md(cmd);
-     auto f = proxy->async_ForwardToLearnerI(slot, ballot, md, fuattr);
+     auto f = proxy->async_ForwardToLearnerServer(par_id, slot, ballot, md, fuattr);
      Future::safe_release(f);
   }
 }
