@@ -134,7 +134,9 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
              un_replay_logs_.push(std::make_tuple(latest_commit_id_v, status, len, (const char*)dest)) ;
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
-         } 
+         } else if (status == 5) {
+            noops_received=true;
+         }
       } else {
         // the ending signal
         const char *log = sp_log_entry.log_entry.c_str() ;
@@ -576,6 +578,12 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
   return nullptr;
 }
 
+void PaxosWorker::WaitForNoops() {
+  while(1){
+    if(noops_received) break;
+    usleep(100);//0.1ms
+  }
+}
 void PaxosWorker::WaitForSubmit() {
   /*while(true){
 	sleep(1);

@@ -41,7 +41,7 @@ pthread_t submit_poll_th_;
 const int len = 5;
 static std::map<std::string,long double> timer;
 
-function<void()> leader_callback_{};
+function<void(int)> leader_callback_{};
 
 std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> leader_replay_cb;
 // std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> follower_replay_cb{};
@@ -308,7 +308,7 @@ int shutdown_paxos() {
     return 0;
 }
 
-void register_leader_election_callback(std::function<void()> cb){
+void register_leader_election_callback(std::function<void(int)> cb){
   leader_callback_ = cb;
 }
 
@@ -547,6 +547,7 @@ void stuff_todo_learner_upgrade(){
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
+    //Log_info("current XXXXX pxs_workers_g epoch: %d",pxs_workers_g[i]->cur_epoch);
     pxs_workers_g[i]->is_leader = 1;
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
@@ -558,11 +559,16 @@ void stuff_todo_learner_upgrade(){
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
+  //Log_info("sync the new epoch:%d", epoch);
   es->state_unlock();
-  sync_callbacks_for_new_leader();
   //send_sync_logs(epoch); // SWH: pull and update potentially missing logs: sync_commit
   send_no_ops_to_all_workers(epoch);
   send_no_ops_for_mark(epoch);
+  vector<thread> threads;
+  for(int i=0; i<pxs_workers_g.size(); i++) {
+    pxs_workers_g[i]->WaitForNoops();
+  }
+  sync_callbacks_for_new_leader();
 }
 
 void stuff_todo_leader_election(){
@@ -647,7 +653,7 @@ void* electionMonitor(void* arg){
     }
     es->state_unlock();
     stuff_todo_leader_election();
-    leader_callback_();
+    leader_callback_(0);
   }
   pthread_exit(nullptr);
   return nullptr;
@@ -703,7 +709,7 @@ void* heartbeatMonitor2(void* arg) {
     if (counter>5) { // reach threshold to trigger a failover
      Config::GetConfig()->UpgradeFromLearnerToLeader();
      stuff_todo_learner_upgrade();
-     leader_callback_(); // notify the learner that you're the new leader
+     leader_callback_(0); // notify the learner that you're the new leader
      sleep(1000);
      break;
     }

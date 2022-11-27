@@ -589,6 +589,7 @@ private:
 
   rrr::Mutex finish_mutex{};
   rrr::CondVar finish_cond{};
+  bool noops_received=false;
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
   std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> callback_par_id_return_ = nullptr;
@@ -649,6 +650,7 @@ public:
   void ShutDown();
   void Next(int,shared_ptr<Marshallable>);
   void WaitForSubmit();
+  void WaitForNoops();
   void IncSubmit();
   void BulkSubmit(const vector<shared_ptr<Coordinator>>&);
   void AddAccept(shared_ptr<Coordinator>);
@@ -747,6 +749,7 @@ public:
 
   int set_epoch(int val = -1){
     if(val == -1){
+      //Log_info("XXXXX current default epoch %d", cur_epoch);
       return ++cur_epoch;
     } else{
       cur_epoch = val;
