@@ -232,7 +232,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
         break;
       }
       // SWH: (tune it) it's only required for the leader election, it's ok if the leader is not changed
-      //Prepare();
+      Prepare();
       if(!in_submission_){
         break;
       }
@@ -351,6 +351,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;
+        Log_info("I can't believe this");
         return;
     } else {
         verify(0);

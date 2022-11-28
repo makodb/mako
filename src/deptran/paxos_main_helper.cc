@@ -43,8 +43,8 @@ static std::map<std::string,long double> timer;
 
 function<void(int)> leader_callback_{};
 
-std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> leader_replay_cb;
-// std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>> follower_replay_cb{};
+std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)>> leader_replay_cb;
+// std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)>> follower_replay_cb{};
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
@@ -328,7 +328,7 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
     }
 }
 
-void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, 
+void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> cb, 
                                                                              uint32_t par_id) {
     // follower_replay_cb[par_id] = cb;
     if(es->machine_id != 0){
@@ -355,7 +355,7 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
     }
 }
 
-void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb, 
+void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> cb, 
                                        uint32_t par_id) {
     leader_replay_cb[par_id] = cb;
     if(es->machine_id == 0){
@@ -568,6 +568,7 @@ void stuff_todo_learner_upgrade(){
   for(int i=0; i<pxs_workers_g.size(); i++) {
     pxs_workers_g[i]->WaitForNoops();
   }
+  //Log_info("sync_callbacks for the new leader");
   sync_callbacks_for_new_leader();
 }
 
@@ -707,9 +708,10 @@ void* heartbeatMonitor2(void* arg) {
     usleep(1*1000); // 1 ms
     counter = ret>0? counter+1: 0;
     if (counter>5) { // reach threshold to trigger a failover
+     leader_callback_(0); // call register_leader_election_callback
      Config::GetConfig()->UpgradeFromLearnerToLeader();
      stuff_todo_learner_upgrade();
-     leader_callback_(0); // notify the learner that you're the new leader
+     leader_callback_(2);
      sleep(1000);
      break;
     }
@@ -725,11 +727,11 @@ int setup2(int action){  // action == 0 is default, action == 1 is forced to be 
   }
   if(action == 0 && es->machine_id == 0){
     es->set_state(1);
-    es->set_epoch(2);
+    //es->set_epoch(2);
     es->set_leader(0);
     for(int i = 0; i < pxs_workers_g.size(); i++){
       pxs_workers_g[i]->is_leader = 1;
-      pxs_workers_g[i]->cur_epoch = 2;
+      //pxs_workers_g[i]->cur_epoch = 2;
     }
   } else{
     es->set_state(0);

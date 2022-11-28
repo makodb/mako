@@ -592,7 +592,7 @@ private:
   bool noops_received=false;
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
-  std::function<std::vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> callback_par_id_return_ = nullptr;
+  std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> callback_par_id_return_ = nullptr;
   vector<Coordinator*> created_coordinators_{};
   vector<shared_ptr<Coordinator>> created_coordinators_shrd{};
   struct timeval t1;
@@ -624,7 +624,7 @@ public:
   base::ThreadPool* hb_thread_pool_g = nullptr;
 
   Config::SiteInfo* site_info_ = nullptr;
-  std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> un_replay_logs_ ;  // latest_commit_id, status, len, log
+  std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> un_replay_logs_ ;  // latest_commit_id, status, len, log
   Frame* rep_frame_ = nullptr;
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
@@ -675,7 +675,7 @@ public:
   void Submit(const char*, int, uint32_t);
   void register_apply_callback(std::function<void(const char*, int)>);
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
-  void register_apply_callback_par_id_return(std::function<vector<uint64_t>(const char*&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)>);
+  void register_apply_callback_par_id_return(std::function<vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)>);
   rrr::PollMgr * GetPollMgr(){
       return svr_poll_mgr_;
   }

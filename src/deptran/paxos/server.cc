@@ -413,6 +413,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         es->set_leader(req_leader);
         es->state_unlock();
         auto instance = GetInstance(slot_id);
+        Log_info("XXXX: we insert an instance:%d",slot_id);
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
@@ -622,7 +623,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           max_executed_slot_=id;//SWH:(double-check)
           n_commit_++;
       }else{ // SWH: (TODO) no need to consider leader election at this moment
-        //Log_info("multi-paxos par-2:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
+        Log_info("multi-paxos par-2:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
       }
    }
   for(int i = 0; i < commit_exec.size(); i++){

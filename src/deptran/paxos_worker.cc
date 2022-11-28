@@ -103,6 +103,7 @@ void PaxosWorker::SetupBase() {
 
 
 void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+  Log_info("we commit a log, slot_id:%d", slot_id);
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
       auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
@@ -118,6 +119,7 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
          callback_par_id_return_(log, 
                                  len, 
                                  site_info_->partition_id_,
+                                 slot_id,
                                  un_replay_logs_).swap(latest_commit_id_v);
          //Log_info("XXXXX: partition_id: %d, id: %d, proc_name: %s, role: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
          //Log_info("received a message: %d, latest_commit_id_v.size: %d", sp_log_entry.length, latest_commit_id_v.size());
@@ -131,21 +133,23 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
              // SWH: we can remove it later and use shared_ptr
              char *dest = (char *)malloc(len) ;
              memcpy(dest, log, len) ;
-             un_replay_logs_.push(std::make_tuple(latest_commit_id_v, status, len, (const char*)dest)) ;
+             un_replay_logs_.push(std::make_tuple(latest_commit_id_v, slot_id, status, len, (const char*)dest)) ;
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
          } else if (status == 5) {
+            //Log_info("update the no-ops, par_id:%d",site_info_->partition_id_);
             noops_received=true;
          }
       } else {
         // the ending signal
         const char *log = sp_log_entry.log_entry.c_str() ;
-        callback_par_id_return_(log, len, site_info_->partition_id_, un_replay_logs_) ;
+        callback_par_id_return_(log, len, site_info_->partition_id_, slot_id, un_replay_logs_) ;
       }
 
       // if the leader, we forward the cmd to the learner
       if (es_pw->cur_state==1&&site_info_->proc_name.compare("learner")!=0) {
        auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0); //SWH: (to fix), slot_id is not accruate
+       Log_info("we want to forward slot_id:%d", slot_id);
        coord->commo_->ForwardToLearner(site_info_->partition_id_,
                                        slot_id,
                                        ((CoordinatorMultiPaxos*)coord)->curr_ballot_,
@@ -153,6 +157,7 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
                                        [&](uint64_t slot, ballot_t ballot) {
                                          //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
                                        });
+       usleep(100*1000);//sleep 100ms
       }
     } else {
       verify(0);
@@ -668,7 +673,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  //Log_info("in the _submit, par_id:%d, we open the slot: %d", site_info_->partition_id_, x);
+  Log_info("in the _submit, par_id:%d, we open the slot: %d", site_info_->partition_id_, x);
   coord->set_slot(x);
   coord->assignCmd(sp_m);
   //Log_info("PaxosWorker: job submitted for slot %d, par_id: %d, slot_id: %d, addr: %p", x, coord->par_id_, coord->slot_id_, (void*)coord);
@@ -717,7 +722,7 @@ void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *
                                            std::placeholders::_2));
 }
 
-void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint64_t>(const char *&, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, const char *>> &)> cb) {
+void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint64_t>(const char *&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> cb) {
     this->callback_par_id_return_ = cb;
     verify(rep_sched_ != nullptr);
     rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
