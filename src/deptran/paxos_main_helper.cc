@@ -58,6 +58,15 @@ int get_epoch(){
   return x;
 }
 
+void set_epoch() {
+  auto x = get_epoch();
+  es->set_epoch();
+  Log_info("epoch change from %d to %d", x, es->get_epoch());
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    pxs_workers_g[i]->cur_epoch = es->get_epoch();
+  }
+}
+
 void check_current_path() {
     auto path = boost::filesystem::current_path();
     Log_info("PWD : %s", path.string().c_str());
@@ -563,13 +572,12 @@ void stuff_todo_learner_upgrade(){
   es->state_unlock();
   //send_sync_logs(epoch); // SWH: pull and update potentially missing logs: sync_commit
   send_no_ops_to_all_workers(epoch);
+  sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
   send_no_ops_for_mark(epoch);
   vector<thread> threads;
   for(int i=0; i<pxs_workers_g.size(); i++) {
     pxs_workers_g[i]->WaitForNoops();
   }
-  //Log_info("sync_callbacks for the new leader");
-  sync_callbacks_for_new_leader();
 }
 
 void stuff_todo_leader_election(){
