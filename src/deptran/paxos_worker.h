@@ -292,12 +292,17 @@ class SyncLogResponse : public Marshallable {
         m << *sync_data[i];
       }
       m << (int32_t)missing_slots.size();
-      for(int i = 0; i < missing_slots.size(); i++){
+      //int a=0;
+      for(int i = 0; i < (int32_t)missing_slots.size(); i++){
+        //a+=1;
+        //Log_info("it has an error here-2:i-size:%d,idx:%d,size:%d,>:%d",
+        //            (int32_t)missing_slots[i].size(), i,missing_slots.size(),i<missing_slots.size());
         m << (int32_t)missing_slots[i].size();
-        for(int j = 0; j < missing_slots[i].size(); j++){
+        for(int j = 0; j < (int32_t)missing_slots[i].size(); j++){
           m << missing_slots[i][j];
         }
       }
+      //Log_info("it has an error here-2:%d",a);
     }
 
     Marshal& FromMarshal(Marshal& m) override {

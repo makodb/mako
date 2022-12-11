@@ -142,7 +142,16 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
                       valid,
                       response,
                       std::bind(&rrr::DeferredReply::reply, defer));
-    //defer->reply();
+  //  auto rpx = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
+  //   auto xx = (int32_t)rpx->missing_slots.size();
+  //   Log_info("received a OnSyncLog2,xxx: %d",xx);
+  //   for(int i = 0; i < rpx->missing_slots.size(); i++){
+  //      Log_info("yy2: %d", (int32_t)rpx->missing_slots[i].size());
+  //      for(int j = 0; j < rpx->missing_slots[i].size(); j++){
+  //         Log_info("yy2 a OnSyncLog2,xxx: %d",j);
+  //      }
+  //   }
+    defer->reply();
   });
 
 }

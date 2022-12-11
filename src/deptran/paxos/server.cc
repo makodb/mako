@@ -307,6 +307,15 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
                                i32* valid,
                                shared_ptr<SyncLogResponse> ret_cmd,
                                const function<void()> &cb){
+  // auto xx = (int32_t)ret_cmd->missing_slots.size();
+  // Log_info("received a OnSyncLog,xxx: %d",xx);
+  // for(int i = 0; i < ret_cmd->missing_slots.size(); i++){
+  //    Log_info("yy: %d", (int32_t)ret_cmd->missing_slots[i].size());
+  //    for(int j = 0; j < ret_cmd->missing_slots[i].size(); j++){
+  //       Log_info("yy2 a OnSyncLog,xxx: %d",j);
+  //    }
+  // }
+  //cb();
   auto bcmd = dynamic_pointer_cast<SyncLogRequest>(cmd);
   es->state_lock();
   if(bcmd->epoch < es->cur_epoch){
@@ -314,7 +323,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
     *valid = 0;
     *ballot = es->cur_epoch;
     es->state_unlock();
-    cb();
+    //cb();
     return;
   }
   es->state_unlock();
@@ -350,7 +359,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
     ret_cmd->sync_data.push_back(bp_sp_md);
     ps->mtx_.unlock();
   }
-  cb();
+  //cb();
 }
 
 void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
@@ -413,7 +422,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
         es->set_leader(req_leader);
         es->state_unlock();
         auto instance = GetInstance(slot_id);
-        Log_info("XXXX: we insert an instance:%d",slot_id);
+        //Log_info("InAccept insert an instance, par_id:%d, epoch:%d, slot_id:%d",partition_id_, cur_epoch, slot_id);
         //verify(instance->max_ballot_accepted_ < ballot_id);
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
@@ -618,12 +627,12 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
       if (next_instance->committed_cmd_) {
           commit_exec.push_back(std::make_pair(id,next_instance));
           //if(req_leader >= 0)
-		      //  Log_info("multi-paxos par:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
+		      //Log_info("PaxosServer multi-paxos submit, par_id:%d, epoch:%d, executed slot %ld in range[%ld-%ld]", partition_id_, cur_epoch, id,tmpx,max_committed_slot_);
           //max_executed_slot_++;
-          max_executed_slot_=id;//SWH:(double-check)
+          max_executed_slot_=id;
           n_commit_++;
-      }else{ // SWH: (TODO) no need to consider leader election at this moment
-        Log_info("multi-paxos par-2:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
+      }else{
+        Log_info("ERROR multi-paxos par-2:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
       }
    }
   for(int i = 0; i < commit_exec.size(); i++){

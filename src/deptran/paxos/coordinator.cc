@@ -231,8 +231,7 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
       if(phase_ > 3){
         break;
       }
-      // SWH: (tune it) it's only required for the leader election, it's ok if the leader is not changed
-      Prepare();
+      //Prepare();
       if(!in_submission_){
         break;
       }

@@ -404,7 +404,7 @@ static tp endTime;
 static bool debug = false;
 void add_log_to_nc(const char* log, int len, uint32_t par_id) {
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
-  //Log_info("add_log_to_nc, len:%d, par_id:%d, es->mid:%d, isLeader:%d",len,par_id,es->machine_id, pxs_workers_g[par_id]->is_leader);
+  Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader);
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
 	     Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
@@ -418,10 +418,11 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id) {
 	// return;
   // }
   // in our project, one worker thread per partition, so no lock required
-	//l_.lock();
+  // but it is not true for the loader
+	l_.lock();
 	len = len;
 	add_log_without_queue((char*)log, len, par_id);
-	//l_.unlock();
+	l_.unlock();
 }
 
 void* PollSubQNc(void* arg){
@@ -575,9 +576,12 @@ void stuff_todo_learner_upgrade(){
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
   send_no_ops_for_mark(epoch);
   vector<thread> threads;
-  for(int i=0; i<pxs_workers_g.size(); i++) {
-    pxs_workers_g[i]->WaitForNoops();
-  }
+  // SWH: fix it
+  // for(int i=0; i<pxs_workers_g.size(); i++) {
+  //   Log_info("wait for noops: %d", i);
+  //   pxs_workers_g[i]->WaitForNoops();
+  //   Log_info("wait for noops: %d (DONE)", i);
+  // }
 }
 
 void stuff_todo_leader_election(){
