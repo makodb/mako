@@ -576,12 +576,11 @@ void stuff_todo_learner_upgrade(){
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
   send_no_ops_for_mark(epoch);
   vector<thread> threads;
-  // SWH: fix it
-  // for(int i=0; i<pxs_workers_g.size(); i++) {
-  //   Log_info("wait for noops: %d", i);
-  //   pxs_workers_g[i]->WaitForNoops();
-  //   Log_info("wait for noops: %d (DONE)", i);
-  // }
+  for(int i=0; i<pxs_workers_g.size(); i++) {
+    Log_info("wait for noops: %d", i);
+    pxs_workers_g[i]->WaitForNoops();
+    Log_info("wait for noops(DONE),par_id: %d", i);
+  }
 }
 
 void stuff_todo_leader_election(){

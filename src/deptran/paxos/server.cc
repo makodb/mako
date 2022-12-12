@@ -632,7 +632,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           max_executed_slot_=id;
           n_commit_++;
       }else{
-        Log_info("ERROR multi-paxos par-2:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
+        Log_info("ERROR multi-paxos par_id:%d executed slot %ld in range[%ld-%ld]", partition_id_, id,tmpx,max_committed_slot_);
       }
    }
   for(int i = 0; i < commit_exec.size(); i++){
