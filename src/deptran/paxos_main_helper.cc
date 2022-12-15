@@ -451,7 +451,7 @@ void* PollSubQNc(void* arg){
 
 shared_ptr<BulkPrepareLog> createBulkPrepare(int epoch, int machine_id){
   auto bulk_prepare = make_shared<BulkPrepareLog>();
-  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+  for(int i = 0; i < pxs_workers_g.size(); i++){
     int32_t par_id = pxs_workers_g[i]->site_info_->partition_id_;
     slotid_t slot = pxs_workers_g[i]->n_current+1;
     bulk_prepare->min_prepared_slots.push_back(make_pair(par_id, slot));
@@ -486,7 +486,7 @@ shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
   auto syncNoOpLog = make_shared<SyncNoOpRequest>();
   syncNoOpLog->leader_id = machine_id;
   syncNoOpLog->epoch = epoch;
-  for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+  for(int i = 0; i < pxs_workers_g.size(); i++){
     auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     pw->mtx_.lock();
     slotid_t min_slot = pw->max_executed_slot_+1;
@@ -569,9 +569,8 @@ void stuff_todo_learner_upgrade(){
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
-  //Log_info("sync the new epoch:%d", epoch);
   es->state_unlock();
-  //send_sync_logs(epoch); // SWH: pull and update potentially missing logs: sync_commit
+  //send_sync_logs(epoch); // SWH: fix it later
   send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
   send_no_ops_for_mark(epoch);

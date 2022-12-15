@@ -427,7 +427,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
     }
 
     vector<shared_ptr<BulkPaxosCmd>> sync_cmds;
-    for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    for(int i = 0; i < pxs_workers_g.size(); i++){
       auto bp_cmd = make_shared<BulkPaxosCmd>();
       bp_cmd->leader_id = es_pw->machine_id;
       sync_cmds.push_back(bp_cmd);
@@ -438,7 +438,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       sync_cmds[x.first.first]->ballots.push_back(sync_log_req->epoch);
     }
     vector<shared_ptr<PaxosAcceptQuorumEvent>> events;
-    for(int i = 0; i < pxs_workers_g.size() - 1; i++){
+    for(int i = 0; i < pxs_workers_g.size(); i++){
       if(sync_cmds[i]->ballots.size() == 0)
         continue;
       //Log_info("Should receive some uncommitted slots here %d", i);

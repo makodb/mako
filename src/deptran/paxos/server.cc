@@ -676,7 +676,6 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
   }
   mtx_.unlock();
 
-  // SWH: double-check here
   // for(int i = 0; i < pxs_workers_g.size(); i++){
   //   PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
   //   ps->mtx_.lock();
