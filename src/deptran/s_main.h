@@ -24,7 +24,7 @@ void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
-void add_log_to_nc(const char*, int, uint32_t);
+void add_log_to_nc(const char*, int, uint32_t, int = 0);
 void wait_for_submit(uint32_t);
 void microbench_paxos_queue();
 void pre_shutdown_step();

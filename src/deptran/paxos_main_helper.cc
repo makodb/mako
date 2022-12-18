@@ -402,9 +402,9 @@ void add_time(std::string key, long double value,long double denom){
 static tp firstTime;
 static tp endTime;
 static bool debug = false;
-void add_log_to_nc(const char* log, int len, uint32_t par_id) {
+void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
-  Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader);
+  Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d, batch_size:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader, batch_size);
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
 	     Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
