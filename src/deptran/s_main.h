@@ -29,7 +29,7 @@ void wait_for_submit(uint32_t);
 void microbench_paxos_queue();
 void pre_shutdown_step();
 int get_epoch();
-void set_epoch();
+void set_epoch(int = -1);
 
 // auxiliary functions
 void worker_info_stats(size_t);

@@ -58,9 +58,13 @@ int get_epoch(){
   return x;
 }
 
-void set_epoch() {
+void set_epoch(int v) {
   auto x = get_epoch();
-  es->set_epoch();
+  if (v==-1) {
+    es->set_epoch();
+  } else {
+    es->set_epoch(v);
+  }
   Log_info("epoch change from %d to %d", x, es->get_epoch());
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
@@ -404,7 +408,7 @@ static tp endTime;
 static bool debug = false;
 void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
-  Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d, batch_size:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader, batch_size);
+  //Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d, batch_size:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader, batch_size);
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
 	     Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
@@ -475,7 +479,7 @@ shared_ptr<SyncLogRequest> createSyncLog(int epoch, int machine_id){
   for(int i = 0; i < pxs_workers_g.size(); i++){
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    slotid_t min_slot = ps->max_executed_slot_+1;
+    slotid_t min_slot = ps->max_committed_slot_+1;
     ps->mtx_.unlock();
     syncLog->sync_commit_slot.push_back(min_slot);
   }
@@ -557,7 +561,6 @@ void stuff_todo_learner_upgrade(){
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
-    //Log_info("current XXXXX pxs_workers_g epoch: %d",pxs_workers_g[i]->cur_epoch);
     pxs_workers_g[i]->is_leader = 1;
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
@@ -570,7 +573,7 @@ void stuff_todo_learner_upgrade(){
   }
   int epoch = es->get_epoch();
   es->state_unlock();
-  //send_sync_logs(epoch); // SWH: fix it later
+  send_sync_logs(epoch);
   send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
   send_no_ops_for_mark(epoch);

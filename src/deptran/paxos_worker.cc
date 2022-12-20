@@ -131,10 +131,11 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
          //Log_info("par_id: %d, append a log into un_replay_logs, size: %lld, status: %d, first[0]: %llu, received: %d", 
          //         site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
          if (status == 3) {
-             // SWH: we can remove it later and use shared_ptr
              char *dest = (char *)malloc(len) ;
              memcpy(dest, log, len) ;
              un_replay_logs_.push(std::make_tuple(latest_commit_id_v, slot_id, status, len, (const char*)dest)) ;
+             // SWH: it should work, since GetInstance always hold this object, this char* is always valid.
+             //un_replay_logs_.push(std::make_tuple(latest_commit_id_v, slot_id, status, len, (const char*)log)) ;
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
          } else if (status == 5) {
@@ -393,7 +394,8 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       es_pww->step_down(ballot);
     else{
       if(!done){
-        responses.push_back(dynamic_pointer_cast<SyncLogResponse>(md->sp_data_));
+        // SWH: (TODO) update syncLog response
+        //responses.push_back(dynamic_pointer_cast<SyncLogResponse>(md->sp_data_));
       } else{
         return;
       }
@@ -673,7 +675,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  //Log_info("in the _submit, par_id:%d, epoch:%d, open the slot: %d", site_info_->partition_id_, cur_epoch, x);
+  Log_info("in the add_log_to_nc(_submit), par_id:%d, epoch:%d, open the slot: %d", site_info_->partition_id_, cur_epoch, x);
   coord->set_slot(x);
   coord->assignCmd(sp_m);
   //Log_info("PaxosWorker: job submitted for slot %d, par_id: %d, slot_id: %d, addr: %p", x, coord->par_id_, coord->slot_id_, (void*)coord);
