@@ -407,7 +407,7 @@ static tp firstTime;
 static tp endTime;
 static bool debug = false;
 void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
-  pxs_workers_g[par_id]->election_state_lock.lock(); // local lock;
+  pxs_workers_g[par_id]->election_state_lock.lock();
   //Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d, batch_size:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader, batch_size);
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
@@ -421,8 +421,6 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   //    if(debug)
 	// return;
   // }
-  // in our project, one worker thread per partition, so no lock required
-  // but it is not true for the loader
 	l_.lock();
 	len = len;
 	add_log_without_queue((char*)log, len, par_id);

@@ -110,7 +110,7 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
       if(sp_log_entry.length == 0){
 	      Log_info("Recieved a zero length log");
       }
-      Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
+      //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
       //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
       if (len > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
@@ -675,7 +675,8 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  Log_info("in the add_log_to_nc(_submit), par_id:%d, epoch:%d, open the slot: %d", site_info_->partition_id_, cur_epoch, x);
+  //Log_info("in the add_log_to_nc(_submit), par_id:%d, epoch:%d, open the slot: %d", site_info_->partition_id_, cur_epoch, x);
+  //Log_info("par_id[%d] open slot:%d",site_info_->partition_id_,x);
   coord->set_slot(x);
   coord->assignCmd(sp_m);
   //Log_info("PaxosWorker: job submitted for slot %d, par_id: %d, slot_id: %d, addr: %p", x, coord->par_id_, coord->slot_id_, (void*)coord);

@@ -3,6 +3,7 @@ config={
     # base_{shardIdx}
     "base_0": [(101, 7001),(201, 7101),(301, 7201),(401, 7301)],
     "base_1": [(101, 8001),(201, 8101),(301, 8201),(401, 8301)],
+    "base_2": [(101, 9001),(201, 9101),(301, 9201),(401, 9301)],
 }
 def generate_shard(shardIdx):
     template="template_paxos1_shardidx{sIdx}.yml".format(sIdx=shardIdx)
@@ -39,5 +40,5 @@ def generate_shard(shardIdx):
 
 
 if __name__ == "__main__":
-    for shardIdx in range(2):
+    for shardIdx in range(3):
         generate_shard(shardIdx)
