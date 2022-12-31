@@ -394,8 +394,8 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       es_pww->step_down(ballot);
     else{
       if(!done){
-        // SWH: (TODO) update syncLog response
-        //responses.push_back(dynamic_pointer_cast<SyncLogResponse>(md->sp_data_));
+        auto x = dynamic_pointer_cast<SyncLogResponse>(md->sp_data_);
+        responses.emplace_back(x);
       } else{
         return;
       }

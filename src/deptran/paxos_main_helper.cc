@@ -295,7 +295,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
 
 int shutdown_paxos() {
     // kill the election thread
-    //es->running = false;
+    es->running = false;
 
     for(auto kv : timer){
    	 std::cout << "Key=" << kv.first << " Val=" << kv.second/1000.0 << std::endl;

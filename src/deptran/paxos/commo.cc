@@ -238,6 +238,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
   vector<Future*> fus;
   for (auto& p : proxies) {
     if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
+    if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
@@ -295,7 +296,8 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
   for (auto& p : proxies) {
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
+    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
+    if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
