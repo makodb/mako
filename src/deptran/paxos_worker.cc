@@ -110,7 +110,7 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
       if(sp_log_entry.length == 0){
 	      Log_info("Recieved a zero length log");
       }
-      //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
+      Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
       //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
       if (len > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
@@ -134,7 +134,6 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
              char *dest = (char *)malloc(len) ;
              memcpy(dest, log, len) ;
              un_replay_logs_.push(std::make_tuple(latest_commit_id_v, slot_id, status, len, (const char*)dest)) ;
-             // SWH: it should work, since GetInstance always hold this object, this char* is always valid.
              //un_replay_logs_.push(std::make_tuple(latest_commit_id_v, slot_id, status, len, (const char*)log)) ;
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;

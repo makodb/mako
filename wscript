@@ -287,6 +287,7 @@ def _enable_debug(conf):
             conf.env.append_value("CXXFLAGS", "-Wall -pthread -O0 -DNDEBUG -g "
                 "-ggdb -DLOG_INFO -rdynamic -fno-omit-frame-pointer".split())
         else:
+            #conf.env.append_value("CXXFLAGS", "-g -pthread -O2 -DNDEBUG -g -ggdb".split())
             conf.env.append_value("CXXFLAGS", "-g -pthread -O2 -DNDEBUG -DLOG_INFO".split())
 
 def _properly_split(args):

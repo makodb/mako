@@ -649,7 +649,7 @@ void PaxosServer::OnForwardToLeader(const rrr::i32& par_id,
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
                                     const function<void()> &cb) {
-  //Log_info("receive a message on the learner side: OnForwardToLeader, par_id:%d, slot: %d", par_id, slot);
+  // SWH: (TODO) might not hold -> modify ForwardToLearner to sync in paxos_worker
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   app_next_(slot,cmd);
@@ -677,8 +677,8 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
   }
   mtx_.unlock();
 
-  // for(int i = 0; i < pxs_workers_g.size(); i++){
-  //   PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
   //   ps->mtx_.lock();
   //   if(bcmd->sync_slots[i] <= ps->max_executed_slot_){
   //     Log_info("The sync slot is %d for partition %d and committed slot is %d", bcmd->sync_slots[i], i, ps->max_executed_slot_);
@@ -703,11 +703,11 @@ void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
   //         verify(0);
   //     }
   //   }
-  //   ps->max_committed_slot_ = ps->max_committed_slot_;
-  //   ps->max_executed_slot_ = ps->max_committed_slot_;
-  //   ps->cur_open_slot_ = ps->max_committed_slot_+1;
-  //   ps->mtx_.unlock();
-  // }
+    ps->max_committed_slot_ = bcmd->sync_slots[i];
+    ps->max_executed_slot_ = bcmd->sync_slots[i];
+    ps->cur_open_slot_ = bcmd->sync_slots[i]+1;
+    ps->mtx_.unlock();
+  }
 
   pxs_workers_g.back()->cur_epoch = cur_b;
 

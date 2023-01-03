@@ -65,7 +65,6 @@ void set_epoch(int v) {
   } else {
     es->set_epoch(v);
   }
-  Log_info("epoch change from %d to %d", x, es->get_epoch());
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
   }
@@ -491,7 +490,7 @@ shared_ptr<SyncNoOpRequest> createSyncNoOpLog(int epoch, int machine_id){
   for(int i = 0; i < pxs_workers_g.size(); i++){
     auto pw = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     pw->mtx_.lock();
-    slotid_t min_slot = pw->max_executed_slot_+1;
+    slotid_t min_slot = pw->max_executed_slot_;
     pw->mtx_.unlock();
     syncNoOpLog->sync_slots.push_back(min_slot);
   }
@@ -548,6 +547,7 @@ void sync_callbacks_for_new_leader(){
 void send_no_ops_for_mark(int epoch){
   string log = "no-ops:" + to_string(epoch);
   for(int i = 0; i < pxs_workers_g.size(); i++){
+    Log_info("send a noops:%s to par_id:%d", log.c_str(), i);
     add_log_to_nc(log.c_str(), log.size(), i);
   }
 }
@@ -563,7 +563,7 @@ void stuff_todo_learner_upgrade(){
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    ps->max_committed_slot_ = ps->max_committed_slot_learner_;
+    ps->max_committed_slot_ = ps->max_committed_slot_learner_+100;
     ps->max_executed_slot_ = ps->max_committed_slot_;
     ps->cur_open_slot_ = ps->max_committed_slot_+1;
     //Log_info("The last committed slot %d and executed slot %d and open %d and touched %d,i:%d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot, i);
@@ -719,6 +719,7 @@ void* heartbeatMonitor2(void* arg) {
     usleep(1*1000); // 1 ms
     counter = ret>0? counter+1: 0;
     if (counter>5) { // reach threshold to trigger a failover
+    Log_info("trigger an new leader");
      leader_callback_(0); // call register_leader_election_callback
      Config::GetConfig()->UpgradeFromLearnerToLeader();
      stuff_todo_learner_upgrade();

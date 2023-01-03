@@ -264,11 +264,13 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
                                   const std::function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k);
+  // not old leader, not new leader(old learner)
+  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n-1, n-1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
   for (auto& p : proxies) {
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
+    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
+    if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
