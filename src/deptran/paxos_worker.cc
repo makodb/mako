@@ -102,9 +102,25 @@ void PaxosWorker::SetupBase() {
 }
 
 
-void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+  int status=-1;
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
+      // forward the cmd to the learner
+      if (es_pw->cur_state==1 /* the leader or new leader */
+            && site_info_->proc_name.compare("learner")!=0 /* localhost */
+            && !noops_received /* if this entry is noops, forward it!*/ ) {
+        auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+        //Log_info("Paxos leader forward, par_id:%d, epoch:%d, slot_id:%d,len:%d",site_info_->partition_id_, cur_epoch, slot_id, len);
+        coord->commo_->ForwardToLearner(site_info_->partition_id_,
+                                       slot_id,
+                                       ((CoordinatorMultiPaxos*)coord)->curr_ballot_,
+                                       cmd,
+                                       [&](uint64_t slot, ballot_t ballot) {
+                                         //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
+                                       });
+      }
+
       auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
       int len = sp_log_entry.length;
       if(sp_log_entry.length == 0){
@@ -125,7 +141,7 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
          //Log_info("received a message: %d, latest_commit_id_v.size: %d", sp_log_entry.length, latest_commit_id_v.size());
         //  for (int i=0;i<latest_commit_id_v.size();i++)
         //   Log_info("  XXXX: i:%d,v:%d", i,latest_commit_id_v[i]);
-         int status = latest_commit_id_v[0] % 10;
+         status = latest_commit_id_v[0] % 10;
          latest_commit_id_v[0] = latest_commit_id_v[0] / 10;
          // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
          //Log_info("par_id: %d, append a log into un_replay_logs, size: %lld, status: %d, first[0]: %llu, received: %d", 
@@ -146,19 +162,6 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
         const char *log = sp_log_entry.log_entry.c_str() ;
         callback_par_id_return_(log, len, site_info_->partition_id_, slot_id, un_replay_logs_) ;
       }
-
-      // if the old leader, we forward the cmd to the learner
-      if (es_pw->cur_state==1&&site_info_->proc_name.compare("learner")!=0) {
-       auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-       //Log_info("Paxos leader forward, par_id:%d, epoch:%d, slot_id:%d,len:%d",site_info_->partition_id_, cur_epoch, slot_id, len);
-       coord->commo_->ForwardToLearner(site_info_->partition_id_,
-                                       slot_id,
-                                       ((CoordinatorMultiPaxos*)coord)->curr_ballot_,
-                                       cmd,
-                                       [&](uint64_t slot, ballot_t ballot) {
-                                         //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
-                                       });
-      }
     } else {
       verify(0);
     }
@@ -170,6 +173,7 @@ void PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
     //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
     finish_cond.bcast();
   }
+  return status;
 }
 
 void PaxosWorker::SetupService() {

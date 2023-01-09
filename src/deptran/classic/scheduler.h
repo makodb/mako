@@ -56,7 +56,7 @@ class SchedulerClassic: public TxLogServer {
 
   bool ExecuteAll(Tx &tx, TxnOutput &ret_output);
 
-  virtual void Next(int,shared_ptr<Marshallable>) override;
+  virtual int Next(int,shared_ptr<Marshallable>) override;
 
   int PrepareReplicated(TpcPrepareCommand& prepare_cmd);
   int CommitReplicated(TpcCommitCommand& commit_cmd);

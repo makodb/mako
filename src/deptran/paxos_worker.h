@@ -649,7 +649,7 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  void Next(int,shared_ptr<Marshallable>);
+  int Next(int,shared_ptr<Marshallable>);
   void WaitForSubmit();
   void WaitForNoops();
   void IncSubmit();

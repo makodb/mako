@@ -22,7 +22,7 @@ class TxLogServer {
   unordered_map<txid_t, mdb::Txn *> mdb_txns_{};
   unordered_map<txid_t, Executor *> executors_{};
 
-  function<void(int,shared_ptr<Marshallable>)> app_next_{};
+  function<int(int,shared_ptr<Marshallable>)> app_next_{};
   function<shared_ptr<vector<MultiValue>>(Marshallable&)> key_deps_{};
 
   shared_ptr<mdb::TxnMgr> mdb_txn_mgr_{};
@@ -150,11 +150,11 @@ class TxLogServer {
     return false;
   }
 
-  void RegLearnerAction(function<void(int,shared_ptr<Marshallable>)> learner_action) {
+  void RegLearnerAction(function<int(int,shared_ptr<Marshallable>)> learner_action) {
     app_next_ = learner_action;
   }
 
-  virtual void Next(int,shared_ptr<Marshallable> cmd) { verify(0); };
+  virtual int Next(int,shared_ptr<Marshallable> cmd) { verify(0); };
 
   // epoch related functions
   void TriggerUpgradeEpoch();

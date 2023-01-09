@@ -272,7 +272,7 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   return 0;
 }
 
-void SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
+int SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
   if (cmd.get()->kind_ == MarshallDeputy::CMD_TPC_PREPARE) {
     auto& c = dynamic_cast<TpcPrepareCommand&>(*cmd.get());
     PrepareReplicated(c);
@@ -282,6 +282,7 @@ void SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {
   } else {
     verify(0);
   }
+  return -1;
 }
 
 } // namespace janus

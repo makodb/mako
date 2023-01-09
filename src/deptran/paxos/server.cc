@@ -652,8 +652,11 @@ void PaxosServer::OnForwardToLeader(const rrr::i32& par_id,
   // SWH: (TODO) might not hold -> modify ForwardToLearner to sync in paxos_worker
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  app_next_(slot,cmd);
+  int status=app_next_(slot,cmd);
   cb();
+  if (status==5){// if noops
+    Log_info("We can stop here at this moment!!!however it will cause the coredump on the sender side");
+  }
 }
 
 void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
