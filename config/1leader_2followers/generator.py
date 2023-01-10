@@ -1,10 +1,19 @@
 
 config={
-    # base_{shardIdx}
     "base_0": [(101, 7001),(201, 7101),(301, 7201),(401, 7301)],
     "base_1": [(101, 8001),(201, 8101),(301, 8201),(401, 8301)],
     "base_2": [(101, 9001),(201, 9101),(301, 9201),(401, 9301)],
 }
+nshards=3
+map_ip=[{} for _ in range(nshards)]
+
+def loader():
+    for shardIdx in range(3):
+        file="../../../../bash/shard{shardIdx}.config".format(shardIdx=shardIdx)
+        for line in open(file, "r").readlines():
+            items=[e for e in line.split(" ") if e]
+            map_ip[shardIdx][items[0]]=items[1].strip()
+
 def generate_shard(shardIdx):
     template="template_paxos1_shardidx{sIdx}.yml".format(sIdx=shardIdx)
     base = config["base_"+str(shardIdx)]
@@ -13,7 +22,13 @@ def generate_shard(shardIdx):
         file_name="paxos{w_id}_shardidx{sIdx}.yml".format(w_id=w_id,sIdx=shardIdx)
         content = ""
         for line in open(template, "r").readlines():
-            content += line
+            skip=False
+            for p in ["localhost","p1","p2","learner"]:
+                if p in line:
+                    skip=True
+            
+            if not skip:
+                content += line
             if "server:" in line:
                 servers = ""
                 for i in range(w_id): 
@@ -34,11 +49,18 @@ def generate_shard(shardIdx):
                     processes += "  s{n3}: learner\n".format(n3=base[3][0]+i)
                 content += processes
 
+            for p in ["localhost","p1","p2","learner"]:
+                if p in line:
+                    line = line.replace("127.0.0.1", map_ip[shardIdx][p])
+                    content += line
+
         f = open(file_name, "w")
         f.write(content)
         f.close()
 
 
 if __name__ == "__main__":
+    loader()
+
     for shardIdx in range(3):
         generate_shard(shardIdx)
