@@ -126,7 +126,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
       if(sp_log_entry.length == 0){
 	      Log_info("Recieved a zero length log");
       }
-      Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
+      //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
       //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
       if (len > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
@@ -591,7 +591,7 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
 void PaxosWorker::WaitForNoops() {
   while(1){
     if(noops_received) break;
-    usleep(100);//0.1ms
+    sleep(0);
   }
 }
 void PaxosWorker::WaitForSubmit() {
