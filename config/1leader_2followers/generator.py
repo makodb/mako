@@ -3,12 +3,15 @@ config={
     "base_0": [(101, 7001),(201, 7101),(301, 7201),(401, 7301)],
     "base_1": [(101, 8001),(201, 8101),(301, 8201),(401, 8301)],
     "base_2": [(101, 9001),(201, 9101),(301, 9201),(401, 9301)],
+    "base_3": [(101, 7501),(201, 7601),(301, 7701),(401, 7801)],
+    "base_4": [(101, 8501),(201, 8601),(301, 8701),(401, 8801)],
+    "base_5": [(101, 9501),(201, 9601),(301, 9701),(401, 9801)],
 }
-nshards=3
+nshards=6
 map_ip=[{} for _ in range(nshards)]
 
 def loader():
-    for shardIdx in range(3):
+    for shardIdx in range(nshards):
         file="../../../../bash/shard{shardIdx}.config".format(shardIdx=shardIdx)
         for line in open(file, "r").readlines():
             items=[e for e in line.split(" ") if e]
@@ -62,5 +65,5 @@ def generate_shard(shardIdx):
 if __name__ == "__main__":
     loader()
 
-    for shardIdx in range(3):
+    for shardIdx in range(nshards):
         generate_shard(shardIdx)
