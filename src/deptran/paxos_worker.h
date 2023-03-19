@@ -691,6 +691,7 @@ public:
   std::recursive_mutex election_mutex{};
   pthread_t election_th_;
   pthread_t heartbeat_th_;
+  pthread_t heartbeat_th_checking_;
   bool running = true;
   int timeout = 1; // in seconds
   int heartbeat_timeout = 300; // in milliseconds
@@ -705,6 +706,9 @@ public:
   rrr::CondVar stuff_after_election_cond_{};
   timepoint lastseen = std::chrono::high_resolution_clock::now();
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
+
+  // weihai
+  timepoint heartbeat_seen = std::chrono::high_resolution_clock::now();
 
   //void operator=(const ElectionState &) = delete;
 
@@ -779,6 +783,10 @@ public:
     //if(val != 0)
 //	Log_info("Leader being set %d", val);
     leader_id = val;
+  }
+
+  void set_heartbeat_seen(){
+    heartbeat_seen = std::chrono::high_resolution_clock::now();
   }
 
   void set_lastseen(){

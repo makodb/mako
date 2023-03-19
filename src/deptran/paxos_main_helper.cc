@@ -16,6 +16,8 @@
 #include "s_main.h"
 #include "paxos/server.h"
 #include "network_client/network_impl.h"
+#include <time.h>
+#include <chrono>
 
 using namespace janus;
 using namespace network_client;
@@ -701,30 +703,56 @@ void* heartbeatMonitor(void* arg){
    return nullptr;
 }
 
-// learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
-void* heartbeatMonitor2(void* arg) {
+void* heartbeatBackground(void* arg) {
   rrr::PollMgr *pm = new rrr::PollMgr(1);
   rrr::Client* rpc_cli = new rrr::Client(pm);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
   std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
+  Log_info("start a heartbeatBackground, addr:%s",addr_port.c_str());
   while (rpc_cli->connect(addr_port.c_str())!=0) {
      usleep(100 * 1000); // retry to connect
   }
+
   ServerControlProxy *client_proxy = new ServerControlProxy(rpc_cli);
-  int counter=0;
   while (es->running) {
-    auto ret = client_proxy->server_heart_beat();
-    usleep(1*1000); // 1 ms
-    counter = ret>0? counter+1: 0;
-    if (counter>5) { // reach threshold to trigger a failover
-    Log_info("trigger an new leader");
+    size_t connected = client_proxy->server_heart_beat();
+    if (connected==0){
+      es->set_heartbeat_seen();
+    }
+    std::this_thread::sleep_for(10ms); // CAN'T run it too fast, otherwise error!
+  }
+  Log_info("heartbeatBackground is ended!");
+}
+
+// learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
+void* heartbeatMonitor2(void* arg) {
+  Log_info("start a heartbeatMonitor2");
+  time_t st = time(NULL);
+
+  std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
+
+  while (es->running) {
+    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
+    std::this_thread::sleep_for(3ms);
+    if (duration2.count()/1000.0/1000.0 > 35) { // if not received about 3 times = ~ 10ms
+     Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
+     // reach threshold to trigger a failover
+     // 5ms is far enough within the same data center, otherwise, several seconds across data-center
+     time_t end = time (NULL);
+     if (end - st > 25) {
+       Log_info("Let's stop it automatically without failover!!!");
+       exit(0);
+     }
+
+     Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
      leader_callback_(0); // call register_leader_election_callback
      Config::GetConfig()->UpgradeFromLearnerToLeader();
      stuff_todo_learner_upgrade();
      leader_callback_(2);
-     sleep(1000);
+     std::this_thread::sleep_for(std::chrono::seconds(100000));
      break;
     }
   }
@@ -751,8 +779,11 @@ int setup2(int action){  // action == 0 is default, action == 1 is forced to be 
     es->set_leader(0);
   }
   if (Config::GetConfig()->proc_name_.compare("learner")==0) {
-    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatMonitor2, nullptr);
+    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
     pthread_detach(es->heartbeat_th_);
+
+    Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
+    pthread_detach(es->heartbeat_th_checking_);
   }
   // Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   // pthread_detach(submit_poll_th_);

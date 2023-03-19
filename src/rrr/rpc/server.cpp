@@ -1,6 +1,7 @@
 #include <string>
 #include <sstream>
 #include <memory>
+#include <cerrno>
 
 #include <sys/select.h>
 #include <sys/un.h>
@@ -498,8 +499,15 @@ ServerListener::ServerListener(Server* server, string addr) {
     }
 
     const int yes = 1;
-    verify(setsockopt(server_sock_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
-    verify(setsockopt(server_sock_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
+    if (setsockopt(server_sock_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) != 0) {
+      Log_info("errno: %d, msg: %s, addr: %s", errno, strerror(errno), addr.c_str());
+      verify(0);
+    }
+
+    if (setsockopt(server_sock_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) != 0) {
+      Log_info("errno: %d, msg: %s, addr: %s", errno, strerror(errno), addr.c_str());
+      verify(0);
+    }
 
     if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
       break;
