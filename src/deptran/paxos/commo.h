@@ -12,6 +12,11 @@ class MultiPaxosCommo : public Communicator {
  public:
   MultiPaxosCommo() = delete;
   MultiPaxosCommo(PollMgr*);
+
+  int proxy_batch_size = 4;
+  int current_proxy_batch_idx = 0;
+  bool is_broadcast_syncLog = false;
+
   shared_ptr<PaxosPrepareQuorumEvent>
   BroadcastPrepare(parid_t par_id,
                    slotid_t slot_id,

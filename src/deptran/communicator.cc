@@ -11,21 +11,26 @@
 namespace janus {
 
 Communicator::Communicator(PollMgr* poll_mgr) {
+  Log_info("setup paxos communicator");
   vector<string> addrs;
   if (poll_mgr == nullptr)
     rpc_poll_ = new PollMgr(1);
   else
     rpc_poll_ = poll_mgr;
   auto config = Config::GetConfig();
+  // create more client per server
+  int proxy_batch_size = 4;
   vector<parid_t> partitions = config->GetAllPartitionIds();
   for (auto& par_id : partitions) {
     auto site_infos = config->SitesByPartitionId(par_id);
     vector<std::pair<siteid_t, ClassicProxy*>> proxies;
-    for (auto& si : site_infos) {
-      auto result = ConnectToSite(si, std::chrono::milliseconds
-          (CONNECT_TIMEOUT_MS));
-      verify(result.first == SUCCESS);
-      proxies.push_back(std::make_pair(si.id, result.second));
+    for (int i=0; i<proxy_batch_size; i++) {
+      for (auto& si : site_infos) {
+        auto result = ConnectToSite(si, std::chrono::milliseconds
+            (CONNECT_TIMEOUT_MS));
+        verify(result.first == SUCCESS);
+        proxies.push_back(std::make_pair(si.id, result.second));
+      }
     }
     rpc_par_proxies_.insert(std::make_pair(par_id, proxies));
 
