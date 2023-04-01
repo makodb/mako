@@ -257,9 +257,8 @@ map<string, string> getHosts(std::string filename) {
 int get_outstanding_logs(uint32_t par_id) {
     for (auto& worker : pxs_workers_g) {
         if (worker->site_info_->partition_id_ == par_id){
-            //if(es->machine_id == 1) {  //  if leader
-            return (int)worker->n_tot - (int)worker->n_current ;
-            //}
+            auto ps = dynamic_cast<PaxosServer*>(worker->rep_sched_);
+            return (int)worker->n_tot - (int)ps->n_commit_ ;
         }
     }
     return -1;

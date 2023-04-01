@@ -13,7 +13,7 @@ class MultiPaxosCommo : public Communicator {
   MultiPaxosCommo() = delete;
   MultiPaxosCommo(PollMgr*);
 
-  int proxy_batch_size = 4;
+  int proxy_batch_size = 6;
   int current_proxy_batch_idx = 0;
   bool is_broadcast_syncLog = false;
 
