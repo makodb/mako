@@ -269,7 +269,7 @@ Future* Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   pending_fu_l_.lock();
   pending_fu_[fu->xid_] = fu;
   pending_fu_l_.unlock();
-  //Log_info("Starting a new request with rpc_id %ld", rpc_id); 
+  //Log_info("Starting a new request with rpc_id %ld,xid_:%llu", rpc_id,fu->xid_); 
   // check if the client gets closed in the meantime
   if (status_ != CONNECTED) {
     pending_fu_l_.lock();

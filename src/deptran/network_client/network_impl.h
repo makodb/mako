@@ -17,8 +17,8 @@ namespace network_client {
         NetworkClientServiceImpl() ;
         
         // YCSB++ benchmark
-        void txn_rmw(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
-        void txn_read(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;
+        void txn_rmw(const std::vector<int64_t>& _req, rrr::DeferredReply* defer) override;
+        void txn_read(const std::vector<int64_t>& _req, rrr::DeferredReply* defer) override;
         
         // TPC-C bencmark
         void txn_new_order(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) override;

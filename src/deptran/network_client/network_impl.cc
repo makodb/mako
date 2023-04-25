@@ -1,17 +1,27 @@
 #include "network_impl.h"
+#include <chrono>
+
+long long getCurrentTimeMillis2() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
 
 namespace network_client {
     NetworkClientServiceImpl::NetworkClientServiceImpl() {  }
 
-    void NetworkClientServiceImpl::txn_rmw(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) {
-        rmw_requests.push_back(_req);
+    void NetworkClientServiceImpl::txn_rmw(const std::vector<int64_t>& _req, rrr::DeferredReply* defer) {
+        //rmw_requests.push_back(_req);
+        if (counter_rmw%100==0)
+        std::cout<<"rpc to be received:"<<(getCurrentTimeMillis2() - _req.back())<<std::endl;
         counter_rmw += 1;
         defer->reply();
     }
 
-    void NetworkClientServiceImpl::txn_read(const std::vector<int32_t>& _req, rrr::DeferredReply* defer) {
-        read_requests.push_back(_req);
+    void NetworkClientServiceImpl::txn_read(const std::vector<int64_t>& _req, rrr::DeferredReply* defer) {
+        //read_requests.push_back(_req);
         counter_read += 1;
+        if (counter_read%100==0)
+        std::cout<<"rpc to be received:"<<getCurrentTimeMillis2() - _req.back()<<std::endl;
         defer->reply();
     }
 

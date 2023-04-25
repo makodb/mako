@@ -120,21 +120,35 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
   vector<Future*> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
+
+  //auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1,1);
+
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     if (Config::GetConfig()->SiteById(p.first).role!=2) continue; 
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
-     fuattr.callback = [cb] (Future* fu) {
+     fuattr.callback = [/*e, */cb] (Future* fu) {
         uint64_t slot;
         ballot_t ballot;
         fu->get_reply() >> slot >> ballot;
         cb(slot, ballot);
+        //e->FeedResponse(1);
       };
      MarshallDeputy md(cmd);
      auto f = proxy->async_ForwardToLearnerServer(par_id, slot, ballot, md, fuattr);
      Future::safe_release(f);
+
+    // auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
+    // if (Config::GetConfig()->SiteById(p.first).role!=2) continue; 
+    //  auto proxy = (MultiPaxosProxy*) p.second;
+    //  MarshallDeputy md(cmd);
+    //  uint64_t *slotr;
+    //  ballot_t *ballotr;
+    //  proxy->ForwardToLearnerServer(par_id, slot, ballot, md, slotr, ballotr);
+    //  cb(*slotr, *ballotr);
   }
+  //e->Wait();
 }
 
 void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,
@@ -336,10 +350,10 @@ shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
                                   shared_ptr<Marshallable> cmd,
                                   const std::function<void(ballot_t, int)>& cb) {
-  verify(0);                                  
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k);
+  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1, 1);
+  e->FeedResponse(1);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
   // int cur_batch_idx = current_proxy_batch_idx;
@@ -370,16 +384,15 @@ shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
                                  const function<void(ballot_t, int)>& cb) {
+  //Log_info("the BroadcastAccept, par_id:%d",par_id);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
   vector<Future*> fus;
-  //Log_info("Sending bulk accept for some slot");
-  //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
-  //Log_info("paxos commo bulkaccept: length proxies %d, current_proxy_batch_idx:%d", proxies.size(),cur_batch_idx);
+  //Log_info("cur_batch_idx:%d",cur_batch_idx);
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
@@ -390,14 +403,14 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
       i32 valid;
       i32 ballot;
       fu->get_reply() >> ballot >> valid;
+       // it's possible during failure because the client can receive reponse even the distant server shutdowns
       if (!valid)
-        Log_info("Accept response received from %d site", st);
+        Log_debug("Accept invalid response received from %d site", st);
       cb(ballot, valid);
       e->FeedResponse(valid);
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    //Log_info("Sending bulk accept for some slot");
     auto f = proxy->async_BulkAccept(md, fuattr);
     Future::safe_release(f);
   }
@@ -418,21 +431,21 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-        if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
-        auto proxy = (MultiPaxosProxy*) p.second;
-        FutureAttr fuattr;
-        fuattr.callback = [e, cb] (Future* fu) {
-          i32 valid;
-          i32 ballot;
-          fu->get_reply() >> ballot >> valid;
-          cb(ballot, valid);
-          e->FeedResponse(valid);
-        };
-        MarshallDeputy md(cmd);
-        auto f = proxy->async_BulkDecide(md, fuattr);
-        Future::safe_release(f);
-    }
-    return e;
+    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
+    auto proxy = (MultiPaxosProxy*) p.second;
+    FutureAttr fuattr;
+    fuattr.callback = [e, cb] (Future* fu) {
+      i32 valid;
+      i32 ballot;
+      fu->get_reply() >> ballot >> valid;
+      cb(ballot, valid);
+      e->FeedResponse(valid);
+    };
+    MarshallDeputy md(cmd);
+    auto f = proxy->async_BulkDecide(md, fuattr);
+    Future::safe_release(f);
+  }
+  return e;
 }
 
 } // namespace janus

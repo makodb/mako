@@ -4,6 +4,8 @@
 #include "coordinator.h"
 #include "commo.h"
 #include "paxos_worker.h"
+#include <cstdlib>
+#include <ctime>
 
 namespace janus {
 
@@ -45,11 +47,6 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
 void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
                                        const function<void()>& func,
                                        const function<void()>& exe_callback) {
-    /*if (!IsLeader()) {
-        Log_fatal("i am not the leader; site %d; locale %d",
-                  frame_->site_info_->id, loc_id_);
-    }*/
-    //std::lock_guard<std::recursive_mutex> lock(mtx_);
     verify(!in_submission_);
     in_submission_ = true;
     cmd_ = cmd;
@@ -128,6 +125,8 @@ void CoordinatorMultiPaxos::Accept() {
                 "par_id_: %lx, slot_id: %llx",
             par_id_, slot_id_);
   auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
+  //int num = rand() % 11 + 40;
+  //usleep(num*1000);
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     committed_ = true;
@@ -227,11 +226,10 @@ void BulkCoordinatorMultiPaxos::GotoNextPhase() {
     verify(1);
 
     if(current_phase == Phase::INIT_END){
-      //Log_info("In prepare mode");
       if(phase_ > 3){
         break;
       }
-      //Prepare();
+      //Prepare();  // not necessary for the prepare phase
       if(!in_submission_){
         break;
       }
@@ -323,13 +321,8 @@ void BulkCoordinatorMultiPaxos::Prepare() {
 }
 
 void BulkCoordinatorMultiPaxos::Accept() {
-    //std::lock_guard<std::recursive_mutex> lock(mtx_);
-    //committed_ = true;
-    //return;
     in_accept = true;
     auto cmd_temp1 = dynamic_pointer_cast<BulkPaxosCmd>(cmd_);
-    //Log_info("Sending paxos accept request for slot %d, ballot: %d, par_id:%d", cmd_temp1->slots[0], cmd_temp1->ballots[0], par_id_);
-    //Log_info("Accept: some slot is committed");
     if(!in_submission_){
       return;
     }
@@ -337,11 +330,11 @@ void BulkCoordinatorMultiPaxos::Accept() {
     auto sp_quorum = commo()->BroadcastBulkAccept(par_id_, cmd_, [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_accept)
 	       return;
-      if(!valid){
-	         verify(0);
-        ess_cc->step_down(ballot);
-        this->in_submission_ = false;
-      }
+      // if(!valid){
+	    //      verify(0);
+      //   ess_cc->step_down(ballot);
+      //   this->in_submission_ = false;
+      // }
     });
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
@@ -350,7 +343,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
         committed_ = true;
     } else if (sp_quorum->No()) {
         in_submission_ = false;
-        Log_info("I can't believe this");
+        Log_info("can't reach quorum on Accept phase");
         return;
     } else {
         verify(0);
@@ -359,9 +352,6 @@ void BulkCoordinatorMultiPaxos::Accept() {
 }
 
 void BulkCoordinatorMultiPaxos::Commit() {
-    //std::lock_guard<std::recursive_mutex> lock(mtx_);
-    //commit_callback_();
-    //return;
     if(!in_submission_){
       return;
     }

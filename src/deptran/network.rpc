@@ -5,8 +5,8 @@ abstract service NetworkClient {
     // a | b in the parameter
     // structured data
 
-    defer txn_rmw(vector<int32_t> _req);
-    defer txn_read(vector<int32_t> _req);
+    defer txn_rmw(vector<i64> _req);
+    defer txn_read(vector<i64> _req);
 
     // five transaction categories
     defer txn_new_order(vector<int32_t> _req);

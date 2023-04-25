@@ -186,12 +186,13 @@ void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
   for (auto& worker : pxs_workers_g) {  // submit a transaction
     if (worker->site_info_->partition_id_ == par_id){
+        // for the same partition, protect it with mutex
+        std::unique_lock<std::mutex> lock(worker->condition_mutex);
+        {
     	    worker->IncSubmit();
           worker->Submit(log,len, par_id);
-        // if(es->machine_id == 1){
-        //   Log_debug("Submitted on behalf on new leader %d", (int)worker->n_tot);
-        // }
           break;
+        }
       }
     }
 }
@@ -407,27 +408,25 @@ static tp firstTime;
 static tp endTime;
 static bool debug = false;
 void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
-  pxs_workers_g[par_id]->election_state_lock.lock();
   //Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d, batch_size:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader, batch_size);
+  //pxs_workers_g[par_id]->election_state_lock.lock();
   if(!pxs_workers_g[par_id]->is_leader){
     if(es->machine_id != 0)
 	     Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
-    pxs_workers_g[par_id]->election_state_lock.unlock();
+  //pxs_workers_g[par_id]->election_state_lock.unlock();
     return;
   }
-  pxs_workers_g[par_id]->election_state_lock.unlock();
+  //pxs_workers_g[par_id]->election_state_lock.unlock();
 
-  // if(es->machine_id == 1 || es->machine_id == 2) {
-  //    if(debug)
-	// return;
-  // }
-	l_.lock();
-	len = len;
+	// l_.lock();
+	// len = len;
 	add_log_without_queue((char*)log, len, par_id);
-	l_.unlock();
+	// l_.unlock();
 }
 
 void* PollSubQNc(void* arg){
+   Log_error("exit branch");
+   exit(1);
    while(true){
      std::this_thread::sleep_for(std::chrono::milliseconds(100));
      l_.lock();
@@ -567,6 +566,7 @@ void stuff_todo_learner_upgrade(){
     ps->max_committed_slot_ = ps->max_committed_slot_learner_+100;
     ps->max_executed_slot_ = ps->max_committed_slot_;
     ps->cur_open_slot_ = ps->max_committed_slot_+1;
+    ps->cur_epoch = es->get_epoch();
     //Log_info("The last committed slot %d and executed slot %d and open %d and touched %d,i:%d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot, i);
     ps->mtx_.unlock();
   }
@@ -991,13 +991,13 @@ void *nc_start_server(void *input) {
       sleep(1);
       if (c==40) break;
 
-      if (track_cputime) {
-        clockid_t cid;
-        int s = pthread_getcpuclockid(*ps, &cid);
-        if (s != 0)
-            std::cout << "error\n";
-        nc_pclock("sub threads thread CPU time:   ", cid);
-      }
+      // if (track_cputime) {
+      //   clockid_t cid;
+      //   int s = pthread_getcpuclockid(*ps, &cid);
+      //   if (s != 0)
+      //       std::cout << "error\n";
+      //   nc_pclock("sub threads thread CPU time:   ", cid);
+      // }
       
       /*
       std::cout << "received on par_id: " << std::to_string(((struct args*)input)->par_id) << "\n";

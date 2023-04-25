@@ -600,7 +600,7 @@ private:
   struct timeval t2;
 
 public:
-  std::atomic<int> n_current{0};
+  std::atomic<int> n_current{0};  // requests sent out
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};
   SubmitPool* submit_pool = nullptr;
@@ -630,6 +630,7 @@ public:
   TxLogServer* rep_sched_ = nullptr;
   Communicator* rep_commo_ = nullptr;
   std::recursive_mutex mtx_worker_submit{};
+  std::mutex condition_mutex;
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;

@@ -2,6 +2,8 @@
 #include "paxos/commo.h"
 #include "service.h"
 #include "chrono"
+#include <cstdlib>
+#include <ctime>
 
 namespace janus {
 // Paxos worker thread
@@ -104,14 +106,20 @@ void PaxosWorker::SetupBase() {
 
 int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   int status=-1;
+  auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
+  int len = sp_log_entry.length;
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
       // forward the cmd to the learner
-      if (es_pw->cur_state==1 /* the leader or new leader */
+      // if (es_pw->cur_state==0 /* the learner or follower */
+      //       && site_info_->proc_name.compare("p1")==0 /* localhost */
+      //       && !noops_received /* if this entry is noops, forward it!*/ ) {
+
+      if (es_pw->cur_state==1 /* the learner or follower */
             && site_info_->proc_name.compare("learner")!=0 /* localhost */
             && !noops_received /* if this entry is noops, forward it!*/ ) {
+        //Log_info("Paxos leader forward, par_id:%d, epoch:%d, slot_id:%d, len:%d",site_info_->partition_id_, cur_epoch, slot_id, len);
         auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
-        //Log_info("Paxos leader forward, par_id:%d, epoch:%d, slot_id:%d,len:%d",site_info_->partition_id_, cur_epoch, slot_id, len);
         coord->commo_->ForwardToLearner(site_info_->partition_id_,
                                        slot_id,
                                        ((CoordinatorMultiPaxos*)coord)->curr_ballot_,
@@ -297,37 +305,28 @@ void PaxosWorker::IncSubmit(){
 }
 
 void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
-    //Log_info("Obtaining bulk submit of size %d through coro", (int)entries.size());
-    //Log_debug("Current n_submit and n_current is %d %d", (int)n_submit, (int)n_current);
-    //marker:ansh use per thread stuff for optimization
     auto sp_cmd = make_shared<BulkPaxosCmd>();
     election_state_lock.lock();
     ballot_t send_epoch = this->cur_epoch;
     election_state_lock.unlock();
     sp_cmd->leader_id = es_pw->machine_id;
-    //Log_debug("Current reference count before submit : %d", sp_cmd.use_count());
     for(auto coo : entries){
         auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
         sp_cmd->slots.push_back(mpc.get()->slot_id_);
         sp_cmd->ballots.push_back(send_epoch);
         verify(mpc->cmd_ != nullptr);
-        //auto x = dynamic_pointer_cast<LogEntry>(mpc->cmd_);
-        //read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
         MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
         sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
-        //auto x = dynamic_pointer_cast<LogEntry>(md->sp_data_);
-       // read_log(x.get()->operation_test.get(), x.get()->length, "BulkSubmit");
     }
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
     _BulkSubmit(sp_m, entries.size());
-    Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
+    //Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
 }
 
 inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0){
     auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
     coord.get()->par_id_ = site_info_->partition_id_;
     coord.get()->loc_id_ = site_info_->locale_id;
-	  //Log_info("Submitting on behalf of new leader, bulkBatchCount: %d", cnt);
 
     coord.get()->BulkSubmit(sp_m, [this, cnt]() {
       this->n_current += cnt;
@@ -350,6 +349,8 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
     }
   });
   Log_info("BulkPrepare: waiting for response");
+  //int num =rand() % 11 + 40;
+  //usleep(num*1000);
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     Log_info("SendBulkPrepare: Leader election successfull");
@@ -491,6 +492,8 @@ int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
       }
     }
   });
+  //int num =rand() % 11 + 40;
+  //usleep(num*1000);
   sp_quorum->Wait();
   done = true;
   if(sp_quorum->Yes()){
@@ -625,7 +628,7 @@ void PaxosWorker::AddReplayEntry(Marshallable& entry){
 void* PaxosWorker::StartReplayRead(void* arg){
   PaxosWorker* pw = (PaxosWorker*)arg;
   while(!pw->stop_replay_flag){
-    sleep(1); // this is NOT used again, we sleep here for a cpu saving
+    sleep(10000); // this is NOT used again, we sleep here for a cpu saving
     Marshallable* p;
     auto res = pw->replay_queue.try_dequeue(p);
     if(!res)continue;
@@ -647,21 +650,18 @@ PaxosWorker::~PaxosWorker() {
 }
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
-  //Log_info("# of submit: %d", length);
   auto sp_cmd = make_shared<LogEntry>();
   if(!shared_ptr_apprch){
-    void(0);
-	  sp_cmd->log_entry = string(log_entry,length);
+    Log_error("exit branch");
+    exit(1);
+	  // sp_cmd->log_entry = string(log_entry,length);
   }else{
-    //sp_cmd->operation_ = (char*)string(log_entry,length).c_str();
-    //sp_cmd->operation_test = shared_ptr<char>((char*)string(log_entry,length).c_str());
 	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));
     memcpy(sp_cmd->operation_test.get(), log_entry, length);
   }
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);
-  //free((char*)log_entry);
 }
 
 inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
@@ -678,16 +678,12 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
   slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
-  //Log_info("in the add_log_to_nc(_submit), par_id:%d, epoch:%d, open the slot: %d", site_info_->partition_id_, cur_epoch, x);
-  //Log_info("par_id[%d] open slot:%d",site_info_->partition_id_,x);
   coord->set_slot(x);
   coord->assignCmd(sp_m);
-  //Log_info("PaxosWorker: job submitted for slot %d, par_id: %d, slot_id: %d, addr: %p", x, coord->par_id_, coord->slot_id_, (void*)coord);
   if(stop_flag != true) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
-    //Log_info("PaxosWorker: job submitted for slot %d", x);
     auto sp_job = std::make_shared<OneTimeJob>([this, curr2]() {
       this->BulkSubmit(curr2);
     });
