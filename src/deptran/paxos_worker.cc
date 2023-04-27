@@ -187,7 +187,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
 
 void PaxosWorker::SetupService() {
   std::string bind_addr = site_info_->GetBindAddress();
-  int n_io_threads = 1;
+  int n_io_threads = 1 ;
   svr_poll_mgr_ = new rrr::PollMgr(n_io_threads);
   if (rep_frame_ != nullptr) {
     services_ = rep_frame_->CreateRpcServices(site_info_->id,

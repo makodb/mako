@@ -19,7 +19,7 @@ Communicator::Communicator(PollMgr* poll_mgr) {
     rpc_poll_ = poll_mgr;
   auto config = Config::GetConfig();
   // create more client per server
-  int proxy_batch_size = 1;
+  int proxy_batch_size = 1 ;
   vector<parid_t> partitions = config->GetAllPartitionIds();
   for (auto& par_id : partitions) {
     auto site_infos = config->SitesByPartitionId(par_id);
