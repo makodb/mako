@@ -613,6 +613,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
           max_executed_slot_++;
           n_commit_++;
       }else{
+        //Log_info("wait for the id:%d, par_id:%d, max:%d", id, partition_id_, max_committed_slot_);
         // if (max_committed_slot_ - tmpx>20){
         //   max_executed_slot_++;
         //   n_commit_++;
@@ -633,7 +634,7 @@ void PaxosServer::OnForwardToLeader(const rrr::i32& par_id,
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
                                     const function<void()> &cb) {
-  // SWH: (TODO) might not hold -> modify ForwardToLearner to sync in paxos_worker
+  //Log_info("received slot:%d",slot);
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   int status=app_next_(slot,cmd);

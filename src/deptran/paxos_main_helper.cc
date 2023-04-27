@@ -741,8 +741,8 @@ void* heartbeatMonitor2(void* arg) {
      // reach threshold to trigger a failover
      // 5ms is far enough within the same data center, otherwise, several seconds across data-center
      time_t end = time (NULL);
-     if (end - st > 25) {
-       Log_info("Let's stop it automatically without failover!!!");
+     if (end - st > 35) {
+       Log_info("Let's stop it automatically without failover!!! time: %s", end-st);
        exit(0);
      }
 

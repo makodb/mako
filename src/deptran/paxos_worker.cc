@@ -106,19 +106,20 @@ void PaxosWorker::SetupBase() {
 
 int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
   int status=-1;
+  // if (site_info_->proc_name.compare("learner")==0){
+  //   Log_info("receive a slot_id:%d",slot_id);
+  // }
   auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
   int len = sp_log_entry.length;
+  //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
   if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
     if (this->callback_par_id_return_ != nullptr) {
       // forward the cmd to the learner
-      // if (es_pw->cur_state==0 /* the learner or follower */
-      //       && site_info_->proc_name.compare("p1")==0 /* localhost */
-      //       && !noops_received /* if this entry is noops, forward it!*/ ) {
-
-      if (es_pw->cur_state==1 /* the learner or follower */
-            && site_info_->proc_name.compare("learner")!=0 /* localhost */
+      // if (site_info_->proc_name.compare("p1")==0 /* localhost */
+      //      && !noops_received /* if this entry is noops, forward it!*/ ) {
+      // ONLY localhost forward the request
+      if ((site_info_->proc_name.compare("p1")==0) /* localhost */
             && !noops_received /* if this entry is noops, forward it!*/ ) {
-        //Log_info("Paxos leader forward, par_id:%d, epoch:%d, slot_id:%d, len:%d",site_info_->partition_id_, cur_epoch, slot_id, len);
         auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
         coord->commo_->ForwardToLearner(site_info_->partition_id_,
                                        slot_id,
