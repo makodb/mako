@@ -205,6 +205,7 @@ class Config {
   SiteInfo* SiteByName(std::string name);
   int GetPartitionSize(parid_t par_id);
   void UpgradeFromLearnerToLeader();
+  void UpgradeFromP1ToLeader();
   vector<SiteInfo> GetMyServers() { return SitesByProcessName(this->proc_name_, SERVER); }
   vector<SiteInfo> GetMyClients() { return SitesByProcessName(this->proc_name_, CLIENT); }
   int NumClients() {

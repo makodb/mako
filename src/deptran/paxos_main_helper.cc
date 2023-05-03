@@ -50,7 +50,7 @@ std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, int, s
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
-
+const bool is_datacenter_failure = false;
 
 int get_epoch(){
   int x;
@@ -552,6 +552,27 @@ void send_no_ops_for_mark(int epoch){
   }
 }
 
+void upgrade_p1_to_leader() {
+  Config::GetConfig()->UpgradeFromP1ToLeader();
+  Log_info("upgrade_p1_to_leader invoke");
+  // change the machine_id
+  es->machine_id = 0;
+  for(int i = 0; i < pxs_workers_g.size(); i++){
+    pxs_workers_g[i]->election_state_lock.lock();
+    pxs_workers_g[i]->cur_epoch = es->get_epoch();
+    pxs_workers_g[i]->is_leader = 1;
+    pxs_workers_g[i]->election_state_lock.unlock();
+    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    ps->mtx_.lock();
+    ps->max_committed_slot_ = ps->max_committed_slot_learner_+100;
+    ps->max_executed_slot_ = ps->max_committed_slot_;
+    ps->cur_open_slot_ = ps->max_committed_slot_+1;
+    ps->cur_epoch = es->get_epoch();
+    ps->mtx_.unlock();
+  }
+  sync_callbacks_for_new_leader();
+}
+
 void stuff_todo_learner_upgrade(){
   es->state_lock();
   es->set_state(1);
@@ -723,10 +744,36 @@ void* heartbeatBackground(void* arg) {
     std::this_thread::sleep_for(10ms); // CAN'T run it too fast, otherwise error!
   }
   Log_info("heartbeatBackground is ended!");
+  return nullptr;
+}
+
+// between distant datacenters
+void* heartbeatBackground2(void* arg) {
+  rrr::PollMgr *pm = new rrr::PollMgr(1);
+  rrr::Client* rpc_cli = new rrr::Client(pm);
+  auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0); // tie to the partition0
+  // get the leader's host + port
+  auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
+  std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);
+  Log_info("start a heartbeatBackground2, addr:%s",addr_port.c_str());
+  while (rpc_cli->connect(addr_port.c_str())!=0) {
+     usleep(100 * 1000); // retry to connect
+  }
+
+  ServerControlProxy *client_proxy = new ServerControlProxy(rpc_cli);
+  while (es->running) {
+    size_t connected = client_proxy->server_heart_beat();
+    if (connected==0){
+      es->set_heartbeat_seen();
+    }
+    std::this_thread::sleep_for(30ms); // for the heartbeat between 2 distant datacenters
+  }
+  Log_info("heartbeatBackground2 is ended!");
+  return nullptr;
 }
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
-void* heartbeatMonitor2(void* arg) {
+void* heartbeatMonitor2(void* arg) { // happens on the learner
   Log_info("start a heartbeatMonitor2");
   time_t st = time(NULL);
 
@@ -755,10 +802,46 @@ void* heartbeatMonitor2(void* arg) {
      break;
     }
   }
+  return nullptr;
+}
+
+// this is for the datacenter failure, on the p1
+void* heartbeatMonitor3(void* arg) {  
+  Log_info("start a heartbeatMonitor3");
+  time_t st = time(NULL);
+
+  std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
+
+  while (es->running) {
+    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                  std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
+    std::this_thread::sleep_for(10ms);
+    // 1. detect
+    if (duration2.count()/1000.0/1000.0 > 1000) { // if not received about 10 times, datacenter failure very expensive
+     Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
+     // reach threshold to trigger a failover
+     // 5ms is far enough within the same data center, otherwise, several seconds across data-center
+     time_t end = time (NULL);
+     if (end - st > 35) {
+       Log_info("Let's stop it automatically without failover!!! time: %s", end-st);
+       exit(0);
+     }
+
+     // by default, p1 is the new leader datacenter, p2 is still the follower datacenter
+     // the synchrnization is equivalent to the leader election overhead
+     // synchronize the consensus between different datacenter
+     leader_callback_(4);  // call register_leader_election_callback
+
+     std::this_thread::sleep_for(std::chrono::seconds(100000));
+     break;
+    }
+  }
+  Log_info("end a heartbeatMonitor3");
+  return nullptr;
 }
 
 // to be called after setup 1; needed for multiprocess setup
-int setup2(int action){  // action == 0 is default, action == 1 is forced to be follower
+int setup2(int action, int shardIndex){  // action == 0 is default, action == 1 is forced to be follower
 
   auto server_infos = Config::GetConfig()->GetMyServers();
   if (server_infos.size() > 0) {
@@ -777,13 +860,26 @@ int setup2(int action){  // action == 0 is default, action == 1 is forced to be 
     es->set_epoch(0);
     es->set_leader(0);
   }
-  if (Config::GetConfig()->proc_name_.compare("learner")==0) {
-    Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
-    pthread_detach(es->heartbeat_th_);
+  if (is_datacenter_failure){
+    if (Config::GetConfig()->proc_name_.compare("p1")==0
+        && shardIndex == 0) {
+      Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground2, nullptr);
+      pthread_detach(es->heartbeat_th_);
 
-    Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
-    pthread_detach(es->heartbeat_th_checking_);
+      Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor3, nullptr);
+      pthread_detach(es->heartbeat_th_checking_);
+    }
+  }else{
+    if (Config::GetConfig()->proc_name_.compare("learner")==0) {
+      Pthread_create(&es->heartbeat_th_, nullptr, heartbeatBackground, nullptr);
+      pthread_detach(es->heartbeat_th_);
+
+      Pthread_create(&es->heartbeat_th_checking_, nullptr, heartbeatMonitor2, nullptr);
+      pthread_detach(es->heartbeat_th_checking_);
+    }
+    return 0;
   }
+
   // Pthread_create(&submit_poll_th_, nullptr, PollSubQNc, nullptr);
   // pthread_detach(submit_poll_th_);
   // if (action != 1) {
@@ -1009,6 +1105,7 @@ void *nc_start_server(void *input) {
                 << "  in total:" << (impl->counter_new_order+impl->counter_payement+impl->counter_delivery+impl->counter_order_status+impl->counter_stock_level) << "\n\n" ;
                 */
     }
+    return nullptr;
 }
 
 // setup nthreads servers

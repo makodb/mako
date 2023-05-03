@@ -7,7 +7,7 @@
 #include <map>
 
 std::vector<std::string> setup(int argc, char* argv[]);  // return proc_name on the same machine, s101, s102
-int setup2(int = 0);
+int setup2(int action = 0, int shardIndex = -1);
 std::map<std::string, std::string> getHosts(std::string) ;  // return hosts map
 int get_outstanding_logs(uint32_t);
 int shutdown_paxos();
@@ -30,6 +30,7 @@ void microbench_paxos_queue();
 void pre_shutdown_step();
 int get_epoch();
 void set_epoch(int = -1);
+void upgrade_p1_to_leader();
 
 // auxiliary functions
 void worker_info_stats(size_t);

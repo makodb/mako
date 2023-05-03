@@ -131,6 +131,8 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
      fuattr.callback = [/*e, */cb] (Future* fu) {
         uint64_t slot;
         ballot_t ballot;
+        // if the learner is killed at this moment, throw an error
+        // in datacenter failover, keep learners are alive
         fu->get_reply() >> slot >> ballot;
         cb(slot, ballot);
         //e->FeedResponse(1);

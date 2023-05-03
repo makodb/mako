@@ -835,6 +835,18 @@ void Config::UpgradeFromLearnerToLeader() {
   }
 }
 
+void Config::UpgradeFromP1ToLeader() {
+  verify(proc_name_.compare("p1")==0); 
+  for (auto &s: sites_) {
+    if (s.proc_name.compare("p1")==0) {
+      s.role=0;
+    }
+    if (s.proc_name.compare("localhost")==0) {
+      s.role=2; // to skip old leader if failure occurs
+    }
+  }
+}
+
 std::vector<Config::SiteInfo> Config::SitesByPartitionId(
     parid_t partition_id) {
   std::vector<SiteInfo> result;
