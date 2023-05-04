@@ -350,8 +350,8 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
     }
   });
   Log_info("BulkPrepare: waiting for response");
-  // int num =rand() % 10 + 40;
-  // usleep(num*1000);
+  int num =rand() % 10 + 40;
+  usleep(num*1000);
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     Log_info("SendBulkPrepare: Leader election successfull");
@@ -493,8 +493,8 @@ int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
       }
     }
   });
-  // int num =rand() % 10 + 40;
-  // usleep(num*1000);
+  int num =rand() % 10 + 40;
+  usleep(num*1000);
   sp_quorum->Wait();
   done = true;
   if(sp_quorum->Yes()){
@@ -636,6 +636,7 @@ void* PaxosWorker::StartReplayRead(void* arg){
     exit(1);
     //pw->Next(*p);
   }
+  return nullptr;
 }
 
 PaxosWorker::PaxosWorker() {
