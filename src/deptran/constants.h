@@ -117,5 +117,6 @@ namespace janus {
 #define TPCC_REAL_DIST_PART (4)
 #define MICRO_BENCH (5)
 
+#define SIMULATE_WAN
 
 } // namespace janus

@@ -140,7 +140,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
       if (len > 0) {
          const char *log = sp_log_entry.log_entry.c_str() ;
          
-         std::vector<uint64_t> latest_commit_id_v;
+         std::vector<uint32_t> latest_commit_id_v;
          callback_par_id_return_(log, 
                                  len, 
                                  site_info_->partition_id_,
@@ -350,8 +350,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
     }
   });
   Log_info("BulkPrepare: waiting for response");
-  int num =rand() % 10 + 40;
-  usleep(num*1000);
+  WAN_WAIT;
   sp_quorum->Wait();
   if (sp_quorum->Yes()) {
     Log_info("SendBulkPrepare: Leader election successfull");
@@ -493,8 +492,7 @@ int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
       }
     }
   });
-  int num =rand() % 10 + 40;
-  usleep(num*1000);
+  WAN_WAIT;
   sp_quorum->Wait();
   done = true;
   if(sp_quorum->Yes()){
@@ -726,7 +724,7 @@ void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *
                                            std::placeholders::_2));
 }
 
-void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint64_t>(const char *&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> cb) {
+void PaxosWorker::register_apply_callback_par_id_return(std::function<std::vector<uint32_t>(const char *&, int, int, int, std::queue<std::tuple<std::vector<uint32_t>, int, int, int, const char *>> &)> cb) {
     this->callback_par_id_return_ = cb;
     verify(rep_sched_ != nullptr);
     rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,

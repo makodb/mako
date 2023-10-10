@@ -45,12 +45,12 @@ static std::map<std::string,long double> timer;
 
 function<void(int)> leader_callback_{};
 
-std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)>> leader_replay_cb;
-// std::map<int, std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)>> follower_replay_cb{};
+std::map<int, std::function<std::vector<uint32_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint32_t>, int, int, int, const char *>> &)>> leader_replay_cb;
+// std::map<int, std::function<std::vector<uint32_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint32_t>, int, int, int, const char *>> &)>> follower_replay_cb{};
 
 
 shared_ptr<ElectionState> es = ElectionState::instance();
-const bool is_datacenter_failure = false;
+const bool is_datacenter_failure = false;  // data center failures
 
 int get_epoch(){
   int x;
@@ -184,6 +184,7 @@ void microbench_paxos() {
 
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
+  //Log_info("invoke add_log_without_queue:len, par_id:%d, %d",len,par_id);
   for (auto& worker : pxs_workers_g) {  // submit a transaction
     if (worker->site_info_->partition_id_ == par_id){
         // for the same partition, protect it with mutex
@@ -342,7 +343,7 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)> cb
     }
 }
 
-void register_for_follower_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> cb, 
+void register_for_follower_par_id_return(std::function<std::vector<uint32_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint32_t>, int, int, int, const char *>> &)> cb, 
                                                                              uint32_t par_id) {
     // follower_replay_cb[par_id] = cb;
     if(es->machine_id != 0){
@@ -369,7 +370,7 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
     }
 }
 
-void register_for_leader_par_id_return(std::function<std::vector<uint64_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint64_t>, int, int, int, const char *>> &)> cb, 
+void register_for_leader_par_id_return(std::function<std::vector<uint32_t>(const char*&, int, int, int, std::queue<std::tuple<std::vector<uint32_t>, int, int, int, const char *>> &)> cb, 
                                        uint32_t par_id) {
     leader_replay_cb[par_id] = cb;
     if(es->machine_id == 0){
@@ -547,7 +548,6 @@ void sync_callbacks_for_new_leader(){
 void send_no_ops_for_mark(int epoch){
   string log = "no-ops:" + to_string(epoch);
   for(int i = 0; i < pxs_workers_g.size(); i++){
-    Log_info("send a noops:%s to par_id:%d", log.c_str(), i);
     add_log_to_nc(log.c_str(), log.size(), i);
   }
 }
@@ -596,8 +596,9 @@ void stuff_todo_learner_upgrade(){
   send_sync_logs(epoch);
   send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
-  send_no_ops_for_mark(epoch);
+  send_no_ops_for_mark(epoch); // ??? can't send out the noops
   vector<thread> threads;
+  //usleep(40*1000);
   for(int i=0; i<pxs_workers_g.size(); i++) {
     Log_info("wait for noops: %d", i);
     pxs_workers_g[i]->WaitForNoops();
@@ -782,22 +783,30 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
                   std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    std::this_thread::sleep_for(3ms);
+    std::this_thread::sleep_for(10ms);
     if (duration2.count()/1000.0/1000.0 > 35) { // if not received about 3 times = ~ 10ms
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
      // reach threshold to trigger a failover
      // 5ms is far enough within the same data center, otherwise, several seconds across data-center
      time_t end = time (NULL);
      if (end - st > 35) {
-       Log_info("Let's stop it automatically without failover!!! time: %s", end-st);
-       exit(0);
+       Log_info("Let's stop it automatically without failover!!!");
+       std::quick_exit( EXIT_SUCCESS );
      }
 
      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
+     auto x0 = std::chrono::high_resolution_clock::now() ;
      leader_callback_(0); // call register_leader_election_callback
-     Config::GetConfig()->UpgradeFromLearnerToLeader();
+     auto x1 = std::chrono::high_resolution_clock::now() ;
      stuff_todo_learner_upgrade();
+     auto x2 = std::chrono::high_resolution_clock::now() ;
      leader_callback_(2);
+     auto x3 = std::chrono::high_resolution_clock::now() ;
+     // milliseconds: x1-x0:40402, x2-x1:103832, x3-x2:2011
+     Log_info("x1-x0:%d, x2-x1:%d, x3-x2:%d",
+            std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(x2-x1).count(),
+            std::chrono::duration_cast<std::chrono::microseconds>(x3-x2).count());
      std::this_thread::sleep_for(std::chrono::seconds(100000));
      break;
     }
@@ -823,7 +832,7 @@ void* heartbeatMonitor3(void* arg) {
      // 5ms is far enough within the same data center, otherwise, several seconds across data-center
      time_t end = time (NULL);
      if (end - st > 35) {
-       Log_info("Let's stop it automatically without failover!!! time: %s", end-st);
+       Log_info("Let's stop it automatically without failover2!!!");
        exit(0);
      }
 

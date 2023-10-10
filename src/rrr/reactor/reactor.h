@@ -31,6 +31,7 @@ class Reactor {
   std::set<std::shared_ptr<Coroutine>> coros_{};
   std::vector<std::shared_ptr<Coroutine>> available_coros_{};
   std::unordered_map<uint64_t, std::function<void(Event&)>> processors_{};
+  std::list<std::shared_ptr<Event>> timeout_events_{};
   bool looping_{false};
   std::thread::id thread_id_{};
 #ifdef REUSE_CORO
@@ -39,6 +40,7 @@ class Reactor {
 #define REUSING_CORO (false)
 #endif
 
+  void CheckTimeout(std::vector<std::shared_ptr<Event>>&);
   /**
    * @param ev. is usually allocated on coroutine stack. memory managed by user.
    */

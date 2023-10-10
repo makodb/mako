@@ -7,8 +7,24 @@
 #include "command_marshaler.h"
 #include "deptran/rcc/dep_graph.h"
 #include "rcc_rpc.h"
+#include <ctime>
 
 namespace janus {
+
+static void _wan_wait() {
+  int num = rand() % 10 + 40;
+  Reactor::CreateSpEvent<NeverEvent>()->Wait(num*1000);
+}
+
+#ifdef SIMULATE_WAN
+
+#define WAN_WAIT _wan_wait();
+
+#else
+
+#define WAN_WAIT ;
+
+#endif
 
 class Coordinator;
 class ClassicProxy;

@@ -351,7 +351,9 @@ class Marshal: public NoCopy {
       int cnt = 0;
       if (write_idx < data->size) {
         cnt = ::read(fd, data->ptr + write_idx, bytes);
-
+        if (cnt<=0){
+          return cnt;
+        }
 #ifdef RPC_STATISTICS
         stat_marshal_in(fd, data->ptr + write_idx, bytes, cnt);
 #endif // RPC_STATISTICS

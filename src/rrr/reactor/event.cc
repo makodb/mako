@@ -9,26 +9,79 @@
 namespace rrr {
 using std::function;
 
-void Event::Wait() {
-//  verify(__debug_creator); // if this fails, the event is not created by reactor.
+// void Event::Wait(uint64_t timeout) {
+// //  verify(__debug_creator); // if this fails, the event is not created by reactor.
 
+//   verify(Reactor::sp_reactor_th_);
+//   verify(Reactor::sp_reactor_th_->thread_id_ == std::this_thread::get_id());
+//   if (IsReady()) {
+//     status_ = DONE; // does not need to wait.
+//     return;
+//   } else {
+//     verify(status_ == INIT);
+//     status_= DEBUG;
+//     // the event may be created in a different coroutine.
+//     // this value is set when wait is called.
+//     // for now only one coroutine can wait on an event.
+//     auto sp_coro = Coroutine::CurrentCoroutine();
+// //    verify(sp_coro);
+// //    verify(_dbg_p_scheduler_ == nullptr);
+// //    _dbg_p_scheduler_ = Reactor::GetReactor().get();
+//     auto& events = Reactor::GetReactor()->waiting_events_;
+//     events.push_back(shared_from_this());
+//     wp_coro_ = sp_coro;
+//     status_ = WAIT;
+//     sp_coro->Yield();
+//   }
+// }
+
+void Event::Wait(uint64_t timeout) {
+//  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_);
   verify(Reactor::sp_reactor_th_->thread_id_ == std::this_thread::get_id());
+  if (status_ == DONE) return; // TODO: yidawu add for the second use the event.
+  // verify(status_ == INIT);
   if (IsReady()) {
-    status_ = DONE; // does not need to wait.
+    status_ = DONE; // no need to wait.
     return;
   } else {
-    verify(status_ == INIT);
-    status_= DEBUG;
+//    if (status_ == WAIT) {
+//      // this does not look right, fix later
+//      Log_fatal("multiple waits on the same event; no support at the moment");
+//    }
+//    verify(status_ == INIT); // does not support multiple wait so far. maybe we can support it in the future.
+//    status_= DEBUG;
     // the event may be created in a different coroutine.
     // this value is set when wait is called.
     // for now only one coroutine can wait on an event.
     auto sp_coro = Coroutine::CurrentCoroutine();
-//    verify(sp_coro);
+    verify(sp_coro);
 //    verify(_dbg_p_scheduler_ == nullptr);
 //    _dbg_p_scheduler_ = Reactor::GetReactor().get();
-    auto& events = Reactor::GetReactor()->waiting_events_;
-    events.push_back(shared_from_this());
+    auto& waiting_events =
+          Reactor::GetReactor()->waiting_events_;  // Timeout???
+    waiting_events.push_back(shared_from_this());
+
+    if (timeout > 0) {
+      auto now = Time::now(true);
+      wakeup_time_ = now + timeout;
+      //Log_info("WAITING: %p", shared_from_this());
+      // Log_info("wake up %lld, now %lld", wakeup_time_, now);
+      auto& timeout_events = Reactor::GetReactor()->timeout_events_;
+      timeout_events.push_back(shared_from_this());
+    }
+    // TODO optimize timeout_events, sort by wakeup time.
+//      auto it = timeout_events.end();
+//      timeout_events.push_back(shared_from_this());
+//      while (it != events.begin()) {
+//        it--;
+//        auto& it_event = *it;
+//        if (it_event->wakeup_time_ < wakeup_time_) {
+//          it++; // list insert happens before position.
+//          break;
+//        }
+//      }
+//      events.insert(it, shared_from_this());
     wp_coro_ = sp_coro;
     status_ = WAIT;
     sp_coro->Yield();

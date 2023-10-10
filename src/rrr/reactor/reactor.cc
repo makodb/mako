@@ -78,6 +78,43 @@ Reactor::CreateRunCoroutine(const std::function<void()> func) {
   return sp_coro;
 }
 
+void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) {
+  auto time_now = Time::now(true);
+  for (auto it = timeout_events_.begin(); it != timeout_events_.end();) {
+    Event& event = **it;
+    auto status = event.status_;
+    switch (status) {
+      case Event::INIT:
+        verify(0);
+      case Event::WAIT: {
+        const auto &wakeup_time = event.wakeup_time_;
+        verify(wakeup_time > 0);
+        if (time_now > wakeup_time) {
+          if (event.IsReady()) {
+            // This is because our event mechanism is not perfect, some events
+            // don't get triggered with arbitrary condition change.
+            event.status_ = Event::READY;
+          } else {
+            event.status_ = Event::TIMEOUT;
+          }
+          ready_events.push_back(*it);
+          it = timeout_events_.erase(it);
+        } else {
+          it++;
+        }
+        break;
+      }
+      case Event::READY:
+      case Event::DONE:
+        it = timeout_events_.erase(it);
+        break;
+      default:
+        verify(0);
+    }
+  }
+
+}
+
 //  be careful this could be called from different coroutines.
 void Reactor::Loop(bool infinite) {
   verify(std::this_thread::get_id() == thread_id_);
@@ -99,11 +136,18 @@ void Reactor::Loop(bool infinite) {
         it ++;
       }
     }
+    CheckTimeout(ready_events);
+
     for (auto& up_ev: ready_events) {
       auto& event = *up_ev;
       auto sp_coro = event.wp_coro_.lock();
       verify(sp_coro);
       verify(coros_.find(sp_coro) != coros_.end());
+      if (event.status_ == Event::READY) {
+        event.status_ = Event::DONE;
+      } else {
+        verify(event.status_ == Event::TIMEOUT);
+      }
       ContinueCoro(sp_coro);
     }
   } while (looping_);

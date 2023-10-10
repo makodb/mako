@@ -193,7 +193,7 @@ void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
     *ret_slot = slot;
     *ret_ballot = ballot;
     Coroutine::CreateRun([&] () {
-      sched_->OnForwardToLeader(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).sp_data_,
+      sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).sp_data_,
                                std::bind(&rrr::DeferredReply::reply, defer));
     });
 }

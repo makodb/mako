@@ -125,9 +125,7 @@ void CoordinatorMultiPaxos::Accept() {
                 "par_id_: %lx, slot_id: %llx",
             par_id_, slot_id_);
   auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
-  int num = rand() % 10 + 40;
-  usleep(num*1000);
-  sp_quorum->Wait();
+  WAN_WAIT;
   if (sp_quorum->Yes()) {
     committed_ = true;
   } else if (sp_quorum->No()) {
@@ -336,6 +334,16 @@ void BulkCoordinatorMultiPaxos::Accept() {
       //   this->in_submission_ = false;
       // }
     });
+    
+  // auto strt = std::chrono::high_resolution_clock::now();
+  WAN_WAIT;
+  // auto endt2 = std::chrono::high_resolution_clock::now();
+  sp_quorum->Wait();
+  // auto endt3 = std::chrono::high_resolution_clock::now();
+  // Log_info("Wan_wait: %d, %d", 
+  //         std::chrono::duration_cast<std::chrono::milliseconds>(endt2 - strt).count(),
+  //         std::chrono::duration_cast<std::chrono::milliseconds>(endt3 - endt2).count());
+
     sp_quorum->Wait();
     if (sp_quorum->Yes()) {
 	      if(ess_cc->machine_id == 0)

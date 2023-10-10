@@ -114,7 +114,7 @@ class PaxosServer : public TxLogServer {
                   i32 *valid,
                   const function<void()> &cb);
   
-  void OnForwardToLeader(const rrr::i32& par_id,
+  void OnForwardToLearner(const rrr::i32& par_id,
                         const uint64_t& slot, 
                         const ballot_t& ballot,
                         shared_ptr<Marshallable> &cmd,

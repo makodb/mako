@@ -629,7 +629,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
   cb();
 }
 
-void PaxosServer::OnForwardToLeader(const rrr::i32& par_id,
+void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
                                     const uint64_t& slot, 
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
@@ -640,7 +640,7 @@ void PaxosServer::OnForwardToLeader(const rrr::i32& par_id,
   int status=app_next_(slot,cmd);
   cb();
   if (status==5){// if noops
-    Log_info("We can stop here at this moment!!!however it will cause the coredump on the sender side");
+    Log_info("Noops received on the learner side");
   }
 }
 

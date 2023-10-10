@@ -330,7 +330,7 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
-    if (Config::GetConfig()->SiteById(p.first).role==0) continue;
+    if (Config::GetConfig()->SiteById(p.first).role==0) continue; // ??? why skip itself
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
@@ -386,7 +386,6 @@ shared_ptr<PaxosAcceptQuorumEvent>
 MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
                                  shared_ptr<Marshallable> cmd,
                                  const function<void(ballot_t, int)>& cb) {
-  //Log_info("the BroadcastAccept, par_id:%d",par_id);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
