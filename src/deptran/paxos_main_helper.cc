@@ -184,7 +184,7 @@ void microbench_paxos() {
 
 void add_log_without_queue(const char* log, int len, uint32_t par_id){
   char* nlog = (char*)log;
-  //Log_info("invoke add_log_without_queue:len, par_id:%d, %d",len,par_id);
+  //Log_info("invoke add_log_without_queue:len:%d, par_id:%d",len,par_id);
   for (auto& worker : pxs_workers_g) {  // submit a transaction
     if (worker->site_info_->partition_id_ == par_id){
         // for the same partition, protect it with mutex
@@ -574,6 +574,7 @@ void upgrade_p1_to_leader() {
 }
 
 void stuff_todo_learner_upgrade(){
+  Config::GetConfig()->UpgradeFromLearnerToLeader();
   es->state_lock();
   es->set_state(1);
   es->set_epoch(); // increase the epoch number for failover
@@ -588,7 +589,6 @@ void stuff_todo_learner_upgrade(){
     ps->max_executed_slot_ = ps->max_committed_slot_;
     ps->cur_open_slot_ = ps->max_committed_slot_+1;
     ps->cur_epoch = es->get_epoch();
-    //Log_info("The last committed slot %d and executed slot %d and open %d and touched %d,i:%d", ps->max_committed_slot_, ps->max_executed_slot_, ps->cur_open_slot_, ps->max_touched_slot, i);
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
@@ -596,7 +596,7 @@ void stuff_todo_learner_upgrade(){
   send_sync_logs(epoch);
   send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
-  send_no_ops_for_mark(epoch); // ??? can't send out the noops
+  send_no_ops_for_mark(epoch);
   vector<thread> threads;
   //usleep(40*1000);
   for(int i=0; i<pxs_workers_g.size(); i++) {
@@ -783,10 +783,10 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
                   std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    std::this_thread::sleep_for(10ms);
-    if (duration2.count()/1000.0/1000.0 > 35) { // if not received about 3 times = ~ 10ms
+    //std::this_thread::sleep_for(5ms);
+    WAN_WAIT_TIME(5);
+    if (duration2.count()/1000.0/1000.0 > 35) { // 35ms heartbeat timeout
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
-     // reach threshold to trigger a failover
      // 5ms is far enough within the same data center, otherwise, several seconds across data-center
      time_t end = time (NULL);
      if (end - st > 35) {
@@ -824,7 +824,8 @@ void* heartbeatMonitor3(void* arg) {
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
                   std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    std::this_thread::sleep_for(10ms);
+    //std::this_thread::sleep_for(10ms);
+    WAN_WAIT_TIME(100);
     // 1. detect
     if (duration2.count()/1000.0/1000.0 > 1000) { // if not received about 10 times, datacenter failure very expensive
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);

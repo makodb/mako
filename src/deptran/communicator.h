@@ -16,13 +16,23 @@ static void _wan_wait() {
   Reactor::CreateSpEvent<NeverEvent>()->Wait(num*1000);
 }
 
+static void _wan_wait_time(int m) {
+  this_thread::sleep_for(chrono::milliseconds(m));
+  //Reactor::CreateSpEvent<NeverEvent>()->Wait(m*1000);
+}
+
+
+
 #ifdef SIMULATE_WAN
 
 #define WAN_WAIT _wan_wait();
 
+#define WAN_WAIT_TIME(m) _wan_wait_time(m);
+
 #else
 
 #define WAN_WAIT ;
+#define WAN_WAIT_TIME ;
 
 #endif
 

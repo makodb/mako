@@ -129,6 +129,10 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
      fuattr.callback = [/*e, */cb] (Future* fu) {
+        if (fu->get_error_code()!=0) {
+          Log_info("received an error message6");
+          return;
+        }
         uint64_t slot;
         ballot_t ballot;
         // if the learner is killed at this moment, throw an error
@@ -264,6 +268,10 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
+      if (fu->get_error_code()!=0) {
+        Log_info("received an error message5");
+        return;
+      }
       i32 valid;
       i32 ballot;
       fu->get_reply() >> ballot >> valid;
@@ -299,6 +307,10 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
+      if (fu->get_error_code()!=0) {
+        Log_info("received an error message3");
+        return;
+      }
       i32 valid;
       i32 ballot;
       MarshallDeputy response_val;
@@ -334,6 +346,10 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
+      if (fu->get_error_code()!=0) {
+        Log_info("received an error message4");
+        return;
+      }
       i32 valid;
       i32 ballot;
       fu->get_reply() >> ballot >> valid;
@@ -401,6 +417,10 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     FutureAttr fuattr;
     int st = p.first;
     fuattr.callback = [e, cb, st] (Future* fu) {
+      if (fu->get_error_code()!=0) {
+        Log_info("received an error message2");
+        return;
+      }
       i32 valid;
       i32 ballot;
       fu->get_reply() >> ballot >> valid;
@@ -436,6 +456,10 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [e, cb] (Future* fu) {
+      if (fu->get_error_code()!=0) {
+        Log_info("received an error message");
+        return;
+      }
       i32 valid;
       i32 ballot;
       fu->get_reply() >> ballot >> valid;
