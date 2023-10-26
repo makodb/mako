@@ -783,8 +783,7 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
                   std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    //std::this_thread::sleep_for(5ms);
-    WAN_WAIT_TIME(5);
+    WAN_WAIT_TIME(10);
     if (duration2.count()/1000.0/1000.0 > 35) { // 35ms heartbeat timeout
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
      // 5ms is far enough within the same data center, otherwise, several seconds across data-center
@@ -824,7 +823,6 @@ void* heartbeatMonitor3(void* arg) {
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
                   std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    //std::this_thread::sleep_for(10ms);
     WAN_WAIT_TIME(100);
     // 1. detect
     if (duration2.count()/1000.0/1000.0 > 1000) { // if not received about 10 times, datacenter failure very expensive

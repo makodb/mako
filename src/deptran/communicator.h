@@ -18,9 +18,7 @@ static void _wan_wait() {
 
 static void _wan_wait_time(int m) {
   this_thread::sleep_for(chrono::milliseconds(m));
-  //Reactor::CreateSpEvent<NeverEvent>()->Wait(m*1000);
 }
-
 
 
 #ifdef SIMULATE_WAN
