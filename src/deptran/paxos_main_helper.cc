@@ -775,18 +775,15 @@ void* heartbeatBackground2(void* arg) {
 
 // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
 void* heartbeatMonitor2(void* arg) { // happens on the learner
-  Log_info("start a heartbeatMonitor2");
   time_t st = time(NULL);
-
   std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
 
   while (es->running) {
-    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                  std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    WAN_WAIT_TIME(10);
+    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
+    WAN_WAIT_TIME(5); // 5ms is far enough within the same data center, otherwise, several seconds across data-center
+    auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 35) { // 35ms heartbeat timeout
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
-     // 5ms is far enough within the same data center, otherwise, several seconds across data-center
      time_t end = time (NULL);
      if (end - st > 35) {
        Log_info("Let's stop it automatically without failover!!!");
