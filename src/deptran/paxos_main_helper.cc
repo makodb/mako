@@ -792,11 +792,12 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
      auto x0 = std::chrono::high_resolution_clock::now() ;
-     leader_callback_(0); // call register_leader_election_callback
+     leader_callback_(0); // call register_leader_election_callback in dbtest.cc
      auto x1 = std::chrono::high_resolution_clock::now() ;
      stuff_todo_learner_upgrade();
      auto x2 = std::chrono::high_resolution_clock::now() ;
-     leader_callback_(2);
+     leader_callback_(2); // prepare
+     leader_callback_(3); // commit
      auto x3 = std::chrono::high_resolution_clock::now() ;
      // milliseconds: x1-x0:40402, x2-x1:103832, x3-x2:2011
      Log_info("x1-x0:%d, x2-x1:%d, x3-x2:%d",
