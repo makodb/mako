@@ -249,9 +249,9 @@ def _enable_snappy(conf):
 
 def _enable_tcmalloc(conf):
     if Options.options.tcmalloc:
-        Logs.pprint("PINK", "tcmalloc enabled")
+        Logs.pprint("PINK", "jemalloc enabled")
         conf.env.append_value("LINKFLAGS", "-Wl,--no-as-needed")
-        conf.env.append_value("LINKFLAGS", "-ltcmalloc")
+        conf.env.append_value("LINKFLAGS", "-ljemalloc")
         conf.env.append_value("LINKFLAGS", "-Wl,--as-needed")
 
 def _enable_pic(conf):
