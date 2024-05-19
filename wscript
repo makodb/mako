@@ -109,6 +109,10 @@ def build(bld):
     _depend("src/deptran/rcc_rpc.h src/deptran/rcc_rpc.py",
             "src/deptran/rcc_rpc.rpc",
             "bin/rpcgen --python --cpp src/deptran/rcc_rpc.rpc")
+    
+    _depend("src/deptran/helloworld.h src/deptran/helloworld.py",
+            "src/deptran/helloworld.rpc",
+            "bin/rpcgen --python --cpp src/deptran/helloworld.rpc")
 
     _gen_srpc_headers()
 
@@ -182,6 +186,14 @@ def build(bld):
     bld.program(source=bld.path.ant_glob("src/nc_main.cc "
                                          "src/deptran/paxos_main_helper.cc"),
                 target="nc_main",
+                includes="src src/rrr src/deptran ",
+                uselib="YAML-CPP BOOST",
+                use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+    
+    # simple rpc, helloworld
+    bld.program(source=bld.path.ant_glob("src/helloworld.cc "
+                                         "src/deptran/paxos_main_helper.cc"),
+                target="helloworld",
                 includes="src src/rrr src/deptran ",
                 uselib="YAML-CPP BOOST",
                 use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
