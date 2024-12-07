@@ -44,7 +44,7 @@ def options(opt):
                    default=False, action='store_true')
     opt.add_option('-m', '--enable-mutrace-debug', dest='mutrace',
                    default=False, action='store_true')
-    opt.parse_args();
+    opt.parse_args()
 
 def configure(conf):
     _choose_compiler(conf)

@@ -163,7 +163,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
          } else if (status == 1) {
              std::cout << "this should never happen!!!" << std::endl;
          } else if (status == 5) {
-            Log_info("update the no-ops, par_id:%d",site_info_->partition_id_);
+            Log_info("update the no-ops, par_id:%d, slot_id:%d",site_info_->partition_id_, slot_id);
             noops_received=true;
          }
       } else {

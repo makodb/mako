@@ -51,6 +51,7 @@ std::map<int, std::function<std::vector<uint32_t>(const char*&, int, int, int, s
 
 shared_ptr<ElectionState> es = ElectionState::instance();
 const bool is_datacenter_failure = false;  // data center failures
+const bool is_fail_new_impl = true; // the new implementation for the shard failure
 
 int get_epoch(){
   int x;
@@ -594,7 +595,7 @@ void stuff_todo_learner_upgrade(){
   int epoch = es->get_epoch();
   es->state_unlock();
   send_sync_logs(epoch);
-  send_no_ops_to_all_workers(epoch);
+  //send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
   send_no_ops_for_mark(epoch);
   vector<thread> threads;
@@ -780,9 +781,9 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
 
   while (es->running) {
     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
-    WAN_WAIT_TIME(5); // 5ms is far enough within the same data center, otherwise, several seconds across data-center
+    WAN_WAIT_TIME(5); // 5ms is far enough within the same datacenter, otherwise, several seconds across data-center
     auto xx1 = std::chrono::high_resolution_clock::now() ;
-    if (duration2.count()/1000.0/1000.0 > 35) { // 35ms heartbeat timeout
+    if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
      time_t end = time (NULL);
      if (end - st > 35) {
@@ -791,21 +792,29 @@ void* heartbeatMonitor2(void* arg) { // happens on the learner
      }
 
      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
-     auto x0 = std::chrono::high_resolution_clock::now() ;
-     leader_callback_(0); // call register_leader_election_callback in dbtest.cc
-     auto x1 = std::chrono::high_resolution_clock::now() ;
-     stuff_todo_learner_upgrade();
-     auto x2 = std::chrono::high_resolution_clock::now() ;
-     leader_callback_(2); // prepare
-     leader_callback_(3); // commit
-     auto x3 = std::chrono::high_resolution_clock::now() ;
-     // milliseconds: x1-x0:40402, x2-x1:103832, x3-x2:2011
-     Log_info("x1-x0:%d, x2-x1:%d, x3-x2:%d",
-            std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),
-            std::chrono::duration_cast<std::chrono::microseconds>(x2-x1).count(),
-            std::chrono::duration_cast<std::chrono::microseconds>(x3-x2).count());
-     std::this_thread::sleep_for(std::chrono::seconds(100000));
-     break;
+
+     if (is_fail_new_impl) {
+      leader_callback_(0); // call register_leader_election_callback in dbtest.cc
+      stuff_todo_learner_upgrade();
+      leader_callback_(2);
+      std::this_thread::sleep_for(std::chrono::seconds(100000));
+      break;
+     } else {
+      auto x0 = std::chrono::high_resolution_clock::now() ;
+      leader_callback_(0); // call register_leader_election_callback in dbtest.cc
+      auto x1 = std::chrono::high_resolution_clock::now() ;
+      stuff_todo_learner_upgrade();
+      auto x2 = std::chrono::high_resolution_clock::now() ;
+      leader_callback_(2); // prepare
+      leader_callback_(3); // commit
+      auto x3 = std::chrono::high_resolution_clock::now() ;
+      // milliseconds: x1-x0:40402, x2-x1:103832, x3-x2:2011
+      Log_info("x1-x0:%d, x2-x1:%d, x3-x2:%d",
+              std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),
+              std::chrono::duration_cast<std::chrono::microseconds>(x2-x1).count(),
+              std::chrono::duration_cast<std::chrono::microseconds>(x3-x2).count());
+      std::this_thread::sleep_for(std::chrono::seconds(100000));
+     }
     }
   }
   return nullptr;

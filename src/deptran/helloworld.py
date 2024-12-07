@@ -3,7 +3,7 @@ from simplerpc.marshal import Marshal
 from simplerpc.future import Future
 
 class HelloworldClientService(object):
-    TXN_READ = 0x53362ae3
+    TXN_READ = 0x2e6830d2
 
     __input_type_info__ = {
         'txn_read': ['std::vector<rrr::i64>'],
