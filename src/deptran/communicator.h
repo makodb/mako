@@ -12,7 +12,7 @@
 namespace janus {
 
 static void _wan_wait() {
-  int num = rand() % 10 + 40;
+  int num = 50;
   Reactor::CreateSpEvent<NeverEvent>()->Wait(num*1000);
 }
 
