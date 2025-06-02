@@ -1,0 +1,522 @@
++ sudo cgdelete -g cpuset:/cpulimit
++ sudo cgcreate -t rolis:rolis -a rolis:rolis -g cpuset:/cpulimit
++ nshard=1
++ shard=0
++ trd=24
++ let up=trd+3
++ sec=5
++ cluster=localhost
++ sudo cgset -r cpuset.mems=0 cpulimit
++ sudo cgset -r cpuset.cpus=0-27 cpulimit
++ mkdir -p results
+++ pwd
++ path=/home/rolis/srolis
++ sudo cgexec -g cpuset:cpulimit ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp --db-type mbta --num-threads 24 --scale-factor 24 --num-erpc-server 2 --shard-index 0 --shard-config /home/rolis/srolis/config/local-shards1-warehouses24.yml -F third-party/paxos/config/1leader_2followers/paxos24_shardidx0.yml -F third-party/paxos/config/occ_paxos.yml --txn-flags 1 --runtime 5 -P localhost --bench-opts --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7f524737f000, 0x7f528957f000)
+cpu0 owns [0x7f5247400000, 0x7f524a000000)
+cpu1 owns [0x7f524a000000, 0x7f524cc00000)
+cpu2 owns [0x7f524cc00000, 0x7f524f800000)
+cpu3 owns [0x7f524f800000, 0x7f5252400000)
+cpu4 owns [0x7f5252400000, 0x7f5255000000)
+cpu5 owns [0x7f5255000000, 0x7f5257c00000)
+cpu6 owns [0x7f5257c00000, 0x7f525a800000)
+cpu7 owns [0x7f525a800000, 0x7f525d400000)
+cpu8 owns [0x7f525d400000, 0x7f5260000000)
+cpu9 owns [0x7f5260000000, 0x7f5262c00000)
+cpu10 owns [0x7f5262c00000, 0x7f5265800000)
+cpu11 owns [0x7f5265800000, 0x7f5268400000)
+cpu12 owns [0x7f5268400000, 0x7f526b000000)
+cpu13 owns [0x7f526b000000, 0x7f526dc00000)
+cpu14 owns [0x7f526dc00000, 0x7f5270800000)
+cpu15 owns [0x7f5270800000, 0x7f5273400000)
+cpu16 owns [0x7f5273400000, 0x7f5276000000)
+cpu17 owns [0x7f5276000000, 0x7f5278c00000)
+cpu18 owns [0x7f5278c00000, 0x7f527b800000)
+cpu19 owns [0x7f527b800000, 0x7f527e400000)
+cpu20 owns [0x7f527e400000, 0x7f5281000000)
+cpu21 owns [0x7f5281000000, 0x7f5283c00000)
+cpu22 owns [0x7f5283c00000, 0x7f5286800000)
+cpu23 owns [0x7f5286800000, 0x7f5289400000)
+Database Benchmark:
+  pid: 678469
+settings:
+  par-loading : 0
+  pin-cpus    : 1
+  slow-exit   : 0
+  retry-txns  : 1
+  backoff-txns: 0
+  bench       : tpcc
+  scale       : 24
+  num-cpus    : 32
+  num-threads : 24
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  db-type     : mbta
+  basedir     : ./tmp
+  txn-flags   : 1
+  runtime     : 5
+  var-encode  : yes
+  allocator   : jemalloc
+  numa-memory : 1107296256
+  logfiles : []
+  assignments : []
+  disable-gc : 0
+  disable-snapshots : 0
+  stats-server-sockfile: 
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  batch-size                   :1
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [50, 50, 0, 0, 0]
+20250401-20:18.33-545761(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31029, numa_node = 0, req_types: 1
+13:552854 INFOR: eRPC Nexus: Created with management UDP port 31029, hostname 172.19.0.33.
+13:562524 INFOR: DPDK transport for Rpc 29 initializing DPDK EAL.
+13:902749 WARNG: Running as primary DPDK process. eRPC DPDK daemon is not running.
+13:902768 INFOR: DPDK transport for Rpc 29 got QP 0
+13:902773 INFOR: Initializing port 0 with driver net_mlx5
+14:669716 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+14:669749 WARNG: DpdkTransport created for Rpc ID 29, queue 0, datapath UDP port 10000
+20250401-20:18.34-670428(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31030, numa_node = 0, req_types: 1
+14:678150 INFOR: eRPC Nexus: Created with management UDP port 31030, hostname 172.19.0.33.
+14:678196 INFOR: DPDK transport for Rpc 30 skipping DPDK EAL initialization.
+14:678199 INFOR: DPDK transport for Rpc 30 got QP 1
+14:678554 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+14:678575 WARNG: DpdkTransport created for Rpc ID 30, queue 1, datapath UDP port 10001
+20250401-20:18.34-679717(us) 678469 ! run             (bench.cc:311):     # of loaders size:1
+20250401-20:18.34-722772(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [0,10000]
+20250401-20:18.34-743761(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [10000,20000]
+20250401-20:18.34-745324(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [20000,30000]
+20250401-20:18.34-746840(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [30000,40000]
+20250401-20:18.34-748326(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [40000,50000]
+20250401-20:18.34-749928(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [50000,60000]
+20250401-20:18.34-751212(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [60000,70000]
+20250401-20:18.34-752527(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [70000,80000]
+20250401-20:18.34-754148(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [80000,90000]
+20250401-20:18.34-755892(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [90000,100000]
+20250401-20:18.34-757206(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [100000,110000]
+20250401-20:18.34-758594(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [110000,120000]
+20250401-20:18.34-760119(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [120000,130000]
+20250401-20:18.34-761795(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [130000,140000]
+20250401-20:18.34-763101(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [140000,150000]
+20250401-20:18.34-764424(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [150000,160000]
+20250401-20:18.34-765841(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [160000,170000]
+20250401-20:18.34-767361(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [170000,180000]
+20250401-20:18.34-769268(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [180000,190000]
+20250401-20:18.34-770798(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [190000,200000]
+20250401-20:18.34-772332(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [200000,210000]
+20250401-20:18.34-774100(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [210000,220000]
+20250401-20:18.34-775427(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [220000,230000]
+20250401-20:18.34-776764(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [230000,240000]
+20250401-20:18.34-778138(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [240000,250000]
+20250401-20:18.34-779658(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [250000,260000]
+20250401-20:18.34-782577(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [260000,270000]
+20250401-20:18.34-789697(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [270000,280000]
+20250401-20:18.34-791244(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [280000,290000]
+20250401-20:18.34-799425(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [290000,300000]
+20250401-20:18.34-800770(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [300000,310000]
+20250401-20:18.34-802058(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [310000,320000]
+20250401-20:18.34-803695(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [320000,330000]
+20250401-20:18.34-805011(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [330000,340000]
+20250401-20:18.34-833088(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [340000,350000]
+20250401-20:18.34-866701(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [350000,360000]
+20250401-20:18.34-868532(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [360000,370000]
+20250401-20:18.34-870063(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [370000,380000]
+20250401-20:18.34-871588(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [380000,390000]
+20250401-20:18.34-873426(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [390000,400000]
+20250401-20:18.34-874750(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [400000,410000]
+20250401-20:18.34-876072(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [410000,420000]
+20250401-20:18.34-877389(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [420000,430000]
+20250401-20:18.34-879065(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [430000,440000]
+20250401-20:18.34-880445(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [440000,450000]
+20250401-20:18.34-917060(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [450000,460000]
+20250401-20:18.34-941891(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [460000,470000]
+20250401-20:18.34-943499(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [470000,480000]
+20250401-20:18.34-945057(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [480000,490000]
+20250401-20:18.34-946833(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [490000,500000]
+20250401-20:18.34-948167(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [500000,510000]
+20250401-20:18.34-949483(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [510000,520000]
+20250401-20:18.34-951166(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [520000,530000]
+20250401-20:18.34-952500(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [530000,540000]
+20250401-20:18.34-953811(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [540000,550000]
+20250401-20:18.34-981418(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [550000,560000]
+20250401-20:18.35-16351(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [560000,570000]
+20250401-20:18.35-17725(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [570000,580000]
+20250401-20:18.35-19097(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [580000,590000]
+20250401-20:18.35-20776(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [590000,600000]
+20250401-20:18.35-46315(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [600000,610000]
+20250401-20:18.35-86727(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [610000,620000]
+20250401-20:18.35-88187(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [620000,630000]
+20250401-20:18.35-89747(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [630000,640000]
+20250401-20:18.35-91706(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [640000,650000]
+20250401-20:18.35-109588(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [650000,660000]
+20250401-20:18.35-120752(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [660000,670000]
+20250401-20:18.35-122088(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [670000,680000]
+20250401-20:18.35-123415(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [680000,690000]
+20250401-20:18.35-125060(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [690000,700000]
+20250401-20:18.35-139113(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [700000,710000]
+20250401-20:18.35-179289(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [710000,720000]
+20250401-20:18.35-180990(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [720000,730000]
+20250401-20:18.35-182747(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [730000,740000]
+20250401-20:18.35-184104(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [740000,750000]
+20250401-20:18.35-185806(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [750000,760000]
+20250401-20:18.35-187153(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [760000,770000]
+20250401-20:18.35-188503(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [770000,780000]
+20250401-20:18.35-189853(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [780000,790000]
+20250401-20:18.35-191391(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [790000,800000]
+20250401-20:18.35-192918(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [800000,810000]
+20250401-20:18.35-194450(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [810000,820000]
+20250401-20:18.35-196577(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [820000,830000]
+20250401-20:18.35-197911(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [830000,840000]
+20250401-20:18.35-199238(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [840000,850000]
+20250401-20:18.35-200914(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [850000,860000]
+20250401-20:18.35-202226(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [860000,870000]
+20250401-20:18.35-203538(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [870000,880000]
+20250401-20:18.35-205195(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [880000,890000]
+20250401-20:18.35-206524(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [890000,900000]
+20250401-20:18.35-207864(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [900000,910000]
+20250401-20:18.35-250882(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [910000,920000]
+20250401-20:18.35-252956(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [920000,930000]
+20250401-20:18.35-254294(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [930000,940000]
+20250401-20:18.35-255628(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [940000,950000]
+20250401-20:18.35-257295(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [950000,960000]
+20250401-20:18.35-296361(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [960000,970000]
+20250401-20:18.35-297750(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [970000,980000]
+20250401-20:18.35-299139(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [980000,990000]
+20250401-20:18.35-300713(us) 678469 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [990000,1000000]
+start worker:1137001
+timed region dataloading took 621.518 ms
+DB size: 91.9531 MB
+[0, 0, 0] txns persisted in loading phase
+starting benchmark...
+--------------Finish loading data and wait for others completing load phase ------------
+tpcc: worker id 32 => warehouses [1, 2)
+tpcc: worker id 33 => warehouses [2, 3)
+tpcc: worker id 34 => warehouses [3, 4)
+tpcc: worker id 35 => warehouses [4, 5)
+tpcc: worker id 36 => warehouses [5, 6)
+tpcc: worker id 37 => warehouses [6, 7)
+tpcc: worker id 38 => warehouses [7, 8)
+tpcc: worker id 39 => warehouses [8, 9)
+tpcc: worker id 40 => warehouses [9, 10)
+tpcc: worker id 41 => warehouses [10, 11)
+tpcc: worker id 42 => warehouses [11, 12)
+tpcc: worker id 43 => warehouses [12, 13)
+tpcc: worker id 44 => warehouses [13, 14)
+tpcc: worker id 45 => warehouses [14, 15)
+tpcc: worker id 46 => warehouses [15, 16)
+tpcc: worker id 47 => warehouses [16, 17)
+tpcc: worker id 48 => warehouses [17, 18)
+tpcc: worker id 49 => warehouses [18, 19)
+tpcc: worker id 50 => warehouses [19, 20)
+tpcc: worker id 51 => warehouses [20, 21)
+tpcc: worker id 52 => warehouses [21, 22)
+tpcc: worker id 53 => warehouses [22, 23)
+tpcc: worker id 54 => warehouses [23, 24)
+tpcc: worker id 55 => warehouses [24, 25)
+20250401-20:18.35-308222(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31000, numa_node = 0, req_types: 1
+15:318395 INFOR: eRPC Nexus: Created with management UDP port 31000, hostname 172.19.0.33.
+15:318462 INFOR: DPDK transport for Rpc 0 skipping DPDK EAL initialization.
+15:318467 INFOR: DPDK transport for Rpc 0 got QP 2
+15:318907 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:318925 WARNG: DpdkTransport created for Rpc ID 0, queue 2, datapath UDP port 10002
+20250401-20:18.35-321103(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31001, numa_node = 0, req_types: 1
+15:329213 INFOR: eRPC Nexus: Created with management UDP port 31001, hostname 172.19.0.33.
+15:329269 INFOR: DPDK transport for Rpc 1 skipping DPDK EAL initialization.
+15:329273 INFOR: DPDK transport for Rpc 1 got QP 3
+15:329659 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:329675 WARNG: DpdkTransport created for Rpc ID 1, queue 3, datapath UDP port 10003
+20250401-20:18.35-332169(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31002, numa_node = 0, req_types: 1
+15:339927 INFOR: eRPC Nexus: Created with management UDP port 31002, hostname 172.19.0.33.
+15:339974 INFOR: DPDK transport for Rpc 2 skipping DPDK EAL initialization.
+15:339977 INFOR: DPDK transport for Rpc 2 got QP 4
+15:340339 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:340351 WARNG: DpdkTransport created for Rpc ID 2, queue 4, datapath UDP port 10004
+20250401-20:18.35-341270(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31003, numa_node = 0, req_types: 1
+15:348365 INFOR: eRPC Nexus: Created with management UDP port 31003, hostname 172.19.0.33.
+15:348417 INFOR: DPDK transport for Rpc 3 skipping DPDK EAL initialization.
+15:348421 INFOR: DPDK transport for Rpc 3 got QP 5
+15:348827 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:348843 WARNG: DpdkTransport created for Rpc ID 3, queue 5, datapath UDP port 10005
+20250401-20:18.35-349754(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31006, numa_node = 0, req_types: 1
+15:357285 INFOR: eRPC Nexus: Created with management UDP port 31006, hostname 172.19.0.33.
+15:357331 INFOR: DPDK transport for Rpc 6 skipping DPDK EAL initialization.
+15:357335 INFOR: DPDK transport for Rpc 6 got QP 6
+15:357677 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:357695 WARNG: DpdkTransport created for Rpc ID 6, queue 6, datapath UDP port 10006
+20250401-20:18.35-358558(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31004, numa_node = 0, req_types: 1
+15:366263 INFOR: eRPC Nexus: Created with management UDP port 31004, hostname 172.19.0.33.
+15:366308 INFOR: DPDK transport for Rpc 4 skipping DPDK EAL initialization.
+15:366311 INFOR: DPDK transport for Rpc 4 got QP 7
+15:366636 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:366653 WARNG: DpdkTransport created for Rpc ID 4, queue 7, datapath UDP port 10007
+20250401-20:18.35-367524(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31005, numa_node = 0, req_types: 1
+15:374574 INFOR: eRPC Nexus: Created with management UDP port 31005, hostname 172.19.0.33.
+15:374635 INFOR: DPDK transport for Rpc 5 skipping DPDK EAL initialization.
+15:374639 INFOR: DPDK transport for Rpc 5 got QP 8
+15:374972 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:374988 WARNG: DpdkTransport created for Rpc ID 5, queue 8, datapath UDP port 10008
+20250401-20:18.35-375855(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31008, numa_node = 0, req_types: 1
+15:382918 INFOR: eRPC Nexus: Created with management UDP port 31008, hostname 172.19.0.33.
+15:382956 INFOR: DPDK transport for Rpc 8 skipping DPDK EAL initialization.
+15:382959 INFOR: DPDK transport for Rpc 8 got QP 9
+15:383317 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:383330 WARNG: DpdkTransport created for Rpc ID 8, queue 9, datapath UDP port 10009
+20250401-20:18.35-384599(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31011, numa_node = 0, req_types: 1
+15:391647 INFOR: eRPC Nexus: Created with management UDP port 31011, hostname 172.19.0.33.
+15:391698 INFOR: DPDK transport for Rpc 11 skipping DPDK EAL initialization.
+15:391701 INFOR: DPDK transport for Rpc 11 got QP 10
+15:392047 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:392059 WARNG: DpdkTransport created for Rpc ID 11, queue 10, datapath UDP port 10010
+20250401-20:18.35-392968(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31007, numa_node = 0, req_types: 1
+15:400634 INFOR: eRPC Nexus: Created with management UDP port 31007, hostname 172.19.0.33.
+15:400669 INFOR: DPDK transport for Rpc 7 skipping DPDK EAL initialization.
+15:400671 INFOR: DPDK transport for Rpc 7 got QP 11
+15:401001 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:401012 WARNG: DpdkTransport created for Rpc ID 7, queue 11, datapath UDP port 10011
+20250401-20:18.35-401723(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31009, numa_node = 0, req_types: 1
+15:409141 INFOR: eRPC Nexus: Created with management UDP port 31009, hostname 172.19.0.33.
+15:409174 INFOR: DPDK transport for Rpc 9 skipping DPDK EAL initialization.
+15:409177 INFOR: DPDK transport for Rpc 9 got QP 12
+15:409528 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:409538 WARNG: DpdkTransport created for Rpc ID 9, queue 12, datapath UDP port 10012
+20250401-20:18.35-410461(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31010, numa_node = 0, req_types: 1
+15:417524 INFOR: eRPC Nexus: Created with management UDP port 31010, hostname 172.19.0.33.
+15:417582 INFOR: DPDK transport for Rpc 10 skipping DPDK EAL initialization.
+15:417586 INFOR: DPDK transport for Rpc 10 got QP 13
+15:417904 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:417925 WARNG: DpdkTransport created for Rpc ID 10, queue 13, datapath UDP port 10013
+20250401-20:18.35-418784(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31014, numa_node = 0, req_types: 1
+15:425860 INFOR: eRPC Nexus: Created with management UDP port 31014, hostname 172.19.0.33.
+15:425903 INFOR: DPDK transport for Rpc 14 skipping DPDK EAL initialization.
+15:425906 INFOR: DPDK transport for Rpc 14 got QP 14
+15:426254 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:426268 WARNG: DpdkTransport created for Rpc ID 14, queue 14, datapath UDP port 10014
+20250401-20:18.35-427144(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31012, numa_node = 0, req_types: 1
+15:434186 INFOR: eRPC Nexus: Created with management UDP port 31012, hostname 172.19.0.33.
+15:434224 INFOR: DPDK transport for Rpc 12 skipping DPDK EAL initialization.
+15:434227 INFOR: DPDK transport for Rpc 12 got QP 15
+15:434578 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:434590 WARNG: DpdkTransport created for Rpc ID 12, queue 15, datapath UDP port 10015
+20250401-20:18.35-435538(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31016, numa_node = 0, req_types: 1
+15:442816 INFOR: eRPC Nexus: Created with management UDP port 31016, hostname 172.19.0.33.
+15:442852 INFOR: DPDK transport for Rpc 16 skipping DPDK EAL initialization.
+15:442854 INFOR: DPDK transport for Rpc 16 got QP 16
+15:443182 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:443193 WARNG: DpdkTransport created for Rpc ID 16, queue 16, datapath UDP port 10016
+20250401-20:18.35-444095(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31013, numa_node = 0, req_types: 1
+15:451287 INFOR: eRPC Nexus: Created with management UDP port 31013, hostname 172.19.0.33.
+15:451360 INFOR: DPDK transport for Rpc 13 skipping DPDK EAL initialization.
+15:451366 INFOR: DPDK transport for Rpc 13 got QP 17
+15:451733 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:451756 WARNG: DpdkTransport created for Rpc ID 13, queue 17, datapath UDP port 10017
+20250401-20:18.35-452671(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31015, numa_node = 0, req_types: 1
+15:459737 INFOR: eRPC Nexus: Created with management UDP port 31015, hostname 172.19.0.33.
+15:459777 INFOR: DPDK transport for Rpc 15 skipping DPDK EAL initialization.
+15:459780 INFOR: DPDK transport for Rpc 15 got QP 18
+15:460112 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:460125 WARNG: DpdkTransport created for Rpc ID 15, queue 18, datapath UDP port 10018
+20250401-20:18.35-461042(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31018, numa_node = 0, req_types: 1
+15:468085 INFOR: eRPC Nexus: Created with management UDP port 31018, hostname 172.19.0.33.
+15:468123 INFOR: DPDK transport for Rpc 18 skipping DPDK EAL initialization.
+15:468126 INFOR: DPDK transport for Rpc 18 got QP 19
+15:468456 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:468469 WARNG: DpdkTransport created for Rpc ID 18, queue 19, datapath UDP port 10019
+20250401-20:18.35-469353(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31017, numa_node = 0, req_types: 1
+15:476486 INFOR: eRPC Nexus: Created with management UDP port 31017, hostname 172.19.0.33.
+15:476550 INFOR: DPDK transport for Rpc 17 skipping DPDK EAL initialization.
+15:476553 INFOR: DPDK transport for Rpc 17 got QP 20
+15:476902 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:476923 WARNG: DpdkTransport created for Rpc ID 17, queue 20, datapath UDP port 10020
+20250401-20:18.35-477737(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31020, numa_node = 0, req_types: 1
+15:484757 INFOR: eRPC Nexus: Created with management UDP port 31020, hostname 172.19.0.33.
+15:484795 INFOR: DPDK transport for Rpc 20 skipping DPDK EAL initialization.
+15:484798 INFOR: DPDK transport for Rpc 20 got QP 21
+15:485119 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:485131 WARNG: DpdkTransport created for Rpc ID 20, queue 21, datapath UDP port 10021
+20250401-20:18.35-485992(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31022, numa_node = 0, req_types: 1
+15:493053 INFOR: eRPC Nexus: Created with management UDP port 31022, hostname 172.19.0.33.
+15:493095 INFOR: DPDK transport for Rpc 22 skipping DPDK EAL initialization.
+15:493098 INFOR: DPDK transport for Rpc 22 got QP 22
+15:493427 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:493440 WARNG: DpdkTransport created for Rpc ID 22, queue 22, datapath UDP port 10022
+20250401-20:18.35-494372(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31019, numa_node = 0, req_types: 1
+15:501510 INFOR: eRPC Nexus: Created with management UDP port 31019, hostname 172.19.0.33.
+15:501558 INFOR: DPDK transport for Rpc 19 skipping DPDK EAL initialization.
+15:501563 INFOR: DPDK transport for Rpc 19 got QP 23
+15:501904 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:501921 WARNG: DpdkTransport created for Rpc ID 19, queue 23, datapath UDP port 10023
+20250401-20:18.35-502914(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31021, numa_node = 0, req_types: 1
+15:510010 INFOR: eRPC Nexus: Created with management UDP port 31021, hostname 172.19.0.33.
+15:510072 INFOR: DPDK transport for Rpc 21 skipping DPDK EAL initialization.
+15:510076 INFOR: DPDK transport for Rpc 21 got QP 24
+15:510418 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:510439 WARNG: DpdkTransport created for Rpc ID 21, queue 24, datapath UDP port 10024
+20250401-20:18.35-511363(us) 678469 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31023, numa_node = 0, req_types: 1
+15:518507 INFOR: eRPC Nexus: Created with management UDP port 31023, hostname 172.19.0.33.
+15:518557 INFOR: DPDK transport for Rpc 23 skipping DPDK EAL initialization.
+15:518561 INFOR: DPDK transport for Rpc 23 got QP 25
+15:518909 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+15:518930 WARNG: DpdkTransport created for Rpc ID 23, queue 25, datapath UDP port 10025
+20250401-20:18.35-520233(us) 678469 ! run             (bench.cc:411):     start the running time, runTime:5
+20250401-20:18.35-520266(us) 678469 ! run             (bench.cc:423):     runtime time left:5000 ms, bool:1
+20250401-20:18.36-528267(us) 678469 ! run             (bench.cc:423):     runtime time left:4000 ms, bool:1
+20250401-20:18.37-536001(us) 678469 ! run             (bench.cc:423):     runtime time left:3000 ms, bool:1
+20250401-20:18.38-543736(us) 678469 ! run             (bench.cc:423):     runtime time left:2000 ms, bool:1
+20250401-20:18.39-552396(us) 678469 ! run             (bench.cc:423):     runtime time left:1000 ms, bool:1
+20250401-20:18.40-560535(us) 678469 ! run             (bench.cc:431):     runtime_plus:0
+20250401-20:18.40-560591(us) 678469 ! stop            (bench.cc:292):     stop all erpc clients. set stop=false
+20250401-20:18.40-560605(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560669(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560709(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560736(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560772(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560816(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560854(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560883(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560920(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560946(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-560983(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561021(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561067(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561105(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561133(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561169(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561207(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561236(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561263(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561289(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561317(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561343(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561379(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561406(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561419(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561426(us) 678469 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561451(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561460(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561467(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561474(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561487(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561494(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561501(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561507(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561514(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561520(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561527(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561534(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561540(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561547(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561553(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561560(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561566(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561573(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561579(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561586(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561592(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.40-561599(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+--- n_commits per partition ---
+ par_id: 0, n_commits: 1684114
+ par_id: 1, n_commits: 2142548
+ par_id: 2, n_commits: 1682644
+ par_id: 3, n_commits: 1684500
+ par_id: 4, n_commits: 1710765
+ par_id: 5, n_commits: 1695532
+ par_id: 6, n_commits: 1678128
+ par_id: 7, n_commits: 1695984
+ par_id: 8, n_commits: 1709688
+ par_id: 9, n_commits: 1693013
+ par_id: 10, n_commits: 1692284
+ par_id: 11, n_commits: 2119181
+ par_id: 12, n_commits: 1690523
+ par_id: 13, n_commits: 1692487
+ par_id: 14, n_commits: 1710641
+ par_id: 15, n_commits: 1675981
+ par_id: 16, n_commits: 1695184
+ par_id: 17, n_commits: 1694519
+ par_id: 18, n_commits: 1708647
+ par_id: 19, n_commits: 1701386
+ par_id: 20, n_commits: 1604370
+ par_id: 21, n_commits: 1690351
+ par_id: 22, n_commits: 1686410
+ par_id: 23, n_commits: 1610943
+--- benchmark statistics ---
+runtime: 5.0418 sec
+memory delta: 2837.8 MB
+n_commits: 41349823
+latency_numer_us: 99947397
+latency_numer_us_remote: 0
+memory delta rate: 562.855 MB/sec
+logical memory delta: 0 MB
+logical memory delta rate: 0 MB/sec
+agg_nosync_throughput: 8.20163e+06 ops/sec
+avg_nosync_per_core_throughput: 341735 ops/sec/core
+agg_throughput: 8.2014e+06 ops/sec
+avg_per_core_throughput: 341725 ops/sec/core
+agg_persist_throughput: 8.2014e+06 ops/sec
+avg_per_core_persist_throughput: 341725 ops/sec/core
+avg_latency: 0.00241712 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 1543.3 aborts/sec
+avg_per_core_abort_rate: 64.3041 aborts/sec/core
+txn breakdown: [[NewOrder_Local, 20678223], [NewOrder_Local_NANO, 74359594442], [NewOrder_Local_NANO_abort, 9065358], [NewOrder_Local_abort, 3968], [NewOrder_Remote, 0], [NewOrder_Remote_NANO, 0], [NewOrder_Remote_NANO_abort, 0], [NewOrder_Remote_abort, 0], [Payment_Local, 20671600], [Payment_Local_NANO, 44644853737], [Payment_Local_NANO_abort, 9681987], [Payment_Local_abort, 3813], [Payment_Remote, 0], [Payment_Remote_NANO, 0], [Payment_Remote_NANO_abort, 0], [Payment_Remote_abort, 0]]
+  NewOrder_local_commit_latency: 0.00359603 ms
+  NewOrder_local_abort_latency: 0.00228462 ms
+  NewOrder_local_abort_ratio: 0.0191856
+  NewOrder_abort_ratio: 0.0191856
+  Payment_local_commit_latency: 0.00215972 ms
+  Payment_local_abort_latency: 0.0025392 ms
+  Payment_local_abort_ratio: 0.0184422
+  Payment_abort_ratio: 0.0184422
+  NewOrder_remote_ratio: 0 %
+  NewOrder_remote_abort_ratio: -nan %
+  NewOrder_remote_commit_latency: -nan ms
+  NewOrder_remote_abort_latency: -nan ms
+  Payment_remote_ratio: 0 %
+  Payment_remote_abort_ratio: -nan %
+  Payment_remote_commit_latency: -nan ms
+  Payment_remote_abort_latency: -nan ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[allocator] ncpus=24
+[allocator] cpu=0 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=1 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=2 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=3 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=4 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=5 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=6 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=7 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=8 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=9 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=10 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=11 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=12 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=13 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=14 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=15 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=16 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=17 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=18 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=19 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=20 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=21 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=22 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=23 fully_faulted?=0 remaining=46137344 bytes
+---------------------------------------
+--- system counters for n_comits ---
+20250401-20:18.41-562603(us) 678469 ! cleanup         (tpcc.cc:4199):     stop the server rpc
+20250401-20:18.41-562628(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-20:18.41-562642(us) 678469 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan

@@ -1,0 +1,762 @@
+diff --git a/Makefile b/Makefile
+index ea4fe13..8303b35 100644
+--- a/Makefile
++++ b/Makefile
+@@ -10,8 +10,8 @@ ERPC_PATH="$(BUILD_DIR)/eRPC"
+ ERPC_CFLAGS_DPDK := -I $(ERPC_PATH)/src -DERPC_DPDK=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+ ERPC_LDFLAGS_DPDK := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lerpc -lpthread  -lnuma -ldl -lgflags  -ldl -libverbs -lmlx4 -lmlx5
+ 
+-ERPC_CFLAGS_IB := -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+-ERPC_LDFLAGS_IB := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lpthread -lerpc -lnuma -ldl -lgflags -ldl -libverbs -lmlx4 -lmlx5
++#ERPC_CFLAGS_IB := -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
++#ERPC_LDFLAGS_IB := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lpthread -lerpc -lnuma -ldl -lgflags -ldl -libverbs -lmlx4 -lmlx5
+ 
+ CXX_INCLUDES = -I $(ERPC_PATH)/third_party/googletest/googletest/include -I $(ERPC_PATH)/third_party/googletest/googletest -isystem $(ERPC_PATH)/third_party/asio/include -I $(ERPC_PATH)/src -isystem $(ERPC_PATH)/third_party -isystem /usr/include/dpdk -I$(ERPC_PATH)/third_party/gflags/include -I$(ERPC_PATH)/third_party/HdrHistogram_c/src
+ CXX_INCLUDES := $(CXX_INCLUDES)
+@@ -115,9 +115,9 @@ endif
+ 
+ #CXXFLAGS := -g -Wall
+ # suppress all warning: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
+-CXXFLAGS := -w -Wreturn-type
++CXXFLAGS := -w -g -Wreturn-type
+ CXXFLAGS += -MD -MP -Ithird-party/lz4 -Ithird-party/paxos/src -I$(HOME) -DCONFIG_H=\"$(CONFIG_H)\"
+-CXXFLAGS += $(ERPC_CFLAGS_IB)
++CXXFLAGS += $(ERPC_CFLAGS_DPDK)
+ ifeq ($(GPROF_S),1)
+ 	CXXFLAGS += -pg -static-libstdc++ -static-libgcc
+ endif
+@@ -209,8 +209,8 @@ endif
+ ASIO_PATH="$(BUILD_DIR)/eRPC/third_party/asio"
+ ASIO_CFLAGS := -I $(ASIO_PATH)/include
+ CFLAGS += $(ASIO_CFLAGS)
+-CFLAGS += $(ERPC_CFLAGS_IB)
+-LDFLAGS += $(ERPC_LDFLAGS_IB)
++CFLAGS += $(ERPC_CFLAGS_DPDK)
++LDFLAGS += $(ERPC_LDFLAGS_DPDK)
+ LDFLAGS += -levent_pthreads -pthread -lboost_fiber -lboost_context -lboost_system -lboost_thread
+ LIBEVENT_CFLAGS := $(shell pkg-config --cflags libevent)
+ LIBEVENT_LDFLAGS := $(shell pkg-config --libs libevent)
+diff --git a/bash/ips b/bash/ips
+index 7f1220e..a20e317 100644
+--- a/bash/ips
++++ b/bash/ips
+@@ -1,5 +1,5 @@
+-10.1.0.68
+ 10.1.0.69
++10.1.0.68
+ 10.1.0.70
+ 10.1.0.71
+ 10.1.0.72
+diff --git a/bash/ips.pub b/bash/ips.pub
+index c12b5e2..bce2e4e 100644
+--- a/bash/ips.pub
++++ b/bash/ips.pub
+@@ -1,5 +1,5 @@
+-20.65.59.171
+ 20.65.59.224
++20.65.59.171
+ 172.177.48.80
+ 172.177.48.119
+ 172.177.48.238
+diff --git a/bash/kill_leader_datacenter.sh b/bash/kill_leader_datacenter.sh
+index 3a65a8c..e5d5843 100755
+--- a/bash/kill_leader_datacenter.sh
++++ b/bash/kill_leader_datacenter.sh
+@@ -1,41 +1,56 @@
+-servers=(
+-  127.0.0.1
+-)
+-
+-# kill all leader servers
+-for i in "${!servers[@]}"
+-do
+-  ip=${servers[$i]}
+-  echo "ssh to reqest to $ip"
+-  cmd="ps aux|grep -i localhost|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
+-  ssh $ip "$cmd" &
+-done
+-
+-# Await for a while, to avoid throwing an error on the last forwardToLearner call on the p1 datacenter servers 
+-sleep 5
+-
+-# kill all learner servers
+-servers=(
+-  127.0.0.1
+-)
+-for i in "${!servers[@]}"
+-do
+-  ip=${servers[$i]}
+-  echo "ssh to reqest to $ip"
+-  cmd="ps aux|grep -i learner|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
+-  ssh $ip "$cmd" &
+-done
+-
+-echo "Wait for jobs..."
+-FAIL=0
+-for job in `jobs -p`
+-do
+-    wait $job || let "FAIL+=1"
+-done
+-
+-if [ "$FAIL" == "0" ];
+-then
+-    echo "YAY!"
+-else
+-    echo "FAIL! ($FAIL)"
+-fi
++cmd1="ps aux|grep -i shard|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
++ssh 10.1.0.48 "$cmd1" &
++ssh 10.1.0.49 "$cmd1" &
++ssh 10.1.0.50 "$cmd1" &
++ssh 10.1.0.51 "$cmd1" &
++#leaders=(
++#  10.1.0.48
++#  10.1.0.49
++#  10.1.0.50
++#  10.1.0.51
++#)
++#learners=(
++#  10.1.0.69
++#  10.1.0.68
++#  10.1.0.70
++#  10.1.0.71
++#)
++#
++##n_partitions=4
++##leaders=("${leaders[@]:0:$n_partitions}")
++##learners=("${learners[@]:0:$n_partitions}")
++#
++## kill all leader servers
++#for i in "${!leaders[@]}"
++#do
++#  ip=${leaders[$i]}
++#  cmd="ps aux |  grep -i localhost |  awk '{print \$2}'  |  xargs sudo kill -9; echo 'aa'> /home/azureuser/srolis/results/$i.log"
++#  echo "ssh to reqest to $ip, $cmd"
++#  ssh $ip "$cmd" &
++#done
++#
++## Await for a while, to avoid throwing an error on the last forwardToLearner call on the p1 datacenter servers 
++#sleep 5
++#
++## kill all learner servers
++#for i in "${!learners[@]}"
++#do
++#  ip=${learners[$i]}
++#  echo "ssh to reqest to $ip"
++#  cmd="ps aux|grep -i learner|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
++#  ssh $ip "$cmd" &
++#done
++#
++#echo "Wait for jobs..."
++#FAIL=0
++#for job in `jobs -p`
++#do
++#    wait $job || let "FAIL+=1"
++#done
++#
++#if [ "$FAIL" == "0" ];
++#then
++#    echo "YAY!"
++#else
++#    echo "FAIL! ($FAIL)"
++#fi
+diff --git a/bash/op.sh b/bash/op.sh
+index f3e1dc0..64b256c 100755
+--- a/bash/op.sh
++++ b/bash/op.sh
+@@ -19,44 +19,44 @@ wait_jobs() {
+   fi
+ }
+ 
+-# East US 2
+-ipLeaders=(
+-  10.1.0.11  # nfs server
+-  10.1.0.10
+-  10.1.0.13
+-  10.1.0.12
+-  10.1.0.14
+-  10.1.0.15
+-)
+-# East US 2
+-ipLearners=(
+-  10.1.0.4
+-  10.1.0.5
+-  10.1.0.8
+-  10.1.0.7
+-  10.1.0.6
+-  10.1.0.9
+-)
+-# West US 2
+-ipP1=(
+-  10.2.0.4  # nfs server
+-  10.2.0.15
+-  10.2.0.6
+-  10.2.0.5
+-  10.2.0.8
+-  10.2.0.7
+-)
+-# West US 3
+-ipP2=(
+-  10.11.0.4  # nfs server
+-  10.11.0.14
+-  10.11.0.6
+-  10.11.0.5
+-  10.11.0.7
+-  10.11.0.8
+-)
++## East US 2
++#ipLeaders=(
++#  10.1.0.11  # nfs server
++#  10.1.0.10
++#  10.1.0.13
++#  10.1.0.12
++#  10.1.0.14
++#  10.1.0.15
++#)
++## East US 2
++#ipLearners=(
++#  10.1.0.4
++#  10.1.0.5
++#  10.1.0.8
++#  10.1.0.7
++#  10.1.0.6
++#  10.1.0.9
++#)
++## West US 2
++#ipP1=(
++#  10.2.0.4  # nfs server
++#  10.2.0.15
++#  10.2.0.6
++#  10.2.0.5
++#  10.2.0.8
++#  10.2.0.7
++#)
++## West US 3
++#ipP2=(
++#  10.11.0.4  # nfs server
++#  10.11.0.14
++#  10.11.0.6
++#  10.11.0.5
++#  10.11.0.7
++#  10.11.0.8
++#)
+ 
+-allHosts=( "${ipLeaders[@]}" "${ipLearners[@]}" "${ipP1[@]}" "${ipP2[@]}" )
++#allHosts=( "${ipLeaders[@]}" "${ipLearners[@]}" "${ipP1[@]}" "${ipP2[@]}" )
+ allHosts=( 127.0.0.1 )
+ 
+ cmd1="ps aux|grep -i shard|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
+diff --git a/bash/shard.sh b/bash/shard.sh
+index 064dc78..28e7e65 100755
+--- a/bash/shard.sh
++++ b/bash/shard.sh
+@@ -4,7 +4,15 @@ sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimit
+ nshard=$1
+ shard=$2
+ trd=$3
+-let up=trd+3
++
++if (( $trd >= 1 && $trd <= 8 )); then
++  let up=trd+3  # 4 cpus
++elif (( $trd >= 9 && $trd <= 16 )); then
++  let up=trd+4  # 5 cpus
++else
++  let up=trd+5  # 6 cpus
++fi
++
+ sec=${4:-30}
+ cluster=${5:-localhost}
+ sudo cgset -r cpuset.mems=0 cpulimit
+diff --git a/batch-exec-1.sh b/batch-exec-1.sh
+index 6fa2024..3f60c82 100755
+--- a/batch-exec-1.sh
++++ b/batch-exec-1.sh
+@@ -11,8 +11,8 @@ leaders=(
+ 10.1.0.57
+ )
+ learners=(
+-10.1.0.68
+ 10.1.0.69
++10.1.0.68
+ 10.1.0.70
+ 10.1.0.71
+ 10.1.0.72
+@@ -85,7 +85,7 @@ do
+     ssh $host "$cmd1" &
+   elif [ $cmd == 'kill' ]; then
+     echo "kill: $host"
+-    ssh $host "$cmd3" &
++    ssh $host "$cmd3" & 
+     echo ""
+   elif [ $cmd == 'mount' ]; then
+     if [ $host == '10.1.0.48' ]; then    
+diff --git a/batch-runner.sh b/batch-runner.sh
+index c453607..2e40aa5 100755
+--- a/batch-runner.sh
++++ b/batch-runner.sh
+@@ -11,8 +11,8 @@ leaders=(
+ 10.1.0.57
+ )
+ learners=(
+-10.1.0.68
+ 10.1.0.69
++10.1.0.68
+ 10.1.0.70
+ 10.1.0.71
+ 10.1.0.72
+@@ -47,54 +47,66 @@ p2s=(
+ 10.1.0.97
+ )
+ 
++outfile="cmds.sh"
++echo "" > $outfile
++
+ n_partitions=$1
+ leaders=("${leaders[@]:0:$n_partitions}")
+ learners=("${learners[@]:0:$n_partitions}")
+ p1s=("${p1s[@]:0:$n_partitions}")
+ p2s=("${p2s[@]:0:$n_partitions}")
+ 
+-needToRuns=(1 4 8 12 16 20 24)
++needToRuns=(1 4 8 12 16 30 24)
+ needToRuns=(24)
+ for thds in "${needToRuns[@]}"
+ do
+-#bash ~/srolis/batch-exec-1.sh # kill local
++#bash ~/srolis/batch-exec-1.sh 10 kill # kill local
+ #sleep 1
+ 
+ r=0
+ for i in "${!leaders[@]}"
+ do
+   ip=${leaders[$i]}
+-  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 20 localhost > ./results/exp-localhost-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
++  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 30 localhost > ./results/exp-localhost-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
++  #cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 30 localhost 1> ./results/exp-localhost-v14-$n_partitions-$thds-$i-$r.log 2> ./results/exp-localhost-v14-$n_partitions-$thds-$i-$r.err &"
+   echo "ssh to reqest to $ip, $cmd"
+   ssh $ip "$cmd" &
+   sleep 0.3
++  echo "ssh $ip '$cmd' &" >> $outfile
++  echo "sleep 0.3" >> $outfile
+ done
+ 
+ for i in "${!learners[@]}"
+ do
+   ip=${learners[$i]}
+-  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 20 learner > ./results/exp-learner-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
++  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 30 learner > ./results/exp-learner-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
+   echo "ssh to reqest to $ip, $cmd"
+   ssh $ip "$cmd" &
+   sleep 0.3
++  echo "ssh $ip '$cmd' &" >> $outfile
++  echo "sleep 0.3" >> $outfile
+ done
+ 
+ for i in "${!p1s[@]}"
+ do
+   ip=${p1s[$i]}
+-  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 20 p1 > ./results/exp-p1-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
++  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 30 p1 > ./results/exp-p1-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
+   echo "ssh to reqest to $ip, $cmd"
+   ssh $ip "$cmd" &
+   sleep 0.3
++  echo "ssh $ip '$cmd' &" >> $outfile
++  echo "sleep 0.3" >> $outfile
+ done
+ 
+ for i in "${!p2s[@]}"
+ do
+   ip=${p2s[$i]}
+-  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 20 p2 > ./results/exp-p2-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
++  cmd="ulimit -n 20000;cd srolis;bash bash/shard.sh $n_partitions $i $thds 30 p2 > ./results/exp-p2-v14-$n_partitions-$thds-$i-$r.log 2>&1 &"
+   echo "ssh to reqest to $ip, $cmd"
+   ssh $ip "$cmd" &
+   sleep 0.3
++  echo "ssh $ip '$cmd' &" >> $outfile
++  echo "sleep 0.3" >> $outfile
+ done
+ 
+ 
+@@ -114,8 +126,16 @@ else
+     echo "FAIL! ($FAIL)"
+ fi
+ 
+-let sTime=$thds+20
+-sleep $sTime
++while ! grep -q "20000 ms" ./results/exp-localhost-v14-$n_partitions-24-0-0.log; do
++    sleep 0.1
++done
++#echo "kill leader-datacenter"
++#bash bash/kill_leader_datacenter.sh
++echo "event triggerd, Kill the leader-0"
++ps aux |  grep -i localhost | grep -i "shard-index 0" |  awk '{print $2}'  |  xargs sudo kill -9
++
++#let sTime=$thds+20
++#sleep $sTime
+ #nnn=$thds
+ #cat ~/srolis/results/localhost-u-$n_partitions-$nnn-*.log | ag 'NewOrder_remote_commit_latency'
+ #cat ~/srolis/results/localhost-u-$n_partitions-$nnn-*.log | ag 'agg_throughput'
+diff --git a/benchmarks/bench.cc b/benchmarks/bench.cc
+index fd3e40b..fdd7cf7 100644
+--- a/benchmarks/bench.cc
++++ b/benchmarks/bench.cc
+@@ -422,7 +422,7 @@ bench_runner::run()
+       uint32_t n_commits = 0 ;
+       for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
+       samplingTPUT.push_back({getEpochInms(), n_commits});
+-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
++      cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+     }
+     Warning("runtime_plus:%d",runtime_plus);
+     runtime_loop = runtime_plus * repeats;
+@@ -434,7 +434,7 @@ bench_runner::run()
+       uint32_t n_commits = 0 ;
+       for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
+       samplingTPUT.push_back({getEpochInms(), n_commits});
+-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
++      cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+     }
+   }
+   // notify other leaders to shutdown as well
+diff --git a/benchmarks/common2.h b/benchmarks/common2.h
+index 227179a..df92739 100644
+--- a/benchmarks/common2.h
++++ b/benchmarks/common2.h
+@@ -83,6 +83,7 @@ void modeMonitorRun(abstract_db *db, int thread_nums, bench_runner * R) {
+ }
+ 
+ void modeMonitor(abstract_db *db, int thread_nums, bench_runner *R) {
++    Warning("start for modeMonitor, running:%d",sync_util::sync_logger::worker_running);   
+     thread mimic_thread(&modeMonitorRun, db, thread_nums, R);
+     pthread_setname_np(mimic_thread.native_handle(), "modeMonitor");
+     mimic_thread.detach();  // thread detach
+@@ -90,4 +91,4 @@ void modeMonitor(abstract_db *db, int thread_nums, bench_runner *R) {
+ 
+ abstract_db *ThreadDBWrapperMbta::replay_thread_wrapper_db = new mbta_wrapper;
+ 
+-#endif // SILO_STO_COMMON_2_H
+\ No newline at end of file
++#endif // SILO_STO_COMMON_2_H
+diff --git a/benchmarks/dbtest.cc b/benchmarks/dbtest.cc
+index 092ddcf..140fda3 100644
+--- a/benchmarks/dbtest.cc
++++ b/benchmarks/dbtest.cc
+@@ -777,7 +777,7 @@ main(int argc, char **argv)
+       start_workers_tpcc(leader_config, db, nthreads, false, 1, r);
+     }
+     delete db;
+-  } else if (cluster.compare(srolis::LEARNER_CENTER)==0) { // learner cluster
++  } else { // if (cluster.compare(srolis::LEARNER_CENTER)==0) { // learner cluster
+     if (bench_type == "tpcc") {
+       abstract_db * db = tpool_mbta.getDBWrapper(nthreads)->getDB () ;
+       bench_runner *r = start_workers_tpcc(1, db, nthreads, true);
+diff --git a/benchmarks/tpcc.cc b/benchmarks/tpcc.cc
+index 3bd3b79..f730032 100644
+--- a/benchmarks/tpcc.cc
++++ b/benchmarks/tpcc.cc
+@@ -801,7 +801,7 @@ protected:
+ 
+     //warmup connections on learner-0 (assume the leader-0 will be killed)
+ #if defined(PAXOS_LIB_ENABLED)
+-    if (clusterRole==srolis::LOCALHOST_CENTER_INT){
++    if (clusterRole==srolis::LOCALHOST_CENTER_INT){ // disable it if 10 shards
+       for (int i=0;i<=100;i++) {
+         // printf("start - pid:%d-i:%d", TThread::getPartitionID(), i);
+         // std::cout<<std::endl;
+@@ -1982,10 +1982,10 @@ tpcc_worker::txn_new_order()
+ 
+   if (control_mode==2 && counter_new_order_failed>0 && shardIndex>0){
+     counter_new_order_failed-=1;
+-    if (rand()%100==0){
++    //if (rand()%100==0){
+       supplierWarehouseIDs[0]=RandomNumber(r, 1, NumWarehouses());
+       isRemote = true;
+-    }
++    //}
+   }
+   INVARIANT(!g_disable_xpartition_txn || allLocal);
+   if (!allLocal)
+@@ -2150,6 +2150,9 @@ tpcc_worker::txn_new_order()
+   } catch (abstract_db::abstract_abort_exception &ex) {
+     db->abort_txn(txn);
+   } catch (int n) {
++    if (n==1002) { // same as fasttransport.cc
++      counter_new_order_failed+=1;
++    }
+     db->abort_txn_local(txn);
+   }
+   return txn_result(false, 0 + (isRemote?1:0));
+@@ -2461,10 +2464,10 @@ tpcc_worker::txn_payment()
+ 
+   if (control_mode==2 && counter_payment_failed>0 && shardIndex>0){
+     counter_payment_failed-=1;
+-    if (rand()%100==0){
++    //if (rand()%100==0){
+       customerWarehouseID=RandomNumber(r, 1, NumWarehouses());
+       isRemote=true;
+-    }
++    //}
+   }
+ 
+   if (!WarehouseInShard(customerWarehouseID, shardIndex)) { isRemote = true; }
+@@ -2659,6 +2662,9 @@ tpcc_worker::txn_payment()
+   } catch (abstract_db::abstract_abort_exception &ex) {
+     db->abort_txn(txn);
+   } catch (int n) {
++    if (n==1002) { // same as fasttransport.cc
++      counter_payment_failed+=1;
++    }
+     db->abort_txn_local(txn);
+   }
+   return txn_result(false, 0 + (isRemote?1:0));
+diff --git a/initial.sh b/initial.sh
+index 85a0693..3e57e91 100755
+--- a/initial.sh
++++ b/initial.sh
+@@ -27,7 +27,7 @@ sudo sysctl -w net.ipv4.route.flush=1
+ sudo sysctl -w net.ipv4.tcp_window_scaling=8
+ 
+ skill memcached
+-sleep 5
++sleep 1
+ # or /usr/bin/memcached
+ /usr/local/bin/memcached -m 64 -U 6001 -u memcache &
+ /usr/local/bin/memcached -m 64 -U 6002 -u memcache &
+@@ -41,6 +41,7 @@ sleep 5
+ sudo ifmetric eth1 1
+ 
+ # for v5, have to reorder the DPDK driver version
++echo "start python script..."
+ python <<EOF
+ import subprocess
+ import re
+@@ -76,3 +77,4 @@ else:
+         print(cmd)
+         os.system(cmd)
+ EOF
++echo "DONE"
+diff --git a/lib/fasttransport.cc b/lib/fasttransport.cc
+index 588b02c..ca1cab7 100644
+--- a/lib/fasttransport.cc
++++ b/lib/fasttransport.cc
+@@ -231,8 +231,8 @@ int FastTransport::handleTimeout(size_t start_tsc, int req_type, std::string ext
+     }
+     size_t end_tsc = srolis::rdtsc();
+     if ((end_tsc-start_tsc)/(0.0+ms1_cycles)>=5) { // almost no effect on the results
+-        TThread::skipBeforeRemoteNewOrder = 5;
+-        TThread::skipBeforeRemotePayment = 5;
++        TThread::skipBeforeRemoteNewOrder = 4;
++        TThread::skipBeforeRemotePayment = 4;
+         return 1;
+     }
+ 
+@@ -288,11 +288,11 @@ inline int FastTransport::GetSession(TransportReceiver *src, uint8_t dstShardIdx
+             c->rpc->run_event_loop_once();
+         }
+         c->client.sessions[src][session_key] = session_id;
+-        auto x1 = std::chrono::high_resolution_clock::now() ;
+-        printf("session-id open time:%d,dstShardIdx:%d,cluster:%s,shardIdx:%d,pid:%d\n",
+-            std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),dstShardIdx, 
+-            srolis::convertClusterRole(clusterRoleSentTo).c_str(),TThread::get_shard_index(),
+-            TThread::getPartitionID());
++        //auto x1 = std::chrono::high_resolution_clock::now() ;
++        //printf("session-id open time:%d,dstShardIdx:%d,cluster:%s,shardIdx:%d,pid:%d\n",
++        //    std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count(),dstShardIdx, 
++        //    srolis::convertClusterRole(clusterRoleSentTo).c_str(),TThread::get_shard_index(),
++        //    TThread::getPartitionID());
+         return session_id;
+     }
+     else
+@@ -331,7 +331,7 @@ bool FastTransport::SendRequestToShard(TransportReceiver *src,
+     size_t start_tsc = srolis::rdtsc();  // For counting timeout_ms
+     while (src->Blocked() && !stop && !breakTimeout) {
+         if (handleTimeout(start_tsc, (int)reqType, "SendRequestToShard")>0)
+-            throw ((int)reqType);
++            throw 1002;
+ 
+         c->rpc->run_event_loop_once();
+     }
+@@ -393,7 +393,7 @@ bool FastTransport::SendRequestToAll(TransportReceiver *src,
+     size_t start_tsc = srolis::rdtsc();  // For counting timeout_ms
+     while (src->Blocked() && !stop && !breakTimeout) {
+         if (handleTimeout(start_tsc, (int)reqType, "SendRequestToAll")>0)
+-            throw ((int)reqType);
++            throw 1002;
+       
+         c->rpc->run_event_loop_once();
+     }
+@@ -440,7 +440,7 @@ bool FastTransport::SendBatchRequestToAll(
+     size_t start_tsc = srolis::rdtsc();  // For counting timeout_ms
+     while (src->Blocked() && !stop && !breakTimeout) {
+         if (handleTimeout(start_tsc, (int)req_type, "SendBatchRequestToAll")>0)
+-            throw ((int)req_type);
++            throw 1002;
+ 
+         c->rpc->run_event_loop_once();
+     }
+diff --git a/nfs-client.sh b/nfs-client.sh
+index b0099ec..cb6bfca 100755
+--- a/nfs-client.sh
++++ b/nfs-client.sh
+@@ -12,8 +12,12 @@ export nfs_master="10.1.0.48"
+ #sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/rdma-core /home/azureuser/rdma-core
+ #sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/dpdk-stable-19.11.5 /home/azureuser/dpdk-stable-19.11.5
+ #sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/logs /home/azureuser/logs
+-mkdir -p janus rolis-eurosys2022
++mkdir -p janus rolis-eurosys2022 meerkat tapir
+ sudo umount /home/azureuser/janus
++sudo umount /home/azureuser/tapir
++sudo umount /home/azureuser/meerkat
+ sudo umount /home/azureuser/rolis-eurosys2022
+ sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/janus /home/azureuser/janus
++sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/tapir /home/azureuser/tapir
++sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/meerkat /home/azureuser/meerkat
+ sudo mount -t nfs -vvvv $nfs_master:/home/azureuser/rolis-eurosys2022 /home/azureuser/rolis-eurosys2022
+diff --git a/nfs-master.sh b/nfs-master.sh
+index d4a0a83..2b7f85a 100755
+--- a/nfs-master.sh
++++ b/nfs-master.sh
+@@ -1,5 +1,5 @@
+ # nfs master
+ # edit /etc/exports
+-mkdir -p eRPC srolis rdma-core dpdk-stable-19.11.5 logs janus
++mkdir -p eRPC srolis rdma-core dpdk-stable-19.11.5 logs janus meerkat tapir
+ sudo systemctl restart nfs-kernel-server
+ sudo systemctl status nfs-kernel-server
+diff --git a/one-click.sh b/one-click.sh
+index 9ddf0f1..3db1663 100755
+--- a/one-click.sh
++++ b/one-click.sh
+@@ -28,7 +28,9 @@ experiment0_0() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=1 MICRO_BENCHMARK=0
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp0_0_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -40,7 +42,9 @@ experiment0_1() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=1 MICRO_BENCHMARK=1
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp0_1_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -54,7 +58,9 @@ experiment1_0() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=0 MICRO_BENCHMARK=0
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp1_0_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -66,7 +72,9 @@ experiment1_1() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=0 MICRO_BENCHMARK=1
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp1_1_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -177,9 +185,9 @@ done
+ #}
+ setup
+ 
+-#experiment0_0
+-#experiment0_1
+-#experiment1_0
+-#experiment1_1
++experiment0_0
++experiment0_1
++experiment1_0
++experiment1_1
+ #experiment2_0
+-#experiment2_1
+\ No newline at end of file
++#experiment2_1
+diff --git a/results/cal.sh b/results/cal.sh
+index 7d65d6c..f6e5c96 100755
+--- a/results/cal.sh
++++ b/results/cal.sh
+@@ -13,10 +13,10 @@
+ 
+ # for v3
+ threads=(1 4 8 12 16 20 24 28)
+-threads=(24)
+ for thr in "${threads[@]}"; do
+    log="v3-10-tpcc-replicated/exp-localhost-v3-10-$thr-*.log"
+-   log="exp-localhost-v14-1-$thr-*.log"
++   log="exp-localhost-v14-10-$thr-*.log"
++   echo "Threads: $thr"
+    cat $log| ag 'agg_throughput'| ag 'agg_throughput' | wc -l
+    cat $log| ag 'agg_throughput'| awk '{sum += $2} END {print sum}'
+    cat $log| ag 'NewOrder_remote_commit_latency'| awk '{sum += $2} END {print sum/10.0}'
+diff --git a/results/commands.txt b/results/commands.txt
+deleted file mode 100644
+index 28537f9..0000000
+--- a/results/commands.txt
++++ /dev/null
+@@ -1,5 +0,0 @@
+-
+------>>> start to run 
+-
+-bash bash/shard.sh 2 0 12 > ./results/exp2_0_nshard2_sIdx0_trd12.log 2>&1
+-bash bash/shard.sh 2 1 12 > ./results/exp2_0_nshard2_sIdx1_trd12.log 2>&1
+diff --git a/results/extractor.py b/results/extractor.py
+index d112d92..7b6cfa6 100644
+--- a/results/extractor.py
++++ b/results/extractor.py
+@@ -128,7 +128,7 @@ def extract_time_ncommits(f):
+ def extract_failover():
+     # Prompt the user to enter a filename
+     # extract_time_ncommits("./leader.log")
+-    ret = extract_time_ncommits("./leader-1.log")
++    ret = extract_time_ncommits("./exp-localhost-v14-4-24-2-0.log")
+ 
+     ret_update = []
+     interval = 10 # 10ms
+@@ -136,12 +136,12 @@ def extract_failover():
+         t, n = int(t), int(n)
+         ret_update.append(((t-ret[0][0])/interval, (1000/interval)*(n-ret[i][1])))
+     for i, (t, n) in enumerate(ret_update):
+-        if 900 <= t <= 1400:
+-            print("{a}\t{b}\t{c}\t{d}".format(a=t, b=n, c=ret[i][0], d=ret[i][1]))
++        #if 900 <= t <= 1400:
++        print("{a}\t{b}\t{c}\t{d}".format(a=t, b=n, c=ret[i][0], d=ret[i][1]))
+ 
+ def extract_failover_complete():
+-    leader = extract_time_ncommits("./leader-1.log")
+-    p1 = extract_time_ncommits("./follower-p1.log")
++    leader = extract_time_ncommits("./exp-localhost-v14-4-24-0-0.log")
++    p1 = extract_time_ncommits("./exp-p1-v14-4-24-0-0.log")
+     ret = leader + p1
+     ret_update = []
+     interval = 10 # 10ms
+@@ -193,5 +193,5 @@ if __name__ == "__main__":
+     # exp_2_1()
+     # print "\n"
+ 
+-    extract_failover()
+-    #extract_failover_complete()
+\ No newline at end of file
++    #extract_failover()
++    extract_failover_complete()
+diff --git a/third-party/paxos b/third-party/paxos
+--- a/third-party/paxos
++++ b/third-party/paxos
+@@ -1 +1 @@
+-Subproject commit 7dea3aabfdefd47947550e954d0465d616b173ff
++Subproject commit 7dea3aabfdefd47947550e954d0465d616b173ff-dirty

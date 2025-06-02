@@ -1,0 +1,1892 @@
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7fbd0e17f000, 0x7fbd5037f000)
+cpu0 owns [0x7fbd0e200000, 0x7fbd10e00000)
+cpu1 owns [0x7fbd10e00000, 0x7fbd13a00000)
+cpu2 owns [0x7fbd13a00000, 0x7fbd16600000)
+cpu3 owns [0x7fbd16600000, 0x7fbd19200000)
+cpu4 owns [0x7fbd19200000, 0x7fbd1be00000)
+cpu5 owns [0x7fbd1be00000, 0x7fbd1ea00000)
+cpu6 owns [0x7fbd1ea00000, 0x7fbd21600000)
+cpu7 owns [0x7fbd21600000, 0x7fbd24200000)
+cpu8 owns [0x7fbd24200000, 0x7fbd26e00000)
+cpu9 owns [0x7fbd26e00000, 0x7fbd29a00000)
+cpu10 owns [0x7fbd29a00000, 0x7fbd2c600000)
+cpu11 owns [0x7fbd2c600000, 0x7fbd2f200000)
+cpu12 owns [0x7fbd2f200000, 0x7fbd31e00000)
+cpu13 owns [0x7fbd31e00000, 0x7fbd34a00000)
+cpu14 owns [0x7fbd34a00000, 0x7fbd37600000)
+cpu15 owns [0x7fbd37600000, 0x7fbd3a200000)
+cpu16 owns [0x7fbd3a200000, 0x7fbd3ce00000)
+cpu17 owns [0x7fbd3ce00000, 0x7fbd3fa00000)
+cpu18 owns [0x7fbd3fa00000, 0x7fbd42600000)
+cpu19 owns [0x7fbd42600000, 0x7fbd45200000)
+cpu20 owns [0x7fbd45200000, 0x7fbd47e00000)
+cpu21 owns [0x7fbd47e00000, 0x7fbd4aa00000)
+cpu22 owns [0x7fbd4aa00000, 0x7fbd4d600000)
+cpu23 owns [0x7fbd4d600000, 0x7fbd50200000)
+Database Benchmark:
+  pid: 15116
+settings:
+  par-loading : 0
+  pin-cpus    : 1
+  slow-exit   : 0
+  retry-txns  : 1
+  backoff-txns: 0
+  bench       : tpcc
+  scale       : 24
+  num-cpus    : 32
+  num-threads : 24
+  shardIndex  : 0
+  paxos_proc_name  : learner
+  nshards     : 1
+  db-type     : mbta
+  basedir     : ./tmp
+  txn-flags   : 1
+  runtime     : 30
+  var-encode  : yes
+  allocator   : jemalloc
+  numa-memory : 1107296256
+  logfiles : []
+  assignments : []
+  disable-gc : 0
+  disable-snapshots : 0
+  stats-server-sockfile: 
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+20240302-03:31.15-542982(us) 15116 ! Init            (sync_util.hh:63):  the watermark is exchanging within the cluster: learner
+new table is created: 1
+new table is created: 2
+new table is created: 3
+new table is created: 4
+new table is created: 5
+new table is created: 6
+new table is created: 7
+new table is created: 8
+new table is created: 9
+new table is created: 10
+new table is created: 11
+new table is created: 12
+new table is created: 13
+new table is created: 14
+new table is created: 15
+new table is created: 16
+new table is created: 17
+new table is created: 18
+new table is created: 19
+new table is created: 20
+new table is created: 21
+new table is created: 22
+new table is created: 23
+new table is created: 24
+new table is created: 25
+new table is created: 26
+new table is created: 27
+new table is created: 28
+new table is created: 29
+new table is created: 30
+new table is created: 31
+new table is created: 32
+new table is created: 33
+new table is created: 34
+new table is created: 35
+new table is created: 36
+new table is created: 37
+new table is created: 38
+new table is created: 39
+new table is created: 40
+new table is created: 41
+new table is created: 42
+new table is created: 43
+new table is created: 44
+new table is created: 45
+new table is created: 46
+new table is created: 47
+new table is created: 48
+new table is created: 49
+new table is created: 50
+new table is created: 51
+new table is created: 52
+new table is created: 53
+new table is created: 54
+new table is created: 55
+new table is created: 56
+new table is created: 57
+new table is created: 58
+new table is created: 59
+new table is created: 60
+new table is created: 61
+new table is created: 62
+new table is created: 63
+new table is created: 64
+new table is created: 65
+new table is created: 66
+new table is created: 67
+new table is created: 68
+new table is created: 69
+new table is created: 70
+new table is created: 71
+new table is created: 72
+new table is created: 73
+new table is created: 74
+new table is created: 75
+new table is created: 76
+new table is created: 77
+new table is created: 78
+new table is created: 79
+new table is created: 80
+new table is created: 81
+new table is created: 82
+new table is created: 83
+new table is created: 84
+new table is created: 85
+new table is created: 86
+new table is created: 87
+new table is created: 88
+new table is created: 89
+new table is created: 90
+new table is created: 91
+new table is created: 92
+new table is created: 93
+new table is created: 94
+new table is created: 95
+new table is created: 96
+new table is created: 97
+new table is created: 98
+new table is created: 99
+new table is created: 100
+new table is created: 101
+new table is created: 102
+new table is created: 103
+new table is created: 104
+new table is created: 105
+new table is created: 106
+new table is created: 107
+new table is created: 108
+new table is created: 109
+new table is created: 110
+new table is created: 111
+new table is created: 112
+new table is created: 113
+new table is created: 114
+new table is created: 115
+new table is created: 116
+new table is created: 117
+new table is created: 118
+new table is created: 119
+new table is created: 120
+new table is created: 121
+new table is created: 122
+new table is created: 123
+new table is created: 124
+new table is created: 125
+new table is created: 126
+new table is created: 127
+new table is created: 128
+new table is created: 129
+new table is created: 130
+new table is created: 131
+new table is created: 132
+new table is created: 133
+new table is created: 134
+new table is created: 135
+new table is created: 136
+new table is created: 137
+new table is created: 138
+new table is created: 139
+new table is created: 140
+new table is created: 141
+new table is created: 142
+new table is created: 143
+new table is created: 144
+new table is created: 145
+new table is created: 146
+new table is created: 147
+new table is created: 148
+new table is created: 149
+new table is created: 150
+new table is created: 151
+new table is created: 152
+new table is created: 153
+new table is created: 154
+new table is created: 155
+new table is created: 156
+new table is created: 157
+new table is created: 158
+new table is created: 159
+new table is created: 160
+new table is created: 161
+new table is created: 162
+new table is created: 163
+new table is created: 164
+new table is created: 165
+new table is created: 166
+new table is created: 167
+new table is created: 168
+new table is created: 169
+new table is created: 170
+new table is created: 171
+new table is created: 172
+new table is created: 173
+new table is created: 174
+new table is created: 175
+new table is created: 176
+new table is created: 177
+new table is created: 178
+new table is created: 179
+new table is created: 180
+new table is created: 181
+new table is created: 182
+new table is created: 183
+new table is created: 184
+new table is created: 185
+new table is created: 186
+new table is created: 187
+new table is created: 188
+new table is created: 189
+new table is created: 190
+new table is created: 191
+new table is created: 192
+new table is created: 193
+new table is created: 194
+new table is created: 195
+new table is created: 196
+new table is created: 197
+new table is created: 198
+new table is created: 199
+new table is created: 200
+new table is created: 201
+new table is created: 202
+new table is created: 203
+new table is created: 204
+new table is created: 205
+new table is created: 206
+new table is created: 207
+new table is created: 208
+new table is created: 209
+new table is created: 210
+new table is created: 211
+new table is created: 212
+new table is created: 213
+new table is created: 214
+new table is created: 215
+new table is created: 216
+new table is created: 217
+new table is created: 218
+new table is created: 219
+new table is created: 220
+new table is created: 221
+new table is created: 222
+new table is created: 223
+new table is created: 224
+new table is created: 225
+new table is created: 226
+new table is created: 227
+new table is created: 228
+new table is created: 229
+new table is created: 230
+new table is created: 231
+new table is created: 232
+new table is created: 233
+new table is created: 234
+new table is created: 235
+new table is created: 236
+new table is created: 237
+new table is created: 238
+new table is created: 239
+new table is created: 240
+new table is created: 241
+new table is created: 242
+new table is created: 243
+new table is created: 244
+new table is created: 245
+new table is created: 246
+new table is created: 247
+new table is created: 248
+new table is created: 249
+new table is created: 250
+new table is created: 251
+new table is created: 252
+new table is created: 253
+new table is created: 254
+new table is created: 255
+new table is created: 256
+new table is created: 257
+new table is created: 258
+new table is created: 259
+new table is created: 260
+new table is created: 261
+new table is created: 262
+new table is created: 263
+new table is created: 264
+new table is created: 265
+I [../src/deptran/paxos_main_helper.cc:77] 2024-04-02 03:31:15.848 | PWD : /home/azureuser/srolis
+I [../src/deptran/paxos_main_helper.cc:273] 2024-04-02 03:31:15.848 | starting process 15116
+I [../src/deptran/config.cc:290] 2024-04-02 03:31:15.848 | LoadYML: third-party/paxos/config/1leader_2followers/paxos24_shardidx0.yml
+I [../src/deptran/config.cc:290] 2024-04-02 03:31:15.850 | LoadYML: third-party/paxos/config/occ_paxos.yml
+I [../src/deptran/paxos_main_helper.cc:282] 2024-04-02 03:31:15.850 | server_infos, number of sites: 24, proc_name: learner
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.854 | parition id of each Paxos group is 23, site-name: s424, site-id: 95
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.858 | parition id of each Paxos group is 22, site-name: s423, site-id: 91
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.861 | parition id of each Paxos group is 21, site-name: s422, site-id: 87
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.865 | parition id of each Paxos group is 20, site-name: s421, site-id: 83
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.868 | parition id of each Paxos group is 19, site-name: s420, site-id: 79
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.871 | parition id of each Paxos group is 18, site-name: s419, site-id: 75
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.874 | parition id of each Paxos group is 17, site-name: s418, site-id: 71
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.878 | parition id of each Paxos group is 16, site-name: s417, site-id: 67
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.881 | parition id of each Paxos group is 15, site-name: s416, site-id: 63
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.885 | parition id of each Paxos group is 14, site-name: s415, site-id: 59
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.888 | parition id of each Paxos group is 13, site-name: s414, site-id: 55
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.891 | parition id of each Paxos group is 12, site-name: s413, site-id: 51
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.894 | parition id of each Paxos group is 11, site-name: s412, site-id: 47
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.898 | parition id of each Paxos group is 10, site-name: s411, site-id: 43
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.901 | parition id of each Paxos group is 9, site-name: s410, site-id: 39
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.905 | parition id of each Paxos group is 8, site-name: s409, site-id: 35
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.908 | parition id of each Paxos group is 7, site-name: s408, site-id: 31
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.912 | parition id of each Paxos group is 6, site-name: s407, site-id: 27
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.916 | parition id of each Paxos group is 5, site-name: s406, site-id: 23
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.919 | parition id of each Paxos group is 4, site-name: s405, site-id: 19
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.922 | parition id of each Paxos group is 3, site-name: s404, site-id: 15
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.925 | parition id of each Paxos group is 2, site-name: s403, site-id: 11
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.929 | parition id of each Paxos group is 1, site-name: s402, site-id: 7
+I [../src/deptran/paxos_main_helper.cc:288] 2024-04-02 03:31:15.932 | parition id of each Paxos group is 0, site-name: s401, site-id: 3
+I [../src/deptran/paxos_main_helper.cc:294] 2024-04-02 03:31:15.932 | running machine-id: 3
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.932 | launching site: b, bind address 0.0.0.0:7303
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.932 | launching site: 3, bind address 0.0.0.0:7301
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.933 | launching site: 13, bind address 0.0.0.0:7305
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.933 | launching site: f, bind address 0.0.0.0:7304
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.933 | launching site: 7, bind address 0.0.0.0:7302
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.933 | launching site: 17, bind address 0.0.0.0:7306
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.935 | [service]loc_id: 3, name: s401, proc: learner, id: 3
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.935 | launching site: 1b, bind address 0.0.0.0:7307
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.937 | [service]loc_id: 3, name: s403, proc: learner, id: 11
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.937 | [service]loc_id: 3, name: s402, proc: learner, id: 7
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.937 | launching site: 1f, bind address 0.0.0.0:7308
+starting server at 0.0.0.0:7303
+starting server at 0.0.0.0:7301
+starting server at 0.0.0.0:7302
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.938 | rrr::Server: started on 0.0.0.0:7303
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.938 | [service]loc_id: 3, name: s404, proc: learner, id: 15
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.938 | [service]loc_id: 3, name: s405, proc: learner, id: 19
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.938 | rrr::Server: started on 0.0.0.0:7301
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.938 | Server s401 ready at 0.0.0.0:7301
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.938 | Server s403 ready at 0.0.0.0:7303
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.938 | rrr::Server: started on 0.0.0.0:7302
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.938 | Server s402 ready at 0.0.0.0:7302
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.938 | setup paxos communicator
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.938 | setup paxos communicator
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.938 | setup paxos communicator
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.938 | launching site: 23, bind address 0.0.0.0:7309
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.938 | [service]loc_id: 3, name: s406, proc: learner, id: 23
+starting server at 0.0.0.0:7304
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.938 | rrr::Server: started on 0.0.0.0:7304
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.938 | Server s404 ready at 0.0.0.0:7304
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.938 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.938 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.938 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.938 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.938 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.939 | launching site: 27, bind address 0.0.0.0:7310
+starting server at 0.0.0.0:7305
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.939 | rrr::Server: started on 0.0.0.0:7305
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.939 | Server s405 ready at 0.0.0.0:7305
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.939 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.939 | connect to site: 20.7.73.161:7001 (attempt 0)
+starting server at 0.0.0.0:7306
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.940 | launching site: 2b, bind address 0.0.0.0:7311
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.940 | [service]loc_id: 3, name: s407, proc: learner, id: 27
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.940 | rrr::Server: started on 0.0.0.0:7306
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.940 | Server s406 ready at 0.0.0.0:7306
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.940 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.940 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.940 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.940 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.941 | launching site: 2f, bind address 0.0.0.0:7312
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.941 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.941 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.941 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+starting server at 0.0.0.0:7307
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.942 | rrr::Server: started on 0.0.0.0:7307
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.942 | Server s407 ready at 0.0.0.0:7307
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.942 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.942 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.942 | launching site: 33, bind address 0.0.0.0:7313
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.942 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.942 | [service]loc_id: 3, name: s408, proc: learner, id: 31
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.942 | launching site: 37, bind address 0.0.0.0:7314
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.942 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.942 | launching site: 3b, bind address 0.0.0.0:7315
+starting server at 0.0.0.0:7308
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.943 | rrr::Server: started on 0.0.0.0:7308
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.943 | Server s408 ready at 0.0.0.0:7308
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.943 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.943 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.943 | launching site: 3f, bind address 0.0.0.0:7316
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.943 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.944 | launching site: 43, bind address 0.0.0.0:7317
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.945 | launching site: 47, bind address 0.0.0.0:7318
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.946 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.946 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.946 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.946 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.947 | launching site: 4b, bind address 0.0.0.0:7319
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.947 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.947 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.948 | launching site: 4f, bind address 0.0.0.0:7320
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.948 | [service]loc_id: 3, name: s409, proc: learner, id: 35
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.948 | [service]loc_id: 3, name: s410, proc: learner, id: 39
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.948 | launching site: 53, bind address 0.0.0.0:7321
+starting server at 0.0.0.0:7309
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.949 | rrr::Server: started on 0.0.0.0:7309
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.949 | Server s409 ready at 0.0.0.0:7309
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.949 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.949 | connect to site: 20.7.73.161:7001 (attempt 0)
+starting server at 0.0.0.0:7310
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.949 | rrr::Server: started on 0.0.0.0:7310
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.949 | Server s410 ready at 0.0.0.0:7310
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.949 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.949 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.949 | launching site: 57, bind address 0.0.0.0:7322
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.949 | launching site: 5b, bind address 0.0.0.0:7323
+I [../src/deptran/paxos_main_helper.cc:103] 2024-04-02 03:31:15.950 | waiting for server setup threads.
+I [../src/deptran/paxos_main_helper.cc:88] 2024-04-02 03:31:15.950 | launching site: 5f, bind address 0.0.0.0:7324
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.950 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.950 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.950 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.950 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.951 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.952 | [service]loc_id: 3, name: s411, proc: learner, id: 43
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.953 | [service]loc_id: 3, name: s412, proc: learner, id: 47
+starting server at 0.0.0.0:7311
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.953 | rrr::Server: started on 0.0.0.0:7311
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.953 | Server s411 ready at 0.0.0.0:7311
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.953 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.953 | connect to site: 20.7.73.161:7001 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.954 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+starting server at 0.0.0.0:7312
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.954 | rrr::Server: started on 0.0.0.0:7312
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.954 | Server s412 ready at 0.0.0.0:7312
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.954 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.954 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.954 | [service]loc_id: 3, name: s413, proc: learner, id: 51
+starting server at 0.0.0.0:7313
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.955 | rrr::Server: started on 0.0.0.0:7313
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.955 | Server s413 ready at 0.0.0.0:7313
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.955 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.955 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.956 | [service]loc_id: 3, name: s414, proc: learner, id: 55
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.957 | [service]loc_id: 3, name: s415, proc: learner, id: 59
+starting server at 0.0.0.0:7315
+starting server at 0.0.0.0:7314
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.958 | rrr::Server: started on 0.0.0.0:7315
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.958 | Server s415 ready at 0.0.0.0:7315
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.958 | rrr::Server: started on 0.0.0.0:7314
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.958 | setup paxos communicator
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.958 | Server s414 ready at 0.0.0.0:7314
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.958 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.958 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.958 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.958 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.958 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.959 | [service]loc_id: 3, name: s416, proc: learner, id: 63
+starting server at 0.0.0.0:7316
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.960 | rrr::Server: started on 0.0.0.0:7316
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.960 | Server s416 ready at 0.0.0.0:7316
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.960 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.960 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.960 | [service]loc_id: 3, name: s417, proc: learner, id: 67
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.961 | [service]loc_id: 3, name: s418, proc: learner, id: 71
+starting server at 0.0.0.0:7317
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.961 | rrr::Server: started on 0.0.0.0:7317
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.961 | Server s417 ready at 0.0.0.0:7317
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.961 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.961 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.961 | [service]loc_id: 3, name: s419, proc: learner, id: 75
+starting server at 0.0.0.0:7318
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.961 | rrr::Server: started on 0.0.0.0:7318
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.961 | Server s418 ready at 0.0.0.0:7318
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.961 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.961 | connect to site: 20.7.73.161:7001 (attempt 0)
+starting server at 0.0.0.0:7319
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.961 | rrr::Server: started on 0.0.0.0:7319
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.961 | Server s419 ready at 0.0.0.0:7319
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.961 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.961 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.961 | [service]loc_id: 3, name: s420, proc: learner, id: 79
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.962 | connect to site: 20.65.59.224:7101 (attempt 0)
+starting server at 0.0.0.0:7320
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.962 | rrr::Server: started on 0.0.0.0:7320
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.962 | Server s420 ready at 0.0.0.0:7320
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.962 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.963 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.963 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.963 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.963 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.964 | connect to site: 20.7.73.161:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.965 | [service]loc_id: 3, name: s421, proc: learner, id: 83
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.966 | [service]loc_id: 3, name: s422, proc: learner, id: 87
+starting server at 0.0.0.0:7321
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.967 | rrr::Server: started on 0.0.0.0:7321
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.967 | Server s421 ready at 0.0.0.0:7321
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.967 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.967 | connect to site: 20.65.59.224:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.967 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.967 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.967 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.967 | connect to site: 20.7.73.161:7001 (attempt 0)
+starting server at 0.0.0.0:7322
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.967 | rrr::Server: started on 0.0.0.0:7322
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.967 | Server s422 ready at 0.0.0.0:7322
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.967 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.967 | connect to site: 20.7.73.161:7001 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.968 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.968 | [service]loc_id: 3, name: s423, proc: learner, id: 91
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.968 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.968 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/paxos_worker.cc:197] 2024-04-02 03:31:15.969 | [service]loc_id: 3, name: s424, proc: learner, id: 95
+starting server at 0.0.0.0:7323
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.971 | rrr::Server: started on 0.0.0.0:7323
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.971 | Server s423 ready at 0.0.0.0:7323
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.971 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.971 | connect to site: 20.7.73.161:7001 (attempt 0)
+starting server at 0.0.0.0:7324
+I [../src/rrr/rpc/server.cpp:537] 2024-04-02 03:31:15.971 | rrr::Server: started on 0.0.0.0:7324
+I [../src/deptran/paxos_worker.cc:220] 2024-04-02 03:31:15.971 | Server s424 ready at 0.0.0.0:7324
+I [../src/deptran/communicator.cc:14] 2024-04-02 03:31:15.971 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.971 | connect to site: 20.7.73.161:7001 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.973 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.973 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.973 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:15.977 | connect to site: 20.65.59.224:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:15.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.941 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.941 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.942 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.943 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.943 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.944 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.947 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.947 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.948 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.948 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.948 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.948 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.950 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.950 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.951 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.951 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.951 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.951 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.954 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.954 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.967 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.968 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.968 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.968 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.968 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.969 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.973 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.973 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.973 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.973 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.973 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.973 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.974 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.974 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.984 | connect to site: 20.65.59.224:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:16.984 | connect to site: 20.65.59.224:7101 (attempt 1)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:16.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.943 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.944 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.944 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.945 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.948 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.948 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.948 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.948 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.951 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.951 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.951 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.952 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.952 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.952 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.952 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.952 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.952 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.954 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.956 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.956 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.968 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.969 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.969 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.970 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.972 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.972 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.973 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.973 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.973 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.974 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.974 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.974 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.974 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.974 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.985 | connect to site: 20.65.59.224:7101 (attempt 2)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:17.985 | connect to site: 20.65.59.224:7101 (attempt 2)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.987 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:17.992 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.944 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.946 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.946 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.952 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.952 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.952 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.952 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.952 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.952 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.953 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.953 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.953 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.953 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.956 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.956 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.958 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.961 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.961 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.961 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.961 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.969 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.970 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.973 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.974 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.974 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.975 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.975 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.975 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.975 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.975 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.976 | connect to site: 20.65.59.224:7101 (attempt 3)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.976 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.979 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.979 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.979 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.979 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.987 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:18.992 | connect to site: 20.65.59.224:7101 (attempt 3)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:18.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.946 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.953 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.953 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.953 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.953 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.953 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.954 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.954 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.954 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.954 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.958 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.959 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.961 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.961 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.961 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.961 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.962 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.962 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.962 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.962 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.974 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.974 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.974 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.975 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.975 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.975 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.976 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.976 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.976 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.977 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.977 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.977 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.979 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.979 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.979 | connect to site: 20.65.59.224:7101 (attempt 4)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.979 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.979 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.988 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:19.998 | connect to site: 20.65.59.224:7101 (attempt 4)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:19.999 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.953 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.954 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.954 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.954 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.954 | connect to site: 20.65.59.224:7101 (attempt 5)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.956 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.956 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.959 | connect to site: 20.65.59.224:7101 (attempt 5)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.959 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.959 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.959 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.960 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.962 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.962 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.962 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.962 | connect to site: 20.65.59.224:7101 (attempt 5)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.969 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.975 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.975 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.975 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.976 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.976 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.977 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.977 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.977 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.979 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.982 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.982 | connect to site: 20.65.59.224:7101 (attempt 5)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.982 | connect to site: 20.65.59.224:7101 (attempt 5)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.985 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.985 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.995 | connect to site: 20.65.59.224:7101 (attempt 5)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:20.999 | connect to site: 20.65.59.224:7101 (attempt 5)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:20.000 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.956 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.956 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.957 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.957 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.959 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.959 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.959 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.960 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.960 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.960 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.960 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.961 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.969 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.971 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.972 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.972 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.972 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.972 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.982 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.982 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.982 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.982 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.982 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.982 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.983 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.985 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.985 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.989 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.989 | connect to site: 20.65.59.224:7101 (attempt 6)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.989 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.997 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:21.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:21.000 | connect to site: 20.65.59.224:7101 (attempt 6)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.957 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.957 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.960 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.960 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.960 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.961 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.964 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.964 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.965 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.970 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.970 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.970 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.971 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.973 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.976 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.976 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.977 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.980 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.983 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.983 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.983 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.983 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.985 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.985 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.985 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.986 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.986 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.986 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.986 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.986 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.990 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.990 | connect to site: 20.65.59.224:7101 (attempt 7)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.990 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.996 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:22.998 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:22.999 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.001 | connect to site: 20.65.59.224:7101 (attempt 7)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.004 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.964 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.965 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.965 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.966 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.966 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.967 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.970 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.970 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.970 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.971 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.971 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.971 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.974 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.977 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.978 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.980 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.980 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.981 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.984 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.984 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.985 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.985 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.985 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.995 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.995 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.995 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.995 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.996 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.996 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.996 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.996 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.997 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.997 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.997 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:23.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:23.999 | connect to site: 20.65.59.224:7101 (attempt 8)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.005 | connect to site: 20.65.59.224:7101 (attempt 8)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.005 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.966 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.966 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.967 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.971 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.971 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.971 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.973 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.974 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.978 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.980 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.981 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.984 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.985 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.986 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.987 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.991 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.991 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.991 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.991 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.992 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.992 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.992 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.992 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.996 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.997 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.997 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.997 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.997 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.998 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:24.998 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:24.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.005 | connect to site: 20.65.59.224:7101 (attempt 9)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.008 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.009 | connect to site: 20.65.59.224:7101 (attempt 9)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.973 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.973 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.974 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.976 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.982 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.984 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.984 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.985 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.985 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.985 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.986 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.987 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.992 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.992 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.992 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.992 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.992 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.993 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:25.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.997 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.997 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.997 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.997 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.998 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.998 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:25.998 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.008 | connect to site: 20.65.59.224:7101 (attempt 10)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.009 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.014 | connect to site: 20.65.59.224:7101 (attempt 10)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.024 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.976 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.976 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.976 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.982 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.986 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.987 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.988 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.988 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.988 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.988 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.989 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.989 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.992 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.993 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.996 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.997 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:26.997 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:26.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.008 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.008 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.014 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.022 | connect to site: 20.65.59.224:7101 (attempt 11)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.024 | connect to site: 20.65.59.224:7101 (attempt 11)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.025 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.029 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.982 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.982 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.982 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.983 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.987 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.988 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.989 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.989 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.989 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.989 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.989 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.990 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.990 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.997 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.997 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.998 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:27.998 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.000 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:27.000 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.008 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.009 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.009 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.009 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.009 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.009 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.010 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.014 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.015 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.018 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.019 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.025 | connect to site: 20.65.59.224:7101 (attempt 12)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.029 | connect to site: 20.65.59.224:7101 (attempt 12)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.034 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.035 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.983 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.983 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.983 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.988 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.989 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.990 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.990 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.990 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.990 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.990 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.991 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.994 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.994 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.994 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.994 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:28.994 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.000 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:28.001 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.002 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.002 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.003 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.009 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.009 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.009 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.009 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.010 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.011 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.012 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.015 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.015 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.016 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.016 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.019 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.020 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.034 | connect to site: 20.65.59.224:7101 (attempt 13)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.035 | connect to site: 20.65.59.224:7101 (attempt 13)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.035 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.035 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.989 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.989 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.991 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.991 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.991 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.991 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.994 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.994 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.994 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.994 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:29.994 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:29.995 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.001 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.002 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.002 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.003 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.003 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.007 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.011 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.012 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.014 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.014 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.014 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.016 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.016 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.016 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.017 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.017 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.017 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.017 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.017 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.017 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.020 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.021 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.035 | connect to site: 20.65.59.224:7101 (attempt 14)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.036 | connect to site: 20.65.59.224:7101 (attempt 14)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.036 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.991 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:30.995 | connect to site: 20.65.59.224:7101 (attempt 15)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.997 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:30.998 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.002 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.003 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.003 | connect to site: 20.65.59.224:7101 (attempt 15)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.004 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.005 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.005 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.007 | connect to site: 20.65.59.224:7101 (attempt 15)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.011 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.017 | connect to site: 20.65.59.224:7101 (attempt 15)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.021 | connect to site: 20.65.59.224:7101 (attempt 15)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.025 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.025 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.028 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.036 | connect to site: 20.65.59.224:7101 (attempt 15)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.037 | connect to site: 20.65.59.224:7101 (attempt 15)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.040 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.997 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.997 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.997 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:31.998 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.999 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.999 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.000 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:31.000 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.001 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.001 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.001 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.001 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.001 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.001 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.002 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.004 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.005 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.005 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.006 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.006 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.006 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.011 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.012 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.018 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.018 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.018 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.018 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.022 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.025 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.025 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.028 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.029 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.033 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.037 | connect to site: 20.65.59.224:7101 (attempt 16)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.040 | connect to site: 20.65.59.224:7101 (attempt 16)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.040 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:32.041 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.999 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.999 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.000 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:32.000 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.001 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.002 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.002 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.002 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.002 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.002 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.002 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.003 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.005 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.005 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.006 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.006 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.006 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.012 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.013 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.019 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.019 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.019 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.026 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.026 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.026 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.026 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.026 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.026 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.029 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.033 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.033 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.040 | connect to site: 20.65.59.224:7101 (attempt 17)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:33.041 | connect to site: 20.65.59.224:7101 (attempt 17)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.041 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:33.042 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.001 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.003 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.005 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.005 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.011 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.011 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.011 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.011 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.013 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.015 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.015 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.015 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.015 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.015 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.015 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.015 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.016 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.018 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.019 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.019 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.019 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.024 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.026 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.027 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.027 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.027 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.027 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.027 | connect to site: 20.65.59.224:7101 (attempt 18)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.030 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.033 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.034 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.041 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.042 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:34.042 | connect to site: 20.65.59.224:7101 (attempt 18)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:34.046 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.011 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.011 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.011 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.011 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.012 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.012 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.012 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.014 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.015 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.016 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.018 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.018 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.018 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.018 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.020 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.020 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.024 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.025 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.027 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.030 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.030 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.030 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.031 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.031 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.031 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.031 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.031 | connect to site: 20.65.59.224:7101 (attempt 19)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.034 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.036 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.036 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.036 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.036 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.036 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.042 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:35.046 | connect to site: 20.65.59.224:7101 (attempt 19)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:35.049 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.012 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.013 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.013 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.014 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.020 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.020 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.022 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.022 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.022 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.022 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.022 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.023 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.025 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.026 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.027 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.028 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.030 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.036 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.036 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.036 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.036 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.036 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.037 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.037 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.037 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.037 | connect to site: 20.65.59.224:7101 (attempt 20)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.038 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.043 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.044 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:36.049 | connect to site: 20.65.59.224:7101 (attempt 20)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:36.050 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.014 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.014 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.014 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.019 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.019 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.020 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.026 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.027 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.027 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.027 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.028 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.028 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.028 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.028 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.030 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.030 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.031 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.031 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.031 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.031 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.031 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.032 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.033 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.033 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.033 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.037 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.037 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.037 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.037 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.037 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.038 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.038 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.038 | connect to site: 20.65.59.224:7101 (attempt 21)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.039 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.045 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:37.050 | connect to site: 20.65.59.224:7101 (attempt 21)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:37.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.019 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.020 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.020 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.021 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.021 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.024 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.028 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.028 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.028 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.028 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.029 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.029 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.029 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.029 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.031 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.031 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.032 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.032 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.032 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.033 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.033 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.033 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.033 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.034 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.034 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.038 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.038 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.038 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.038 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.038 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.038 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.039 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.039 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.039 | connect to site: 20.65.59.224:7101 (attempt 22)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.039 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.040 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.040 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.045 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.046 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:38.051 | connect to site: 20.65.59.224:7101 (attempt 22)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:38.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.021 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.021 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.022 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.024 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.025 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.029 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.029 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.029 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.029 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.032 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.032 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.033 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.034 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.034 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.034 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.038 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.039 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.039 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.039 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.040 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.040 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.040 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.040 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.041 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.042 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.042 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.042 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.042 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.043 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.043 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.043 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.043 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.043 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.044 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.044 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.044 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.046 | connect to site: 20.65.59.224:7101 (attempt 23)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.047 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:39.052 | connect to site: 20.65.59.224:7101 (attempt 23)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:39.053 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.022 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.025 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.034 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.039 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.039 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.039 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.039 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.040 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.040 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.041 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.042 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.042 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.042 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.042 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.043 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.043 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.043 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.044 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.044 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.044 | connect to site: 20.65.59.224:7101 (attempt 24)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.045 | connect to site: 20.65.59.224:7101 (attempt 24)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.045 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.046 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.046 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.046 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.047 | connect to site: 20.65.59.224:7101 (attempt 24)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.047 | connect to site: 20.65.59.224:7101 (attempt 24)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.048 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:40.053 | connect to site: 20.65.59.224:7101 (attempt 24)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.059 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.059 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.059 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.059 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.059 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.059 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.067 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.067 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:40.067 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.045 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.046 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.046 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.046 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.046 | connect to site: 20.65.59.224:7101 (attempt 25)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.046 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.047 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.048 | connect to site: 20.65.59.224:7101 (attempt 25)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.049 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.059 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.059 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.059 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.059 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.059 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.059 | connect to site: 20.65.59.224:7101 (attempt 25)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.060 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.060 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.060 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.060 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.060 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.060 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.067 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.068 | connect to site: 20.65.59.224:7101 (attempt 25)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:41.068 | connect to site: 20.65.59.224:7101 (attempt 25)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.072 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.072 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:41.073 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.047 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.049 | connect to site: 20.65.59.224:7101 (attempt 26)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.051 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.052 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.052 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.052 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.052 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.052 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.052 | connect to site: 20.65.59.224:7101 (attempt 26)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.057 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.060 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.060 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.060 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.060 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.060 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.060 | connect to site: 20.65.59.224:7101 (attempt 26)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.061 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.061 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.062 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.071 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.072 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.073 | connect to site: 20.65.59.224:7101 (attempt 26)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:42.073 | connect to site: 20.65.59.224:7101 (attempt 26)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.073 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.081 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.081 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.081 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.082 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.082 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.082 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:42.082 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.051 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.052 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.052 | connect to site: 20.65.59.224:7101 (attempt 27)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.052 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.055 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.055 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.055 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.055 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.055 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.055 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.056 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.056 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.057 | connect to site: 20.65.59.224:7101 (attempt 27)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.057 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.057 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.057 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.061 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.062 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.062 | connect to site: 20.65.59.224:7101 (attempt 27)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.062 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.063 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.063 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.071 | connect to site: 20.65.59.224:7101 (attempt 27)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.072 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.073 | connect to site: 20.65.59.224:7101 (attempt 27)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.080 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.081 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.081 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.082 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.082 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.082 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.082 | connect to site: 20.65.59.224:7101 (attempt 27)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:43.082 | connect to site: 20.65.59.224:7101 (attempt 27)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.083 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.083 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.083 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.083 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.085 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.085 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:43.085 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.052 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.052 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.053 | connect to site: 20.65.59.224:7101 (attempt 28)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.053 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.053 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.054 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.055 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.055 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.055 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.055 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.055 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.055 | connect to site: 20.65.59.224:7101 (attempt 28)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.056 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.057 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.057 | connect to site: 20.65.59.224:7101 (attempt 28)
+I [../src/deptran/communicator.cc:167] 2024-04-02 03:31:44.057 | connect to site: 20.65.59.224:7101 (attempt 28)
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.058 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.058 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2024-04-02 03:31:44.058 | rrr::Client: connect(20.65.59.224:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2

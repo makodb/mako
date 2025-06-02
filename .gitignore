@@ -20,6 +20,7 @@ tmp_conf*.xml
 benchmark*.log
 log*
 .idea
+*.o
 *.orig
 docs/
 deptran/mdcc/mdcc_rpc.h

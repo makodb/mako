@@ -1,0 +1,1124 @@
++ sudo cgdelete -g cpuset:/cpulimit
++ sudo cgcreate -t rolis:rolis -a rolis:rolis -g cpuset:/cpulimit
++ nshard=5
++ shard=4
++ trd=24
++ let up=trd+3
++ sec=5
++ cluster=localhost
++ sudo cgset -r cpuset.mems=0 cpulimit
++ sudo cgset -r cpuset.cpus=0-27 cpulimit
++ mkdir -p results
+++ pwd
++ path=/home/rolis/srolis
++ sudo cgexec -g cpuset:cpulimit ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp --db-type mbta --num-threads 24 --scale-factor 24 --num-erpc-server 2 --shard-index 4 --shard-config /home/rolis/srolis/config/local-shards5-warehouses24.yml -F third-party/paxos/config/1leader_2followers/paxos24_shardidx4.yml -F third-party/paxos/config/occ_paxos.yml --txn-flags 1 --runtime 5 -P localhost --bench-opts --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7f4fc2b7f000, 0x7f5004d7f000)
+cpu0 owns [0x7f4fc2c00000, 0x7f4fc5800000)
+cpu1 owns [0x7f4fc5800000, 0x7f4fc8400000)
+cpu2 owns [0x7f4fc8400000, 0x7f4fcb000000)
+cpu3 owns [0x7f4fcb000000, 0x7f4fcdc00000)
+cpu4 owns [0x7f4fcdc00000, 0x7f4fd0800000)
+cpu5 owns [0x7f4fd0800000, 0x7f4fd3400000)
+cpu6 owns [0x7f4fd3400000, 0x7f4fd6000000)
+cpu7 owns [0x7f4fd6000000, 0x7f4fd8c00000)
+cpu8 owns [0x7f4fd8c00000, 0x7f4fdb800000)
+cpu9 owns [0x7f4fdb800000, 0x7f4fde400000)
+cpu10 owns [0x7f4fde400000, 0x7f4fe1000000)
+cpu11 owns [0x7f4fe1000000, 0x7f4fe3c00000)
+cpu12 owns [0x7f4fe3c00000, 0x7f4fe6800000)
+cpu13 owns [0x7f4fe6800000, 0x7f4fe9400000)
+cpu14 owns [0x7f4fe9400000, 0x7f4fec000000)
+cpu15 owns [0x7f4fec000000, 0x7f4feec00000)
+cpu16 owns [0x7f4feec00000, 0x7f4ff1800000)
+cpu17 owns [0x7f4ff1800000, 0x7f4ff4400000)
+cpu18 owns [0x7f4ff4400000, 0x7f4ff7000000)
+cpu19 owns [0x7f4ff7000000, 0x7f4ff9c00000)
+cpu20 owns [0x7f4ff9c00000, 0x7f4ffc800000)
+cpu21 owns [0x7f4ffc800000, 0x7f4fff400000)
+cpu22 owns [0x7f4fff400000, 0x7f5002000000)
+cpu23 owns [0x7f5002000000, 0x7f5004c00000)
+Database Benchmark:
+  pid: 790270
+settings:
+  par-loading : 0
+  pin-cpus    : 1
+  slow-exit   : 0
+  retry-txns  : 1
+  backoff-txns: 0
+  bench       : tpcc
+  scale       : 24
+  num-cpus    : 32
+  num-threads : 24
+  shardIndex  : 4
+  paxos_proc_name  : localhost
+  nshards     : 5
+  db-type     : mbta
+  basedir     : ./tmp
+  txn-flags   : 1
+  runtime     : 5
+  var-encode  : yes
+  allocator   : jemalloc
+  numa-memory : 1107296256
+  logfiles : []
+  assignments : []
+  disable-gc : 0
+  disable-snapshots : 0
+  stats-server-sockfile: 
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  batch-size                   :1
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [50, 50, 0, 0, 0]
+20250401-22:03.51-792957(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31429, numa_node = 0, req_types: 1
+31:800219 INFOR: eRPC Nexus: Created with management UDP port 31429, hostname 172.19.0.40.
+31:804532 INFOR: DPDK transport for Rpc 29 initializing DPDK EAL.
+32:080197 WARNG: Running as primary DPDK process. eRPC DPDK daemon is not running.
+32:080220 INFOR: DPDK transport for Rpc 29 got QP 0
+32:080245 INFOR: Initializing port 0 with driver net_mlx5
+32:833564 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 100.0 Gbps
+32:833593 WARNG: DpdkTransport created for Rpc ID 29, queue 0, datapath UDP port 10000
+20250401-22:03.52-834274(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31430, numa_node = 0, req_types: 1
+32:841737 INFOR: eRPC Nexus: Created with management UDP port 31430, hostname 172.19.0.40.
+32:841783 INFOR: DPDK transport for Rpc 30 skipping DPDK EAL initialization.
+32:841787 INFOR: DPDK transport for Rpc 30 got QP 1
+32:842137 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 100.0 Gbps
+32:842156 WARNG: DpdkTransport created for Rpc ID 30, queue 1, datapath UDP port 10001
+20250401-22:03.52-924505(us) 790270 ! run             (bench.cc:311):     # of loaders size:1
+20250401-22:03.52-961071(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [0,10000]
+20250401-22:03.52-963481(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [10000,20000]
+20250401-22:03.52-965002(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [20000,30000]
+20250401-22:03.53-5892(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [30000,40000]
+20250401-22:03.53-8576(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [40000,50000]
+20250401-22:03.53-47371(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [50000,60000]
+20250401-22:03.53-64295(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [60000,70000]
+20250401-22:03.53-105745(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [70000,80000]
+20250401-22:03.53-130504(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [80000,90000]
+20250401-22:03.53-147868(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [90000,100000]
+20250401-22:03.53-180988(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [100000,110000]
+20250401-22:03.53-182364(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [110000,120000]
+20250401-22:03.53-218399(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [120000,130000]
+20250401-22:03.53-219924(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [130000,140000]
+20250401-22:03.53-261322(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [140000,150000]
+20250401-22:03.53-267044(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [150000,160000]
+20250401-22:03.53-306928(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [160000,170000]
+20250401-22:03.53-325499(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [170000,180000]
+20250401-22:03.53-356925(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [180000,190000]
+20250401-22:03.53-384957(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [190000,200000]
+20250401-22:03.53-405588(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [200000,210000]
+20250401-22:03.53-438810(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [210000,220000]
+20250401-22:03.53-440443(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [220000,230000]
+20250401-22:03.53-478490(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [230000,240000]
+20250401-22:03.53-479853(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [240000,250000]
+20250401-22:03.53-520244(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [250000,260000]
+20250401-22:03.53-529089(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [260000,270000]
+20250401-22:03.53-570504(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [270000,280000]
+20250401-22:03.53-592323(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [280000,290000]
+20250401-22:03.53-625436(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [290000,300000]
+20250401-22:03.53-657318(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [300000,310000]
+20250401-22:03.53-662233(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [310000,320000]
+20250401-22:03.53-698127(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [320000,330000]
+20250401-22:03.53-699480(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [330000,340000]
+20250401-22:03.53-739362(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [340000,350000]
+20250401-22:03.53-743666(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [350000,360000]
+20250401-22:03.53-786472(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [360000,370000]
+20250401-22:03.53-798512(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [370000,380000]
+20250401-22:03.53-836353(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [380000,390000]
+20250401-22:03.53-859536(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [390000,400000]
+20250401-22:03.53-886835(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [400000,410000]
+20250401-22:03.53-917248(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [410000,420000]
+20250401-22:03.53-918959(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [420000,430000]
+20250401-22:03.53-954306(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [430000,440000]
+20250401-22:03.53-956012(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [440000,450000]
+20250401-22:03.53-997008(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [450000,460000]
+20250401-22:03.53-999974(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [460000,470000]
+20250401-22:03.54-40276(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [470000,480000]
+20250401-22:03.54-55849(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [480000,490000]
+20250401-22:03.54-94490(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [490000,500000]
+20250401-22:03.54-120877(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [500000,510000]
+20250401-22:03.54-133399(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [510000,520000]
+20250401-22:03.54-165197(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [520000,530000]
+20250401-22:03.54-166845(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [530000,540000]
+20250401-22:03.54-207211(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [540000,550000]
+20250401-22:03.54-209301(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [550000,560000]
+20250401-22:03.54-250273(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [560000,570000]
+20250401-22:03.54-257893(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [570000,580000]
+20250401-22:03.54-299173(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [580000,590000]
+20250401-22:03.54-317548(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [590000,600000]
+20250401-22:03.54-348907(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [600000,610000]
+20250401-22:03.54-377106(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [610000,620000]
+20250401-22:03.54-394130(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [620000,630000]
+20250401-22:03.54-430466(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [630000,640000]
+20250401-22:03.54-432210(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [640000,650000]
+20250401-22:03.54-468973(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [650000,660000]
+20250401-22:03.54-470637(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [660000,670000]
+20250401-22:03.54-510692(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [670000,680000]
+20250401-22:03.54-519398(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [680000,690000]
+20250401-22:03.54-557940(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [690000,700000]
+20250401-22:03.54-579446(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [700000,710000]
+20250401-22:03.54-612736(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [710000,720000]
+20250401-22:03.54-642858(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [720000,730000]
+20250401-22:03.54-644910(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [730000,740000]
+20250401-22:03.54-682306(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [740000,750000]
+20250401-22:03.54-683703(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [750000,760000]
+20250401-22:03.54-721983(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [760000,770000]
+20250401-22:03.54-724012(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [770000,780000]
+20250401-22:03.54-767585(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [780000,790000]
+20250401-22:03.54-777825(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [790000,800000]
+20250401-22:03.54-816023(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [800000,810000]
+20250401-22:03.54-836761(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [810000,820000]
+20250401-22:03.54-864772(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [820000,830000]
+20250401-22:03.54-894132(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [830000,840000]
+20250401-22:03.54-899711(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [840000,850000]
+20250401-22:03.54-934372(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [850000,860000]
+20250401-22:03.54-936183(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [860000,870000]
+20250401-22:03.54-977369(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [870000,880000]
+20250401-22:03.54-983925(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [880000,890000]
+20250401-22:03.55-22896(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [890000,900000]
+20250401-22:03.55-36475(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [900000,910000]
+20250401-22:03.55-73296(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [910000,920000]
+20250401-22:03.55-99626(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [920000,930000]
+20250401-22:03.55-127660(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [930000,940000]
+20250401-22:03.55-157627(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [940000,950000]
+20250401-22:03.55-159052(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [950000,960000]
+20250401-22:03.55-193647(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [960000,970000]
+20250401-22:03.55-195372(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [970000,980000]
+20250401-22:03.55-236983(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [980000,990000]
+20250401-22:03.55-241724(us) 790270 * load_micro      (tpcc.cc:944):      [load] micro-benchmark insert: [990000,1000000]
+start worker:1135775
+timed region dataloading took 2317.72 ms
+DB size: 112.914 MB
+[0, 0, 0] txns persisted in loading phase
+starting benchmark...
+--------------Finish loading data and wait for others completing load phase ------------
+20250401-22:03.55-245136(us) 790270 ! wait_for_key    (common.h:50):      wait a key:load_phase_0 from host:172.19.0.33, port:6001
+20250401-22:03.55-246120(us) 790270 ! wait_for_key    (common.h:50):      wait a key:load_phase_1 from host:172.19.0.33, port:6001
+20250401-22:03.55-247056(us) 790270 ! wait_for_key    (common.h:50):      wait a key:load_phase_2 from host:172.19.0.33, port:6001
+20250401-22:03.55-255200(us) 790270 ! wait_for_key    (common.h:50):      wait a key:load_phase_3 from host:172.19.0.33, port:6001
+tpcc: worker id 32 => warehouses [1, 2)
+tpcc: worker id 33 => warehouses [2, 3)
+tpcc: worker id 34 => warehouses [3, 4)
+tpcc: worker id 35 => warehouses [4, 5)
+tpcc: worker id 36 => warehouses [5, 6)
+tpcc: worker id 37 => warehouses [6, 7)
+tpcc: worker id 38 => warehouses [7, 8)
+tpcc: worker id 39 => warehouses [8, 9)
+tpcc: worker id 40 => warehouses [9, 10)
+tpcc: worker id 41 => warehouses [10, 11)
+tpcc: worker id 42 => warehouses [11, 12)
+tpcc: worker id 43 => warehouses [12, 13)
+tpcc: worker id 44 => warehouses [13, 14)
+tpcc: worker id 45 => warehouses [14, 15)
+tpcc: worker id 46 => warehouses [15, 16)
+tpcc: worker id 47 => warehouses [16, 17)
+tpcc: worker id 48 => warehouses [17, 18)
+tpcc: worker id 49 => warehouses [18, 19)
+tpcc: worker id 50 => warehouses [19, 20)
+tpcc: worker id 51 => warehouses [20, 21)
+tpcc: worker id 52 => warehouses [21, 22)
+tpcc: worker id 53 => warehouses [22, 23)
+tpcc: worker id 54 => warehouses [23, 24)
+tpcc: worker id 55 => warehouses [24, 25)
+20250401-22:03.55-265045(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31401, numa_node = 0, req_types: 1
+35:273013 INFOR: eRPC Nexus: Created with management UDP port 31401, hostname 172.19.0.40.
+35:273050 INFOR: DPDK transport for Rpc 1 skipping DPDK EAL initialization.
+35:273053 INFOR: DPDK transport for Rpc 1 got QP 2
+35:273084 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:273086 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:273098 WARNG: DpdkTransport created for Rpc ID 1, queue 2, datapath UDP port 10002
+20250401-22:03.55-274504(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31400, numa_node = 0, req_types: 1
+35:281387 INFOR: eRPC Nexus: Created with management UDP port 31400, hostname 172.19.0.40.
+35:281423 INFOR: DPDK transport for Rpc 0 skipping DPDK EAL initialization.
+35:281426 INFOR: DPDK transport for Rpc 0 got QP 3
+35:281845 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 100.0 Gbps
+35:281858 WARNG: DpdkTransport created for Rpc ID 0, queue 3, datapath UDP port 10003
+20250401-22:03.55-282392(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31402, numa_node = 0, req_types: 1
+35:289668 INFOR: eRPC Nexus: Created with management UDP port 31402, hostname 172.19.0.40.
+35:289708 INFOR: DPDK transport for Rpc 2 skipping DPDK EAL initialization.
+35:289711 INFOR: DPDK transport for Rpc 2 got QP 4
+35:289728 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:289730 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:289739 WARNG: DpdkTransport created for Rpc ID 2, queue 4, datapath UDP port 10004
+20250401-22:03.55-290310(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31403, numa_node = 0, req_types: 1
+35:297756 INFOR: eRPC Nexus: Created with management UDP port 31403, hostname 172.19.0.40.
+35:297797 INFOR: DPDK transport for Rpc 3 skipping DPDK EAL initialization.
+35:297800 INFOR: DPDK transport for Rpc 3 got QP 5
+35:297817 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:297824 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:297834 WARNG: DpdkTransport created for Rpc ID 3, queue 5, datapath UDP port 10005
+20250401-22:03.55-298395(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31404, numa_node = 0, req_types: 1
+35:305707 INFOR: eRPC Nexus: Created with management UDP port 31404, hostname 172.19.0.40.
+35:305749 INFOR: DPDK transport for Rpc 4 skipping DPDK EAL initialization.
+35:305752 INFOR: DPDK transport for Rpc 4 got QP 6
+35:305769 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:305771 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:305780 WARNG: DpdkTransport created for Rpc ID 4, queue 6, datapath UDP port 10006
+20250401-22:03.55-306381(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31407, numa_node = 0, req_types: 1
+35:313719 INFOR: eRPC Nexus: Created with management UDP port 31407, hostname 172.19.0.40.
+35:313761 INFOR: DPDK transport for Rpc 7 skipping DPDK EAL initialization.
+35:313764 INFOR: DPDK transport for Rpc 7 got QP 7
+35:313782 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:313784 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:313794 WARNG: DpdkTransport created for Rpc ID 7, queue 7, datapath UDP port 10007
+20250401-22:03.55-314369(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31408, numa_node = 0, req_types: 1
+35:322001 INFOR: eRPC Nexus: Created with management UDP port 31408, hostname 172.19.0.40.
+35:322046 INFOR: DPDK transport for Rpc 8 skipping DPDK EAL initialization.
+35:322049 INFOR: DPDK transport for Rpc 8 got QP 8
+35:322068 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:322070 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:322081 WARNG: DpdkTransport created for Rpc ID 8, queue 8, datapath UDP port 10008
+20250401-22:03.55-322668(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31409, numa_node = 0, req_types: 1
+35:329720 INFOR: eRPC Nexus: Created with management UDP port 31409, hostname 172.19.0.40.
+35:329772 INFOR: DPDK transport for Rpc 9 skipping DPDK EAL initialization.
+35:329776 INFOR: DPDK transport for Rpc 9 got QP 9
+35:329795 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:329797 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:329808 WARNG: DpdkTransport created for Rpc ID 9, queue 9, datapath UDP port 10009
+20250401-22:03.55-330387(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31411, numa_node = 0, req_types: 1
+35:337901 INFOR: eRPC Nexus: Created with management UDP port 31411, hostname 172.19.0.40.
+35:337944 INFOR: DPDK transport for Rpc 11 skipping DPDK EAL initialization.
+35:337947 INFOR: DPDK transport for Rpc 11 got QP 10
+35:337963 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:337965 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:337974 WARNG: DpdkTransport created for Rpc ID 11, queue 10, datapath UDP port 10010
+20250401-22:03.55-338520(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31405, numa_node = 0, req_types: 1
+35:345882 INFOR: eRPC Nexus: Created with management UDP port 31405, hostname 172.19.0.40.
+35:345936 INFOR: DPDK transport for Rpc 5 skipping DPDK EAL initialization.
+35:345939 INFOR: DPDK transport for Rpc 5 got QP 11
+35:345956 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:345958 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:345974 WARNG: DpdkTransport created for Rpc ID 5, queue 11, datapath UDP port 10011
+20250401-22:03.55-346579(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31414, numa_node = 0, req_types: 1
+35:354033 INFOR: eRPC Nexus: Created with management UDP port 31414, hostname 172.19.0.40.
+35:354079 INFOR: DPDK transport for Rpc 14 skipping DPDK EAL initialization.
+35:354083 INFOR: DPDK transport for Rpc 14 got QP 12
+35:354103 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:354106 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:354119 WARNG: DpdkTransport created for Rpc ID 14, queue 12, datapath UDP port 10012
+20250401-22:03.55-354701(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31413, numa_node = 0, req_types: 1
+35:361798 INFOR: eRPC Nexus: Created with management UDP port 31413, hostname 172.19.0.40.
+35:361846 INFOR: DPDK transport for Rpc 13 skipping DPDK EAL initialization.
+35:361849 INFOR: DPDK transport for Rpc 13 got QP 13
+35:361867 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:361869 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:361880 WARNG: DpdkTransport created for Rpc ID 13, queue 13, datapath UDP port 10013
+20250401-22:03.55-362453(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31415, numa_node = 0, req_types: 1
+35:369991 INFOR: eRPC Nexus: Created with management UDP port 31415, hostname 172.19.0.40.
+35:370043 INFOR: DPDK transport for Rpc 15 skipping DPDK EAL initialization.
+35:370047 INFOR: DPDK transport for Rpc 15 got QP 14
+35:370067 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:370069 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:370083 WARNG: DpdkTransport created for Rpc ID 15, queue 14, datapath UDP port 10014
+20250401-22:03.55-370709(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31406, numa_node = 0, req_types: 1
+35:377793 INFOR: eRPC Nexus: Created with management UDP port 31406, hostname 172.19.0.40.
+35:377835 INFOR: DPDK transport for Rpc 6 skipping DPDK EAL initialization.
+35:377838 INFOR: DPDK transport for Rpc 6 got QP 15
+35:378213 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 100.0 Gbps
+35:378226 WARNG: DpdkTransport created for Rpc ID 6, queue 15, datapath UDP port 10015
+20250401-22:03.55-378847(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31410, numa_node = 0, req_types: 1
+35:385922 INFOR: eRPC Nexus: Created with management UDP port 31410, hostname 172.19.0.40.
+35:385974 INFOR: DPDK transport for Rpc 10 skipping DPDK EAL initialization.
+35:385977 INFOR: DPDK transport for Rpc 10 got QP 16
+35:385996 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:385998 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:386011 WARNG: DpdkTransport created for Rpc ID 10, queue 16, datapath UDP port 10016
+20250401-22:03.55-386628(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31416, numa_node = 0, req_types: 1
+35:393689 INFOR: eRPC Nexus: Created with management UDP port 31416, hostname 172.19.0.40.
+35:393738 INFOR: DPDK transport for Rpc 16 skipping DPDK EAL initialization.
+35:393741 INFOR: DPDK transport for Rpc 16 got QP 17
+35:393759 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:393761 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:393773 WARNG: DpdkTransport created for Rpc ID 16, queue 17, datapath UDP port 10017
+20250401-22:03.55-394443(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31412, numa_node = 0, req_types: 1
+35:401545 INFOR: eRPC Nexus: Created with management UDP port 31412, hostname 172.19.0.40.
+35:401598 INFOR: DPDK transport for Rpc 12 skipping DPDK EAL initialization.
+35:401601 INFOR: DPDK transport for Rpc 12 got QP 18
+35:401618 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:401620 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:401632 WARNG: DpdkTransport created for Rpc ID 12, queue 18, datapath UDP port 10018
+20250401-22:03.55-402254(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31418, numa_node = 0, req_types: 1
+35:409340 INFOR: eRPC Nexus: Created with management UDP port 31418, hostname 172.19.0.40.
+35:409398 INFOR: DPDK transport for Rpc 18 skipping DPDK EAL initialization.
+35:409401 INFOR: DPDK transport for Rpc 18 got QP 19
+35:409419 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:409421 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:409433 WARNG: DpdkTransport created for Rpc ID 18, queue 19, datapath UDP port 10019
+20250401-22:03.55-410007(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31417, numa_node = 0, req_types: 1
+35:417081 INFOR: eRPC Nexus: Created with management UDP port 31417, hostname 172.19.0.40.
+35:417129 INFOR: DPDK transport for Rpc 17 skipping DPDK EAL initialization.
+35:417132 INFOR: DPDK transport for Rpc 17 got QP 20
+35:417150 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:417152 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:417164 WARNG: DpdkTransport created for Rpc ID 17, queue 20, datapath UDP port 10020
+20250401-22:03.55-417759(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31420, numa_node = 0, req_types: 1
+35:424811 INFOR: eRPC Nexus: Created with management UDP port 31420, hostname 172.19.0.40.
+35:424864 INFOR: DPDK transport for Rpc 20 skipping DPDK EAL initialization.
+35:424867 INFOR: DPDK transport for Rpc 20 got QP 21
+35:424884 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:424887 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:424899 WARNG: DpdkTransport created for Rpc ID 20, queue 21, datapath UDP port 10021
+20250401-22:03.55-425478(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31421, numa_node = 0, req_types: 1
+35:432528 INFOR: eRPC Nexus: Created with management UDP port 31421, hostname 172.19.0.40.
+35:432580 INFOR: DPDK transport for Rpc 21 skipping DPDK EAL initialization.
+35:432582 INFOR: DPDK transport for Rpc 21 got QP 22
+35:432600 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:432603 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:432615 WARNG: DpdkTransport created for Rpc ID 21, queue 22, datapath UDP port 10022
+20250401-22:03.55-433214(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31422, numa_node = 0, req_types: 1
+35:440248 INFOR: eRPC Nexus: Created with management UDP port 31422, hostname 172.19.0.40.
+35:440302 INFOR: DPDK transport for Rpc 22 skipping DPDK EAL initialization.
+35:440305 INFOR: DPDK transport for Rpc 22 got QP 23
+35:440324 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:440326 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:440339 WARNG: DpdkTransport created for Rpc ID 22, queue 23, datapath UDP port 10023
+20250401-22:03.55-440896(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31419, numa_node = 0, req_types: 1
+35:445839 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31208, R: 8, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:445908 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31218, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:445918 INFOR: 35:445919 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31208, R: 8, S: 0]. Issue: None. Sending response.
+35:445926 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31212, R: 12, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:445932 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31208, R: 8, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 0].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31205, R: 5, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:445963 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31211, R: 11, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:445978 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31218, R: 18, S: 0]. Issue: None. Sending response.
+35:445980 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31218, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 1].
+35:445992 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31205, R: 5, S: 0]. Issue: None. Sending response.
+35:445998 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31205, R: 5, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 0].
+35:446012 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31212, R: 12, S: 0]. Issue: None. Sending response.
+35:446015 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31212, R: 12, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 2].
+35:446056 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31211, R: 11, S: 0]. Issue: None. Sending response.
+35:446058 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31211, R: 11, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 1].
+35:447981 INFOR: eRPC Nexus: Created with management UDP port 31419, hostname 172.19.0.40.
+35:448030 INFOR: DPDK transport for Rpc 19 skipping DPDK EAL initialization.
+35:448033 INFOR: DPDK transport for Rpc 19 got QP 24
+35:448048 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:448051 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:448062 WARNG: DpdkTransport created for Rpc ID 19, queue 24, datapath UDP port 10024
+20250401-22:03.55-448650(us) 790270 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.40:31423, numa_node = 0, req_types: 1
+35:449033 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31107, R: 7, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:449156 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31118, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:449180 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31118, R: 18, S: 0]. Issue: None. Sending response.
+35:449192 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31118, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 3].
+35:449206 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31109, R: 9, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450038 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31009, R: 9, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450189 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31107, R: 7, S: 0]. Issue: None. Sending response.
+35:450196 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31107, R: 7, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 2].
+35:450199 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31003, R: 3, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450218 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31005, R: 5, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450224 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31109, R: 9, S: 0]. Issue: None. Sending response.
+35:450237 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31109, R: 9, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 3].
+35:450251 INFOR: 35:450256 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31102, R: 2, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+Rpc 30: Received connect request from [H: 172.19.0.33:31009, R: 9, S: 0]. Issue: None. Sending response.
+35:450265 INFOR: 35:450267 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31009, R: 9, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 4].
+35:450271 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31102, R: 2, S: 0]. Issue: None. Sending response.
+35:450274 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31209, R: 9, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31102, R: 2, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 4].
+35:450269 INFOR: 35:450283 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31018, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31121, R: 21, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450290 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31110, R: 10, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:450296 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31003, R: 3, S: 0]. Issue: None. Sending response.
+35:450301 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31003, R: 3, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 5].
+35:450298 INFOR: 35:450309 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31018, R: 18, S: 0]. Issue: None. Sending response.
+35:450314 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31018, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 5].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31214, R: 14, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:450334 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31005, R: 5, S: 0]. Issue: None. Sending response.
+35:450336 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31005, R: 5, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 6].
+35:450347 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31110, R: 10, S: 0]. Issue: None. Sending response.
+35:450349 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31110, R: 10, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 6].
+35:450355 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31209, R: 9, S: 0]. Issue: None. Sending response.
+35:450357 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31209, R: 9, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 7].
+35:450380 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31214, R: 14, S: 0]. Issue: None. Sending response.
+35:450383 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31214, R: 14, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 7].
+35:450381 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31121, R: 21, S: 0]. Issue: None. Sending response.
+35:450408 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31121, R: 21, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 8].
+35:450452 INFOR: 35:450452 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31010, R: 10, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31017, R: 17, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450468 INFOR: 35:450470 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31010, R: 10, S: 0]. Issue: None. Sending response.
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31016, R: 16, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:450473 INFOR: 35:450473 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31017, R: 17, S: 0]. Issue: None. Sending response.
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31010, R: 10, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 8].
+35:450478 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31017, R: 17, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 9].
+35:450508 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31016, R: 16, S: 0]. Issue: None. Sending response.
+35:450510 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31016, R: 16, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 9].
+35:450734 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31201, R: 1, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450754 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31201, R: 1, S: 1]. Issue: None. Sending response.
+35:450756 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31201, R: 1, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 10].
+35:450849 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31219, R: 19, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:450871 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31219, R: 19, S: 1]. Issue: None. Sending response.
+35:450873 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31219, R: 19, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 11].
+35:451077 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31022, R: 22, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:451108 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31022, R: 22, S: 1]. Issue: None. Sending response.
+35:451110 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31022, R: 22, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 10].
+35:451318 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31117, R: 17, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:451339 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31117, R: 17, S: 1]. Issue: None. Sending response.
+35:451341 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31117, R: 17, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 12].
+35:451389 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31020, R: 20, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:451410 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31020, R: 20, S: 1]. Issue: None. Sending response.
+35:451412 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31020, R: 20, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 11].
+35:451612 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31220, R: 20, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:451633 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31216, R: 16, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:451644 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31220, R: 20, S: 2]. Issue: None. Sending response.
+35:451646 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31220, R: 20, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 12].
+35:451671 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31216, R: 16, S: 2]. Issue: None. Sending response.
+35:451673 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31216, R: 16, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 13].
+35:452258 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31104, R: 4, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:452270 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31019, R: 19, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:452279 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31104, R: 4, S: 1]. Issue: None. Sending response.
+35:452282 INFOR: 35:452284 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31019, R: 19, S: 2]. Issue: None. Sending response.
+35:452289 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31019, R: 19, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 13].
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31104, R: 4, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 14].
+35:452453 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31215, R: 15, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:452466 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31215, R: 15, S: 1]. Issue: None. Sending response.
+35:452469 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31215, R: 15, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 14].
+35:455034 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31007, R: 7, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:455049 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31007, R: 7, S: 1]. Issue: None. Sending response.
+35:455051 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31007, R: 7, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 15].
+35:455717 INFOR: eRPC Nexus: Created with management UDP port 31423, hostname 172.19.0.40.
+35:455755 INFOR: DPDK transport for Rpc 23 skipping DPDK EAL initialization.
+35:455758 INFOR: DPDK transport for Rpc 23 got QP 25
+35:455776 WARNG: Port 0 bandwidth not reported by DPDK. Using default 10 Gbps.
+35:455778 INFOR: Resolved port 0: MAC 7c:1e:52:d1:24:9, IPv4 172.19.0.43, RETA size 128 entries, bandwidth 10.0 Gbps
+35:455787 WARNG: DpdkTransport created for Rpc ID 23, queue 25, datapath UDP port 10025
+35:456350 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31203, R: 3, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:456368 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31203, R: 3, S: 2]. Issue: None. Sending response.
+35:456371 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31203, R: 3, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 16].
+20250401-22:03.55-456929(us) 790270 ! run             (bench.cc:411):     start the running time, runTime:5
+35:456949 INFOR: 35:456951 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31310, R: 10, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+20250401-22:03.55-456954(us) 790270 ! run             (bench.cc:423):     runtime time left:5000 ms, bool:1eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31315, R: 15, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+
+35:456977 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31310, R: 10, S: 0]. Issue: None. Sending response.
+35:456980 INFOR: 35:456966 INFOR: Rpc 13: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 0], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:456987 INFOR: 35:456985 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31315, R: 15, S: 0]. Issue: None. Sending response.
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31310, R: 10, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 15].
+Rpc 9: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 0], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:457001 INFOR: 35:456978 INFOR: 35:457004 INFOR: 35:456979 INFOR: 35:457006 INFOR: 35:456970 INFOR: Rpc 2: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 0], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:456998 INFOR: Rpc 1: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31318, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:457024 INFOR: 35:457016 INFOR: 35:457031 INFOR: Rpc 20: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+Rpc 23: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:457038 INFOR: 35:457042 INFOR: Rpc 0: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:457049 INFOR: Rpc 8: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+Rpc 5: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 0], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:457074 INFOR: 35:457035 INFOR: 35:457081 INFOR: Rpc 17: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+Rpc 3: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:456999 INFOR: 35:457095 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31311, R: 11, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:457042 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31315, R: 15, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 17].
+35:456968 INFOR: Rpc 7: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+Rpc 19: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 0], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+Rpc 21: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 0], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+Rpc 10: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+Rpc 11: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 0], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+Rpc 16: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+Rpc 22: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:457146 INFOR: 35:457167 INFOR: Rpc 18: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:457061 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31318, R: 18, S: 0]. Issue: None. Sending response.
+35:457194 INFOR: 35:457194 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31318, R: 18, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 16].
+35:457204 INFOR: Rpc 4: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:457152 INFOR: 35:457217 INFOR: Rpc 14: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 0], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+Rpc 6: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:457169 INFOR: Rpc 15: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+Rpc 12: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31213, R: 13, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+Rpc 30: Received connect request from [H: 172.19.0.63:31311, R: 11, S: 0]. Issue: None. Sending response.
+35:457265 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31311, R: 11, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 18].
+35:457277 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31307, R: 7, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:457292 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31213, R: 13, S: 3]. Issue: None. Sending response.
+35:457294 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31213, R: 13, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 19].
+35:457317 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31307, R: 7, S: 0]. Issue: None. Sending response.
+35:457318 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31307, R: 7, S: 0], server: [H: 172.19.0.40:31430, R: 30, S: 20].
+35:457412 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31217, R: 17, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:457433 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31217, R: 17, S: 2]. Issue: None. Sending response.
+35:457435 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31217, R: 17, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 21].
+35:457601 INFOR: 35:457607 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: 10]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 0], server: [H: 172.19.0.33:31030, R: 30, S: 12]
+35:457630 INFOR: 35:457641 INFOR: Rpc 20: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 10] for session 0. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 0], server: [H: 172.19.0.26:31230, R: 30, S: 13]
+35:457749 INFOR: 35:457752 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31323, R: 23, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:457756 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 0], server: [H: 172.19.0.33:31030, R: 30, S: 13]
+35:457770 INFOR: 35:457756 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: 19]
+35:457783 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31323, R: 23, S: 1]. Issue: None. Sending response.
+35:457786 INFOR: 35:457787 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: 20]
+Rpc 19: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 13] for session 0. Issue: None. Session connected.
+Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31323, R: 23, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 22].
+35:457815 INFOR: Rpc 23: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 20] for session 0. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: 18]
+35:457875 INFOR: Rpc 17: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 18] for session 0. Issue: None. Session connected.
+35:457877 INFOR: 35:457890 INFOR: 35:457894 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: 13]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 0], server: [H: 172.19.0.26:31230, R: 30, S: 15]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: 23]
+35:457959 INFOR: 35:457986 INFOR: 35:457988 INFOR: 35:457992 INFOR: 35:457994 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 0], server: [H: 172.19.0.26:31230, R: 30, S: 16]
+35:458002 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: 12]
+35:458003 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: 22]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 0], server: [H: 172.19.0.26:31229, R: 29, S: 14]
+35:458016 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 0], server: [H: 172.19.0.33:31029, R: 29, S: 15]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 0], server: [H: 172.19.0.63:31330, R: 30, S: 21]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: 8]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 0], server: [H: 172.19.0.33:31029, R: 29, S: 14]
+35:458111 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 0], server: [H: 172.19.0.33:31030, R: 30, S: 14]
+35:458141 INFOR: Rpc 21: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 14] for session 0. Issue: None. Session connected.
+35:458264 INFOR: Rpc 12: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 14] for session 0. Issue: None. Session connected.
+35:458329 INFOR: Rpc 10: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 12] for session 0. Issue: None. Session connected.
+35:458508 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31108, R: 8, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:458534 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31108, R: 8, S: 0]. Issue: None. Sending response.
+35:458538 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31108, R: 8, S: 0], server: [H: 172.19.0.40:31429, R: 29, S: 17].
+35:458547 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31006, R: 6, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:458574 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31006, R: 6, S: 2]. Issue: None. Sending response.
+35:458575 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31006, R: 6, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 18].
+35:458592 INFOR: Rpc 6: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 8] for session 0. Issue: None. Session connected.
+35:458629 INFOR: Rpc 13: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 13] for session 0. Issue: None. Session connected.
+35:458672 INFOR: Rpc 17: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:458879 INFOR: Rpc 15: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 23] for session 0. Issue: None. Session connected.
+35:458882 INFOR: Rpc 21: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 1], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:458880 INFOR: Rpc 23: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:458964 INFOR: Rpc 20: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:459009 INFOR: Rpc 19: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:459057 INFOR: Rpc 14: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 15] for session 0. Issue: None. Session connected.
+35:459084 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31002, R: 2, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:459106 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31002, R: 2, S: 2]. Issue: None. Sending response.
+35:459109 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31002, R: 2, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 19].
+35:459164 INFOR: Rpc 9: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 12] for session 0. Issue: None. Session connected.
+35:459183 INFOR: Rpc 5: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 15] for session 0. Issue: None. Session connected.
+35:459209 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31021, R: 21, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:459225 INFOR: 35:459228 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31313, R: 13, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: 16]
+35:459239 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31021, R: 21, S: 1]. Issue: None. Sending response.
+35:459242 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31021, R: 21, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 23].
+35:459248 INFOR: Rpc 17: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 16] for session 1. Issue: None. Session connected.
+35:459256 INFOR: Rpc 11: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 16] for session 0. Issue: None. Session connected.
+35:459278 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31313, R: 13, S: 1]. Issue: None. Sending response.
+35:459281 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31313, R: 13, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 24].
+35:459383 INFOR: Rpc 15: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:459461 INFOR: Rpc 8: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 13] for session 0. Issue: None. Session connected.
+35:459541 INFOR: 35:459546 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: 18]
+35:459566 INFOR: Rpc 23: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 18] for session 1. Issue: None. Session connected.
+Rpc 11: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 1], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:459599 INFOR: 35:459603 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31101, R: 1, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+Rpc 9: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:459619 INFOR: Rpc 7: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 21] for session 0. Issue: None. Session connected.
+35:459620 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31101, R: 1, S: 1]. Issue: None. Sending response.
+35:459640 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31101, R: 1, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 25].
+35:459652 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31302, R: 2, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:459687 INFOR: 35:459688 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31302, R: 2, S: 1]. Issue: None. Sending response.
+35:459691 INFOR: Rpc 17: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31302, R: 2, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 20].
+35:459728 INFOR: Rpc 13: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:459796 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: 21]
+35:459899 INFOR: 35:459915 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: 7]
+Rpc 23: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:459933 INFOR: Rpc 22: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 7] for session 0. Issue: None. Session connected.
+35:459936 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: 24]
+35:459961 INFOR: Rpc 18: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 24] for session 0. Issue: None. Session connected.
+35:460035 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: 19]
+35:460041 INFOR: 35:460059 INFOR: Rpc 15: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 19] for session 1. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31303, R: 3, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:460075 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31303, R: 3, S: 1]. Issue: None. Sending response.
+35:460078 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31303, R: 3, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 26].
+35:460082 INFOR: 35:460089 INFOR: Rpc 3: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 19] for session 0. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31223, R: 23, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:460091 INFOR: Rpc 14: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:460106 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31223, R: 23, S: 3]. Issue: None. Sending response.
+35:460126 INFOR: 35:460124 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31223, R: 23, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 27].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31112, R: 12, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:460143 INFOR: Rpc 0: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 21] for session 0. Issue: None. Session connected.
+35:460157 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31112, R: 12, S: 1]. Issue: None. Sending response.
+35:460160 INFOR: 35:460161 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31112, R: 12, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 21].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31300, R: 0, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:460174 INFOR: Rpc 2: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 14] for session 0. Issue: None. Session connected.
+35:460182 INFOR: Rpc 6: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:460197 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31012, R: 12, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:460189 INFOR: Rpc 8: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 1], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:460202 INFOR: 35:460228 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31300, R: 0, S: 1]. Issue: None. Sending response.
+35:460236 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31300, R: 0, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 22].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31322, R: 22, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:460247 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31116, R: 16, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:460267 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31012, R: 12, S: 1]. Issue: None. Sending response.
+35:460270 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31012, R: 12, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 23].
+35:460309 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31322, R: 22, S: 3]. Issue: None. Sending response.
+35:460311 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31322, R: 22, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 24].
+35:460341 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31116, R: 16, S: 1]. Issue: None. Sending response.
+35:460343 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31116, R: 16, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 25].
+35:460376 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 1], server: [H: 172.19.0.33:31030, R: 30, S: 20]
+35:460396 INFOR: Rpc 13: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 20] for session 1. Issue: None. Session connected.
+35:460460 INFOR: Rpc 0: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:460480 INFOR: Rpc 1: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 22] for session 0. Issue: None. Session connected.
+35:460494 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31014, R: 14, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:460526 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31014, R: 14, S: 2]. Issue: None. Sending response.
+35:460529 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31014, R: 14, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 26].
+35:460608 INFOR: Rpc 2: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 1], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:460661 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: 15]
+35:460689 INFOR: Rpc 13: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:460702 INFOR: Rpc 14: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 15] for session 1. Issue: None. Session connected.
+35:460727 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31001, R: 1, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:460745 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31001, R: 1, S: 2]. Issue: None. Sending response.
+35:460748 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31001, R: 1, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 28].
+35:460883 INFOR: Rpc 1: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:460983 INFOR: 35:460984 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31100, R: 0, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: 19]
+35:461005 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31100, R: 0, S: 2]. Issue: None. Sending response.
+35:461009 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31100, R: 0, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 27].
+35:461019 INFOR: Rpc 0: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 19] for session 1. Issue: None. Session connected.
+35:461042 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: 29]
+35:461062 INFOR: 35:461063 INFOR: 35:461066 INFOR: Rpc 19: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 29] for session 1. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31023, R: 23, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 23]
+35:461084 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31023, R: 23, S: 3]. Issue: None. Sending response.
+35:461086 INFOR: 35:461088 INFOR: Rpc 17: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 23] for session 2. Issue: None. Session connected.
+35:461092 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31023, R: 23, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 29].
+Rpc 15: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 2], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:461146 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 1], server: [H: 172.19.0.26:31229, R: 29, S: 20]
+35:461165 INFOR: Rpc 2: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 20] for session 1. Issue: None. Session connected.
+35:461217 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31103, R: 3, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:461253 INFOR: 35:461254 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31103, R: 3, S: 1]. Issue: None. Sending response.
+35:461256 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31308, R: 8, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31103, R: 3, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 30].
+35:461288 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31308, R: 8, S: 2]. Issue: None. Sending response.
+35:461291 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31308, R: 8, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 28].
+35:461452 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31122, R: 22, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:461469 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31122, R: 22, S: 2]. Issue: None. Sending response.
+35:461471 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31122, R: 22, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 29].
+35:461596 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31222, R: 22, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:461613 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: 33]
+35:461626 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31222, R: 22, S: 2]. Issue: None. Sending response.
+35:461628 INFOR: 35:461629 INFOR: Rpc 1: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 33] for session 1. Issue: None. Session connected.
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31222, R: 22, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 30].
+35:461643 INFOR: Rpc 18: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 1], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:461672 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 2], server: [H: 172.19.0.26:31230, R: 30, S: 24]
+35:461690 INFOR: Rpc 15: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 24] for session 2. Issue: None. Session connected.
+35:461691 INFOR: 35:461706 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31312, R: 12, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+Rpc 22: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 1], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:461723 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31312, R: 12, S: 2]. Issue: None. Sending response.
+35:461725 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31312, R: 12, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 31].
+35:461743 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: 35]
+35:461772 INFOR: Rpc 16: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 35] for session 0. Issue: None. Session connected.
+35:461777 INFOR: Rpc 14: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 2], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:461908 INFOR: 35:461911 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31200, R: 0, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 0], server: [H: 172.19.0.80:31129, R: 29, S: 38]
+35:461931 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31200, R: 0, S: 2]. Issue: None. Sending response.
+35:461934 INFOR: 35:461935 INFOR: 35:461936 INFOR: Rpc 4: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 38] for session 0. Issue: None. Session connected.
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31200, R: 0, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 32].
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 1], server: [H: 172.19.0.80:31129, R: 29, S: 33]
+35:461964 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 35]
+35:461969 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: 34]
+35:461980 INFOR: Rpc 23: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 35] for session 2. Issue: None. Session connected.
+35:461971 INFOR: Rpc 8: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 33] for session 1. Issue: None. Session connected.
+35:461987 INFOR: Rpc 9: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 34] for session 1. Issue: None. Session connected.
+35:462000 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31106, R: 6, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:462024 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31106, R: 6, S: 2]. Issue: None. Sending response.
+35:462026 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31106, R: 6, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 33].
+35:462240 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 1], server: [H: 172.19.0.26:31229, R: 29, S: 22]
+35:462260 INFOR: Rpc 22: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 22] for session 1. Issue: None. Session connected.
+35:462278 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 37]
+35:462288 INFOR: 35:462291 INFOR: Rpc 13: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 37] for session 2. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 2], server: [H: 172.19.0.80:31129, R: 29, S: 40]
+35:462300 INFOR: Rpc 14: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 40] for session 2. Issue: None. Session connected.
+35:462345 INFOR: Rpc 4: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 1], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:462368 INFOR: Rpc 17: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:462453 INFOR: Rpc 19: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 2], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:462542 INFOR: Rpc 8: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:462547 INFOR: Rpc 23: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:462587 INFOR: Rpc 22: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:462615 INFOR: Rpc 0: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:462678 INFOR: Rpc 1: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 2], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:462712 INFOR: Rpc 16: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:462825 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31417, R: 17, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: 28]
+35:462844 INFOR: Rpc 17: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 28] for session 3. Issue: None. Session connected.
+35:462893 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31304, R: 4, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:462925 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31304, R: 4, S: 3]. Issue: None. Sending response.
+35:462929 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31304, R: 4, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 34].
+35:463039 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: 26]
+35:463062 INFOR: Rpc 22: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 26] for session 2. Issue: None. Session connected.
+35:463359 INFOR: Rpc 9: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 2], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:463560 INFOR: Rpc 13: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 3], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:463710 INFOR: Rpc 12: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 1], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:463796 INFOR: Rpc 5: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 1], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:463958 INFOR: Rpc 10: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:464063 INFOR: Rpc 15: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 3], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:464345 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 1], server: [H: 172.19.0.63:31330, R: 30, S: 34]
+35:464376 INFOR: Rpc 5: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 34] for session 1. Issue: None. Session connected.
+35:464432 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 1], server: [H: 172.19.0.26:31230, R: 30, S: 30]
+35:464458 INFOR: Rpc 21: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 30] for session 1. Issue: None. Session connected.
+35:464601 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31415, R: 15, S: 3], server: [H: 172.19.0.80:31130, R: 30, S: 39]
+35:464613 INFOR: Rpc 15: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 39] for session 3. Issue: None. Session connected.
+35:464720 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 1], server: [H: 172.19.0.26:31229, R: 29, S: 32]
+35:464740 INFOR: Rpc 4: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 32] for session 1. Issue: None. Session connected.
+35:464776 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31423, R: 23, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: 33]
+35:464794 INFOR: Rpc 23: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 33] for session 3. Issue: None. Session connected.
+35:464829 INFOR: Rpc 2: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:464839 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 2], server: [H: 172.19.0.26:31230, R: 30, S: 34]
+35:464864 INFOR: Rpc 9: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 34] for session 2. Issue: None. Session connected.
+35:464872 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31221, R: 21, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:464904 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31221, R: 21, S: 1]. Issue: None. Sending response.
+35:464908 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31221, R: 21, S: 1], server: [H: 172.19.0.40:31430, R: 30, S: 31].
+35:464954 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31206, R: 6, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:464976 INFOR: 35:464977 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31314, R: 14, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+Rpc 5: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:464980 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 1], server: [H: 172.19.0.63:31330, R: 30, S: 27]
+35:464985 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31206, R: 6, S: 2]. Issue: None. Sending response.
+35:465008 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31206, R: 6, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 35].
+35:465020 INFOR: Rpc 11: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 27] for session 1. Issue: None. Session connected.
+35:465031 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31314, R: 14, S: 2]. Issue: None. Sending response.
+35:465033 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31314, R: 14, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 36].
+35:465082 INFOR: Rpc 4: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:465183 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31309, R: 9, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:465189 INFOR: 35:465189 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: 16]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: 11]
+35:465199 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31309, R: 9, S: 2]. Issue: None. Sending response.
+35:465218 INFOR: 35:465218 INFOR: Rpc 6: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 16] for session 1. Issue: None. Session connected.
+35:465229 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31309, R: 9, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 32].
+Rpc 20: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 11] for session 1. Issue: None. Session connected.
+35:465280 INFOR: 35:465281 INFOR: Rpc 21: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31120, R: 20, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:465325 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31120, R: 20, S: 3]. Issue: None. Sending response.
+35:465327 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31120, R: 20, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 37].
+35:465407 INFOR: Rpc 7: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 1], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:465450 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31115, R: 15, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:465466 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31115, R: 15, S: 3]. Issue: None. Sending response.
+35:465472 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31115, R: 15, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 33].
+35:465468 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31119, R: 19, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:465507 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31119, R: 19, S: 2]. Issue: None. Sending response.
+35:465509 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31119, R: 19, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 34].
+35:465708 INFOR: Rpc 6: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 2], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:465742 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: 23]
+35:465758 INFOR: Rpc 4: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 23] for session 2. Issue: None. Session connected.
+35:465759 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 41]
+35:465780 INFOR: Rpc 5: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 41] for session 2. Issue: None. Session connected.
+35:465782 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31114, R: 14, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:465808 INFOR: Rpc 29: Received connect request from [H: 172.19.0.80:31114, R: 14, S: 1]. Issue: None. Sending response.
+35:465811 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31114, R: 14, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 38].
+35:465849 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 42]
+35:465864 INFOR: Rpc 21: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 42] for session 2. Issue: None. Session connected.
+35:465959 INFOR: Rpc 20: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:466002 INFOR: 35:466007 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 1], server: [H: 172.19.0.26:31230, R: 30, S: 36]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: 30]
+35:466028 INFOR: Rpc 7: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 36] for session 1. Issue: None. Session connected.
+35:466032 INFOR: Rpc 8: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 30] for session 2. Issue: None. Session connected.
+35:466094 INFOR: Rpc 11: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:466151 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31306, R: 6, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:466171 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 2], server: [H: 172.19.0.26:31229, R: 29, S: 35]
+35:466182 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31306, R: 6, S: 1]. Issue: None. Sending response.
+35:466185 INFOR: 35:466187 INFOR: Rpc 6: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 35] for session 2. Issue: None. Session connected.
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31306, R: 6, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 39].
+35:466263 INFOR: Rpc 3: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:466319 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31320, R: 20, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:466339 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31320, R: 20, S: 1]. Issue: None. Sending response.
+35:466341 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31320, R: 20, S: 1], server: [H: 172.19.0.40:31429, R: 29, S: 40].
+35:466350 INFOR: Rpc 5: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:466343 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31319, R: 19, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:466378 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31319, R: 19, S: 2]. Issue: None. Sending response.
+35:466381 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31319, R: 19, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 35].
+35:466475 INFOR: 35:466480 INFOR: Rpc 14: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 3], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:466487 INFOR: Rpc 7: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: XX].
+35:466498 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: 32]
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31321, R: 21, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:466518 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31321, R: 21, S: 2]. Issue: None. Sending response.
+35:466520 INFOR: 35:466521 INFOR: Rpc 2: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 32] for session 2. Issue: None. Session connected.
+Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31321, R: 21, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 36].
+35:466659 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: 24]
+35:466674 INFOR: Rpc 20: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 24] for session 2. Issue: None. Session connected.
+35:466713 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 43]
+35:466725 INFOR: Rpc 11: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 43] for session 2. Issue: None. Session connected.
+35:466880 INFOR: Rpc 6: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:466889 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 1], server: [H: 172.19.0.80:31130, R: 30, S: 44]
+35:466908 INFOR: Rpc 3: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 44] for session 1. Issue: None. Session connected.
+35:466937 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 2], server: [H: 172.19.0.80:31130, R: 30, S: 45]
+35:466947 INFOR: 35:466949 INFOR: Rpc 7: Received connect response from [H: 172.19.0.80:31130, R: 30, S: 45] for session 2. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31414, R: 14, S: 3], server: [H: 172.19.0.26:31229, R: 29, S: 36]
+35:466951 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: 33]
+35:466966 INFOR: Rpc 14: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 36] for session 3. Issue: None. Session connected.
+35:466982 INFOR: Rpc 10: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 33] for session 1. Issue: None. Session connected.
+35:467014 INFOR: Rpc 21: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 3], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:467029 INFOR: 35:467030 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 2], server: [H: 172.19.0.63:31330, R: 30, S: 37]
+Rpc 9: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 3], server: [H: 172.19.0.63:31330, R: 30, S: XX].
+35:467064 INFOR: Rpc 19: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 37] for session 2. Issue: None. Session connected.
+35:467037 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 1], server: [H: 172.19.0.63:31329, R: 29, S: 34]
+35:467106 INFOR: Rpc 16: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 34] for session 1. Issue: None. Session connected.
+35:467113 INFOR: Rpc 4: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 3], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:467159 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31413, R: 13, S: 3], server: [H: 172.19.0.63:31330, R: 30, S: 38]
+35:467188 INFOR: Rpc 13: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 38] for session 3. Issue: None. Session connected.
+35:467437 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31406, R: 6, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: 26]
+35:467444 INFOR: 35:467462 INFOR: Rpc 6: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 26] for session 3. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31000, R: 0, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:467481 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31000, R: 0, S: 3]. Issue: None. Sending response.
+35:467486 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31000, R: 0, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 41].
+35:467495 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31421, R: 21, S: 3], server: [H: 172.19.0.63:31330, R: 30, S: 41]
+35:467517 INFOR: Rpc 21: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 41] for session 3. Issue: None. Session connected.
+35:467570 INFOR: Rpc 22: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:467710 INFOR: 35:467710 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31015, R: 15, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31004, R: 4, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:467739 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31004, R: 4, S: 3]. Issue: None. Sending response.
+35:467742 INFOR: 35:467742 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31015, R: 15, S: 3]. Issue: None. Sending response.
+35:467747 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31004, R: 4, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 42].
+Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31015, R: 15, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 37].
+35:467761 INFOR: Rpc 19: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:467795 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31409, R: 9, S: 3], server: [H: 172.19.0.63:31330, R: 30, S: 42]
+35:467802 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31404, R: 4, S: 3], server: [H: 172.19.0.63:31329, R: 29, S: 38]
+35:467818 INFOR: Rpc 9: Received connect response from [H: 172.19.0.63:31330, R: 30, S: 42] for session 3. Issue: None. Session connected.
+35:467823 INFOR: Rpc 4: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 38] for session 3. Issue: None. Session connected.
+35:467826 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31317, R: 17, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:467872 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31317, R: 17, S: 3]. Issue: None. Sending response.
+35:467875 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31317, R: 17, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 38].
+35:467966 INFOR: Rpc 16: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 2], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:468318 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31419, R: 19, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: 40]
+35:468339 INFOR: Rpc 19: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 40] for session 3. Issue: None. Session connected.
+35:468405 INFOR: Rpc 20: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:468478 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31113, R: 13, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:468510 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31113, R: 13, S: 2]. Issue: None. Sending response.
+35:468513 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31113, R: 13, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 39].
+35:468558 INFOR: 35:468562 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31204, R: 4, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 2], server: [H: 172.19.0.26:31229, R: 29, S: 38]
+35:468587 INFOR: Rpc 16: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 38] for session 2. Issue: None. Session connected.
+35:468590 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31204, R: 4, S: 3]. Issue: None. Sending response.
+35:468609 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31204, R: 4, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 43].
+35:469006 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31420, R: 20, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: 43]
+35:469017 INFOR: Rpc 20: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 43] for session 3. Issue: None. Session connected.
+35:469060 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31013, R: 13, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:469097 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31013, R: 13, S: 2]. Issue: None. Sending response.
+35:469099 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31013, R: 13, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 40].
+35:469150 INFOR: 35:469151 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31008, R: 8, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 1], server: [H: 172.19.0.33:31029, R: 29, S: 33]
+35:469170 INFOR: 35:469178 INFOR: Rpc 29: Received connect request from [H: 172.19.0.33:31008, R: 8, S: 2]. Issue: None. Sending response.
+35:469182 INFOR: Rpc 10: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31008, R: 8, S: 2], server: [H: 172.19.0.40:31429, R: 29, S: 44].
+35:469194 INFOR: Rpc 12: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 33] for session 1. Issue: None. Session connected.
+35:469300 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31123, R: 23, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:469323 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31123, R: 23, S: 2]. Issue: None. Sending response.
+35:469326 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31123, R: 23, S: 2], server: [H: 172.19.0.40:31430, R: 30, S: 41].
+35:469402 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 2], server: [H: 172.19.0.33:31030, R: 30, S: 36]
+35:469424 INFOR: Rpc 1: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 36] for session 2. Issue: None. Session connected.
+35:469510 INFOR: 35:469517 INFOR: Rpc 8: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: 38]
+35:469542 INFOR: Rpc 0: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 38] for session 2. Issue: None. Session connected.
+35:469576 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31207, R: 7, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:469587 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 1], server: [H: 172.19.0.33:31029, R: 29, S: 36]
+35:469596 INFOR: Rpc 30: Received connect request from [H: 172.19.0.26:31207, R: 7, S: 3]. Issue: None. Sending response.
+35:469611 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31207, R: 7, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 42].
+35:469615 INFOR: Rpc 18: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 36] for session 1. Issue: None. Session connected.
+35:469653 INFOR: Rpc 16: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: XX].
+35:469789 INFOR: 35:469793 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31405, R: 5, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: 41]
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 2], server: [H: 172.19.0.33:31029, R: 29, S: 44]
+35:469808 INFOR: Rpc 5: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 41] for session 3. Issue: None. Session connected.
+35:469823 INFOR: Rpc 10: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 44] for session 2. Issue: None. Session connected.
+35:469871 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31111, R: 11, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:469893 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31111, R: 11, S: 3]. Issue: None. Sending response.
+35:469896 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31111, R: 11, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 43].
+35:470029 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31305, R: 5, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:470058 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31305, R: 5, S: 3]. Issue: None. Sending response.
+35:470061 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31305, R: 5, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 44].
+35:470151 INFOR: 35:470152 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31301, R: 1, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+Rpc 1: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:470189 INFOR: Rpc 30: Received connect request from [H: 172.19.0.63:31301, R: 1, S: 3]. Issue: None. Sending response.
+35:470196 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31301, R: 1, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 45].
+35:470202 INFOR: 35:470205 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31416, R: 16, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: 46]
+Rpc 12: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+35:470228 INFOR: Rpc 16: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 46] for session 3. Issue: None. Session connected.
+35:470286 INFOR: 35:470287 INFOR: Rpc 18: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: XX].
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31408, R: 8, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: 47]
+35:470297 INFOR: Rpc 0: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 3], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:470309 INFOR: Rpc 8: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 47] for session 3. Issue: None. Session connected.
+35:470319 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31422, R: 22, S: 3], server: [H: 172.19.0.33:31029, R: 29, S: 29]
+35:470339 INFOR: Rpc 22: Received connect response from [H: 172.19.0.33:31029, R: 29, S: 29] for session 3. Issue: None. Session connected.
+35:470402 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31210, R: 10, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:470434 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31210, R: 10, S: 3]. Issue: None. Sending response.
+35:470437 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31210, R: 10, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 45].
+35:470460 INFOR: Rpc 10: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:470595 INFOR: Rpc 3: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 2], server: [H: 172.19.0.26:31230, R: 30, S: XX].
+35:470644 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.80:31105, R: 5, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:470665 INFOR: Rpc 30: Received connect request from [H: 172.19.0.80:31105, R: 5, S: 3]. Issue: None. Sending response.
+35:470668 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.80:31105, R: 5, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 46].
+35:470779 INFOR: 35:470785 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: 45]
+Rpc 2: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:470806 INFOR: 35:470812 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31401, R: 1, S: 3], server: [H: 172.19.0.26:31230, R: 30, S: 43]
+35:470816 INFOR: Rpc 12: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 45] for session 2. Issue: None. Session connected.
+35:470827 INFOR: Rpc 1: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 43] for session 3. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31400, R: 0, S: 3], server: [H: 172.19.0.26:31229, R: 29, S: 42]
+35:470835 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 2], server: [H: 172.19.0.63:31329, R: 29, S: 46]
+35:470851 INFOR: Rpc 0: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 42] for session 3. Issue: None. Session connected.
+35:470867 INFOR: Rpc 18: Received connect response from [H: 172.19.0.63:31329, R: 29, S: 46] for session 2. Issue: None. Session connected.
+35:470924 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31410, R: 10, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: 44]
+35:470935 INFOR: Rpc 10: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 44] for session 3. Issue: None. Session connected.
+35:470991 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.33:31011, R: 11, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: XX]
+35:471015 INFOR: Rpc 30: Received connect request from [H: 172.19.0.33:31011, R: 11, S: 3]. Issue: None. Sending response.
+35:471018 INFOR: Rpc 30: Sending packet [Connect response], [No error], client: [H: 172.19.0.33:31011, R: 11, S: 3], server: [H: 172.19.0.40:31430, R: 30, S: 47].
+35:471115 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 2], server: [H: 172.19.0.26:31230, R: 30, S: 45]
+35:471138 INFOR: Rpc 3: Received connect response from [H: 172.19.0.26:31230, R: 30, S: 45] for session 2. Issue: None. Session connected.
+35:471267 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31402, R: 2, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: 45]
+35:471279 INFOR: Rpc 2: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 45] for session 3. Issue: None. Session connected.
+35:471506 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.63:31316, R: 16, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:471523 INFOR: Rpc 29: Received connect request from [H: 172.19.0.63:31316, R: 16, S: 3]. Issue: None. Sending response.
+35:471526 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.63:31316, R: 16, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 46].
+35:471551 INFOR: Rpc 3: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:471649 INFOR: Rpc 18: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 3], server: [H: 172.19.0.26:31229, R: 29, S: XX].
+35:471827 INFOR: Rpc 7: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:471857 INFOR: Rpc 12: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: XX].
+35:471976 INFOR: eRPC SM thread: Received SM packet [Connect request], [No error], client: [H: 172.19.0.26:31202, R: 2, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: XX]
+35:472006 INFOR: Rpc 29: Received connect request from [H: 172.19.0.26:31202, R: 2, S: 3]. Issue: None. Sending response.
+35:472009 INFOR: Rpc 29: Sending packet [Connect response], [No error], client: [H: 172.19.0.26:31202, R: 2, S: 3], server: [H: 172.19.0.40:31429, R: 29, S: 47].
+35:472140 INFOR: 35:472149 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31403, R: 3, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: 45]
+35:472169 INFOR: Rpc 3: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 45] for session 3. Issue: None. Session connected.
+eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31418, R: 18, S: 3], server: [H: 172.19.0.26:31229, R: 29, S: 46]
+35:472191 INFOR: Rpc 18: Received connect response from [H: 172.19.0.26:31229, R: 29, S: 46] for session 3. Issue: None. Session connected.
+35:472322 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31412, R: 12, S: 3], server: [H: 172.19.0.80:31129, R: 29, S: 47]
+35:472351 INFOR: Rpc 12: Received connect response from [H: 172.19.0.80:31129, R: 29, S: 47] for session 3. Issue: None. Session connected.
+35:472420 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31407, R: 7, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: 46]
+35:472438 INFOR: Rpc 7: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 46] for session 3. Issue: None. Session connected.
+35:473357 INFOR: Rpc 11: Sending packet [Connect request], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: XX].
+35:473945 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 172.19.0.40:31411, R: 11, S: 3], server: [H: 172.19.0.33:31030, R: 30, S: 47]
+35:473971 INFOR: Rpc 11: Received connect response from [H: 172.19.0.33:31030, R: 30, S: 47] for session 3. Issue: None. Session connected.
+20250401-22:03.56-463131(us) 790270 ! run             (bench.cc:423):     runtime time left:4000 ms, bool:1
+20250401-22:03.57-469070(us) 790270 ! run             (bench.cc:423):     runtime time left:3000 ms, bool:1
+20250401-22:03.58-475258(us) 790270 ! run             (bench.cc:423):     runtime time left:2000 ms, bool:1
+20250401-22:03.59-481460(us) 790270 ! run             (bench.cc:423):     runtime time left:1000 ms, bool:1
+20250401-22:04.00-487632(us) 790270 ! run             (bench.cc:431):     runtime_plus:0
+20250401-22:04.00-487684(us) 790270 ! stop            (bench.cc:292):     stop all erpc clients. set stop=false
+20250401-22:04.00-487705(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1674558 bytes, counter: 44728, avg: 37.438696
+20250401-22:04.00-487754(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1672394 bytes, counter: 44556, avg: 37.534653
+20250401-22:04.00-487790(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1679510 bytes, counter: 44826, avg: 37.467318
+20250401-22:04.00-487820(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1669448 bytes, counter: 44594, avg: 37.436606
+20250401-22:04.00-487857(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1683308 bytes, counter: 44925, avg: 37.469293
+20250401-22:04.00-487888(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1686756 bytes, counter: 45001, avg: 37.482634
+20250401-22:04.00-487917(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1684144 bytes, counter: 45025, avg: 37.404642
+20250401-22:04.00-487955(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1681466 bytes, counter: 44754, avg: 37.571301
+20250401-22:04.00-487989(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488002(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488011(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488021(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488030(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488037(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1673198 bytes, counter: 44701, avg: 37.430885
+20250401-22:04.00-488075(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1664490 bytes, counter: 44473, avg: 37.426978
+20250401-22:04.00-488108(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1685204 bytes, counter: 44890, avg: 37.540744
+20250401-22:04.00-488143(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1685718 bytes, counter: 44932, avg: 37.517092
+20250401-22:04.00-488167(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1683820 bytes, counter: 44903, avg: 37.499054
+20250401-22:04.00-488197(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1670692 bytes, counter: 44677, avg: 37.394901
+20250401-22:04.00-488232(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1686698 bytes, counter: 44951, avg: 37.523036
+20250401-22:04.00-488256(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1686354 bytes, counter: 44861, avg: 37.590647
+20250401-22:04.00-488280(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1673110 bytes, counter: 44710, avg: 37.421382
+20250401-22:04.00-488305(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1675934 bytes, counter: 44740, avg: 37.459410
+20250401-22:04.00-488338(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1676426 bytes, counter: 44764, avg: 37.450317
+20250401-22:04.00-488362(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1689394 bytes, counter: 45112, avg: 37.448883
+20250401-22:04.00-488385(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1674546 bytes, counter: 44680, avg: 37.478648
+20250401-22:04.00-488410(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488419(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488428(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488437(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488445(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488453(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488461(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488468(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1690014 bytes, counter: 44987, avg: 37.566719
+20250401-22:04.00-488486(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488494(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488500(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488506(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488512(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488519(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488525(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488534(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488541(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488550(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488556(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1676588 bytes, counter: 44733, avg: 37.479892
+20250401-22:04.00-488581(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488594(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250401-22:04.00-488641(us) 790270 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1678468 bytes, counter: 44808, avg: 37.459114
+--- n_commits per partition ---
+ par_id: 0, n_commits: 443437
+ par_id: 1, n_commits: 445156
+ par_id: 2, n_commits: 448754
+ par_id: 3, n_commits: 448956
+ par_id: 4, n_commits: 448286
+ par_id: 5, n_commits: 444876
+ par_id: 6, n_commits: 451912
+ par_id: 7, n_commits: 445839
+ par_id: 8, n_commits: 449896
+ par_id: 9, n_commits: 450229
+ par_id: 10, n_commits: 451144
+ par_id: 11, n_commits: 452544
+ par_id: 12, n_commits: 443236
+ par_id: 13, n_commits: 445417
+ par_id: 14, n_commits: 448874
+ par_id: 15, n_commits: 445988
+ par_id: 16, n_commits: 448812
+ par_id: 17, n_commits: 446795
+ par_id: 18, n_commits: 448553
+ par_id: 19, n_commits: 449360
+ par_id: 20, n_commits: 446571
+ par_id: 21, n_commits: 452963
+ par_id: 22, n_commits: 447770
+ par_id: 23, n_commits: 450597
+--- benchmark statistics ---
+runtime: 5.03219 sec
+memory delta: 1148.48 MB
+n_commits: 10755965
+latency_numer_us: 27494188
+latency_numer_us_remote: 87086848
+memory delta rate: 228.226 MB/sec
+logical memory delta: 0 MB
+logical memory delta rate: 0 MB/sec
+agg_nosync_throughput: 2.13751e+06 ops/sec
+avg_nosync_per_core_throughput: 89062.7 ops/sec/core
+agg_throughput: 2.13743e+06 ops/sec
+avg_per_core_throughput: 89059.8 ops/sec/core
+agg_persist_throughput: 2.13743e+06 ops/sec
+avg_per_core_persist_throughput: 89059.8 ops/sec/core
+avg_latency: 0.00255618 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 1938.72 aborts/sec
+avg_per_core_abort_rate: 80.78 aborts/sec/core
+txn breakdown: [[NewOrder_Local, 5111215], [NewOrder_Local_NANO, 20258505133], [NewOrder_Local_NANO_abort, 6798866], [NewOrder_Local_abort, 3582], [NewOrder_Remote, 268533], [NewOrder_Remote_NANO, 72308636729], [NewOrder_Remote_NANO_abort, 17774501], [NewOrder_Remote_abort, 154], [Payment_Local, 5110415], [Payment_Local_NANO, 12268618151], [Payment_Local_NANO_abort, 5079009], [Payment_Local_abort, 3011], [Payment_Remote, 265802], [Payment_Remote_NANO, 15045017127], [Payment_Remote_NANO_abort, 305370856], [Payment_Remote_abort, 3009]]
+  NewOrder_local_commit_latency: 0.00396354 ms
+  NewOrder_local_abort_latency: 0.00189806 ms
+  NewOrder_local_abort_ratio: 0.0700321
+  NewOrder_abort_ratio: 0.0693974
+  Payment_local_commit_latency: 0.00240071 ms
+  Payment_local_abort_latency: 0.00168682 ms
+  Payment_local_abort_ratio: 0.0588842
+  Payment_abort_ratio: 0.111849
+  NewOrder_remote_ratio: 4.99095 %
+  NewOrder_remote_abort_ratio: 0.0573158 %
+  NewOrder_remote_commit_latency: 0.269273 ms
+  NewOrder_remote_abort_latency: 0.115419 ms
+  Payment_remote_ratio: 4.99441 %
+  Payment_remote_abort_ratio: 1.11937 %
+  Payment_remote_commit_latency: 0.0566023 ms
+  Payment_remote_abort_latency: 0.101486 ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[allocator] ncpus=24
+[allocator] cpu=0 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=1 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=2 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=3 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=4 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=5 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=6 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=7 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=8 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=9 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=10 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=11 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=12 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=13 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=14 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=15 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=16 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=17 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=18 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=19 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=20 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=21 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=22 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=23 fully_faulted?=0 remaining=46137344 bytes
+---------------------------------------
+--- system counters for n_comits ---
+20250401-22:04.01-489681(us) 790270 ! cleanup         (tpcc.cc:4199):     stop the server rpc
+20250401-22:04.01-489704(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 17248448 bytes, counter: 523187, avg: 32.968036
+20250401-22:04.01-489719(us) 790270 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 17028090 bytes, counter: 515602, avg: 33.025648

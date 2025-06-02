@@ -1,0 +1,545 @@
++ sudo cgdelete -g cpuset:/cpulimit
++ sudo cgcreate -t rolis:rolis -a rolis:rolis -g cpuset:/cpulimit
++ nshard=1
++ shard=0
++ trd=24
++ let up=trd+3
++ sec=5
++ cluster=localhost
++ sudo cgset -r cpuset.mems=0 cpulimit
++ sudo cgset -r cpuset.cpus=0-27 cpulimit
++ mkdir -p results
+++ pwd
++ path=/home/rolis/srolis
++ sudo cgexec -g cpuset:cpulimit ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp --db-type mbta --num-threads 24 --scale-factor 24 --num-erpc-server 2 --shard-index 0 --shard-config /home/rolis/srolis/config/local-shards1-warehouses24.yml -F third-party/paxos/config/1leader_2followers/paxos24_shardidx0.yml -F third-party/paxos/config/occ_paxos.yml --txn-flags 1 --runtime 5 -P localhost --bench-opts --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7fc6dc17f000, 0x7fc71e37f000)
+cpu0 owns [0x7fc6dc200000, 0x7fc6dee00000)
+cpu1 owns [0x7fc6dee00000, 0x7fc6e1a00000)
+cpu2 owns [0x7fc6e1a00000, 0x7fc6e4600000)
+cpu3 owns [0x7fc6e4600000, 0x7fc6e7200000)
+cpu4 owns [0x7fc6e7200000, 0x7fc6e9e00000)
+cpu5 owns [0x7fc6e9e00000, 0x7fc6eca00000)
+cpu6 owns [0x7fc6eca00000, 0x7fc6ef600000)
+cpu7 owns [0x7fc6ef600000, 0x7fc6f2200000)
+cpu8 owns [0x7fc6f2200000, 0x7fc6f4e00000)
+cpu9 owns [0x7fc6f4e00000, 0x7fc6f7a00000)
+cpu10 owns [0x7fc6f7a00000, 0x7fc6fa600000)
+cpu11 owns [0x7fc6fa600000, 0x7fc6fd200000)
+cpu12 owns [0x7fc6fd200000, 0x7fc6ffe00000)
+cpu13 owns [0x7fc6ffe00000, 0x7fc702a00000)
+cpu14 owns [0x7fc702a00000, 0x7fc705600000)
+cpu15 owns [0x7fc705600000, 0x7fc708200000)
+cpu16 owns [0x7fc708200000, 0x7fc70ae00000)
+cpu17 owns [0x7fc70ae00000, 0x7fc70da00000)
+cpu18 owns [0x7fc70da00000, 0x7fc710600000)
+cpu19 owns [0x7fc710600000, 0x7fc713200000)
+cpu20 owns [0x7fc713200000, 0x7fc715e00000)
+cpu21 owns [0x7fc715e00000, 0x7fc718a00000)
+cpu22 owns [0x7fc718a00000, 0x7fc71b600000)
+cpu23 owns [0x7fc71b600000, 0x7fc71e200000)
+Database Benchmark:
+  pid: 750071
+settings:
+  par-loading : 0
+  pin-cpus    : 1
+  slow-exit   : 0
+  retry-txns  : 1
+  backoff-txns: 0
+  bench       : tpcc
+  scale       : 24
+  num-cpus    : 32
+  num-threads : 24
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  db-type     : mbta
+  basedir     : ./tmp
+  txn-flags   : 1
+  runtime     : 5
+  var-encode  : yes
+  allocator   : jemalloc
+  numa-memory : 1107296256
+  logfiles : []
+  assignments : []
+  disable-gc : 0
+  disable-snapshots : 0
+  stats-server-sockfile: 
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  batch-size                   :1
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+20250402-00:44.59-385603(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31029, numa_node = 0, req_types: 1
+99:392820 INFOR: eRPC Nexus: Created with management UDP port 31029, hostname 172.19.0.33.
+99:400778 INFOR: DPDK transport for Rpc 29 initializing DPDK EAL.
+99:698570 WARNG: Running as primary DPDK process. eRPC DPDK daemon is not running.
+99:698586 INFOR: DPDK transport for Rpc 29 got QP 0
+99:698592 INFOR: Initializing port 0 with driver net_mlx5
+0:588132 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+0:588156 WARNG: DpdkTransport created for Rpc ID 29, queue 0, datapath UDP port 10000
+20250402-00:45.00-588723(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31030, numa_node = 0, req_types: 1
+0:596155 INFOR: eRPC Nexus: Created with management UDP port 31030, hostname 172.19.0.33.
+0:596199 INFOR: DPDK transport for Rpc 30 skipping DPDK EAL initialization.
+0:596201 INFOR: DPDK transport for Rpc 30 got QP 1
+0:596542 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+0:596561 WARNG: DpdkTransport created for Rpc ID 30, queue 1, datapath UDP port 10001
+20250402-00:45.00-598362(us) 750071 ! run             (bench.cc:311):     # of loaders size:6
+start worker:1215396
+PinToWarehouseId(): coreid=2 pinned to whse=1 (partid=0)
+[INFO] finished loading warehouse
+[INFO]   * average warehouse record length: num batches: 30
+PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0PinToWarehouseId(): coreid=PinToWarehouseId(): coreid=973 pinned to whse=1 (partid=0)
+ bytes
+)
+5 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=3 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=3 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=3 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=3 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=3 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=3 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=3 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=3 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=3 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=3 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=3 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=3 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=3 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=3 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=3 pinned to whse=16 (partid=15)
+PinToWarehouseId(): coreid=3 pinned to whse=17 (partid=16)
+PinToWarehouseId(): coreid=3 pinned to whse=18 (partid=17)
+PinToWarehouseId(): coreid=3 pinned to whse=19 (partid=18)
+PinToWarehouseId(): coreid=3 pinned to whse=20 (partid=19)
+PinToWarehouseId(): coreid=3 pinned to whse=21 (partid=20)
+PinToWarehouseId(): coreid=3 pinned to whse=22 (partid=21)
+PinToWarehouseId(): coreid=3 pinned to whse=23 (partid=22)
+PinToWarehouseId(): coreid=3 pinned to whse=24 (partid=23)
+[INFO] finished loading district
+[INFO]   * average district record length: 99 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=2 (partid=1)
+[INFO] finished loading item
+[INFO]   * average item record length: 84.1739 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=4 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=5 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=4 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=5 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=5 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=2 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=4 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=5 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=5 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=4 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=5 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=5 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=4 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=5 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=5 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=2 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=5 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=4 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=5 pinned to whse=16 (partid=15)
+PinToWarehouseId(): coreid=5 pinned to whse=17 (partid=16)
+PinToWarehouseId(): coreid=4 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=5 pinned to whse=18 (partid=17)
+PinToWarehouseId(): coreid=5 pinned to whse=19 (partid=18)
+PinToWarehouseId(): coreid=4 pinned to whse=9 (partid=8)
+PinToWarehouseId(): coreid=5 pinned to whse=20 (partid=19)
+PinToWarehouseId(): coreid=5 pinned to whse=21 (partid=20)
+PinToWarehouseId(): coreid=2 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=5 pinned to whse=22 (partid=21)
+PinToWarehouseId(): coreid=4 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=5 pinned to whse=23 (partid=22)
+PinToWarehouseId(): coreid=5 pinned to whse=24 (partid=23)
+PinToWarehouseId(): coreid=4 pinned to whse=11 (partid=10)
+[INFO] finished loading order
+[INFO]   * average order_line record length: 11.3009 bytes
+[INFO]   * average oorder record length: 7.95607 bytes
+[INFO]   * average new_order record length: 12 bytes
+PinToWarehouseId(): coreid=4 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=2 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=4 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=4 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=4 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=2 pinned to whse=6 (partid=5)
+PinToWarehouseId(): coreid=4 pinned to whse=16 (partid=15)
+PinToWarehouseId(): coreid=4 pinned to whse=17 (partid=16)
+PinToWarehouseId(): coreid=4 pinned to whse=18 (partid=17)
+PinToWarehouseId(): coreid=2 pinned to whse=7 (partid=6)
+PinToWarehouseId(): coreid=4 pinned to whse=19 (partid=18)
+PinToWarehouseId(): coreid=4 pinned to whse=20 (partid=19)
+PinToWarehouseId(): coreid=4 pinned to whse=21 (partid=20)
+PinToWarehouseId(): coreid=2 pinned to whse=8 (partid=7)
+PinToWarehouseId(): coreid=4 pinned to whse=22 (partid=21)
+PinToWarehouseId(): coreid=4 pinned to whse=23 (partid=22)
+PinToWarehouseId(): coreid=4 pinned to whse=24 (partid=23)
+PinToWarehouseId(): coreid=2 pinned to whse=9 (partid=8)
+[INFO] finished loading customer
+[INFO]   * average customer record length: 153.989 bytes 
+PinToWarehouseId(): coreid=2 pinned to whse=10 (partid=9)
+PinToWarehouseId(): coreid=2 pinned to whse=11 (partid=10)
+PinToWarehouseId(): coreid=2 pinned to whse=12 (partid=11)
+PinToWarehouseId(): coreid=2 pinned to whse=13 (partid=12)
+PinToWarehouseId(): coreid=2 pinned to whse=14 (partid=13)
+PinToWarehouseId(): coreid=2 pinned to whse=15 (partid=14)
+PinToWarehouseId(): coreid=2 pinned to whse=16 (partid=15)
+PinToWarehouseId(): coreid=2 pinned to whse=17 (partid=16)
+PinToWarehouseId(): coreid=2 pinned to whse=18 (partid=17)
+PinToWarehouseId(): coreid=2 pinned to whse=19 (partid=18)
+PinToWarehouseId(): coreid=2 pinned to whse=20 (partid=19)
+PinToWarehouseId(): coreid=2 pinned to whse=21 (partid=20)
+PinToWarehouseId(): coreid=2 pinned to whse=22 (partid=21)
+PinToWarehouseId(): coreid=2 pinned to whse=23 (partid=22)
+PinToWarehouseId(): coreid=2 pinned to whse=24 (partid=23)
+[INFO] finished loading stock
+[INFO]   * average stock record length: 8 bytes
+timed region dataloading took 15595.9 ms
+DB size: 2717.82 MB
+[0, 0, 0] txns persisted in loading phase
+starting benchmark...
+--------------Finish loading data and wait for others completing load phase ------------
+tpcc: worker id 32 => warehouses [1, 2)
+tpcc: worker id 33 => warehouses [2, 3)
+tpcc: worker id 34 => warehouses [3, 4)
+tpcc: worker id 35 => warehouses [4, 5)
+tpcc: worker id 36 => warehouses [5, 6)
+tpcc: worker id 37 => warehouses [6, 7)
+tpcc: worker id 38 => warehouses [7, 8)
+tpcc: worker id 39 => warehouses [8, 9)
+tpcc: worker id 40 => warehouses [9, 10)
+tpcc: worker id 41 => warehouses [10, 11)
+tpcc: worker id 42 => warehouses [11, 12)
+tpcc: worker id 43 => warehouses [12, 13)
+tpcc: worker id 44 => warehouses [13, 14)
+tpcc: worker id 45 => warehouses [14, 15)
+tpcc: worker id 46 => warehouses [15, 16)
+tpcc: worker id 47 => warehouses [16, 17)
+tpcc: worker id 48 => warehouses [17, 18)
+tpcc: worker id 49 => warehouses [18, 19)
+tpcc: worker id 50 => warehouses [19, 20)
+tpcc: worker id 51 => warehouses [20, 21)
+tpcc: worker id 52 => warehouses [21, 22)
+tpcc: worker id 53 => warehouses [22, 23)
+tpcc: worker id 54 => warehouses [23, 24)
+tpcc: worker id 55 => warehouses [24, 25)
+20250402-00:45.16-200944(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31000, numa_node = 0, req_types: 1
+16:209644 INFOR: eRPC Nexus: Created with management UDP port 31000, hostname 172.19.0.33.
+16:209702 INFOR: DPDK transport for Rpc 0 skipping DPDK EAL initialization.
+16:209706 INFOR: DPDK transport for Rpc 0 got QP 2
+16:210087 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:210105 WARNG: DpdkTransport created for Rpc ID 0, queue 2, datapath UDP port 10002
+20250402-00:45.16-212327(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31001, numa_node = 0, req_types: 1
+16:220403 INFOR: eRPC Nexus: Created with management UDP port 31001, hostname 172.19.0.33.
+16:220442 INFOR: DPDK transport for Rpc 1 skipping DPDK EAL initialization.
+16:220445 INFOR: DPDK transport for Rpc 1 got QP 3
+16:220809 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:220823 WARNG: DpdkTransport created for Rpc ID 1, queue 3, datapath UDP port 10003
+20250402-00:45.16-222797(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31002, numa_node = 0, req_types: 1
+16:230787 INFOR: eRPC Nexus: Created with management UDP port 31002, hostname 172.19.0.33.
+16:231169 INFOR: DPDK transport for Rpc 2 skipping DPDK EAL initialization.
+16:231173 INFOR: DPDK transport for Rpc 2 got QP 4
+16:231537 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:231957 WARNG: DpdkTransport created for Rpc ID 2, queue 4, datapath UDP port 10004
+20250402-00:45.16-232560(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31003, numa_node = 0, req_types: 1
+16:239628 INFOR: eRPC Nexus: Created with management UDP port 31003, hostname 172.19.0.33.
+16:239686 INFOR: DPDK transport for Rpc 3 skipping DPDK EAL initialization.
+16:239690 INFOR: DPDK transport for Rpc 3 got QP 5
+16:240067 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:240082 WARNG: DpdkTransport created for Rpc ID 3, queue 5, datapath UDP port 10005
+20250402-00:45.16-240967(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31004, numa_node = 0, req_types: 1
+16:248032 INFOR: eRPC Nexus: Created with management UDP port 31004, hostname 172.19.0.33.
+16:248081 INFOR: DPDK transport for Rpc 4 skipping DPDK EAL initialization.
+16:248084 INFOR: DPDK transport for Rpc 4 got QP 6
+16:248457 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:248471 WARNG: DpdkTransport created for Rpc ID 4, queue 6, datapath UDP port 10006
+20250402-00:45.16-249302(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31005, numa_node = 0, req_types: 1
+16:256793 INFOR: eRPC Nexus: Created with management UDP port 31005, hostname 172.19.0.33.
+16:256853 INFOR: DPDK transport for Rpc 5 skipping DPDK EAL initialization.
+16:256856 INFOR: DPDK transport for Rpc 5 got QP 7
+16:257188 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:257888 WARNG: DpdkTransport created for Rpc ID 5, queue 7, datapath UDP port 10007
+20250402-00:45.16-258473(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31006, numa_node = 0, req_types: 1
+16:265915 INFOR: eRPC Nexus: Created with management UDP port 31006, hostname 172.19.0.33.
+16:265957 INFOR: DPDK transport for Rpc 6 skipping DPDK EAL initialization.
+16:265960 INFOR: DPDK transport for Rpc 6 got QP 8
+16:266286 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:266297 WARNG: DpdkTransport created for Rpc ID 6, queue 8, datapath UDP port 10008
+20250402-00:45.16-267132(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31008, numa_node = 0, req_types: 1
+16:274458 INFOR: eRPC Nexus: Created with management UDP port 31008, hostname 172.19.0.33.
+16:274493 INFOR: DPDK transport for Rpc 8 skipping DPDK EAL initialization.
+16:274496 INFOR: DPDK transport for Rpc 8 got QP 9
+16:274827 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:274844 WARNG: DpdkTransport created for Rpc ID 8, queue 9, datapath UDP port 10009
+20250402-00:45.16-275569(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31007, numa_node = 0, req_types: 1
+16:283172 INFOR: eRPC Nexus: Created with management UDP port 31007, hostname 172.19.0.33.
+16:283207 INFOR: DPDK transport for Rpc 7 skipping DPDK EAL initialization.
+16:283210 INFOR: DPDK transport for Rpc 7 got QP 10
+16:283526 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:283539 WARNG: DpdkTransport created for Rpc ID 7, queue 10, datapath UDP port 10010
+20250402-00:45.16-284475(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31010, numa_node = 0, req_types: 1
+16:291992 INFOR: eRPC Nexus: Created with management UDP port 31010, hostname 172.19.0.33.
+16:292030 INFOR: DPDK transport for Rpc 10 skipping DPDK EAL initialization.
+16:292033 INFOR: DPDK transport for Rpc 10 got QP 11
+16:292380 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:292391 WARNG: DpdkTransport created for Rpc ID 10, queue 11, datapath UDP port 10011
+20250402-00:45.16-293253(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31011, numa_node = 0, req_types: 1
+16:300288 INFOR: eRPC Nexus: Created with management UDP port 31011, hostname 172.19.0.33.
+16:300324 INFOR: DPDK transport for Rpc 11 skipping DPDK EAL initialization.
+16:300327 INFOR: DPDK transport for Rpc 11 got QP 12
+16:300656 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:300667 WARNG: DpdkTransport created for Rpc ID 11, queue 12, datapath UDP port 10012
+20250402-00:45.16-301554(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31009, numa_node = 0, req_types: 1
+16:308615 INFOR: eRPC Nexus: Created with management UDP port 31009, hostname 172.19.0.33.
+16:308658 INFOR: DPDK transport for Rpc 9 skipping DPDK EAL initialization.
+16:308661 INFOR: DPDK transport for Rpc 9 got QP 13
+16:309003 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:309015 WARNG: DpdkTransport created for Rpc ID 9, queue 13, datapath UDP port 10013
+20250402-00:45.16-309863(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31013, numa_node = 0, req_types: 1
+16:317046 INFOR: eRPC Nexus: Created with management UDP port 31013, hostname 172.19.0.33.
+16:317092 INFOR: DPDK transport for Rpc 13 skipping DPDK EAL initialization.
+16:317097 INFOR: DPDK transport for Rpc 13 got QP 14
+16:317486 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:317508 WARNG: DpdkTransport created for Rpc ID 13, queue 14, datapath UDP port 10014
+20250402-00:45.16-318435(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31015, numa_node = 0, req_types: 1
+16:325468 INFOR: eRPC Nexus: Created with management UDP port 31015, hostname 172.19.0.33.
+16:325507 INFOR: DPDK transport for Rpc 15 skipping DPDK EAL initialization.
+16:325510 INFOR: DPDK transport for Rpc 15 got QP 15
+16:325851 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:325863 WARNG: DpdkTransport created for Rpc ID 15, queue 15, datapath UDP port 10015
+20250402-00:45.16-326712(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31012, numa_node = 0, req_types: 1
+16:333778 INFOR: eRPC Nexus: Created with management UDP port 31012, hostname 172.19.0.33.
+16:333847 INFOR: DPDK transport for Rpc 12 skipping DPDK EAL initialization.
+16:333850 INFOR: DPDK transport for Rpc 12 got QP 16
+16:334210 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:334231 WARNG: DpdkTransport created for Rpc ID 12, queue 16, datapath UDP port 10016
+20250402-00:45.16-335069(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31014, numa_node = 0, req_types: 1
+16:342090 INFOR: eRPC Nexus: Created with management UDP port 31014, hostname 172.19.0.33.
+16:342130 INFOR: DPDK transport for Rpc 14 skipping DPDK EAL initialization.
+16:342133 INFOR: DPDK transport for Rpc 14 got QP 17
+16:342470 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:342482 WARNG: DpdkTransport created for Rpc ID 14, queue 17, datapath UDP port 10017
+20250402-00:45.16-343346(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31017, numa_node = 0, req_types: 1
+16:350419 INFOR: eRPC Nexus: Created with management UDP port 31017, hostname 172.19.0.33.
+16:350464 INFOR: DPDK transport for Rpc 17 skipping DPDK EAL initialization.
+16:350468 INFOR: DPDK transport for Rpc 17 got QP 18
+16:350814 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:350828 WARNG: DpdkTransport created for Rpc ID 17, queue 18, datapath UDP port 10018
+20250402-00:45.16-351660(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31016, numa_node = 0, req_types: 1
+16:358698 INFOR: eRPC Nexus: Created with management UDP port 31016, hostname 172.19.0.33.
+16:358736 INFOR: DPDK transport for Rpc 16 skipping DPDK EAL initialization.
+16:358739 INFOR: DPDK transport for Rpc 16 got QP 19
+16:359074 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:359086 WARNG: DpdkTransport created for Rpc ID 16, queue 19, datapath UDP port 10019
+20250402-00:45.16-359963(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31018, numa_node = 0, req_types: 1
+16:367014 INFOR: eRPC Nexus: Created with management UDP port 31018, hostname 172.19.0.33.
+16:367055 INFOR: DPDK transport for Rpc 18 skipping DPDK EAL initialization.
+16:367058 INFOR: DPDK transport for Rpc 18 got QP 20
+16:367406 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:367419 WARNG: DpdkTransport created for Rpc ID 18, queue 20, datapath UDP port 10020
+20250402-00:45.16-368299(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31022, numa_node = 0, req_types: 1
+16:375332 INFOR: eRPC Nexus: Created with management UDP port 31022, hostname 172.19.0.33.
+16:375370 INFOR: DPDK transport for Rpc 22 skipping DPDK EAL initialization.
+16:375372 INFOR: DPDK transport for Rpc 22 got QP 21
+16:375693 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:375706 WARNG: DpdkTransport created for Rpc ID 22, queue 21, datapath UDP port 10021
+20250402-00:45.16-376577(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31020, numa_node = 0, req_types: 1
+16:383604 INFOR: eRPC Nexus: Created with management UDP port 31020, hostname 172.19.0.33.
+16:383642 INFOR: DPDK transport for Rpc 20 skipping DPDK EAL initialization.
+16:383644 INFOR: DPDK transport for Rpc 20 got QP 22
+16:383982 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:383995 WARNG: DpdkTransport created for Rpc ID 20, queue 22, datapath UDP port 10022
+20250402-00:45.16-384923(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31019, numa_node = 0, req_types: 1
+16:391975 INFOR: eRPC Nexus: Created with management UDP port 31019, hostname 172.19.0.33.
+16:392017 INFOR: DPDK transport for Rpc 19 skipping DPDK EAL initialization.
+16:392020 INFOR: DPDK transport for Rpc 19 got QP 23
+16:392349 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:392368 WARNG: DpdkTransport created for Rpc ID 19, queue 23, datapath UDP port 10023
+20250402-00:45.16-393213(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31021, numa_node = 0, req_types: 1
+16:400305 INFOR: eRPC Nexus: Created with management UDP port 31021, hostname 172.19.0.33.
+16:400345 INFOR: DPDK transport for Rpc 21 skipping DPDK EAL initialization.
+16:400347 INFOR: DPDK transport for Rpc 21 got QP 24
+16:400669 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:400681 WARNG: DpdkTransport created for Rpc ID 21, queue 24, datapath UDP port 10024
+20250402-00:45.16-401570(us) 750071 ! FastTransport   (fasttransport.cc:202): Created nexus object with local_uri = 172.19.0.33:31023, numa_node = 0, req_types: 1
+16:408629 INFOR: eRPC Nexus: Created with management UDP port 31023, hostname 172.19.0.33.
+16:408667 INFOR: DPDK transport for Rpc 23 skipping DPDK EAL initialization.
+16:408670 INFOR: DPDK transport for Rpc 23 got QP 25
+16:408997 INFOR: Resolved port 0: MAC 60:45:bd:83:67:49, IPv4 172.19.0.37, RETA size 128 entries, bandwidth 100.0 Gbps
+16:409009 WARNG: DpdkTransport created for Rpc ID 23, queue 25, datapath UDP port 10025
+20250402-00:45.16-410122(us) 750071 ! run             (bench.cc:411):     start the running time, runTime:5
+20250402-00:45.16-410153(us) 750071 ! run             (bench.cc:423):     runtime time left:5000 ms, bool:1
+20250402-00:45.17-418816(us) 750071 ! run             (bench.cc:423):     runtime time left:4000 ms, bool:1
+20250402-00:45.18-427563(us) 750071 ! run             (bench.cc:423):     runtime time left:3000 ms, bool:1
+20250402-00:45.19-436371(us) 750071 ! run             (bench.cc:423):     runtime time left:2000 ms, bool:1
+20250402-00:45.20-445114(us) 750071 ! run             (bench.cc:423):     runtime time left:1000 ms, bool:1
+20250402-00:45.21-453840(us) 750071 ! run             (bench.cc:431):     runtime_plus:0
+20250402-00:45.21-453894(us) 750071 ! stop            (bench.cc:292):     stop all erpc clients. set stop=false
+20250402-00:45.21-453907(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-453958(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454002(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454038(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454077(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454104(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454127(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454173(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454210(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454236(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454251(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454269(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454276(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454286(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454306(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454312(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454323(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454329(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454339(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454346(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454355(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454362(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454371(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454378(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454387(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454394(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454403(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454410(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454420(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454426(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454435(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454442(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454451(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454461(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454493(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454526(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454557(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454579(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454613(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454638(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454677(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454712(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454735(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454775(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454798(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454821(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454845(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.21-454868(us) 750071 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+--- n_commits per partition ---
+ par_id: 0, n_commits: 286467
+ par_id: 1, n_commits: 290248
+ par_id: 2, n_commits: 290620
+ par_id: 3, n_commits: 291954
+ par_id: 4, n_commits: 289103
+ par_id: 5, n_commits: 286977
+ par_id: 6, n_commits: 290557
+ par_id: 7, n_commits: 288962
+ par_id: 8, n_commits: 290346
+ par_id: 9, n_commits: 292339
+ par_id: 10, n_commits: 287927
+ par_id: 11, n_commits: 292478
+ par_id: 12, n_commits: 423173
+ par_id: 13, n_commits: 289269
+ par_id: 14, n_commits: 291362
+ par_id: 15, n_commits: 422467
+ par_id: 16, n_commits: 291253
+ par_id: 17, n_commits: 289765
+ par_id: 18, n_commits: 291745
+ par_id: 19, n_commits: 293474
+ par_id: 20, n_commits: 292160
+ par_id: 21, n_commits: 290616
+ par_id: 22, n_commits: 290326
+ par_id: 23, n_commits: 289366
+--- benchmark statistics ---
+runtime: 5.04544 sec
+memory delta: 9112.89 MB
+n_commits: 7232954
+latency_numer_us: 113239745
+latency_numer_us_remote: 0
+memory delta rate: 1806.16 MB/sec
+logical memory delta: 0 MB
+logical memory delta rate: 0 MB/sec
+agg_nosync_throughput: 1.4336e+06 ops/sec
+avg_nosync_per_core_throughput: 59733.4 ops/sec/core
+agg_throughput: 1.43356e+06 ops/sec
+avg_per_core_throughput: 59731.8 ops/sec/core
+agg_persist_throughput: 1.43356e+06 ops/sec
+avg_per_core_persist_throughput: 59731.8 ops/sec/core
+avg_latency: 0.0156561 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 61259.3 aborts/sec
+avg_per_core_abort_rate: 2552.47 aborts/sec/core
+txn breakdown: [[Delivery_Local, 300959], [Delivery_Local_NANO, 24046332143], [Delivery_Local_NANO_abort, 0], [Delivery_Local_abort, 0], [Delivery_Remote, 0], [Delivery_Remote_NANO, 0], [Delivery_Remote_NANO_abort, 0], [Delivery_Remote_abort, 0], [NewOrder_Local, 3084190], [NewOrder_Local_NANO, 53887322476], [NewOrder_Local_NANO_abort, 3770086038], [NewOrder_Local_abort, 308849], [NewOrder_Remote, 0], [NewOrder_Remote_NANO, 0], [NewOrder_Remote_NANO_abort, 0], [NewOrder_Remote_abort, 0], [OrderStatus_Local, 302250], [OrderStatus_Local_NANO, 1546040845], [OrderStatus_Local_NANO_abort, 846], [OrderStatus_Local_abort, 1], [OrderStatus_Remote, 0], [OrderStatus_Remote_NANO, 0], [OrderStatus_Remote_NANO_abort, 0], [OrderStatus_Remote_abort, 0], [Payment_Local, 3243625], [Payment_Local_NANO, 16743659999], [Payment_Local_NANO_abort, 132191], [Payment_Local_abort, 58], [Payment_Remote, 0], [Payment_Remote_NANO, 0], [Payment_Remote_NANO_abort, 0], [Payment_Remote_abort, 0], [StockLevel_Local, 301930], [StockLevel_Local_NANO, 20634621370], [StockLevel_Local_NANO_abort, 7649581], [StockLevel_Local_abort, 172], [StockLevel_Remote, 0], [StockLevel_Remote_NANO, 0], [StockLevel_Remote_NANO_abort, 0], [StockLevel_Remote_abort, 0]]
+  NewOrder_local_commit_latency: 0.0174721 ms
+  NewOrder_local_abort_latency: 0.0122069 ms
+  NewOrder_local_abort_ratio: 9.10243
+  NewOrder_abort_ratio: 9.10243
+  Payment_local_commit_latency: 0.00516202 ms
+  Payment_local_abort_latency: 0.00227916 ms
+  Payment_local_abort_ratio: 0.00178809
+  Payment_abort_ratio: 0.00178809
+  Delivery_local_commit_latency: 0.079899 ms
+  Delivery_local_abort_latency: -nan ms
+  Delivery_local_abort_ratio: 0
+  Delivery_abort_ratio: 0
+  OrderStatus_local_commit_latency: 0.00511511 ms
+  OrderStatus_local_abort_latency: 0.000846 ms
+  OrderStatus_local_abort_ratio: 0.000330851
+  OrderStatus_abort_ratio: 0.000330851
+  StockLevel_local_commit_latency: 0.0683424 ms
+  StockLevel_local_abort_latency: 0.0444743 ms
+  StockLevel_local_abort_ratio: 0.0569344
+  StockLevel_abort_ratio: 0.0569344
+  NewOrder_remote_ratio: 0 %
+  NewOrder_remote_abort_ratio: -nan %
+  NewOrder_remote_commit_latency: -nan ms
+  NewOrder_remote_abort_latency: -nan ms
+  Payment_remote_ratio: 0 %
+  Payment_remote_abort_ratio: -nan %
+  Payment_remote_commit_latency: -nan ms
+  Payment_remote_abort_latency: -nan ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[allocator] ncpus=24
+[allocator] cpu=0 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=1 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=2 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=3 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=4 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=5 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=6 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=7 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=8 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=9 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=10 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=11 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=12 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=13 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=14 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=15 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=16 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=17 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=18 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=19 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=20 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=21 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=22 fully_faulted?=0 remaining=46137344 bytes
+[allocator] cpu=23 fully_faulted?=0 remaining=46137344 bytes
+---------------------------------------
+--- system counters for n_comits ---
+20250402-00:45.22-456410(us) 750071 ! cleanup         (tpcc.cc:4199):     stop the server rpc
+20250402-00:45.22-456438(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250402-00:45.22-456454(us) 750071 * Stop            (fasttransport.cc:635): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan

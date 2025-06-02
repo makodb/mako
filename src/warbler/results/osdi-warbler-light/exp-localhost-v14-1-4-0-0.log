@@ -1,0 +1,3528 @@
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7f678737f000, 0x7f67c757f000)
+cpu0 owns [0x7f6787400000, 0x7f6797400000)
+cpu1 owns [0x7f6797400000, 0x7f67a7400000)
+cpu2 owns [0x7f67a7400000, 0x7f67b7400000)
+cpu3 owns [0x7f67b7400000, 0x7f67c7400000)
+Database Benchmark:
+  pid: 83447
+settings:
+  par-loading : 0
+  pin-cpus    : 1
+  slow-exit   : 0
+  retry-txns  : 1
+  backoff-txns: 0
+  bench       : tpcc
+  scale       : 4
+  num-cpus    : 8
+  num-threads : 4
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  db-type     : mbta
+  basedir     : ./tmp
+  txn-flags   : 1
+  runtime     : 30
+  var-encode  : yes
+  allocator   : jemalloc
+  numa-memory : 1073741824
+  logfiles : []
+  assignments : []
+  disable-gc : 0
+  disable-snapshots : 0
+  stats-server-sockfile: 
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+I [../src/deptran/paxos_main_helper.cc:78] 2025-03-10 23:03:08.177 | PWD : /home/rolis/srolis
+I [../src/deptran/paxos_main_helper.cc:274] 2025-03-10 23:03:08.183 | starting process 83447
+I [../src/deptran/config.cc:290] 2025-03-10 23:03:08.183 | LoadYML: third-party/paxos/config/1leader_2followers/paxos4_shardidx0.yml
+I [../src/deptran/config.cc:290] 2025-03-10 23:03:08.184 | LoadYML: third-party/paxos/config/occ_paxos.yml
+I [../src/deptran/paxos_main_helper.cc:283] 2025-03-10 23:03:08.185 | server_infos, number of sites: 4, proc_name: localhost
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:08.189 | parition id of each Paxos group is 3, site-name: s104, site-id: 12
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:08.193 | parition id of each Paxos group is 2, site-name: s103, site-id: 8
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:08.196 | parition id of each Paxos group is 1, site-name: s102, site-id: 4
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:08.200 | parition id of each Paxos group is 0, site-name: s101, site-id: 0
+I [../src/deptran/paxos_main_helper.cc:295] 2025-03-10 23:03:08.200 | running machine-id: 0
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:08.200 | launching site: 0, bind address 0.0.0.0:7001
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:08.200 | launching site: 4, bind address 0.0.0.0:7002
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:08.200 | launching site: 8, bind address 0.0.0.0:7003
+I [../src/deptran/paxos_main_helper.cc:104] 2025-03-10 23:03:08.202 | waiting for server setup threads.
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:08.202 | launching site: c, bind address 0.0.0.0:7004
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:08.203 | [service]loc_id: 0, name: s101, proc: localhost, id: 0
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:08.204 | [service]loc_id: 0, name: s102, proc: localhost, id: 4
+starting server at 0.0.0.0:7001
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:08.206 | rrr::Server: started on 0.0.0.0:7001
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:08.206 | Server s101 ready at 0.0.0.0:7001
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:08.206 | setup paxos communicator
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:08.206 | [service]loc_id: 0, name: s103, proc: localhost, id: 8
+starting server at 0.0.0.0:7002
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.206 | connect to site: 172.206.32.35:7001 (attempt 0)
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:08.206 | [service]loc_id: 0, name: s104, proc: localhost, id: 12
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:08.206 | rrr::Server: started on 0.0.0.0:7002
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:08.206 | Server s102 ready at 0.0.0.0:7002
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:08.206 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.206 | connect to site: 172.206.32.35:7001 (attempt 0)
+starting server at 0.0.0.0:7003
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:08.207 | rrr::Server: started on 0.0.0.0:7003
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:08.207 | Server s103 ready at 0.0.0.0:7003
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:08.207 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.207 | connect to site: 172.206.32.35:7001 (attempt 0)
+starting server at 0.0.0.0:7004
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:08.207 | rrr::Server: started on 0.0.0.0:7004
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:08.207 | Server s104 ready at 0.0.0.0:7004
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:08.207 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.207 | connect to site: 172.206.32.35:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.211 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.211 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.215 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:08.225 | connect to site: 172.206.32.132:7101 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:08.229 | rrr::Client: connect(172.206.32.132:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:08.232 | rrr::Client: connect(172.206.32.132:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:08.238 | rrr::Client: connect(172.206.32.132:7101): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:08.240 | rrr::Client: connect(172.206.32.132:7101): Connection refused
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.229 | connect to site: 172.206.32.132:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.231 | connect to site: 172.200.168.117:7201 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.233 | connect to site: 172.206.32.132:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.238 | connect to site: 172.206.32.132:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.239 | connect to site: 172.200.168.117:7201 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.240 | connect to site: 172.206.32.132:7101 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.242 | connect to site: 172.200.168.117:7201 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.245 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.245 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.245 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.250 | connect to site: 172.200.168.117:7201 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.254 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.245 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.245 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.245 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.246 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.246 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.246 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.247 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.247 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.254 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.256 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.256 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.257 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.258 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.258 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.266 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.267 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.267 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.268 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.269 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.269 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.270 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.275 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.275 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.277 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.277 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.278 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.278 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.278 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.278 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.278 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.279 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.279 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.284 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.284 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.287 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.288 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.289 | site 8 launched!
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.289 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.290 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.291 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.297 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.297 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.301 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.301 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.302 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.303 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.303 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.304 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.304 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.304 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.305 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.307 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.323 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.323 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.324 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.327 | site 0 launched!
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.332 | site 12 launched!
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.332 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.342 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.351 | site 4 launched!
+I [../src/deptran/paxos_main_helper.cc:108] 2025-03-10 23:03:10.351 | done waiting for server setup threads.
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.351 | rrr::Server: started on 0.0.0.0:17001
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.351 | heartbeat setup for s101 on 0.0.0.0:17001
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.351 | rrr::Server: started on 0.0.0.0:17002
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.351 | heartbeat setup for s102 on 0.0.0.0:17002
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.352 | rrr::Server: started on 0.0.0.0:17003
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.352 | heartbeat setup for s103 on 0.0.0.0:17003
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.352 | rrr::Server: started on 0.0.0.0:17004
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.352 | heartbeat setup for s104 on 0.0.0.0:17004
+I [../src/deptran/paxos_main_helper.cc:115] 2025-03-10 23:03:10.352 | server workers' communicators setup
+tpcc settings:
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+Table: customer_0, Id: 1
+Table: customer_1, Id: 2
+Table: customer_2, Id: 3
+Table: customer_3, Id: 4
+Table: customer_name_idx_0, Id: 5
+Table: customer_name_idx_1, Id: 6
+Table: customer_name_idx_2, Id: 7
+Table: customer_name_idx_3, Id: 8
+Table: district_0, Id: 9
+Table: district_1, Id: 10
+Table: district_2, Id: 11
+Table: district_3, Id: 12
+Table: history_0, Id: 13
+Table: history_1, Id: 14
+Table: history_2, Id: 15
+Table: history_3, Id: 16
+Table: new_order_0, Id: 17
+Table: new_order_1, Id: 18
+Table: new_order_2, Id: 19
+Table: new_order_3, Id: 20
+Table: oorder_0, Id: 21
+Table: oorder_1, Id: 22
+Table: oorder_2, Id: 23
+Table: oorder_3, Id: 24
+Table: oorder_c_id_idx_0, Id: 25
+Table: oorder_c_id_idx_1, Id: 26
+Table: oorder_c_id_idx_2, Id: 27
+Table: oorder_c_id_idx_3, Id: 28
+Table: order_line_0, Id: 29
+Table: order_line_1, Id: 30
+Table: order_line_2, Id: 31
+Table: order_line_3, Id: 32
+Table: stock_0, Id: 33
+Table: stock_1, Id: 34
+Table: stock_2, Id: 35
+Table: stock_3, Id: 36
+Table: stock_data_0, Id: 37
+Table: stock_data_1, Id: 38
+Table: stock_data_2, Id: 39
+Table: stock_data_3, Id: 40
+Table: warehouse_0, Id: 41
+Table: warehouse_1, Id: 42
+Table: warehouse_2, Id: 43
+Table: warehouse_3, Id: 44
+Table: item, Id: 45
+Table: customer_dummy_1, Id: 46
+Table: customer_dummy_2, Id: 47
+Table: customer_dummy_3, Id: 48
+Table: customer_dummy_4, Id: 49
+Table: customer_name_idx_dummy_1, Id: 50
+Table: customer_name_idx_dummy_2, Id: 51
+Table: customer_name_idx_dummy_3, Id: 52
+Table: customer_name_idx_dummy_4, Id: 53
+Table: district_dummy_1, Id: 54
+Table: district_dummy_2, Id: 55
+Table: district_dummy_3, Id: 56
+Table: district_dummy_4, Id: 57
+Table: history_dummy_1, Id: 58
+Table: history_dummy_2, Id: 59
+Table: history_dummy_3, Id: 60
+Table: history_dummy_4, Id: 61
+Table: new_order_dummy_1, Id: 62
+Table: new_order_dummy_2, Id: 63
+Table: new_order_dummy_3, Id: 64
+Table: new_order_dummy_4, Id: 65
+Table: oorder_dummy_1, Id: 66
+Table: oorder_dummy_2, Id: 67
+Table: oorder_dummy_3, Id: 68
+Table: oorder_dummy_4, Id: 69
+Table: oorder_c_id_idx_dummy_1, Id: 70
+Table: oorder_c_id_idx_dummy_2, Id: 71
+Table: oorder_c_id_idx_dummy_3, Id: 72
+Table: oorder_c_id_idx_dummy_4, Id: 73
+Table: order_line_dummy_1, Id: 74
+Table: order_line_dummy_2, Id: 75
+Table: order_line_dummy_3, Id: 76
+Table: order_line_dummy_4, Id: 77
+Table: stock_dummy_1, Id: 78
+Table: stock_dummy_2, Id: 79
+Table: stock_dummy_3, Id: 80
+Table: stock_dummy_4, Id: 81
+Table: stock_data_dummy_1, Id: 82
+Table: stock_data_dummy_2, Id: 83
+Table: stock_data_dummy_3, Id: 84
+Table: stock_data_dummy_4, Id: 85
+Table: warehouse_dummy_1, Id: 86
+Table: warehouse_dummy_2, Id: 87
+Table: warehouse_dummy_3, Id: 88
+Table: warehouse_dummy_4, Id: 89
+Table: item_dummy_1, Id: 90
+Table: item_dummy_2, Id: 91
+Table: item_dummy_3, Id: 92
+Table: item_dummy_4, Id: 93
+93:361520 INFOR: eRPC Nexus: Created with management UDP port 31009, hostname 10.1.0.6.
+93:361639 INFOR: DPDK transport for Rpc 9 initializing DPDK EAL.
+EAL: Detected 8 lcore(s)
+EAL: Detected 1 NUMA nodes
+EAL: Auto-detected process type: PRIMARY
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available hugepages reported in hugepages-1048576kB
+EAL: Probing VFIO support...
+EAL: VFIO support initialized
+EAL: PCI device cdfd:00:02.0 on NUMA socket 0
+EAL:   probe driver: 15b3:1018 net_mlx5
+EAL: PCI device fd1b:00:02.0 on NUMA socket 0
+EAL:   probe driver: 15b3:1018 net_mlx5
+net_mlx5: no Verbs device matches PCI device fd1b:00:02.0, are kernel drivers loaded?
+EAL: Requested device fd1b:00:02.0 cannot be used
+93:580008 WARNG: Running as primary DPDK process. eRPC DPDK daemon is not running.
+93:580016 INFOR: DPDK transport for Rpc 9 got QP 0
+93:580021 INFOR: Initializing port 0 with driver net_mlx5
+93:831465 INFOR: Resolved port 0: MAC 60:45:bd:b0:f0:4c, IPv4 10.1.0.9, RETA size 16 entries, bandwidth 100.0 Gbps
+93:831494 WARNG: DpdkTransport created for Rpc ID 9, queue 0, datapath UDP port 10000
+93:839838 INFOR: eRPC Nexus: Created with management UDP port 31010, hostname 10.1.0.6.
+93:839916 INFOR: DPDK transport for Rpc 10 skipping DPDK EAL initialization.
+93:839920 INFOR: DPDK transport for Rpc 10 got QP 1
+93:840285 INFOR: Resolved port 0: MAC 60:45:bd:b0:f0:4c, IPv4 10.1.0.9, RETA size 16 entries, bandwidth 100.0 Gbps
+93:840302 WARNG: DpdkTransport created for Rpc ID 10, queue 1, datapath UDP port 10001
+20250210-23:03.13-842130(us) 83447 ! run             (bench.cc:366):     # of loaders size:6
+start worker:488880
+[INFO] finished loading warehouse
+[INFO]   * average warehouse record length: 97 bytes
+PinToWarehouseId(): coreid=2 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=3 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=3 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=3 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=3 pinned to whse=4 (partid=3)
+[INFO] finished loading district
+[INFO]   * average district record length: 99 bytes
+[INFO] finished loading item
+[INFO]   * average item record length: 84.1739 bytes
+PinToWarehouseId(): coreid=2 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=2 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=2 pinned to whse=4 (partid=3)
+[INFO] finished loading stock
+[INFO]   * average stock record length: 8 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=1 (partid=0)
+num batches: 30
+PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=5 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=4 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=4 (partid=3)
+[INFO] finished loading order
+[INFO]   * average order_line record length: 11.2189 bytes
+[INFO]   * average oorder record length: 7.8414 bytes
+[INFO]   * average new_order record length: 12 bytes
+PinToWarehouseId(): coreid=4 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=4 pinned to whse=4 (partid=3)
+[INFO] finished loading customer
+[INFO]   * average customer record length: 153.931 bytes 
+timed region dataloading took 3823.01 ms
+DB size: 839.801 MB
+[0, 0, 0] txns persisted in loading phase
+20250210-23:03.17-665183(us) 83447 ! run             (bench.cc:418):     # of shards:1
+20250210-23:03.17-665206(us) 83447 ! run             (bench.cc:419):     # of nthreads:4
+20250210-23:03.17-665213(us) 83447 ! run             (bench.cc:420):     # of MERGE_KEYS_GROUPS:1
+starting benchmark...
+--------------Finish loading data and wait for others completing load phase ------------
+tpcc: worker id 8 => warehouses [1, 2)
+tpcc: worker id 9 => warehouses [2, 3)
+tpcc: worker id 10 => warehouses [3, 4)
+tpcc: worker id 11 => warehouses [4, 5)
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+97:674889 INFOR: eRPC Nexus: Created with management UDP port 31000, hostname 10.1.0.6.
+97:675019 INFOR: DPDK transport for Rpc 0 skipping DPDK EAL initialization.
+97:675024 INFOR: DPDK transport for Rpc 0 got QP 2
+97:675405 INFOR: Resolved port 0: MAC 60:45:bd:b0:f0:4c, IPv4 10.1.0.9, RETA size 16 entries, bandwidth 100.0 Gbps
+97:675424 WARNG: DpdkTransport created for Rpc ID 0, queue 2, datapath UDP port 10002
+97:676983 INFOR: Rpc 0: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31000, R: 0, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: XX].
+97:680901 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31000, R: 0, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: 0]
+97:680941 INFOR: Rpc 0: Received connect response from [H: 10.1.0.4:34009, R: 9, S: 0] for session 0. Issue: None. Session connected.
+97:683759 INFOR: eRPC Nexus: Created with management UDP port 31001, hostname 10.1.0.6.
+97:683893 INFOR: DPDK transport for Rpc 1 skipping DPDK EAL initialization.
+97:683898 INFOR: DPDK transport for Rpc 1 got QP 3
+97:684266 INFOR: 97:684406 INFOR: Rpc 0: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31000, R: 0, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: XX].
+Resolved port 0: MAC 60:45:bd:b0:f0:4c, IPv4 10.1.0.9, RETA size 16 entries, bandwidth 100.0 Gbps
+97:684532 WARNG: DpdkTransport created for Rpc ID 1, queue 3, datapath UDP port 10003
+97:685200 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31000, R: 0, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: 0]
+97:685228 INFOR: Rpc 0: Received connect response from [H: 10.1.0.4:34010, R: 10, S: 0] for session 1. Issue: None. Session connected.
+97:685868 INFOR: Rpc 1: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31001, R: 1, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: XX].
+97:688591 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31001, R: 1, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: 1]
+97:688623 INFOR: Rpc 1: Received connect response from [H: 10.1.0.4:34009, R: 9, S: 1] for session 0. Issue: None. Session connected.
+97:688947 INFOR: Rpc 1: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31001, R: 1, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: XX].
+97:692333 INFOR: eRPC Nexus: Created with management UDP port 31002, hostname 10.1.0.6.
+97:692437 INFOR: DPDK transport for Rpc 2 skipping DPDK EAL initialization.
+97:692445 INFOR: DPDK transport for Rpc 2 got QP 4
+97:692746 INFOR: Resolved port 0: MAC 60:45:bd:b0:f0:4c, IPv4 10.1.0.9, RETA size 16 entries, bandwidth 100.0 Gbps
+97:692759 WARNG: DpdkTransport created for Rpc ID 2, queue 4, datapath UDP port 10004
+97:693904 INFOR: Rpc 2: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31002, R: 2, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: XX].
+20250210-23:03.17-696600(us) 83447 ! on_run_setup    (tpcc.cc:826):      DONE a warmup on leader:0 to the learner-0
+
+97:700830 INFOR: eRPC Nexus: Created with management UDP port 31003, hostname 10.1.0.6.
+97:700943 INFOR: DPDK transport for Rpc 3 skipping DPDK EAL initialization.
+97:700947 INFOR: DPDK transport for Rpc 3 got QP 5
+97:701258 INFOR: Resolved port 0: MAC 60:45:bd:b0:f0:4c, IPv4 10.1.0.9, RETA size 16 entries, bandwidth 100.0 Gbps
+97:701274 WARNG: DpdkTransport created for Rpc ID 3, queue 5, datapath UDP port 10005
+97:701833 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31002, R: 2, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: 2]
+97:701870 INFOR: Rpc 2: Received connect response from [H: 10.1.0.4:34009, R: 9, S: 2] for session 0. Issue: None. Session connected.
+97:702349 INFOR: Rpc 3: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31003, R: 3, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: XX].
+97:702840 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31001, R: 1, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: 1]
+97:702869 INFOR: Rpc 1: Received connect response from [H: 10.1.0.4:34010, R: 10, S: 1] for session 1. Issue: None. Session connected.
+97:703092 INFOR: Rpc 2: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31002, R: 2, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: XX].
+97:703567 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31003, R: 3, S: 0], server: [H: 10.1.0.4:34009, R: 9, S: 3]
+97:703595 INFOR: Rpc 3: Received connect response from [H: 10.1.0.4:34009, R: 9, S: 3] for session 0. Issue: None. Session connected.
+97:703711 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31002, R: 2, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: 2]
+97:703725 INFOR: Rpc 2: Received connect response from [H: 10.1.0.4:34010, R: 10, S: 2] for session 1. Issue: None. Session connected.
+20250210-23:03.17-711781(us) 83447 ! on_run_setup    (tpcc.cc:826):      DONE a warmup on leader:1 to the learner-0
+
+20250210-23:03.17-712062(us) 83447 ! on_run_setup    (tpcc.cc:826):      DONE a warmup on leader:2 to the learner-0
+
+97:713452 INFOR: Rpc 3: Sending packet [Connect request], [No error], client: [H: 10.1.0.6:31003, R: 3, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: XX].
+97:714239 INFOR: eRPC SM thread: Received SM packet [Connect response], [No error], client: [H: 10.1.0.6:31003, R: 3, S: 1], server: [H: 10.1.0.4:34010, R: 10, S: 3]
+97:714258 INFOR: Rpc 3: Received connect response from [H: 10.1.0.4:34010, R: 10, S: 3] for session 1. Issue: None. Session connected.
+we can start a advancer
+start the advancer thread...
+20250210-23:03.17-722049(us) 83447 ! on_run_setup    (tpcc.cc:826):      DONE a warmup on leader:3 to the learner-0
+
+20250210-23:03.17-722070(us) 83447 ! run             (bench.cc:469):     start the running time, runTime:30
+20250210-23:03.17-722091(us) 83447 ! run             (bench.cc:481):     runtime time left:30000 ms, bool:1
+20250210-23:03.18-728572(us) 83447 ! run             (bench.cc:481):     runtime time left:29000 ms, bool:1
+20250210-23:03.19-737178(us) 83447 ! run             (bench.cc:481):     runtime time left:28000 ms, bool:1
+20250210-23:03.20-745976(us) 83447 ! run             (bench.cc:481):     runtime time left:27000 ms, bool:1
+20250210-23:03.21-754842(us) 83447 ! run             (bench.cc:481):     runtime time left:26000 ms, bool:1
+20250210-23:03.22-761955(us) 83447 ! run             (bench.cc:481):     runtime time left:25000 ms, bool:1
+20250210-23:03.23-769015(us) 83447 ! run             (bench.cc:481):     runtime time left:24000 ms, bool:1
+20250210-23:03.24-777056(us) 83447 ! run             (bench.cc:481):     runtime time left:23000 ms, bool:1
+20250210-23:03.25-784172(us) 83447 ! run             (bench.cc:481):     runtime time left:22000 ms, bool:1
+20250210-23:03.26-791305(us) 83447 ! run             (bench.cc:481):     runtime time left:21000 ms, bool:1
+20250210-23:03.27-797986(us) 83447 ! run             (bench.cc:481):     runtime time left:20000 ms, bool:1
+20250210-23:03.28-804537(us) 83447 ! run             (bench.cc:481):     runtime time left:19000 ms, bool:1
+20250210-23:03.29-811081(us) 83447 ! run             (bench.cc:481):     runtime time left:18000 ms, bool:1
+20250210-23:03.30-819215(us) 83447 ! run             (bench.cc:481):     runtime time left:17000 ms, bool:1
+20250210-23:03.31-826727(us) 83447 ! run             (bench.cc:481):     runtime time left:16000 ms, bool:1
+20250210-23:03.32-834631(us) 83447 ! run             (bench.cc:481):     runtime time left:15000 ms, bool:1
+20250210-23:03.33-841933(us) 83447 ! run             (bench.cc:481):     runtime time left:14000 ms, bool:1
+20250210-23:03.34-851346(us) 83447 ! run             (bench.cc:481):     runtime time left:13000 ms, bool:1
+20250210-23:03.35-858030(us) 83447 ! run             (bench.cc:481):     runtime time left:12000 ms, bool:1
+20250210-23:03.36-867455(us) 83447 ! run             (bench.cc:481):     runtime time left:11000 ms, bool:1
+20250210-23:03.37-878354(us) 83447 ! run             (bench.cc:481):     runtime time left:10000 ms, bool:1
+20250210-23:03.38-886862(us) 83447 ! run             (bench.cc:481):     runtime time left:9000 ms, bool:1
+20250210-23:03.39-896256(us) 83447 ! run             (bench.cc:481):     runtime time left:8000 ms, bool:1
+20250210-23:03.40-903946(us) 83447 ! run             (bench.cc:481):     runtime time left:7000 ms, bool:1
+20250210-23:03.41-916338(us) 83447 ! run             (bench.cc:481):     runtime time left:6000 ms, bool:1
+20250210-23:03.42-922980(us) 83447 ! run             (bench.cc:481):     runtime time left:5000 ms, bool:1
+20250210-23:03.43-930343(us) 83447 ! run             (bench.cc:481):     runtime time left:4000 ms, bool:1
+20250210-23:03.44-941053(us) 83447 ! run             (bench.cc:481):     runtime time left:3000 ms, bool:1
+20250210-23:03.45-952059(us) 83447 ! run             (bench.cc:481):     runtime time left:2000 ms, bool:1
+20250210-23:03.46-962346(us) 83447 ! run             (bench.cc:481):     runtime time left:1000 ms, bool:1
+20250210-23:03.47-968927(us) 83447 ! run             (bench.cc:489):     runtime_plus:0
+20250210-23:03.47-968974(us) 83447 ! stop            (bench.cc:347):     stop all erpc clients. set stop=false
+jump out the while loopjump out the while loop
+20250210-23:03.47-968987(us) 83447 * Stop            (fasttransport.cc:636): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250210-23:03.47-969008(us) 83447 * 
+Stop            (fasttransport.cc:636): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250210-23:03.47-969027(us) 83447 * Stop            (fasttransport.cc:636): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250210-23:03.47-969040(us) 83447 * Stop            (fasttransport.cc:636): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+jump out the while loop
+jump out the while loop
+20250210-23:03.47-969057(us) 83447 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1212 bytes, counter: 101, avg: 12.000000
+20250210-23:03.47-969093(us) 83447 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1212 bytes, counter: 101, avg: 12.000000
+20250210-23:03.47-969129(us) 83447 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1212 bytes, counter: 101, avg: 12.000000
+20250210-23:03.47-969153(us) 83447 * Statistics      (fasttransport.cc:136): one Transport msg_size_req_sent: 1212 bytes, counter: 101, avg: 12.000000
+--- n_commits per partition ---
+ par_id: 0, n_commits: 1606419
+ par_id: 1, n_commits: 1543924
+ par_id: 2, n_commits: 1489335
+ par_id: 3, n_commits: 1722143
+--- benchmark statistics ---
+runtime: 30.2476 sec
+memory delta: 12361.6 MB
+n_commits: 6361821
+latency_numer_us: 117395115
+latency_numer_us_remote: 0
+memory delta rate: 408.681 MB/sec
+logical memory delta: 403.549 MB
+logical memory delta rate: 13.3415 MB/sec
+agg_nosync_throughput: 210325 ops/sec
+avg_nosync_per_core_throughput: 52581.3 ops/sec/core
+agg_throughput: 210325 ops/sec
+avg_per_core_throughput: 52581.2 ops/sec/core
+agg_persist_throughput: 210325 ops/sec
+avg_per_core_persist_throughput: 52581.2 ops/sec/core
+avg_latency: 0.0184531 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 34.8788 aborts/sec
+avg_per_core_abort_rate: 8.7197 aborts/sec/core
+txn breakdown: [[Delivery_Local, 255023], [Delivery_Local_NANO, 23213219824], [Delivery_Local_NANO_abort, 0], [Delivery_Local_abort, 0], [Delivery_Remote, 0], [Delivery_Remote_NANO, 0], [Delivery_Remote_NANO_abort, 0], [Delivery_Remote_abort, 0], [NewOrder_Local, 2862218], [NewOrder_Local_NANO, 57621581879], [NewOrder_Local_NANO_abort, 7645720], [NewOrder_Local_abort, 318], [NewOrder_Remote, 0], [NewOrder_Remote_NANO, 0], [NewOrder_Remote_NANO_abort, 0], [NewOrder_Remote_abort, 0], [OrderStatus_Local, 254673], [OrderStatus_Local_NANO, 1511399472], [OrderStatus_Local_NANO_abort, 0], [OrderStatus_Local_abort, 0], [OrderStatus_Remote, 0], [OrderStatus_Remote_NANO, 0], [OrderStatus_Remote_NANO_abort, 0], [OrderStatus_Remote_abort, 0], [Payment_Local, 2736471], [Payment_Local_NANO, 17003164927], [Payment_Local_NANO_abort, 221809], [Payment_Local_abort, 20], [Payment_Remote, 0], [Payment_Remote_NANO, 0], [Payment_Remote_NANO_abort, 0], [Payment_Remote_abort, 0], [StockLevel_Local, 253436], [StockLevel_Local_NANO, 21223824191], [StockLevel_Local_NANO_abort, 60603187], [StockLevel_Local_abort, 717], [StockLevel_Remote, 0], [StockLevel_Remote_NANO, 0], [StockLevel_Remote_NANO_abort, 0], [StockLevel_Remote_abort, 0]]
+  NewOrder_local_commit_latency: 0.0201318 ms
+  NewOrder_local_abort_latency: 0.0240431 ms
+  NewOrder_local_abort_ratio: 0.00011109
+  Payment_local_commit_latency: 0.00621354 ms
+  Payment_local_abort_latency: 0.0110904 ms
+  Payment_local_abort_ratio: 7.30863e-06
+  Delivery_local_commit_latency: 0.091024 ms
+  Delivery_local_abort_latency: -nan ms
+  Delivery_local_abort_ratio: 0
+  OrderStatus_local_commit_latency: 0.00593467 ms
+  OrderStatus_local_abort_latency: -nan ms
+  OrderStatus_local_abort_ratio: 0
+  StockLevel_local_commit_latency: 0.0837443 ms
+  StockLevel_local_abort_latency: 0.0845233 ms
+  StockLevel_local_abort_ratio: 0.00282114
+  NewOrder_remote_ratio: 0 %
+  NewOrder_remote_abort_ratio: -nan %
+  NewOrder_remote_commit_latency: -nan ms
+  NewOrder_remote_abort_latency: -nan ms
+  Payment_remote_ratio: 0 %
+  Payment_remote_abort_ratio: -nan %
+  Payment_remote_commit_latency: -nan ms
+  Payment_remote_abort_latency: -nan ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[allocator] ncpus=4
+[allocator] cpu=0 fully_faulted?=0 remaining=268435456 bytes
+[allocator] cpu=1 fully_faulted?=0 remaining=268435456 bytes
+[allocator] cpu=2 fully_faulted?=0 remaining=268435456 bytes
+[allocator] cpu=3 fully_faulted?=0 remaining=268435456 bytes
+---------------------------------------
+--- system counters for n_comits ---
+Time: 2186042852, n_comits: 1350
+Time: 2186042862, n_comits: 3193
+Time: 2186042872, n_comits: 5076
+Time: 2186042882, n_comits: 7142
+Time: 2186042892, n_comits: 9165
+Time: 2186042902, n_comits: 11285
+Time: 2186042912, n_comits: 13497
+Time: 2186042922, n_comits: 15804
+Time: 2186042932, n_comits: 18272
+Time: 2186042942, n_comits: 20698
+Time: 2186042952, n_comits: 23119
+Time: 2186042962, n_comits: 25510
+Time: 2186042972, n_comits: 27841
+Time: 2186042982, n_comits: 30288
+Time: 2186042993, n_comits: 32520
+Time: 2186043003, n_comits: 34919
+Time: 2186043013, n_comits: 37346
+Time: 2186043023, n_comits: 39624
+Time: 2186043033, n_comits: 41905
+Time: 2186043043, n_comits: 44233
+Time: 2186043053, n_comits: 46465
+Time: 2186043063, n_comits: 48766
+Time: 2186043073, n_comits: 51221
+Time: 2186043083, n_comits: 53537
+Time: 2186043093, n_comits: 55882
+Time: 2186043103, n_comits: 58222
+Time: 2186043113, n_comits: 60527
+Time: 2186043123, n_comits: 62698
+Time: 2186043133, n_comits: 64958
+Time: 2186043143, n_comits: 67197
+Time: 2186043153, n_comits: 69596
+Time: 2186043163, n_comits: 71795
+Time: 2186043174, n_comits: 74119
+Time: 2186043184, n_comits: 76496
+Time: 2186043194, n_comits: 78849
+Time: 2186043204, n_comits: 80992
+Time: 2186043214, n_comits: 83352
+Time: 2186043224, n_comits: 85690
+Time: 2186043234, n_comits: 87909
+Time: 2186043244, n_comits: 90145
+Time: 2186043254, n_comits: 92203
+Time: 2186043264, n_comits: 94527
+Time: 2186043274, n_comits: 96753
+Time: 2186043284, n_comits: 99033
+Time: 2186043294, n_comits: 101454
+Time: 2186043304, n_comits: 103826
+Time: 2186043314, n_comits: 106069
+Time: 2186043325, n_comits: 108328
+Time: 2186043335, n_comits: 110701
+Time: 2186043345, n_comits: 112968
+Time: 2186043355, n_comits: 115236
+Time: 2186043365, n_comits: 117487
+Time: 2186043375, n_comits: 119675
+Time: 2186043385, n_comits: 121954
+Time: 2186043395, n_comits: 124168
+Time: 2186043405, n_comits: 126507
+Time: 2186043415, n_comits: 128799
+Time: 2186043425, n_comits: 131179
+Time: 2186043435, n_comits: 133402
+Time: 2186043445, n_comits: 135552
+Time: 2186043455, n_comits: 137676
+Time: 2186043465, n_comits: 139865
+Time: 2186043475, n_comits: 142106
+Time: 2186043485, n_comits: 144485
+Time: 2186043496, n_comits: 146668
+Time: 2186043506, n_comits: 148856
+Time: 2186043516, n_comits: 151131
+Time: 2186043526, n_comits: 153401
+Time: 2186043536, n_comits: 155603
+Time: 2186043546, n_comits: 157896
+Time: 2186043556, n_comits: 160114
+Time: 2186043566, n_comits: 162312
+Time: 2186043576, n_comits: 164602
+Time: 2186043586, n_comits: 166748
+Time: 2186043596, n_comits: 169075
+Time: 2186043606, n_comits: 171292
+Time: 2186043616, n_comits: 173552
+Time: 2186043626, n_comits: 175770
+Time: 2186043636, n_comits: 178108
+Time: 2186043646, n_comits: 180500
+Time: 2186043657, n_comits: 182835
+Time: 2186043667, n_comits: 185035
+Time: 2186043677, n_comits: 187254
+Time: 2186043687, n_comits: 189575
+Time: 2186043697, n_comits: 191902
+Time: 2186043707, n_comits: 194096
+Time: 2186043717, n_comits: 196398
+Time: 2186043727, n_comits: 198589
+Time: 2186043737, n_comits: 200865
+Time: 2186043747, n_comits: 203094
+Time: 2186043758, n_comits: 205279
+Time: 2186043768, n_comits: 207558
+Time: 2186043778, n_comits: 209703
+Time: 2186043788, n_comits: 211991
+Time: 2186043798, n_comits: 214277
+Time: 2186043808, n_comits: 216476
+Time: 2186043818, n_comits: 218878
+Time: 2186043828, n_comits: 221037
+Time: 2186043838, n_comits: 223261
+Time: 2186043848, n_comits: 225569
+Time: 2186043858, n_comits: 227900
+Time: 2186043868, n_comits: 230112
+Time: 2186043878, n_comits: 232313
+Time: 2186043888, n_comits: 234686
+Time: 2186043898, n_comits: 236895
+Time: 2186043908, n_comits: 239230
+Time: 2186043919, n_comits: 241476
+Time: 2186043929, n_comits: 243725
+Time: 2186043939, n_comits: 246014
+Time: 2186043949, n_comits: 248384
+Time: 2186043959, n_comits: 250630
+Time: 2186043969, n_comits: 252951
+Time: 2186043979, n_comits: 255194
+Time: 2186043989, n_comits: 257520
+Time: 2186043999, n_comits: 259727
+Time: 2186044009, n_comits: 262005
+Time: 2186044019, n_comits: 264270
+Time: 2186044029, n_comits: 266537
+Time: 2186044039, n_comits: 268855
+Time: 2186044049, n_comits: 271236
+Time: 2186044059, n_comits: 273516
+Time: 2186044069, n_comits: 275732
+Time: 2186044080, n_comits: 278090
+Time: 2186044090, n_comits: 280297
+Time: 2186044100, n_comits: 282670
+Time: 2186044110, n_comits: 285007
+Time: 2186044120, n_comits: 287306
+Time: 2186044130, n_comits: 289563
+Time: 2186044140, n_comits: 291786
+Time: 2186044150, n_comits: 294106
+Time: 2186044160, n_comits: 296276
+Time: 2186044170, n_comits: 298603
+Time: 2186044180, n_comits: 300827
+Time: 2186044190, n_comits: 303168
+Time: 2186044200, n_comits: 305398
+Time: 2186044211, n_comits: 307673
+Time: 2186044221, n_comits: 309917
+Time: 2186044231, n_comits: 312120
+Time: 2186044241, n_comits: 314365
+Time: 2186044251, n_comits: 316619
+Time: 2186044261, n_comits: 318849
+Time: 2186044271, n_comits: 321017
+Time: 2186044281, n_comits: 323233
+Time: 2186044291, n_comits: 325642
+Time: 2186044301, n_comits: 327916
+Time: 2186044312, n_comits: 330291
+Time: 2186044322, n_comits: 332466
+Time: 2186044332, n_comits: 334719
+Time: 2186044342, n_comits: 336981
+Time: 2186044352, n_comits: 339308
+Time: 2186044362, n_comits: 341601
+Time: 2186044372, n_comits: 343783
+Time: 2186044382, n_comits: 346122
+Time: 2186044393, n_comits: 348503
+Time: 2186044403, n_comits: 350808
+Time: 2186044413, n_comits: 353075
+Time: 2186044423, n_comits: 355519
+Time: 2186044433, n_comits: 357806
+Time: 2186044443, n_comits: 360114
+Time: 2186044453, n_comits: 362403
+Time: 2186044463, n_comits: 364760
+Time: 2186044473, n_comits: 367038
+Time: 2186044483, n_comits: 369274
+Time: 2186044493, n_comits: 371514
+Time: 2186044503, n_comits: 373758
+Time: 2186044514, n_comits: 376050
+Time: 2186044524, n_comits: 378451
+Time: 2186044534, n_comits: 380722
+Time: 2186044544, n_comits: 382985
+Time: 2186044554, n_comits: 385247
+Time: 2186044565, n_comits: 387461
+Time: 2186044575, n_comits: 389724
+Time: 2186044585, n_comits: 391897
+Time: 2186044595, n_comits: 394108
+Time: 2186044605, n_comits: 396479
+Time: 2186044615, n_comits: 398717
+Time: 2186044625, n_comits: 401005
+Time: 2186044635, n_comits: 403267
+Time: 2186044645, n_comits: 405604
+Time: 2186044655, n_comits: 407771
+Time: 2186044665, n_comits: 410021
+Time: 2186044675, n_comits: 412338
+Time: 2186044685, n_comits: 414573
+Time: 2186044695, n_comits: 416874
+Time: 2186044706, n_comits: 419179
+Time: 2186044716, n_comits: 421393
+Time: 2186044726, n_comits: 423633
+Time: 2186044736, n_comits: 425956
+Time: 2186044746, n_comits: 428154
+Time: 2186044756, n_comits: 430395
+Time: 2186044766, n_comits: 432708
+Time: 2186044776, n_comits: 435001
+Time: 2186044786, n_comits: 437204
+Time: 2186044796, n_comits: 439393
+Time: 2186044806, n_comits: 441677
+Time: 2186044816, n_comits: 443877
+Time: 2186044826, n_comits: 446192
+Time: 2186044837, n_comits: 448385
+Time: 2186044847, n_comits: 450563
+Time: 2186044857, n_comits: 452762
+Time: 2186044867, n_comits: 454940
+Time: 2186044877, n_comits: 457082
+Time: 2186044887, n_comits: 459343
+Time: 2186044897, n_comits: 461601
+Time: 2186044907, n_comits: 463765
+Time: 2186044917, n_comits: 465995
+Time: 2186044928, n_comits: 468306
+Time: 2186044938, n_comits: 470612
+Time: 2186044948, n_comits: 472902
+Time: 2186044958, n_comits: 475105
+Time: 2186044969, n_comits: 477555
+Time: 2186044979, n_comits: 479735
+Time: 2186044989, n_comits: 481936
+Time: 2186044999, n_comits: 484140
+Time: 2186045009, n_comits: 486457
+Time: 2186045019, n_comits: 488639
+Time: 2186045029, n_comits: 490687
+Time: 2186045039, n_comits: 492821
+Time: 2186045049, n_comits: 495011
+Time: 2186045059, n_comits: 497119
+Time: 2186045069, n_comits: 499450
+Time: 2186045079, n_comits: 501718
+Time: 2186045089, n_comits: 503947
+Time: 2186045099, n_comits: 506145
+Time: 2186045109, n_comits: 508356
+Time: 2186045120, n_comits: 510551
+Time: 2186045130, n_comits: 512715
+Time: 2186045140, n_comits: 514907
+Time: 2186045150, n_comits: 517126
+Time: 2186045160, n_comits: 519335
+Time: 2186045170, n_comits: 521545
+Time: 2186045180, n_comits: 523820
+Time: 2186045190, n_comits: 526044
+Time: 2186045200, n_comits: 528272
+Time: 2186045210, n_comits: 530499
+Time: 2186045220, n_comits: 532725
+Time: 2186045230, n_comits: 534904
+Time: 2186045240, n_comits: 537122
+Time: 2186045250, n_comits: 539222
+Time: 2186045260, n_comits: 541523
+Time: 2186045271, n_comits: 543771
+Time: 2186045281, n_comits: 546053
+Time: 2186045291, n_comits: 548240
+Time: 2186045301, n_comits: 550473
+Time: 2186045311, n_comits: 552779
+Time: 2186045321, n_comits: 554975
+Time: 2186045331, n_comits: 557140
+Time: 2186045341, n_comits: 559458
+Time: 2186045351, n_comits: 561577
+Time: 2186045361, n_comits: 563840
+Time: 2186045371, n_comits: 566042
+Time: 2186045381, n_comits: 568248
+Time: 2186045391, n_comits: 570509
+Time: 2186045401, n_comits: 572714
+Time: 2186045412, n_comits: 574835
+Time: 2186045422, n_comits: 576970
+Time: 2186045432, n_comits: 579161
+Time: 2186045442, n_comits: 581550
+Time: 2186045452, n_comits: 583746
+Time: 2186045462, n_comits: 585903
+Time: 2186045472, n_comits: 588114
+Time: 2186045482, n_comits: 590393
+Time: 2186045492, n_comits: 592639
+Time: 2186045502, n_comits: 594948
+Time: 2186045512, n_comits: 597146
+Time: 2186045522, n_comits: 599402
+Time: 2186045532, n_comits: 601656
+Time: 2186045543, n_comits: 603954
+Time: 2186045553, n_comits: 606096
+Time: 2186045563, n_comits: 608327
+Time: 2186045573, n_comits: 610572
+Time: 2186045583, n_comits: 612867
+Time: 2186045593, n_comits: 615004
+Time: 2186045603, n_comits: 617382
+Time: 2186045613, n_comits: 619502
+Time: 2186045623, n_comits: 621805
+Time: 2186045633, n_comits: 623987
+Time: 2186045644, n_comits: 626209
+Time: 2186045654, n_comits: 628425
+Time: 2186045664, n_comits: 630622
+Time: 2186045674, n_comits: 632902
+Time: 2186045684, n_comits: 635193
+Time: 2186045694, n_comits: 637371
+Time: 2186045704, n_comits: 639729
+Time: 2186045714, n_comits: 642063
+Time: 2186045724, n_comits: 644277
+Time: 2186045735, n_comits: 646476
+Time: 2186045745, n_comits: 648728
+Time: 2186045755, n_comits: 650839
+Time: 2186045765, n_comits: 653026
+Time: 2186045775, n_comits: 655218
+Time: 2186045785, n_comits: 657401
+Time: 2186045795, n_comits: 659570
+Time: 2186045805, n_comits: 661852
+Time: 2186045815, n_comits: 664107
+Time: 2186045825, n_comits: 666336
+Time: 2186045835, n_comits: 668550
+Time: 2186045845, n_comits: 670774
+Time: 2186045855, n_comits: 673166
+Time: 2186045865, n_comits: 675457
+Time: 2186045876, n_comits: 677648
+Time: 2186045886, n_comits: 679934
+Time: 2186045896, n_comits: 682206
+Time: 2186045906, n_comits: 684379
+Time: 2186045916, n_comits: 686631
+Time: 2186045926, n_comits: 688870
+Time: 2186045936, n_comits: 691137
+Time: 2186045946, n_comits: 693328
+Time: 2186045956, n_comits: 695572
+Time: 2186045966, n_comits: 697786
+Time: 2186045976, n_comits: 699899
+Time: 2186045986, n_comits: 702170
+Time: 2186045996, n_comits: 704463
+Time: 2186046007, n_comits: 706634
+Time: 2186046017, n_comits: 708877
+Time: 2186046027, n_comits: 711136
+Time: 2186046037, n_comits: 713374
+Time: 2186046047, n_comits: 715647
+Time: 2186046057, n_comits: 717837
+Time: 2186046067, n_comits: 720142
+Time: 2186046077, n_comits: 722293
+Time: 2186046087, n_comits: 724480
+Time: 2186046097, n_comits: 726677
+Time: 2186046107, n_comits: 728916
+Time: 2186046117, n_comits: 731162
+Time: 2186046127, n_comits: 733314
+Time: 2186046137, n_comits: 735650
+Time: 2186046147, n_comits: 737949
+Time: 2186046158, n_comits: 740217
+Time: 2186046168, n_comits: 742550
+Time: 2186046178, n_comits: 744824
+Time: 2186046188, n_comits: 747037
+Time: 2186046198, n_comits: 749364
+Time: 2186046208, n_comits: 751561
+Time: 2186046218, n_comits: 753771
+Time: 2186046228, n_comits: 755973
+Time: 2186046238, n_comits: 758271
+Time: 2186046248, n_comits: 760511
+Time: 2186046258, n_comits: 762688
+Time: 2186046268, n_comits: 764944
+Time: 2186046278, n_comits: 767227
+Time: 2186046288, n_comits: 769439
+Time: 2186046299, n_comits: 771678
+Time: 2186046309, n_comits: 773972
+Time: 2186046319, n_comits: 776323
+Time: 2186046329, n_comits: 778495
+Time: 2186046339, n_comits: 780786
+Time: 2186046349, n_comits: 783108
+Time: 2186046360, n_comits: 785322
+Time: 2186046370, n_comits: 787482
+Time: 2186046380, n_comits: 789780
+Time: 2186046390, n_comits: 792070
+Time: 2186046400, n_comits: 794367
+Time: 2186046410, n_comits: 796677
+Time: 2186046420, n_comits: 798832
+Time: 2186046430, n_comits: 801132
+Time: 2186046440, n_comits: 803389
+Time: 2186046450, n_comits: 805573
+Time: 2186046460, n_comits: 807851
+Time: 2186046471, n_comits: 810111
+Time: 2186046481, n_comits: 812394
+Time: 2186046491, n_comits: 814655
+Time: 2186046501, n_comits: 816874
+Time: 2186046511, n_comits: 819088
+Time: 2186046521, n_comits: 821309
+Time: 2186046531, n_comits: 823464
+Time: 2186046541, n_comits: 825791
+Time: 2186046551, n_comits: 827864
+Time: 2186046561, n_comits: 830140
+Time: 2186046571, n_comits: 832315
+Time: 2186046581, n_comits: 834596
+Time: 2186046591, n_comits: 836692
+Time: 2186046602, n_comits: 839006
+Time: 2186046612, n_comits: 841316
+Time: 2186046622, n_comits: 843517
+Time: 2186046632, n_comits: 845805
+Time: 2186046642, n_comits: 848154
+Time: 2186046652, n_comits: 850424
+Time: 2186046662, n_comits: 852736
+Time: 2186046672, n_comits: 854895
+Time: 2186046682, n_comits: 857089
+Time: 2186046692, n_comits: 859285
+Time: 2186046702, n_comits: 861536
+Time: 2186046712, n_comits: 863752
+Time: 2186046723, n_comits: 865984
+Time: 2186046733, n_comits: 868299
+Time: 2186046743, n_comits: 870551
+Time: 2186046753, n_comits: 872581
+Time: 2186046763, n_comits: 874791
+Time: 2186046774, n_comits: 877037
+Time: 2186046784, n_comits: 879135
+Time: 2186046794, n_comits: 881388
+Time: 2186046804, n_comits: 883613
+Time: 2186046814, n_comits: 885764
+Time: 2186046824, n_comits: 887961
+Time: 2186046834, n_comits: 890147
+Time: 2186046844, n_comits: 892236
+Time: 2186046854, n_comits: 894530
+Time: 2186046864, n_comits: 896721
+Time: 2186046874, n_comits: 898875
+Time: 2186046884, n_comits: 901085
+Time: 2186046895, n_comits: 903293
+Time: 2186046905, n_comits: 905434
+Time: 2186046915, n_comits: 907575
+Time: 2186046925, n_comits: 909767
+Time: 2186046935, n_comits: 911886
+Time: 2186046945, n_comits: 914136
+Time: 2186046955, n_comits: 916323
+Time: 2186046965, n_comits: 918575
+Time: 2186046975, n_comits: 920689
+Time: 2186046985, n_comits: 922807
+Time: 2186046995, n_comits: 925019
+Time: 2186047005, n_comits: 927146
+Time: 2186047015, n_comits: 929279
+Time: 2186047025, n_comits: 931328
+Time: 2186047035, n_comits: 933546
+Time: 2186047045, n_comits: 935720
+Time: 2186047056, n_comits: 937689
+Time: 2186047066, n_comits: 939688
+Time: 2186047076, n_comits: 941595
+Time: 2186047086, n_comits: 943496
+Time: 2186047096, n_comits: 945335
+Time: 2186047106, n_comits: 947421
+Time: 2186047116, n_comits: 949636
+Time: 2186047126, n_comits: 951702
+Time: 2186047136, n_comits: 953943
+Time: 2186047147, n_comits: 956010
+Time: 2186047157, n_comits: 958116
+Time: 2186047167, n_comits: 960172
+Time: 2186047177, n_comits: 962331
+Time: 2186047187, n_comits: 964520
+Time: 2186047197, n_comits: 966632
+Time: 2186047207, n_comits: 968818
+Time: 2186047217, n_comits: 970969
+Time: 2186047227, n_comits: 973183
+Time: 2186047237, n_comits: 975369
+Time: 2186047247, n_comits: 977444
+Time: 2186047258, n_comits: 979476
+Time: 2186047268, n_comits: 981627
+Time: 2186047278, n_comits: 983713
+Time: 2186047288, n_comits: 985863
+Time: 2186047298, n_comits: 987957
+Time: 2186047308, n_comits: 990051
+Time: 2186047318, n_comits: 992225
+Time: 2186047328, n_comits: 994287
+Time: 2186047338, n_comits: 996410
+Time: 2186047348, n_comits: 998585
+Time: 2186047358, n_comits: 1000750
+Time: 2186047368, n_comits: 1002954
+Time: 2186047378, n_comits: 1005025
+Time: 2186047388, n_comits: 1007151
+Time: 2186047398, n_comits: 1009308
+Time: 2186047408, n_comits: 1011601
+Time: 2186047418, n_comits: 1013817
+Time: 2186047429, n_comits: 1016140
+Time: 2186047439, n_comits: 1018247
+Time: 2186047449, n_comits: 1020484
+Time: 2186047459, n_comits: 1022848
+Time: 2186047469, n_comits: 1025020
+Time: 2186047479, n_comits: 1027235
+Time: 2186047489, n_comits: 1029505
+Time: 2186047499, n_comits: 1031700
+Time: 2186047509, n_comits: 1034002
+Time: 2186047519, n_comits: 1036177
+Time: 2186047529, n_comits: 1038462
+Time: 2186047539, n_comits: 1040544
+Time: 2186047549, n_comits: 1042795
+Time: 2186047559, n_comits: 1044996
+Time: 2186047569, n_comits: 1047230
+Time: 2186047579, n_comits: 1049288
+Time: 2186047590, n_comits: 1051411
+Time: 2186047600, n_comits: 1053645
+Time: 2186047610, n_comits: 1055872
+Time: 2186047620, n_comits: 1058119
+Time: 2186047630, n_comits: 1060363
+Time: 2186047640, n_comits: 1062652
+Time: 2186047650, n_comits: 1064851
+Time: 2186047660, n_comits: 1066949
+Time: 2186047670, n_comits: 1069216
+Time: 2186047680, n_comits: 1071549
+Time: 2186047690, n_comits: 1073817
+Time: 2186047700, n_comits: 1076025
+Time: 2186047710, n_comits: 1078295
+Time: 2186047720, n_comits: 1080525
+Time: 2186047730, n_comits: 1082759
+Time: 2186047741, n_comits: 1084959
+Time: 2186047751, n_comits: 1087226
+Time: 2186047761, n_comits: 1089499
+Time: 2186047771, n_comits: 1091843
+Time: 2186047781, n_comits: 1093989
+Time: 2186047791, n_comits: 1096215
+Time: 2186047801, n_comits: 1098471
+Time: 2186047811, n_comits: 1100692
+Time: 2186047821, n_comits: 1102934
+Time: 2186047831, n_comits: 1105250
+Time: 2186047841, n_comits: 1107495
+Time: 2186047851, n_comits: 1109555
+Time: 2186047861, n_comits: 1111847
+Time: 2186047871, n_comits: 1114002
+Time: 2186047881, n_comits: 1116332
+Time: 2186047892, n_comits: 1118561
+Time: 2186047902, n_comits: 1120885
+Time: 2186047912, n_comits: 1123052
+Time: 2186047922, n_comits: 1125360
+Time: 2186047932, n_comits: 1127525
+Time: 2186047942, n_comits: 1129752
+Time: 2186047952, n_comits: 1131886
+Time: 2186047962, n_comits: 1134053
+Time: 2186047972, n_comits: 1136251
+Time: 2186047982, n_comits: 1138527
+Time: 2186047992, n_comits: 1140834
+Time: 2186048002, n_comits: 1143105
+Time: 2186048012, n_comits: 1145180
+Time: 2186048022, n_comits: 1147611
+Time: 2186048032, n_comits: 1149873
+Time: 2186048043, n_comits: 1151977
+Time: 2186048053, n_comits: 1154193
+Time: 2186048063, n_comits: 1156481
+Time: 2186048073, n_comits: 1158669
+Time: 2186048083, n_comits: 1160997
+Time: 2186048093, n_comits: 1163337
+Time: 2186048103, n_comits: 1165631
+Time: 2186048113, n_comits: 1167946
+Time: 2186048123, n_comits: 1170149
+Time: 2186048133, n_comits: 1172410
+Time: 2186048143, n_comits: 1174687
+Time: 2186048153, n_comits: 1176983
+Time: 2186048163, n_comits: 1179180
+Time: 2186048173, n_comits: 1181312
+Time: 2186048183, n_comits: 1183627
+Time: 2186048194, n_comits: 1185773
+Time: 2186048204, n_comits: 1188127
+Time: 2186048214, n_comits: 1190364
+Time: 2186048224, n_comits: 1192576
+Time: 2186048234, n_comits: 1194844
+Time: 2186048244, n_comits: 1197101
+Time: 2186048254, n_comits: 1199312
+Time: 2186048264, n_comits: 1201575
+Time: 2186048274, n_comits: 1203901
+Time: 2186048285, n_comits: 1206157
+Time: 2186048295, n_comits: 1208423
+Time: 2186048305, n_comits: 1210599
+Time: 2186048315, n_comits: 1212825
+Time: 2186048325, n_comits: 1215050
+Time: 2186048335, n_comits: 1217222
+Time: 2186048345, n_comits: 1219421
+Time: 2186048355, n_comits: 1221703
+Time: 2186048365, n_comits: 1223983
+Time: 2186048375, n_comits: 1226131
+Time: 2186048385, n_comits: 1228433
+Time: 2186048395, n_comits: 1230661
+Time: 2186048405, n_comits: 1232765
+Time: 2186048415, n_comits: 1234995
+Time: 2186048425, n_comits: 1237210
+Time: 2186048436, n_comits: 1239479
+Time: 2186048446, n_comits: 1241653
+Time: 2186048456, n_comits: 1243938
+Time: 2186048466, n_comits: 1246212
+Time: 2186048476, n_comits: 1248456
+Time: 2186048486, n_comits: 1250734
+Time: 2186048496, n_comits: 1252934
+Time: 2186048506, n_comits: 1255324
+Time: 2186048516, n_comits: 1257568
+Time: 2186048526, n_comits: 1259911
+Time: 2186048536, n_comits: 1262075
+Time: 2186048546, n_comits: 1264242
+Time: 2186048556, n_comits: 1266412
+Time: 2186048566, n_comits: 1268589
+Time: 2186048576, n_comits: 1270968
+Time: 2186048586, n_comits: 1273084
+Time: 2186048597, n_comits: 1275330
+Time: 2186048607, n_comits: 1277591
+Time: 2186048617, n_comits: 1279687
+Time: 2186048627, n_comits: 1282015
+Time: 2186048637, n_comits: 1284189
+Time: 2186048647, n_comits: 1286307
+Time: 2186048657, n_comits: 1288570
+Time: 2186048667, n_comits: 1290791
+Time: 2186048677, n_comits: 1293061
+Time: 2186048687, n_comits: 1295338
+Time: 2186048697, n_comits: 1297482
+Time: 2186048707, n_comits: 1299888
+Time: 2186048717, n_comits: 1302075
+Time: 2186048727, n_comits: 1304347
+Time: 2186048738, n_comits: 1306502
+Time: 2186048748, n_comits: 1308752
+Time: 2186048758, n_comits: 1310981
+Time: 2186048768, n_comits: 1313076
+Time: 2186048778, n_comits: 1315371
+Time: 2186048788, n_comits: 1317446
+Time: 2186048798, n_comits: 1319756
+Time: 2186048808, n_comits: 1321955
+Time: 2186048818, n_comits: 1324235
+Time: 2186048828, n_comits: 1326470
+Time: 2186048838, n_comits: 1328700
+Time: 2186048848, n_comits: 1330871
+Time: 2186048858, n_comits: 1332966
+Time: 2186048868, n_comits: 1335225
+Time: 2186048878, n_comits: 1337428
+Time: 2186048889, n_comits: 1339726
+Time: 2186048899, n_comits: 1342124
+Time: 2186048909, n_comits: 1344296
+Time: 2186048919, n_comits: 1346495
+Time: 2186048929, n_comits: 1348615
+Time: 2186048939, n_comits: 1350844
+Time: 2186048949, n_comits: 1353048
+Time: 2186048959, n_comits: 1355194
+Time: 2186048969, n_comits: 1357310
+Time: 2186048980, n_comits: 1359453
+Time: 2186048990, n_comits: 1361751
+Time: 2186049000, n_comits: 1364083
+Time: 2186049010, n_comits: 1366171
+Time: 2186049020, n_comits: 1368319
+Time: 2186049030, n_comits: 1370464
+Time: 2186049040, n_comits: 1372723
+Time: 2186049050, n_comits: 1374972
+Time: 2186049060, n_comits: 1377039
+Time: 2186049070, n_comits: 1379189
+Time: 2186049080, n_comits: 1381504
+Time: 2186049090, n_comits: 1383748
+Time: 2186049100, n_comits: 1385936
+Time: 2186049110, n_comits: 1388190
+Time: 2186049121, n_comits: 1390432
+Time: 2186049131, n_comits: 1392497
+Time: 2186049141, n_comits: 1394709
+Time: 2186049151, n_comits: 1396963
+Time: 2186049161, n_comits: 1399261
+Time: 2186049171, n_comits: 1401413
+Time: 2186049181, n_comits: 1403645
+Time: 2186049191, n_comits: 1405860
+Time: 2186049201, n_comits: 1408200
+Time: 2186049212, n_comits: 1410478
+Time: 2186049222, n_comits: 1412707
+Time: 2186049232, n_comits: 1414913
+Time: 2186049242, n_comits: 1417131
+Time: 2186049252, n_comits: 1419335
+Time: 2186049262, n_comits: 1421517
+Time: 2186049272, n_comits: 1423737
+Time: 2186049282, n_comits: 1425903
+Time: 2186049292, n_comits: 1428215
+Time: 2186049302, n_comits: 1430451
+Time: 2186049312, n_comits: 1432555
+Time: 2186049322, n_comits: 1434777
+Time: 2186049332, n_comits: 1436923
+Time: 2186049342, n_comits: 1439111
+Time: 2186049352, n_comits: 1441277
+Time: 2186049362, n_comits: 1443422
+Time: 2186049373, n_comits: 1445672
+Time: 2186049383, n_comits: 1447907
+Time: 2186049393, n_comits: 1450107
+Time: 2186049403, n_comits: 1452329
+Time: 2186049413, n_comits: 1454559
+Time: 2186049423, n_comits: 1456874
+Time: 2186049433, n_comits: 1459070
+Time: 2186049443, n_comits: 1461244
+Time: 2186049453, n_comits: 1463500
+Time: 2186049463, n_comits: 1465854
+Time: 2186049473, n_comits: 1468146
+Time: 2186049483, n_comits: 1470347
+Time: 2186049493, n_comits: 1472397
+Time: 2186049503, n_comits: 1474633
+Time: 2186049514, n_comits: 1476758
+Time: 2186049524, n_comits: 1478985
+Time: 2186049534, n_comits: 1481163
+Time: 2186049544, n_comits: 1483247
+Time: 2186049554, n_comits: 1485411
+Time: 2186049564, n_comits: 1487619
+Time: 2186049574, n_comits: 1489819
+Time: 2186049584, n_comits: 1492027
+Time: 2186049594, n_comits: 1494213
+Time: 2186049604, n_comits: 1496470
+Time: 2186049614, n_comits: 1498622
+Time: 2186049624, n_comits: 1500788
+Time: 2186049634, n_comits: 1502898
+Time: 2186049644, n_comits: 1505203
+Time: 2186049654, n_comits: 1507349
+Time: 2186049665, n_comits: 1509338
+Time: 2186049675, n_comits: 1511574
+Time: 2186049685, n_comits: 1513921
+Time: 2186049695, n_comits: 1515981
+Time: 2186049705, n_comits: 1518095
+Time: 2186049715, n_comits: 1520338
+Time: 2186049725, n_comits: 1522462
+Time: 2186049735, n_comits: 1524632
+Time: 2186049745, n_comits: 1526849
+Time: 2186049755, n_comits: 1529060
+Time: 2186049765, n_comits: 1531285
+Time: 2186049775, n_comits: 1533435
+Time: 2186049785, n_comits: 1535564
+Time: 2186049795, n_comits: 1537834
+Time: 2186049806, n_comits: 1539993
+Time: 2186049816, n_comits: 1542275
+Time: 2186049826, n_comits: 1544406
+Time: 2186049836, n_comits: 1546599
+Time: 2186049846, n_comits: 1548792
+Time: 2186049856, n_comits: 1551043
+Time: 2186049866, n_comits: 1553260
+Time: 2186049876, n_comits: 1555442
+Time: 2186049886, n_comits: 1557726
+Time: 2186049897, n_comits: 1559944
+Time: 2186049907, n_comits: 1562155
+Time: 2186049917, n_comits: 1564425
+Time: 2186049927, n_comits: 1566770
+Time: 2186049937, n_comits: 1568878
+Time: 2186049947, n_comits: 1571099
+Time: 2186049957, n_comits: 1573399
+Time: 2186049967, n_comits: 1575739
+Time: 2186049977, n_comits: 1577862
+Time: 2186049987, n_comits: 1580082
+Time: 2186049997, n_comits: 1582277
+Time: 2186050007, n_comits: 1584432
+Time: 2186050017, n_comits: 1586660
+Time: 2186050027, n_comits: 1588817
+Time: 2186050037, n_comits: 1591040
+Time: 2186050048, n_comits: 1593291
+Time: 2186050058, n_comits: 1595470
+Time: 2186050068, n_comits: 1597640
+Time: 2186050078, n_comits: 1599874
+Time: 2186050088, n_comits: 1602095
+Time: 2186050098, n_comits: 1604397
+Time: 2186050108, n_comits: 1606553
+Time: 2186050118, n_comits: 1608759
+Time: 2186050128, n_comits: 1611024
+Time: 2186050138, n_comits: 1613252
+Time: 2186050148, n_comits: 1615371
+Time: 2186050158, n_comits: 1617522
+Time: 2186050168, n_comits: 1619680
+Time: 2186050178, n_comits: 1621827
+Time: 2186050188, n_comits: 1624072
+Time: 2186050199, n_comits: 1626293
+Time: 2186050209, n_comits: 1628631
+Time: 2186050219, n_comits: 1630802
+Time: 2186050229, n_comits: 1633151
+Time: 2186050239, n_comits: 1635318
+Time: 2186050249, n_comits: 1637569
+Time: 2186050259, n_comits: 1639761
+Time: 2186050269, n_comits: 1642028
+Time: 2186050279, n_comits: 1644194
+Time: 2186050289, n_comits: 1646386
+Time: 2186050299, n_comits: 1648585
+Time: 2186050309, n_comits: 1650779
+Time: 2186050319, n_comits: 1652863
+Time: 2186050329, n_comits: 1655046
+Time: 2186050339, n_comits: 1657324
+Time: 2186050349, n_comits: 1659557
+Time: 2186050360, n_comits: 1661928
+Time: 2186050370, n_comits: 1663965
+Time: 2186050380, n_comits: 1666192
+Time: 2186050390, n_comits: 1668387
+Time: 2186050400, n_comits: 1670720
+Time: 2186050410, n_comits: 1672938
+Time: 2186050420, n_comits: 1675221
+Time: 2186050430, n_comits: 1677443
+Time: 2186050440, n_comits: 1679708
+Time: 2186050450, n_comits: 1681998
+Time: 2186050460, n_comits: 1684144
+Time: 2186050470, n_comits: 1686349
+Time: 2186050480, n_comits: 1688541
+Time: 2186050490, n_comits: 1690843
+Time: 2186050500, n_comits: 1693105
+Time: 2186050510, n_comits: 1695229
+Time: 2186050521, n_comits: 1697471
+Time: 2186050531, n_comits: 1699662
+Time: 2186050541, n_comits: 1701943
+Time: 2186050551, n_comits: 1704121
+Time: 2186050561, n_comits: 1706254
+Time: 2186050571, n_comits: 1708442
+Time: 2186050582, n_comits: 1710831
+Time: 2186050592, n_comits: 1712915
+Time: 2186050602, n_comits: 1715026
+Time: 2186050612, n_comits: 1717316
+Time: 2186050622, n_comits: 1719523
+Time: 2186050632, n_comits: 1721766
+Time: 2186050642, n_comits: 1724016
+Time: 2186050652, n_comits: 1726222
+Time: 2186050662, n_comits: 1728355
+Time: 2186050672, n_comits: 1730571
+Time: 2186050682, n_comits: 1732730
+Time: 2186050692, n_comits: 1735034
+Time: 2186050702, n_comits: 1737112
+Time: 2186050713, n_comits: 1739391
+Time: 2186050723, n_comits: 1741723
+Time: 2186050733, n_comits: 1744009
+Time: 2186050743, n_comits: 1746093
+Time: 2186050753, n_comits: 1748360
+Time: 2186050763, n_comits: 1750508
+Time: 2186050773, n_comits: 1752587
+Time: 2186050783, n_comits: 1754698
+Time: 2186050793, n_comits: 1756840
+Time: 2186050803, n_comits: 1759043
+Time: 2186050813, n_comits: 1761253
+Time: 2186050823, n_comits: 1763341
+Time: 2186050833, n_comits: 1765484
+Time: 2186050843, n_comits: 1767677
+Time: 2186050853, n_comits: 1769851
+Time: 2186050863, n_comits: 1771929
+Time: 2186050873, n_comits: 1774019
+Time: 2186050884, n_comits: 1776228
+Time: 2186050894, n_comits: 1778426
+Time: 2186050904, n_comits: 1780609
+Time: 2186050914, n_comits: 1782779
+Time: 2186050924, n_comits: 1784901
+Time: 2186050934, n_comits: 1787051
+Time: 2186050944, n_comits: 1789430
+Time: 2186050954, n_comits: 1791502
+Time: 2186050964, n_comits: 1793735
+Time: 2186050974, n_comits: 1795890
+Time: 2186050984, n_comits: 1798105
+Time: 2186050994, n_comits: 1800278
+Time: 2186051004, n_comits: 1802525
+Time: 2186051014, n_comits: 1804699
+Time: 2186051024, n_comits: 1806875
+Time: 2186051034, n_comits: 1808982
+Time: 2186051045, n_comits: 1811036
+Time: 2186051055, n_comits: 1813188
+Time: 2186051065, n_comits: 1815490
+Time: 2186051075, n_comits: 1817570
+Time: 2186051085, n_comits: 1819866
+Time: 2186051095, n_comits: 1822009
+Time: 2186051105, n_comits: 1824206
+Time: 2186051115, n_comits: 1826358
+Time: 2186051125, n_comits: 1828556
+Time: 2186051135, n_comits: 1830778
+Time: 2186051145, n_comits: 1832927
+Time: 2186051155, n_comits: 1835138
+Time: 2186051165, n_comits: 1837318
+Time: 2186051176, n_comits: 1839487
+Time: 2186051186, n_comits: 1841731
+Time: 2186051196, n_comits: 1843871
+Time: 2186051206, n_comits: 1846103
+Time: 2186051216, n_comits: 1848243
+Time: 2186051226, n_comits: 1850463
+Time: 2186051236, n_comits: 1852737
+Time: 2186051246, n_comits: 1854867
+Time: 2186051256, n_comits: 1857130
+Time: 2186051266, n_comits: 1859321
+Time: 2186051276, n_comits: 1861454
+Time: 2186051286, n_comits: 1863754
+Time: 2186051296, n_comits: 1865905
+Time: 2186051306, n_comits: 1868138
+Time: 2186051317, n_comits: 1870403
+Time: 2186051327, n_comits: 1872606
+Time: 2186051337, n_comits: 1874799
+Time: 2186051347, n_comits: 1876927
+Time: 2186051357, n_comits: 1879116
+Time: 2186051367, n_comits: 1881362
+Time: 2186051377, n_comits: 1883584
+Time: 2186051387, n_comits: 1885706
+Time: 2186051397, n_comits: 1887968
+Time: 2186051407, n_comits: 1890148
+Time: 2186051417, n_comits: 1892349
+Time: 2186051427, n_comits: 1894591
+Time: 2186051438, n_comits: 1896762
+Time: 2186051448, n_comits: 1898903
+Time: 2186051458, n_comits: 1901118
+Time: 2186051468, n_comits: 1903290
+Time: 2186051478, n_comits: 1905482
+Time: 2186051488, n_comits: 1907692
+Time: 2186051498, n_comits: 1909922
+Time: 2186051508, n_comits: 1912194
+Time: 2186051518, n_comits: 1914452
+Time: 2186051528, n_comits: 1916526
+Time: 2186051538, n_comits: 1918810
+Time: 2186051548, n_comits: 1920977
+Time: 2186051558, n_comits: 1923116
+Time: 2186051568, n_comits: 1925338
+Time: 2186051578, n_comits: 1927420
+Time: 2186051588, n_comits: 1929683
+Time: 2186051599, n_comits: 1931857
+Time: 2186051609, n_comits: 1933986
+Time: 2186051619, n_comits: 1936250
+Time: 2186051629, n_comits: 1938577
+Time: 2186051639, n_comits: 1940857
+Time: 2186051649, n_comits: 1943197
+Time: 2186051659, n_comits: 1945470
+Time: 2186051669, n_comits: 1947723
+Time: 2186051679, n_comits: 1949892
+Time: 2186051689, n_comits: 1952128
+Time: 2186051699, n_comits: 1954291
+Time: 2186051710, n_comits: 1956535
+Time: 2186051720, n_comits: 1958638
+Time: 2186051730, n_comits: 1960968
+Time: 2186051740, n_comits: 1963101
+Time: 2186051750, n_comits: 1965462
+Time: 2186051760, n_comits: 1967646
+Time: 2186051770, n_comits: 1969819
+Time: 2186051780, n_comits: 1971916
+Time: 2186051790, n_comits: 1974268
+Time: 2186051800, n_comits: 1976387
+Time: 2186051810, n_comits: 1978590
+Time: 2186051820, n_comits: 1980769
+Time: 2186051830, n_comits: 1982944
+Time: 2186051840, n_comits: 1985213
+Time: 2186051850, n_comits: 1987510
+Time: 2186051860, n_comits: 1989607
+Time: 2186051871, n_comits: 1991692
+Time: 2186051881, n_comits: 1993750
+Time: 2186051891, n_comits: 1995924
+Time: 2186051901, n_comits: 1998087
+Time: 2186051911, n_comits: 2000115
+Time: 2186051921, n_comits: 2002217
+Time: 2186051931, n_comits: 2004505
+Time: 2186051941, n_comits: 2006732
+Time: 2186051951, n_comits: 2008899
+Time: 2186051961, n_comits: 2011189
+Time: 2186051971, n_comits: 2013267
+Time: 2186051981, n_comits: 2015457
+Time: 2186051991, n_comits: 2017666
+Time: 2186052001, n_comits: 2019923
+Time: 2186052012, n_comits: 2022104
+Time: 2186052022, n_comits: 2024363
+Time: 2186052032, n_comits: 2026566
+Time: 2186052042, n_comits: 2028758
+Time: 2186052052, n_comits: 2031039
+Time: 2186052062, n_comits: 2033092
+Time: 2186052072, n_comits: 2035374
+Time: 2186052082, n_comits: 2037489
+Time: 2186052092, n_comits: 2039613
+Time: 2186052102, n_comits: 2041800
+Time: 2186052112, n_comits: 2043918
+Time: 2186052122, n_comits: 2046112
+Time: 2186052132, n_comits: 2048274
+Time: 2186052142, n_comits: 2050341
+Time: 2186052152, n_comits: 2052540
+Time: 2186052163, n_comits: 2054713
+Time: 2186052173, n_comits: 2056862
+Time: 2186052183, n_comits: 2059043
+Time: 2186052193, n_comits: 2061188
+Time: 2186052203, n_comits: 2063322
+Time: 2186052213, n_comits: 2065499
+Time: 2186052223, n_comits: 2067679
+Time: 2186052233, n_comits: 2069946
+Time: 2186052243, n_comits: 2072137
+Time: 2186052253, n_comits: 2074327
+Time: 2186052263, n_comits: 2076383
+Time: 2186052273, n_comits: 2078515
+Time: 2186052283, n_comits: 2080718
+Time: 2186052293, n_comits: 2082794
+Time: 2186052303, n_comits: 2084999
+Time: 2186052314, n_comits: 2087094
+Time: 2186052324, n_comits: 2089336
+Time: 2186052334, n_comits: 2091539
+Time: 2186052344, n_comits: 2093655
+Time: 2186052354, n_comits: 2095984
+Time: 2186052364, n_comits: 2098051
+Time: 2186052374, n_comits: 2100332
+Time: 2186052384, n_comits: 2102478
+Time: 2186052394, n_comits: 2104665
+Time: 2186052404, n_comits: 2106788
+Time: 2186052414, n_comits: 2108896
+Time: 2186052424, n_comits: 2111065
+Time: 2186052434, n_comits: 2113192
+Time: 2186052444, n_comits: 2115443
+Time: 2186052454, n_comits: 2117614
+Time: 2186052464, n_comits: 2119831
+Time: 2186052475, n_comits: 2122003
+Time: 2186052485, n_comits: 2124177
+Time: 2186052495, n_comits: 2126447
+Time: 2186052505, n_comits: 2128612
+Time: 2186052515, n_comits: 2130811
+Time: 2186052525, n_comits: 2133041
+Time: 2186052535, n_comits: 2135252
+Time: 2186052545, n_comits: 2137490
+Time: 2186052555, n_comits: 2139696
+Time: 2186052565, n_comits: 2141828
+Time: 2186052575, n_comits: 2143979
+Time: 2186052585, n_comits: 2146118
+Time: 2186052595, n_comits: 2148378
+Time: 2186052605, n_comits: 2150520
+Time: 2186052615, n_comits: 2152798
+Time: 2186052626, n_comits: 2155000
+Time: 2186052636, n_comits: 2157120
+Time: 2186052646, n_comits: 2159320
+Time: 2186052656, n_comits: 2161542
+Time: 2186052666, n_comits: 2163720
+Time: 2186052676, n_comits: 2165914
+Time: 2186052686, n_comits: 2168138
+Time: 2186052696, n_comits: 2170312
+Time: 2186052706, n_comits: 2172605
+Time: 2186052716, n_comits: 2174793
+Time: 2186052726, n_comits: 2176943
+Time: 2186052736, n_comits: 2179122
+Time: 2186052746, n_comits: 2181369
+Time: 2186052756, n_comits: 2183526
+Time: 2186052766, n_comits: 2185743
+Time: 2186052777, n_comits: 2187866
+Time: 2186052787, n_comits: 2189966
+Time: 2186052797, n_comits: 2192037
+Time: 2186052807, n_comits: 2194189
+Time: 2186052817, n_comits: 2196387
+Time: 2186052827, n_comits: 2198459
+Time: 2186052837, n_comits: 2200506
+Time: 2186052847, n_comits: 2202828
+Time: 2186052857, n_comits: 2205074
+Time: 2186052867, n_comits: 2207281
+Time: 2186052877, n_comits: 2209523
+Time: 2186052887, n_comits: 2211673
+Time: 2186052897, n_comits: 2213835
+Time: 2186052907, n_comits: 2216065
+Time: 2186052917, n_comits: 2218148
+Time: 2186052928, n_comits: 2220334
+Time: 2186052938, n_comits: 2222441
+Time: 2186052948, n_comits: 2224662
+Time: 2186052958, n_comits: 2226846
+Time: 2186052968, n_comits: 2229003
+Time: 2186052978, n_comits: 2231205
+Time: 2186052988, n_comits: 2233217
+Time: 2186052998, n_comits: 2235328
+Time: 2186053008, n_comits: 2237449
+Time: 2186053018, n_comits: 2239619
+Time: 2186053028, n_comits: 2241778
+Time: 2186053038, n_comits: 2243900
+Time: 2186053048, n_comits: 2245953
+Time: 2186053058, n_comits: 2248083
+Time: 2186053069, n_comits: 2250355
+Time: 2186053079, n_comits: 2252386
+Time: 2186053089, n_comits: 2254478
+Time: 2186053099, n_comits: 2256564
+Time: 2186053109, n_comits: 2258664
+Time: 2186053119, n_comits: 2260886
+Time: 2186053129, n_comits: 2262994
+Time: 2186053139, n_comits: 2265245
+Time: 2186053149, n_comits: 2267294
+Time: 2186053159, n_comits: 2269305
+Time: 2186053169, n_comits: 2271393
+Time: 2186053179, n_comits: 2273525
+Time: 2186053189, n_comits: 2275728
+Time: 2186053199, n_comits: 2277878
+Time: 2186053209, n_comits: 2279882
+Time: 2186053220, n_comits: 2281983
+Time: 2186053230, n_comits: 2284202
+Time: 2186053240, n_comits: 2286336
+Time: 2186053250, n_comits: 2288385
+Time: 2186053260, n_comits: 2290457
+Time: 2186053270, n_comits: 2292576
+Time: 2186053280, n_comits: 2294875
+Time: 2186053290, n_comits: 2296911
+Time: 2186053300, n_comits: 2299116
+Time: 2186053310, n_comits: 2301322
+Time: 2186053320, n_comits: 2303463
+Time: 2186053330, n_comits: 2305647
+Time: 2186053340, n_comits: 2307899
+Time: 2186053350, n_comits: 2310033
+Time: 2186053360, n_comits: 2312266
+Time: 2186053370, n_comits: 2314423
+Time: 2186053381, n_comits: 2316568
+Time: 2186053391, n_comits: 2318822
+Time: 2186053401, n_comits: 2321042
+Time: 2186053411, n_comits: 2323172
+Time: 2186053421, n_comits: 2325516
+Time: 2186053431, n_comits: 2327800
+Time: 2186053441, n_comits: 2329963
+Time: 2186053451, n_comits: 2331972
+Time: 2186053461, n_comits: 2334083
+Time: 2186053471, n_comits: 2336240
+Time: 2186053481, n_comits: 2338455
+Time: 2186053491, n_comits: 2340643
+Time: 2186053501, n_comits: 2342832
+Time: 2186053511, n_comits: 2345030
+Time: 2186053521, n_comits: 2347138
+Time: 2186053532, n_comits: 2349318
+Time: 2186053542, n_comits: 2351521
+Time: 2186053552, n_comits: 2353721
+Time: 2186053562, n_comits: 2355854
+Time: 2186053572, n_comits: 2358096
+Time: 2186053582, n_comits: 2360168
+Time: 2186053592, n_comits: 2362268
+Time: 2186053602, n_comits: 2364405
+Time: 2186053612, n_comits: 2366489
+Time: 2186053622, n_comits: 2368545
+Time: 2186053632, n_comits: 2370729
+Time: 2186053642, n_comits: 2372921
+Time: 2186053652, n_comits: 2374918
+Time: 2186053662, n_comits: 2377136
+Time: 2186053672, n_comits: 2379230
+Time: 2186053682, n_comits: 2381414
+Time: 2186053693, n_comits: 2383515
+Time: 2186053703, n_comits: 2385745
+Time: 2186053713, n_comits: 2387946
+Time: 2186053723, n_comits: 2389989
+Time: 2186053733, n_comits: 2392032
+Time: 2186053743, n_comits: 2394094
+Time: 2186053753, n_comits: 2396192
+Time: 2186053763, n_comits: 2398274
+Time: 2186053773, n_comits: 2400462
+Time: 2186053783, n_comits: 2402619
+Time: 2186053793, n_comits: 2404800
+Time: 2186053803, n_comits: 2407006
+Time: 2186053813, n_comits: 2409187
+Time: 2186053823, n_comits: 2411368
+Time: 2186053833, n_comits: 2413600
+Time: 2186053844, n_comits: 2415754
+Time: 2186053854, n_comits: 2417991
+Time: 2186053864, n_comits: 2420218
+Time: 2186053874, n_comits: 2422416
+Time: 2186053884, n_comits: 2424567
+Time: 2186053894, n_comits: 2426650
+Time: 2186053904, n_comits: 2428891
+Time: 2186053914, n_comits: 2430979
+Time: 2186053924, n_comits: 2433209
+Time: 2186053934, n_comits: 2435385
+Time: 2186053944, n_comits: 2437650
+Time: 2186053954, n_comits: 2439841
+Time: 2186053964, n_comits: 2442040
+Time: 2186053974, n_comits: 2444223
+Time: 2186053984, n_comits: 2446515
+Time: 2186053995, n_comits: 2448735
+Time: 2186054005, n_comits: 2450925
+Time: 2186054015, n_comits: 2453219
+Time: 2186054025, n_comits: 2455371
+Time: 2186054035, n_comits: 2457608
+Time: 2186054045, n_comits: 2459837
+Time: 2186054055, n_comits: 2462080
+Time: 2186054065, n_comits: 2464249
+Time: 2186054075, n_comits: 2466350
+Time: 2186054085, n_comits: 2468470
+Time: 2186054095, n_comits: 2470667
+Time: 2186054105, n_comits: 2472717
+Time: 2186054115, n_comits: 2474948
+Time: 2186054125, n_comits: 2477205
+Time: 2186054135, n_comits: 2479263
+Time: 2186054145, n_comits: 2481348
+Time: 2186054155, n_comits: 2483499
+Time: 2186054166, n_comits: 2485549
+Time: 2186054176, n_comits: 2487778
+Time: 2186054186, n_comits: 2489899
+Time: 2186054196, n_comits: 2492015
+Time: 2186054206, n_comits: 2494145
+Time: 2186054216, n_comits: 2496168
+Time: 2186054226, n_comits: 2498438
+Time: 2186054236, n_comits: 2500542
+Time: 2186054246, n_comits: 2502644
+Time: 2186054256, n_comits: 2504800
+Time: 2186054266, n_comits: 2506933
+Time: 2186054276, n_comits: 2509112
+Time: 2186054286, n_comits: 2511264
+Time: 2186054296, n_comits: 2513459
+Time: 2186054306, n_comits: 2515733
+Time: 2186054317, n_comits: 2517997
+Time: 2186054327, n_comits: 2520296
+Time: 2186054337, n_comits: 2522533
+Time: 2186054347, n_comits: 2524655
+Time: 2186054357, n_comits: 2526820
+Time: 2186054367, n_comits: 2528944
+Time: 2186054377, n_comits: 2531055
+Time: 2186054387, n_comits: 2533126
+Time: 2186054397, n_comits: 2535172
+Time: 2186054407, n_comits: 2537144
+Time: 2186054417, n_comits: 2539210
+Time: 2186054427, n_comits: 2541388
+Time: 2186054437, n_comits: 2543535
+Time: 2186054448, n_comits: 2545704
+Time: 2186054458, n_comits: 2547873
+Time: 2186054468, n_comits: 2550060
+Time: 2186054478, n_comits: 2552261
+Time: 2186054488, n_comits: 2554409
+Time: 2186054498, n_comits: 2556497
+Time: 2186054508, n_comits: 2558704
+Time: 2186054518, n_comits: 2560876
+Time: 2186054528, n_comits: 2563100
+Time: 2186054538, n_comits: 2565180
+Time: 2186054548, n_comits: 2567313
+Time: 2186054558, n_comits: 2569450
+Time: 2186054568, n_comits: 2571548
+Time: 2186054578, n_comits: 2573761
+Time: 2186054588, n_comits: 2575847
+Time: 2186054599, n_comits: 2577876
+Time: 2186054609, n_comits: 2580105
+Time: 2186054619, n_comits: 2582291
+Time: 2186054629, n_comits: 2584375
+Time: 2186054639, n_comits: 2586587
+Time: 2186054649, n_comits: 2588711
+Time: 2186054659, n_comits: 2590999
+Time: 2186054669, n_comits: 2593020
+Time: 2186054679, n_comits: 2595228
+Time: 2186054689, n_comits: 2597340
+Time: 2186054699, n_comits: 2599519
+Time: 2186054709, n_comits: 2601808
+Time: 2186054719, n_comits: 2603975
+Time: 2186054729, n_comits: 2606159
+Time: 2186054739, n_comits: 2608368
+Time: 2186054749, n_comits: 2610529
+Time: 2186054760, n_comits: 2612728
+Time: 2186054770, n_comits: 2614843
+Time: 2186054780, n_comits: 2616875
+Time: 2186054790, n_comits: 2619007
+Time: 2186054800, n_comits: 2621130
+Time: 2186054810, n_comits: 2623298
+Time: 2186054820, n_comits: 2625452
+Time: 2186054830, n_comits: 2627634
+Time: 2186054840, n_comits: 2629841
+Time: 2186054850, n_comits: 2631945
+Time: 2186054860, n_comits: 2634073
+Time: 2186054870, n_comits: 2636226
+Time: 2186054880, n_comits: 2638387
+Time: 2186054890, n_comits: 2640509
+Time: 2186054900, n_comits: 2642692
+Time: 2186054910, n_comits: 2644845
+Time: 2186054921, n_comits: 2647061
+Time: 2186054931, n_comits: 2649183
+Time: 2186054941, n_comits: 2651277
+Time: 2186054951, n_comits: 2653495
+Time: 2186054961, n_comits: 2655651
+Time: 2186054971, n_comits: 2657791
+Time: 2186054981, n_comits: 2659852
+Time: 2186054991, n_comits: 2662084
+Time: 2186055001, n_comits: 2664181
+Time: 2186055011, n_comits: 2666298
+Time: 2186055021, n_comits: 2668473
+Time: 2186055031, n_comits: 2670689
+Time: 2186055041, n_comits: 2672829
+Time: 2186055051, n_comits: 2674919
+Time: 2186055061, n_comits: 2677034
+Time: 2186055072, n_comits: 2679231
+Time: 2186055082, n_comits: 2681353
+Time: 2186055092, n_comits: 2683487
+Time: 2186055102, n_comits: 2685452
+Time: 2186055112, n_comits: 2687478
+Time: 2186055122, n_comits: 2689625
+Time: 2186055132, n_comits: 2691720
+Time: 2186055142, n_comits: 2693800
+Time: 2186055152, n_comits: 2696006
+Time: 2186055162, n_comits: 2698204
+Time: 2186055172, n_comits: 2700305
+Time: 2186055182, n_comits: 2702404
+Time: 2186055192, n_comits: 2704491
+Time: 2186055202, n_comits: 2706716
+Time: 2186055212, n_comits: 2708854
+Time: 2186055223, n_comits: 2710880
+Time: 2186055233, n_comits: 2712964
+Time: 2186055243, n_comits: 2715170
+Time: 2186055253, n_comits: 2717320
+Time: 2186055263, n_comits: 2719340
+Time: 2186055273, n_comits: 2721455
+Time: 2186055283, n_comits: 2723530
+Time: 2186055293, n_comits: 2725604
+Time: 2186055303, n_comits: 2727758
+Time: 2186055313, n_comits: 2729891
+Time: 2186055323, n_comits: 2731972
+Time: 2186055333, n_comits: 2734247
+Time: 2186055343, n_comits: 2736362
+Time: 2186055353, n_comits: 2738421
+Time: 2186055363, n_comits: 2740546
+Time: 2186055373, n_comits: 2742709
+Time: 2186055384, n_comits: 2744789
+Time: 2186055394, n_comits: 2747004
+Time: 2186055404, n_comits: 2749219
+Time: 2186055414, n_comits: 2751300
+Time: 2186055424, n_comits: 2753499
+Time: 2186055434, n_comits: 2755599
+Time: 2186055444, n_comits: 2757619
+Time: 2186055454, n_comits: 2759732
+Time: 2186055465, n_comits: 2762052
+Time: 2186055475, n_comits: 2764141
+Time: 2186055485, n_comits: 2766354
+Time: 2186055495, n_comits: 2768602
+Time: 2186055506, n_comits: 2770729
+Time: 2186055516, n_comits: 2772891
+Time: 2186055526, n_comits: 2775142
+Time: 2186055536, n_comits: 2777392
+Time: 2186055546, n_comits: 2779630
+Time: 2186055556, n_comits: 2781716
+Time: 2186055566, n_comits: 2783831
+Time: 2186055576, n_comits: 2785960
+Time: 2186055586, n_comits: 2788095
+Time: 2186055596, n_comits: 2790198
+Time: 2186055606, n_comits: 2792300
+Time: 2186055617, n_comits: 2794482
+Time: 2186055627, n_comits: 2796557
+Time: 2186055637, n_comits: 2798637
+Time: 2186055647, n_comits: 2800700
+Time: 2186055657, n_comits: 2802894
+Time: 2186055667, n_comits: 2804973
+Time: 2186055677, n_comits: 2806998
+Time: 2186055687, n_comits: 2809105
+Time: 2186055697, n_comits: 2811315
+Time: 2186055707, n_comits: 2813528
+Time: 2186055717, n_comits: 2815653
+Time: 2186055727, n_comits: 2817828
+Time: 2186055737, n_comits: 2819988
+Time: 2186055747, n_comits: 2822191
+Time: 2186055757, n_comits: 2824397
+Time: 2186055767, n_comits: 2826603
+Time: 2186055778, n_comits: 2828773
+Time: 2186055788, n_comits: 2830919
+Time: 2186055798, n_comits: 2833057
+Time: 2186055808, n_comits: 2835278
+Time: 2186055818, n_comits: 2837348
+Time: 2186055828, n_comits: 2839493
+Time: 2186055838, n_comits: 2841644
+Time: 2186055848, n_comits: 2843718
+Time: 2186055858, n_comits: 2845824
+Time: 2186055868, n_comits: 2848095
+Time: 2186055878, n_comits: 2850220
+Time: 2186055888, n_comits: 2852382
+Time: 2186055898, n_comits: 2854366
+Time: 2186055909, n_comits: 2856438
+Time: 2186055919, n_comits: 2858560
+Time: 2186055929, n_comits: 2860656
+Time: 2186055939, n_comits: 2862719
+Time: 2186055949, n_comits: 2864872
+Time: 2186055959, n_comits: 2866970
+Time: 2186055969, n_comits: 2869049
+Time: 2186055979, n_comits: 2871208
+Time: 2186055989, n_comits: 2873342
+Time: 2186055999, n_comits: 2875509
+Time: 2186056009, n_comits: 2877587
+Time: 2186056019, n_comits: 2879662
+Time: 2186056029, n_comits: 2881764
+Time: 2186056039, n_comits: 2883920
+Time: 2186056049, n_comits: 2886164
+Time: 2186056060, n_comits: 2888241
+Time: 2186056070, n_comits: 2890424
+Time: 2186056080, n_comits: 2892549
+Time: 2186056090, n_comits: 2894544
+Time: 2186056100, n_comits: 2896779
+Time: 2186056110, n_comits: 2898923
+Time: 2186056120, n_comits: 2900914
+Time: 2186056130, n_comits: 2902993
+Time: 2186056140, n_comits: 2905095
+Time: 2186056150, n_comits: 2907053
+Time: 2186056160, n_comits: 2909091
+Time: 2186056170, n_comits: 2911185
+Time: 2186056180, n_comits: 2913296
+Time: 2186056190, n_comits: 2915295
+Time: 2186056200, n_comits: 2917363
+Time: 2186056211, n_comits: 2919548
+Time: 2186056221, n_comits: 2921626
+Time: 2186056231, n_comits: 2923691
+Time: 2186056241, n_comits: 2925928
+Time: 2186056251, n_comits: 2928022
+Time: 2186056261, n_comits: 2930193
+Time: 2186056271, n_comits: 2932338
+Time: 2186056281, n_comits: 2934546
+Time: 2186056291, n_comits: 2936677
+Time: 2186056301, n_comits: 2938846
+Time: 2186056311, n_comits: 2941054
+Time: 2186056321, n_comits: 2943109
+Time: 2186056331, n_comits: 2945251
+Time: 2186056342, n_comits: 2947328
+Time: 2186056352, n_comits: 2949453
+Time: 2186056362, n_comits: 2951582
+Time: 2186056372, n_comits: 2953804
+Time: 2186056382, n_comits: 2956017
+Time: 2186056392, n_comits: 2958240
+Time: 2186056402, n_comits: 2960439
+Time: 2186056412, n_comits: 2962566
+Time: 2186056422, n_comits: 2964638
+Time: 2186056432, n_comits: 2966685
+Time: 2186056442, n_comits: 2968815
+Time: 2186056452, n_comits: 2970949
+Time: 2186056462, n_comits: 2973140
+Time: 2186056472, n_comits: 2975287
+Time: 2186056482, n_comits: 2977331
+Time: 2186056492, n_comits: 2979513
+Time: 2186056502, n_comits: 2981633
+Time: 2186056513, n_comits: 2983600
+Time: 2186056523, n_comits: 2985660
+Time: 2186056533, n_comits: 2987827
+Time: 2186056543, n_comits: 2989878
+Time: 2186056553, n_comits: 2992085
+Time: 2186056563, n_comits: 2994128
+Time: 2186056573, n_comits: 2996165
+Time: 2186056583, n_comits: 2998245
+Time: 2186056593, n_comits: 3000262
+Time: 2186056603, n_comits: 3002510
+Time: 2186056613, n_comits: 3004604
+Time: 2186056623, n_comits: 3006796
+Time: 2186056633, n_comits: 3008831
+Time: 2186056643, n_comits: 3010899
+Time: 2186056653, n_comits: 3012988
+Time: 2186056664, n_comits: 3015108
+Time: 2186056674, n_comits: 3017139
+Time: 2186056684, n_comits: 3019151
+Time: 2186056694, n_comits: 3021235
+Time: 2186056704, n_comits: 3023370
+Time: 2186056714, n_comits: 3025536
+Time: 2186056724, n_comits: 3027647
+Time: 2186056735, n_comits: 3029906
+Time: 2186056745, n_comits: 3031986
+Time: 2186056755, n_comits: 3034113
+Time: 2186056765, n_comits: 3036279
+Time: 2186056775, n_comits: 3038321
+Time: 2186056785, n_comits: 3040410
+Time: 2186056795, n_comits: 3042525
+Time: 2186056805, n_comits: 3044639
+Time: 2186056815, n_comits: 3046718
+Time: 2186056825, n_comits: 3048780
+Time: 2186056836, n_comits: 3050847
+Time: 2186056846, n_comits: 3053000
+Time: 2186056856, n_comits: 3055082
+Time: 2186056866, n_comits: 3057166
+Time: 2186056876, n_comits: 3059296
+Time: 2186056886, n_comits: 3061455
+Time: 2186056896, n_comits: 3063669
+Time: 2186056906, n_comits: 3065784
+Time: 2186056916, n_comits: 3067945
+Time: 2186056926, n_comits: 3070213
+Time: 2186056936, n_comits: 3072311
+Time: 2186056946, n_comits: 3074514
+Time: 2186056956, n_comits: 3076700
+Time: 2186056966, n_comits: 3078843
+Time: 2186056976, n_comits: 3081001
+Time: 2186056987, n_comits: 3083120
+Time: 2186056997, n_comits: 3085257
+Time: 2186057007, n_comits: 3087522
+Time: 2186057017, n_comits: 3089615
+Time: 2186057027, n_comits: 3091722
+Time: 2186057037, n_comits: 3093742
+Time: 2186057047, n_comits: 3095941
+Time: 2186057057, n_comits: 3098151
+Time: 2186057067, n_comits: 3100343
+Time: 2186057077, n_comits: 3102463
+Time: 2186057087, n_comits: 3104634
+Time: 2186057097, n_comits: 3106749
+Time: 2186057108, n_comits: 3108815
+Time: 2186057118, n_comits: 3111015
+Time: 2186057128, n_comits: 3113069
+Time: 2186057138, n_comits: 3115198
+Time: 2186057148, n_comits: 3117282
+Time: 2186057158, n_comits: 3119380
+Time: 2186057168, n_comits: 3121474
+Time: 2186057178, n_comits: 3123564
+Time: 2186057188, n_comits: 3125718
+Time: 2186057198, n_comits: 3127844
+Time: 2186057208, n_comits: 3130057
+Time: 2186057218, n_comits: 3132187
+Time: 2186057228, n_comits: 3134336
+Time: 2186057238, n_comits: 3136569
+Time: 2186057249, n_comits: 3138564
+Time: 2186057259, n_comits: 3140663
+Time: 2186057269, n_comits: 3142820
+Time: 2186057279, n_comits: 3144915
+Time: 2186057289, n_comits: 3147135
+Time: 2186057299, n_comits: 3149309
+Time: 2186057309, n_comits: 3151533
+Time: 2186057319, n_comits: 3153759
+Time: 2186057329, n_comits: 3155851
+Time: 2186057339, n_comits: 3158031
+Time: 2186057349, n_comits: 3160320
+Time: 2186057359, n_comits: 3162452
+Time: 2186057369, n_comits: 3164682
+Time: 2186057379, n_comits: 3166859
+Time: 2186057390, n_comits: 3169022
+Time: 2186057400, n_comits: 3171160
+Time: 2186057410, n_comits: 3173275
+Time: 2186057420, n_comits: 3175375
+Time: 2186057430, n_comits: 3177531
+Time: 2186057440, n_comits: 3179695
+Time: 2186057450, n_comits: 3181810
+Time: 2186057460, n_comits: 3183981
+Time: 2186057470, n_comits: 3186084
+Time: 2186057480, n_comits: 3188251
+Time: 2186057490, n_comits: 3190485
+Time: 2186057500, n_comits: 3192601
+Time: 2186057510, n_comits: 3194730
+Time: 2186057521, n_comits: 3196959
+Time: 2186057531, n_comits: 3199123
+Time: 2186057541, n_comits: 3201172
+Time: 2186057551, n_comits: 3203287
+Time: 2186057561, n_comits: 3205393
+Time: 2186057571, n_comits: 3207603
+Time: 2186057581, n_comits: 3209647
+Time: 2186057591, n_comits: 3211736
+Time: 2186057601, n_comits: 3213792
+Time: 2186057611, n_comits: 3215964
+Time: 2186057622, n_comits: 3218066
+Time: 2186057632, n_comits: 3220191
+Time: 2186057642, n_comits: 3222437
+Time: 2186057652, n_comits: 3224520
+Time: 2186057662, n_comits: 3226697
+Time: 2186057672, n_comits: 3228828
+Time: 2186057682, n_comits: 3231032
+Time: 2186057692, n_comits: 3233180
+Time: 2186057702, n_comits: 3235405
+Time: 2186057712, n_comits: 3237530
+Time: 2186057722, n_comits: 3239652
+Time: 2186057732, n_comits: 3241732
+Time: 2186057743, n_comits: 3243837
+Time: 2186057753, n_comits: 3246113
+Time: 2186057763, n_comits: 3248163
+Time: 2186057773, n_comits: 3250277
+Time: 2186057783, n_comits: 3252424
+Time: 2186057793, n_comits: 3254557
+Time: 2186057803, n_comits: 3256820
+Time: 2186057813, n_comits: 3258982
+Time: 2186057823, n_comits: 3261181
+Time: 2186057833, n_comits: 3263278
+Time: 2186057843, n_comits: 3265475
+Time: 2186057853, n_comits: 3267669
+Time: 2186057864, n_comits: 3269921
+Time: 2186057874, n_comits: 3272029
+Time: 2186057884, n_comits: 3274190
+Time: 2186057894, n_comits: 3276411
+Time: 2186057904, n_comits: 3278544
+Time: 2186057914, n_comits: 3280770
+Time: 2186057924, n_comits: 3282818
+Time: 2186057934, n_comits: 3284960
+Time: 2186057944, n_comits: 3287076
+Time: 2186057954, n_comits: 3289240
+Time: 2186057964, n_comits: 3291416
+Time: 2186057974, n_comits: 3293562
+Time: 2186057984, n_comits: 3295763
+Time: 2186057994, n_comits: 3297952
+Time: 2186058005, n_comits: 3300021
+Time: 2186058015, n_comits: 3302159
+Time: 2186058025, n_comits: 3304353
+Time: 2186058035, n_comits: 3306476
+Time: 2186058045, n_comits: 3308716
+Time: 2186058055, n_comits: 3310820
+Time: 2186058065, n_comits: 3312879
+Time: 2186058075, n_comits: 3315167
+Time: 2186058085, n_comits: 3317373
+Time: 2186058095, n_comits: 3319645
+Time: 2186058106, n_comits: 3321767
+Time: 2186058116, n_comits: 3323925
+Time: 2186058126, n_comits: 3326097
+Time: 2186058136, n_comits: 3328288
+Time: 2186058146, n_comits: 3330418
+Time: 2186058156, n_comits: 3332604
+Time: 2186058166, n_comits: 3334679
+Time: 2186058176, n_comits: 3336876
+Time: 2186058186, n_comits: 3338975
+Time: 2186058196, n_comits: 3341063
+Time: 2186058206, n_comits: 3343188
+Time: 2186058216, n_comits: 3345289
+Time: 2186058226, n_comits: 3347448
+Time: 2186058236, n_comits: 3349659
+Time: 2186058246, n_comits: 3351757
+Time: 2186058256, n_comits: 3353867
+Time: 2186058267, n_comits: 3355976
+Time: 2186058277, n_comits: 3358182
+Time: 2186058287, n_comits: 3360257
+Time: 2186058297, n_comits: 3362376
+Time: 2186058307, n_comits: 3364487
+Time: 2186058317, n_comits: 3366621
+Time: 2186058327, n_comits: 3368761
+Time: 2186058337, n_comits: 3370873
+Time: 2186058347, n_comits: 3373115
+Time: 2186058357, n_comits: 3375196
+Time: 2186058367, n_comits: 3377282
+Time: 2186058377, n_comits: 3379386
+Time: 2186058387, n_comits: 3381489
+Time: 2186058397, n_comits: 3383598
+Time: 2186058407, n_comits: 3385651
+Time: 2186058417, n_comits: 3387764
+Time: 2186058427, n_comits: 3389820
+Time: 2186058438, n_comits: 3392011
+Time: 2186058448, n_comits: 3394231
+Time: 2186058458, n_comits: 3396448
+Time: 2186058468, n_comits: 3398530
+Time: 2186058478, n_comits: 3400747
+Time: 2186058488, n_comits: 3403026
+Time: 2186058498, n_comits: 3405121
+Time: 2186058508, n_comits: 3407183
+Time: 2186058518, n_comits: 3409460
+Time: 2186058528, n_comits: 3411628
+Time: 2186058538, n_comits: 3413854
+Time: 2186058548, n_comits: 3415955
+Time: 2186058558, n_comits: 3418133
+Time: 2186058568, n_comits: 3420166
+Time: 2186058579, n_comits: 3422235
+Time: 2186058589, n_comits: 3424338
+Time: 2186058599, n_comits: 3426537
+Time: 2186058609, n_comits: 3428652
+Time: 2186058619, n_comits: 3430747
+Time: 2186058629, n_comits: 3432891
+Time: 2186058639, n_comits: 3434986
+Time: 2186058649, n_comits: 3437040
+Time: 2186058659, n_comits: 3439202
+Time: 2186058669, n_comits: 3441247
+Time: 2186058679, n_comits: 3443404
+Time: 2186058689, n_comits: 3445464
+Time: 2186058699, n_comits: 3447628
+Time: 2186058709, n_comits: 3449748
+Time: 2186058719, n_comits: 3451943
+Time: 2186058730, n_comits: 3454161
+Time: 2186058740, n_comits: 3456311
+Time: 2186058750, n_comits: 3458344
+Time: 2186058760, n_comits: 3460360
+Time: 2186058770, n_comits: 3462492
+Time: 2186058780, n_comits: 3464565
+Time: 2186058790, n_comits: 3466713
+Time: 2186058800, n_comits: 3468746
+Time: 2186058810, n_comits: 3470771
+Time: 2186058820, n_comits: 3472900
+Time: 2186058830, n_comits: 3475102
+Time: 2186058840, n_comits: 3477114
+Time: 2186058850, n_comits: 3479194
+Time: 2186058860, n_comits: 3481189
+Time: 2186058871, n_comits: 3483294
+Time: 2186058881, n_comits: 3485353
+Time: 2186058891, n_comits: 3487460
+Time: 2186058901, n_comits: 3489696
+Time: 2186058911, n_comits: 3491764
+Time: 2186058921, n_comits: 3493807
+Time: 2186058931, n_comits: 3495895
+Time: 2186058941, n_comits: 3497965
+Time: 2186058951, n_comits: 3499923
+Time: 2186058961, n_comits: 3502062
+Time: 2186058972, n_comits: 3504464
+Time: 2186058982, n_comits: 3506479
+Time: 2186058992, n_comits: 3508572
+Time: 2186059002, n_comits: 3510589
+Time: 2186059013, n_comits: 3512557
+Time: 2186059023, n_comits: 3514674
+Time: 2186059033, n_comits: 3516796
+Time: 2186059043, n_comits: 3518908
+Time: 2186059053, n_comits: 3520899
+Time: 2186059063, n_comits: 3523035
+Time: 2186059073, n_comits: 3525104
+Time: 2186059083, n_comits: 3527218
+Time: 2186059093, n_comits: 3529310
+Time: 2186059103, n_comits: 3531351
+Time: 2186059114, n_comits: 3533537
+Time: 2186059124, n_comits: 3535501
+Time: 2186059134, n_comits: 3537555
+Time: 2186059144, n_comits: 3539597
+Time: 2186059154, n_comits: 3541673
+Time: 2186059164, n_comits: 3543841
+Time: 2186059174, n_comits: 3545905
+Time: 2186059184, n_comits: 3548162
+Time: 2186059194, n_comits: 3550376
+Time: 2186059204, n_comits: 3552479
+Time: 2186059214, n_comits: 3554733
+Time: 2186059224, n_comits: 3556812
+Time: 2186059234, n_comits: 3558917
+Time: 2186059244, n_comits: 3561103
+Time: 2186059254, n_comits: 3563185
+Time: 2186059265, n_comits: 3565347
+Time: 2186059275, n_comits: 3567520
+Time: 2186059285, n_comits: 3569621
+Time: 2186059295, n_comits: 3571707
+Time: 2186059305, n_comits: 3573737
+Time: 2186059315, n_comits: 3575845
+Time: 2186059325, n_comits: 3577979
+Time: 2186059335, n_comits: 3580251
+Time: 2186059345, n_comits: 3582310
+Time: 2186059355, n_comits: 3584428
+Time: 2186059366, n_comits: 3586555
+Time: 2186059376, n_comits: 3588625
+Time: 2186059386, n_comits: 3590856
+Time: 2186059396, n_comits: 3593000
+Time: 2186059406, n_comits: 3595187
+Time: 2186059416, n_comits: 3597316
+Time: 2186059426, n_comits: 3599351
+Time: 2186059437, n_comits: 3601519
+Time: 2186059447, n_comits: 3603660
+Time: 2186059457, n_comits: 3605712
+Time: 2186059467, n_comits: 3607944
+Time: 2186059477, n_comits: 3610081
+Time: 2186059487, n_comits: 3612192
+Time: 2186059497, n_comits: 3614377
+Time: 2186059507, n_comits: 3616618
+Time: 2186059517, n_comits: 3618749
+Time: 2186059527, n_comits: 3620970
+Time: 2186059537, n_comits: 3623221
+Time: 2186059547, n_comits: 3625290
+Time: 2186059557, n_comits: 3627409
+Time: 2186059568, n_comits: 3629587
+Time: 2186059578, n_comits: 3631807
+Time: 2186059588, n_comits: 3633940
+Time: 2186059598, n_comits: 3636074
+Time: 2186059608, n_comits: 3638285
+Time: 2186059618, n_comits: 3640432
+Time: 2186059628, n_comits: 3642634
+Time: 2186059638, n_comits: 3644758
+Time: 2186059649, n_comits: 3646887
+Time: 2186059659, n_comits: 3649052
+Time: 2186059669, n_comits: 3651199
+Time: 2186059679, n_comits: 3653318
+Time: 2186059689, n_comits: 3655305
+Time: 2186059699, n_comits: 3657463
+Time: 2186059709, n_comits: 3659644
+Time: 2186059719, n_comits: 3661776
+Time: 2186059729, n_comits: 3663960
+Time: 2186059739, n_comits: 3666098
+Time: 2186059749, n_comits: 3668283
+Time: 2186059759, n_comits: 3670375
+Time: 2186059769, n_comits: 3672365
+Time: 2186059779, n_comits: 3674571
+Time: 2186059789, n_comits: 3676778
+Time: 2186059800, n_comits: 3678891
+Time: 2186059810, n_comits: 3681058
+Time: 2186059820, n_comits: 3683198
+Time: 2186059830, n_comits: 3685298
+Time: 2186059840, n_comits: 3687370
+Time: 2186059850, n_comits: 3689415
+Time: 2186059860, n_comits: 3691603
+Time: 2186059870, n_comits: 3693837
+Time: 2186059880, n_comits: 3696008
+Time: 2186059890, n_comits: 3698173
+Time: 2186059900, n_comits: 3700283
+Time: 2186059910, n_comits: 3702490
+Time: 2186059921, n_comits: 3704624
+Time: 2186059931, n_comits: 3706706
+Time: 2186059941, n_comits: 3708794
+Time: 2186059951, n_comits: 3710982
+Time: 2186059961, n_comits: 3712972
+Time: 2186059971, n_comits: 3715128
+Time: 2186059981, n_comits: 3717221
+Time: 2186059991, n_comits: 3719432
+Time: 2186060001, n_comits: 3721626
+Time: 2186060011, n_comits: 3723723
+Time: 2186060021, n_comits: 3725899
+Time: 2186060031, n_comits: 3728038
+Time: 2186060041, n_comits: 3730031
+Time: 2186060051, n_comits: 3732120
+Time: 2186060061, n_comits: 3734337
+Time: 2186060072, n_comits: 3736504
+Time: 2186060082, n_comits: 3738717
+Time: 2186060092, n_comits: 3740788
+Time: 2186060102, n_comits: 3742888
+Time: 2186060112, n_comits: 3745037
+Time: 2186060122, n_comits: 3747094
+Time: 2186060132, n_comits: 3749220
+Time: 2186060142, n_comits: 3751418
+Time: 2186060152, n_comits: 3753593
+Time: 2186060162, n_comits: 3755655
+Time: 2186060172, n_comits: 3757686
+Time: 2186060182, n_comits: 3759745
+Time: 2186060192, n_comits: 3761846
+Time: 2186060202, n_comits: 3763976
+Time: 2186060212, n_comits: 3766147
+Time: 2186060223, n_comits: 3768266
+Time: 2186060233, n_comits: 3770347
+Time: 2186060243, n_comits: 3772442
+Time: 2186060253, n_comits: 3774563
+Time: 2186060263, n_comits: 3776646
+Time: 2186060273, n_comits: 3778674
+Time: 2186060283, n_comits: 3780821
+Time: 2186060293, n_comits: 3782985
+Time: 2186060303, n_comits: 3785155
+Time: 2186060313, n_comits: 3787536
+Time: 2186060323, n_comits: 3789773
+Time: 2186060333, n_comits: 3791967
+Time: 2186060344, n_comits: 3793981
+Time: 2186060354, n_comits: 3796020
+Time: 2186060364, n_comits: 3798073
+Time: 2186060374, n_comits: 3800111
+Time: 2186060384, n_comits: 3802164
+Time: 2186060394, n_comits: 3804218
+Time: 2186060404, n_comits: 3806205
+Time: 2186060414, n_comits: 3808242
+Time: 2186060424, n_comits: 3810319
+Time: 2186060434, n_comits: 3812369
+Time: 2186060444, n_comits: 3814453
+Time: 2186060454, n_comits: 3816480
+Time: 2186060464, n_comits: 3818577
+Time: 2186060474, n_comits: 3820577
+Time: 2186060484, n_comits: 3822593
+Time: 2186060494, n_comits: 3824667
+Time: 2186060505, n_comits: 3826644
+Time: 2186060515, n_comits: 3828711
+Time: 2186060525, n_comits: 3830695
+Time: 2186060535, n_comits: 3832884
+Time: 2186060545, n_comits: 3834883
+Time: 2186060555, n_comits: 3836958
+Time: 2186060565, n_comits: 3839002
+Time: 2186060575, n_comits: 3840860
+Time: 2186060585, n_comits: 3842891
+Time: 2186060595, n_comits: 3844982
+Time: 2186060605, n_comits: 3847098
+Time: 2186060615, n_comits: 3849208
+Time: 2186060625, n_comits: 3851341
+Time: 2186060635, n_comits: 3853447
+Time: 2186060645, n_comits: 3855470
+Time: 2186060655, n_comits: 3857468
+Time: 2186060666, n_comits: 3859436
+Time: 2186060676, n_comits: 3861474
+Time: 2186060686, n_comits: 3863440
+Time: 2186060696, n_comits: 3865577
+Time: 2186060706, n_comits: 3867684
+Time: 2186060716, n_comits: 3869711
+Time: 2186060726, n_comits: 3871634
+Time: 2186060736, n_comits: 3873593
+Time: 2186060746, n_comits: 3875585
+Time: 2186060756, n_comits: 3877544
+Time: 2186060766, n_comits: 3879574
+Time: 2186060776, n_comits: 3881587
+Time: 2186060786, n_comits: 3883536
+Time: 2186060796, n_comits: 3885506
+Time: 2186060806, n_comits: 3887490
+Time: 2186060816, n_comits: 3889411
+Time: 2186060827, n_comits: 3891389
+Time: 2186060837, n_comits: 3893356
+Time: 2186060847, n_comits: 3895341
+Time: 2186060857, n_comits: 3897365
+Time: 2186060867, n_comits: 3899211
+Time: 2186060877, n_comits: 3901286
+Time: 2186060887, n_comits: 3903244
+Time: 2186060897, n_comits: 3905214
+Time: 2186060907, n_comits: 3907153
+Time: 2186060917, n_comits: 3909066
+Time: 2186060927, n_comits: 3911057
+Time: 2186060937, n_comits: 3913026
+Time: 2186060947, n_comits: 3915045
+Time: 2186060957, n_comits: 3917088
+Time: 2186060967, n_comits: 3919043
+Time: 2186060978, n_comits: 3920985
+Time: 2186060988, n_comits: 3923033
+Time: 2186060998, n_comits: 3925067
+Time: 2186061008, n_comits: 3926964
+Time: 2186061018, n_comits: 3928875
+Time: 2186061028, n_comits: 3930888
+Time: 2186061038, n_comits: 3932888
+Time: 2186061048, n_comits: 3934793
+Time: 2186061058, n_comits: 3936790
+Time: 2186061068, n_comits: 3938806
+Time: 2186061078, n_comits: 3940832
+Time: 2186061088, n_comits: 3942840
+Time: 2186061099, n_comits: 3944856
+Time: 2186061109, n_comits: 3946849
+Time: 2186061119, n_comits: 3948828
+Time: 2186061129, n_comits: 3950751
+Time: 2186061139, n_comits: 3952741
+Time: 2186061149, n_comits: 3954727
+Time: 2186061159, n_comits: 3956602
+Time: 2186061169, n_comits: 3958545
+Time: 2186061179, n_comits: 3960460
+Time: 2186061189, n_comits: 3962312
+Time: 2186061199, n_comits: 3964227
+Time: 2186061209, n_comits: 3966216
+Time: 2186061219, n_comits: 3968205
+Time: 2186061229, n_comits: 3970080
+Time: 2186061239, n_comits: 3971972
+Time: 2186061250, n_comits: 3973942
+Time: 2186061260, n_comits: 3975832
+Time: 2186061270, n_comits: 3977800
+Time: 2186061280, n_comits: 3979809
+Time: 2186061290, n_comits: 3981895
+Time: 2186061300, n_comits: 3983839
+Time: 2186061310, n_comits: 3985822
+Time: 2186061320, n_comits: 3987868
+Time: 2186061330, n_comits: 3989935
+Time: 2186061340, n_comits: 3991866
+Time: 2186061351, n_comits: 3993890
+Time: 2186061361, n_comits: 3995894
+Time: 2186061371, n_comits: 3997815
+Time: 2186061381, n_comits: 3999861
+Time: 2186061391, n_comits: 4001738
+Time: 2186061401, n_comits: 4003677
+Time: 2186061411, n_comits: 4005753
+Time: 2186061421, n_comits: 4007640
+Time: 2186061431, n_comits: 4009604
+Time: 2186061441, n_comits: 4011561
+Time: 2186061451, n_comits: 4013464
+Time: 2186061461, n_comits: 4015473
+Time: 2186061472, n_comits: 4017447
+Time: 2186061482, n_comits: 4019427
+Time: 2186061492, n_comits: 4021451
+Time: 2186061502, n_comits: 4023497
+Time: 2186061512, n_comits: 4025472
+Time: 2186061522, n_comits: 4027290
+Time: 2186061532, n_comits: 4029293
+Time: 2186061542, n_comits: 4031232
+Time: 2186061553, n_comits: 4033131
+Time: 2186061563, n_comits: 4035120
+Time: 2186061573, n_comits: 4037055
+Time: 2186061583, n_comits: 4039167
+Time: 2186061593, n_comits: 4041222
+Time: 2186061603, n_comits: 4043200
+Time: 2186061613, n_comits: 4045184
+Time: 2186061623, n_comits: 4047146
+Time: 2186061633, n_comits: 4049139
+Time: 2186061644, n_comits: 4051062
+Time: 2186061654, n_comits: 4053079
+Time: 2186061664, n_comits: 4055207
+Time: 2186061674, n_comits: 4057155
+Time: 2186061684, n_comits: 4059112
+Time: 2186061694, n_comits: 4061096
+Time: 2186061704, n_comits: 4063063
+Time: 2186061714, n_comits: 4065091
+Time: 2186061724, n_comits: 4066981
+Time: 2186061734, n_comits: 4069073
+Time: 2186061744, n_comits: 4071052
+Time: 2186061754, n_comits: 4073127
+Time: 2186061765, n_comits: 4075110
+Time: 2186061775, n_comits: 4077263
+Time: 2186061785, n_comits: 4079297
+Time: 2186061795, n_comits: 4081224
+Time: 2186061805, n_comits: 4083276
+Time: 2186061815, n_comits: 4085278
+Time: 2186061825, n_comits: 4087272
+Time: 2186061835, n_comits: 4089207
+Time: 2186061845, n_comits: 4091161
+Time: 2186061856, n_comits: 4093182
+Time: 2186061866, n_comits: 4095189
+Time: 2186061876, n_comits: 4097217
+Time: 2186061886, n_comits: 4099234
+Time: 2186061896, n_comits: 4101255
+Time: 2186061906, n_comits: 4103215
+Time: 2186061916, n_comits: 4105184
+Time: 2186061926, n_comits: 4107147
+Time: 2186061937, n_comits: 4109082
+Time: 2186061947, n_comits: 4111099
+Time: 2186061957, n_comits: 4113153
+Time: 2186061967, n_comits: 4115109
+Time: 2186061977, n_comits: 4117122
+Time: 2186061987, n_comits: 4119116
+Time: 2186061997, n_comits: 4121120
+Time: 2186062007, n_comits: 4123065
+Time: 2186062017, n_comits: 4124938
+Time: 2186062027, n_comits: 4126946
+Time: 2186062037, n_comits: 4128901
+Time: 2186062047, n_comits: 4130978
+Time: 2186062058, n_comits: 4132945
+Time: 2186062068, n_comits: 4134960
+Time: 2186062078, n_comits: 4136933
+Time: 2186062088, n_comits: 4138884
+Time: 2186062098, n_comits: 4140801
+Time: 2186062108, n_comits: 4142814
+Time: 2186062118, n_comits: 4144778
+Time: 2186062128, n_comits: 4146923
+Time: 2186062138, n_comits: 4148968
+Time: 2186062148, n_comits: 4150883
+Time: 2186062159, n_comits: 4152931
+Time: 2186062169, n_comits: 4154988
+Time: 2186062179, n_comits: 4156961
+Time: 2186062190, n_comits: 4158941
+Time: 2186062200, n_comits: 4160882
+Time: 2186062210, n_comits: 4162824
+Time: 2186062220, n_comits: 4164835
+Time: 2186062230, n_comits: 4166860
+Time: 2186062240, n_comits: 4168919
+Time: 2186062250, n_comits: 4170925
+Time: 2186062260, n_comits: 4172923
+Time: 2186062270, n_comits: 4175004
+Time: 2186062280, n_comits: 4177104
+Time: 2186062290, n_comits: 4179164
+Time: 2186062301, n_comits: 4181189
+Time: 2186062312, n_comits: 4183440
+Time: 2186062322, n_comits: 4185502
+Time: 2186062332, n_comits: 4187497
+Time: 2186062342, n_comits: 4189292
+Time: 2186062352, n_comits: 4191256
+Time: 2186062362, n_comits: 4193386
+Time: 2186062372, n_comits: 4195326
+Time: 2186062382, n_comits: 4197352
+Time: 2186062392, n_comits: 4199309
+Time: 2186062402, n_comits: 4201265
+Time: 2186062412, n_comits: 4203283
+Time: 2186062423, n_comits: 4205335
+Time: 2186062433, n_comits: 4207369
+Time: 2186062443, n_comits: 4209340
+Time: 2186062453, n_comits: 4211220
+Time: 2186062463, n_comits: 4213182
+Time: 2186062473, n_comits: 4215160
+Time: 2186062483, n_comits: 4217159
+Time: 2186062493, n_comits: 4219184
+Time: 2186062503, n_comits: 4221109
+Time: 2186062513, n_comits: 4223128
+Time: 2186062524, n_comits: 4225129
+Time: 2186062534, n_comits: 4227150
+Time: 2186062544, n_comits: 4229148
+Time: 2186062554, n_comits: 4231156
+Time: 2186062564, n_comits: 4233120
+Time: 2186062574, n_comits: 4234961
+Time: 2186062584, n_comits: 4237019
+Time: 2186062594, n_comits: 4238968
+Time: 2186062604, n_comits: 4240894
+Time: 2186062614, n_comits: 4242886
+Time: 2186062624, n_comits: 4244769
+Time: 2186062634, n_comits: 4246729
+Time: 2186062644, n_comits: 4248719
+Time: 2186062654, n_comits: 4250798
+Time: 2186062664, n_comits: 4252647
+Time: 2186062675, n_comits: 4254611
+Time: 2186062685, n_comits: 4256736
+Time: 2186062695, n_comits: 4258764
+Time: 2186062705, n_comits: 4260778
+Time: 2186062715, n_comits: 4262727
+Time: 2186062725, n_comits: 4264649
+Time: 2186062735, n_comits: 4266599
+Time: 2186062745, n_comits: 4268675
+Time: 2186062755, n_comits: 4270644
+Time: 2186062765, n_comits: 4272681
+Time: 2186062775, n_comits: 4274642
+Time: 2186062786, n_comits: 4276704
+Time: 2186062796, n_comits: 4278583
+Time: 2186062806, n_comits: 4280673
+Time: 2186062816, n_comits: 4282536
+Time: 2186062826, n_comits: 4284530
+Time: 2186062836, n_comits: 4286426
+Time: 2186062846, n_comits: 4288483
+Time: 2186062857, n_comits: 4290524
+Time: 2186062867, n_comits: 4292712
+Time: 2186062877, n_comits: 4294771
+Time: 2186062887, n_comits: 4296819
+Time: 2186062897, n_comits: 4298775
+Time: 2186062907, n_comits: 4300820
+Time: 2186062917, n_comits: 4302882
+Time: 2186062927, n_comits: 4304971
+Time: 2186062937, n_comits: 4307069
+Time: 2186062948, n_comits: 4309214
+Time: 2186062958, n_comits: 4311317
+Time: 2186062968, n_comits: 4313449
+Time: 2186062978, n_comits: 4315535
+Time: 2186062988, n_comits: 4317570
+Time: 2186062998, n_comits: 4319685
+Time: 2186063008, n_comits: 4321823
+Time: 2186063018, n_comits: 4323860
+Time: 2186063028, n_comits: 4325919
+Time: 2186063038, n_comits: 4327897
+Time: 2186063048, n_comits: 4329891
+Time: 2186063058, n_comits: 4331878
+Time: 2186063068, n_comits: 4333891
+Time: 2186063078, n_comits: 4336028
+Time: 2186063089, n_comits: 4338032
+Time: 2186063099, n_comits: 4340237
+Time: 2186063109, n_comits: 4342357
+Time: 2186063119, n_comits: 4344355
+Time: 2186063129, n_comits: 4346365
+Time: 2186063139, n_comits: 4348486
+Time: 2186063149, n_comits: 4350655
+Time: 2186063159, n_comits: 4352661
+Time: 2186063169, n_comits: 4354718
+Time: 2186063179, n_comits: 4356769
+Time: 2186063189, n_comits: 4358860
+Time: 2186063199, n_comits: 4360996
+Time: 2186063209, n_comits: 4363197
+Time: 2186063219, n_comits: 4365297
+Time: 2186063229, n_comits: 4367233
+Time: 2186063239, n_comits: 4369375
+Time: 2186063250, n_comits: 4371459
+Time: 2186063260, n_comits: 4373456
+Time: 2186063270, n_comits: 4375537
+Time: 2186063280, n_comits: 4377651
+Time: 2186063290, n_comits: 4379734
+Time: 2186063300, n_comits: 4381883
+Time: 2186063310, n_comits: 4383986
+Time: 2186063320, n_comits: 4386109
+Time: 2186063330, n_comits: 4388173
+Time: 2186063340, n_comits: 4390249
+Time: 2186063350, n_comits: 4392274
+Time: 2186063360, n_comits: 4394345
+Time: 2186063370, n_comits: 4396376
+Time: 2186063380, n_comits: 4398367
+Time: 2186063390, n_comits: 4400378
+Time: 2186063401, n_comits: 4402498
+Time: 2186063411, n_comits: 4404559
+Time: 2186063421, n_comits: 4406674
+Time: 2186063431, n_comits: 4408666
+Time: 2186063441, n_comits: 4410761
+Time: 2186063451, n_comits: 4412859
+Time: 2186063461, n_comits: 4414938
+Time: 2186063471, n_comits: 4416941
+Time: 2186063481, n_comits: 4419027
+Time: 2186063491, n_comits: 4421175
+Time: 2186063501, n_comits: 4423249
+Time: 2186063511, n_comits: 4425179
+Time: 2186063521, n_comits: 4427142
+Time: 2186063531, n_comits: 4429123
+Time: 2186063541, n_comits: 4431196
+Time: 2186063552, n_comits: 4433290
+Time: 2186063562, n_comits: 4435392
+Time: 2186063572, n_comits: 4437551
+Time: 2186063582, n_comits: 4439534
+Time: 2186063592, n_comits: 4441648
+Time: 2186063602, n_comits: 4443825
+Time: 2186063612, n_comits: 4445940
+Time: 2186063622, n_comits: 4448125
+Time: 2186063632, n_comits: 4450305
+Time: 2186063642, n_comits: 4452501
+Time: 2186063653, n_comits: 4454706
+Time: 2186063663, n_comits: 4456800
+Time: 2186063673, n_comits: 4458947
+Time: 2186063683, n_comits: 4460982
+Time: 2186063693, n_comits: 4463008
+Time: 2186063704, n_comits: 4465116
+Time: 2186063714, n_comits: 4467286
+Time: 2186063724, n_comits: 4469333
+Time: 2186063734, n_comits: 4471408
+Time: 2186063744, n_comits: 4473587
+Time: 2186063754, n_comits: 4475673
+Time: 2186063765, n_comits: 4477785
+Time: 2186063775, n_comits: 4479970
+Time: 2186063785, n_comits: 4482122
+Time: 2186063795, n_comits: 4484157
+Time: 2186063805, n_comits: 4486229
+Time: 2186063815, n_comits: 4488202
+Time: 2186063825, n_comits: 4490228
+Time: 2186063835, n_comits: 4492325
+Time: 2186063845, n_comits: 4494416
+Time: 2186063855, n_comits: 4496459
+Time: 2186063865, n_comits: 4498736
+Time: 2186063875, n_comits: 4500864
+Time: 2186063885, n_comits: 4503002
+Time: 2186063896, n_comits: 4505148
+Time: 2186063906, n_comits: 4507210
+Time: 2186063916, n_comits: 4509268
+Time: 2186063926, n_comits: 4511360
+Time: 2186063936, n_comits: 4513551
+Time: 2186063946, n_comits: 4515751
+Time: 2186063956, n_comits: 4517768
+Time: 2186063966, n_comits: 4519880
+Time: 2186063976, n_comits: 4522066
+Time: 2186063986, n_comits: 4524202
+Time: 2186063996, n_comits: 4526197
+Time: 2186064006, n_comits: 4528439
+Time: 2186064016, n_comits: 4530582
+Time: 2186064027, n_comits: 4532687
+Time: 2186064037, n_comits: 4534705
+Time: 2186064047, n_comits: 4536798
+Time: 2186064057, n_comits: 4538936
+Time: 2186064067, n_comits: 4540959
+Time: 2186064077, n_comits: 4543064
+Time: 2186064087, n_comits: 4545127
+Time: 2186064097, n_comits: 4547285
+Time: 2186064107, n_comits: 4549516
+Time: 2186064117, n_comits: 4551605
+Time: 2186064127, n_comits: 4553801
+Time: 2186064137, n_comits: 4556035
+Time: 2186064148, n_comits: 4558293
+Time: 2186064158, n_comits: 4560359
+Time: 2186064168, n_comits: 4562528
+Time: 2186064178, n_comits: 4564732
+Time: 2186064188, n_comits: 4566854
+Time: 2186064198, n_comits: 4568880
+Time: 2186064208, n_comits: 4570957
+Time: 2186064218, n_comits: 4572976
+Time: 2186064228, n_comits: 4575106
+Time: 2186064238, n_comits: 4577088
+Time: 2186064248, n_comits: 4579119
+Time: 2186064259, n_comits: 4581157
+Time: 2186064269, n_comits: 4583159
+Time: 2186064279, n_comits: 4585297
+Time: 2186064289, n_comits: 4587498
+Time: 2186064299, n_comits: 4589641
+Time: 2186064309, n_comits: 4591779
+Time: 2186064319, n_comits: 4593946
+Time: 2186064329, n_comits: 4596054
+Time: 2186064339, n_comits: 4598254
+Time: 2186064349, n_comits: 4600425
+Time: 2186064359, n_comits: 4602530
+Time: 2186064369, n_comits: 4604697
+Time: 2186064379, n_comits: 4606805
+Time: 2186064389, n_comits: 4608933
+Time: 2186064400, n_comits: 4611098
+Time: 2186064410, n_comits: 4613239
+Time: 2186064420, n_comits: 4615377
+Time: 2186064430, n_comits: 4617396
+Time: 2186064440, n_comits: 4619388
+Time: 2186064450, n_comits: 4621510
+Time: 2186064460, n_comits: 4623632
+Time: 2186064470, n_comits: 4625809
+Time: 2186064480, n_comits: 4628009
+Time: 2186064490, n_comits: 4630072
+Time: 2186064501, n_comits: 4632235
+Time: 2186064511, n_comits: 4634342
+Time: 2186064521, n_comits: 4636365
+Time: 2186064531, n_comits: 4638409
+Time: 2186064541, n_comits: 4640563
+Time: 2186064551, n_comits: 4642682
+Time: 2186064561, n_comits: 4644782
+Time: 2186064571, n_comits: 4646703
+Time: 2186064581, n_comits: 4648831
+Time: 2186064591, n_comits: 4651053
+Time: 2186064601, n_comits: 4653166
+Time: 2186064612, n_comits: 4655294
+Time: 2186064622, n_comits: 4657393
+Time: 2186064632, n_comits: 4659525
+Time: 2186064642, n_comits: 4661662
+Time: 2186064652, n_comits: 4663781
+Time: 2186064662, n_comits: 4666097
+Time: 2186064672, n_comits: 4668262
+Time: 2186064682, n_comits: 4670350
+Time: 2186064693, n_comits: 4672589
+Time: 2186064703, n_comits: 4674786
+Time: 2186064713, n_comits: 4676901
+Time: 2186064723, n_comits: 4679033
+Time: 2186064733, n_comits: 4681074
+Time: 2186064743, n_comits: 4683197
+Time: 2186064754, n_comits: 4685373
+Time: 2186064764, n_comits: 4687535
+Time: 2186064774, n_comits: 4689647
+Time: 2186064784, n_comits: 4691875
+Time: 2186064794, n_comits: 4693966
+Time: 2186064804, n_comits: 4696089
+Time: 2186064814, n_comits: 4698126
+Time: 2186064824, n_comits: 4700297
+Time: 2186064834, n_comits: 4702474
+Time: 2186064844, n_comits: 4704557
+Time: 2186064854, n_comits: 4706721
+Time: 2186064864, n_comits: 4708881
+Time: 2186064875, n_comits: 4710974
+Time: 2186064885, n_comits: 4713000
+Time: 2186064895, n_comits: 4714979
+Time: 2186064905, n_comits: 4716926
+Time: 2186064915, n_comits: 4718812
+Time: 2186064925, n_comits: 4720861
+Time: 2186064935, n_comits: 4722882
+Time: 2186064945, n_comits: 4724971
+Time: 2186064955, n_comits: 4727105
+Time: 2186064965, n_comits: 4729199
+Time: 2186064975, n_comits: 4731255
+Time: 2186064986, n_comits: 4733513
+Time: 2186064996, n_comits: 4735615
+Time: 2186065006, n_comits: 4737622
+Time: 2186065016, n_comits: 4739689
+Time: 2186065026, n_comits: 4741813
+Time: 2186065036, n_comits: 4743846
+Time: 2186065046, n_comits: 4746030
+Time: 2186065056, n_comits: 4748040
+Time: 2186065066, n_comits: 4750018
+Time: 2186065076, n_comits: 4752127
+Time: 2186065086, n_comits: 4754207
+Time: 2186065096, n_comits: 4756214
+Time: 2186065106, n_comits: 4758294
+Time: 2186065116, n_comits: 4760271
+Time: 2186065127, n_comits: 4762318
+Time: 2186065137, n_comits: 4764386
+Time: 2186065147, n_comits: 4766545
+Time: 2186065157, n_comits: 4768623
+Time: 2186065167, n_comits: 4770653
+Time: 2186065177, n_comits: 4772711
+Time: 2186065187, n_comits: 4774788
+Time: 2186065197, n_comits: 4776837
+Time: 2186065207, n_comits: 4778925
+Time: 2186065217, n_comits: 4780863
+Time: 2186065227, n_comits: 4782942
+Time: 2186065237, n_comits: 4784979
+Time: 2186065247, n_comits: 4786913
+Time: 2186065257, n_comits: 4788939
+Time: 2186065268, n_comits: 4791111
+Time: 2186065278, n_comits: 4793134
+Time: 2186065288, n_comits: 4795236
+Time: 2186065298, n_comits: 4797351
+Time: 2186065308, n_comits: 4799493
+Time: 2186065318, n_comits: 4801583
+Time: 2186065328, n_comits: 4803673
+Time: 2186065338, n_comits: 4805688
+Time: 2186065348, n_comits: 4807760
+Time: 2186065358, n_comits: 4809806
+Time: 2186065368, n_comits: 4811862
+Time: 2186065378, n_comits: 4813819
+Time: 2186065388, n_comits: 4815825
+Time: 2186065398, n_comits: 4817828
+Time: 2186065408, n_comits: 4819961
+Time: 2186065419, n_comits: 4821875
+Time: 2186065429, n_comits: 4823923
+Time: 2186065439, n_comits: 4825976
+Time: 2186065449, n_comits: 4828043
+Time: 2186065459, n_comits: 4830026
+Time: 2186065469, n_comits: 4832097
+Time: 2186065479, n_comits: 4834195
+Time: 2186065489, n_comits: 4836221
+Time: 2186065499, n_comits: 4838243
+Time: 2186065509, n_comits: 4840321
+Time: 2186065519, n_comits: 4842393
+Time: 2186065529, n_comits: 4844536
+Time: 2186065539, n_comits: 4846523
+Time: 2186065549, n_comits: 4848597
+Time: 2186065559, n_comits: 4850590
+Time: 2186065569, n_comits: 4852526
+Time: 2186065580, n_comits: 4854563
+Time: 2186065590, n_comits: 4856578
+Time: 2186065600, n_comits: 4858683
+Time: 2186065610, n_comits: 4860709
+Time: 2186065620, n_comits: 4862722
+Time: 2186065630, n_comits: 4864769
+Time: 2186065640, n_comits: 4866935
+Time: 2186065650, n_comits: 4869050
+Time: 2186065660, n_comits: 4871116
+Time: 2186065670, n_comits: 4873151
+Time: 2186065680, n_comits: 4875280
+Time: 2186065690, n_comits: 4877349
+Time: 2186065700, n_comits: 4879498
+Time: 2186065710, n_comits: 4881522
+Time: 2186065720, n_comits: 4883602
+Time: 2186065730, n_comits: 4885701
+Time: 2186065741, n_comits: 4887789
+Time: 2186065751, n_comits: 4889886
+Time: 2186065761, n_comits: 4891891
+Time: 2186065771, n_comits: 4893911
+Time: 2186065781, n_comits: 4895935
+Time: 2186065791, n_comits: 4898053
+Time: 2186065801, n_comits: 4900116
+Time: 2186065811, n_comits: 4902171
+Time: 2186065821, n_comits: 4904142
+Time: 2186065831, n_comits: 4906147
+Time: 2186065841, n_comits: 4908159
+Time: 2186065851, n_comits: 4910299
+Time: 2186065861, n_comits: 4912440
+Time: 2186065871, n_comits: 4914551
+Time: 2186065881, n_comits: 4916593
+Time: 2186065892, n_comits: 4918748
+Time: 2186065902, n_comits: 4920856
+Time: 2186065912, n_comits: 4922944
+Time: 2186065922, n_comits: 4925098
+Time: 2186065932, n_comits: 4927218
+Time: 2186065942, n_comits: 4929382
+Time: 2186065952, n_comits: 4931431
+Time: 2186065962, n_comits: 4933498
+Time: 2186065973, n_comits: 4935725
+Time: 2186065983, n_comits: 4937816
+Time: 2186065993, n_comits: 4939846
+Time: 2186066003, n_comits: 4941943
+Time: 2186066013, n_comits: 4944092
+Time: 2186066023, n_comits: 4946339
+Time: 2186066034, n_comits: 4948409
+Time: 2186066044, n_comits: 4950549
+Time: 2186066054, n_comits: 4952590
+Time: 2186066064, n_comits: 4954677
+Time: 2186066074, n_comits: 4956792
+Time: 2186066084, n_comits: 4958892
+Time: 2186066094, n_comits: 4960973
+Time: 2186066104, n_comits: 4962952
+Time: 2186066114, n_comits: 4964954
+Time: 2186066124, n_comits: 4966978
+Time: 2186066134, n_comits: 4969133
+Time: 2186066144, n_comits: 4971169
+Time: 2186066155, n_comits: 4973341
+Time: 2186066165, n_comits: 4975528
+Time: 2186066175, n_comits: 4977535
+Time: 2186066185, n_comits: 4979583
+Time: 2186066195, n_comits: 4981602
+Time: 2186066205, n_comits: 4983742
+Time: 2186066215, n_comits: 4985799
+Time: 2186066225, n_comits: 4987867
+Time: 2186066235, n_comits: 4990070
+Time: 2186066245, n_comits: 4992289
+Time: 2186066255, n_comits: 4994350
+Time: 2186066265, n_comits: 4996431
+Time: 2186066275, n_comits: 4998528
+Time: 2186066285, n_comits: 5000699
+Time: 2186066295, n_comits: 5002769
+Time: 2186066305, n_comits: 5004865
+Time: 2186066316, n_comits: 5006979
+Time: 2186066326, n_comits: 5009116
+Time: 2186066336, n_comits: 5011284
+Time: 2186066346, n_comits: 5013385
+Time: 2186066356, n_comits: 5015455
+Time: 2186066366, n_comits: 5017550
+Time: 2186066376, n_comits: 5019647
+Time: 2186066386, n_comits: 5021760
+Time: 2186066397, n_comits: 5023933
+Time: 2186066407, n_comits: 5025952
+Time: 2186066417, n_comits: 5028121
+Time: 2186066427, n_comits: 5030318
+Time: 2186066437, n_comits: 5032341
+Time: 2186066447, n_comits: 5034378
+Time: 2186066457, n_comits: 5036478
+Time: 2186066468, n_comits: 5038749
+Time: 2186066478, n_comits: 5040809
+Time: 2186066488, n_comits: 5042916
+Time: 2186066498, n_comits: 5045048
+Time: 2186066508, n_comits: 5047209
+Time: 2186066518, n_comits: 5049309
+Time: 2186066528, n_comits: 5051359
+Time: 2186066538, n_comits: 5053433
+Time: 2186066549, n_comits: 5055412
+Time: 2186066559, n_comits: 5057441
+Time: 2186066569, n_comits: 5059606
+Time: 2186066579, n_comits: 5061586
+Time: 2186066589, n_comits: 5063606
+Time: 2186066599, n_comits: 5065833
+Time: 2186066610, n_comits: 5068083
+Time: 2186066620, n_comits: 5070251
+Time: 2186066630, n_comits: 5072405
+Time: 2186066640, n_comits: 5074527
+Time: 2186066650, n_comits: 5076657
+Time: 2186066660, n_comits: 5078768
+Time: 2186066670, n_comits: 5080825
+Time: 2186066680, n_comits: 5082938
+Time: 2186066690, n_comits: 5084960
+Time: 2186066701, n_comits: 5087148
+Time: 2186066711, n_comits: 5089319
+Time: 2186066722, n_comits: 5091483
+Time: 2186066732, n_comits: 5093593
+Time: 2186066742, n_comits: 5095656
+Time: 2186066752, n_comits: 5097839
+Time: 2186066762, n_comits: 5099913
+Time: 2186066772, n_comits: 5102072
+Time: 2186066782, n_comits: 5104054
+Time: 2186066792, n_comits: 5106220
+Time: 2186066802, n_comits: 5108368
+Time: 2186066812, n_comits: 5110379
+Time: 2186066823, n_comits: 5112397
+Time: 2186066833, n_comits: 5114473
+Time: 2186066843, n_comits: 5116552
+Time: 2186066853, n_comits: 5118575
+Time: 2186066864, n_comits: 5120736
+Time: 2186066874, n_comits: 5122875
+Time: 2186066884, n_comits: 5125075
+Time: 2186066894, n_comits: 5127149
+Time: 2186066905, n_comits: 5129443
+Time: 2186066915, n_comits: 5131541
+Time: 2186066925, n_comits: 5133521
+Time: 2186066935, n_comits: 5135706
+Time: 2186066945, n_comits: 5137857
+Time: 2186066955, n_comits: 5140082
+Time: 2186066965, n_comits: 5142150
+Time: 2186066975, n_comits: 5144288
+Time: 2186066985, n_comits: 5146345
+Time: 2186066995, n_comits: 5148399
+Time: 2186067005, n_comits: 5150492
+Time: 2186067016, n_comits: 5152553
+Time: 2186067026, n_comits: 5154627
+Time: 2186067036, n_comits: 5156718
+Time: 2186067046, n_comits: 5158811
+Time: 2186067056, n_comits: 5160922
+Time: 2186067066, n_comits: 5163067
+Time: 2186067076, n_comits: 5165033
+Time: 2186067086, n_comits: 5167131
+Time: 2186067096, n_comits: 5169122
+Time: 2186067106, n_comits: 5171230
+Time: 2186067116, n_comits: 5173371
+Time: 2186067126, n_comits: 5175367
+Time: 2186067137, n_comits: 5177325
+Time: 2186067147, n_comits: 5179337
+Time: 2186067157, n_comits: 5181346
+Time: 2186067167, n_comits: 5183250
+Time: 2186067177, n_comits: 5185348
+Time: 2186067187, n_comits: 5187398
+Time: 2186067197, n_comits: 5189444
+Time: 2186067207, n_comits: 5191512
+Time: 2186067217, n_comits: 5193529
+Time: 2186067227, n_comits: 5195502
+Time: 2186067237, n_comits: 5197541
+Time: 2186067247, n_comits: 5199500
+Time: 2186067257, n_comits: 5201522
+Time: 2186067267, n_comits: 5203536
+Time: 2186067277, n_comits: 5205601
+Time: 2186067288, n_comits: 5207635
+Time: 2186067298, n_comits: 5209662
+Time: 2186067308, n_comits: 5211718
+Time: 2186067318, n_comits: 5213731
+Time: 2186067328, n_comits: 5215804
+Time: 2186067338, n_comits: 5217794
+Time: 2186067348, n_comits: 5219775
+Time: 2186067358, n_comits: 5221854
+Time: 2186067368, n_comits: 5223883
+Time: 2186067378, n_comits: 5225885
+Time: 2186067388, n_comits: 5227854
+Time: 2186067398, n_comits: 5229980
+Time: 2186067408, n_comits: 5232016
+Time: 2186067418, n_comits: 5234032
+Time: 2186067428, n_comits: 5236109
+Time: 2186067439, n_comits: 5238182
+Time: 2186067449, n_comits: 5240244
+Time: 2186067459, n_comits: 5242305
+Time: 2186067469, n_comits: 5244432
+Time: 2186067479, n_comits: 5246570
+Time: 2186067489, n_comits: 5248622
+Time: 2186067499, n_comits: 5250727
+Time: 2186067509, n_comits: 5252661
+Time: 2186067519, n_comits: 5254782
+Time: 2186067529, n_comits: 5256818
+Time: 2186067539, n_comits: 5258819
+Time: 2186067549, n_comits: 5260890
+Time: 2186067559, n_comits: 5262927
+Time: 2186067569, n_comits: 5264999
+Time: 2186067579, n_comits: 5267072
+Time: 2186067589, n_comits: 5269189
+Time: 2186067600, n_comits: 5271128
+Time: 2186067610, n_comits: 5273181
+Time: 2186067620, n_comits: 5275268
+Time: 2186067630, n_comits: 5277314
+Time: 2186067640, n_comits: 5279328
+Time: 2186067650, n_comits: 5281342
+Time: 2186067660, n_comits: 5283383
+Time: 2186067670, n_comits: 5285389
+Time: 2186067680, n_comits: 5287616
+Time: 2186067690, n_comits: 5289622
+Time: 2186067700, n_comits: 5291788
+Time: 2186067710, n_comits: 5293983
+Time: 2186067720, n_comits: 5296175
+Time: 2186067730, n_comits: 5298112
+Time: 2186067740, n_comits: 5300150
+Time: 2186067751, n_comits: 5302208
+Time: 2186067761, n_comits: 5304387
+Time: 2186067771, n_comits: 5306443
+Time: 2186067781, n_comits: 5308492
+Time: 2186067791, n_comits: 5310641
+Time: 2186067801, n_comits: 5312650
+Time: 2186067811, n_comits: 5314638
+Time: 2186067821, n_comits: 5316729
+Time: 2186067831, n_comits: 5318807
+Time: 2186067841, n_comits: 5320845
+Time: 2186067851, n_comits: 5322908
+Time: 2186067861, n_comits: 5325084
+Time: 2186067871, n_comits: 5327017
+Time: 2186067881, n_comits: 5329005
+Time: 2186067891, n_comits: 5330975
+Time: 2186067901, n_comits: 5333054
+Time: 2186067912, n_comits: 5335146
+Time: 2186067922, n_comits: 5337312
+Time: 2186067932, n_comits: 5339313
+Time: 2186067942, n_comits: 5341437
+Time: 2186067952, n_comits: 5343478
+Time: 2186067962, n_comits: 5345496
+Time: 2186067972, n_comits: 5347721
+Time: 2186067982, n_comits: 5349910
+Time: 2186067992, n_comits: 5352078
+Time: 2186068002, n_comits: 5354177
+Time: 2186068012, n_comits: 5356336
+Time: 2186068022, n_comits: 5358356
+Time: 2186068032, n_comits: 5360534
+Time: 2186068042, n_comits: 5362736
+Time: 2186068053, n_comits: 5364771
+Time: 2186068063, n_comits: 5366750
+Time: 2186068073, n_comits: 5368683
+Time: 2186068083, n_comits: 5370653
+Time: 2186068093, n_comits: 5372704
+Time: 2186068103, n_comits: 5374844
+Time: 2186068113, n_comits: 5376894
+Time: 2186068123, n_comits: 5378908
+Time: 2186068133, n_comits: 5380945
+Time: 2186068143, n_comits: 5382890
+Time: 2186068153, n_comits: 5384941
+Time: 2186068163, n_comits: 5386769
+Time: 2186068173, n_comits: 5388659
+Time: 2186068184, n_comits: 5390587
+Time: 2186068194, n_comits: 5392565
+Time: 2186068204, n_comits: 5394487
+Time: 2186068214, n_comits: 5396529
+Time: 2186068224, n_comits: 5398598
+Time: 2186068234, n_comits: 5400629
+Time: 2186068244, n_comits: 5402650
+Time: 2186068254, n_comits: 5404692
+Time: 2186068264, n_comits: 5406707
+Time: 2186068274, n_comits: 5408726
+Time: 2186068284, n_comits: 5410864
+Time: 2186068294, n_comits: 5412916
+Time: 2186068304, n_comits: 5414935
+Time: 2186068314, n_comits: 5417014
+Time: 2186068324, n_comits: 5419010
+Time: 2186068334, n_comits: 5420912
+Time: 2186068345, n_comits: 5423011
+Time: 2186068355, n_comits: 5425036
+Time: 2186068365, n_comits: 5427141
+Time: 2186068375, n_comits: 5429275
+Time: 2186068385, n_comits: 5431289
+Time: 2186068395, n_comits: 5433305
+Time: 2186068405, n_comits: 5435347
+Time: 2186068415, n_comits: 5437349
+Time: 2186068425, n_comits: 5439386
+Time: 2186068435, n_comits: 5441530
+Time: 2186068445, n_comits: 5443617
+Time: 2186068455, n_comits: 5445687
+Time: 2186068465, n_comits: 5447679
+Time: 2186068475, n_comits: 5449768
+Time: 2186068485, n_comits: 5451876
+Time: 2186068496, n_comits: 5453939
+Time: 2186068506, n_comits: 5455910
+Time: 2186068516, n_comits: 5458005
+Time: 2186068526, n_comits: 5460162
+Time: 2186068536, n_comits: 5462284
+Time: 2186068546, n_comits: 5464424
+Time: 2186068556, n_comits: 5466531
+Time: 2186068566, n_comits: 5468607
+Time: 2186068576, n_comits: 5470725
+Time: 2186068586, n_comits: 5472731
+Time: 2186068597, n_comits: 5474772
+Time: 2186068607, n_comits: 5476811
+Time: 2186068617, n_comits: 5478838
+Time: 2186068627, n_comits: 5480849
+Time: 2186068637, n_comits: 5482928
+Time: 2186068647, n_comits: 5484994
+Time: 2186068657, n_comits: 5487161
+Time: 2186068667, n_comits: 5489177
+Time: 2186068677, n_comits: 5491168
+Time: 2186068687, n_comits: 5493298
+Time: 2186068697, n_comits: 5495362
+Time: 2186068707, n_comits: 5497366
+Time: 2186068717, n_comits: 5499356
+Time: 2186068727, n_comits: 5501426
+Time: 2186068737, n_comits: 5503375
+Time: 2186068748, n_comits: 5505327
+Time: 2186068758, n_comits: 5507344
+Time: 2186068768, n_comits: 5509411
+Time: 2186068778, n_comits: 5511558
+Time: 2186068788, n_comits: 5513637
+Time: 2186068798, n_comits: 5515677
+Time: 2186068808, n_comits: 5517745
+Time: 2186068818, n_comits: 5519835
+Time: 2186068828, n_comits: 5521857
+Time: 2186068838, n_comits: 5523902
+Time: 2186068848, n_comits: 5525892
+Time: 2186068858, n_comits: 5527978
+Time: 2186068868, n_comits: 5530083
+Time: 2186068878, n_comits: 5532125
+Time: 2186068888, n_comits: 5534195
+Time: 2186068898, n_comits: 5536130
+Time: 2186068909, n_comits: 5538249
+Time: 2186068919, n_comits: 5540298
+Time: 2186068929, n_comits: 5542310
+Time: 2186068939, n_comits: 5544244
+Time: 2186068949, n_comits: 5546231
+Time: 2186068959, n_comits: 5548284
+Time: 2186068969, n_comits: 5550366
+Time: 2186068979, n_comits: 5552430
+Time: 2186068989, n_comits: 5554397
+Time: 2186069000, n_comits: 5556460
+Time: 2186069010, n_comits: 5558520
+Time: 2186069020, n_comits: 5560615
+Time: 2186069030, n_comits: 5562600
+Time: 2186069040, n_comits: 5564698
+Time: 2186069050, n_comits: 5566820
+Time: 2186069060, n_comits: 5568791
+Time: 2186069070, n_comits: 5570704
+Time: 2186069080, n_comits: 5572774
+Time: 2186069090, n_comits: 5574883
+Time: 2186069100, n_comits: 5576893
+Time: 2186069110, n_comits: 5578877
+Time: 2186069120, n_comits: 5580824
+Time: 2186069130, n_comits: 5582916
+Time: 2186069140, n_comits: 5584903
+Time: 2186069150, n_comits: 5586895
+Time: 2186069160, n_comits: 5588919
+Time: 2186069171, n_comits: 5590863
+Time: 2186069181, n_comits: 5592837
+Time: 2186069191, n_comits: 5594843
+Time: 2186069201, n_comits: 5596824
+Time: 2186069211, n_comits: 5598944
+Time: 2186069221, n_comits: 5601089
+Time: 2186069231, n_comits: 5603141
+Time: 2186069241, n_comits: 5605183
+Time: 2186069251, n_comits: 5607204
+Time: 2186069262, n_comits: 5609349
+Time: 2186069272, n_comits: 5611352
+Time: 2186069282, n_comits: 5613355
+Time: 2186069292, n_comits: 5615468
+Time: 2186069302, n_comits: 5617534
+Time: 2186069312, n_comits: 5619575
+Time: 2186069322, n_comits: 5621686
+Time: 2186069333, n_comits: 5623893
+Time: 2186069343, n_comits: 5625937
+Time: 2186069353, n_comits: 5627965
+Time: 2186069363, n_comits: 5629916
+Time: 2186069374, n_comits: 5632009
+Time: 2186069385, n_comits: 5634330
+Time: 2186069395, n_comits: 5636374
+Time: 2186069405, n_comits: 5638377
+Time: 2186069415, n_comits: 5640365
+Time: 2186069425, n_comits: 5642323
+Time: 2186069435, n_comits: 5644385
+Time: 2186069446, n_comits: 5646357
+Time: 2186069456, n_comits: 5648304
+Time: 2186069466, n_comits: 5650374
+Time: 2186069476, n_comits: 5652426
+Time: 2186069486, n_comits: 5654339
+Time: 2186069496, n_comits: 5656258
+Time: 2186069506, n_comits: 5658292
+Time: 2186069516, n_comits: 5660359
+Time: 2186069526, n_comits: 5662460
+Time: 2186069536, n_comits: 5664425
+Time: 2186069546, n_comits: 5666478
+Time: 2186069556, n_comits: 5668543
+Time: 2186069566, n_comits: 5670609
+Time: 2186069577, n_comits: 5672678
+Time: 2186069587, n_comits: 5674697
+Time: 2186069597, n_comits: 5676826
+Time: 2186069607, n_comits: 5678843
+Time: 2186069617, n_comits: 5680940
+Time: 2186069627, n_comits: 5683155
+Time: 2186069637, n_comits: 5685320
+Time: 2186069647, n_comits: 5687369
+Time: 2186069657, n_comits: 5689384
+Time: 2186069668, n_comits: 5691480
+Time: 2186069678, n_comits: 5693650
+Time: 2186069688, n_comits: 5695751
+Time: 2186069698, n_comits: 5697839
+Time: 2186069708, n_comits: 5699867
+Time: 2186069718, n_comits: 5701921
+Time: 2186069728, n_comits: 5703996
+Time: 2186069738, n_comits: 5706025
+Time: 2186069748, n_comits: 5708062
+Time: 2186069758, n_comits: 5710081
+Time: 2186069768, n_comits: 5712075
+Time: 2186069778, n_comits: 5714182
+Time: 2186069788, n_comits: 5716313
+Time: 2186069798, n_comits: 5718450
+Time: 2186069808, n_comits: 5720556
+Time: 2186069819, n_comits: 5722590
+Time: 2186069829, n_comits: 5724713
+Time: 2186069839, n_comits: 5726786
+Time: 2186069849, n_comits: 5728866
+Time: 2186069859, n_comits: 5731023
+Time: 2186069869, n_comits: 5733225
+Time: 2186069879, n_comits: 5735424
+Time: 2186069889, n_comits: 5737561
+Time: 2186069899, n_comits: 5739562
+Time: 2186069909, n_comits: 5741592
+Time: 2186069920, n_comits: 5743639
+Time: 2186069930, n_comits: 5745730
+Time: 2186069940, n_comits: 5747711
+Time: 2186069950, n_comits: 5749767
+Time: 2186069960, n_comits: 5751839
+Time: 2186069970, n_comits: 5753975
+Time: 2186069980, n_comits: 5756007
+Time: 2186069990, n_comits: 5758067
+Time: 2186070000, n_comits: 5760162
+Time: 2186070010, n_comits: 5762232
+Time: 2186070020, n_comits: 5764224
+Time: 2186070030, n_comits: 5766234
+Time: 2186070040, n_comits: 5768322
+Time: 2186070050, n_comits: 5770455
+Time: 2186070061, n_comits: 5772500
+Time: 2186070071, n_comits: 5774531
+Time: 2186070081, n_comits: 5776640
+Time: 2186070091, n_comits: 5778838
+Time: 2186070101, n_comits: 5780879
+Time: 2186070112, n_comits: 5783216
+Time: 2186070122, n_comits: 5785450
+Time: 2186070133, n_comits: 5787440
+Time: 2186070143, n_comits: 5789421
+Time: 2186070153, n_comits: 5791546
+Time: 2186070163, n_comits: 5793622
+Time: 2186070173, n_comits: 5795787
+Time: 2186070183, n_comits: 5797803
+Time: 2186070193, n_comits: 5799859
+Time: 2186070204, n_comits: 5801908
+Time: 2186070214, n_comits: 5803974
+Time: 2186070224, n_comits: 5806099
+Time: 2186070234, n_comits: 5808269
+Time: 2186070244, n_comits: 5810356
+Time: 2186070254, n_comits: 5812367
+Time: 2186070264, n_comits: 5814419
+Time: 2186070274, n_comits: 5816499
+Time: 2186070284, n_comits: 5818604
+Time: 2186070294, n_comits: 5820645
+Time: 2186070305, n_comits: 5822800
+Time: 2186070315, n_comits: 5824943
+Time: 2186070325, n_comits: 5826974
+Time: 2186070335, n_comits: 5829138
+Time: 2186070345, n_comits: 5831106
+Time: 2186070355, n_comits: 5833233
+Time: 2186070365, n_comits: 5835267
+Time: 2186070375, n_comits: 5837383
+Time: 2186070385, n_comits: 5839418
+Time: 2186070395, n_comits: 5841496
+Time: 2186070405, n_comits: 5843525
+Time: 2186070415, n_comits: 5845545
+Time: 2186070426, n_comits: 5847576
+Time: 2186070436, n_comits: 5849680
+Time: 2186070446, n_comits: 5851779
+Time: 2186070456, n_comits: 5853905
+Time: 2186070466, n_comits: 5855857
+Time: 2186070476, n_comits: 5857943
+Time: 2186070486, n_comits: 5859893
+Time: 2186070496, n_comits: 5861993
+Time: 2186070506, n_comits: 5863986
+Time: 2186070516, n_comits: 5866074
+Time: 2186070526, n_comits: 5867985
+Time: 2186070536, n_comits: 5870036
+Time: 2186070546, n_comits: 5872079
+Time: 2186070557, n_comits: 5874106
+Time: 2186070567, n_comits: 5876154
+Time: 2186070577, n_comits: 5878283
+Time: 2186070587, n_comits: 5880347
+Time: 2186070597, n_comits: 5882499
+Time: 2186070607, n_comits: 5884592
+Time: 2186070617, n_comits: 5886565
+Time: 2186070627, n_comits: 5888591
+Time: 2186070637, n_comits: 5890659
+Time: 2186070648, n_comits: 5892876
+Time: 2186070658, n_comits: 5894857
+Time: 2186070668, n_comits: 5896946
+Time: 2186070678, n_comits: 5899069
+Time: 2186070688, n_comits: 5901171
+Time: 2186070698, n_comits: 5903184
+Time: 2186070708, n_comits: 5905278
+Time: 2186070718, n_comits: 5907302
+Time: 2186070728, n_comits: 5909339
+Time: 2186070739, n_comits: 5911520
+Time: 2186070749, n_comits: 5913495
+Time: 2186070759, n_comits: 5915596
+Time: 2186070769, n_comits: 5917692
+Time: 2186070779, n_comits: 5919739
+Time: 2186070789, n_comits: 5921860
+Time: 2186070799, n_comits: 5923944
+Time: 2186070809, n_comits: 5925928
+Time: 2186070819, n_comits: 5928016
+Time: 2186070829, n_comits: 5930056
+Time: 2186070839, n_comits: 5932178
+Time: 2186070849, n_comits: 5934268
+Time: 2186070860, n_comits: 5936238
+Time: 2186070870, n_comits: 5938244
+Time: 2186070880, n_comits: 5940303
+Time: 2186070890, n_comits: 5942375
+Time: 2186070900, n_comits: 5944397
+Time: 2186070910, n_comits: 5946424
+Time: 2186070920, n_comits: 5948396
+Time: 2186070930, n_comits: 5950503
+Time: 2186070940, n_comits: 5952541
+Time: 2186070950, n_comits: 5954596
+Time: 2186070960, n_comits: 5956616
+Time: 2186070971, n_comits: 5958588
+Time: 2186070981, n_comits: 5960563
+Time: 2186070991, n_comits: 5962519
+Time: 2186071001, n_comits: 5964654
+Time: 2186071011, n_comits: 5966786
+Time: 2186071021, n_comits: 5968936
+Time: 2186071031, n_comits: 5970843
+Time: 2186071041, n_comits: 5972990
+Time: 2186071051, n_comits: 5975018
+Time: 2186071061, n_comits: 5977009
+Time: 2186071072, n_comits: 5978998
+Time: 2186071082, n_comits: 5980920
+Time: 2186071092, n_comits: 5983061
+Time: 2186071102, n_comits: 5985101
+Time: 2186071112, n_comits: 5987127
+Time: 2186071122, n_comits: 5989083
+Time: 2186071132, n_comits: 5991103
+Time: 2186071142, n_comits: 5993226
+Time: 2186071152, n_comits: 5995150
+Time: 2186071163, n_comits: 5997370
+Time: 2186071174, n_comits: 5999426
+Time: 2186071184, n_comits: 6001422
+Time: 2186071194, n_comits: 6003426
+Time: 2186071204, n_comits: 6005470
+Time: 2186071214, n_comits: 6007498
+Time: 2186071224, n_comits: 6009453
+Time: 2186071234, n_comits: 6011488
+Time: 2186071244, n_comits: 6013570
+Time: 2186071254, n_comits: 6015702
+Time: 2186071264, n_comits: 6017693
+Time: 2186071274, n_comits: 6019709
+Time: 2186071284, n_comits: 6021669
+Time: 2186071294, n_comits: 6023716
+Time: 2186071304, n_comits: 6025710
+Time: 2186071315, n_comits: 6027881
+Time: 2186071326, n_comits: 6029985
+Time: 2186071336, n_comits: 6032011
+Time: 2186071346, n_comits: 6033990
+Time: 2186071356, n_comits: 6035962
+Time: 2186071366, n_comits: 6037899
+Time: 2186071376, n_comits: 6039880
+Time: 2186071386, n_comits: 6041870
+Time: 2186071396, n_comits: 6043917
+Time: 2186071406, n_comits: 6045889
+Time: 2186071416, n_comits: 6048006
+Time: 2186071427, n_comits: 6050097
+Time: 2186071437, n_comits: 6052120
+Time: 2186071447, n_comits: 6053985
+Time: 2186071457, n_comits: 6056034
+Time: 2186071467, n_comits: 6058152
+Time: 2186071477, n_comits: 6060338
+Time: 2186071487, n_comits: 6062398
+Time: 2186071497, n_comits: 6064584
+Time: 2186071507, n_comits: 6066664
+Time: 2186071517, n_comits: 6068650
+Time: 2186071528, n_comits: 6070670
+Time: 2186071538, n_comits: 6072750
+Time: 2186071548, n_comits: 6074764
+Time: 2186071558, n_comits: 6076801
+Time: 2186071568, n_comits: 6078823
+Time: 2186071579, n_comits: 6080939
+Time: 2186071589, n_comits: 6082976
+Time: 2186071599, n_comits: 6085014
+Time: 2186071609, n_comits: 6086995
+Time: 2186071619, n_comits: 6089087
+Time: 2186071629, n_comits: 6091208
+Time: 2186071639, n_comits: 6093253
+Time: 2186071649, n_comits: 6095201
+Time: 2186071659, n_comits: 6097303
+Time: 2186071669, n_comits: 6099389
+Time: 2186071679, n_comits: 6101328
+Time: 2186071689, n_comits: 6103387
+Time: 2186071699, n_comits: 6105410
+Time: 2186071709, n_comits: 6107343
+Time: 2186071720, n_comits: 6109256
+Time: 2186071730, n_comits: 6111139
+Time: 2186071740, n_comits: 6113096
+Time: 2186071750, n_comits: 6114980
+Time: 2186071760, n_comits: 6116855
+Time: 2186071770, n_comits: 6118757
+Time: 2186071780, n_comits: 6120653
+Time: 2186071790, n_comits: 6122545
+Time: 2186071800, n_comits: 6124530
+Time: 2186071810, n_comits: 6126430
+Time: 2186071820, n_comits: 6128306
+Time: 2186071830, n_comits: 6130365
+Time: 2186071840, n_comits: 6132205
+Time: 2186071850, n_comits: 6134085
+Time: 2186071860, n_comits: 6135999
+Time: 2186071870, n_comits: 6137985
+Time: 2186071881, n_comits: 6139893
+Time: 2186071891, n_comits: 6141633
+Time: 2186071901, n_comits: 6143451
+Time: 2186071911, n_comits: 6145325
+Time: 2186071921, n_comits: 6147207
+Time: 2186071931, n_comits: 6149067
+Time: 2186071941, n_comits: 6150911
+Time: 2186071951, n_comits: 6152737
+Time: 2186071961, n_comits: 6154629
+Time: 2186071971, n_comits: 6156413
+Time: 2186071981, n_comits: 6158285
+Time: 2186071991, n_comits: 6160105
+Time: 2186072001, n_comits: 6161960
+Time: 2186072011, n_comits: 6163900
+Time: 2186072021, n_comits: 6165825
+Time: 2186072032, n_comits: 6167732
+Time: 2186072042, n_comits: 6169636
+Time: 2186072052, n_comits: 6171526
+Time: 2186072062, n_comits: 6173312
+Time: 2186072072, n_comits: 6175144
+Time: 2186072082, n_comits: 6176880
+Time: 2186072092, n_comits: 6178801
+Time: 2186072102, n_comits: 6180611
+Time: 2186072112, n_comits: 6182612
+Time: 2186072122, n_comits: 6184464
+Time: 2186072132, n_comits: 6186363
+Time: 2186072142, n_comits: 6188143
+Time: 2186072152, n_comits: 6189980
+Time: 2186072162, n_comits: 6191771
+Time: 2186072172, n_comits: 6193610
+Time: 2186072183, n_comits: 6195409
+Time: 2186072193, n_comits: 6197217
+Time: 2186072203, n_comits: 6199099
+Time: 2186072213, n_comits: 6200998
+Time: 2186072223, n_comits: 6202880
+Time: 2186072233, n_comits: 6204697
+Time: 2186072243, n_comits: 6206502
+Time: 2186072253, n_comits: 6208281
+Time: 2186072263, n_comits: 6210028
+Time: 2186072273, n_comits: 6211835
+Time: 2186072283, n_comits: 6213692
+Time: 2186072293, n_comits: 6215544
+Time: 2186072303, n_comits: 6217357
+Time: 2186072314, n_comits: 6219136
+Time: 2186072324, n_comits: 6220964
+Time: 2186072334, n_comits: 6222823
+Time: 2186072344, n_comits: 6224635
+Time: 2186072354, n_comits: 6226534
+Time: 2186072364, n_comits: 6228316
+Time: 2186072374, n_comits: 6230079
+Time: 2186072384, n_comits: 6231909
+Time: 2186072394, n_comits: 6233630
+Time: 2186072404, n_comits: 6235470
+Time: 2186072414, n_comits: 6237361
+Time: 2186072424, n_comits: 6239256
+Time: 2186072434, n_comits: 6241109
+Time: 2186072444, n_comits: 6243001
+Time: 2186072454, n_comits: 6244884
+Time: 2186072464, n_comits: 6246744
+Time: 2186072475, n_comits: 6248524
+Time: 2186072485, n_comits: 6250356
+Time: 2186072495, n_comits: 6252216
+Time: 2186072505, n_comits: 6254000
+Time: 2186072515, n_comits: 6255841
+Time: 2186072525, n_comits: 6257629
+Time: 2186072535, n_comits: 6259543
+Time: 2186072545, n_comits: 6261591
+Time: 2186072555, n_comits: 6263484
+Time: 2186072565, n_comits: 6265276
+Time: 2186072575, n_comits: 6267085
+Time: 2186072585, n_comits: 6268982
+Time: 2186072595, n_comits: 6270825
+Time: 2186072605, n_comits: 6272668
+Time: 2186072615, n_comits: 6274462
+Time: 2186072625, n_comits: 6276310
+Time: 2186072636, n_comits: 6278039
+Time: 2186072646, n_comits: 6279838
+Time: 2186072656, n_comits: 6281704
+Time: 2186072666, n_comits: 6283720
+Time: 2186072676, n_comits: 6285496
+Time: 2186072686, n_comits: 6287430
+Time: 2186072696, n_comits: 6289381
+Time: 2186072706, n_comits: 6291223
+Time: 2186072716, n_comits: 6292989
+Time: 2186072726, n_comits: 6294832
+Time: 2186072736, n_comits: 6296603
+Time: 2186072746, n_comits: 6298344
+Time: 2186072756, n_comits: 6300223
+Time: 2186072766, n_comits: 6301974
+Time: 2186072776, n_comits: 6303768
+Time: 2186072787, n_comits: 6305624
+Time: 2186072797, n_comits: 6307455
+Time: 2186072807, n_comits: 6309369
+Time: 2186072817, n_comits: 6311348
+Time: 2186072827, n_comits: 6313253
+Time: 2186072837, n_comits: 6314972
+Time: 2186072847, n_comits: 6316994
+Time: 2186072857, n_comits: 6318928
+Time: 2186072867, n_comits: 6320806
+Time: 2186072877, n_comits: 6322681
+Time: 2186072887, n_comits: 6324572
+Time: 2186072897, n_comits: 6326339
+Time: 2186072907, n_comits: 6328170
+Time: 2186072917, n_comits: 6329992
+Time: 2186072927, n_comits: 6331747
+Time: 2186072937, n_comits: 6333741
+Time: 2186072947, n_comits: 6335608
+Time: 2186072958, n_comits: 6337461
+Time: 2186072968, n_comits: 6339473
+Time: 2186072978, n_comits: 6341322
+Time: 2186072988, n_comits: 6343060
+Time: 2186072998, n_comits: 6344936
+Time: 2186073008, n_comits: 6346792
+Time: 2186073018, n_comits: 6348772
+Time: 2186073028, n_comits: 6350540
+Time: 2186073038, n_comits: 6352321
+Time: 2186073048, n_comits: 6354167
+Time: 2186073058, n_comits: 6356183
+Time: 2186073068, n_comits: 6358126
+Time: 2186073078, n_comits: 6360079
+Time: 2186073088, n_comits: 6361805
+20250210-23:03.48-987149(us) 83447 ! cleanup         (tpcc.cc:3549):     stop the server rpc
+20250210-23:03.48-987177(us) 83447 * Stop            (fasttransport.cc:636): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250210-23:03.48-987187(us) 83447 * Stop            (fasttransport.cc:636): one server msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20250210-23:03.48-987199(us) 83447 ! tpcc_do_test    (tpcc.cc:3644):     ######--------------###### send endLlogs #####---------------######
+20250210-23:03.48-987209(us) 83447 * erpc_server     (tpcc.cc:3522):     the erpc_server is terminated on shardIdx:0, alpha:1!
+20250210-23:03.48-987247(us) 83447 * erpc_server     (tpcc.cc:3522):     the erpc_server is terminated on shardIdx:0, alpha:0!
+averaged latency: 62
+10% latency: 58
+50% latency: 62
+90% latency: 66
+95% latency: 68
+99% latency: 69
+20250210-23:03.49-38254(us) 83447 ! operator()      (dbtest.cc:772):    Recieved a zero length log
+20250210-23:03.49-38520(us) 83447 ! operator()      (dbtest.cc:772):    Recieved a zero length log
+20250210-23:03.49-38934(us) 83447 ! operator()      (dbtest.cc:772):    Recieved a zero length log
+20250210-23:03.49-38956(us) 83447 ! operator()      (dbtest.cc:772):    Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_main_helper.cc:976] 2025-03-10 23:03:50.987 | shutdown Server Control Service after task finish total submit 0
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:50.987 | Shutdown Server Control Service
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:50.987 | Shutdown Server Control Service
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:50.987 | Shutdown Server Control Service
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:50.987 | Shutdown Server Control Service
+I [../src/deptran/paxos_main_helper.cc:309] 2025-03-10 23:03:51.041 | all server workers have shut down.
