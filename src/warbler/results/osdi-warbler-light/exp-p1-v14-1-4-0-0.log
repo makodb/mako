@@ -1,0 +1,327 @@
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7f956737f000, 0x7f95a757f000)
+cpu0 owns [0x7f9567400000, 0x7f9577400000)
+cpu1 owns [0x7f9577400000, 0x7f9587400000)
+cpu2 owns [0x7f9587400000, 0x7f9597400000)
+cpu3 owns [0x7f9597400000, 0x7f95a7400000)
+Database Benchmark:
+  pid: 83164
+settings:
+  par-loading : 0
+  pin-cpus    : 1
+  slow-exit   : 0
+  retry-txns  : 1
+  backoff-txns: 0
+  bench       : tpcc
+  scale       : 4
+  num-cpus    : 8
+  num-threads : 4
+  shardIndex  : 0
+  paxos_proc_name  : p1
+  nshards     : 1
+  db-type     : mbta
+  basedir     : ./tmp
+  txn-flags   : 1
+  runtime     : 30
+  var-encode  : yes
+  allocator   : jemalloc
+  numa-memory : 1073741824
+  logfiles : []
+  assignments : []
+  disable-gc : 0
+  disable-snapshots : 0
+  stats-server-sockfile: 
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+20250210-23:03.08-841826(us) 83164 ! Init            (sync_util.hh:65):  the watermark is exchanging within the cluster: p1
+88:851005 INFOR: eRPC Nexus: Created with management UDP port 32005, hostname 10.1.0.7.
+88:855218 INFOR: DPDK transport for Rpc 5 initializing DPDK EAL.
+EAL: Detected 8 lcore(s)
+EAL: Detected 1 NUMA nodes
+EAL: Auto-detected process type: PRIMARY
+EAL: Multi-process socket /var/run/dpdk/rte/mp_socket
+EAL: Selected IOVA mode 'PA'
+EAL: No available hugepages reported in hugepages-1048576kB
+EAL: Probing VFIO support...
+EAL: VFIO support initialized
+EAL: PCI device 29f6:00:02.0 on NUMA socket 0
+EAL:   probe driver: 15b3:1018 net_mlx5
+EAL: PCI device ff64:00:02.0 on NUMA socket 0
+EAL:   probe driver: 15b3:1018 net_mlx5
+net_mlx5: no Verbs device matches PCI device ff64:00:02.0, are kernel drivers loaded?
+EAL: Requested device ff64:00:02.0 cannot be used
+89:078869 WARNG: Running as primary DPDK process. eRPC DPDK daemon is not running.
+89:078876 INFOR: DPDK transport for Rpc 5 got QP 0
+89:078883 INFOR: Initializing port 0 with driver net_mlx5
+new table is created: 1
+new table is created: 2
+new table is created: 3
+new table is created: 4
+new table is created: 5
+new table is created: 6
+new table is created: 7
+new table is created: 8
+new table is created: 9
+new table is created: 10
+new table is created: 11
+new table is created: 12
+new table is created: 13
+new table is created: 14
+new table is created: 15
+new table is created: 16
+new table is created: 17
+new table is created: 18
+new table is created: 19
+new table is created: 20
+new table is created: 21
+new table is created: 22
+new table is created: 23
+new table is created: 24
+new table is created: 25
+new table is created: 26
+new table is created: 27
+new table is created: 28
+new table is created: 29
+new table is created: 30
+new table is created: 31
+new table is created: 32
+new table is created: 33
+new table is created: 34
+new table is created: 35
+new table is created: 36
+new table is created: 37
+new table is created: 38
+new table is created: 39
+new table is created: 40
+new table is created: 41
+new table is created: 42
+new table is created: 43
+new table is created: 44
+new table is created: 45
+I [../src/deptran/paxos_main_helper.cc:78] 2025-03-10 23:03:09.142 | PWD : /home/rolis/srolis
+I [../src/deptran/paxos_main_helper.cc:274] 2025-03-10 23:03:09.142 | starting process 83164
+I [../src/deptran/config.cc:290] 2025-03-10 23:03:09.142 | LoadYML: third-party/paxos/config/1leader_2followers/paxos4_shardidx0.yml
+I [../src/deptran/config.cc:290] 2025-03-10 23:03:09.144 | LoadYML: third-party/paxos/config/occ_paxos.yml
+I [../src/deptran/paxos_main_helper.cc:283] 2025-03-10 23:03:09.145 | server_infos, number of sites: 4, proc_name: p1
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:09.149 | parition id of each Paxos group is 3, site-name: s204, site-id: 13
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:09.152 | parition id of each Paxos group is 2, site-name: s203, site-id: 9
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:09.156 | parition id of each Paxos group is 1, site-name: s202, site-id: 5
+I [../src/deptran/paxos_main_helper.cc:289] 2025-03-10 23:03:09.160 | parition id of each Paxos group is 0, site-name: s201, site-id: 1
+I [../src/deptran/paxos_main_helper.cc:295] 2025-03-10 23:03:09.160 | running machine-id: 1
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:09.160 | launching site: 1, bind address 0.0.0.0:7101
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:09.160 | launching site: 5, bind address 0.0.0.0:7102
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:09.160 | launching site: 9, bind address 0.0.0.0:7103
+I [../src/deptran/paxos_main_helper.cc:104] 2025-03-10 23:03:09.162 | waiting for server setup threads.
+I [../src/deptran/paxos_main_helper.cc:89] 2025-03-10 23:03:09.162 | launching site: d, bind address 0.0.0.0:7104
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:09.163 | [service]loc_id: 1, name: s202, proc: p1, id: 5
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:09.164 | [service]loc_id: 1, name: s203, proc: p1, id: 9
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:09.164 | [service]loc_id: 1, name: s201, proc: p1, id: 1
+starting server at 0.0.0.0:7102
+I [../src/deptran/paxos_worker.cc:197] 2025-03-10 23:03:09.164 | [service]loc_id: 1, name: s204, proc: p1, id: 13
+starting server at 0.0.0.0:7103
+starting server at 0.0.0.0:7101
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:09.164 | rrr::Server: started on 0.0.0.0:7102
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:09.164 | rrr::Server: started on 0.0.0.0:7103
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:09.164 | rrr::Server: started on 0.0.0.0:7101
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:09.164 | Server s203 ready at 0.0.0.0:7103
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:09.164 | Server s202 ready at 0.0.0.0:7102
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:09.164 | Server s201 ready at 0.0.0.0:7101
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:09.165 | setup paxos communicator
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:09.165 | setup paxos communicator
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:09.165 | setup paxos communicator
+starting server at 0.0.0.0:7104
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.165 | connect to site: 172.206.32.35:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.165 | connect to site: 172.206.32.35:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.165 | connect to site: 172.206.32.35:7001 (attempt 0)
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:09.166 | rrr::Server: started on 0.0.0.0:7104
+I [../src/deptran/paxos_worker.cc:220] 2025-03-10 23:03:09.166 | Server s204 ready at 0.0.0.0:7104
+I [../src/deptran/communicator.cc:14] 2025-03-10 23:03:09.166 | setup paxos communicator
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.166 | connect to site: 172.206.32.35:7001 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.167 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.167 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.167 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.167 | connect to site: 172.206.32.132:7101 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.168 | connect to site: 172.200.168.117:7201 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.168 | connect to site: 172.200.168.117:7201 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.168 | connect to site: 172.200.168.117:7201 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:09.168 | connect to site: 172.200.168.117:7201 (attempt 0)
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.169 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.169 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.169 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+E [../src/rrr/rpc/client.cpp:166] 2025-03-10 23:03:09.169 | rrr::Client: connect(172.200.168.117:7201): Connection refused
+89:335257 INFOR: Resolved port 0: MAC 7c:1e:52:9b:9c:fb, IPv4 10.1.0.10, RETA size 16 entries, bandwidth 100.0 Gbps
+89:335302 WARNG: DpdkTransport created for Rpc ID 5, queue 0, datapath UDP port 10000
+89:343528 INFOR: eRPC Nexus: Created with management UDP port 32006, hostname 10.1.0.7.
+89:343645 INFOR: DPDK transport for Rpc 6 skipping DPDK EAL initialization.
+89:343649 INFOR: DPDK transport for Rpc 6 got QP 1
+89:344016 INFOR: Resolved port 0: MAC 7c:1e:52:9b:9c:fb, IPv4 10.1.0.10, RETA size 16 entries, bandwidth 100.0 Gbps
+89:344032 WARNG: DpdkTransport created for Rpc ID 6, queue 1, datapath UDP port 10001
+20250210-23:03.14-245713(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.15-245828(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.16-245945(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.17-246043(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.169 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.169 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.169 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.169 | connect to site: 172.200.168.117:7201 (attempt 1)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.171 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.171 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.179 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.182 | connect to site: 135.237.144.227:7301 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.183 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.187 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.187 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.189 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.195 | connect to site: 172.206.32.35:7002 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.195 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.200 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.201 | connect to site: 172.206.32.132:7102 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.202 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.202 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.202 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.202 | connect to site: 172.200.168.117:7202 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.203 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.204 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.205 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.205 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.206 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.206 | connect to site: 135.237.144.227:7302 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.206 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.207 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.207 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.208 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.210 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.211 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.211 | connect to site: 172.206.32.35:7003 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.211 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.212 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.212 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.212 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.213 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.213 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.213 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.214 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.214 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.215 | site 5 launched!
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.218 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.219 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.220 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.221 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.221 | connect to site: 172.206.32.132:7103 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.222 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.222 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.223 | connect to site: 172.200.168.117:7203 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.223 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.224 | connect to site: 135.237.144.227:7303 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.224 | site 13 launched!
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.226 | site 9 launched!
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.229 | connect to site: 172.206.32.35:7004 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.231 | connect to site: 172.206.32.132:7104 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.232 | connect to site: 172.200.168.117:7204 (attempt 0)
+I [../src/deptran/communicator.cc:167] 2025-03-10 23:03:10.243 | connect to site: 135.237.144.227:7304 (attempt 0)
+I [../src/deptran/paxos_main_helper.cc:101] 2025-03-10 23:03:10.244 | site 1 launched!
+I [../src/deptran/paxos_main_helper.cc:108] 2025-03-10 23:03:10.244 | done waiting for server setup threads.
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.244 | rrr::Server: started on 0.0.0.0:17101
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.244 | heartbeat setup for s201 on 0.0.0.0:17101
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.244 | rrr::Server: started on 0.0.0.0:17102
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.244 | heartbeat setup for s202 on 0.0.0.0:17102
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.245 | rrr::Server: started on 0.0.0.0:17103
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.245 | heartbeat setup for s203 on 0.0.0.0:17103
+I [../src/rrr/rpc/server.cpp:537] 2025-03-10 23:03:10.245 | rrr::Server: started on 0.0.0.0:17104
+I [../src/deptran/paxos_worker.cc:255] 2025-03-10 23:03:10.245 | heartbeat setup for s204 on 0.0.0.0:17104
+I [../src/deptran/paxos_main_helper.cc:115] 2025-03-10 23:03:10.245 | server workers' communicators setup
+we can start a advancer
+start the advancer thread...
+20250210-23:03.18-246149(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+exception, retry#:1
+succeed at retry#:2
+20250210-23:03.19-246254(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.20-246365(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.21-246466(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.22-246572(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.23-246673(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.24-246772(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.25-246879(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.26-246983(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+exception, retry#:1
+succeed at retry#:2
+20250210-23:03.27-247087(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+exception, retry#:1
+succeed at retry#:2
+20250210-23:03.28-247190(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.29-247292(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.30-248214(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.31-248304(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.32-248406(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+exception, retry#:1
+succeed at retry#:2
+20250210-23:03.33-248507(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.34-248612(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.35-248719(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.36-248828(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.37-248932(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.38-249203(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.39-249310(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.40-249416(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.41-249536(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.42-249648(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.43-249752(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.44-249857(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.45-249963(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.46-250070(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.47-250175(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.48-250284(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 0/4, noops_cnt:0
+
+20250210-23:03.49-38013(us) 83164 ! operator()      (dbtest.cc:632):    Recieved a zero length log
+20250210-23:03.49-38319(us) 83164 ! operator()      (dbtest.cc:632):    Recieved a zero length log
+20250210-23:03.49-38832(us) 83164 ! operator()      (dbtest.cc:632):    Recieved a zero length log
+20250210-23:03.49-38846(us) 83164 ! operator()      (dbtest.cc:632):    Recieved a zero length log
+20250210-23:03.49-250395(us) 83164 * main            (dbtest.cc:907):    follower is waiting for being ended: 4/4, noops_cnt:0
+
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_worker.cc:136] 2025-03-10 23:03:49.038 | Recieved a zero length log
+I [../src/deptran/paxos_main_helper.cc:976] 2025-03-10 23:03:51.250 | shutdown Server Control Service after task finish total submit 0
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:51.250 | Shutdown Server Control Service
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:51.250 | Shutdown Server Control Service
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:51.250 | Shutdown Server Control Service
+I [../src/deptran/benchmark_control_rpc.cc:43] 2025-03-10 23:03:51.250 | Shutdown Server Control Service
+I [../src/deptran/paxos_main_helper.cc:309] 2025-03-10 23:03:51.253 | all server workers have shut down.

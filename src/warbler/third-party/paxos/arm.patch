@@ -1,0 +1,30 @@
+diff --git a/.waf-tools/boost.py b/.waf-tools/boost.py
+index 98af58eb..6d4b1340 100644
+--- a/.waf-tools/boost.py
++++ b/.waf-tools/boost.py
+@@ -54,7 +54,7 @@ from waflib import Utils, Logs, Errors
+ from waflib.Configure import conf
+ from waflib.TaskGen import feature, after_method
+ 
+-BOOST_LIBS = ['/usr/lib/x86_64-linux-gnu', '/usr/lib/i386-linux-gnu',
++BOOST_LIBS = ['/usr/lib/aarch64-linux-gnu', '/usr/lib/i386-linux-gnu',
+ 			  '/usr/lib', '/usr/local/lib', '/opt/local/lib', '/sw/lib', '/lib']
+ BOOST_INCLUDES = ['/usr/include', '/usr/local/include', '/opt/local/include', '/sw/include']
+ BOOST_VERSION_FILE = 'boost/version.hpp'
+diff --git a/src/rrr/misc/rand.cpp b/src/rrr/misc/rand.cpp
+index eb338111..feff5d99 100644
+--- a/src/rrr/misc/rand.cpp
++++ b/src/rrr/misc/rand.cpp
+@@ -109,9 +109,9 @@ int RandomGenerator::nu_rand(int a, int x, int y) {
+ }
+ 
+ unsigned long long RandomGenerator::rdtsc() {
+-    unsigned int lo, hi;
+-    __asm__ __volatile__("rdtsc" : "=a" (lo), "=d" (hi));
+-    return ((unsigned long long)hi << 32) | lo;
++    uint64_t tsc;
++    asm volatile("mrs %0, cntvct_el0" : "=r"(tsc));
++    return tsc;
+ }
+ 
+ unsigned int RandomGenerator::weighted_select(const std::vector<double> &weight_vector) {

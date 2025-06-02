@@ -1,0 +1,305 @@
+I [s_main.cc:127] 2025-04-18 04:21:09.322 | PWD :
+I [s_main.cc:148] 2025-04-18 04:21:09.322 | starting process 7706
+I [s_main.cc:143] 2025-04-18 04:21:09.322 | ulimit -n is 20000
+I [config.cc:575] 2025-04-18 04:21:09.832 | group size: 8
+I [config.cc:297] 2025-04-18 04:21:09.984 | # of concurrent requests: 200
+I [s_main.cc:27] 2025-04-18 04:21:09.984 | client_setup_heartbeat
+I [s_main.cc:51] 2025-04-18 04:21:09.984 | client enabled, number of sites: 8
+I [communicator.cc:89] 2025-04-18 04:21:09.985 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.037 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.038 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.045 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.098 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.102 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.103 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.155 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.156 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.157 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.212 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.220 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.221 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.273 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.277 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.278 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.330 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.331 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.332 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.384 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.385 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.389 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.441 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.444 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.448 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.499 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.503 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.503 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.554 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.557 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.558 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.609 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.617 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.637 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.690 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.694 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.696 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.747 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.748 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.757 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.808 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.810 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.811 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.874 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.879 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.880 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.936 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.937 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.939 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.991 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.994 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:10.995 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.053 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.056 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.057 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.108 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.124 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.125 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.176 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.209 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.211 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.270 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.271 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.272 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.324 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.326 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.327 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.378 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.382 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.383 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.435 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.436 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.437 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.488 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.489 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.491 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.542 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.543 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.544 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.595 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.596 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.597 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.648 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.649 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.650 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.701 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.702 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.703 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.755 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.758 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.758 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.809 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.822 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.825 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.876 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.878 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.879 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.930 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.933 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:11.934 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:12.995 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.005 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.006 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.063 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.064 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.065 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.116 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.123 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.129 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.193 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.195 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.196 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.251 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.255 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.269 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.321 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.322 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.329 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.380 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.382 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.403 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.458 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.460 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.461 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.523 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.524 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.525 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.586 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.588 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.595 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.654 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.664 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.671 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.729 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.731 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.732 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.787 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.793 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.799 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.850 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.851 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.857 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.910 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.912 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:13.913 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:14.978 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:14.982 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:14.987 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.046 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.048 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.049 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.101 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.105 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.106 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.166 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.171 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.172 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.227 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.232 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.234 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.297 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.299 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.300 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.350 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.351 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.352 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.404 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.406 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:15.414 | connect to site: 20.81.128.213:7001 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.488 | connect to site: 20.81.133.172:7101 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.489 | connect to site: 68.154.32.129:7201 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.490 | connect to site: 20.81.128.213:7002 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.542 | connect to site: 20.81.133.172:7102 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.543 | connect to site: 68.154.32.129:7202 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.544 | connect to site: 20.81.128.213:7003 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.596 | connect to site: 20.81.133.172:7103 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.598 | connect to site: 68.154.32.129:7203 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.602 | connect to site: 20.81.128.213:7004 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.660 | connect to site: 20.81.133.172:7104 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.666 | connect to site: 68.154.32.129:7204 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.667 | connect to site: 20.81.128.213:7005 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.722 | connect to site: 20.81.133.172:7105 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.729 | connect to site: 68.154.32.129:7205 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:16.730 | connect to site: 20.81.128.213:7006 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.792 | connect to site: 20.81.133.172:7106 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.794 | connect to site: 68.154.32.129:7206 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.799 | connect to site: 20.81.128.213:7007 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.850 | connect to site: 20.81.133.172:7107 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.852 | connect to site: 68.154.32.129:7207 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.869 | connect to site: 20.81.128.213:7008 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.920 | connect to site: 20.81.133.172:7108 (attempt 0)
+I [communicator.cc:89] 2025-04-18 04:21:17.921 | connect to site: 68.154.32.129:7208 (attempt 0)
+I [s_main.cc:131] 2025-04-18 04:21:17.928 | wait_for_clients: wait for client threads to exit.
+I [client_worker.cc:149] 2025-04-18 04:21:40.547 | Finish:
+Total: 85428, Commit: 85428, Attempts: 85428, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:40.547 | Finish:
+Commit2:	85428	Client-id:26
+
+I [client_worker.cc:164] 2025-04-18 04:21:40.551 | Collected lat: 85428
+I [client_worker.cc:166] 2025-04-18 04:21:40.551 | The 99p lat: 101.922479ms
+I [client_worker.cc:168] 2025-04-18 04:21:40.551 | The 95p lat: 100.449446ms
+I [client_worker.cc:170] 2025-04-18 04:21:40.551 | The 90p lat: 99.012515ms
+I [client_worker.cc:172] 2025-04-18 04:21:40.551 | The 50p lat: 59.403603ms
+I [client_worker.cc:174] 2025-04-18 04:21:40.551 | The 10p lat: 51.236759ms
+I [client_worker.cc:175] 2025-04-18 04:21:40.551 | The lowest lat: 50.251928ms
+I [client_worker.cc:149] 2025-04-18 04:21:41.032 | Finish:
+Total: 87095, Commit: 87095, Attempts: 87095, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:41.032 | Finish:
+Commit2:	87095	Client-id:29
+
+I [client_worker.cc:164] 2025-04-18 04:21:41.036 | Collected lat: 87095
+I [client_worker.cc:166] 2025-04-18 04:21:41.036 | The 99p lat: 100.606560ms
+I [client_worker.cc:168] 2025-04-18 04:21:41.036 | The 95p lat: 99.157537ms
+I [client_worker.cc:170] 2025-04-18 04:21:41.036 | The 90p lat: 97.768281ms
+I [client_worker.cc:172] 2025-04-18 04:21:41.036 | The 50p lat: 56.165040ms
+I [client_worker.cc:174] 2025-04-18 04:21:41.036 | The 10p lat: 51.118898ms
+I [client_worker.cc:175] 2025-04-18 04:21:41.036 | The lowest lat: 50.235518ms
+I [client_worker.cc:149] 2025-04-18 04:21:41.521 | Finish:
+Total: 87633, Commit: 87633, Attempts: 87633, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:41.521 | Finish:
+Commit2:	87633	Client-id:32
+
+I [client_worker.cc:164] 2025-04-18 04:21:41.526 | Collected lat: 87633
+I [client_worker.cc:166] 2025-04-18 04:21:41.526 | The 99p lat: 100.559509ms
+I [client_worker.cc:168] 2025-04-18 04:21:41.526 | The 95p lat: 97.283781ms
+I [client_worker.cc:170] 2025-04-18 04:21:41.526 | The 90p lat: 92.805868ms
+I [client_worker.cc:172] 2025-04-18 04:21:41.526 | The 50p lat: 64.947577ms
+I [client_worker.cc:174] 2025-04-18 04:21:41.526 | The 10p lat: 51.722700ms
+I [client_worker.cc:175] 2025-04-18 04:21:41.526 | The lowest lat: 50.265905ms
+I [client_worker.cc:149] 2025-04-18 04:21:41.973 | Finish:
+Total: 87524, Commit: 87524, Attempts: 87524, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:41.973 | Finish:
+Commit2:	87524	Client-id:35
+
+I [client_worker.cc:164] 2025-04-18 04:21:41.978 | Collected lat: 87524
+I [client_worker.cc:166] 2025-04-18 04:21:41.978 | The 99p lat: 100.652211ms
+I [client_worker.cc:168] 2025-04-18 04:21:41.978 | The 95p lat: 98.370039ms
+I [client_worker.cc:170] 2025-04-18 04:21:41.978 | The 90p lat: 94.516635ms
+I [client_worker.cc:172] 2025-04-18 04:21:41.978 | The 50p lat: 61.269237ms
+I [client_worker.cc:174] 2025-04-18 04:21:41.978 | The 10p lat: 51.385441ms
+I [client_worker.cc:175] 2025-04-18 04:21:41.978 | The lowest lat: 50.259746ms
+I [client_worker.cc:149] 2025-04-18 04:21:43.476 | Finish:
+Total: 85816, Commit: 85816, Attempts: 85816, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:43.476 | Finish:
+Commit2:	85816	Client-id:38
+
+I [client_worker.cc:164] 2025-04-18 04:21:43.481 | Collected lat: 85816
+I [client_worker.cc:166] 2025-04-18 04:21:43.481 | The 99p lat: 100.579781ms
+I [client_worker.cc:168] 2025-04-18 04:21:43.481 | The 95p lat: 98.937530ms
+I [client_worker.cc:170] 2025-04-18 04:21:43.481 | The 90p lat: 97.552758ms
+I [client_worker.cc:172] 2025-04-18 04:21:43.481 | The 50p lat: 57.057211ms
+I [client_worker.cc:174] 2025-04-18 04:21:43.481 | The 10p lat: 51.491472ms
+I [client_worker.cc:175] 2025-04-18 04:21:43.481 | The lowest lat: 50.289587ms
+I [client_worker.cc:149] 2025-04-18 04:21:43.987 | Finish:
+Total: 84656, Commit: 84656, Attempts: 84656, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:43.987 | Finish:
+Commit2:	84656	Client-id:41
+
+I [client_worker.cc:164] 2025-04-18 04:21:43.991 | Collected lat: 84656
+I [client_worker.cc:166] 2025-04-18 04:21:43.991 | The 99p lat: 101.237345ms
+I [client_worker.cc:168] 2025-04-18 04:21:43.991 | The 95p lat: 99.378897ms
+I [client_worker.cc:170] 2025-04-18 04:21:43.991 | The 90p lat: 97.557367ms
+I [client_worker.cc:172] 2025-04-18 04:21:43.991 | The 50p lat: 62.808217ms
+I [client_worker.cc:174] 2025-04-18 04:21:43.991 | The 10p lat: 52.034699ms
+I [client_worker.cc:175] 2025-04-18 04:21:43.992 | The lowest lat: 50.327964ms
+I [client_worker.cc:149] 2025-04-18 04:21:45.501 | Finish:
+Total: 85450, Commit: 85450, Attempts: 85450, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:45.501 | Finish:
+Commit2:	85450	Client-id:44
+
+I [client_worker.cc:164] 2025-04-18 04:21:45.505 | Collected lat: 85450
+I [client_worker.cc:166] 2025-04-18 04:21:45.505 | The 99p lat: 100.715064ms
+I [client_worker.cc:168] 2025-04-18 04:21:45.505 | The 95p lat: 98.775564ms
+I [client_worker.cc:170] 2025-04-18 04:21:45.505 | The 90p lat: 96.923523ms
+I [client_worker.cc:172] 2025-04-18 04:21:45.505 | The 50p lat: 64.093367ms
+I [client_worker.cc:174] 2025-04-18 04:21:45.505 | The 10p lat: 51.743934ms
+I [client_worker.cc:175] 2025-04-18 04:21:45.505 | The lowest lat: 50.310283ms
+I [client_worker.cc:149] 2025-04-18 04:21:47.985 | Finish:
+Total: 86906, Commit: 86906, Attempts: 86906, Running for 30
+
+I [client_worker.cc:152] 2025-04-18 04:21:47.985 | Finish:
+Commit2:	86906	Client-id:47
+
+I [client_worker.cc:164] 2025-04-18 04:21:47.990 | Collected lat: 86906
+I [client_worker.cc:166] 2025-04-18 04:21:47.990 | The 99p lat: 100.899400ms
+I [client_worker.cc:168] 2025-04-18 04:21:47.990 | The 95p lat: 99.181457ms
+I [client_worker.cc:170] 2025-04-18 04:21:47.990 | The 90p lat: 97.610319ms
+I [client_worker.cc:172] 2025-04-18 04:21:47.990 | The 50p lat: 57.404851ms
+I [client_worker.cc:174] 2025-04-18 04:21:47.990 | The 10p lat: 51.358415ms
+I [client_worker.cc:175] 2025-04-18 04:21:47.990 | The lowest lat: 50.264853ms
+I [s_main.cc:174] 2025-04-18 04:21:47.990 | all clients have shut down.
