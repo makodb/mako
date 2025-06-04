@@ -16,8 +16,8 @@ ERPC_LDFLAGS_DPDK := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-w
 ERPC_CFLAGS_IB := -Isrc/warbler -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
 ERPC_LDFLAGS_IB := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lpthread -lerpc -lnuma -ldl -lgflags -ldl -libverbs -lmlx4 -lmlx5
 
-CXX_INCLUDES = -I $(ERPC_PATH)/third_party/googletest/googletest/include -I $(ERPC_PATH)/third_party/googletest/googletest -isystem $(ERPC_PATH)/third_party/asio/include -I $(ERPC_PATH)/src -isystem $(ERPC_PATH)/third_party -isystem /usr/include/dpdk -I$(ERPC_PATH)/third_party/gflags/include -I$(ERPC_PATH)/third_party/HdrHistogram_c/src
-CXX_INCLUDES := $(CXX_INCLUDES)
+# CXX_INCLUDES = -I $(ERPC_PATH)/third_party/googletest/googletest/include -I $(ERPC_PATH)/third_party/googletest/googletest -isystem $(ERPC_PATH)/third_party/asio/include -I $(ERPC_PATH)/src -isystem $(ERPC_PATH)/third_party -isystem /usr/include/dpdk -I$(ERPC_PATH)/third_party/gflags/include -I$(ERPC_PATH)/third_party/HdrHistogram_c/src
+# CXX_INCLUDES := $(CXX_INCLUDES)
 
 ### Options ###
 DEBUG ?= 0
@@ -114,6 +114,7 @@ ifeq ($(HASHTABLE_S),1)
         OSUFFIX_H=.ht
 endif
 OSUFFIX=$(OSUFFIX_D)$(OSUFFIX_S)$(OSUFFIX_E)$(OSUFFIX_H)$(OSUFFIX_R)
+$(info "OSUFFIX:" ${OSUFFIX})
 
 # O is compile output path
 ifeq ($(MODE_S),perf)
@@ -235,6 +236,7 @@ CXXFLAGS += -DSTO_ABORT_ON_LOCKED=$(ABORT_ON_LOCKED)
 endif
 
 TOP     := $(shell echo $${PWD-`pwd`})
+$(info "TOP:" ${TOP})
 LDFLAGS := -lpthread -lnuma -lrt -lmemcached
 ifeq ($(GPROF_S),1)
         LDFLAGS += -pg -static-libstdc++ -static-libgcc 
@@ -313,6 +315,7 @@ MASSTREE_SRCFILES = $(W)/masstree/compiler.cc \
 	$(W)/masstree/kvthread.cc
 
 OBJFILES := $(patsubst %.cc, $(O)/%.o, $(SRCFILES))
+$(info "OBJFILES:" $(OBJFILES))
 
 MASSTREE_OBJFILES := $(patsubst $(W)/masstree/%.cc, $(O)/$(W)/%.o, $(MASSTREE_SRCFILES))
 
@@ -397,7 +400,26 @@ PROTOS :=
 # $(foreach bin,$(1),$(eval LDFLAGS-$(bin) += $(2)))
 # endef
 
-include $(W)/lib/Rules.mk
+# include $(W)/lib/Rules.mk
+
+libd = src/warbler/lib/
+SRCS += $(addprefix $(libd), \
+	lookup3.cc message.cc memory.cc helper_queue.cc transport.cc \
+	fasttransport.cc configuration.cc timestamp.cc promise.cc client.cc shardClient.cc server.cc)
+
+# LIB-hash := $(libo)lookup3.o
+
+# LIB-message := $(libo)message.o $(LIB-hash)
+
+# LIB-hashtable := $(LIB-hash) $(LIB-message)
+
+# LIB-memory := $(libo)memory.o
+
+# LIB-configuration := $(libo)configuration.o $(LIB-message)
+
+# LIB-transport := $(libo)transport.o $(LIB-message) $(LIB-configuration)
+
+# LIB-fasttransport := $(libo)fasttransport.o $(LIB-transport)
 
 $(debug LDFLAGS is ${LDFLAGS})
 $(debug CFLAGS is ${CFLAGS})
@@ -411,14 +433,15 @@ DEPFLAGS = -M -MF ${@:.o=.d} -MP -MT $@ -MG
 # $(call add-CFLAGS,$(TEST_SRCS),$(CHECK_CFLAGS))
 OBJS := $(SRCS:%.cc=.obj/%.o) $(TEST_SRCS:%.cc=.obj/%.o) $(GTEST_SRCS:%.cc=.obj/%.o)
 
-define compile
-	@mkdir -p $(dir $@)
-	$(call trace,$(1),$<,\
-	  $(CC) -iquote. $(CFLAGS) $(CFLAGS-$<) $(2) $(DEPFLAGS) -E $<)
-	$(Q)$(CC) -iquote. $(CFLAGS) $(CFLAGS-$<) $(2) -E -o .obj/$*.t $<
-	$(Q)$(EXPAND) $(EXPANDARGS) -o .obj/$*.i .obj/$*.t
-	$(Q)$(CC) $(CFLAGS) $(CFLAGS-$<) $(2) -c -o $@ .obj/$*.i
-endef
+$(info "OBJS:" ${OBJS})
+# define compile
+# 	@mkdir -p $(dir $@)
+# 	$(call trace,$(1),$<,\
+# 	  $(CC) -iquote. $(CFLAGS) $(CFLAGS-$<) $(2) $(DEPFLAGS) -E $<)
+# 	$(Q)$(CC) -iquote. $(CFLAGS) $(CFLAGS-$<) $(2) -E -o .obj/$*.t $<
+# 	$(Q)$(EXPAND) $(EXPANDARGS) -o .obj/$*.i .obj/$*.t
+# 	$(Q)$(CC) $(CFLAGS) $(CFLAGS-$<) $(2) -c -o $@ .obj/$*.i
+# endef
 
 define compilecxx
 	@mkdir -p $(dir $@)
@@ -446,6 +469,9 @@ $(PROTOOBJS): .obj/%.o: .obj/gen/%.pb.cc
 $(PROTOOBJS:%.o=%-pic.o): .obj/%-pic.o: .obj/gen/%.pb.cc $(PROTOSRCS)
 	$(call compilecxx,CCPIC,-fPIC)
 
+$(info "CXX:" ${CXX}) # g++
+$(info "CC:" ${CC}) # cc
+
 #
 # Automatic dependencies
 #
@@ -454,6 +480,8 @@ DEPS := $(OBJS:.o=.d) $(OBJS:.o=-pic.d)
 -include $(DEPS)
 
 all: $(O)/test
+
+$(info "OBJDEP:" ${OBJDEP})
 
 $(O)/$(W)/benchmarks/%.o: $(W)/benchmarks/%.cc $(O)/$(W)/buildstamp $(O)/$(W)/buildstamp.bench $(OBJDEP)
 	@mkdir -p $(@D)
@@ -483,6 +511,11 @@ test: $(O)/test
 
 $(O)/test: $(O)/test.o $(OBJFILES) $(MASSTREE_OBJFILES) third-party/lz4/liblz4.so
 	$(CXX) -o $(O)/test $^ $(LDFLAGS) $(LZ4LDFLAGS)
+$(warning "O:" $O)
+$(warning "OBJFILES:" ${OBJFILES})
+$(warning "MASSTREE_OBJFILES:" ${MASSTREE_OBJFILES})
+$(warning "LDFLAGS:" ${LDFLAGS})
+$(warning "LZ4LDFLAGS:" ${LZ4LDFLAGS})
 
 .PHONY: persist_test
 persist_test: $(O)/persist_test
@@ -551,8 +584,8 @@ clean:
 .PHONY = simpleTransaction
 simpleTransaction:  $(O)/benchmarks/simpleTransaction
 
-$(O)/benchmarks/simpleTransaction: $(O)/benchmarks/ut/simpleTransaction.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) build/libtxlog.so third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/simpleTransaction $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lbuild
+$(O)/benchmarks/simpleTransaction: $(O)/$(W)/benchmarks/ut/simpleTransaction.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) build/libtxlog.so third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/simpleTransaction $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lbuild
 
 build/libtxlog.so:
 	python3 waf configure build -M
@@ -560,15 +593,15 @@ build/libtxlog.so:
 .PHONY = simpleShards
 simpleShards:  $(O)/benchmarks/simpleShards
 
-$(O)/benchmarks/simpleShards: $(O)/benchmarks/ut/simpleShards.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) build/libtxlog.so third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/simpleShards $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lbuild
+$(O)/benchmarks/simpleShards: $(O)/$(W)/benchmarks/ut/simpleShards.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) build/libtxlog.so third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/simpleShards $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lbuild
 
 
 .PHONY = basic
 basic: $(O)/benchmarks/basic
 
-$(O)/benchmarks/basic: $(O)/benchmarks/ut/basic.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) build/libtxlog.so third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/basic -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
+$(O)/benchmarks/basic: $(O)/$(W)/benchmarks/ut/basic.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) build/libtxlog.so third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/basic -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
 
 # .PHONY: paxos
 # paxos:
@@ -577,21 +610,21 @@ $(O)/benchmarks/basic: $(O)/benchmarks/ut/basic.o $(OBJFILES) $(MASSTREE_OBJFILE
 .PHONY: paxos_async_commit_test
 paxos_async_commit_test: $(O)/benchmarks/paxos_async_commit_test
 
-$(O)/benchmarks/paxos_async_commit_test: $(O)/benchmarks/paxos_async_commit_test.o  build/libtxlog.so third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/paxos_async_commit_test $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lbuild
+$(O)/benchmarks/paxos_async_commit_test: $(O)/$(W)/benchmarks/paxos_async_commit_test.o  build/libtxlog.so third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/paxos_async_commit_test $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lbuild
 
 erpc_runner:  $(O)/benchmarks/erpc_runner_test
 
-$(O)/benchmarks/erpc_runner_test: $(O)/benchmarks/erpc_runner/erpc_runner_test.o $(O)/benchmarks/erpc_runner/erpc_runner_queue.o $(O)/benchmarks/erpc_runner/common.o $(O)/benchmarks/erpc_runner/configuration.o $(O)/benchmarks/erpc_runner/erpc_runner.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/erpc_runner_test -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
+$(O)/benchmarks/erpc_runner_test: $(O)/$(W)/benchmarks/erpc_runner/erpc_runner_test.o $(O)/benchmarks/erpc_runner/erpc_runner_queue.o $(O)/benchmarks/erpc_runner/common.o $(O)/benchmarks/erpc_runner/configuration.o $(O)/benchmarks/erpc_runner/erpc_runner.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/erpc_runner_test -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
 
 .PHONY = erpc_server
 erpc_server:  $(O)/benchmarks/erpc_server
 
-$(O)/benchmarks/erpc_server: $(O)/benchmarks/ut/erpc_server.o third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/erpc_server -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
+$(O)/benchmarks/erpc_server: $(O)/$(W)/benchmarks/ut/erpc_server.o third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/erpc_server -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
 
 erpc_client:  $(O)/benchmarks/erpc_client
 
-$(O)/benchmarks/erpc_client: $(O)/benchmarks/ut/erpc_client.o third-party/lz4/liblz4.so
-	$(CXX) -o $(O)/benchmarks/erpc_client -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp
+$(O)/benchmarks/erpc_client: $(O)/$(W)/benchmarks/ut/erpc_client.o third-party/lz4/liblz4.so
+	$(CXX) -o $(O)/$(W)/benchmarks/erpc_client -O0 $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp

@@ -1,298 +1,606 @@
-# ubuntu 16.04 has cmake 3.5
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
+# using g++
+set(CMAKE_C_COMPILER "gcc" CACHE STRING "C compiler")
+set(CMAKE_CXX_COMPILER "g++" CACHE STRING "C++ compiler")
+project(warbler)
 
+# Set C++ standard
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# use hunter instead of conan
-include("HunterGate.cmake")
+# Define paths
+set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
+set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
+set(BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+set(ERPC_PATH "${BUILD_DIR}/eRPC")
+set(W "src/warbler")
+set(TOP "${CMAKE_SOURCE_DIR}")
 
-HunterGate(
-        URL "https://github.com/ruslo/hunter/archive/v0.23.179.tar.gz"
-        SHA1 "21b2f139feb9f3c37e367750013aee15e1c45355"
-#        "${CMAKE_CURRENT_LIST_DIR}/cxx11.cmake"
-#        FILEPATH "/home/shuai/git/janus/config.cmake"
-        LOCAL
+# Read environment variable from env.txt (ib or dpdk)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/env.txt" env_raw LIMIT_COUNT 1)
+if(env_raw)
+  string(STRIP "${env_raw}" env)
+else()
+  set(env "ib")
+endif()
+
+# eRPC flags
+set(ERPC_CFLAGS_DPDK
+  -Isrc/warbler
+  -I${ERPC_PATH}/src
+  -DERPC_DPDK=true
+  -march=native
+  -I/usr/include/dpdk
+  -DERPC_LOG_LEVEL=6
+  -DERPC_TESTING=false
+  -DGFLAGS_IS_A_DLL=0
+)
+set(ERPC_LDFLAGS_DPDK
+  -L${ERPC_PATH}/build
+  -Wl,--whole-archive
+  -ldpdk
+  -Wl,--no-whole-archive
+  -lerpc
+  -lpthread
+  -lnuma
+  -ldl
+  -lgflags
+  -libverbs
+  -lmlx4
+  -lmlx5
+)
+set(ERPC_CFLAGS_IB
+  -Isrc/warbler
+  -I${ERPC_PATH}/src
+  -DERPC_INFINIBAND=true
+  -march=native
+  -I/usr/include/dpdk
+  -DERPC_LOG_LEVEL=6
+  -DERPC_TESTING=false
+  -DGFLAGS_IS_A_DLL=0
+)
+set(ERPC_LDFLAGS_IB
+  -L${ERPC_PATH}/build
+  -Wl,--whole-archive
+  -ldpdk
+  -Wl,--no-whole-archive
+  -lpthread
+  -lerpc
+  -lnuma
+  -ldl
+  -lgflags
+  -libverbs
+  -lmlx4
+  -lmlx5
 )
 
-set(
-        CMAKE_TOOLCHAIN_FILE
-        "${CMAKE_CURRENT_LIST_DIR}/cmake/cxx14.cmake"
-        CACHE
-        FILEPATH
-        "Default toolchain"
+# Options
+option(DEBUG "Enable debug mode" OFF)
+option(CHECK_INVARIANTS "Enable invariant checking" OFF)
+option(COCO "Enable COCO" OFF)
+set(USE_MALLOC_MODE 1 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow")
+set(MODE "perf" CACHE STRING "Build mode: perf, backoff, factor-gc, factor-gc-nowriteinplace, factor-fake-compression, sandbox")
+option(STO_RMW "Enable STO read-modify-write" OFF)
+option(HASHTABLE "Enable hashtable" OFF)
+option(GPROF "Enable profiling with gprof" OFF)
+option(OPACITY "Enable opacity" OFF)
+option(PAXOS_LIB_ENABLED "Enable Paxos library" OFF)
+option(DISABLE_MULTI_VERSION "Disable multi-version" OFF)
+option(MICRO_BENCHMARK "Enable micro benchmark" OFF)
+option(MEGA_BENCHMARK "Enable MEGA benchmark" OFF)
+option(MEGA_BENCHMARK_MICRO "Enable MEGA benchmark micro" OFF)
+option(TRACKING_LATENCY "Enable latency tracking" OFF)
+set(SHARDS 1 CACHE STRING "Number of shards")
+set(MERGE_KEYS_GROUPS "${SHARDS}" CACHE STRING "Merge keys groups")
+option(FAIL_NEW_VERSION "Enable fail new version" OFF)
+option(SIMULATE_ONE_SHARD_PER_THREAD "Simulate one shard per thread" OFF)
+option(TRACKING_ROLLBACK "Enable rollback tracking" OFF)
+
+# Masstree configuration
+set(MASSTREE_CONFIG "CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} --enable-max-key-len=1024")
+if(DEBUG)
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --enable-assertions")
+else()
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --disable-assertions")
+endif()
+if(CHECK_INVARIANTS)
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --enable-invariants --enable-preconditions")
+else()
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --disable-invariants --disable-preconditions")
+endif()
+
+# Output suffix
+set(OSUFFIX_D "")
+set(OSUFFIX_S "")
+set(OSUFFIX_E "")
+set(OSUFFIX_H "")
+set(OSUFFIX_R "")
+if(DEBUG)
+  set(OSUFFIX_D "")
+else()
+  set(OSUFFIX_D "")
+endif()
+if(CHECK_INVARIANTS)
+  set(OSUFFIX_S ".check")
+else()
+  set(OSUFFIX_S "")
+endif()
+if(EVENT_COUNTERS)
+  set(OSUFFIX_E ".ectrs")
+endif()
+if(STO_RMW)
+  set(OSUFFIX_R ".rmw")
+endif()
+if(HASHTABLE)
+  set(OSUFFIX_H ".ht")
+endif()
+set(OSUFFIX "${OSUFFIX_D}${OSUFFIX_S}${OSUFFIX_E}${OSUFFIX_H}${OSUFFIX_R}")
+
+# Output directory and config header
+if(MODE STREQUAL "perf")
+  set(O "out-perf${OSUFFIX}")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-perf.h")
+elseif(MODE STREQUAL "backoff")
+  set(O "out-backoff${OSUFFIX}")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-backoff.h")
+elseif(MODE STREQUAL "factor-gc")
+  set(O "out-factor-gc${OSUFFIX}")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-factor-gc.h")
+elseif(MODE STREQUAL "factor-gc-nowriteinplace")
+  set(O "out-factor-gc-nowriteinplace${OSUFFIX}")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-factor-gc-nowriteinplace.h")
+elseif(MODE STREQUAL "factor-fake-compression")
+  set(O "out-factor-fake-compression${OSUFFIX}")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-factor-fake-compression.h")
+elseif(MODE STREQUAL "sandbox")
+  set(O "out-sandbox${OSUFFIX}")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-sandbox.h")
+else()
+  message(FATAL_ERROR "Invalid mode: ${MODE}")
+endif()
+set(O "${O}.masstree")
+
+# Compiler flags
+set(CXXFLAGS
+  -w
+  -Wreturn-type
+  -Isrc/warbler
+  -MD
+  -MP
+  -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
+  -Isrc
+  -I${HOME}
+  -DCONFIG_H="${CONFIG_H}" # No need for extra escaping with quotes
 )
 
-project(janus)
+if(env STREQUAL "ib")
+  list(APPEND CXXFLAGS ${ERPC_CFLAGS_IB})
+else()
+  list(APPEND CXXFLAGS ${ERPC_CFLAGS_DPDK})
+endif()
+if(GPROF)
+  list(APPEND CXXFLAGS -pg -static-libstdc++ -static-libgcc)
+endif()
+if(DEBUG)
+  list(APPEND CXXFLAGS -fno-omit-frame-pointer -DDEBUG -DSIMPLE_WORKLOAD)
+else()
+  list(APPEND CXXFLAGS -O2)
+endif()
+if(CHECK_INVARIANTS)
+  list(APPEND CXXFLAGS -DCHECK_INVARIANTS)
+endif()
+if(EVENT_COUNTERS)
+  list(APPEND CXXFLAGS -DENABLE_EVENT_COUNTERS)
+endif()
+if(PAXOS_LIB_ENABLED)
+  list(APPEND CXXFLAGS -DPAXOS_LIB_ENABLED)
+endif()
+if(DISABLE_MULTI_VERSION)
+  list(APPEND CXXFLAGS -DDISABLE_MULTI_VERSION)
+endif()
+if(MICRO_BENCHMARK)
+  list(APPEND CXXFLAGS -DMICRO_BENCHMARK)
+endif()
+if(COCO)
+  list(APPEND CXXFLAGS -DCOCO)
+endif()
+if(MEGA_BENCHMARK)
+  list(APPEND CXXFLAGS -DMEGA_BENCHMARK)
+endif()
+if(MEGA_BENCHMARK_MICRO)
+  list(APPEND CXXFLAGS -DMEGA_BENCHMARK_MICRO)
+endif()
+if(TRACKING_LATENCY)
+  list(APPEND CXXFLAGS -DTRACKING_LATENCY)
+endif()
+if(FAIL_NEW_VERSION)
+  list(APPEND CXXFLAGS -DFAIL_NEW_VERSION)
+endif()
+if(SIMULATE_ONE_SHARD_PER_THREAD)
+  list(APPEND CXXFLAGS -DSIMULATE_ONE_SHARD_PER_THREAD)
+endif()
+if(TRACKING_ROLLBACK)
+  list(APPEND CXXFLAGS -DTRACKING_ROLLBACK)
+endif()
+list(APPEND CXXFLAGS
+  -DSHARDS=${SHARDS}
+  -DMERGE_KEYS_GROUPS=${MERGE_KEYS_GROUPS}
+  -include ${W}/masstree/config.h
+  -DREAD_MY_WRITES=${STO_RMW}
+  -DHASHTABLE=${HASHTABLE}
+  -DSTO_OPACITY=${OPACITY}
+)
 
-# Hunter disallows using (cmake_)cxx_standard, use toolchain instead.
-#set (CMAKE_CXX_STANDARD 14)
+if(DEFINED LESSER_OPACITY)
+  list(APPEND CXXFLAGS -DLESSER_OPACITY=${LESSER_OPACITY})
+endif()
+if(DEFINED GV7_OPACITY)
+  list(APPEND CXXFLAGS -DGV7_OPACITY)
+endif()
+if(DEFINED ABORT_ON_LOCKED)
+  list(APPEND CXXFLAGS -DSTO_ABORT_ON_LOCKED=${ABORT_ON_LOCKED})
+endif()
 
-find_package(Threads)
+# ASIO and libevent flags
+list(APPEND CXXFLAGS ${ASIO_CFLAGS} ${LIBEVENT_CFLAGS})
+
+set(LDFLAGS
+  -lpthread
+  -lnuma
+  -lrt
+  -lmemcached
+)
+if(GPROF)
+  list(APPEND LDFLAGS -pg -static-libstdc++ -static-libgcc)
+endif()
+
+set(LZ4LDFLAGS
+  -L${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
+  -llz4
+  -Wl,-rpath,${TOP}/third-party/lz4
+)
+
+if(USE_MALLOC_MODE EQUAL 1)
+  list(APPEND CXXFLAGS -DUSE_JEMALLOC)
+  list(APPEND LDFLAGS -ljemalloc)
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=jemalloc")
+elseif(USE_MALLOC_MODE EQUAL 2)
+  list(APPEND CXXFLAGS -DUSE_TCMALLOC)
+  list(APPEND LDFLAGS -ltcmalloc)
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=tcmalloc")
+elseif(USE_MALLOC_MODE EQUAL 3)
+  list(APPEND CXXFLAGS -DUSE_FLOW)
+  list(APPEND LDFLAGS -lflow)
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=flow")
+else()
+  set(MASSTREE_CONFIG "${MASSTREE_CONFIG} --with-malloc=malloc")
+endif()
+
+if(DEFINED CUSTOM_LDPATH)
+  set(LDFLAGS "${LDFLAGS} ${CUSTOM_LDPATH}")
+endif()
+
+set(ASIO_PATH "${BUILD_DIR}/eRPC/third_party/asio")
+set(ASIO_CFLAGS -I${ASIO_PATH}/include)
+
+set(CFLAGS ${ASIO_CFLAGS})
+if(env STREQUAL "ib")
+  separate_arguments(ERPC_CFLAGS_IB_LIST UNIX_COMMAND "${ERPC_CFLAGS_IB}")
+  list(APPEND CFLAGS ${ERPC_CFLAGS_IB_LIST})
+  separate_arguments(ERPC_LDFLAGS_IB_LIST UNIX_COMMAND "${ERPC_LDFLAGS_IB}")
+  list(APPEND LDFLAGS ${ERPC_LDFLAGS_IB_LIST})
+else()
+  separate_arguments(ERPC_CFLAGS_DPDK_LIST UNIX_COMMAND "${ERPC_CFLAGS_DPDK}")
+  list(APPEND CFLAGS ${ERPC_CFLAGS_DPDK_LIST})
+  separate_arguments(ERPC_LDFLAGS_DPDK_LIST UNIX_COMMAND "${ERPC_LDFLAGS_DPDK}")
+  list(APPEND LDFLAGS ${ERPC_LDFLAGS_DPDK_LIST})
+endif()
+
+list(APPEND LDFLAGS
+  -levent_pthreads
+  -pthread
+  -lboost_fiber
+  -lboost_context
+  -lboost_system
+  -lboost_thread
+)
+
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(PYTHON REQUIRED python3)
-#pkg_check_modules(YAML_CPP REQUIRED yaml-cpp)
+pkg_check_modules(LIBEVENT REQUIRED libevent)
+list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
+list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
+list(APPEND CXXFLAGS ${ASIO_CFLAGS})
 
-
-hunter_add_package(Boost COMPONENTS system filesystem coroutine context thread)
-hunter_add_package(GTest)
-hunter_add_package(GSL)
-
-find_package(Boost CONFIG REQUIRED
-        system filesystem coroutine context thread)
-find_package(GTest CONFIG REQUIRED)
-find_package(GSL CONFIG REQUIRED)
-
-include_directories(
-        ${Boost_INCLUDE_DIR}
-#        ${YAML_CPP_INCLUDE_DIRS}
-)
-link_directories(
-        ${Boost_LIBRARY_DIRS}
-#        ${YAML_CPP_LIBRARY_DIRS}
-        ${PYTHON_LIBRARY_DIRS}
-)
-
-
-# deprecated conan; using hunter now.
-#
-# do the following after git clone:
-#   1. install conan package manage tool
-#   2. create build_cmake directory:
-#   3. run `conan remote add conan-community https://api.bintray.com/conan/conan-community/conan`
-#   4. in build_cmake, run `conan install --build=missing ..`
-# after a compiler upgrade in the system, re-execute above.
-#
-
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/build_cmake/conanbuildinfo.cmake)
-    #Clion, using conan, with conanbuildinfo.cmake in build folder
-    include(${CMAKE_CURRENT_SOURCE_DIR}/build_cmake/conanbuildinfo.cmake)
-    conan_basic_setup()
-    MESSAGE(${CONAN_LIBS})
-elseif(EXISTS ${CMAKE_BINARY_DIR}/conanbuildinfo.cmake )
-    # Not CLion, but using conan
-    include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
-    conan_basic_setup()
-    MESSAGE(${CONAN_LIBS})
-else()
-    # not using conan
-    # use hunter
-endif()
-
-if(APPLE)
-    set(RT "")
-else()
-    set(RT "rt")
-endif()
-
-# enable sanitizers
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -O1 -fno-omit-frame-pointer -g -fstandalone-debug")
-
-# for c build
-
-add_library(
-        EXTERN_C
-        extern_interface/scheduler.c
-        extern_interface/scheduler.h
+# Source files
+set(SRCFILES
+  "${W}/allocator.cc"
+  "${W}/btree.cc"
+  "${W}/core.cc"
+  "${W}/counter.cc"
+  "${W}/memory.cc"
+  "${W}/rcu.cc"
+  "${W}/stats_server.cc"
+  "${W}/thread.cc"
+  "${W}/ticker.cc"
+  "${W}/tuple.cc"
+  "${W}/txn_btree.cc"
+  "${W}/txn.cc"
+  "${W}/txn_proto2_impl.cc"
+  "${W}/varint.cc"
 )
 
-# yaml
-file(GLOB YAML_SRC
-    "dependencies/yaml-cpp/src/*.h"
-    "dependencies/yaml-cpp/src/*/*.h"
-    "dependencies/yaml-cpp/src/*.cpp"
-    "dependencies/yaml-cpp/src/*/*.cpp"
+set(MASSTREE_SRCFILES
+  "${W}/masstree/compiler.cc"
+  "${W}/masstree/str.cc"
+  "${W}/masstree/string.cc"
+  "${W}/masstree/straccum.cc"
+  "${W}/masstree/json.cc"
+  "${W}/masstree/kvthread.cc"
 )
 
-add_library(YAMLCPP
-    ${YAML_SRC}
+set(BENCH_SRCFILES
+  "${W}/benchmarks/bench.cc"
+  "${W}/benchmarks/encstress.cc"
+  "${W}/benchmarks/bid.cc"
+  "${W}/benchmarks/queue.cc"
+  "${W}/benchmarks/tpcc.cc"
+  "${W}/benchmarks/tpcc_simple.cc"
+  "${W}/benchmarks/ycsb.cc"
+  "${W}/benchmarks/sto/Transaction.cc"
+  "${W}/benchmarks/sto/MassTrans.cc"
+  "${W}/benchmarks/sto/common.cc"
+  "${W}/benchmarks/sto/TRcu.cc"
+  "${W}/benchmarks/sto/Packer.cc"
+  "${W}/benchmarks/sto/ReplayDB.cc"
+  "${W}/benchmarks/sto/ThreadPool.cc"
+  "${W}/benchmarks/dbtest.cc" # Added dbtest.cc
 )
 
-# for cxx build
-set(CMAKE_VERBOSE_MAKEFILE on)
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-register -Werror")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUSE_IPC")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Weffc++")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DCHECK_ISO")
-# this makes gcc>=5 support conan.io libraries, e.g. yaml-cpp
-# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
+set(LIB_SRCFILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/lookup3.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/message.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/memory.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/helper_queue.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/transport.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/fasttransport.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/configuration.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/timestamp.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/promise.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/client.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/shardClient.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/server.cc"
+)
 
-#pkg_check_modules(APR REQUIRED apr-1)
-#pkg_check_modules(APRUTIL REQUIRED apr-util-1)
-#pkg_check_modules(PROFILER REQUIRED libprofiler)
+# Benchmark flags
+set(BENCH_CXXFLAGS ${CXXFLAGS})
+set(BENCH_LDFLAGS
+  ${LDFLAGS}
+  -lz
+  -lrt
+  -lcrypt
+  -laio
+  -ldl
+  -lssl
+  -lcrypto
+)
 
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDEBUG_CODE")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DLOG_LEVEL_AS_INFO")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -DLOG_LEVEL_AS_DEBUG")
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DCPU_PROFILE")
-
-#FIND_LIBRARY (DMALLOC_LIBRARY dmalloc /usr/lib /sw/lib)
-#FIND_PATH (DMALLOC_INCLUDE_DIR dmalloc.h PATHS /usr/include /sw/include)
-#IF(DMALLOC_LIBRARY)
-#  ADD_DEFINITIONS(-D_USE_DMALLOC)
-#  SET(LINK_TO_DMALLOC 1)
-#ENDIF(DMALLOC_LIBRARY)
-
-#add_custom_command(
-#    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/deptran/mdcc/mdcc_rpc.h
-#    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp deptran/mdcc/mdcc_rpc.rpc
-#    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/deptran/mdcc/mdcc_rpc.rpc
-#    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+# Custom command for Masstree configuration
+add_custom_command(
+  OUTPUT ${W}/masstree/config.h
+  COMMAND rm -f "${W}/masstree/config.h"
+  COMMAND cd "${W}/masstree" && ./configure ${MASSTREE_CONFIG}
+  COMMAND test -f "${W}/masstree/config.h" && touch "${W}/masstree/config.h" || true
+  DEPENDS "${O}/${W}/buildstamp.masstree" "${W}/masstree/configure" "${W}/masstree/config.h.in"
+)
 
 add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
-           ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python
-        src/deptran/rcc_rpc.rpc
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-
-add_custom_target (gen-rpc
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py)
-
-include_directories(
-    ${PYTHON_INCLUDE_DIRS}
-    src
-    src/rrr
-    src/memdb
-    src/deptran
-    dependencies/yaml-cpp/include
+  OUTPUT ${W}/masstree/configure ${W}/masstree/config.h.in
+  COMMAND cd "${W}/masstree" && autoreconf -i && touch configure config.h.in
+  DEPENDS "${W}/masstree/configure.ac"
 )
 
-link_directories(
-    ${PYTHON_LIBRARY_DIRS}
-#    ${APR_LIBRARY_DIRS}
-#    ${PROFILER_LIBRARY_DIRS}
+# Custom command for lz4 library
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+  COMMAND make -C "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4" library
 )
 
-
-#set (CMAKE_SHARED_LINKER_FLAGS "-Wl, -lyaml-cpp")
-
-
-file(GLOB RRR_SRC
-    "src/rrr/base/*.hpp"
-    "src/rrr/base/*.cpp"
-    "src/rrr/misc/*.hpp"
-    "src/rrr/misc/*.cpp"
-    "src/rrr/reactor/*.h"
-    "src/rrr/reactor/*.cc"
-#    "rrr/mq/*.cpp"
-#    "rrr/mq/*.h"
-    "src/rrr/pylib/simplerpc/_pyrpc.cpp"
-    "src/rrr/rpc/*.cpp"
-    "src/rrr/rpc/*.hpp"
-    "src/rrr/utils/*.h"
-    "src/rrr/rrr.h"
-    "src/rrr/rrr.hpp"
+# Custom command for libtxlog.so
+add_custom_command(
+  OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  COMMAND python3 waf configure build -M
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
-file(GLOB MEMDB_SRC
-    "src/memdb/*.h"
-    "src/memdb/*.cc")
-
-file(GLOB BENCH_SRC
-    "src/bench/*/*.h"
-    "src/bench/*/*.cc"
+# Build stamp files
+add_custom_command(
+  OUTPUT ${O}/${W}/buildstamp ${O}/${W}/buildstamp.bench ${O}/${W}/buildstamp.masstree
+  COMMAND mkdir -p "${O}/${W}"
+  COMMAND echo > "${O}/${W}/buildstamp"
+  COMMAND echo > "${O}/${W}/buildstamp.bench"
+  COMMAND echo > "${O}/${W}/buildstamp.masstree"
 )
 
-file(GLOB DEPTRAN_SRC
-    "src/deptran/*.h"
-    "src/deptran/*.cc"
-    "src/deptran/*/*.cc"
-    "src/deptran/*/*.h"
+# Object library for all source files
+add_library(warbler_objects OBJECT
+  ${SRCFILES}
+  ${MASSTREE_SRCFILES}
+  ${BENCH_SRCFILES}
+  ${LIB_SRCFILES}
 )
-
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX
-        "src/deptran/s_main.cc"
+target_include_directories(warbler_objects PRIVATE
+  "${W}/masstree"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
+  "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  "${HOME}"
 )
+target_compile_options(warbler_objects PRIVATE ${BENCH_CXXFLAGS})
+target_compile_definitions(warbler_objects PRIVATE CONFIG_H="${CONFIG_H}")
+target_include_directories(warbler_objects PRIVATE ${LIBEVENT_INCLUDE_DIRS})
 
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX
-        "src/deptran/paxos_main_helper.cc"
+add_executable(dbtest
+  $<TARGET_OBJECTS:warbler_objects>
+  #${W}/masstree/config.h
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
 )
-
-add_library(RRR
-    ${RRR_SRC})
-
-add_library(MEMDB
-    ${MEMDB_SRC})
-
-#add_library(JANUS
-#        ${DEPTRAN_SRC}
-#        ${BENCH_SRC})
-
-add_executable(janusdb
-        "src/deptran/s_main.cc"
-        ${DEPTRAN_SRC}
-        ${BENCH_SRC})
-
-add_executable(paxosbench
-        "src/run.cc"
-        "src/deptran/paxos_main_helper.cc"
-        ${DEPTRAN_SRC}
-        ${BENCH_SRC})
-
-
-add_dependencies(janusdb gen-rpc)
-
-#add_executable(JANUS_PROCESS
-#        "deptran/empty.cc")
-
-add_executable(TEST
-        "test/coroutine.cc")
-
-target_link_libraries(
-        MEMDB
-        RRR
-#        ${CONAN_LIBS}
-        ${Boost_LIBRARIES}
-#        ${YAML_CPP_LIBRARIES}
-        ${RT})
-
-target_link_libraries(
-        janusdb
-        RRR
-        MEMDB
-        EXTERN_C
-        YAMLCPP
-        ${RT}
-#        ${CONAN_LIBS}
-        ${Boost_LIBRARIES}
-        ${CMAKE_THREAD_LIBS_INIT}
-        ${PYTHON_LIBRARIES}
-#    ${APR_LIBRARIES}
-#    ${APRUTIL_LIBRARIES}
-#    ${PROFILER_LIBRARIES}
+target_link_libraries(dbtest PRIVATE
+  ${BENCH_LDFLAGS}
+  ${LZ4LDFLAGS}
+  -lyaml-cpp
+  -L${CMAKE_CURRENT_SOURCE_DIR}/build
+  -ljemalloc
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
 )
+target_include_directories(dbtest PRIVATE ${LIBEVENT_INCLUDE_DIRS})
 
-target_link_libraries(
-        paxosbench
-        RRR
-        MEMDB
-        EXTERN_C
-        YAMLCPP
-        ${RT}
-        #        ${CONAN_LIBS}
-        ${Boost_LIBRARIES}
-        ${CMAKE_THREAD_LIBS_INIT}
-        ${PYTHON_LIBRARIES}
-        #    ${APR_LIBRARIES}
-        #    ${APRUTIL_LIBRARIES}
-        #    ${PROFILER_LIBRARIES}
-)
+# for benchmarks/ut
+# Gather all .cc files in the benchmarks/ut directory
+# file(GLOB BENCHMARK_SOURCES "${W}/benchmarks/ut/*.cc")
+# foreach(SOURCE_FILE ${BENCHMARK_SOURCES}) # Create object files for each source file
+#     get_filename_component(SOURCE_NAME ${SOURCE_FILE} NAME_WE)
+#     set(OBJECT_FILE ${O}/${W}/benchmarks/ut/${SOURCE_NAME}.o)
+#     add_custom_command(
+#         OUTPUT ${OBJECT_FILE}
+#         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/${O}/${W}/benchmarks/ut/
+#         COMMAND ${CMAKE_CXX_COMPILER} -I${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree -I${CMAKE_CURRENT_SOURCE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/${W} ${BENCH_CXXFLAGS} -DCONFIG_H=\\\"/home/weihai/janus/src/warbler/config/config-perf.h\\\" -c ${SOURCE_FILE} -o ${OBJECT_FILE}
+#         DEPENDS ${SOURCE_FILE} ${O}/${W}/buildstamp ${O}/${W}/buildstamp.bench
+#         COMMENT "Compiling ${SOURCE_FILE} to ${OBJECT_FILE}"
+#     )
+    
+#     list(APPEND BENCHMARK_OBJECTS ${OBJECT_FILE})
+# endforeach()
 
-#target_link_libraries(
-#        JANUS_PROCESS
-#        JANUS
-#)
+# Create a custom target to depend on all object files
+#add_custom_target(benchmark_objects DEPENDS ${BENCHMARK_OBJECTS})
 
-target_link_libraries(
-        TEST
-        RRR
-        GTest::main
-        GTest::gtest
-        GSL:gsl
-        ${Boost_LIBRARIES}
-#        ${CONAN_LIBS}
-        ${CMAKE_THREAD_LIBS_INIT}
-)
+# add_executable(simpleTransaction
+#   ${O}/${W}/benchmarks/ut/simpleTransaction.o
+#   ${OBJFILES}
+#   ${MASSTREE_OBJFILES}
+#   ${OBJS}
+#   ${BENCH_OBJFILES}
+#   ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+#   ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+# )
+# target_link_libraries(simpleTransaction PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp -L${CMAKE_CURRENT_SOURCE_DIR}/build)
+
+# add_custom_target(simpleShards
+#   DEPENDS "${O}/benchmarks/simpleShards"
+# )
+
+# add_executable(simpleShards
+#   "${O}/benchmarks/ut/simpleShards.o"
+#   ${OBJFILES}
+#   ${MASSTREE_OBJFILES}
+#   ${OBJS}
+#   ${BENCH_OBJFILES}
+#   "${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
+# )
+# target_link_libraries(simpleShards PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp -L${CMAKE_CURRENT_SOURCE_DIR}/build)
+
+# add_custom_target(basic
+#   DEPENDS "${O}/benchmarks/basic"
+# )
+
+# add_library(common_objects OBJECT
+#   #${SRCFILES}
+#   ${OBJFILES}
+#   ${MASSTREE_OBJFILES}
+#   ${OBJS}
+#   ${BENCH_OBJFILES}
+#   ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+#   ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+# )
+
+# target_include_directories(common_objects PRIVATE
+#   "${W}/masstree"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/src"
+#   "${HOME}"
+# )
+# target_compile_options(common_objects PRIVATE ${BENCH_CXXFLAGS})
+# target_compile_definitions(common_objects PRIVATE CONFIG_H="${CONFIG_H}")
+# target_include_directories(common_objects PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
+# add_executable(basic
+#   ${O}/${W}/benchmarks/ut/basic.o
+#   $<TARGET_OBJECTS:common_objects>
+# )
+# target_link_libraries(basic PRIVATE 
+#   ${BENCH_LDFLAGS} 
+#   ${LZ4LDFLAGS} 
+#   -lyaml-cpp 
+#   -L${CMAKE_CURRENT_SOURCE_DIR}/build
+#   -ljemalloc
+#   ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+#   ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+# )
+
+# add_custom_target(paxos_async_commit_test
+#   DEPENDS "${O}/benchmarks/paxos_async_commit_test"
+# )
+
+# add_executable(paxos_async_commit_test
+#   "${O}/benchmarks/paxos_async_commit_test.o"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
+# )
+# target_link_libraries(paxos_async_commit_test PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp -L${CMAKE_CURRENT_SOURCE_DIR}/build)
+
+# add_custom_target(erpc_runner
+#   DEPENDS "${O}/benchmarks/erpc_runner_test"
+# )
+
+# add_executable(erpc_runner
+#   "${O}/benchmarks/erpc_runner/erpc_runner_test.o"
+#   "${O}/benchmarks/erpc_runner/erpc_runner_queue.o"
+#   "${O}/benchmarks/erpc_runner/common.o"
+#   "${O}/benchmarks/erpc_runner/configuration.o"
+#   "${O}/benchmarks/erpc_runner/erpc_runner.o"
+#   ${OBJFILES}
+#   ${MASSTREE_OBJFILES}
+#   ${OBJS}
+#   ${BENCH_OBJFILES}
+#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
+# )
+# target_link_libraries(erpc_runner PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp)
+
+# add_custom_target(erpc_server
+#   DEPENDS "${O}/benchmarks/erpc_server"
+# )
+
+# add_executable(erpc_server
+#   "${O}/benchmarks/ut/erpc_server.o"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
+# )
+# target_link_libraries(erpc_server PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp)
+
+# add_custom_target(erpc_client
+#   DEPENDS "${O}/benchmarks/erpc_client"
+# )
+
+# add_executable(erpc_client
+#   "${O}/benchmarks/ut/erpc_client.o"
+#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
+# )
+# target_link_libraries(erpc_client PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp)
+
+# Handle Masstree submodule
+if(NOT EXISTS "${W}/masstree/GNUmakefile.in")
+  execute_process(COMMAND git submodule init WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  execute_process(COMMAND git submodule update WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
+
+# Track MASSTREE_CONFIG changes
+if(NOT "${MASSTREE_CONFIG}" STREQUAL "${DEP_MASSTREE_CONFIG}")
+  execute_process(
+    COMMAND mkdir -p "${O}/${W}"
+    COMMAND echo > "${O}/${W}/buildstamp.masstree"
+  )
+  set(DEP_MASSTREE_CONFIG "${MASSTREE_CONFIG}" CACHE INTERNAL "Stored MASSTREE_CONFIG")
+endif()
