@@ -353,7 +353,6 @@ set(BENCH_SRCFILES
   "${W}/benchmarks/sto/Packer.cc"
   "${W}/benchmarks/sto/ReplayDB.cc"
   "${W}/benchmarks/sto/ThreadPool.cc"
-  "${W}/benchmarks/dbtest.cc" # Added dbtest.cc
 )
 
 set(LIB_SRCFILES
@@ -385,16 +384,20 @@ set(BENCH_LDFLAGS
 )
 
 # Custom command for Masstree configuration
+# avoid adding backslashes (\) automatically
+separate_arguments(MASSTREE_CONFIG_ARGS NATIVE_COMMAND "${MASSTREE_CONFIG}")
 add_custom_command(
   OUTPUT ${W}/masstree/config.h
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   COMMAND rm -f "${W}/masstree/config.h"
-  COMMAND cd "${W}/masstree" && ./configure ${MASSTREE_CONFIG}
+  COMMAND cd "${W}/masstree" && ./configure ${MASSTREE_CONFIG_ARGS}
   COMMAND test -f "${W}/masstree/config.h" && touch "${W}/masstree/config.h" || true
   DEPENDS "${O}/${W}/buildstamp.masstree" "${W}/masstree/configure" "${W}/masstree/config.h.in"
 )
 
 add_custom_command(
   OUTPUT ${W}/masstree/configure ${W}/masstree/config.h.in
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
   COMMAND cd "${W}/masstree" && autoreconf -i && touch configure config.h.in
   DEPENDS "${W}/masstree/configure.ac"
 )
@@ -421,175 +424,6 @@ add_custom_command(
   COMMAND echo > "${O}/${W}/buildstamp.masstree"
 )
 
-# Object library for all source files
-add_library(warbler_objects OBJECT
-  ${SRCFILES}
-  ${MASSTREE_SRCFILES}
-  ${BENCH_SRCFILES}
-  ${LIB_SRCFILES}
-)
-target_include_directories(warbler_objects PRIVATE
-  "${W}/masstree"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
-  "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src"
-  "${HOME}"
-)
-target_compile_options(warbler_objects PRIVATE ${BENCH_CXXFLAGS})
-target_compile_definitions(warbler_objects PRIVATE CONFIG_H="${CONFIG_H}")
-target_include_directories(warbler_objects PRIVATE ${LIBEVENT_INCLUDE_DIRS})
-
-add_executable(dbtest
-  $<TARGET_OBJECTS:warbler_objects>
-  #${W}/masstree/config.h
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_link_libraries(dbtest PRIVATE
-  ${BENCH_LDFLAGS}
-  ${LZ4LDFLAGS}
-  -lyaml-cpp
-  -L${CMAKE_CURRENT_SOURCE_DIR}/build
-  -ljemalloc
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_include_directories(dbtest PRIVATE ${LIBEVENT_INCLUDE_DIRS})
-
-# for benchmarks/ut
-# Gather all .cc files in the benchmarks/ut directory
-# file(GLOB BENCHMARK_SOURCES "${W}/benchmarks/ut/*.cc")
-# foreach(SOURCE_FILE ${BENCHMARK_SOURCES}) # Create object files for each source file
-#     get_filename_component(SOURCE_NAME ${SOURCE_FILE} NAME_WE)
-#     set(OBJECT_FILE ${O}/${W}/benchmarks/ut/${SOURCE_NAME}.o)
-#     add_custom_command(
-#         OUTPUT ${OBJECT_FILE}
-#         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/${O}/${W}/benchmarks/ut/
-#         COMMAND ${CMAKE_CXX_COMPILER} -I${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree -I${CMAKE_CURRENT_SOURCE_DIR} -I${CMAKE_CURRENT_SOURCE_DIR}/${W} ${BENCH_CXXFLAGS} -DCONFIG_H=\\\"/home/weihai/janus/src/warbler/config/config-perf.h\\\" -c ${SOURCE_FILE} -o ${OBJECT_FILE}
-#         DEPENDS ${SOURCE_FILE} ${O}/${W}/buildstamp ${O}/${W}/buildstamp.bench
-#         COMMENT "Compiling ${SOURCE_FILE} to ${OBJECT_FILE}"
-#     )
-    
-#     list(APPEND BENCHMARK_OBJECTS ${OBJECT_FILE})
-# endforeach()
-
-# Create a custom target to depend on all object files
-#add_custom_target(benchmark_objects DEPENDS ${BENCHMARK_OBJECTS})
-
-# add_executable(simpleTransaction
-#   ${O}/${W}/benchmarks/ut/simpleTransaction.o
-#   ${OBJFILES}
-#   ${MASSTREE_OBJFILES}
-#   ${OBJS}
-#   ${BENCH_OBJFILES}
-#   ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-#   ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-# )
-# target_link_libraries(simpleTransaction PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp -L${CMAKE_CURRENT_SOURCE_DIR}/build)
-
-# add_custom_target(simpleShards
-#   DEPENDS "${O}/benchmarks/simpleShards"
-# )
-
-# add_executable(simpleShards
-#   "${O}/benchmarks/ut/simpleShards.o"
-#   ${OBJFILES}
-#   ${MASSTREE_OBJFILES}
-#   ${OBJS}
-#   ${BENCH_OBJFILES}
-#   "${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
-# )
-# target_link_libraries(simpleShards PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp -L${CMAKE_CURRENT_SOURCE_DIR}/build)
-
-# add_custom_target(basic
-#   DEPENDS "${O}/benchmarks/basic"
-# )
-
-# add_library(common_objects OBJECT
-#   #${SRCFILES}
-#   ${OBJFILES}
-#   ${MASSTREE_OBJFILES}
-#   ${OBJS}
-#   ${BENCH_OBJFILES}
-#   ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-#   ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-# )
-
-# target_include_directories(common_objects PRIVATE
-#   "${W}/masstree"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/src"
-#   "${HOME}"
-# )
-# target_compile_options(common_objects PRIVATE ${BENCH_CXXFLAGS})
-# target_compile_definitions(common_objects PRIVATE CONFIG_H="${CONFIG_H}")
-# target_include_directories(common_objects PRIVATE ${LIBEVENT_INCLUDE_DIRS})
-
-# add_executable(basic
-#   ${O}/${W}/benchmarks/ut/basic.o
-#   $<TARGET_OBJECTS:common_objects>
-# )
-# target_link_libraries(basic PRIVATE 
-#   ${BENCH_LDFLAGS} 
-#   ${LZ4LDFLAGS} 
-#   -lyaml-cpp 
-#   -L${CMAKE_CURRENT_SOURCE_DIR}/build
-#   -ljemalloc
-#   ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-#   ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-# )
-
-# add_custom_target(paxos_async_commit_test
-#   DEPENDS "${O}/benchmarks/paxos_async_commit_test"
-# )
-
-# add_executable(paxos_async_commit_test
-#   "${O}/benchmarks/paxos_async_commit_test.o"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
-# )
-# target_link_libraries(paxos_async_commit_test PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp -L${CMAKE_CURRENT_SOURCE_DIR}/build)
-
-# add_custom_target(erpc_runner
-#   DEPENDS "${O}/benchmarks/erpc_runner_test"
-# )
-
-# add_executable(erpc_runner
-#   "${O}/benchmarks/erpc_runner/erpc_runner_test.o"
-#   "${O}/benchmarks/erpc_runner/erpc_runner_queue.o"
-#   "${O}/benchmarks/erpc_runner/common.o"
-#   "${O}/benchmarks/erpc_runner/configuration.o"
-#   "${O}/benchmarks/erpc_runner/erpc_runner.o"
-#   ${OBJFILES}
-#   ${MASSTREE_OBJFILES}
-#   ${OBJS}
-#   ${BENCH_OBJFILES}
-#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
-# )
-# target_link_libraries(erpc_runner PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp)
-
-# add_custom_target(erpc_server
-#   DEPENDS "${O}/benchmarks/erpc_server"
-# )
-
-# add_executable(erpc_server
-#   "${O}/benchmarks/ut/erpc_server.o"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
-# )
-# target_link_libraries(erpc_server PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp)
-
-# add_custom_target(erpc_client
-#   DEPENDS "${O}/benchmarks/erpc_client"
-# )
-
-# add_executable(erpc_client
-#   "${O}/benchmarks/ut/erpc_client.o"
-#   "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so"
-# )
-# target_link_libraries(erpc_client PRIVATE ${BENCH_LDFLAGS} ${LZ4LDFLAGS} -lyaml-cpp)
-
 # Handle Masstree submodule
 if(NOT EXISTS "${W}/masstree/GNUmakefile.in")
   execute_process(COMMAND git submodule init WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -604,3 +438,111 @@ if(NOT "${MASSTREE_CONFIG}" STREQUAL "${DEP_MASSTREE_CONFIG}")
   )
   set(DEP_MASSTREE_CONFIG "${MASSTREE_CONFIG}" CACHE INTERNAL "Stored MASSTREE_CONFIG")
 endif()
+
+# Add a masstree dependency
+set_source_files_properties(${SRCFILES} PROPERTIES OBJECT_DEPENDS "${W}/masstree/config.h")
+
+# Make all dependencies and objects into a common function
+function(make_common_objects_v1 tgt)
+  add_library(${tgt} OBJECT
+    ${SRCFILES}
+    ${MASSTREE_SRCFILES}
+    ${BENCH_SRCFILES}
+    ${LIB_SRCFILES}
+  )
+  target_include_directories(${tgt} PRIVATE
+    "${W}/masstree"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${HOME}"
+  )
+  target_compile_options(${tgt} PRIVATE ${BENCH_CXXFLAGS})
+  target_compile_definitions(${tgt} PRIVATE CONFIG_H="${CONFIG_H}")
+  target_include_directories(${tgt} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+endfunction()
+
+# have different libraries
+function(make_common_objects_v2 tgt)
+  add_library(${tgt} OBJECT
+  )
+  target_include_directories(${tgt} PRIVATE
+    "${W}/masstree"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${HOME}"
+  )
+  target_compile_options(${tgt} PRIVATE ${BENCH_CXXFLAGS})
+  target_compile_definitions(${tgt} PRIVATE CONFIG_H="${CONFIG_H}")
+  target_include_directories(${tgt} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+endfunction()
+
+######## ---------------- Compile a dbtest ---------------- ######## 
+set(EXEC_NAME "dbtest")
+set(MAIN_FILE
+  "${W}/benchmarks/dbtest.cc"
+)
+make_common_objects_v1(${EXEC_NAME}_common_objects)
+target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
+add_executable(${EXEC_NAME}
+  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_link_libraries(${EXEC_NAME} PRIVATE 
+  ${BENCH_LDFLAGS} 
+  ${LZ4LDFLAGS} 
+  -lyaml-cpp 
+  -L${CMAKE_CURRENT_SOURCE_DIR}/build
+  -ljemalloc
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
+######## ---------------- Compile a basic ---------------- ######## 
+set(EXEC_NAME "basic")
+set(MAIN_FILE
+  "${W}/benchmarks/ut/basic.cc"
+)
+make_common_objects_v1(${EXEC_NAME}_common_objects)
+target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
+add_executable(${EXEC_NAME}
+  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_link_libraries(${EXEC_NAME} PRIVATE 
+  ${BENCH_LDFLAGS} 
+  ${LZ4LDFLAGS} 
+  -lyaml-cpp 
+  -L${CMAKE_CURRENT_SOURCE_DIR}/build
+  -ljemalloc
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
+######## ---------------- Compile a paxos_async_commit_test ---------------- ######## 
+set(EXEC_NAME "paxos_async_commit_test")
+set(MAIN_FILE
+  "${W}/benchmarks/paxos_async_commit_test.cc"
+)
+make_common_objects_v2(${EXEC_NAME}_common_objects)
+target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
+add_executable(${EXEC_NAME}
+  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_link_libraries(${EXEC_NAME} PRIVATE 
+  ${BENCH_LDFLAGS} 
+  ${LZ4LDFLAGS} 
+  -lyaml-cpp 
+  -L${CMAKE_CURRENT_SOURCE_DIR}/build
+  -ljemalloc
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})

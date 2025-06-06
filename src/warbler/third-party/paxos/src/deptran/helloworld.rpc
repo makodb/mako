@@ -1,9 +1,0 @@
-namespace helloworld_client;
-
-abstract service HelloworldClient {
-    // fast or defer
-    // a | b in the parameter
-    // structured data
-
-    defer txn_read(vector<i64> _req | i32 val);
-}

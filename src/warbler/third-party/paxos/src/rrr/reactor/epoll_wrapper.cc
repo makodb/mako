@@ -1,7 +1,0 @@
-
-
-namespace rrr {
-
-
-
-} // namespace rrr

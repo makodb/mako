@@ -1,15 +1,15 @@
-cd $HOME/srolis
+cd $HOME/janus
 
-# Update ips, ips.pub, n_partitions (last line leaves an enter!)
+# src/warbler/bash, Update ips, ips.pub, n_partitions (last line leaves an enter!)
 
 # Generate configurations
-cd $HOME/srolis/bash
+cd $HOME/janus/src/warbler/bash
 python3 convert_ip.py
 
-cd $HOME/srolis/config
+cd $HOME/janus/src/warbler/config
 python generator.py
 
-cd $HOME/srolis/third-party/paxos/config/1leader_2followers
+cd $HOME/janus/config/1leader_2followers
 python generator.py
 
-cd $HOME/srolis
+cd $HOME/janus
