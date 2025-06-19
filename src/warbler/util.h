@@ -310,6 +310,12 @@ private:
   unsigned long seed;
 };
 
+// Add operator<< for std::pair to support format_list
+template <typename T1, typename T2>
+inline std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
+  return os << "(" << p.first << ", " << p.second << ")";
+}
+
 template <typename ForwardIterator>
 std::string
 format_list(ForwardIterator begin, ForwardIterator end)

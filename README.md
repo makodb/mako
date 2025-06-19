@@ -1,16 +1,29 @@
-## Warbler (OSDI'25)
+# Mako
 
-### Installation
-1. dpdk
-2. eRPC 
-3. masstree
-4. paxos(janus)
+## Compile (Debian 12)
 
-### Testing compilation
+Recursive clone everything 
+
 ```
-# using makefile
-bash compile-makefile.sh 
-
-# using cmakelists.txt
-bash compile-cmake.sh
+$ git clone --recursive [git_repo_url]
 ```
+
+Install all dependencies
+
+```
+$ bash apt_packages.sh
+```
+
+Manually compile eRPC (TODO: change to auto build)
+
+```
+$ cd third-party/erpc
+$ make
+```
+
+# Compile
+```
+bash compile-cmake.sh 
+```
+TODO replace this script with standard cmake build
+

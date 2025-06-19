@@ -11,7 +11,7 @@
 #define CACHE_LINE_SIZE 64
 
 /* Define to enable debugging assertions. */
-/* #undef ENABLE_ASSERTIONS */
+#define ENABLE_ASSERTIONS 1
 
 /* Define to enable invariant assertions. */
 #define ENABLE_INVARIANTS 0
@@ -78,9 +78,6 @@
 /* Define if memory debugging support is enabled. */
 /* #undef HAVE_MEMDEBUG */
 
-/* Define to 1 if you have the <memory.h> header file. */
-#define HAVE_MEMORY_H 1
-
 /* Define to 1 if you have the <numa.h> header file. */
 #define HAVE_NUMA_H 1
 
@@ -101,6 +98,9 @@
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1
+
+/* Define to 1 if you have the <stdio.h> header file. */
+#define HAVE_STDIO_H 1
 
 /* Define to 1 if you have the <stdlib.h> header file. */
 #define HAVE_STDLIB_H 1
@@ -270,7 +270,9 @@
 /* The size of `void *', as computed by sizeof. */
 #define SIZEOF_VOID_P 8
 
-/* Define to 1 if you have the ANSI C header files. */
+/* Define to 1 if all of the C90 standard headers exist (not just the ones
+   required in a freestanding environment). This macro is provided for
+   backward compatibility; new code need not use it. */
 #define STDC_HEADERS 1
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
