@@ -1,3 +1,6 @@
 [submodule "dependencies/yaml-cpp"]
 	path = dependencies/yaml-cpp
 	url = https://github.com/jbeder/yaml-cpp/
+[submodule "third-party/erpc"]
+	path = third-party/erpc
+	url = https://github.com/shenweihai1/erpc

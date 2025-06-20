@@ -53,6 +53,8 @@ def configure(conf):
     conf.load("compiler_cxx unittest_gtest")
     conf.load("boost")
 
+    conf.env.append_value("CFLAGS", "-std=c99") # fix the problem of missing CLOCK_MONOTONIC
+
     _enable_tcmalloc(conf)
     _enable_cxx14(conf)
     _enable_debug(conf)

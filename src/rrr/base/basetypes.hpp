@@ -5,6 +5,7 @@
 #include <random>
 #include <inttypes.h>
 
+#include <time.h>
 #include <sys/time.h>
 
 #include "debugging.hpp"

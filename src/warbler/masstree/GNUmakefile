@@ -1,6 +1,6 @@
 AR = ar
-CC = cc
-CXX = g++
+CC = /usr/bin/gcc
+CXX = /usr/bin/g++
 CPPFLAGS = 
 CXXFLAGS = -g -W -Wall -O3
 DEPSDIR := .deps
@@ -77,7 +77,7 @@ configure config.h.in: configure.ac
 	touch config.h.in
 
 config.status: configure
-	./configure  'CC=cc' 'CXX=g++' '--enable-max-key-len=1024' '--disable-assertions' '--disable-invariants' '--disable-preconditions' '--with-malloc=jemalloc'
+	./configure  'CC=/usr/bin/gcc' 'CXX=/usr/bin/g++' '--enable-max-key-len=1024' '--enable-assertions' '--disable-invariants' '--disable-preconditions' '--with-malloc=jemalloc'
 
 $(DEPSDIR)/stamp:
 	mkdir -p $(DEPSDIR)

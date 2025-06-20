@@ -8,11 +8,15 @@ project(warbler)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(DPDK REQUIRED libdpdk)
+
 # Define paths
 set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
 set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
 set(BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
-set(ERPC_PATH "${BUILD_DIR}/eRPC")
+set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
+message(STATUS "I: ${ERPC_PATH}")
 set(W "src/warbler")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
@@ -30,7 +34,7 @@ set(ERPC_CFLAGS_DPDK
   -I${ERPC_PATH}/src
   -DERPC_DPDK=true
   -march=native
-  -I/usr/include/dpdk
+  # ${DPDK_CXXFLAGS} 
   -DERPC_LOG_LEVEL=6
   -DERPC_TESTING=false
   -DGFLAGS_IS_A_DLL=0
@@ -38,7 +42,7 @@ set(ERPC_CFLAGS_DPDK
 set(ERPC_LDFLAGS_DPDK
   -L${ERPC_PATH}/build
   -Wl,--whole-archive
-  -ldpdk
+  ${DPDK_LDFLAGS} 
   -Wl,--no-whole-archive
   -lerpc
   -lpthread
@@ -54,15 +58,15 @@ set(ERPC_CFLAGS_IB
   -I${ERPC_PATH}/src
   -DERPC_INFINIBAND=true
   -march=native
-  -I/usr/include/dpdk
+  # ${DPDK_CFLAGS} 
   -DERPC_LOG_LEVEL=6
   -DERPC_TESTING=false
   -DGFLAGS_IS_A_DLL=0
 )
 set(ERPC_LDFLAGS_IB
   -L${ERPC_PATH}/build
-  -Wl,--whole-archive
-  -ldpdk
+  -Wl,--whole-archive 
+  ${DPDK_LDFLAGS} 
   -Wl,--no-whole-archive
   -lpthread
   -lerpc
@@ -280,7 +284,7 @@ if(DEFINED CUSTOM_LDPATH)
   set(LDFLAGS "${LDFLAGS} ${CUSTOM_LDPATH}")
 endif()
 
-set(ASIO_PATH "${BUILD_DIR}/eRPC/third_party/asio")
+set(ASIO_PATH "${ERPC_PATH}/third_party/asio")
 set(ASIO_CFLAGS -I${ASIO_PATH}/include)
 
 set(CFLAGS ${ASIO_CFLAGS})
@@ -305,8 +309,11 @@ list(APPEND LDFLAGS
   -lboost_thread
 )
 
-find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVENT REQUIRED libevent)
+pkg_check_modules(GFLAGS REQUIRED gflags)
+#pkg_check_modules(MEMCACHED REQUIRED memcached)
+pkg_check_modules(PROTOBUF REQUIRED protobuf)
+pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS ${ASIO_CFLAGS})
