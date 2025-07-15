@@ -27,3 +27,9 @@ bash compile-cmake.sh
 ```
 TODO replace this script with standard cmake build
 
+TODO
+ - change name to Mako
+ - write a ut as much simple as possible
+
+## notes
+1. we use nfs to sync some data, e.g., we use nfs to control all worker threads execute at the roughly same time (we used memcached and removed this external dependencies)

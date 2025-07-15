@@ -179,7 +179,7 @@ bench_worker::run()
           int clusterRoleLocal = srolis::LOCALHOST_CENTER_INT;
           if (i==0) 
             clusterRoleLocal = srolis::LEARNER_CENTER_INT;
-          std::string w_i = srolis::Memcached::get_key("fvw_"+std::to_string(i), 
+          std::string w_i = srolis::NFSSync::get_key("fvw_"+std::to_string(i), 
                                                       config->shard(0, clusterRoleLocal).host.c_str(), 
                                                       config->mports[clusterRoleLocal]);
           std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
@@ -436,12 +436,12 @@ bench_runner::run()
 
   if (f_mode == 0) {
     std::cout << "--------------Finish loading data and wait for others completing load phase ------------" << std::endl;
-    srolis::Memcached::set_key("load_phase_"+std::to_string(shardIndex), "DONE", config->shard(0, clusterRole).host.c_str(), config->mports[clusterRole]);
+    srolis::NFSSync::set_key("load_phase_"+std::to_string(shardIndex), "DONE", config->shard(0, clusterRole).host.c_str(), config->mports[clusterRole]);
 
     // wait for all other shards to complete
     for (int i=0; i<config->nshards; i++) {
       if (i!=shardIndex) {
-        srolis::Memcached::wait_for_key("load_phase_"+std::to_string(i), config->shard(0, clusterRole).host.c_str(), config->mports[clusterRole]);
+        srolis::NFSSync::wait_for_key("load_phase_"+std::to_string(i), config->shard(0, clusterRole).host.c_str(), config->mports[clusterRole]);
       }
     }
 
@@ -488,7 +488,7 @@ bench_runner::run()
       uint32_t n_commits = 0 ;
       for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
       samplingTPUT.push_back({getEpochInms(), n_commits});
-      cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
     }
     Warning("runtime_plus:%d",runtime_plus);
     runtime_loop = runtime_plus * repeats;
@@ -500,7 +500,7 @@ bench_runner::run()
       uint32_t n_commits = 0 ;
       for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
       samplingTPUT.push_back({getEpochInms(), n_commits});
-      cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
     }
   }
   // notify other leaders to shutdown as well

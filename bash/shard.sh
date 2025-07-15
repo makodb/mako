@@ -10,14 +10,13 @@ cluster=${5:-localhost}
 sudo cgset -r cpuset.mems=0 cpulimit
 sudo cgset -r cpuset.cpus=0-$up cpulimit
 mkdir -p results
-path=$(pwd)
+path=$(pwd)/src/warbler
 
 # gdb --args 
 # sudo strace -f -c
-#sudo cgexec -g cpuset:cpulimit ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp \
-sudo cgexec -g cpuset:cpulimit ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp \
+sudo cgexec -g cpuset:cpulimit ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
                                       --db-type mbta --num-threads $trd --scale-factor $trd --num-erpc-server 2 \
                                       --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml \
-                                      -F third-party/paxos/config/1leader_2followers/paxos$trd\_shardidx$shard.yml  -F third-party/paxos/config/occ_paxos.yml \
+                                      -F config/1leader_2followers/paxos$trd\_shardidx$shard.yml  -F config/occ_paxos.yml \
                                       --txn-flags 1 --runtime $sec  -P $cluster --bench-opts \
                                       --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G

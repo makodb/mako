@@ -525,9 +525,9 @@ main(int argc, char **argv)
           int clusterRoleLocal = srolis::LOCALHOST_CENTER_INT;
           if (i==0) 
             clusterRoleLocal = srolis::LEARNER_CENTER_INT;
-          srolis::Memcached::wait_for_key("fvw_"+std::to_string(i), 
+          srolis::NFSSync::wait_for_key("fvw_"+std::to_string(i), 
                                           config->shard(0, clusterRoleLocal).host.c_str(), config->mports[clusterRole]);
-          std::string w_i = srolis::Memcached::get_key("fvw_"+std::to_string(i), 
+          std::string w_i = srolis::NFSSync::get_key("fvw_"+std::to_string(i), 
                                                       config->shard(0, clusterRoleLocal).host.c_str(), 
                                                       config->mports[clusterRoleLocal]);
           std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
@@ -659,7 +659,7 @@ main(int argc, char **argv)
           if (par_id==0) {
             uint32_t local_w = sync_util::sync_logger::computeLocal();
             //Warning("update %s in phase-1 on port:%d", ("noops_phase_"+std::to_string(shardIndex)).c_str(), config->mports[clusterRole]);
-            srolis::Memcached::set_key("noops_phase_"+std::to_string(shardIndex), 
+            srolis::NFSSync::set_key("noops_phase_"+std::to_string(shardIndex), 
                                        std::to_string(local_w).c_str(),
                                        config->shard(0, clusterRole).host.c_str(),
                                        config->mports[clusterRole]);
@@ -691,9 +691,9 @@ main(int argc, char **argv)
       if (noops) {
         for (int i=0; i<nshards; i++) {
           if (i!=shardIndex && par_id==0) {
-            srolis::Memcached::wait_for_key("noops_phase_"+std::to_string(i), 
+            srolis::NFSSync::wait_for_key("noops_phase_"+std::to_string(i), 
                                             config->shard(0, clusterRole).host.c_str(), config->mports[clusterRole]);
-            std::string local_w = srolis::Memcached::get_key("noops_phase_"+std::to_string(i), 
+            std::string local_w = srolis::NFSSync::get_key("noops_phase_"+std::to_string(i), 
                                                             config->shard(0, clusterRole).host.c_str(), 
                                                             config->mports[clusterRole]);
 
@@ -794,13 +794,13 @@ main(int argc, char **argv)
           Warning("phase-1,par_id:%d DONE",par_id);
           if (par_id==0) {
             uint32_t local_w = sync_util::sync_logger::computeLocal();
-            srolis::Memcached::set_key("noops_phase_"+std::to_string(shardIndex), 
+            srolis::NFSSync::set_key("noops_phase_"+std::to_string(shardIndex), 
                                           std::to_string(local_w).c_str(),
                                           config->shard(0, clusterRole).host.c_str(), 
                                           config->mports[clusterRole]);
             sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, sync_util::sync_logger::retrieveShardW()/10);
 #if defined(FAIL_NEW_VERSION)
-            srolis::Memcached::set_key("fvw_"+std::to_string(shardIndex), 
+            srolis::NFSSync::set_key("fvw_"+std::to_string(shardIndex), 
                                        std::to_string(local_w).c_str(),
                                        config->shard(0, clusterRole).host.c_str(),
                                        config->mports[clusterRole]);

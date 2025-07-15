@@ -10,6 +10,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <unordered_map>
+#include <iostream>
+#include <fstream>
 #include <thread>
 #include "lib/memcached_client.h"
 
@@ -31,8 +33,43 @@ class HashWrapper {
     }
 } ;
 
-// the simplest memcached implementation with socket
+// in this implementation, we rely on nfs to sync file
 // running on the shard-0 on the leader datacenter
+namespace srolis {
+    class NFSSync {
+public:
+        static int set_key(std::string kk, const char *value, const char*host, int port) {
+            std::string filename = std::string("nfs_sync_") + host + "_" + std::to_string(port) + "_" + kk;
+            std::ofstream outfile(filename);
+            if (!outfile) {
+                std::cerr << "Failed to open file for writing: " << filename << std::endl;
+                return 1;
+            }
+            outfile << value;
+            return 0;
+        }
+
+        static void wait_for_key(std::string kk, const char*host, int port) {
+            std::string filename = std::string("nfs_sync_") + host + "_" + std::to_string(port) + "_" + kk;
+            while (1) {
+                std::ifstream infile(filename);
+                if (infile) {
+                    break;
+                }
+                usleep(0);
+            }
+        }
+
+        static string get_key(std::string kk, const char*host, int port) {
+            std::string filename = std::string("nfs_sync_") + host + "_" + std::to_string(port) + "_" + kk;
+            std::ifstream infile(filename);
+            return std::string((std::istreambuf_iterator<char>(infile)),
+                            std::istreambuf_iterator<char>());
+        }
+    };
+}
+
+
 namespace srolis {
     class Memcached
     {
