@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 # using g++
 set(CMAKE_C_COMPILER "gcc" CACHE STRING "C compiler")
 set(CMAKE_CXX_COMPILER "g++" CACHE STRING "C++ compiler")
-project(warbler)
+project(mako)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
@@ -17,7 +17,7 @@ set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
 set(BUILD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
 message(STATUS "I: ${ERPC_PATH}")
-set(W "src/warbler")
+set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
 # Read environment variable from env.txt (ib or dpdk)
@@ -30,7 +30,7 @@ endif()
 
 # eRPC flags
 set(ERPC_CFLAGS_DPDK
-  -Isrc/warbler
+  -Isrc/mako
   -I${ERPC_PATH}/src
   -DERPC_DPDK=true
   -march=native
@@ -54,7 +54,7 @@ set(ERPC_LDFLAGS_DPDK
   -lmlx5
 )
 set(ERPC_CFLAGS_IB
-  -Isrc/warbler
+  -Isrc/mako
   -I${ERPC_PATH}/src
   -DERPC_INFINIBAND=true
   -march=native
@@ -143,22 +143,22 @@ set(OSUFFIX "${OSUFFIX_D}${OSUFFIX_S}${OSUFFIX_E}${OSUFFIX_H}${OSUFFIX_R}")
 # Output directory and config header
 if(MODE STREQUAL "perf")
   set(O "out-perf${OSUFFIX}")
-  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-perf.h")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/config-perf.h")
 elseif(MODE STREQUAL "backoff")
   set(O "out-backoff${OSUFFIX}")
-  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-backoff.h")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/config-backoff.h")
 elseif(MODE STREQUAL "factor-gc")
   set(O "out-factor-gc${OSUFFIX}")
-  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-factor-gc.h")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/config-factor-gc.h")
 elseif(MODE STREQUAL "factor-gc-nowriteinplace")
   set(O "out-factor-gc-nowriteinplace${OSUFFIX}")
-  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-factor-gc-nowriteinplace.h")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/config-factor-gc-nowriteinplace.h")
 elseif(MODE STREQUAL "factor-fake-compression")
   set(O "out-factor-fake-compression${OSUFFIX}")
-  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-factor-fake-compression.h")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/config-factor-fake-compression.h")
 elseif(MODE STREQUAL "sandbox")
   set(O "out-sandbox${OSUFFIX}")
-  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/config/config-sandbox.h")
+  set(CONFIG_H "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/config-sandbox.h")
 else()
   message(FATAL_ERROR "Invalid mode: ${MODE}")
 endif()
@@ -168,7 +168,7 @@ set(O "${O}.masstree")
 set(CXXFLAGS
   -w
   -Wreturn-type
-  -Isrc/warbler
+  -Isrc/mako
   -MD
   -MP
   -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
@@ -363,18 +363,18 @@ set(BENCH_SRCFILES
 )
 
 set(LIB_SRCFILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/lookup3.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/message.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/memory.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/helper_queue.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/transport.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/fasttransport.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/configuration.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/timestamp.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/promise.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/client.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/shardClient.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler/lib/server.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/memory.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/transport.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/fasttransport.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/configuration.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/timestamp.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/promise.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/client.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
 )
 
 # Benchmark flags
@@ -459,7 +459,7 @@ function(make_common_objects_v1 tgt)
   )
   target_include_directories(${tgt} PRIVATE
     "${W}/masstree"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${HOME}"
@@ -475,7 +475,7 @@ function(make_common_objects_v2 tgt)
   )
   target_include_directories(${tgt} PRIVATE
     "${W}/masstree"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/warbler"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${HOME}"

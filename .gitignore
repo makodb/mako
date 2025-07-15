@@ -45,7 +45,7 @@ GPATH
 /.clang-format
 *.so
 .vscode/
-src/warbler/masstree/*
+src/mako/masstree/*
 cpu*
 profile-results/
 paxos*.yml

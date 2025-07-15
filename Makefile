@@ -10,10 +10,10 @@ ERPC_PATH="$(BUILD_DIR)/eRPC"
 $(debug BUILD_DIR is: ${BUILD_DIR}, HOME is: $(HOME))
 $(info BUILD_DIR is ${BUILD_DIR})
 $(info ERPC_PATH is ${ERPC_PATH})
-ERPC_CFLAGS_DPDK := -Isrc/warbler -I $(ERPC_PATH)/src -DERPC_DPDK=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+ERPC_CFLAGS_DPDK := -Isrc/mako -I $(ERPC_PATH)/src -DERPC_DPDK=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
 ERPC_LDFLAGS_DPDK := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lerpc -lpthread  -lnuma -ldl -lgflags  -ldl -libverbs -lmlx4 -lmlx5
 
-ERPC_CFLAGS_IB := -Isrc/warbler -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+ERPC_CFLAGS_IB := -Isrc/mako -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
 ERPC_LDFLAGS_IB := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lpthread -lerpc -lnuma -ldl -lgflags -ldl -libverbs -lmlx4 -lmlx5
 
 # CXX_INCLUDES = -I $(ERPC_PATH)/third_party/googletest/googletest/include -I $(ERPC_PATH)/third_party/googletest/googletest -isystem $(ERPC_PATH)/third_party/asio/include -I $(ERPC_PATH)/src -isystem $(ERPC_PATH)/third_party -isystem /usr/include/dpdk -I$(ERPC_PATH)/third_party/gflags/include -I$(ERPC_PATH)/third_party/HdrHistogram_c/src
@@ -119,34 +119,34 @@ $(info "OSUFFIX:" ${OSUFFIX})
 # O is compile output path
 ifeq ($(MODE_S),perf)
 	O := out-perf$(OSUFFIX)
-	CONFIG_H = src/warbler/config/config-perf.h
+	CONFIG_H = src/mako/config/config-perf.h
 else ifeq ($(MODE_S),backoff)
 	O := out-backoff$(OSUFFIX)
-	CONFIG_H = src/warbler/config/config-backoff.h
+	CONFIG_H = src/mako/config/config-backoff.h
 else ifeq ($(MODE_S),factor-gc)
 	O := out-factor-gc$(OSUFFIX)
-	CONFIG_H = src/warbler/config/config-factor-gc.h
+	CONFIG_H = src/mako/config/config-factor-gc.h
 else ifeq ($(MODE_S),factor-gc-nowriteinplace)
 	O := out-factor-gc-nowriteinplace$(OSUFFIX)
-	CONFIG_H = src/warbler/config/config-factor-gc-nowriteinplace.h
+	CONFIG_H = src/mako/config/config-factor-gc-nowriteinplace.h
 else ifeq ($(MODE_S),factor-fake-compression)
 	O := out-factor-fake-compression$(OSUFFIX)
-	CONFIG_H = src/warbler/config/config-factor-fake-compression.h
+	CONFIG_H = src/mako/config/config-factor-fake-compression.h
 else ifeq ($(MODE_S),sandbox)
 	O := out-sandbox$(OSUFFIX)
-	CONFIG_H = src/warbler/config/config-sandbox.h
+	CONFIG_H = src/mako/config/config-sandbox.h
 else
 	$(error invalid mode)
 endif
 
-# W is the warbler source code 
-W := src/warbler
+# W is the mako source code 
+W := src/mako
 
 $(debug COMPILE path is: ${O}, CONFIG-H is: ${CONFIG_H}, W is ${W})
 
 #CXXFLAGS := -g -Wall
 # suppress all warning: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
-CXXFLAGS := -w -Wreturn-type -Isrc/warbler
+CXXFLAGS := -w -Wreturn-type -Isrc/mako
 CXXFLAGS += -MD -MP -Ithird-party/lz4 -Isrc -I$(HOME) -DCONFIG_H=\"$(CONFIG_H)\"
 ifeq ($(env),ib)
   $(debug We use ib device: $(env).)
@@ -402,7 +402,7 @@ PROTOS :=
 
 # include $(W)/lib/Rules.mk
 
-libd = src/warbler/lib/
+libd = src/mako/lib/
 SRCS += $(addprefix $(libd), \
 	lookup3.cc message.cc memory.cc helper_queue.cc transport.cc \
 	fasttransport.cc configuration.cc timestamp.cc promise.cc client.cc shardClient.cc server.cc)
