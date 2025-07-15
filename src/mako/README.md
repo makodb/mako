@@ -1,10 +1,10 @@
-## Warbler: Speculative Distributed Transactions with Geo-Replication (OSDI'25)
+## Mako: Speculative Distributed Transactions with Geo-Replication (OSDI'25)
 
 ### How to setup environment step by step
 https://aju9mlkupe.feishu.cn/docx/SafudaEdzostF6xFXr2cGgxBnpg?from=from_copylink
 
 
-### Warbler OSDI'25 revision
+### mako OSDI'25 revision
 ### Different ratio on Microbenchmark
 ### In the same DC or different DC
 1. We run different with ratio [0, 5, 20, 50, 90, 100]
@@ -15,7 +15,7 @@ bash ~/srolis/bash/run_x.sh
 ```
 
 ### Failure recovery for COCO
-In COCO implementation, it uses execution-to-completion model like us, no changes. Generally, COCO can be considered as a special case for Warbler where all vectors are compressed into a single timestamp with different advancing strategies: Warbler uses two `min` operations to advance watermark more fine-grained than epoch in COCO.
+In COCO implementation, it uses execution-to-completion model like us, no changes. Generally, COCO can be considered as a special case for mako where all vectors are compressed into a single timestamp with different advancing strategies: mako uses two `min` operations to advance watermark more fine-grained than epoch in COCO.
 
 In this implementation, we basically make two signficants changes: (1) Just using a single-timestamp `st`, which presents `Epoch` in COCO; (2) Keep tracking of the `st` from 10ms ago.
 

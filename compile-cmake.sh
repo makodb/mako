@@ -1,6 +1,6 @@
 rm -rf ./out-perf.masstree/*
-rm -rf ./src/warbler/out-perf.masstree/*
-rm src/warbler/masstree/config.h
+rm -rf ./src/mako/out-perf.masstree/*
+rm src/mako/masstree/config.h
 cd build
 rm -rf CMakeFiles cmake_install.cmake CMakeCache.txt
 

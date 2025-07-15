@@ -10,7 +10,7 @@ cluster=${5:-localhost}
 sudo cgset -r cpuset.mems=0 cpulimit
 sudo cgset -r cpuset.cpus=0-$up cpulimit
 mkdir -p results
-path=$(pwd)/src/warbler
+path=$(pwd)/src/mako
 
 # gdb --args 
 # sudo strace -f -c
