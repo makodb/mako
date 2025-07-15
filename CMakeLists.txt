@@ -96,7 +96,7 @@ option(MEGA_BENCHMARK_MICRO "Enable MEGA benchmark micro" OFF)
 option(TRACKING_LATENCY "Enable latency tracking" OFF)
 set(SHARDS 1 CACHE STRING "Number of shards")
 set(MERGE_KEYS_GROUPS "${SHARDS}" CACHE STRING "Merge keys groups")
-option(FAIL_NEW_VERSION "Enable fail new version" OFF)
+option(FAIL_NEW_VERSION "Enable fail new version" ON)
 option(SIMULATE_ONE_SHARD_PER_THREAD "Simulate one shard per thread" OFF)
 option(TRACKING_ROLLBACK "Enable rollback tracking" OFF)
 

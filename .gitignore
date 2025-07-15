@@ -8,6 +8,7 @@
 *.tar*
 *.sublime*
 *.swp
+.obj/*
 /log
 */deptran/rcc_service.py
 */deptran/rcc_rpc.h
@@ -44,6 +45,7 @@ GPATH
 /.clang-format
 *.so
 .vscode/
+src/warbler/masstree/*
 cpu*
 profile-results/
 paxos*.yml
