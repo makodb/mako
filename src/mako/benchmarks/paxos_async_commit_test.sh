@@ -9,7 +9,7 @@ paxosCompile() {
 
 warblerCompile() {
     # Replication
-    # Warbler is on master branch
+    # Mako is on master branch
     # Paxos is on srolis-rep branch
     make clean
     shards=3

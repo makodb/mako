@@ -8,13 +8,13 @@ static int kMsgSize = 96; // reserved message size
 
 const int value_size = 10;
 
-struct basic_req_t {
+struct ut_basic_req_t {
     uint64_t req_nr; // req_id
     uint16_t tid; // thread_id
     char value[value_size];
 } ;
 
-struct req_tag_t
+struct ut_req_tag_t
 {
     erpc::MsgBuffer req_msgbuf;
     erpc::MsgBuffer resp_msgbuf;
@@ -22,7 +22,7 @@ struct req_tag_t
     size_t latency;
 };
 
-class context_t {
+class ut_context_t {
 public:
     erpc::Rpc<erpc::CTransport> *rpc = nullptr;
     size_t start_tsc_;
