@@ -12,9 +12,10 @@ sudo cgset -r cpuset.cpus=0-$up cpulimit
 mkdir -p results
 path=$(pwd)/src/mako
 
-# gdb --args 
+# sudo gdb --args 
 # sudo strace -f -c
-sudo cgexec -g cpuset:cpulimit ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
+# sudo gdb --args cgexec -g cpuset:cpulimit
+sudo ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
                                       --db-type mbta --num-threads $trd --scale-factor $trd --num-erpc-server 2 \
                                       --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml \
                                       -F config/1leader_2followers/paxos$trd\_shardidx$shard.yml  -F config/occ_paxos.yml \

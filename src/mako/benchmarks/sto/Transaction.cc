@@ -585,7 +585,7 @@ bool Transaction::try_commit(bool no_paxos) {
 			break;
                     if (n==1002) { 
                         // There is a timeout on partial INSTALL, we retry instead of abort for correctness.
-                        // Warbler can't solve "blocking" issue in 2PC.
+                        // Mako can't solve "blocking" issue in 2PC.
                         //std::cout<<"timeout in remoteInstall; retry attempts: " << retry_c <<std::endl;
                         if (!TThread::sclient->isBlocking) {
                             break;

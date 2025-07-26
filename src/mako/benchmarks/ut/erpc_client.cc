@@ -3,19 +3,22 @@
 #include "rpc_constants.h"
 #include "util/numautils.h"
 #include "consts.h"
+#include "benchmarks/sto/sync_util.hh"
+#include "benchmarks/common3.h"
 #include "lib/common.h"
 
 using namespace std;
+INIT_SYNC_UTIL_VARS
 
 //static int num_clients = 12;
-bool running = true;
-int run_time = 10; // seconds
+bool ut_running = true;
+int ut_run_time = 10; // seconds
 
 void sm_handler(int, erpc::SmEventType, erpc::SmErrType, void *) {}
 
 void transport_response(void *_context, void *_tag) {
-    auto *rt = reinterpret_cast<req_tag_t *>(_tag);
-    auto *c = reinterpret_cast<context_t *>(_context);
+    auto *rt = reinterpret_cast<ut_req_tag_t *>(_tag);
+    auto *c = reinterpret_cast<ut_context_t *>(_context);
     //std::cout << "receive a response:" << rt->resp_msgbuf.buf_ << std::endl;
     rt->blocked = false;
     const double req_lat_us =
@@ -26,8 +29,8 @@ void transport_response(void *_context, void *_tag) {
 }
 
 static void client_thread(int thread_id) {
-    req_tag_t* thread_tag = new req_tag_t();
-    context_t* c = new context_t();
+    ut_req_tag_t* thread_tag = new ut_req_tag_t();
+    ut_context_t* c = new ut_context_t();
 
     std::string client_uri = "127.0.0.1:" + std::to_string(clientPort+thread_id);
     erpc::Nexus nexus(client_uri);
@@ -44,12 +47,12 @@ static void client_thread(int thread_id) {
     int64_t count=0;
     thread_tag->blocked = true;
     size_t tot_latency = 0;
-    while (running) {
+    while (ut_running) {
         count ++;
-        thread_tag->req_msgbuf = c->rpc->alloc_msg_buffer_or_die(sizeof(basic_req_t));
+        thread_tag->req_msgbuf = c->rpc->alloc_msg_buffer_or_die(sizeof(ut_basic_req_t));
         thread_tag->resp_msgbuf = c->rpc->alloc_msg_buffer_or_die(kMsgSize);
 
-        auto *reqBuf = reinterpret_cast<basic_req_t *>(thread_tag->req_msgbuf.buf_);
+        auto *reqBuf = reinterpret_cast<ut_basic_req_t *>(thread_tag->req_msgbuf.buf_);
         reqBuf->tid = thread_id;
         reqBuf->req_nr = count;
         char *value = "XXXXX";
@@ -64,9 +67,10 @@ static void client_thread(int thread_id) {
         }
         thread_tag->blocked = true;
         tot_latency += thread_tag->latency;
+        sleep(1);
     }
     usleep((rand() % 1000)*1000);
-    std::cout << "thread-id: " << thread_id << " sent " << count / (run_time + 0.0) << " requests per second" << ", avg latency: " << tot_latency / (count + 0.0) << std::endl;
+    std::cout << "thread-id: " << thread_id << " sent " << count / (ut_run_time + 0.0) << " requests per second" << ", avg latency: " << tot_latency / (count + 0.0) << std::endl;
     sleep(1);
 }
 
@@ -81,8 +85,8 @@ int main() {
         t.detach();
     }
         
-    sleep(run_time);
-    running = false;
+    sleep(ut_run_time);
+    ut_running = false;
     sleep(1);
     return 0;
 }

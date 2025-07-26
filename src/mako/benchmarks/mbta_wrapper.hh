@@ -98,7 +98,7 @@ namespace table_logger {
 		// not found
 		table_logger::table_map[name] = table_logger::table_id++;
 		_table_id = table_logger::table_map[name];
-        std::cout << "Table: " << name << ", Id: " << _table_id << std::endl;
+        //std::cout << "Table: " << name << ", Id: " << _table_id << std::endl;
         table_logger::reversed_table_map[_table_id] = name;
 	  } else {
 		_table_id = search->second;

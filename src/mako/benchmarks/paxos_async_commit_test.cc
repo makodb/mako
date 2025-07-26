@@ -12,16 +12,16 @@
 #include <chrono>
 #include <sstream>
 #include <iomanip>
-//#include "benchmarks/sto/sync_util.hh"
-//#include "benchmarks/common3.h"
-//#include "lib/common.h"
+#include "benchmarks/sto/sync_util.hh"
+#include "benchmarks/common3.h"
+#include "lib/common.h"
 
 using namespace std;
-//using namespace srolis;
+using namespace srolis;
 bool use_fork=false;
 bool new_leader_elected=false;
 
-//INIT_SYNC_UTIL_VARS
+INIT_SYNC_UTIL_VARS
 
 // add a latency on the server
 /* 
@@ -56,10 +56,10 @@ std::string intToString(long long num) {
     return ss.str();
 }
 
-long long getCurrentTimeMillis() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::system_clock::now().time_since_epoch()).count();
-}
+// long long getCurrentTimeMillis() {
+//     return std::chrono::duration_cast<std::chrono::milliseconds>(
+//                std::chrono::system_clock::now().time_since_epoch()).count();
+// }
 
 void db_worker(size_t par_id) {
     size_t sent = 0;
@@ -85,7 +85,7 @@ void db_worker(size_t par_id) {
             LOG[i] = 'i';
 
         t.lap_nano();
-        long long tt_int = getCurrentTimeMillis();
+        long long tt_int = srolis::getCurrentTimeMillis();
         string tt=intToString(tt_int);
         for (int i=16;i<32;i++)
             LOG[i] = tt.at(i-16);

@@ -2,22 +2,26 @@
 #include "rpc.h"
 #include "rpc_constants.h"
 #include "consts.h"
+#include "benchmarks/sto/sync_util.hh"
+#include "benchmarks/common3.h"
+#include "lib/common.h"
 
 using namespace std;
+INIT_SYNC_UTIL_VARS
 
-int counter = 0;
+int ut_counter = 0;
 erpc::Rpc<erpc::CTransport> *rpc;
 erpc::MsgBuffer resp;
 
-int counter1 = 0;
+int ut_counter1 = 0;
 erpc::Rpc<erpc::CTransport> *rpc1;
 erpc::MsgBuffer resp1;
 
 void transport_request(erpc::ReqHandle *req_handle, void *) {
-    basic_req_t *rvalue = reinterpret_cast<basic_req_t *>(req_handle->get_req_msgbuf()->buf_);
-    counter ++;
+    ut_basic_req_t *rvalue = reinterpret_cast<ut_basic_req_t *>(req_handle->get_req_msgbuf()->buf_);
+    ut_counter ++;
     auto &resp = req_handle->pre_resp_msgbuf_;
-    std::string v="request was processed;counter:"+to_string(counter)+";req_nr:"+to_string(rvalue->req_nr)+";tid:"+to_string(rvalue->tid);
+    std::string v="request was processed;ut_counter:"+to_string(ut_counter)+";req_nr:"+to_string(rvalue->req_nr)+";tid:"+to_string(rvalue->tid);
     rpc->resize_msg_buffer(&resp, strlen(v.data()));
     sprintf(reinterpret_cast<char *>(resp.buf_), v.data());
     //std::cout<<"send response:"<<rvalue->req_nr<<std::endl;
@@ -26,10 +30,10 @@ void transport_request(erpc::ReqHandle *req_handle, void *) {
 }
 
 void transport_request1(erpc::ReqHandle *req_handle, void *) {
-    basic_req_t *rvalue = reinterpret_cast<basic_req_t *>(req_handle->get_req_msgbuf()->buf_);
-    counter1 ++;
+    ut_basic_req_t *rvalue = reinterpret_cast<ut_basic_req_t *>(req_handle->get_req_msgbuf()->buf_);
+    ut_counter1 ++;
     auto &resp1 = req_handle->pre_resp_msgbuf_;
-    std::string v="request was processed;counter:"+to_string(counter1)+";req_nr:"+to_string(rvalue->req_nr)+";tid:"+to_string(rvalue->tid);
+    std::string v="request was processed;ut_counter:"+to_string(ut_counter1)+";req_nr:"+to_string(rvalue->req_nr)+";tid:"+to_string(rvalue->tid);
     rpc1->resize_msg_buffer(&resp1, strlen(v.data()));
     sprintf(reinterpret_cast<char *>(resp1.buf_), v.data());
     rpc1->enqueue_response(req_handle, &resp1);

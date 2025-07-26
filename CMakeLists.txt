@@ -22,11 +22,16 @@ set(TOP "${CMAKE_SOURCE_DIR}")
 
 # Read environment variable from env.txt (ib or dpdk)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/env.txt" env_raw LIMIT_COUNT 1)
-if(env_raw)
-  string(STRIP "${env_raw}" env)
-else()
+string(STRIP "${env_raw}" env_clean)
+
+if(env_clean STREQUAL "ib")
   set(env "ib")
+elseif(env_clean STREQUAL "dpdk")
+  set(env "dpdk")
+else()
+  set(env "eth")
 endif()
+message(STATUS "environment: ${env}")
 
 # eRPC flags
 set(ERPC_CFLAGS_DPDK
@@ -76,6 +81,30 @@ set(ERPC_LDFLAGS_IB
   -libverbs
   -lmlx4
   -lmlx5
+)
+set(ERPC_CFLAGS_ETH
+  -Isrc/mako
+  -I${ERPC_PATH}/src
+  -DERPC_FAKE=true
+  -march=native
+  # ${DPDK_CFLAGS} 
+  -DERPC_LOG_LEVEL=6
+  -DERPC_TESTING=false
+  -DGFLAGS_IS_A_DLL=0
+)
+set(ERPC_LDFLAGS_ETH
+  -L${ERPC_PATH}/build
+  -Wl,--whole-archive 
+  ${DPDK_LDFLAGS} 
+  -Wl,--no-whole-archive
+  -lpthread
+  -lerpc
+  -lnuma
+  -ldl
+  -lgflags
+  #-libverbs
+  #-lmlx4
+  #-lmlx5
 )
 
 # Options
@@ -179,8 +208,10 @@ set(CXXFLAGS
 
 if(env STREQUAL "ib")
   list(APPEND CXXFLAGS ${ERPC_CFLAGS_IB})
-else()
+elseif(env STREQUAL "dpdk")
   list(APPEND CXXFLAGS ${ERPC_CFLAGS_DPDK})
+else()
+  list(APPEND CXXFLAGS ${ERPC_CFLAGS_ETH})
 endif()
 if(GPROF)
   list(APPEND CXXFLAGS -pg -static-libstdc++ -static-libgcc)
@@ -293,11 +324,16 @@ if(env STREQUAL "ib")
   list(APPEND CFLAGS ${ERPC_CFLAGS_IB_LIST})
   separate_arguments(ERPC_LDFLAGS_IB_LIST UNIX_COMMAND "${ERPC_LDFLAGS_IB}")
   list(APPEND LDFLAGS ${ERPC_LDFLAGS_IB_LIST})
-else()
+elseif(env STREQUAL "dpdk")
   separate_arguments(ERPC_CFLAGS_DPDK_LIST UNIX_COMMAND "${ERPC_CFLAGS_DPDK}")
   list(APPEND CFLAGS ${ERPC_CFLAGS_DPDK_LIST})
   separate_arguments(ERPC_LDFLAGS_DPDK_LIST UNIX_COMMAND "${ERPC_LDFLAGS_DPDK}")
   list(APPEND LDFLAGS ${ERPC_LDFLAGS_DPDK_LIST})
+else()
+  separate_arguments(ERPC_CFLAGS_ETH_LIST UNIX_COMMAND "${ERPC_CFLAGS_ETH}")
+  list(APPEND CFLAGS ${ERPC_CFLAGS_ETH_LIST})
+  separate_arguments(ERPC_LDFLAGS_ETH_LIST UNIX_COMMAND "${ERPC_LDFLAGS_ETH}")
+  list(APPEND LDFLAGS ${ERPC_LDFLAGS_ETH_LIST})
 endif()
 
 list(APPEND LDFLAGS
@@ -396,7 +432,7 @@ separate_arguments(MASSTREE_CONFIG_ARGS NATIVE_COMMAND "${MASSTREE_CONFIG}")
 add_custom_command(
   OUTPUT ${W}/masstree/config.h
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-  COMMAND rm -f "${W}/masstree/config.h"
+  #COMMAND rm -f "${W}/masstree/config.h"
   COMMAND cd "${W}/masstree" && ./configure ${MASSTREE_CONFIG_ARGS}
   COMMAND test -f "${W}/masstree/config.h" && touch "${W}/masstree/config.h" || true
   DEPENDS "${O}/${W}/buildstamp.masstree" "${W}/masstree/configure" "${W}/masstree/config.h.in"
@@ -450,12 +486,12 @@ endif()
 set_source_files_properties(${SRCFILES} PROPERTIES OBJECT_DEPENDS "${W}/masstree/config.h")
 
 # Make all dependencies and objects into a common function
-function(make_common_objects_v1 tgt)
+function(make_common_objects tgt)
   add_library(${tgt} OBJECT
-    ${SRCFILES}
-    ${MASSTREE_SRCFILES}
-    ${BENCH_SRCFILES}
-    ${LIB_SRCFILES}
+    ${SRCFILES} # basic for mako: allocator or btree
+    ${MASSTREE_SRCFILES} # masstree
+    ${BENCH_SRCFILES} # tpcc and ycsb, and txn proto
+    ${LIB_SRCFILES} # erpc library
   )
   target_include_directories(${tgt} PRIVATE
     "${W}/masstree"
@@ -467,22 +503,8 @@ function(make_common_objects_v1 tgt)
   target_compile_options(${tgt} PRIVATE ${BENCH_CXXFLAGS})
   target_compile_definitions(${tgt} PRIVATE CONFIG_H="${CONFIG_H}")
   target_include_directories(${tgt} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
-endfunction()
 
-# have different libraries
-function(make_common_objects_v2 tgt)
-  add_library(${tgt} OBJECT
-  )
-  target_include_directories(${tgt} PRIVATE
-    "${W}/masstree"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
-    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${HOME}"
-  )
-  target_compile_options(${tgt} PRIVATE ${BENCH_CXXFLAGS})
-  target_compile_definitions(${tgt} PRIVATE CONFIG_H="${CONFIG_H}")
-  target_include_directories(${tgt} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
 endfunction()
 
 ######## ---------------- Compile a dbtest ---------------- ######## 
@@ -490,7 +512,7 @@ set(EXEC_NAME "dbtest")
 set(MAIN_FILE
   "${W}/benchmarks/dbtest.cc"
 )
-make_common_objects_v1(${EXEC_NAME}_common_objects)
+make_common_objects(${EXEC_NAME}_common_objects)
 target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
 add_executable(${EXEC_NAME}
   $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
@@ -508,12 +530,12 @@ target_link_libraries(${EXEC_NAME} PRIVATE
 )
 target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
 
-######## ---------------- Compile a basic ---------------- ######## 
+# ######## ---------------- Compile a basic ---------------- ######## 
 set(EXEC_NAME "basic")
 set(MAIN_FILE
   "${W}/benchmarks/ut/basic.cc"
 )
-make_common_objects_v1(${EXEC_NAME}_common_objects)
+make_common_objects(${EXEC_NAME}_common_objects)
 target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
 add_executable(${EXEC_NAME}
   $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
@@ -536,7 +558,53 @@ set(EXEC_NAME "paxos_async_commit_test")
 set(MAIN_FILE
   "${W}/benchmarks/paxos_async_commit_test.cc"
 )
-make_common_objects_v2(${EXEC_NAME}_common_objects)
+make_common_objects(${EXEC_NAME}_common_objects)
+target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
+add_executable(${EXEC_NAME}
+  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_link_libraries(${EXEC_NAME} PRIVATE 
+  ${BENCH_LDFLAGS} 
+  ${LZ4LDFLAGS} 
+  -lyaml-cpp 
+  -L${CMAKE_CURRENT_SOURCE_DIR}/build
+  -ljemalloc
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
+# ######## ---------------- Compile a eprc_client ---------------- ######## 
+set(EXEC_NAME "erpc_client")
+set(MAIN_FILE
+  "${W}/benchmarks/ut/erpc_client.cc"
+)
+make_common_objects(${EXEC_NAME}_common_objects)
+target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
+add_executable(${EXEC_NAME}
+  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_link_libraries(${EXEC_NAME} PRIVATE 
+  ${BENCH_LDFLAGS} 
+  ${LZ4LDFLAGS} 
+  -lyaml-cpp 
+  -L${CMAKE_CURRENT_SOURCE_DIR}/build
+  -ljemalloc
+  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+)
+target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+
+# ######## ---------------- Compile a erpc_server ---------------- ######## 
+set(EXEC_NAME "erpc_server")
+set(MAIN_FILE
+  "${W}/benchmarks/ut/erpc_server.cc"
+)
+make_common_objects(${EXEC_NAME}_common_objects)
 target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
 add_executable(${EXEC_NAME}
   $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>

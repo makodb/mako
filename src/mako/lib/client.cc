@@ -118,7 +118,7 @@ namespace srolis
                                       validateReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_erpc_server(),
-                                      sizeof(basic_response_t),
+                                      sizeof(get_int_response_t),
                                       sizeof(basic_request_t));
     }
 
