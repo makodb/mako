@@ -49,3 +49,5 @@ src/mako/masstree/*
 cpu*
 profile-results/
 paxos*.yml
+experiment_*.sh
+nfs_sync_*
