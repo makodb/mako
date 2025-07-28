@@ -1,9 +1,9 @@
 cd $HOME/janus
 
-# src/mako/bash, Update ips, ips.pub, n_partitions (last line leaves an enter!)
+# Update ips_{p1|p2|leader|learner}, ips_{p1|p2|leader|learner}.pub, n_partitions (last line leaves an enter!)
 
 # Generate configurations
-cd $HOME/janus/src/mako/bash
+cd $HOME/janus/bash
 python3 convert_ip.py
 
 cd $HOME/janus/src/mako/config

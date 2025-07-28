@@ -1,6 +1,7 @@
 #!/bin/bash
 sudo cgdelete -g cpuset:/cpulimit 2>/dev/null || true
 sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimit
+set -xv
 nshard=$1
 shard=$2
 trd=$3

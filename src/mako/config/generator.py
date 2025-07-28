@@ -1,5 +1,5 @@
 nshards=10
-with open('../bash/n_partitions', 'r') as file:
+with open('../../../bash/n_partitions', 'r') as file:
     file_contents = file.read()
     nshards = int(file_contents)
     print("using partitions: ", nshards)
@@ -7,7 +7,7 @@ map_ip=[{} for _ in range(nshards)]
 
 def loader():
     for shardIdx in range(nshards):
-        file="../bash/shard{shardIdx}.config".format(shardIdx=shardIdx)
+        file="../../../bash/shard{shardIdx}.config".format(shardIdx=shardIdx)
         for line in open(file, "r").readlines():
             items=[e for e in line.split(" ") if e]
             map_ip[shardIdx][items[0]]=items[1].strip()
