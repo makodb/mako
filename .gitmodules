@@ -4,3 +4,6 @@
 [submodule "third-party/erpc"]
 	path = third-party/erpc
 	url = https://github.com/shenweihai1/erpc
+[submodule "third-party/makocon"]
+	path = third-party/makocon
+	url = https://github.com/Jiyang-Wu/MakoCon
