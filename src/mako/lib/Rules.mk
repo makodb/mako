@@ -1,3 +1,4 @@
+# deprecated 
 libd := $(dir $(lastword $(MAKEFILE_LIST)))
 
 SRCS += $(addprefix $(libd), \

@@ -25,6 +25,7 @@
 #include "lib/fasttransport.h"
 #include "lib/common.h"
 #include "lib/server.h"
+#include "lib/rust_wrapper.h"
 
 //#define PAXOS_LIB_ENABLED 1
 using namespace std;
@@ -433,6 +434,19 @@ main(int argc, char **argv)
   memset(argv_paxos[17], '\0', 20);
   sprintf(argv_paxos[17], "%d", kPaxosBatchSize);
 
+  RustWrapper* g_rust_wrapper = nullptr;
+  // start a rust wrapper
+  g_rust_wrapper = new RustWrapper();
+  if (!g_rust_wrapper->init()) {
+      std::cerr << "Failed to initialize rust wrapper!" << std::endl;
+      delete g_rust_wrapper;
+      return 1;
+  } else {
+      std::cout << "Successfully initialized rust wrapper!" << std::endl;
+  }
+
+  g_rust_wrapper->start_polling();
+    
   TSharedThreadPoolMbta tpool_mbta (nthreads+1);
   if (!leader_config) { // initialize tables on follower replicas
     abstract_db * db = tpool_mbta.getDBWrapper(nthreads)->getDB () ;
@@ -907,6 +921,7 @@ main(int argc, char **argv)
       //if (end_received.load() > 0) {std::quick_exit( EXIT_SUCCESS );}
     }
   }
+
 
 #if defined(PAXOS_LIB_ENABLED)
   std::this_thread::sleep_for(2s);

@@ -81,7 +81,6 @@ set(ERPC_CFLAGS_IB
   -I${ERPC_PATH}/src
   -DERPC_INFINIBAND=true
   -march=native
-  # ${DPDK_CFLAGS} 
   -DERPC_LOG_LEVEL=6
   -DERPC_TESTING=false
   -DGFLAGS_IS_A_DLL=0
@@ -105,7 +104,6 @@ set(ERPC_CFLAGS_ETH
   -I${ERPC_PATH}/src
   -DERPC_FAKE=true
   -march=native
-  # ${DPDK_CFLAGS} 
   -DERPC_LOG_LEVEL=6
   -DERPC_TESTING=false
   -DGFLAGS_IS_A_DLL=0
@@ -418,6 +416,7 @@ set(BENCH_SRCFILES
 
 set(LIB_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/memory.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
@@ -504,6 +503,7 @@ endif()
 set_source_files_properties(${SRCFILES} PROPERTIES OBJECT_DEPENDS "${W}/masstree/config.h")
 
 # Make all dependencies and objects into a common function
+# define function: make_common_objects
 function(make_common_objects tgt)
   add_library(${tgt} OBJECT
     ${SRCFILES} # basic for mako: allocator or btree
@@ -521,8 +521,28 @@ function(make_common_objects tgt)
   target_compile_options(${tgt} PRIVATE ${BENCH_CXXFLAGS})
   target_compile_definitions(${tgt} PRIVATE CONFIG_H="${CONFIG_H}")
   target_include_directories(${tgt} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+endfunction()
 
-
+# define function: build_dependencies
+function(build_dependencies _exec_name)
+  target_sources(${_exec_name}_common_objects PRIVATE ${MAIN_FILE})
+  add_executable(${_exec_name}
+    $<TARGET_OBJECTS:${_exec_name}_common_objects>
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+  )
+  target_link_libraries(${_exec_name} PRIVATE 
+    ${BENCH_LDFLAGS} 
+    ${LZ4LDFLAGS} 
+    rust_lib
+    -lyaml-cpp 
+    -L${CMAKE_CURRENT_SOURCE_DIR}/build
+    -ljemalloc
+    ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
+  )
+  add_dependencies(${_exec_name} rust_lib)
+  target_include_directories(${_exec_name} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
 endfunction()
 
 ######## ---------------- Compile a dbtest ---------------- ######## 
@@ -531,23 +551,7 @@ set(MAIN_FILE
   "${W}/benchmarks/dbtest.cc"
 )
 make_common_objects(${EXEC_NAME}_common_objects)
-target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
-add_executable(${EXEC_NAME}
-  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_link_libraries(${EXEC_NAME} PRIVATE 
-  ${BENCH_LDFLAGS} 
-  ${LZ4LDFLAGS} 
-  rust_lib
-  -lyaml-cpp 
-  -L${CMAKE_CURRENT_SOURCE_DIR}/build
-  -ljemalloc
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+build_dependencies(${EXEC_NAME})
 
 # ######## ---------------- Compile a basic ---------------- ######## 
 set(EXEC_NAME "basic")
@@ -555,22 +559,7 @@ set(MAIN_FILE
   "${W}/benchmarks/ut/basic.cc"
 )
 make_common_objects(${EXEC_NAME}_common_objects)
-target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
-add_executable(${EXEC_NAME}
-  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_link_libraries(${EXEC_NAME} PRIVATE 
-  ${BENCH_LDFLAGS} 
-  ${LZ4LDFLAGS} 
-  -lyaml-cpp 
-  -L${CMAKE_CURRENT_SOURCE_DIR}/build
-  -ljemalloc
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+build_dependencies(${EXEC_NAME})
 
 ######## ---------------- Compile a paxos_async_commit_test ---------------- ######## 
 set(EXEC_NAME "paxos_async_commit_test")
@@ -578,22 +567,7 @@ set(MAIN_FILE
   "${W}/benchmarks/paxos_async_commit_test.cc"
 )
 make_common_objects(${EXEC_NAME}_common_objects)
-target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
-add_executable(${EXEC_NAME}
-  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_link_libraries(${EXEC_NAME} PRIVATE 
-  ${BENCH_LDFLAGS} 
-  ${LZ4LDFLAGS} 
-  -lyaml-cpp 
-  -L${CMAKE_CURRENT_SOURCE_DIR}/build
-  -ljemalloc
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+build_dependencies(${EXEC_NAME})
 
 # ######## ---------------- Compile a eprc_client ---------------- ######## 
 set(EXEC_NAME "erpc_client")
@@ -601,22 +575,7 @@ set(MAIN_FILE
   "${W}/benchmarks/ut/erpc_client.cc"
 )
 make_common_objects(${EXEC_NAME}_common_objects)
-target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
-add_executable(${EXEC_NAME}
-  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_link_libraries(${EXEC_NAME} PRIVATE 
-  ${BENCH_LDFLAGS} 
-  ${LZ4LDFLAGS} 
-  -lyaml-cpp 
-  -L${CMAKE_CURRENT_SOURCE_DIR}/build
-  -ljemalloc
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+build_dependencies(${EXEC_NAME})
 
 # ######## ---------------- Compile a erpc_server ---------------- ######## 
 set(EXEC_NAME "erpc_server")
@@ -624,19 +583,4 @@ set(MAIN_FILE
   "${W}/benchmarks/ut/erpc_server.cc"
 )
 make_common_objects(${EXEC_NAME}_common_objects)
-target_sources(${EXEC_NAME}_common_objects PRIVATE ${MAIN_FILE})
-add_executable(${EXEC_NAME}
-  $<TARGET_OBJECTS:${EXEC_NAME}_common_objects>
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_link_libraries(${EXEC_NAME} PRIVATE 
-  ${BENCH_LDFLAGS} 
-  ${LZ4LDFLAGS} 
-  -lyaml-cpp 
-  -L${CMAKE_CURRENT_SOURCE_DIR}/build
-  -ljemalloc
-  ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-  ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-)
-target_include_directories(${EXEC_NAME} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+build_dependencies(${EXEC_NAME})
