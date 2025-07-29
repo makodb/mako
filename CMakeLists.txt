@@ -20,7 +20,25 @@ message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
-# Read environment variable from env.txt (ib or dpdk)
+# RUST
+set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target/release")
+# Custom target to build Rust library
+add_custom_target(rust_build ALL
+    COMMAND cargo build --release
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
+    COMMENT "Building Rust library"
+    VERBATIM
+)
+set(RUST_LIB_NAME "mako")
+# Create imported library for Rust library
+add_library(rust_lib STATIC IMPORTED)
+set_target_properties(rust_lib PROPERTIES
+    IMPORTED_LOCATION "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a"
+)
+add_dependencies(rust_lib rust_build)
+
+# Read environment variable from env.txt (ib or dpdk or eth)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/env.txt" env_raw LIMIT_COUNT 1)
 string(STRIP "${env_raw}" env_clean)
 
@@ -522,6 +540,7 @@ add_executable(${EXEC_NAME}
 target_link_libraries(${EXEC_NAME} PRIVATE 
   ${BENCH_LDFLAGS} 
   ${LZ4LDFLAGS} 
+  rust_lib
   -lyaml-cpp 
   -L${CMAKE_CURRENT_SOURCE_DIR}/build
   -ljemalloc
