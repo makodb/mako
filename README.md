@@ -24,16 +24,9 @@ make -j$(nproc)
 cd ../..
 ```
 
-Config hugepage
+Config hosts
 ```bash
-sudo bash -c "echo 2048 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages"
-sudo mkdir -p /mnt/huge
-sudo mount -t hugetlbfs nodev /mnt/huge
-```
-
-Config hosts with 127.0.0.1 by default
-```bash
-# Multi-servers: Update bash/ips_{p1|p2|leader|learner}, bash/ips_{p1|p2|leader|learner}.pub, n_partitions 
+# if Multi-servers: Update bash/ips_{p1|p2|leader|learner}, bash/ips_{p1|p2|leader|learner}.pub, n_partitions 
 bash ./src/mako/update_config.sh 
 ```
 
