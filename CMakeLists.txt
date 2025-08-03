@@ -299,7 +299,7 @@ set(LDFLAGS
   -lpthread
   -lnuma
   -lrt
-  -lmemcached
+  #-lmemcached
 )
 if(GPROF)
   list(APPEND LDFLAGS -pg -static-libstdc++ -static-libgcc)

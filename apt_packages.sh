@@ -29,7 +29,7 @@ sudo apt-get --assume-yes install libnuma-dev libibverbs-dev libgflags-dev numac
 sudo apt-get --assume-yes install cython3 python3-docutils pandoc make cmake g++ gcc
 sudo apt-get --assume-yes install libjemalloc-dev libpmem-dev net-tools ifmetric
 sudo apt-get --assume-yes install python3 python3-pip
-# sudo ln -s /usr/bin/python3 /usr/bin/python
+sudo ln -s /usr/bin/python3 /usr/bin/python
 sudo apt-get --assume-yes install libnuma-dev
 sudo apt-get --assume-yes install libsystemd-dev
 sudo apt-get --assume-yes install libdpdk-dev
@@ -38,3 +38,5 @@ sudo apt-get --assume-yes install libpmem-dev
 
 sudo apt-get --assume-yes install build-essential cmake gcc libudev-dev libnl-3-dev libnl-route-3-dev 
 sudo apt-get --assume-yes install ninja-build pkg-config valgrind python3-dev cython3 python3-docutils pandoc
+
+sudo apt-get --assume-yes install gh cargo openssh-server

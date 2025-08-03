@@ -174,7 +174,7 @@ class ExperimentRunner:
                 
                 self.run_command(ssh_kill_cmd, f"Kill dbtest processes on shard {shard} role {role} ({host})")
 
-    def generate_filename(self, is_cleanup=False):
+    def generate_filename(self, is_cleanup=False, only_compile=False, skip_compile=False):
         """Generate filename based on experiment parameters"""
         params = self.experiment_params
         shards = params.get('shards', 0)
@@ -183,16 +183,23 @@ class ExperimentRunner:
         micro = "micro" if params.get('is_micro', False) else "tpcc"
         runtime = params.get('runtime', 0)
         
-        suffix = "_del" if is_cleanup else ""
+        suffix = ""
+        if is_cleanup:
+            suffix = "_del"
+        elif only_compile:
+            suffix = "_compile-only"
+        elif skip_compile:
+            suffix = "_no-compile"
+        
         return f"experiment_s{shards}_{replicated}_t{threads}_{micro}_r{runtime}s{suffix}.sh"
 
-    def save_commands_script(self, filename=None, is_cleanup=False):
+    def save_commands_script(self, filename=None, is_cleanup=False, only_compile=False, skip_compile=False):
         """Save all commands to a bash script with descriptive header"""
         if not self.commands:
             return
             
         if filename is None:
-            filename = self.generate_filename(is_cleanup=is_cleanup)
+            filename = self.generate_filename(is_cleanup=is_cleanup, only_compile=only_compile, skip_compile=skip_compile)
         
         # Create header comment
         params = self.experiment_params
@@ -251,6 +258,8 @@ def main():
                        help="Only run cleanup (kill processes and remove logs)")
     parser.add_argument("--skip-compile", action="store_true",
                        help="Skip compilation phase and only run experiment")
+    parser.add_argument("--only-compile", action="store_true",
+                       help="Only compile the project without running experiments")
     
     # SSH options
     parser.add_argument("--ssh-user", type=str, default="weihai",
@@ -279,6 +288,14 @@ def main():
         
         if args.cleanup_only:
             runner.cleanup(args.shards, args.replicated)
+        elif args.only_compile:
+            # Only compile, don't run experiments
+            success = runner.compile_project(args.shards, 
+                                           1 if args.replicated else 0, 
+                                           1 if args.micro else 0)
+            if not success and not args.dry_run:
+                print("Compilation failed!")
+                return 1
         else:
             # Compile first (unless skipped), then run
             if not args.skip_compile:
@@ -292,7 +309,9 @@ def main():
             runner.run_experiment(args.shards, args.threads, args.runtime, args.replicated)
         
         # Always save commands to file
-        runner.save_commands_script(is_cleanup=args.cleanup_only)
+        runner.save_commands_script(is_cleanup=args.cleanup_only, 
+                                  only_compile=args.only_compile,
+                                  skip_compile=args.skip_compile)
             
     except KeyboardInterrupt:
         print("\nInterrupted by user")

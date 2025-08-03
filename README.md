@@ -1,28 +1,40 @@
 # Mako
 
-## Compile (Debian 12)
+## Compile (Debian 12 / Ubuntu22.04)
 
 Recursive clone everything 
 
 ```bash
-$ git clone --recursive [git_repo_url]
+git clone --recursive https://github.com/makodb/mako.git
+git checkout mako-dev
 ```
 
 Install all dependencies
 
 ```
-$ bash apt_packages.sh
+bash apt_packages.sh
 ```
 
+Install eRPC with socket transport
 ```bash
-$ cd third-party/erpc
-$ make
+cd third-party/erpc
+make clean
+cmake . -DTRANSPORT=fake -DROCE=off -DPERF=off
+make -j$(nproc)
+cd ../..
 ```
 
-# Config hosts 
+Config hugepage
 ```bash
-# Update ips_{p1|p2|leader|learner}, ips_{p1|p2|leader|learner}.pub, n_partitions 
-$ bash ./src/mako/update_config.sh 
+sudo bash -c "echo 2048 > /sys/devices/system/node/node0/hugepages/hugepages-2048kB/nr_hugepages"
+sudo mkdir -p /mnt/huge
+sudo mount -t hugetlbfs nodev /mnt/huge
+```
+
+Config hosts with 127.0.0.1 by default
+```bash
+# Multi-servers: Update bash/ips_{p1|p2|leader|learner}, bash/ips_{p1|p2|leader|learner}.pub, n_partitions 
+bash ./src/mako/update_config.sh 
 ```
 
 ## Experiment Runner
@@ -37,50 +49,26 @@ The script uses `sshpass` by default for SSH authentication. Set your password a
 export SSHPASS="your_password"
 ```
 
-### Usage
+Make sure can you ssh your all servers with each other without password
+
+### Compile and Run
 
 ```bash
-# Basic experiment (compile + run)
-./run_experiment.py --shards 3 --threads 6 --runtime 30
+# compile
+./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --dry-run --only-compile
+bash experiment_s1_norepl_t6_tpcc_r30s.sh
 
-# With replication (Paxos)
-./run_experiment.py --shards 3 --threads 6 --runtime 30 --replicated
+# run
+./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --dry-run --skip-compile
+bash experiment_s1_norepl_t6_tpcc_r30s.sh
+# all results are under ./results/*.log
 
-# Microbenchmark instead of TPC-C
-./run_experiment.py --shards 3 --threads 6 --runtime 30 --micro
+# kill
+./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --cleanup-only
 
-# Skip compilation (run experiment only)
-./run_experiment.py --shards 3 --threads 6 --runtime 30 --replicated --skip-compile
-
-# Dry run (generate script without executing)
-./run_experiment.py --shards 3 --threads 6 --runtime 30 --replicated --dry-run
-
-# Cleanup only (kill processes and remove logs)
-./run_experiment.py --shards 3 --threads 6 --runtime 30 --cleanup-only
-
-# Disable sshpass (use regular SSH keys)
-./run_experiment.py --shards 3 --threads 6 --runtime 30 --replicated --no-sshpass
+# more help
+./run_experiment.py --help
 ```
-
-### Parameters
-
-- `--shards N`: Number of shards (default: 3)
-- `--threads N`: Number of worker threads per shard (default: 6) 
-- `--runtime N`: Runtime in seconds (default: 30)
-- `--replicated`: Enable replication with Paxos
-- `--micro`: Use microbenchmark instead of TPC-C
-- `--skip-compile`: Skip compilation phase and only run experiment
-- `--dry-run`: Generate bash script without executing
-- `--cleanup-only`: Only cleanup processes and logs
-- `--ssh-user USER`: SSH username (default: weihai)
-- `--no-sshpass`: Disable sshpass and use regular SSH keys
-
-### Output
-
-The script generates a bash file with all commands executed, named with experiment parameters:
-- Example: `experiment_s3_repl_t6_tpcc_r30s.sh`
-- Contains descriptive header with all configuration details
-- Results are logged to `./results/{role}-{shard}.log`
 
 ### TODOs
  - TODO replace this script with standard cmake build
@@ -99,3 +87,4 @@ make -j10
 cd ~/janus
 echo "eth" > env.txt
 ```
+

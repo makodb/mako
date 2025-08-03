@@ -13,7 +13,7 @@
 #include <iostream>
 #include <fstream>
 #include <thread>
-#include "lib/memcached_client.h"
+//#include "lib/memcached_client.h"
 
 class HashWrapper {
     public:
@@ -70,6 +70,7 @@ public:
 }
 
 
+/*
 namespace srolis {
     class Memcached
     {
@@ -103,5 +104,6 @@ namespace srolis {
         }
     };
 }
+*/
 
 #endif //SILO_STO_COMMON_H
