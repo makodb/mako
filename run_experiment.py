@@ -69,7 +69,7 @@ class ExperimentRunner:
         self.add_section_break()
         
         # Build targets
-        targets = ["dbtest", "basic", "paxos_async_commit_test", "erpc_client", "erpc_server"]
+        targets = ["dbtest"] #"basic", "paxos_async_commit_test", "erpc_client", "erpc_server"]
         for target in targets:
             if not self.run_command(f"make -j32 {target} VERBOSE=1", f"Build {target}"):
                 return False

@@ -1,15 +1,17 @@
-cd $HOME/janus
+#!/bin/bash
+
+PROJECT=$(pwd)
 
 # Update ips_{p1|p2|leader|learner}, ips_{p1|p2|leader|learner}.pub, n_partitions (last line leaves an enter!)
 
 # Generate configurations
-cd $HOME/janus/bash
+cd $PROJECT/bash
 python3 convert_ip.py
 
-cd $HOME/janus/src/mako/config
+cd $PROJECT/src/mako/config
 python generator.py
 
-cd $HOME/janus/config/1leader_2followers
+cd $PROJECT/config/1leader_2followers
 python generator.py
 
-cd $HOME/janus
+cd $PROJECT

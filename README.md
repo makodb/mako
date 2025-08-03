@@ -55,13 +55,16 @@ Make sure can you ssh your all servers with each other without password
 
 ```bash
 # compile
+# If the error <command-line>: fatal error: src/mako/masstree/config.h appears on the first run, rerun the script.
 ./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --dry-run --only-compile
-bash experiment_s1_norepl_t6_tpcc_r30s.sh
+bash experiment_s1_norepl_t6_tpcc_r30s_compile-only.sh
 
 # run
-./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --dry-run --skip-compile
-bash experiment_s1_norepl_t6_tpcc_r30s.sh
 # all results are under ./results/*.log
+./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --dry-run --skip-compile
+bash experiment_s1_norepl_t6_tpcc_r30s_no-compile.sh
+sleep 1
+tail -f *./results/*.log
 
 # kill
 ./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --cleanup-only
@@ -86,5 +89,7 @@ make -j10
 
 cd ~/janus
 echo "eth" > env.txt
+
+sudo for bash/shard.sh is not rquired for socket-based transport
 ```
 

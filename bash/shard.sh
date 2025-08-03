@@ -1,6 +1,6 @@
 #!/bin/bash
-sudo cgdelete -g cpuset:/cpulimit 2>/dev/null || true
-sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimit
+#sudo cgdelete -g cpuset:/cpulimit 2>/dev/null || true
+#sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimit
 set -xv
 nshard=$1
 shard=$2
@@ -8,8 +8,8 @@ trd=$3
 let up=trd+3
 sec=${4:-30}
 cluster=${5:-localhost}
-sudo cgset -r cpuset.mems=0 cpulimit
-sudo cgset -r cpuset.cpus=0-$up cpulimit
+#sudo cgset -r cpuset.mems=0 cpulimit
+#sudo cgset -r cpuset.cpus=0-$up cpulimit
 mkdir -p results
 path=$(pwd)/src/mako
 
