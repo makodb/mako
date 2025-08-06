@@ -51,3 +51,4 @@ profile-results/
 paxos*.yml
 experiment_*.sh
 nfs_sync_*
+out-perf.masstree/*

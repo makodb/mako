@@ -68,7 +68,6 @@ tail -f *./results/*.log
 
 ### TODOs
  - TODO replace this script with standard cmake build
- - Manually compile eRPC (TODO: change to auto build)
 
 
 ## Notes

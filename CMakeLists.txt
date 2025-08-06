@@ -51,6 +51,29 @@ else()
 endif()
 message(STATUS "environment: ${env}")
 
+# Configure erpc based on environment
+if(env STREQUAL "ib")
+  # if env == "ib", erpc compile flag: cmake . -DTRANSPORT=infiniband -DROCE=on -DPERF=ON
+  set(TRANSPORT "infiniband" CACHE STRING "eRPC transport type")
+  set(ROCE ON CACHE BOOL "eRPC RoCE setting")
+  set(PERF ON CACHE BOOL "eRPC performance setting")
+  set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
+elseif(env STREQUAL "dpdk")
+  # if env == "dpdk", erpc compile flag: -DTRANSPORT=dpdk -DAZURE=on -DPERF=ON -DLOG_LEVEL=none"
+  set(TRANSPORT "dpdk" CACHE STRING "eRPC transport type")
+  set(AZURE ON CACHE BOOL "eRPC Azure setting")
+  set(PERF ON CACHE BOOL "eRPC performance setting")
+  set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
+else()
+  # else if env == "eth", erpc compile flag: cmake . -DTRANSPORT=fake -DROCE=off -DPERF=ON
+  set(TRANSPORT "fake" CACHE STRING "eRPC transport type")
+  set(ROCE OFF CACHE BOOL "eRPC RoCE setting")
+  set(PERF ON CACHE BOOL "eRPC performance setting")
+  set(LOG_LEVEL "none" CACHE STRING "eRPC log level")
+endif()
+
+add_subdirectory(third-party/erpc)
+
 # eRPC flags
 set(ERPC_CFLAGS_DPDK
   -Isrc/mako
@@ -63,11 +86,9 @@ set(ERPC_CFLAGS_DPDK
   -DGFLAGS_IS_A_DLL=0
 )
 set(ERPC_LDFLAGS_DPDK
-  -L${ERPC_PATH}/build
   -Wl,--whole-archive
   ${DPDK_LDFLAGS} 
   -Wl,--no-whole-archive
-  -lerpc
   -lpthread
   -lnuma
   -ldl
@@ -86,12 +107,10 @@ set(ERPC_CFLAGS_IB
   -DGFLAGS_IS_A_DLL=0
 )
 set(ERPC_LDFLAGS_IB
-  -L${ERPC_PATH}/build
   -Wl,--whole-archive 
   ${DPDK_LDFLAGS} 
   -Wl,--no-whole-archive
   -lpthread
-  -lerpc
   -lnuma
   -ldl
   -lgflags
@@ -109,12 +128,10 @@ set(ERPC_CFLAGS_ETH
   -DGFLAGS_IS_A_DLL=0
 )
 set(ERPC_LDFLAGS_ETH
-  -L${ERPC_PATH}/build
   -Wl,--whole-archive 
   ${DPDK_LDFLAGS} 
   -Wl,--no-whole-archive
   -lpthread
-  -lerpc
   -lnuma
   -ldl
   -lgflags
@@ -535,13 +552,14 @@ function(build_dependencies _exec_name)
     ${BENCH_LDFLAGS} 
     ${LZ4LDFLAGS} 
     rust_lib
+    erpc
     -lyaml-cpp 
     -L${CMAKE_CURRENT_SOURCE_DIR}/build
     -ljemalloc
     ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
   )
-  add_dependencies(${_exec_name} rust_lib)
+  add_dependencies(${_exec_name} rust_lib erpc)
   target_include_directories(${_exec_name} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
 endfunction()
 
