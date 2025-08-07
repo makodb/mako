@@ -15,15 +15,6 @@ Install all dependencies
 bash apt_packages.sh
 ```
 
-Install eRPC with socket transport
-```bash
-cd third-party/erpc
-make clean
-cmake . -DTRANSPORT=fake -DROCE=off -DPERF=off
-make -j$(nproc)
-cd ../..
-```
-
 Config hosts
 ```bash
 # if Multi-servers: Update bash/ips_{p1|p2|leader|learner}, bash/ips_{p1|p2|leader|learner}.pub, n_partitions 
@@ -67,7 +58,7 @@ tail -f *./results/*.log
 ```
 
 ### TODOs
- - TODO replace this script with standard cmake build
+ - TODO replace paxos waf script with standard cmake build
 
 
 ## Notes
