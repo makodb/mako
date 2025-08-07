@@ -316,13 +316,6 @@ void Transaction::shard_install(std::vector<uint32_t> vectorT) {
     }
     tid_unique_ = vectorT[TThread::get_shard_index()];
 
-    if (MERGE_KEYS_GROUPS != SHARDS) {
-        int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-        if (delta > 0) {
-            __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-        }
-    }
-
 
     TransItem* it = nullptr;
     if (tset_size_ == 0) return;
@@ -451,9 +444,6 @@ bool Transaction::try_commit(bool no_paxos) {
                 goto abort;
             }
         }
-#if MERGE_KEYS_GROUPS > SHARDS
-        //if (!TThread::isRemoteShard && !TThread::isHomeWarehouse) usleep(15);
-#endif
     }
 
     first_write_ = writeset[0];
@@ -494,19 +484,6 @@ bool Transaction::try_commit(bool no_paxos) {
             vectorTimestamp[i] = vectorTimestamp[i]>timestampsReadSet[i]?vectorTimestamp[i]:timestampsReadSet[i];
         }
 
-        int cnt_per_group = max(1,SHARDS / MERGE_KEYS_GROUPS);
-        if (MERGE_KEYS_GROUPS != SHARDS) {
-            for (int i=0; i<SHARDS; i++) {
-                if (i % cnt_per_group != 0)
-                    vectorTimestamp[i] = max(vectorTimestamp[i],vectorTimestamp[i-1]);
-            }
-
-            for (int i=0; i<SHARDS; i++) {
-                vectorTimestamp[i] = vectorTimestamp[cnt_per_group * ((i / cnt_per_group) + 1) - 1];
-            }
-            tid_unique_ = vectorTimestamp[TThread::get_shard_index()];
-        }
-
 #if defined(TRACKING_ROLLBACK)
         if (get_current_term()==0) {
             rollbacks_tracker[srolis::getCurrentTimeMillis()].push_back(vectorTimestamp[0]);
@@ -540,10 +517,6 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 
-#if MERGE_KEYS_GROUPS > SHARDS
-        //if (!TThread::isRemoteShard && !TThread::isHomeWarehouse) usleep(15);
-#endif
-
     //phase3
 #if STO_SORT_WRITESET
     for (unsigned tidx = first_write_; tidx != tset_size_; ++tidx) {
@@ -556,13 +529,6 @@ bool Transaction::try_commit(bool no_paxos) {
 #else
     if (nwriteset) {
         auto writeset_end = writeset + nwriteset;
-
-        if (MERGE_KEYS_GROUPS != SHARDS) {
-            int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-            if (delta > 0) {
-                __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
-            }
-        }
 
         for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
             if (likely(*idxit < tset_initial_capacity))
@@ -598,10 +564,6 @@ bool Transaction::try_commit(bool no_paxos) {
 #endif
         }
     }
-#endif
-
-#if MERGE_KEYS_GROUPS > SHARDS
-        //if (!TThread::isRemoteShard && !TThread::isHomeWarehouse) usleep(15);
 #endif
 
 #if defined(PAXOS_LIB_ENABLED)

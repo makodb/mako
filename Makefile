@@ -59,7 +59,6 @@ MEGA_BENCHMARK_MICRO ?= 0
 TRACKING_LATENCY ?= 0
 SHARDS ?= 1
 # if merge to one key
-MERGE_KEYS_GROUPS ?= $(SHARDS)
 # shard failure optimization
 FAIL_NEW_VERSION ?= 0
 # Simulate 1 shard per thread
@@ -86,7 +85,6 @@ MEGA_BENCHMARK_S=$(strip $(MEGA_BENCHMARK))
 MEGA_BENCHMARK_MICRO_S=$(strip $(MEGA_BENCHMARK_MICRO))
 TRACKING_LATENCY_S=$(strip $(TRACKING_LATENCY))
 SHARDS_S=$(strip $(SHARDS))
-MERGE_KEYS_GROUPS_S=$(strip $(MERGE_KEYS_GROUPS))
 FAIL_NEW_VERSION_S=$(strip $(FAIL_NEW_VERSION))
 SIMULATE_ONE_SHARD_PER_THREAD_S=$(strip $(SIMULATE_ONE_SHARD_PER_THREAD))
 TRACKING_ROLLBACK_S=$(strip $(TRACKING_ROLLBACK))
@@ -214,7 +212,6 @@ endif
 
 # AND then adopt the Node
 CXXFLAGS += -DSHARDS=$(SHARDS_S)
-CXXFLAGS += -DMERGE_KEYS_GROUPS=$(MERGE_KEYS_GROUPS_S)
 
 CXXFLAGS += -include $(W)/masstree/config.h
 OBJDEP += $(W)/masstree/config.h

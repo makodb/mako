@@ -156,20 +156,9 @@ public:
         uint32_t time_term = TThread::txn->tid_unique_ * 10 + TThread::txn->current_term_;
         if (isInsert) { // insert
             srolis::Node* header = reinterpret_cast<srolis::Node*>(oldval_str+oldval_len-srolis::BITS_OF_NODE);
-#if MERGE_KEYS_GROUPS < SHARDS
-            int cnt_per_group = SHARDS / MERGE_KEYS_GROUPS;
-            for (int i=0;i<MERGE_KEYS_GROUPS;i++) {
-                header->timestamps[i] = TThread::txn->vectorTimestamp[i * (cnt_per_group + 1) - 1];
-            }
-#elif MERGE_KEYS_GROUPS > SHARDS
-            for (int i=0;i<MERGE_KEYS_GROUPS;i++){
-                header->timestamps[i]= i<SHARDS ? TThread::txn->vectorTimestamp[i] : 0;
-            }
-#else
             for (int i=0;i<SHARDS;i++){
                 header->timestamps[i]=TThread::txn->vectorTimestamp[i];
             }
-#endif
             header->data_size = 0;  // indicate no next block
             memcpy(oldval_str+oldval_len-srolis::EXTRA_BITS_FOR_VALUE, &time_term, srolis::BITS_OF_TT);
             lazyReclaim(time_term, current_term, header);
@@ -195,25 +184,13 @@ public:
                 memcpy(new_vv+newval.length()-srolis::EXTRA_BITS_FOR_VALUE, 
                                     &time_term, srolis::BITS_OF_TT);
                 srolis::Node* header = reinterpret_cast<srolis::Node*>(new_vv+newval.length()-srolis::BITS_OF_NODE);
-#if MERGE_KEYS_GROUPS < SHARDS
-                int cnt_per_group = SHARDS / MERGE_KEYS_GROUPS;
-                for (int i=0;i<MERGE_KEYS_GROUPS;i++) {
-                    header->timestamps[i] = TThread::txn->vectorTimestamp[i * (cnt_per_group + 1) - 1];
-                }
-#elif MERGE_KEYS_GROUPS > SHARDS
-                for (int i=0;i<MERGE_KEYS_GROUPS;i++){
-                    header->timestamps[i]=i<SHARDS ? TThread::txn->vectorTimestamp[i] : 0;
-                }
-#else
                 for (int i=0;i<SHARDS;i++){
                     header->timestamps[i]=TThread::txn->vectorTimestamp[i];
                 }
-#endif
                 header->data_size = oldval_len;
                 header->data = e->data();
                 e->modifyData(new_vv);
                 lazyReclaim(time_term, current_term, header);
-            //}
         }
         return ;
     }

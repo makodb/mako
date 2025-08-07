@@ -63,8 +63,7 @@ class ExperimentRunner:
         
         # Configure with CMake
         cmake_cmd = (f"cmake .. -DPAXOS_LIB_ENABLED={is_replicated} "
-                    f"-DMICRO_BENCHMARK={is_micro} -DSHARDS={shards} "
-                    f"-DMERGE_KEYS_GROUPS={shards}")
+                    f"-DMICRO_BENCHMARK={is_micro} -DSHARDS={shards}")
         self.run_command(cmake_cmd, "Configure with CMake")
         self.add_section_break()
         

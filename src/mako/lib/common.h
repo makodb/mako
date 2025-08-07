@@ -98,11 +98,7 @@ namespace srolis
     }
 
     struct Node {
-#if MERGE_KEYS_GROUPS != SHARDS
-        uint32_t timestamps[MERGE_KEYS_GROUPS];
-#else
         uint32_t timestamps[SHARDS];
-#endif
         int16_t data_size;
         char *data;
     };

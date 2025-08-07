@@ -419,7 +419,6 @@ bench_runner::run()
 
   Warning("# of shards:%d",SHARDS);
   Warning("# of nthreads:%d",nthreads);
-  Warning("# of MERGE_KEYS_GROUPS:%d",MERGE_KEYS_GROUPS);
   map<string, size_t> table_sizes_before;
   if (verbose) {
     for (map<string, abstract_ordered_index *>::iterator it = open_tables.begin();

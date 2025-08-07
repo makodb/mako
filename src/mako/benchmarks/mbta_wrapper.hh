@@ -23,16 +23,8 @@
 #define UPDATE_VS(val,len) \
   srolis::Node *header = GET_NODE_POINTER(val,len); \
   uint32_t *shardtimestamp = GET_NODE_EXTRA_POINTER(val,len); \
-  if (MERGE_KEYS_GROUPS < SHARDS) { \
-    int cnt_per_group = SHARDS / MERGE_KEYS_GROUPS; \
-    for (int i=0; i<SHARDS;i++) { \
-      int ii=i/cnt_per_group; \
-      TThread::txn->timestampsReadSet[i]=MAX(TThread::txn->timestampsReadSet[i],header->timestamps[ii]); \
-    } \
-  } else { \
-    for (int i=0;i<SHARDS;i++){\
-      TThread::txn->timestampsReadSet[i]=MAX(TThread::txn->timestampsReadSet[i],header->timestamps[i]);\
-    } \
+  for (int i=0;i<SHARDS;i++){\
+    TThread::txn->timestampsReadSet[i]=MAX(TThread::txn->timestampsReadSet[i],header->timestamps[i]);\
   } \
   if (control_mode==4) { \
     if (*shardtimestamp % 10 < TThread::txn->current_term_ && sync_util::sync_logger::safety_check(header->timestamps)){ \
@@ -43,16 +35,8 @@
 #else
 #define UPDATE_VS(val,len) \
   srolis::Node *header = GET_NODE_POINTER(val,len); \
-  if (MERGE_KEYS_GROUPS < SHARDS) { \
-    int cnt_per_group = SHARDS / MERGE_KEYS_GROUPS; \
-    for (int i=0; i<SHARDS;i++) { \
-      int ii=i/cnt_per_group; \
-      TThread::txn->timestampsReadSet[i]=MAX(TThread::txn->timestampsReadSet[i],header->timestamps[ii]); \
-    } \
-  } else { \
-    for (int i=0;i<SHARDS;i++){\
-      TThread::txn->timestampsReadSet[i]=MAX(TThread::txn->timestampsReadSet[i],header->timestamps[i]);\
-    } \
+  for (int i=0;i<SHARDS;i++){\
+    TThread::txn->timestampsReadSet[i]=MAX(TThread::txn->timestampsReadSet[i],header->timestamps[i]);\
   } \
   if (control_mode==1){ \
     if (TThread::txn->timestampsReadSet[0]>sync_util::sync_logger::failed_shard_ts){ \
