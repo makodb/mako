@@ -1,33 +1,6 @@
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <vector>
-#include <utility>
-#include <string>
-#include <set>
+#include <mako.hh>
 
-#include <getopt.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/sysinfo.h>
-
-#include "../allocator.h"
-#include "../stats_server.h"
-#include "bench.h"
-#include "sto/sync_util.hh"
-#include "mbta_wrapper.hh"
-#include "deptran/s_main.h"
-#include "benchmarks/common.h"
-#include "common2.h"
-#include "common3.h"
-#include "lib/common.h"
-#include "lib/configuration.h"
-#include "lib/fasttransport.h"
-#include "lib/common.h"
-#include "lib/server.h"
-#include "lib/rust_wrapper.h"
-
-//#define PAXOS_LIB_ENABLED 1
 using namespace std;
 using namespace util;
 
