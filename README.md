@@ -6,7 +6,6 @@ Recursive clone everything
 
 ```bash
 git clone --recursive https://github.com/makodb/mako.git
-git checkout mako-dev
 ```
 
 Install all dependencies
