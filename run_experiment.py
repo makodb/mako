@@ -57,6 +57,7 @@ class ExperimentRunner:
         self.add_section_break()
         
         # Clean CMake cache
+        self.run_command("mkdir -p build", "mkdir build directory")
         self.run_command("cd build", "Change to build directory")
         self.run_command("rm -rf CMakeFiles cmake_install.cmake CMakeCache.txt", "Clean CMake cache")
         self.add_section_break()
