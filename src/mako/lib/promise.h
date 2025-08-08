@@ -32,6 +32,7 @@
 #ifndef _PROMISE_H_
 #define _PROMISE_H_
 
+#include <string>
 #include "lib/assert.h"
 #include "lib/message.h"
 #include "lib/timestamp.h"
