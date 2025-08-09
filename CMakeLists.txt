@@ -30,7 +30,7 @@ add_custom_target(rust_build ALL
     COMMENT "Building Rust library"
     VERBATIM
 )
-set(RUST_LIB_NAME "mako")
+set(RUST_LIB_NAME "rust_redis")
 # Create imported library for Rust library
 add_library(rust_lib STATIC IMPORTED)
 set_target_properties(rust_lib PROPERTIES
