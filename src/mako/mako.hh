@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <sys/sysinfo.h>
 
+#include "masstree/config.h"
+
 #include "allocator.h"
 #include "stats_server.h"
 
