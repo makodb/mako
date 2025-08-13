@@ -73,6 +73,7 @@ else()
 endif()
 
 add_subdirectory(third-party/erpc)
+set_target_properties(erpc PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/third-party/erpc")
 
 # eRPC flags
 set(ERPC_CFLAGS_DPDK
@@ -235,7 +236,7 @@ set(CXXFLAGS
   -I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
   -Isrc
   -I${HOME}
-  -DCONFIG_H="${CONFIG_H}" # No need for extra escaping with quotes
+  -DCONFIG_H=\"${CONFIG_H}\" 
 )
 
 if(env STREQUAL "ib")
@@ -386,7 +387,7 @@ list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS ${ASIO_CFLAGS})
 
 # Source files
-set(SRCFILES
+set(MAKO_SRCFILES
   "${W}/allocator.cc"
   "${W}/btree.cc"
   "${W}/core.cc"
@@ -401,18 +402,12 @@ set(SRCFILES
   "${W}/txn.cc"
   "${W}/txn_proto2_impl.cc"
   "${W}/varint.cc"
-)
-
-set(MASSTREE_SRCFILES
   "${W}/masstree/compiler.cc"
   "${W}/masstree/str.cc"
   "${W}/masstree/string.cc"
   "${W}/masstree/straccum.cc"
   "${W}/masstree/json.cc"
   "${W}/masstree/kvthread.cc"
-)
-
-set(BENCH_SRCFILES
   "${W}/benchmarks/bench.cc"
   "${W}/benchmarks/encstress.cc"
   "${W}/benchmarks/bid.cc"
@@ -427,9 +422,6 @@ set(BENCH_SRCFILES
   "${W}/benchmarks/sto/Packer.cc"
   "${W}/benchmarks/sto/ReplayDB.cc"
   "${W}/benchmarks/sto/ThreadPool.cc"
-)
-
-set(LIB_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
@@ -516,88 +508,69 @@ if(NOT "${MASSTREE_CONFIG}" STREQUAL "${DEP_MASSTREE_CONFIG}")
 endif()
 
 # Add a masstree dependency
-set_source_files_properties(${SRCFILES} PROPERTIES OBJECT_DEPENDS "${W}/masstree/config.h")
+set_source_files_properties(${MAKO_SRCFILES} PROPERTIES OBJECT_DEPENDS "${W}/masstree/config.h")
 
-# Make all dependencies and objects into a common function
-# define function: make_common_objects
-function(make_common_objects tgt)
-  add_library(${tgt} OBJECT
-    ${SRCFILES} # basic for mako: allocator or btree
-    ${MASSTREE_SRCFILES} # masstree
-    ${BENCH_SRCFILES} # tpcc and ycsb, and txn proto
-    ${LIB_SRCFILES} # erpc library
-  )
-  target_include_directories(${tgt} PRIVATE
+# Add the mako library
+add_library(mako STATIC ${MAKO_SRCFILES})
+target_include_directories(mako PUBLIC
     "${W}/masstree"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${HOME}"
+)
+target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
+target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
+target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
+set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
+
+
+# ------------------------------------- build apps -----------------------------------------------
+
+# Custom targets for additional dependencies
+add_custom_target(lz4_lib DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so)
+add_custom_target(txlog_lib DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so)
+
+
+function(add_apps exec_name exec_path)
+  # Add executable
+  add_executable(${exec_name} ${exec_path})
+  
+  # Configure target
+  target_include_directories(${exec_name} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}
   )
-  target_compile_options(${tgt} PRIVATE ${BENCH_CXXFLAGS})
-  target_compile_definitions(${tgt} PRIVATE CONFIG_H="${CONFIG_H}")
-  target_include_directories(${tgt} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
+  
+  target_compile_options(${exec_name} PRIVATE ${BENCH_CXXFLAGS}) # include all flags
+  
+  # Link dbtest against mako library and dependencies
+  target_link_libraries(${exec_name} 
+      mako
+      erpc
+      rust_lib
+      ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
+      ${BENCH_LDFLAGS}
+      yaml-cpp
+      pthread
+      numa
+      event_pthreads
+      ${LIBEVENT_LDFLAGS}
+      ${GFLAGS_LDFLAGS}
+      ${PROTOBUF_LDFLAGS}
+      ${JEMALLOC_LDFLAGS}
+  )
+  
+  # Add dependencies
+  add_dependencies(${exec_name} mako erpc rust_lib lz4_lib txlog_lib)
 endfunction()
 
-# define function: build_dependencies
-function(build_dependencies _exec_name)
-  target_sources(${_exec_name}_common_objects PRIVATE ${MAIN_FILE})
-  add_executable(${_exec_name}
-    $<TARGET_OBJECTS:${_exec_name}_common_objects>
-    ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-  )
-  target_link_libraries(${_exec_name} PRIVATE 
-    ${BENCH_LDFLAGS} 
-    ${LZ4LDFLAGS} 
-    rust_lib
-    erpc
-    -lyaml-cpp 
-    -L${CMAKE_CURRENT_SOURCE_DIR}/build
-    -ljemalloc
-    ${CMAKE_CURRENT_SOURCE_DIR}/build/libtxlog.so
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so
-  )
-  add_dependencies(${_exec_name} rust_lib erpc)
-  target_include_directories(${_exec_name} PRIVATE ${LIBEVENT_INCLUDE_DIRS})
-endfunction()
-
-######## ---------------- Compile a dbtest ---------------- ######## 
-set(EXEC_NAME "dbtest")
-set(MAIN_FILE
-  "${W}/benchmarks/dbtest.cc"
-)
-make_common_objects(${EXEC_NAME}_common_objects)
-build_dependencies(${EXEC_NAME})
-
-# ######## ---------------- Compile a basic ---------------- ######## 
-set(EXEC_NAME "basic")
-set(MAIN_FILE
-  "${W}/benchmarks/ut/basic.cc"
-)
-make_common_objects(${EXEC_NAME}_common_objects)
-build_dependencies(${EXEC_NAME})
-
-######## ---------------- Compile a paxos_async_commit_test ---------------- ######## 
-set(EXEC_NAME "paxos_async_commit_test")
-set(MAIN_FILE
-  "${W}/benchmarks/paxos_async_commit_test.cc"
-)
-make_common_objects(${EXEC_NAME}_common_objects)
-build_dependencies(${EXEC_NAME})
-
-# ######## ---------------- Compile a eprc_client ---------------- ######## 
-set(EXEC_NAME "erpc_client")
-set(MAIN_FILE
-  "${W}/benchmarks/ut/erpc_client.cc"
-)
-make_common_objects(${EXEC_NAME}_common_objects)
-build_dependencies(${EXEC_NAME})
-
-# ######## ---------------- Compile a erpc_server ---------------- ######## 
-set(EXEC_NAME "erpc_server")
-set(MAIN_FILE
-  "${W}/benchmarks/ut/erpc_server.cc"
-)
-make_common_objects(${EXEC_NAME}_common_objects)
-build_dependencies(${EXEC_NAME})
+add_apps(dbtest src/mako/benchmarks/dbtest.cc)
+add_apps(basic src/mako/benchmarks/ut/basic.cc)
+add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
+add_apps(erpc_client src/mako/benchmarks/ut/erpc_client.cc)
+add_apps(erpc_server src/mako/benchmarks/ut/erpc_server.cc)
