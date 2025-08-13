@@ -16,7 +16,7 @@ PKG_CONFIG_CFLAGS=$(pkg-config --cflags libevent gflags protobuf jemalloc)
 PKG_CONFIG_LIBS=$(pkg-config --libs libevent gflags protobuf jemalloc)
 
 # Project-specific include paths
-INCLUDE_PATHS="-Isrc -Isrc/mako -Isrc/mako/masstree -Ithird-party/lz4 -Ithird-party/erpc/src -Ithird-party/erpc/third_party/asio/include"
+INCLUDE_PATHS="-Isrc -Isrc/mako -Isrc/mako/masstree -Ithird-party/erpc/src -Ithird-party/erpc/third_party/asio/include"
 
 # Project-specific compiler definitions
 # These MUST match the settings used to compile libmako.a
@@ -25,7 +25,7 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 DEFINES="-DCONFIG_H=\"${SCRIPT_DIR}/src/mako/config/config-perf.h\" -DUSE_JEMALLOC -DERPC_FAKE=true -DGFLAGS_IS_A_DLL=0 -DSHARDS=1"
 
 # Paths to our pre-built libraries
-LINK_PATHS="-Lbuild -Lbuild/third-party/erpc -Lthird-party/lz4 -Lrust-lib/target/release"
+LINK_PATHS="-Lbuild -Lbuild/third-party/erpc -Lrust-lib/target/release"
 
 # The libraries to link
 LIBS="\
@@ -33,13 +33,11 @@ LIBS="\
   ${SCRIPT_DIR}/build/third-party/erpc/liberpc.a \
   ${SCRIPT_DIR}/rust-lib/target/release/librust_redis.a \
   /home/weihai/mako/build/libtxlog.so \
-  /home/weihai/mako/third-party/lz4/liblz4.so \
-  -lyaml-cpp -lboost_fiber -lboost_context -lboost_system -lboost_thread \
-  -lpthread -lnuma -lrt -lz -lcrypt -laio -ldl -lssl -lcrypt -levent_pthreads"
+  -lyaml-cpp  \
+  -lpthread -lnuma -levent_pthreads"
 
 # The final g++ command
 g++ -std=c++17 -O2 \
-  -include src/mako/masstree/config.h \
   $INCLUDE_PATHS \
   $PKG_CONFIG_CFLAGS \
   $DEFINES \
