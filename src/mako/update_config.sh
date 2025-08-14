@@ -9,9 +9,9 @@ cd $PROJECT/bash
 python3 convert_ip.py
 
 cd $PROJECT/src/mako/config
-python generator.py
+python3 generator.py
 
 cd $PROJECT/config/1leader_2followers
-python generator.py
+python3 generator.py
 
 cd $PROJECT
