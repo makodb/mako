@@ -1,6 +1,8 @@
 # Mako
 
-## Compile (Debian 12 / Ubuntu22.04)
+## Quickstart 
+
+This is tested on Debian 12 and Ubuntu 22.04+.
 
 Recursive clone everything 
 
@@ -14,7 +16,18 @@ Install all dependencies
 bash apt_packages.sh
 ```
 
-Config hosts
+Configure and compile
+
+```bash
+make 
+```
+You should now see libmako.a and dbtest in the build folder.
+
+Helloworld
+
+TODO for Weihai
+
+<!-- Config hosts
 ```bash
 # if Multi-servers: Update bash/ips_{p1|p2|leader|learner}, bash/ips_{p1|p2|leader|learner}.pub, n_partitions 
 bash ./src/mako/update_config.sh 
@@ -73,5 +86,5 @@ cd ~/janus
 echo "eth" > env.txt
 
 sudo for bash/shard.sh is not rquired for socket-based transport
-```
+``` -->
 
