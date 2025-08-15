@@ -82,7 +82,7 @@ namespace transport
 
     Configuration::~Configuration()
     {
-        Notice("[Configuration]Deconstruct Configuration");
+        //Notice("[Configuration]Deconstruct Configuration");
     }
 
     ShardAddress

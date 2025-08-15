@@ -24,7 +24,6 @@
 
 #include "deptran/s_main.h"
 
-#include "lib/common.h"
 #include "lib/configuration.h"
 #include "lib/fasttransport.h"
 #include "lib/common.h"
