@@ -615,7 +615,7 @@ public:
                                     TThread::txn->get_current_term());
     } else // update
       TransactionTid::inc_nonopaque_version(e->version());
-      RESET_NODE_BY_E(e)
+      //RESET_NODE_BY_E(e)
   }
 
   void unlock(TransItem& item) override {

@@ -435,7 +435,7 @@ namespace srolis
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
         resp->len = c_v.length();
-        //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,srolis::getStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
+        //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,srolis::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, c_v.c_str(), c_v.length());
     }
 
@@ -488,7 +488,7 @@ namespace srolis
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
         resp->len = c_v.length();
-        //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,srolis::getStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
+        //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,srolis::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, c_v.c_str(), c_v.length());
     }
 
@@ -530,7 +530,7 @@ namespace srolis
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
         resp->len = obj_v.length();
-        //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,srolis::getStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
+        //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,srolis::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, obj_v.c_str(), obj_v.length());
 #endif
     }

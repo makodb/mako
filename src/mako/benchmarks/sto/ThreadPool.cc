@@ -90,7 +90,7 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
         int try_cnt = 1 ;
         while (1) {
             try {
-                //Warning("Info of KV: # of K: %d, # of V: %d, table_id: %d, is_deleted: %d,key:%s", *len_of_K, obj_v.length(), *table_id, delete_true,srolis::getStringAsBit(obj_k).c_str());
+                //Warning("Info of KV: # of K: %d, # of V: %d, table_id: %d, is_deleted: %d,key:%s", *len_of_K, obj_v.length(), *table_id, delete_true,srolis::printStringAsBit(obj_k).c_str());
                 void *txn = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
                 abstract_ordered_index *table_index = db->open_index(*table_id) ;
                 table_index->put_mbta(txn, obj_k, cmpFunc2_v2, obj_v);
