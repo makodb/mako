@@ -24,8 +24,9 @@ make
 You should now see libmako.a and dbtest in the build folder.
 
 Helloworld
-
-TODO for Weihai
+```bash
+./build/simpleTransaction
+```
 
 <!-- Config hosts
 ```bash

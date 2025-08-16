@@ -13,6 +13,9 @@
 #include <stdlib.h>
 #include <chrono>
 #include <ctime>
+#include <string>
+#include <sstream>
+#include <iomanip>
 
 // promise.timeout is abandoned
 #define GET_TIMEOUT 250
@@ -74,27 +77,28 @@ namespace srolis
     }
 
     // ----------- several utils
-    static void printStringAsBit(std::string data,std::string prefix="") {
-        Warning("# of data: %lu", data.length());
-        std::string tmp=prefix;
-        for (int i=0; i<(int)data.length(); i++) {
-            if (tmp.length()==0)
-                tmp += std::to_string((int)(data.at(i)));
-            else
-                tmp += ","+std::to_string((int)(data.at(i)));
+    static std::string printStringAsBit(const char *str, size_t len,std::string prefix="") {
+        std::cout << "[" << prefix << "] printStringAsBit:" << std::endl;
+        for (size_t i = 0; i < len; ++i) {
+            unsigned char c = str[i];
+            std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << " ";
+            
+            // Print newline every 8 bytes
+            if ((i + 1) % 8 == 0) {
+                std::cout << std::endl;
+            }
         }
-        std::cout << tmp << std::endl;
+        
+        // Print final newline if last line wasn't complete
+        if (len % 8 != 0) {
+            std::cout << std::endl;
+        }
+
+        return std::string(str, len);
     }
 
-    static std::string getStringAsBit(std::string data) {
-        std::string tmp="";
-        for (int i=0; i<(int)data.length(); i++) {
-            if (tmp.length()==0)
-                tmp += std::to_string((int)(data.at(i)));
-            else
-                tmp += ","+std::to_string((int)(data.at(i)));
-        }
-        return tmp;
+    static std::string printStringAsBit(std::string str,std::string prefix="") {
+        return printStringAsBit(str.c_str(), str.size(), prefix);
     }
 
     struct Node {

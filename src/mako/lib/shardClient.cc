@@ -276,7 +276,7 @@ namespace srolis
                         placeholders::_1),
                     bind(&ShardClient::GiveUpTimeout, this),
                 timeout);
-        //Warning("remoteGET: key:%s,table_id:%d,key_len:%d",srolis::getStringAsBit(key).c_str(),table_id,key.length());
+        //Warning("remoteGET: key:%s,table_id:%d,key_len:%d",srolis::printStringAsBit(key).c_str(),table_id,key.length());
         value = promise.GetValue();
         int ret = promise.GetReply();
         if (ret>0){

@@ -35,7 +35,7 @@ public:
 
         // Write 5 keys
         for (size_t i = 0; i < 5; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+            void *txn = db->new_txn(0, arena, txn_buf());
             std::string key = "test_key_" + std::to_string(i);
             std::string value = "test_value_" + std::to_string(i) + 
                                std::string(srolis::EXTRA_BITS_FOR_VALUE, 'B');
@@ -52,7 +52,7 @@ public:
         // Read and verify 5 keys
         bool all_reads_ok = true;
         for (size_t i = 0; i < 5; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+            void *txn = db->new_txn(0, arena, txn_buf());
             std::string key = "test_key_" + std::to_string(i);
             std::string value = "";
             try {
@@ -90,15 +90,15 @@ public:
     }
 
     void test_overwritten_operations() {
-        printf("\n--- Testing Scan Operations ---\n");
-        static abstract_ordered_index *table = open_table(db, "scan_table");
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        printf("\n--- Testing OverwrittenOperations ---\n");
+        static abstract_ordered_index *table = open_table(db, "overwritten_table");
 
         // Write initial value
+        // Add more extra bits in DO_STRUCT_COMMON_VALUE in previous codebase
         {
-            void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+            void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
-            std::string key = "scan_key";
+            std::string key = "overwrite_key";
             std::string value = "initial_2000" + std::string(srolis::EXTRA_BITS_FOR_VALUE, 'B');
             try {
                 table->put(txn, key, StringWrapper(value));
@@ -111,9 +111,9 @@ public:
 
         // Overwrite with new value
         {
-            void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+            void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
-            std::string key = "scan_key";
+            std::string key = "overwrite_key";
             std::string value = "updated_1000" + std::string(srolis::EXTRA_BITS_FOR_VALUE, 'B');
             try {
                 table->put(txn, key, StringWrapper(value));
@@ -123,13 +123,43 @@ public:
                 db->abort_txn(txn);
             }
         }
-        VERIFY_PASS("Overwrite operation");
 
-        // Verify latest value via scan
         {
-            auto scan_results = scan_tables(db, table);
-            bool scan_ok = (scan_results[0].second.substr(0, 12) == "updated_1000");
-            VERIFY(scan_ok, "Scan returns updated value");
+            void *txn = db->new_txn(0, arena, txn_buf());
+            scoped_str_arena s_arena(arena);
+            std::string key = "overwrite_key";
+            std::string value = "updated_0000" + std::string(srolis::EXTRA_BITS_FOR_VALUE, 'B');
+            try {
+                table->put(txn, key, StringWrapper(value));
+                db->commit_txn(txn);
+            } catch (abstract_db::abstract_abort_exception &ex) {
+                printf("Update aborted: %s\n", key.c_str());
+                db->abort_txn(txn);
+            }
+        }
+
+        // Check multiple versions
+        {
+            void *txn = db->new_txn(0, arena, txn_buf());
+            std::string key = "overwrite_key" ;
+            std::string value = "";
+            try {
+                table->get(txn, key, value);
+                db->commit_txn(txn);
+            } catch (abstract_db::abstract_abort_exception &ex) {
+                db->abort_txn(txn);
+            }
+
+            std::vector<string> versions = MultiVersionValue::getAllVersion<std::string>(value); 
+            VERIFY(versions.size()==3, "Versions size");
+
+            std::string expected0 = "updated_0000";
+            std::string expected1 = "updated_1000";
+            std::string expected2 = "initial_2000";
+            
+            VERIFY(versions[0].substr(0, expected0.length())==expected0, "versions[0] check");
+            VERIFY(versions[1].substr(0, expected1.length())==expected1, "versions[1] check");
+            VERIFY(versions[2].substr(0, expected2.length())==expected2, "versions[2] check");
         }
     }
 
