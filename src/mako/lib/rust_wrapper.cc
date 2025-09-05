@@ -1,23 +1,18 @@
-#include "rust_wrapper.h"
+#include "lib/rust_wrapper.h"
 #include <sstream>
 #include <vector>
 
 // Global instance pointer for Rust notification
 RustWrapper* g_rust_wrapper_instance = nullptr;
-
-// C function implementation for Rust to call
-extern "C" void cpp_notify_request_available() {
-    if (g_rust_wrapper_instance) {
-        g_rust_wrapper_instance->notify_request_available();
-    }
-}
-
 RustWrapper::RustWrapper() : running_(false), initialized_(false) {
     g_rust_wrapper_instance = this;
+    txn_obj_buf.reserve(str_arena::MinStrReserveLength);
 }
 
 RustWrapper::~RustWrapper() {
-    stop();
+    if (running_) running_ = false;
+    g_rust_wrapper_instance = nullptr;
+    delete arena;
 }
 
 bool RustWrapper::init() {
@@ -25,6 +20,9 @@ bool RustWrapper::init() {
         return false; // Already initialized
     }
     
+    arena = new str_arena();
+    txn_obj_buf.resize(db->sizeof_txn_object(0));
+
     // Initialize Rust socket listener
     if (!rust_init()) {
         std::cerr << "Failed to initialize Rust socket listener" << std::endl;
@@ -38,112 +36,67 @@ bool RustWrapper::init() {
     return true;
 }
 
-void RustWrapper::start_polling() {
-    if (!initialized_ || processing_thread_.joinable()) {
-        return;
+extern "C" {
+    bool cpp_execute_request_sync(const char* operation, const char* key, const char* value, char** result) {
+        std::string op_str(operation);
+        std::string key_str(key);
+        std::string val_str(value ? value : "");
+        
+        RustWrapper::Result kv_result = g_rust_wrapper_instance->execute_request(op_str, key_str, val_str);
+        
+        if (kv_result.success && !kv_result.value.empty()) {
+            // Allocate C string for result
+            *result = strdup(kv_result.value.c_str());
+        } else {
+            *result = nullptr;
+        }
+        
+        std::cout << "Executed " << op_str << " for key '" << key_str << "' -> " << kv_result.value << std::endl;
+        
+        return kv_result.success;
     }
     
-    processing_thread_ = std::thread(&RustWrapper::poll_requests, this);
-    std::cout << "Started event-driven request processing thread" << std::endl;
-}
-
-void RustWrapper::stop() {
-    if (running_) {
-        running_ = false;
-        // Notify the processing thread to wake up and exit
-        request_cv_.notify_all();
-        if (processing_thread_.joinable()) {
-            processing_thread_.join();
-        }
-    }
-    g_rust_wrapper_instance = nullptr;
-}
-
-void RustWrapper::notify_request_available() {
-    request_cv_.notify_one();
-}
-
-void RustWrapper::poll_requests() {
-    long int counter = 0;
-    
-    while (running_) {
-        // Wait for notification from Rust
-        std::unique_lock<std::mutex> lock(request_mutex_);
-        request_cv_.wait(lock);
-        
-        if (!running_) {
-            break;
-        }
-        
-        // Process all available requests
-        uint32_t id;
-        char* request_data = nullptr;
-        
-        while (rust_retrieve_request_from_queue(&id, &request_data)) {
-            counter++;
-            std::cout << "Processing request " << id << ": " << request_data << std::endl;
-            
-            // Execute the batch request
-            execute_batch_request(id, string(request_data ? request_data : ""));
-            
-            // Free the string allocated by Rust
-            if (request_data) rust_free_string(request_data);
-        }
-        
-        if (counter % 100 == 0) {
-            std::cout << "Processed " << counter << " requests so far" << std::endl;
+    void cpp_free_string(char* ptr) {
+        if (ptr) {
+            free(ptr);
         }
     }
 }
 
-void RustWrapper::execute_request(uint32_t id, const string& operation, const string& key, const string& value) {
-    KVStore::Result result = kv_store_.execute_operation(operation, key, value);
-    
-    // Send response back to Rust
-    rust_put_response_back_queue(id, result.value.c_str(), result.success);
-    
-    std::cout << "Executed " << operation << " for key '" << key << "' -> " << result.value << std::endl;
-}
 
-void RustWrapper::execute_batch_request(uint32_t id, const string& request_data) {
-    // Parse request_data format: "op1\r\nkey1\r\nval1\r\nop2\r\nkey2\r\nval2\r\n..."
-    vector<string> lines;
-    stringstream ss(request_data);
-    string line;
+RustWrapper::Result RustWrapper::execute_request(const string& operation, const string& key, const string& value) {
+    string result;
+    bool success = true;
     
-    while (getline(ss, line)) {
-        // Remove \r if present (getline removes \n but not \r)
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
+    if (operation == "get") {
+        void *txn = db->new_txn(0, *arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+        std::string table_value = "";
+        try {
+            customerTable->get(txn, key, table_value);
+            db->commit_txn(txn);
+        } catch (abstract_db::abstract_abort_exception &ex) {
+            std::cout << "abort (read) key=" << key << std::endl;
+            db->abort_txn(txn);
         }
-        lines.push_back(line);  // Keep empty lines too, they represent empty values
+        result = table_value;
+    } else if (operation == "set") {
+        std::cout << "DEBUG: Performing SET operation" << std::endl;
+        void *txn = db->new_txn(0, *arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+        std::cout << "DEBUG: Transaction created" << std::endl;
+            try {
+                customerTable->put(txn, key, value);
+                std::cout << "DEBUG: Put operation completed" << std::endl;
+                db->commit_txn(txn);
+                std::cout << "DEBUG: Transaction committed" << std::endl;
+            } catch (abstract_db::abstract_abort_exception &ex) {
+                std::cout << "abort key=" << key << std::endl;
+                db->abort_txn(txn);
+            }
+        result = "OK";
+    } else {
+        result = "ERROR: Invalid operation";
+        success = false;
     }
     
-    
-    string batch_result = "";
-    int operations_count = 0;
-    
-    // Process operations in groups of 3 (operation, key, value)  
-    // Need at least 3 elements: i, i+1, i+2, so condition is i+2 < lines.size()
-    for (size_t i = 0; i + 2 < lines.size(); i += 3) {
-        string operation = lines[i];
-        string key = lines[i + 1];
-        string value = lines[i + 2];
-        
-        std::cout << "  Batch operation " << operations_count << ": " << operation << ":" << key << ":" << value << std::endl;
-        
-        KVStore::Result result = kv_store_.execute_operation(operation, key, value);
-        
-        // Add result to batch (separated by \r\n)
-        if (operations_count > 0) {
-            batch_result += "\r\n";
-        }
-        batch_result += result.value;
-        operations_count++;
-    }
-    
-    // Send batch response back to Rust
-    rust_put_response_back_queue(id, batch_result.c_str(), true);
-    
-    std::cout << "Executed batch request " << id << " with " << operations_count << " operations" << std::endl;
+    return Result(result, success);
 }

@@ -61,6 +61,33 @@ public:
       return get(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), value, max_bytes_read);
   }
 
+  virtual int32_t modifyBy(
+      void *txn,
+      lcdf::Str key,
+      int32_t delta = 1) = 0;
+
+  virtual int32_t modifyBy(
+      void *txn,
+      const std::string &key,
+      int32_t delta = 1) {
+      return modifyBy(txn, lcdf::Str(key), delta);
+  }
+
+  virtual int32_t modifyBy(
+      void *txn,
+      int32_t key,
+      int32_t delta = 1) {
+      return modifyBy(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), delta);
+  }
+  
+  virtual int32_t modifyBy(
+      void *txn,
+      customer_key key,
+      int32_t delta = 1) {
+      return modifyBy(txn, lcdf::Str(reinterpret_cast<const char*>(&key), sizeof(key)), delta);
+  }  
+  
+
   class scan_callback {
   public:
     virtual ~scan_callback() {}

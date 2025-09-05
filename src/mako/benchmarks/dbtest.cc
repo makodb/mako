@@ -152,6 +152,96 @@ static char** prepare_paxos_args(const vector<string>& paxos_config_file,
   argv_paxos[17] = new char[20];
   memset(argv_paxos[17], '\0', 20);
   sprintf(argv_paxos[17], "%d", kPaxosBatchSize);
+
+  RustWrapper* g_rust_wrapper = nullptr;
+  // start a rust wrapper
+  g_rust_wrapper = new RustWrapper();
+
+  abstract_db *sample_db = new mbta_wrapper;
+  abstract_ordered_index *customerTable = db->open_index("customer_0", 1, false, false);;
+
+  g_rust_wrapper->db = sample_db;
+  g_rust_wrapper->customerTable = customerTable;
+
+  if (!g_rust_wrapper->init()) {
+      std::cerr << "Failed to initialize rust wrapper!" << std::endl;
+      delete g_rust_wrapper;
+      return 1;
+  } else {
+      std::cout << "Successfully initialized rust wrapper!" << std::endl;
+  }
+    
+  TSharedThreadPoolMbta tpool_mbta (nthreads+1);
+  if (!leader_config) { // initialize tables on follower replicas
+    abstract_db * db = tpool_mbta.getDBWrapper(nthreads)->getDB () ;
+    // pre-initialize all tables to avoid table creation data race
+    if (likely(workload_type == 1)) { // tpcc or microbenchmark, table_ids [1,11*nthreads+1] at most 
+      for (int i=0;i<((size_t)scale_factor)*11+1;i++) {
+        db->open_index(i+1);
+      }
+    }
+  }
+
+  // Invoke get_epoch function
+  register_sync_util([&]() {
+#if defined(PAXOS_LIB_ENABLED)
+     return get_epoch();
+#else
+    return 0;
+#endif
+  });
+
+  // rpc client
+  register_sync_util_sc([&]() {
+#if defined(FAIL_NEW_VERSION)
+     return 0; // get_epoch();
+#else
+    return 0;
+#endif
+  });
+
+  // rpc server
+  register_sync_util_ss([&]() {
+#if defined(FAIL_NEW_VERSION)
+     return 0; // get_epoch();
+#else
+    return 0;
+#endif
+  });
+
+  // happens on the elected follower-p1, to be the new leader datacenter
+  register_fasttransport_for_dbtest([&](int control, int value) {
+    Warning("receive a control in register_fasttransport_for_dbtest: %d", control);
+    switch (control) {
+      case 4: {
+        // 1. stop the exchange server on p1 datacenter
+        // 2. increase the epoch
+        // 3. add no-ops
+        // 4. sync the logs
+        // 5. start the worker threads 
+        // change the membership
+        upgrade_p1_to_leader();
+
+        string log = "no-ops:" + to_string(get_epoch());
+        for(int i = 0; i < nthreads; i++){
+          add_log_to_nc(log.c_str(), log.size(), i);
+        }
+
+        // start the worker threads
+        std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));
+        sync_util::sync_logger::toLeader = true ;
+        std::cout << "notify a new leader is elected!\n" ;
+        //sync_util::sync_logger::worker_running = true;
+        sync_util::sync_logger::cv.notify_one();
+
+        // terminate the exchange-watermark server
+        sync_util::sync_logger::exchange_running = false;
+        break;
+      }
+    }
+    return 0;
+  });
+
   
   return argv_paxos;
 }

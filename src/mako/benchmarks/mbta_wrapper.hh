@@ -129,6 +129,27 @@ public:
     }
   }
 
+  int32_t modifyBy(void *txn, lcdf::Str key, int32_t delta = 1) {
+    STD_OP({
+      std::string current_value;
+      int32_t current_num;
+
+      if(mbta.transGet(key, current_value)) {
+        try {
+          current_num = std::stoll(current_value);
+        } catch (const std::exception& e) {
+          current_num = 0;
+        }
+      }
+
+      int32_t new_value = current_value + delta;
+      std::string new_value_str = std::to_string(new_value);
+      mbta.transPut(key, StringWrapper(new_value_str));
+      
+      return new_value;
+    })
+  }
+
   bool get_is_dummy() {
     return mbta.get_is_dummy();
   }
