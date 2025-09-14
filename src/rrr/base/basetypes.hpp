@@ -4,11 +4,22 @@
 #include <queue>
 #include <random>
 #include <inttypes.h>
+#include <atomic>
+#include <memory>
 
 #include <time.h>
 #include <sys/time.h>
 
 #include "debugging.hpp"
+
+// External safety annotations for system functions used in this module
+// @external: {
+//   gettimeofday: [safe, (struct timeval*, struct timezone*) -> int]
+//   clock_gettime: [safe, (clockid_t, struct timespec*) -> int]
+//   select: [safe, (int, fd_set*, fd_set*, fd_set*, struct timeval*) -> int]
+//   pthread_self: [safe, () -> pthread_t]
+// }
+// Note: struct types like 'timeval' are not functions - they're filtered out in the AST parser
 
 namespace rrr {
 
@@ -17,16 +28,19 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
+// @safe
 class SparseInt {
 public:
     static size_t buf_size(char byte0);
     static size_t val_size(i64 val);
+    // Note: dump methods use raw pointers for performance - caller must ensure buffer is large enough
     static size_t dump(i32 val, char* buf);
     static size_t dump(i64 val, char* buf);
     static i32 load_i32(const char* buf);
     static i64 load_i64(const char* buf);
 };
 
+// @safe
 class v32 {
     i32 val_;
 public:
@@ -42,6 +56,7 @@ public:
     }
 };
 
+// @safe
 class v64 {
     i64 val_;
 public:
@@ -57,12 +72,19 @@ public:
     }
 };
 
+// @safe
 class NoCopy {
-    NoCopy(const NoCopy&);
-    const NoCopy& operator =(const NoCopy&);
 protected:
-    NoCopy() {}
+    NoCopy() = default;
     virtual ~NoCopy() = 0;
+public:
+    // Delete copy constructor and copy assignment operator
+    NoCopy(const NoCopy&) = delete;
+    NoCopy& operator=(const NoCopy&) = delete;
+    
+    // Also delete move operations to prevent any form of copying/moving
+    NoCopy(NoCopy&&) = delete;
+    NoCopy& operator=(NoCopy&&) = delete;
 };
 inline NoCopy::~NoCopy() {}
 
@@ -71,22 +93,26 @@ inline NoCopy::~NoCopy() {}
  * This prevents accidentally deleting the object.
  * You are only allowed to cleanup with release() call.
  * This is thread safe.
+ * 
+ * SAFETY: Uses atomic reference counting for thread-safe memory management.
+ * The protected destructor pattern ensures controlled deallocation.
  */
+// @safe
 class RefCounted: public NoCopy {
-    volatile int refcnt_;
+    std::atomic<int> refcnt_;
 protected:
     virtual ~RefCounted() = 0;
 public:
     RefCounted(): refcnt_(1) {}
-    int ref_count() {
-        return refcnt_;
+    int ref_count() const {
+        return refcnt_.load(std::memory_order_relaxed);
     }
     RefCounted* ref_copy() {
-        __sync_add_and_fetch(&refcnt_, 1);
+        refcnt_.fetch_add(1, std::memory_order_acq_rel);
         return this;
     }
     int release() {
-        int r = __sync_sub_and_fetch(&refcnt_, 1);
+        int r = refcnt_.fetch_sub(1, std::memory_order_acq_rel) - 1;
         verify(r >= 0);
         if (r == 0) {
             delete this;
@@ -96,21 +122,27 @@ public:
 };
 inline RefCounted::~RefCounted() {}
 
+// @safe
 class Counter: public NoCopy {
-    volatile i64 next_;
+    std::atomic<i64> next_;
 public:
+    // @safe
     Counter(i64 start = 0) : next_(start) { }
+    // @safe
     i64 peek_next() const {
-        return next_;
+        return next_.load(std::memory_order_relaxed);
     }
+    // @safe
     i64 next(i64 step = 1) {
-        return __sync_fetch_and_add(&next_, step);
+        return next_.fetch_add(step, std::memory_order_acq_rel);
     }
+    // @safe
     void reset(i64 start = 0) {
-        next_ = start;
+        next_.store(start, std::memory_order_relaxed);
     }
 };
 
+// @safe
 class Time {
 public:
     static const uint64_t RRR_USEC_PER_SEC = 1000000;
@@ -143,18 +175,25 @@ public:
 
 };
 
+// @safe
 class Timer {
 public:
+    // @safe
     Timer();
+    // @safe
     void start();
+    // @safe
     void stop();
+    // @safe
     void reset();
+    // @safe
     double elapsed() const;
 private:
     struct timeval begin_;
     struct timeval end_;
 };
 
+// @safe
 class Rand: public NoCopy {
     std::mt19937 rand_;
 public:
@@ -171,6 +210,7 @@ public:
     }
 };
 
+// @safe
 template<class T>
 class Enumerator {
 public:
@@ -189,11 +229,13 @@ public:
 };
 
 // keep min-ordering
+// Note: This class stores raw pointers to Enumerator objects
+// The caller must ensure these pointers remain valid for the lifetime of MergedEnumerator
 template<class T, class Compare = std::greater<T>>
 class MergedEnumerator: public Enumerator<T> {
     struct merge_helper {
         T data;
-        Enumerator<T>* src;
+        Enumerator<T>* src;  // Non-owning pointer - lifetime managed externally
 
         merge_helper(const T& d, Enumerator<T>* s): data(d), src(s) {}
 
@@ -205,18 +247,20 @@ class MergedEnumerator: public Enumerator<T> {
     std::priority_queue<merge_helper, std::vector<merge_helper>> q_;
 
 public:
+    // @unsafe - Takes non-owning raw pointer
     void add_source(Enumerator<T>* src) {
-        if (src->has_next()) {
+        if (src && src->has_next()) {
             q_.push(merge_helper(src->next(), src));
         }
     }
     //TODO
-    void reset() {
+    void reset() override {
     }
-    bool has_next() {
+    bool has_next() override {
         return !q_.empty();
     }
-    T next() {
+    T next() override {
+        verify(!q_.empty());
         const merge_helper& mh = q_.top();
         T ret = mh.data;
         Enumerator<T>* src = mh.src;
