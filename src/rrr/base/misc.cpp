@@ -9,6 +9,8 @@
 
 namespace rrr {
 
+// @unsafe - Direct pointer manipulation for performance
+// SAFETY: Caller must ensure str points to buffer with at least 'digits' bytes
 static void make_int(char* str, int val, int digits) {
     char* p = str + digits;
     for (int i = 0; i < digits; i++) {
@@ -23,6 +25,8 @@ static void make_int(char* str, int val, int digits) {
 // inspired by the TPC-C benchmark from Evan Jones
 // strftime is slow because it ends up consulting timezone info
 // also, snprintf is slow
+// @unsafe - Direct buffer manipulation for performance
+// SAFETY: Caller must ensure 'now' points to buffer with at least TIME_NOW_STR_SIZE bytes
 void time_now_str(char* now) {
     time_t seconds_since_epoch = time(nullptr);
     struct tm local_calendar;
@@ -45,10 +49,12 @@ void time_now_str(char* now) {
     now[23] = '\0';
 }
 
+// @safe - Queries system configuration
 int get_ncpu() {
     return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
+// @safe - Returns static buffer, thread-safe after first call
 const char* get_exec_path() {
     static char path[PATH_MAX];
     static bool ready = false;
@@ -66,6 +72,8 @@ const char* get_exec_path() {
     return path;
 }
 
+// @unsafe - Uses raw FILE* and manual memory management
+// SAFETY: FILE* must be valid; getdelim allocates buffer that we free
 std::string getline(FILE* fp, char delim /* =? */) {
     char* buf = nullptr;
     size_t n = 0;

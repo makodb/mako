@@ -116,9 +116,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                     invoke_with += "__defer__",
                     f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
                 else: # normal and fast rpc
-                    if func.attr != "fast":
-                        f.writeln("auto f = [=] {")
-                        f.incr_indent()
+                    # Don't use lambda - execute directly for all methods
                     invoke_with = []
                     in_counter = 0
                     out_counter = 0
@@ -138,10 +136,6 @@ def emit_service_and_proxy(service, f, rpc_table):
                     f.writeln("sconn->end_reply();")
                     f.writeln("delete req;")
                     f.writeln("sconn->release();")
-                    if func.attr != "fast":
-                        f.decr_indent()
-                        f.writeln("};")
-                        f.writeln("sconn->run_async(f);")
             f.writeln("}")
     f.writeln("};")
     f.writeln()

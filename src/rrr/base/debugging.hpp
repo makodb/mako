@@ -3,6 +3,18 @@
 #include <stdio.h>
 #include <assert.h>
 
+// External safety annotations for system functions used in this module
+// @external: {
+//   backtrace: [unsafe, (void**, int) -> int]
+//   backtrace_symbols: [unsafe, (void* const*, int) -> char**]
+//   popen: [unsafe, (const char*, const char*) -> FILE*]
+//   pclose: [unsafe, (FILE*) -> int]
+//   memset: [unsafe, (void*, int, size_t) -> void*]
+//   fprintf: [safe, (FILE*, const char*, ...) -> int]
+//   fputc: [safe, (int, FILE*) -> int]
+//   abort: [safe, () -> void]
+// }
+
 #ifndef likely
 #define likely(x)   __builtin_expect((x), 1)
 #endif // likely
@@ -23,6 +35,8 @@
 
 namespace rrr {
 
+// @unsafe - Uses backtrace functions and raw memory operations
+// SAFETY: FILE* must be valid; backtrace functions are thread-safe
 void print_stack_trace(FILE* fp = stderr) __attribute__((noinline));
 
 } // namespace base

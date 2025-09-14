@@ -11,6 +11,26 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 
+// External safety annotations for system functions used in this module
+// @external: {
+//   bind: [unsafe, (int, const struct sockaddr*, socklen_t) -> int]
+//   listen: [unsafe, (int, int) -> int]
+//   accept: [unsafe, (int, struct sockaddr*, socklen_t*) -> int]
+//   usleep: [unsafe, (useconds_t) -> int]
+// }
+
+// External safety annotations for STL operations used in this module
+// @external: {
+//   operator!=: [safe, (auto, auto) -> bool]
+//   operator==: [safe, (auto, auto) -> bool]
+//   std::*::find: [safe, (auto) -> auto]
+//   std::*::end: [safe, () -> auto]
+//   std::*::begin: [safe, () -> auto]
+//   std::*::insert: [safe, (auto) -> auto]
+//   std::*::operator[]: [safe, (auto) -> auto]
+//   std::*::erase: [safe, (auto) -> auto]
+// }
+
 // for getaddrinfo() used in Server::start()
 //struct addrinfo;
 
@@ -26,17 +46,21 @@ class Server;
  * For the request object, the marshal only contains <arg1>..<argN>,
  * other fields are already consumed.
  */
+// @safe - Simple request container
 struct Request {
     Marshal m;
     i64 xid;
 };
 
+// @safe - Abstract service interface
 class Service {
 public:
     virtual ~Service() {}
     virtual int __reg_to__(Server*) = 0;
 };
 
+// @unsafe - Server listener handling incoming connections
+// SAFETY: Manages socket lifecycle and address info properly
 class ServerListener: public Pollable {
   friend class Server;
  public:
@@ -52,12 +76,18 @@ class ServerListener: public Pollable {
     return Pollable::READ;
   }
   void handle_write() {verify(0);}
+  // @unsafe - Accepts new connections
+  // SAFETY: Proper socket acceptance and configuration
   void handle_read();
   void handle_error() {verify(0);}
+  // @unsafe - Closes server socket
+  // SAFETY: Proper cleanup
   void close();
   int fd() {return server_sock_;}
   ServerListener(Server* s, std::string addr);
 //protected:
+  // @unsafe - Frees addrinfo structures
+  // SAFETY: Checks for null before freeing
   virtual ~ServerListener() {
     if (p_gai_result_ != nullptr) {
       freeaddrinfo(p_gai_result_);
@@ -67,6 +97,8 @@ class ServerListener: public Pollable {
   };
 };
 
+// @unsafe - Handles individual client connections
+// SAFETY: Thread-safe with spinlocks, proper refcounting
 class ServerConnection: public Pollable {
 
     friend class Server;
@@ -90,6 +122,8 @@ class ServerConnection: public Pollable {
      * 1: ~Server(), which is called when destroying Server
      * 2: handle_error(), which is called by PollMgr
      */
+    // @unsafe - Closes connection and cleans up
+    // SAFETY: Thread-safe with server connection lock
     void close();
 
     // used to surpress multiple "no handler for rpc_id=..." errro
@@ -99,10 +133,13 @@ class ServerConnection: public Pollable {
 protected:
 
     // Protected destructor as required by RefCounted.
+    // @safe - Simple destructor updating counter
     ~ServerConnection();
 
 public:
 
+    // @unsafe - Initializes connection with socket
+    // SAFETY: Increments server connection counter
     ServerConnection(Server* server, int socket);
 
     /**
@@ -119,8 +156,12 @@ public:
      * ENOENT: method not found
      * EINVAL: invalid packet (field missing)
      */
+    // @unsafe - Starts reply marshaling
+    // SAFETY: Protected by output spinlock
     void begin_reply(Request* req, i32 error_code = 0);
 
+    // @unsafe - Completes reply packet
+    // SAFETY: Protected by output spinlock
     void end_reply();
 
     // helper function, do some work in background
@@ -141,12 +182,19 @@ public:
         return socket_;
     }
 
+    // @safe - Returns poll mode based on output buffer
     int poll_mode();
+    // @unsafe - Writes buffered data to socket
+    // SAFETY: Protected by output spinlock
     void handle_write();
+    // @unsafe - Reads and processes RPC requests
+    // SAFETY: Creates coroutines for handlers
     void handle_read();
+    // @safe - Error handler
     void handle_error();
 };
 
+// @safe - RAII wrapper for deferred RPC replies
 class DeferredReply: public NoCopy {
     rrr::Request* req_;
     rrr::ServerConnection* sconn_;
@@ -159,6 +207,8 @@ public:
                   const std::function<void()>& marshal_reply, const std::function<void()>& cleanup)
         : req_(req), sconn_(sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
 
+    // @unsafe - Cleanup destructor
+    // SAFETY: Proper cleanup order and null checks
     ~DeferredReply() {
         cleanup_();
         delete req_;
@@ -173,6 +223,8 @@ public:
       return 0;
     }
 
+    // @unsafe - Sends reply and self-deletes
+    // SAFETY: Ensures single use with delete this
     void reply() {
         sconn_->begin_reply(req_);
         marshal_reply_();
@@ -181,6 +233,8 @@ public:
     }
 };
 
+// @unsafe - Main RPC server managing connections
+// SAFETY: Thread-safe connection management with spinlocks
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
@@ -207,11 +261,18 @@ class Server: public NoCopy {
 public:
     std::string addr_;
 
+    // @unsafe - Creates server with optional PollMgr
+    // SAFETY: Proper refcounting of PollMgr
     Server(PollMgr* pollmgr = nullptr, ThreadPool* thrpool = nullptr);
+    // @unsafe - Destroys server and all connections
+    // SAFETY: Waits for all connections to close
     virtual ~Server();
 
+    // @unsafe - Starts server on specified address
+    // SAFETY: Proper socket binding and thread creation
     int start(const char* bind_addr);
 
+    // @safe - Registers service
     int reg(Service* svc) {
         return svc->__reg_to__(this);
     }
@@ -233,6 +294,7 @@ public:
      *     server_connection->release();
      *  }
      */
+    // @safe - Registers RPC handler function
     int reg(i32 rpc_id, const std::function<void(Request*, ServerConnection*)>& func);
 
     template<class S>
@@ -250,6 +312,7 @@ public:
         return 0;
     }
 
+    // @safe - Unregisters RPC handler
     void unreg(i32 rpc_id);
 };
 

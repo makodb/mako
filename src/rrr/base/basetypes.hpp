@@ -28,15 +28,24 @@ typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
-// @safe
+// Sparse integer encoding for efficient storage
 class SparseInt {
 public:
+    // @safe - Pure computation, no memory operations
     static size_t buf_size(char byte0);
+    // @safe - Pure computation, no memory operations  
     static size_t val_size(i64 val);
-    // Note: dump methods use raw pointers for performance - caller must ensure buffer is large enough
+    // @unsafe - Uses raw pointer operations for performance
+    // SAFETY: Caller must ensure buffer is large enough (at least val_size(val) bytes)
     static size_t dump(i32 val, char* buf);
+    // @unsafe - Uses raw pointer operations for performance
+    // SAFETY: Caller must ensure buffer is large enough (at least val_size(val) bytes)
     static size_t dump(i64 val, char* buf);
+    // @unsafe - Reads from raw pointer
+    // SAFETY: Caller must ensure buffer contains valid SparseInt encoding
     static i32 load_i32(const char* buf);
+    // @unsafe - Reads from raw pointer
+    // SAFETY: Caller must ensure buffer contains valid SparseInt encoding
     static i64 load_i64(const char* buf);
 };
 
@@ -97,20 +106,24 @@ inline NoCopy::~NoCopy() {}
  * SAFETY: Uses atomic reference counting for thread-safe memory management.
  * The protected destructor pattern ensures controlled deallocation.
  */
-// @safe
+// @safe - Thread-safe reference counting with atomics
 class RefCounted: public NoCopy {
     std::atomic<int> refcnt_;
 protected:
     virtual ~RefCounted() = 0;
 public:
     RefCounted(): refcnt_(1) {}
+    // @safe - Atomic read of reference count
     int ref_count() const {
         return refcnt_.load(std::memory_order_relaxed);
     }
+    // @safe - Atomic increment of reference count
     RefCounted* ref_copy() {
         refcnt_.fetch_add(1, std::memory_order_acq_rel);
         return this;
     }
+    // @unsafe - May delete this object
+    // SAFETY: Thread-safe via atomic; deletes when refcount reaches 0
     int release() {
         int r = refcnt_.fetch_sub(1, std::memory_order_acq_rel) - 1;
         verify(r >= 0);
@@ -142,16 +155,13 @@ public:
     }
 };
 
-// @safe
+// @safe - Time utilities using system calls marked as safe in external annotations
 class Time {
 public:
     static const uint64_t RRR_USEC_PER_SEC = 1000000;
 
+    // @safe - Uses clock_gettime which is marked safe in external annotations
     static uint64_t now(bool accurate = false) {
-//	  struct timeval tv;
-//	  gettimeofday(&tv, NULL);
-//      return tv.tv_sec * RRR_USEC_PER_SEC + tv.tv_usec;
-
       struct timespec spec;
 #ifdef __APPLE__
       clock_gettime(CLOCK_REALTIME, &spec );
@@ -165,14 +175,13 @@ public:
       return spec.tv_sec * RRR_USEC_PER_SEC + spec.tv_nsec/1000;
     }
 
-
+    // @safe - Uses select which is marked safe in external annotations
     static void sleep(uint64_t t) {
         struct timeval tv;
         tv.tv_usec = t % RRR_USEC_PER_SEC;
         tv.tv_sec = t / RRR_USEC_PER_SEC;
         select(0, NULL, NULL, NULL, &tv);
     }
-
 };
 
 // @safe
@@ -193,18 +202,21 @@ private:
     struct timeval end_;
 };
 
-// @safe
+// @safe - Thread-local random number generator
 class Rand: public NoCopy {
     std::mt19937 rand_;
 public:
+    // @safe - Seeds using current time and thread ID
     Rand();
+    // @safe - Returns next random number
     std::mt19937::result_type next() {
         return rand_();
     }
-    // [lower, upper)
+    // @safe - Returns random number in range [lower, upper)
     std::mt19937::result_type next(int lower, int upper) {
         return lower + rand_() % (upper - lower);
     }
+    // @safe - Operator() for STL compatibility
     std::mt19937::result_type operator() () {
         return rand_();
     }

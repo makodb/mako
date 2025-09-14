@@ -16,12 +16,15 @@ namespace rrr {
 thread_local std::shared_ptr<Reactor> Reactor::sp_reactor_th_{};
 thread_local std::shared_ptr<Coroutine> Reactor::sp_running_coro_th_{};
 
+// @safe - Returns current thread-local coroutine
 std::shared_ptr<Coroutine> Coroutine::CurrentCoroutine() {
   // TODO re-enable this verify
 //  verify(sp_running_coro_th_);
   return Reactor::sp_running_coro_th_;
 }
 
+// @unsafe - Creates and runs a new coroutine with function wrapping
+// SAFETY: Reactor manages coroutine lifecycle properly
 std::shared_ptr<Coroutine>
 Coroutine::CreateRun(std::function<void()> func) {
   auto& reactor = *Reactor::GetReactor();
@@ -30,6 +33,8 @@ Coroutine::CreateRun(std::function<void()> func) {
   return coro;
 }
 
+// @unsafe - Returns thread-local reactor instance, creates if needed
+// SAFETY: Thread-local storage ensures thread safety
 std::shared_ptr<Reactor>
 Reactor::GetReactor() {
   if (!sp_reactor_th_) {
@@ -44,6 +49,8 @@ Reactor::GetReactor() {
  * @param func
  * @return
  */
+// @unsafe - Creates and runs coroutine with complex state management
+// SAFETY: Proper lifecycle management with shared_ptr
 std::shared_ptr<Coroutine>
 Reactor::CreateRunCoroutine(const std::function<void()> func) {
   std::shared_ptr<Coroutine> sp_coro;
@@ -78,6 +85,7 @@ Reactor::CreateRunCoroutine(const std::function<void()> func) {
   return sp_coro;
 }
 
+// @safe - Checks timeout events and moves ready ones to ready list
 void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) {
   auto time_now = Time::now(true);
   for (auto it = timeout_events_.begin(); it != timeout_events_.end();) {
@@ -116,6 +124,8 @@ void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) {
 }
 
 //  be careful this could be called from different coroutines.
+// @unsafe - Main event loop with complex event processing
+// SAFETY: Thread-safe via thread_id verification
 void Reactor::Loop(bool infinite) {
   verify(std::this_thread::get_id() == thread_id_);
   looping_ = infinite;
@@ -153,6 +163,8 @@ void Reactor::Loop(bool infinite) {
   } while (looping_);
 }
 
+// @unsafe - Continues execution of paused coroutine
+// SAFETY: Manages coroutine state transitions properly
 void Reactor::ContinueCoro(std::shared_ptr<Coroutine> sp_coro) {
 //  verify(!sp_running_coro_th_); // disallow nested coros
   auto sp_old_coro = sp_running_coro_th_;
@@ -196,6 +208,8 @@ class PollMgr::PollThread {
   pthread_t th_;
   bool stop_flag_;
 
+  // @unsafe - C-style thread entry point with raw pointer cast
+  // SAFETY: arg is always valid PollThread* from start()
   static void* start_poll_loop(void* arg) {
     PollThread* thiz = (PollThread*) arg;
     thiz->poll_loop();
@@ -205,11 +219,15 @@ class PollMgr::PollThread {
 
   void poll_loop();
 
+  // @unsafe - Creates pthread with raw pointer passing
+  // SAFETY: 'this' remains valid throughout thread lifetime
   void start(PollMgr* poll_mgr) {
     pthread_setname_np(th_, "Follower server thread"); 
     Pthread_create(&th_, nullptr, PollMgr::PollThread::start_poll_loop, this);
   }
 
+  // @unsafe - Triggers ready jobs in coroutines
+  // SAFETY: Uses spinlock for thread safety
   void TriggerJob() {
     lock_job_.lock();
     auto jobs_exec = set_sp_jobs_;
@@ -254,6 +272,8 @@ class PollMgr::PollThread {
   void remove(std::shared_ptr<Job>);
 };
 
+// @unsafe - Allocates raw array and creates threads
+// SAFETY: Array properly deleted in destructor; threads joined before deletion
 PollMgr::PollMgr(int n_threads /* =... */)
     : n_threads_(n_threads), poll_threads_() {
   verify(n_threads_ > 0);
@@ -263,15 +283,21 @@ PollMgr::PollMgr(int n_threads /* =... */)
   }
 }
 
+// @unsafe - Returns raw pointer to pthread handle
+// SAFETY: Valid as long as PollMgr exists and i < n_threads_
 pthread_t* PollMgr::GetPthreads(int i) {
   return &poll_threads_[i].th_;
 }
 
+// @unsafe - Deletes raw array
+// SAFETY: Matches allocation in constructor; threads already joined
 PollMgr::~PollMgr() {
   delete[] poll_threads_;
   //Log_debug("rrr::PollMgr: destroyed");
 }
 
+// @unsafe - Main polling loop with complex synchronization
+// SAFETY: Uses spinlocks and proper synchronization primitives
 void PollMgr::PollThread::poll_loop() {
   while (!stop_flag_) {
     TriggerJob();
@@ -303,18 +329,22 @@ void PollMgr::PollThread::poll_loop() {
   }
 }
 
+// @safe - Thread-safe job addition with spinlock
 void PollMgr::PollThread::add(std::shared_ptr<Job> sp_job) {
   lock_job_.lock();
   set_sp_jobs_.insert(sp_job);
   lock_job_.unlock();
 }
 
+// @safe - Thread-safe job removal with spinlock
 void PollMgr::PollThread::remove(std::shared_ptr<Job> sp_job) {
   lock_job_.lock();
   set_sp_jobs_.erase(sp_job);
   lock_job_.unlock();
 }
 
+// @unsafe - Adds pollable with raw pointer and ref counting
+// SAFETY: Proper reference counting ensures object lifetime
 void PollMgr::PollThread::add(Pollable* poll) {
   poll->ref_copy();   // increase ref count
 
@@ -335,6 +365,8 @@ void PollMgr::PollThread::add(Pollable* poll) {
   l_.unlock();
 }
 
+// @unsafe - Removes pollable with deferred cleanup
+// SAFETY: Deferred removal ensures safe cleanup
 void PollMgr::PollThread::remove(Pollable* poll) {
   bool found = false;
   l_.lock();
@@ -356,6 +388,8 @@ void PollMgr::PollThread::remove(Pollable* poll) {
   }
 }
 
+// @unsafe - Updates poll mode with raw pointer access
+// SAFETY: Protected by spinlock, validates poll existence
 void PollMgr::PollThread::update_mode(Pollable* poll, int new_mode) {
   int fd = poll->fd();
 
@@ -378,6 +412,7 @@ void PollMgr::PollThread::update_mode(Pollable* poll, int new_mode) {
   l_.unlock();
 }
 
+// @safe - Pure hash function with no side effects
 static inline uint32_t hash_fd(uint32_t key) {
   uint32_t c2 = 0x27d4eb2d; // a prime or an odd constant
   key = (key ^ 61) ^ (key >> 16);
@@ -388,6 +423,8 @@ static inline uint32_t hash_fd(uint32_t key) {
   return key;
 }
 
+// @unsafe - Routes pollable to thread based on fd hash
+// SAFETY: Hash ensures consistent thread assignment
 void PollMgr::add(Pollable* poll) {
   int fd = poll->fd();
   if (fd >= 0) {
@@ -396,6 +433,8 @@ void PollMgr::add(Pollable* poll) {
   }
 }
 
+// @unsafe - Routes removal to correct thread
+// SAFETY: Uses same hash as add() for consistency
 void PollMgr::remove(Pollable* poll) {
   int fd = poll->fd();
   if (fd >= 0) {
@@ -404,6 +443,8 @@ void PollMgr::remove(Pollable* poll) {
   }
 }
 
+// @unsafe - Routes mode update to correct thread
+// SAFETY: Uses same hash as add() for consistency
 void PollMgr::update_mode(Pollable* poll, int new_mode) {
   int fd = poll->fd();
   if (fd >= 0) {
@@ -412,11 +453,13 @@ void PollMgr::update_mode(Pollable* poll, int new_mode) {
   }
 }
 
+// @safe - Adds job to first poll thread
 void PollMgr::add(std::shared_ptr<Job> fjob) {
   int tid = 0;
   poll_threads_[tid].add(fjob);
 }
 
+// @safe - Removes job from first poll thread
 void PollMgr::remove(std::shared_ptr<Job> fjob) {
   int tid = 0;
   poll_threads_[tid].remove(fjob);

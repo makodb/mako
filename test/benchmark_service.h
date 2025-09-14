@@ -32,16 +32,16 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
 class BenchmarkService: public rrr::Service {
 public:
     enum {
-        FAST_PRIME = 0x1935c332,
-        FAST_DOT_PROD = 0x347df05d,
-        FAST_ADD = 0x1cd17872,
-        FAST_NOP = 0x413d37b2,
-        FAST_VEC = 0x37ded434,
-        PRIME = 0x64ec6b5b,
-        DOT_PROD = 0x52d1a50e,
-        ADD = 0x657d5038,
-        NOP = 0x6e74b757,
-        SLEEP = 0x3a6649a8,
+        FAST_PRIME = 0x1aed00ec,
+        FAST_DOT_PROD = 0x1734e70c,
+        FAST_ADD = 0x2f8af552,
+        FAST_NOP = 0x2c2581ba,
+        FAST_VEC = 0x2fd964b6,
+        PRIME = 0x6cbeb76f,
+        DOT_PROD = 0x5d1fa03f,
+        ADD = 0x6fe7f871,
+        NOP = 0x5aa56913,
+        SLEEP = 0x28aab39f,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -160,74 +160,59 @@ private:
         sconn->release();
     }
     void __prime__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        auto f = [=] {
-            rrr::i32 in_0;
-            req->m >> in_0;
-            rrr::i8 out_0;
-            this->prime(in_0, &out_0);
-            sconn->begin_reply(req);
-            *sconn << out_0;
-            sconn->end_reply();
-            delete req;
-            sconn->release();
-        };
-        sconn->run_async(f);
+        rrr::i32 in_0;
+        req->m >> in_0;
+        rrr::i8 out_0;
+        this->prime(in_0, &out_0);
+        sconn->begin_reply(req);
+        *sconn << out_0;
+        sconn->end_reply();
+        delete req;
+        sconn->release();
     }
     void __dot_prod__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        auto f = [=] {
-            point3 in_0;
-            req->m >> in_0;
-            point3 in_1;
-            req->m >> in_1;
-            double out_0;
-            this->dot_prod(in_0, in_1, &out_0);
-            sconn->begin_reply(req);
-            *sconn << out_0;
-            sconn->end_reply();
-            delete req;
-            sconn->release();
-        };
-        sconn->run_async(f);
+        point3 in_0;
+        req->m >> in_0;
+        point3 in_1;
+        req->m >> in_1;
+        double out_0;
+        this->dot_prod(in_0, in_1, &out_0);
+        sconn->begin_reply(req);
+        *sconn << out_0;
+        sconn->end_reply();
+        delete req;
+        sconn->release();
     }
     void __add__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        auto f = [=] {
-            rrr::v32 in_0;
-            req->m >> in_0;
-            rrr::v32 in_1;
-            req->m >> in_1;
-            rrr::v32 out_0;
-            this->add(in_0, in_1, &out_0);
-            sconn->begin_reply(req);
-            *sconn << out_0;
-            sconn->end_reply();
-            delete req;
-            sconn->release();
-        };
-        sconn->run_async(f);
+        rrr::v32 in_0;
+        req->m >> in_0;
+        rrr::v32 in_1;
+        req->m >> in_1;
+        rrr::v32 out_0;
+        this->add(in_0, in_1, &out_0);
+        sconn->begin_reply(req);
+        *sconn << out_0;
+        sconn->end_reply();
+        delete req;
+        sconn->release();
     }
     void __nop__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        auto f = [=] {
-            std::string in_0;
-            req->m >> in_0;
-            this->nop(in_0);
-            sconn->begin_reply(req);
-            sconn->end_reply();
-            delete req;
-            sconn->release();
-        };
-        sconn->run_async(f);
+        std::string in_0;
+        req->m >> in_0;
+        this->nop(in_0);
+        sconn->begin_reply(req);
+        sconn->end_reply();
+        delete req;
+        sconn->release();
     }
     void __sleep__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
-        auto f = [=] {
-            double in_0;
-            req->m >> in_0;
-            this->sleep(in_0);
-            sconn->begin_reply(req);
-            sconn->end_reply();
-            delete req;
-            sconn->release();
-        };
-        sconn->run_async(f);
+        double in_0;
+        req->m >> in_0;
+        this->sleep(in_0);
+        sconn->begin_reply(req);
+        sconn->end_reply();
+        delete req;
+        sconn->release();
     }
 };
 

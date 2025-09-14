@@ -5,7 +5,7 @@
 
 namespace rrr {
 
-
+// @safe - Pure computation, no memory operations
 size_t SparseInt::buf_size(char byte0) {
     if ((byte0 & 0x80) == 0) {
         // binary: 0...
@@ -36,6 +36,7 @@ size_t SparseInt::buf_size(char byte0) {
     }
 }
 
+// @safe - Pure computation, no memory operations
 size_t SparseInt::val_size(i64 val) {
     if (-64 <= val && val <= 63) {
         return 1;
@@ -59,6 +60,7 @@ size_t SparseInt::val_size(i64 val) {
 }
 
 // @unsafe - Uses raw pointer operations for performance
+// SAFETY: Caller must ensure buffer is large enough (at least val_size(val) bytes)
 size_t SparseInt::dump(i32 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -101,6 +103,7 @@ size_t SparseInt::dump(i32 val, char* buf) {
 }
 
 // @unsafe - Uses raw pointer operations for performance
+// SAFETY: Caller must ensure buffer is large enough (at least val_size(val) bytes)
 size_t SparseInt::dump(i64 val, char* buf) {
     char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
@@ -184,7 +187,8 @@ size_t SparseInt::dump(i64 val, char* buf) {
 }
 
 
-// @unsafe - Uses raw pointer operations for performance
+// @unsafe - Reads from raw pointer
+// SAFETY: Caller must ensure buffer contains valid SparseInt encoding
 i32 SparseInt::load_i32(const char* buf) {
     i32 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -208,7 +212,8 @@ i32 SparseInt::load_i32(const char* buf) {
     return val;
 }
 
-// @unsafe - Uses raw pointer operations for performance
+// @unsafe - Reads from raw pointer
+// SAFETY: Caller must ensure buffer contains valid SparseInt encoding
 i64 SparseInt::load_i64(const char* buf) {
     i64 val = 0;
     char* pv = reinterpret_cast<char*>(&val);
@@ -232,16 +237,18 @@ i64 SparseInt::load_i64(const char* buf) {
     return val;
 }
 
-// @unsafe - Constructor calls reset() member function
+// @safe - Constructor initializes fields and calls safe reset() method
 Timer::Timer() : begin_(), end_() {
     reset();
 }
 
+// @safe - Uses gettimeofday which is marked safe in external annotations
 void Timer::start() {
     reset();
     gettimeofday(&begin_, nullptr);
 }
 
+// @safe - Uses gettimeofday which is marked safe in external annotations
 void Timer::stop() {
     gettimeofday(&end_, nullptr);
 }
@@ -254,6 +261,7 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
+// @safe - Pure computation with safe gettimeofday call
 double Timer::elapsed() const {
     verify(begin_.tv_sec != 0 || begin_.tv_usec != 0);
     if (end_.tv_sec == 0 && end_.tv_usec == 0) {
@@ -265,6 +273,7 @@ double Timer::elapsed() const {
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
+// @safe - Seeds RNG using time and thread ID (safe operations)
 Rand::Rand() : rand_() {
     struct timeval now;
     gettimeofday(&now, nullptr);

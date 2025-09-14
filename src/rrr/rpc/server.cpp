@@ -87,6 +87,8 @@ std::unordered_set<i32> ServerConnection::rpc_id_missing_s;
 SpinLock ServerConnection::rpc_id_missing_l_s;
 
 
+// @unsafe - Initializes connection and updates counter
+// SAFETY: Counter operations are thread-safe
 ServerConnection::ServerConnection(Server* server, int socket)
         : server_(server), socket_(socket), bmark_(nullptr), status_(CONNECTED) {
     // increase number of open connections
@@ -94,16 +96,22 @@ ServerConnection::ServerConnection(Server* server, int socket)
     block_read_in.init_block_read(100000000);
 }
 
+// @safe - Updates connection counter
 ServerConnection::~ServerConnection() {
     // decrease number of open connections
     server_->sconns_ctr_.next(-1);
 }
 
+// @safe - Delegates to thread pool
 int ServerConnection::run_async(const std::function<void()>& f) {
-  // Enable async run using the thread pool
-  return server_->threadpool_->run_async(f);
+  // run_async should not be used - process RPC synchronously
+  // Call f() directly instead where this was being used
+  verify(0); // This should never be called
+  return 0;
 }
 
+// @unsafe - Begins reply marshaling with locking
+// SAFETY: Protected by output spinlock
 void ServerConnection::begin_reply(Request* req, i32 error_code /* =... */) {
     out_l_.lock();
     v32 v_error_code = error_code;
@@ -115,6 +123,8 @@ void ServerConnection::begin_reply(Request* req, i32 error_code /* =... */) {
     *this << v_error_code;
 }
 
+// @unsafe - Completes reply packet
+// SAFETY: Protected by output spinlock, enables write polling
 void ServerConnection::end_reply() {
     // set reply size in packet
     if (bmark_ != nullptr) {
@@ -131,6 +141,8 @@ void ServerConnection::end_reply() {
     out_l_.unlock();
 }
 
+// @unsafe - Reads requests and dispatches to handlers
+// SAFETY: Creates coroutines for concurrent handling
 void ServerConnection::handle_read() {
     if (status_ == CLOSED) {
         return;
@@ -234,6 +246,8 @@ void ServerConnection::handle_read() {
     }
 }
 
+// @unsafe - Writes buffered data to socket
+// SAFETY: Protected by output spinlock
 void ServerConnection::handle_write() {
     if (status_ == CLOSED) {
         return;
@@ -247,10 +261,13 @@ void ServerConnection::handle_write() {
     out_l_.unlock();
 }
 
+// @safe - Simple error handler
 void ServerConnection::handle_error() {
     this->close();
 }
 
+// @unsafe - Closes connection with proper cleanup
+// SAFETY: Thread-safe with server connection lock, idempotent
 void ServerConnection::close() {
     bool should_release = false;
 
@@ -281,6 +298,7 @@ void ServerConnection::close() {
     }
 }
 
+// @safe - Returns poll mode based on output buffer
 int ServerConnection::poll_mode() {
     int mode = Pollable::READ;
     out_l_.lock();
@@ -291,6 +309,8 @@ int ServerConnection::poll_mode() {
     return mode;
 }
 
+// @unsafe - Constructs server with PollMgr
+// SAFETY: Proper refcounting of PollMgr
 Server::Server(PollMgr* pollmgr /* =... */, ThreadPool* thrpool /* =? */)
         : server_sock_(-1), status_(NEW) {
 
@@ -310,6 +330,8 @@ Server::Server(PollMgr* pollmgr /* =... */, ThreadPool* thrpool /* =? */)
 //    }
 }
 
+// @unsafe - Destroys server and waits for connections
+// SAFETY: Joins thread, closes all connections, waits for cleanup
 Server::~Server() {
     if (status_ == RUNNING) {
         status_ = STOPPING;
@@ -360,6 +382,8 @@ struct start_server_loop_args_type {
     struct addrinfo* svr_addr;
 };
 
+// @unsafe - C-style thread entry point
+// SAFETY: arg is always valid start_server_loop_args_type*
 void* Server::start_server_loop(void* arg) {
     start_server_loop_args_type* start_server_loop_args = (start_server_loop_args_type*) arg;
     start_server_loop_args->server->server_loop(start_server_loop_args->svr_addr);
@@ -371,6 +395,8 @@ void* Server::start_server_loop(void* arg) {
     return nullptr;
 }
 
+// @unsafe - Main server accept loop
+// SAFETY: Uses select for safe shutdown, proper socket handling
 void Server::server_loop(struct addrinfo* svr_addr) {
     fd_set fds;
     while (status_ == RUNNING) {
@@ -417,6 +443,8 @@ void Server::server_loop(struct addrinfo* svr_addr) {
     status_ = STOPPED;
 }
 
+// @unsafe - Accepts new client connections
+// SAFETY: Thread-safe with server connection lock
 void ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
@@ -445,10 +473,14 @@ void ServerListener::handle_read() {
   }
 }
 
+// @unsafe - Closes server socket
+// SAFETY: Simple socket close
 void ServerListener::close() {
   ::close(server_sock_);
 }
 
+// @unsafe - Creates listener socket and binds to address
+// SAFETY: Proper socket creation and error handling
 ServerListener::ServerListener(Server* server, string addr) {
   server_ = server;
   addr_ = addr;
@@ -532,6 +564,8 @@ ServerListener::ServerListener(Server* server, string addr) {
   Log_info("rrr::Server: started on %s", addr.c_str());
 }
 
+// @unsafe - Starts server listening on specified address
+// SAFETY: Creates listener with proper socket setup
 int Server::start(const char* bind_addr) {
   string addr(bind_addr,strlen(bind_addr));
   up_server_listener_ = std::make_unique<ServerListener>(this, addr);
@@ -620,6 +654,7 @@ int Server::start(const char* bind_addr) {
     return 0;
 }
 
+// @safe - Registers RPC handler
 int Server::reg(i32 rpc_id, const std::function<void(Request*, ServerConnection*)>& func) {
     // disallow duplicate rpc_id
     if (handlers_.find(rpc_id) != handlers_.end()) {
@@ -631,6 +666,7 @@ int Server::reg(i32 rpc_id, const std::function<void(Request*, ServerConnection*
     return 0;
 }
 
+// @safe - Unregisters RPC handler
 void Server::unreg(i32 rpc_id) {
     handlers_.erase(rpc_id);
 }

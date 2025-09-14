@@ -12,12 +12,16 @@ int Log::level_s = Log::DEBUG;
 FILE* Log::fp_s = stdout;
 pthread_mutex_t Log::m_s = PTHREAD_MUTEX_INITIALIZER;
 
+// @unsafe - Modifies static level under mutex
+// SAFETY: Mutex ensures thread-safe modification
 void Log::set_level(int level) {
     Pthread_mutex_lock(&m_s);
     level_s = level;
     Pthread_mutex_unlock(&m_s);
 }
 
+// @unsafe - Modifies static FILE pointer under mutex
+// SAFETY: Mutex ensures thread-safe modification; verifies non-null
 void Log::set_file(FILE* fp) {
     verify(fp != nullptr);
     Pthread_mutex_lock(&m_s);
@@ -25,6 +29,7 @@ void Log::set_file(FILE* fp) {
     Pthread_mutex_unlock(&m_s);
 }
 
+// @safe - Pure string manipulation, returns pointer into input string
 static const char* basename(const char* fpath) {
     if (fpath == nullptr) {
         return nullptr;
@@ -42,6 +47,8 @@ static const char* basename(const char* fpath) {
     return &fpath[idx];
 }
 
+// @unsafe - Uses vsprintf to format strings into stack buffer
+// SAFETY: Buffer is sized at 1000 bytes; format strings from code are trusted
 void Log::log_v(int level, int line, const char* file, const char* fmt, va_list args) {
     static char indicator[] = { 'F', 'E', 'W', 'I', 'D' };
     assert(level <= Log::DEBUG);
@@ -73,6 +80,8 @@ void Log::log_v(int level, int line, const char* file, const char* fmt, va_list 
     }
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::log(int level, int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -80,6 +89,8 @@ void Log::log(int level, int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function that calls abort
+// SAFETY: Proper va_start/va_end usage; abort is intentional
 void Log::fatal(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -88,6 +99,8 @@ void Log::fatal(int line, const char* file, const char* fmt, ...) {
     abort();
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::error(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -95,6 +108,8 @@ void Log::error(int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::warn(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -102,6 +117,8 @@ void Log::warn(int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::info(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -109,6 +126,8 @@ void Log::info(int line, const char* file, const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::debug(int line, const char* file, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -117,6 +136,8 @@ void Log::debug(int line, const char* file, const char* fmt, ...) {
 }
 
 
+// @unsafe - Variadic function that calls abort
+// SAFETY: Proper va_start/va_end usage; abort is intentional
 void Log::fatal(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -125,6 +146,8 @@ void Log::fatal(const char* fmt, ...) {
     abort();
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::error(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -132,6 +155,8 @@ void Log::error(const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::warn(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -139,6 +164,8 @@ void Log::warn(const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::info(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
@@ -146,6 +173,8 @@ void Log::info(const char* fmt, ...) {
     va_end(args);
 }
 
+// @unsafe - Variadic function using va_list
+// SAFETY: Proper va_start/va_end usage
 void Log::debug(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
