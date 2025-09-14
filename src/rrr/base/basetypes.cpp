@@ -1,5 +1,6 @@
 
 #include <thread>
+#include <cstring>  // for std::memcpy
 #include "basetypes.hpp"
 
 namespace rrr {
@@ -57,8 +58,9 @@ size_t SparseInt::val_size(i64 val) {
     }
 }
 
+// @unsafe - Uses raw pointer operations for performance
 size_t SparseInt::dump(i32 val, char* buf) {
-    char* pv = (char *) &val;
+    char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
         buf[0] = pv[0];
         buf[0] &= 0x7F;
@@ -98,8 +100,9 @@ size_t SparseInt::dump(i32 val, char* buf) {
     }
 }
 
+// @unsafe - Uses raw pointer operations for performance
 size_t SparseInt::dump(i64 val, char* buf) {
-    char* pv = (char *) &val;
+    char* pv = reinterpret_cast<char*>(&val);
     if (-64 <= val && val <= 63) {
         buf[0] = pv[0];
         buf[0] &= 0x7F;
@@ -181,9 +184,10 @@ size_t SparseInt::dump(i64 val, char* buf) {
 }
 
 
+// @unsafe - Uses raw pointer operations for performance
 i32 SparseInt::load_i32(const char* buf) {
     i32 val = 0;
-    char* pv = (char *) &val;
+    char* pv = reinterpret_cast<char*>(&val);
     int bsize = SparseInt::buf_size(buf[0]);
     if (bsize < 5) {
         for (int i = 0; i < bsize; i++) {
@@ -204,9 +208,10 @@ i32 SparseInt::load_i32(const char* buf) {
     return val;
 }
 
+// @unsafe - Uses raw pointer operations for performance
 i64 SparseInt::load_i64(const char* buf) {
     i64 val = 0;
-    char* pv = (char *) &val;
+    char* pv = reinterpret_cast<char*>(&val);
     int bsize = SparseInt::buf_size(buf[0]);
     if (bsize < 8) {
         for (int i = 0; i < bsize; i++) {
@@ -227,6 +232,7 @@ i64 SparseInt::load_i64(const char* buf) {
     return val;
 }
 
+// @unsafe - Constructor calls reset() member function
 Timer::Timer() : begin_(), end_() {
     reset();
 }
@@ -240,6 +246,7 @@ void Timer::stop() {
     gettimeofday(&end_, nullptr);
 }
 
+// @safe - Simple field assignments, no unsafe operations
 void Timer::reset() {
     begin_.tv_sec = 0;
     begin_.tv_usec = 0;
@@ -261,7 +268,11 @@ double Timer::elapsed() const {
 Rand::Rand() : rand_() {
     struct timeval now;
     gettimeofday(&now, nullptr);
-    rand_.seed(now.tv_sec + now.tv_usec + (long long) pthread_self() + (long long) this);
+    // Use static_cast for pthread_t (which is typically an integer type)
+    // and reinterpret_cast for pointer-to-integer conversion
+    rand_.seed(now.tv_sec + now.tv_usec + 
+               static_cast<long long>(pthread_self()) + 
+               reinterpret_cast<long long>(this));
 }
 
 } // namespace base
