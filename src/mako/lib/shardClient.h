@@ -14,16 +14,16 @@ namespace mako
     class ShardClient
     {
     public:
-        ShardClient(std::string file, string cluster, int shardIndex, int par_id, int workload_type);
-        int remoteGet(int dummy_table_id, std::string key, std::string &value);
-        int remoteScan(int dummy_table_id, std::string start_key, std::string end_key, std::string &value);
+        ShardClient(std::string file, string cluster, int shardIndex, int par_id);
+        int remoteGet(int remote_table_id, std::string key, std::string &value);
+        int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
         // Single timestamp interfaces
         int remoteGetTimestamp(uint32_t &timestamp);
         int remoteExchangeWatermark(uint32_t &watermark, uint64_t set_bits);
         int remoteControl(int control, uint32_t value, uint32_t &ret_value, uint64_t set_bits);
         int remoteAbort();
-        int remoteLock(int dummy_table_id, std::string key, std::string &value);
-        int remoteBatchLock(vector<int> &dummy_table_id_batch, vector<string> &key_batch, vector<string> &value_batch);
+        int remoteLock(int remote_table_id, std::string key, std::string &value);
+        int remoteBatchLock(vector<int> &remote_table_id_batch, vector<string> &key_batch, vector<string> &value_batch);
         int remoteValidate(uint32_t &watermark);
         int remoteInstall(uint32_t timestamp);
         int remoteUnLock();
@@ -47,7 +47,6 @@ namespace mako
         int par_id;  // in mako, each worker thread has a partition
         Promise *waiting; // waiting thread
         int tid;
-        int workload_type;  // 0. simpleShards (debug), 1. tpcc
 
         int num_response_waiting;
         vector<int> status_received;
@@ -69,9 +68,6 @@ namespace mako
         void calculate_num_response_waiting(int shards_to_send_bits);
         void calculate_num_response_waiting_no_skip(int shards_to_send_bits);
 
-        /* utilities */
-        int *convert_dummy_table_id_tpcc(int dummy_table_id);
-        int *convert_dummy_table_id_debug(int dummy_table_id);
     };
 
 }

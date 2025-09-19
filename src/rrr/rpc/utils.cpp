@@ -18,6 +18,7 @@ using namespace std;
 
 namespace rrr {
 
+// @safe - Uses safe fcntl operations
 int set_nonblocking(int fd, bool nonblocking) {
     int ret = fcntl(fd, F_GETFL, 0);
     if (ret != -1) {
@@ -30,6 +31,8 @@ int set_nonblocking(int fd, bool nonblocking) {
     return ret;
 }
 
+// @unsafe - Uses address-of operations for socket functions
+// SAFETY: All pointers remain valid throughout function scope
 int find_open_port() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -78,6 +81,8 @@ int find_open_port() {
     return -1;
 }
 
+// @unsafe - Calls unsafe Log::error on failure
+// SAFETY: Buffer is properly sized, error logging is thread-safe
 std::string get_host_name() {
     char buffer[1024];
     if (gethostname(buffer, 1024) != 0) {

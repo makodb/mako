@@ -6,8 +6,11 @@
 #include <vector>
 #include <atomic>
 #include <utility>
+#include <unordered_map>
 #include "lib/configuration.h"
 #include "lib/common.h"
+#include "lib/helper_queue.h"
+#include "lib/fasttransport.h"
 
 enum {
   RUNMODE_TIME = 0,
@@ -21,11 +24,10 @@ class BenchmarkConfig {
           nthreads_(1),
           num_erpc_server_(2), // number of erpc pull threads
           scale_factor_(1.0),
-          nshards_(1),
-          shardIndex_(0),
+          nshards_(1), // default 1 shard
+          shardIndex_(0), // default on the shard-0
           cluster_("localhost"),
           clusterRole_(0), 
-          workload_type_(1), // 0: simpleShards (debug); 1: tpcc/microbenchmark
           config_(nullptr),
           running_(true),
           control_mode_(0),
@@ -47,14 +49,13 @@ class BenchmarkConfig {
           end_received_leader_(0),
           replay_batch_(0) {}
       
-      // Member variables
+      // Member variables from dbtest.cc
       size_t nthreads_;
       size_t nshards_;
       size_t num_erpc_server_;
       size_t shardIndex_;
       std::string cluster_;
       int clusterRole_;
-      size_t workload_type_;
       transport::Configuration* config_;
       volatile bool running_;
       volatile int control_mode_;
@@ -85,6 +86,13 @@ class BenchmarkConfig {
       // Watermark tracking for latency measurements
       std::vector<std::pair<uint32_t, uint32_t>> advanceWatermarkTracker_;
 
+      // Runtime TPCC wiring state (moved from tpcc.cc)
+      std::vector<FastTransport*> server_transports_;
+      std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_;
+      std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_response_;
+      std::atomic<int> set_server_transport_{0};
+
+
   public:
       // Delete copy/move constructors
       BenchmarkConfig(const BenchmarkConfig&) = delete;
@@ -103,7 +111,6 @@ class BenchmarkConfig {
       size_t getShardIndex() const { return shardIndex_; }
       const std::string& getCluster() const { return cluster_; }
       int getClusterRole() const { return clusterRole_; }
-      size_t getWorkloadType() const { return workload_type_; }
       transport::Configuration* getConfig() const { return config_; }
       bool isRunning() const { return running_; }
       int getControlMode() const { return control_mode_; }
@@ -126,15 +133,24 @@ class BenchmarkConfig {
       std::string getPaxosProcName() const { return paxos_proc_name_; }
       int getLeaderConfig() const { return paxos_proc_name_==mako::LOCALHOST_CENTER; }
       const std::vector<std::string>& getPaxosConfigFile() const { return paxos_config_file_; }
+      
+      // Runtime TPCC wiring getters
+      std::vector<FastTransport*>& getServerTransports() { return server_transports_; }
+      const std::vector<FastTransport*>& getServerTransports() const { return server_transports_; }
+      std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHolders() { return queue_holders_; }
+      const std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHolders() const { return queue_holders_; }
+      std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHoldersResponse() { return queue_holders_response_; }
+      const std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHoldersResponse() const { return queue_holders_response_; }
+      std::atomic<int>& getServerTransportReadyCounter() { return set_server_transport_; }
+      const std::atomic<int>& getServerTransportReadyCounter() const { return set_server_transport_; }
 
       // Setters
-      void setNthreads(size_t n) { nthreads_ = n; }
+      void setNthreads(size_t n) { nthreads_ = n; setScaleFactor(n); }
       void setNshards(size_t n) { nshards_ = n; }
       void setNumErpcServer(size_t n) { num_erpc_server_ = n; }
       void setShardIndex(size_t idx) { shardIndex_ = idx; }
       void setCluster(const std::string& c) { cluster_ = c; }
       void setClusterRole(int role) { clusterRole_ = role; }
-      void setWorkloadType(size_t type) { workload_type_ = type; }
       void setConfig(transport::Configuration* cfg) { config_ = cfg; }
       void setRunning(bool r) { running_ = r; }
       void setControlMode(int mode) { control_mode_ = mode; }
@@ -154,7 +170,7 @@ class BenchmarkConfig {
       void setUseHashtable(int use) { use_hashtable_ = use; }
       void setIsMicro(int micro) { is_micro_ = micro; }
       void setIsReplicated(int replicated) { is_replicated_ = replicated; }
-      void setPaxosProcName(std::string paxos_proc_name) { paxos_proc_name_ = paxos_proc_name; }
+      void setPaxosProcName(std::string paxos_proc_name) { paxos_proc_name_ = paxos_proc_name; setCluster(paxos_proc_name); setClusterRole(mako::convertCluster(paxos_proc_name));}
       void setPaxosConfigFile(const std::vector<std::string>& paxos_config_file) { paxos_config_file_ = paxos_config_file; }
       
       // Getters and setters for Paxos termination tracking
@@ -174,5 +190,7 @@ class BenchmarkConfig {
       std::vector<std::pair<uint32_t, uint32_t>>& getAdvanceWatermarkTracker() { return advanceWatermarkTracker_; }
       const std::vector<std::pair<uint32_t, uint32_t>>& getAdvanceWatermarkTracker() const { return advanceWatermarkTracker_; }
 };
+
+// (no global runtime accessors)
 
 #endif /* _NDB_BENCHMARK_CONFIG_H_ */

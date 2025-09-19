@@ -15,6 +15,8 @@ namespace rrr {
 
 #ifdef __APPLE__
 
+// @unsafe - Uses backtrace functions, popen, and raw memory operations
+// SAFETY: Stack arrays are properly sized; backtrace functions are thread-safe
 void print_stack_trace(FILE* fp /* =? */) {
     const int max_trace = 1024;
     void* callstack[max_trace];
@@ -56,6 +58,8 @@ void print_stack_trace(FILE* fp /* =? */) {
 
 #else // no __APPLE__
 
+// @unsafe - Uses backtrace functions, popen, and raw memory operations  
+// SAFETY: Stack arrays are properly sized; backtrace functions are thread-safe
 void print_stack_trace(FILE* fp /* =? */) {
     const int max_trace = 1024;
     void* callstack[max_trace];

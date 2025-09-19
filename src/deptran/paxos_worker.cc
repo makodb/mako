@@ -647,14 +647,8 @@ PaxosWorker::~PaxosWorker() {
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
   auto sp_cmd = make_shared<LogEntry>();
-  if(!shared_ptr_apprch){
-    Log_error("exit branch");
-    exit(1);
-	  // sp_cmd->log_entry = string(log_entry,length);
-  }else{
-	  sp_cmd->operation_test = shared_ptr<char>((char*)malloc(length));
-    memcpy(sp_cmd->operation_test.get(), log_entry, length);
-  }
+  // Use std::string for payload to avoid mismatched allocation/deallocation
+  sp_cmd->log_entry = std::string(log_entry, length);
   sp_cmd->length = length;
   auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
   _Submit(sp_m);

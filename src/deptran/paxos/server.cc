@@ -3,6 +3,7 @@
 #include "server.h"
 #include "../paxos_worker.h"
 #include "exec.h"
+#include "paxos/commo.h"
 
 namespace janus {
 
@@ -639,7 +640,7 @@ void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   int status=app_next_(slot,cmd);
   cb();
-  if (status==5){// if noops
+  if (status==janus::PaxosStatus::STATUS_NOOPS){// if noops
     Log_info("Noops received on the learner side");
   }
 }

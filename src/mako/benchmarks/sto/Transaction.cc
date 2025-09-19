@@ -398,13 +398,13 @@ bool Transaction::try_commit(bool no_paxos) {
     //phase1
     TransItem* it = nullptr;
 
-    std::vector<int> dummy_table_id_batch;
+    std::vector<int> remote_table_id_batch;
     std::vector<std::string> key_batch;
     std::vector<std::string> value_batch;
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_dummy();
+        bool isRemote = it->owner()->get_is_remote();
         if (it->has_write() && isRemote) {
             std::string key = "", val = "";
             if (hasInsertOp(it)) {  // key_write_value_type
@@ -415,20 +415,20 @@ bool Transaction::try_commit(bool no_paxos) {
                 key = it->extra;
                 val = (*it).template write_value<std::string>();
             }
-            dummy_table_id_batch.push_back(it->owner()->get_table_id());
+            remote_table_id_batch.push_back(it->owner()->get_table_id());
             key_batch.push_back(key);
             value_batch.push_back(val);
         }
     }
 
-    int ret = TThread::sclient->remoteBatchLock(dummy_table_id_batch, key_batch, value_batch);
+    int ret = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
     if (ret > 0) {
         goto abort;
     }
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_dummy();
+        bool isRemote = it->owner()->get_is_remote();
         if (it->has_write()) {
             writeset[nwriteset++] = tidx;
 #if !STO_SORT_WRITESET
@@ -505,7 +505,7 @@ bool Transaction::try_commit(bool no_paxos) {
     //phase2
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_dummy();
+        bool isRemote = it->owner()->get_is_remote();
         if (!isRemote && it->has_read()) {
             TXP_INCREMENT(txp_total_check_read);
             if (!it->owner()->check(*it, *this) // this is just a version check
@@ -554,7 +554,7 @@ bool Transaction::try_commit(bool no_paxos) {
             else
                 it = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
             TXP_INCREMENT(txp_total_w);
-            // to ensure invalid-bit to be reset in transPut for dummy tables on the coordinator shard
+            // to ensure invalid-bit to be reset in transPut for remote tables on the coordinator shard
             it->owner()->install(*it, *this);
         }
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
@@ -660,7 +660,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_dummy();
+        bool isRemote = it->owner()->get_is_remote();
         table_id = 0x0;
         if (!it->has_write() || isRemote) {
             continue;
@@ -722,7 +722,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
             table_id = table_id | (1 << 15); // 1 << ((sizeof(unsigned short)*8)-1) = 1 << 15
         }
         if (table_id == 0) {
-            Warning("SHOULD NOT BE a zero here");
+            Warning("table_id can't be a zero here");
         }
         memcpy(array + w, (char *) &table_id, sizeof(unsigned short));
         w += sizeof(unsigned short);
@@ -747,28 +747,31 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
           pos += sizeof(uint32_t);
 
           instance->update_ptr(pos);
-          //int outstanding = get_outstanding_logs(TThread::getPartitionID ()) ;
-          //if (outstanding>20){
-          //  usleep(10*1000); // wait 1 Paxos log time 
-          //}
+
+          /*
+          int outstanding = get_outstanding_logs(TThread::getPartitionID ()) ;
+          if (outstanding>20){
+           usleep(10*1000); // wait 1 Paxos log time 
+          }
            
-        //   while ((TThread::sclient == NULL) || !TThread::sclient->stopped) {
-        //     if (outstanding>20) {
-        //         usleep(50);
-        //     } else {
-        //         break;
-        //     }
-        //     outstanding = get_outstanding_logs(TThread::getPartitionID ()) ;
-        //   }
-        //   Warning("outstanding request: %d, par_id: %d", outstanding, TThread::getPartitionID ());
+          while ((TThread::sclient == NULL) || !TThread::sclient->stopped) {
+            if (outstanding>20) {
+                usleep(50);
+            } else {
+                break;
+            }
+            outstanding = get_outstanding_logs(TThread::getPartitionID ()) ;
+          }
+          Warning("outstanding request: %d, par_id: %d", outstanding, TThread::getPartitionID ());
           
           // deal with logs from its corresponding threads
-        //   if (TThread::in_loading_phase){
-        //     Warning("add a log to nc, par_id:%d,", TThread::getPartitionID());
-        //     usleep(10*1000);
-        //   }
-        if (!on_remote)  // FIX me: merge the logs from helper threads instead of a separate log
-          add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size); // the partitionID for the helper thread
+          if (TThread::in_loading_phase){
+            Warning("add a log to nc, par_id:%d,", TThread::getPartitionID());
+            usleep(10*1000);
+          }*/
+
+        // FIX me: merge the logs from helper threads instead of a separate log
+        add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size); // the partitionID for the helper thread
       }
       instance->resetMemory();
     }
@@ -834,7 +837,7 @@ unsigned long long int TObject::get_table_id() const {
     return temp;
 }
 
-bool TObject::get_is_dummy() const {
+bool TObject::get_is_remote() const {
     exit(1);
     return false;
 }

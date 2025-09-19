@@ -20,8 +20,7 @@ namespace mako
     ShardClient::ShardClient(std::string file,
                              std::string cluster,
                              int shardIndex,
-                             int par_id,
-                             int workload_type) : config(file), cluster(cluster), shardIndex(shardIndex), par_id(par_id), workload_type(workload_type)
+                             int par_id) : config(file), cluster(cluster), shardIndex(shardIndex), par_id(par_id)
     {
         clusterRole = mako::convertCluster(cluster);
         std::string local_uri = config.shard(shardIndex, clusterRole).host;
@@ -161,63 +160,12 @@ namespace mako
         client->SetNumResponseWaiting(num_response_waiting);
     }
 
-    int* ShardClient::convert_dummy_table_id_debug(int dummy_table_id) {
-        static int r[2]; // (table_id, dst_shard_id)
-        if (dummy_table_id==0) { // for debugging
-            r[0] = 0;
-            r[1] = 1;
-            return r;
-        }
 
-        /**
-         *  simpleShards.cc
-         *  table-name: checking, table_id: 1
-            table-name: saving, table_id: 2
-            table-name: dummy_0, table_id: 3  => checking
-            table-name: dummy_1, table_id: 4  => saving
-        */
-        if (dummy_table_id == 3) {
-            r[0] = 1; // table_id
-            r[1] = 1; // dstShardIndex
-        } else {
-            r[0] = 2; // table_id
-            r[1] = 1; // dstShardIndex
-        }
-        return r;
-    }
+    int ShardClient::remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value) {
 
-    int* ShardClient::convert_dummy_table_id_tpcc(int dummy_table_id) {
-        static int r[2]; // (table_id, dst_shard_id)
-        int total_num_warehouse = TThread::get_nshards() * TThread::get_warehouses();
-        int num_warehouses = TThread::get_warehouses();
-        int nshards = TThread::get_nshards();
-        int g_wid = (dummy_table_id - (11 * num_warehouses + 1) - 1) % total_num_warehouse + 1;
+        int table_id = remote_table_id;
+        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
 
-        int table_id=0;
-        if (dummy_table_id > (11 * num_warehouses + 1) + (nshards * num_warehouses * 11) ) {  // item
-            table_id = 11 * num_warehouses + 1;
-        } else {
-            table_id = num_warehouses * ((dummy_table_id - (11 * num_warehouses + 1) - 1) / total_num_warehouse)
-            + (dummy_table_id - (11 * num_warehouses + 1) - 1) % num_warehouses + 1;
-        }
-
-        int dstShardIndex = (g_wid-1)/num_warehouses;
-
-        r[0] = table_id;
-        r[1] = dstShardIndex;
-        // Warning("###here,nshards:%d,nwarehouses:%d,dstShardId:%d,dummy_table_id:%d",
-        //                 nshards,num_warehouses,dstShardIndex,dummy_table_id);
-        return r;
-    }
-
-    int ShardClient::remoteScan(int dummy_table_id, std::string start_key, std::string end_key, std::string &value) {
-        int *p;
-        if (likely(workload_type == 1))
-            p = convert_dummy_table_id_tpcc(dummy_table_id);
-        else
-            p = convert_dummy_table_id_debug(dummy_table_id);
-        int table_id = *(p);
-        int dstShardIndex = *(p+1);
         TThread::readset_shard_bits |= (1 << dstShardIndex);
         Promise promise(GET_TIMEOUT);
         waiting = &promise;
@@ -250,14 +198,11 @@ namespace mako
         transport->Statistics();
     }
 
-    int ShardClient::remoteGet(int dummy_table_id, std::string key, std::string &value) {
-        int *p;
-        if (likely(workload_type) == 1)
-            p = convert_dummy_table_id_tpcc(dummy_table_id);
-        else
-            p = convert_dummy_table_id_debug(dummy_table_id);
-        int table_id = *(p);
-        int dstShardIndex = *(p+1);
+    int ShardClient::remoteGet(int remote_table_id, std::string key, std::string &value) {
+        
+        int table_id = remote_table_id;
+        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+
         TThread::readset_shard_bits |= (1 << dstShardIndex) ;
         Promise promise(GET_TIMEOUT);
         waiting = &promise;
@@ -286,25 +231,20 @@ namespace mako
     }
 
     int ShardClient::remoteBatchLock(
-        vector<int> &dummy_table_id_batch,
+        vector<int> &remote_table_id_batch,
         vector<string> &key_batch,
         vector<string> &value_batch
     ) {
-        if (dummy_table_id_batch.empty())
+        if (remote_table_id_batch.empty())
             return ErrorCode::SUCCESS;
 
         map<int, BatchLockRequestWrapper> request_batch_per_shard;
         uint16_t server_id = shardIndex * config.warehouses + par_id;
         int shards_to_send_bits = 0;
-        for (int i = 0; i < dummy_table_id_batch.size(); i++) {
-            int *p;
-            int dummy_table_id = dummy_table_id_batch[i];
-            if (likely(workload_type) == 1)
-                p = convert_dummy_table_id_tpcc(dummy_table_id);
-            else
-                p = convert_dummy_table_id_debug(dummy_table_id);
-            int table_id = *(p);
-            int dst_shard_idx = *(p + 1);
+        for (int i = 0; i < remote_table_id_batch.size(); i++) {
+            int remote_table_id = remote_table_id_batch[i];
+            int table_id = remote_table_id;
+            int dst_shard_idx = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
 
             // after combine remoteLock + remoteValidate, this step might need to be skipped
             TThread::writeset_shard_bits |= (1 << dst_shard_idx) ;
@@ -330,15 +270,12 @@ namespace mako
         return is_all_response_ok();
     }
 
-    int ShardClient::remoteLock(int dummy_table_id, std::string key, std::string &value) {
+    int ShardClient::remoteLock(int remote_table_id, std::string key, std::string &value) {
         Panic("Deprecated!");
-        int *p;
-        if (likely(workload_type) == 1)
-            p = convert_dummy_table_id_tpcc(dummy_table_id);
-        else
-            p = convert_dummy_table_id_debug(dummy_table_id);
-        int table_id = *(p);
-        int dstShardIndex = *(p+1);
+
+        int table_id = remote_table_id;
+        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        
         TThread::writeset_shard_bits |= (1 << dstShardIndex) ;
         Promise promise(BASIC_TIMEOUT);
         waiting = &promise;

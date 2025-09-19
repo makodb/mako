@@ -52,3 +52,5 @@ paxos*.yml
 experiment_*.sh
 nfs_sync_*
 out-perf.masstree/*
+.local-rust/
+rust-1.80.0-x86_64-unknown-linux-gnu/

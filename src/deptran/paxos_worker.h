@@ -491,7 +491,8 @@ public:
       }
       //return m;
       m >> szb;
-      for (int i = 0; i < szs; i++) {
+      // Read exactly the number of ballots that were serialized
+      for (int i = 0; i < szb; i++) {
           ballot_t x;
           m >> x;
           ballots.push_back(x);

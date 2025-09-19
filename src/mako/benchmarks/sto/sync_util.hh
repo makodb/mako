@@ -60,6 +60,9 @@ namespace sync_util {
             exchange_running = true;
             // 2. for the exchange_thread, we attach it to remoteValidate on the leader replica
             if (!is_leader) { // on the follower replica, we start a client and server with busy_loop
+                if (nshards <= 1) 
+                    return ;
+
                 //start_advancer();
                 Warning("the watermark is exchanging within the cluster: %s",cluster.c_str());
                 // erpc server - busy loop
@@ -203,6 +206,7 @@ namespace sync_util {
                     Warning("%s", local_w_msg.c_str());
                 }*/
             }
+            std::cout << "END of advancer" << std::endl;
         }
 
         // for the server
@@ -240,8 +244,7 @@ namespace sync_util {
             auto sclient = new mako::ShardClient(config->configFile,
                                                    cluster,
                                                    shardIdx,
-                                                   id, /* par_id */
-                                                   1 /*tpc-c*/);
+                                                   id);
             // send the exchange requests frequently
             int fail_cnt=0;
             while (exchange_running) {
@@ -280,8 +283,7 @@ namespace sync_util {
             auto static control_sclient = new mako::ShardClient(config->configFile,
                                                    cluster,
                                                    shardIdx,
-                                                   id, /* par_id */
-                                                   1 /*tpc-c*/);
+                                                   id);
             uint32_t dstShardIndex=0;
             for (int i=0; i<nshards; i++) {
                 if (i==shardIdx) continue;
@@ -308,8 +310,7 @@ namespace sync_util {
             auto static control_sclient = new mako::ShardClient(config->configFile,
                                                    cluster,
                                                    shardIdx,
-                                                   id, /* par_id */
-                                                   1 /*tpc-c*/);
+                                                   id);
             uint32_t dstShardIndex=0;
             
             bool is_datacenter_failure = control >= 4;

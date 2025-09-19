@@ -118,8 +118,8 @@ def build(bld):
 
     _gen_srpc_headers()
 
-#     _depend("old-test/benchmark_service.h", "old-test/benchmark_service.rpc",
-#             "bin/rpcgen --cpp old-test/benchmark_service.rpc")
+#     _depend("test/benchmark_service.h", "test/benchmark_service.rpc",
+#             "bin/rpcgen --cpp test/benchmark_service.rpc")
 
     bld.stlib(source=bld.path.ant_glob("extern_interface/scheduler.c"),
               target="externc",

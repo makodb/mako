@@ -235,7 +235,7 @@ public:
         mbta_ordered_index::mbta_type::thread_init();
     }
     static abstract_ordered_index * OpenTablesForTablespace(abstract_db *db, const char *name) {
-       return db->open_index(name, 1, false, false); // create a table instance: mbta_ordered_index
+       return db->open_index(name); // create a table instance: mbta_ordered_index
     }
 protected:
     abstract_db *const db;

@@ -1,102 +1,128 @@
-#include "lib/rust_wrapper.h"
-#include <sstream>
-#include <vector>
+// #include "lib/rust_wrapper.h"
+// #include <sstream>
+// #include "mako.hh"
+// #include <vector>
 
-// Global instance pointer for Rust notification
-RustWrapper* g_rust_wrapper_instance = nullptr;
-RustWrapper::RustWrapper() : running_(false), initialized_(false) {
-    g_rust_wrapper_instance = this;
-    txn_obj_buf.reserve(str_arena::MinStrReserveLength);
-}
+// // Global instance pointer for Rust notification
+// RustWrapper* g_rust_wrapper_instance = nullptr;
+// thread_local bool RustWrapper::ti_initialized = false;
 
-RustWrapper::~RustWrapper() {
-    if (running_) running_ = false;
-    g_rust_wrapper_instance = nullptr;
-    delete arena;
-}
+// RustWrapper::RustWrapper() : running_(false), initialized_(false) {
+//     g_rust_wrapper_instance = this;
+//     txn_obj_buf.reserve(str_arena::MinStrReserveLength);
+// }
 
-bool RustWrapper::init() {
-    if (initialized_) {
-        return false; // Already initialized
-    }
+// RustWrapper::~RustWrapper() {
+//     if (running_) running_ = false;
+//     g_rust_wrapper_instance = nullptr;
+//     if (ti_initialized) {
+//         ti_initialized = false;
+//     }
+//     delete arena;
+// }
+
+// bool RustWrapper::init() {
+//     if (initialized_) {
+//         return false; // Already initialized
+//     }
     
-    arena = new str_arena();
-    txn_obj_buf.resize(db->sizeof_txn_object(0));
+//     arena = new str_arena();
+//     txn_obj_buf.resize(db->sizeof_txn_object(0));
 
-    // Initialize Rust socket listener
-    if (!rust_init()) {
-        std::cerr << "Failed to initialize Rust socket listener" << std::endl;
-        return false;
-    }
+//     // Initialize Rust socket listener
+//     if (!rust_init()) {
+//         std::cerr << "Failed to initialize Rust socket listener" << std::endl;
+//         return false;
+//     }
     
-    running_ = true;
-    initialized_ = true;
+//     running_ = true;
+//     initialized_ = true;
     
-    std::cout << "RustWrapper initialized successfully" << std::endl;
-    return true;
-}
+//     std::cout << "RustWrapper initialized successfully" << std::endl;
+//     return true;
+// }
 
-extern "C" {
-    bool cpp_execute_request_sync(const char* operation, const char* key, const char* value, char** result) {
-        std::string op_str(operation);
-        std::string key_str(key);
-        std::string val_str(value ? value : "");
+// void RustWrapper::ensure_thread_info() {
+//     if (!ti_initialized) {
+//         // Initialize threadinfo for this thread
+//         mbta_ordered_index::mbta_type::thread_init();
+//         ti_initialized = true;
+//         std::cout << "DEBUG: Initialized threadinfo for thread " 
+//                   << std::this_thread::get_id() << std::endl;
+//     }
+// }
+
+
+// extern "C" {
+//     bool cpp_execute_request_sync(const char* operation, const char* key, const char* value, char** result) {
+//         std::string op_str(operation);
+//         std::string key_str(key);
+//         std::string val_str(value ? value : "");
         
-        RustWrapper::Result kv_result = g_rust_wrapper_instance->execute_request(op_str, key_str, val_str);
+//         RustWrapper::Result kv_result = g_rust_wrapper_instance->execute_request(op_str, key_str, val_str);
         
-        if (kv_result.success && !kv_result.value.empty()) {
-            // Allocate C string for result
-            *result = strdup(kv_result.value.c_str());
-        } else {
-            *result = nullptr;
-        }
+//         if (kv_result.success && !kv_result.value.empty()) {
+//             // Allocate C string for result
+//             *result = strdup(kv_result.value.c_str());
+//         } else {
+//             *result = nullptr;
+//         }
         
-        std::cout << "Executed " << op_str << " for key '" << key_str << "' -> " << kv_result.value << std::endl;
+//         std::cout << "Executed " << op_str << " for key '" << key_str << "' -> " << kv_result.value << std::endl;
         
-        return kv_result.success;
-    }
+//         return kv_result.success;
+//     }
     
-    void cpp_free_string(char* ptr) {
-        if (ptr) {
-            free(ptr);
-        }
-    }
-}
+//     void cpp_free_string(char* ptr) {
+//         if (ptr) {
+//             free(ptr);
+//         }
+//     }
+// }
 
 
-RustWrapper::Result RustWrapper::execute_request(const string& operation, const string& key, const string& value) {
-    string result;
-    bool success = true;
+// RustWrapper::Result RustWrapper::execute_request(const string& operation, const string& key, const string& value) {
+//     ensure_thread_info();
+//     // // scoped_db_thread_ctx ctx(db, false);
+//     db->thread_init(false, 0);
+//     string result;
+//     bool success = true;
     
-    if (operation == "get") {
-        void *txn = db->new_txn(0, *arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
-        std::string table_value = "";
-        try {
-            customerTable->get(txn, key, table_value);
-            db->commit_txn(txn);
-        } catch (abstract_db::abstract_abort_exception &ex) {
-            std::cout << "abort (read) key=" << key << std::endl;
-            db->abort_txn(txn);
-        }
-        result = table_value;
-    } else if (operation == "set") {
-        std::cout << "DEBUG: Performing SET operation" << std::endl;
-        void *txn = db->new_txn(0, *arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
-        std::cout << "DEBUG: Transaction created" << std::endl;
-            try {
-                customerTable->put(txn, key, value);
-                std::cout << "DEBUG: Put operation completed" << std::endl;
-                db->commit_txn(txn);
-                std::cout << "DEBUG: Transaction committed" << std::endl;
-            } catch (abstract_db::abstract_abort_exception &ex) {
-                std::cout << "abort key=" << key << std::endl;
-                db->abort_txn(txn);
-            }
-        result = "OK";
-    } else {
-        result = "ERROR: Invalid operation";
-        success = false;
-    }
+//     if (operation == "get") {
+//         void *txn = db->new_txn(0, *arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
+//         std::string table_key = "table_key_" + key;
+//         std::string table_value = "";
+//         try {
+//             customerTable->get(txn, table_key, table_value);
+//             db->commit_txn(txn);
+//         } catch (abstract_db::abstract_abort_exception &ex) {
+//             std::cout << "abort (read) key=" << table_key << std::endl;
+//             db->abort_txn(txn);
+//         }
+//         result = table_value;
+//     } else if (operation == "set") {
+//         std::cout << "DEBUG: Performing SET operation" << std::endl;
+//         std::cout << "DEBUG: Transaction created" << std::endl;
+//         void *txn = db->new_txn(0, *arena, txn_buf());
+//         std::string table_key = "table_key_" + key;
+//         std::string table_value = "table_value_" + value + 
+//                             std::string(mako::EXTRA_BITS_FOR_VALUE, 'B');
+//         try {
+//             customerTable->put(txn, table_key, StringWrapper(table_value));
+//             std::cout << "DEBUG: Put operation completed" << std::endl;
+//             db->commit_txn(txn);
+//             std::cout << "DEBUG: Transaction committed" << std::endl;
+//         } catch (abstract_db::abstract_abort_exception &ex) {
+//             printf("Write aborted: %s\n", table_key.c_str());
+//             db->abort_txn(txn);
+//         }
+//         result = "OK";
+//     } else {
+//         result = "ERROR: Invalid operation";
+//         success = false;
+//     }
+
+//     db->thread_end();
     
-    return Result(result, success);
-}
+//     return Result(result, success);
+// }

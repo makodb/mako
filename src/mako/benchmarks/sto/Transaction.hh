@@ -113,6 +113,7 @@ class StringAllocator{
     batch_size = batch_size_x;
     max_bytes_size = max_bytes_size_x;
     latest_commit_timestamp = 0;
+    //Warning("Paxos log created!max_bytes_size:%d",max_bytes_size);
   }
 
   ~StringAllocator() {
@@ -132,7 +133,7 @@ class StringAllocator{
         uint32_t st_time = mako::getCurrentTimeMillis();
         memcpy (queueLog + pos, &st_time, sizeof(uint32_t));
         pos += sizeof(uint32_t);
-        //Warning("Paxos log watermark-2:%s",aa.c_str());
+        //Warning("Paxos log cleanup!max_bytes_size:%d",max_bytes_size);
         add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size);
     }
     freeMemory();

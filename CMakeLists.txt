@@ -9,11 +9,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Configure and enable rusy-cpp-checker
-include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rustycpp/cmake/RustyCppSubmodule.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 
 # Build the rusty-cpp-checker binary first before enabling borrow checking
-set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rustycpp")
+set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp")
 set(CPP_BORROW_CHECKER "${RUSTYCPP_DIR}/target/${RUSTYCPP_BUILD_TYPE}/rusty-cpp-checker")
 
 # Create a custom command to build the checker if it doesn't exist
@@ -436,6 +436,7 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/bid.cc"
   "${W}/benchmarks/queue.cc"
   "${W}/benchmarks/tpcc.cc"
+  "${W}/benchmarks/rpc_setup.cc"
   #"${W}/benchmarks/tpcc_simple.cc"
   #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"
@@ -448,7 +449,7 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/sto/ThreadPool.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/lookup3.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/kv_store.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
+  # "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/rust_wrapper.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/message.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/memory.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/helper_queue.cc"
@@ -460,6 +461,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/client.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/shardClient.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/abstract_db.cc"
 )
 
 # Benchmark flags
@@ -701,6 +703,8 @@ endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
 add_apps(simpleTransaction examples/simpleTransaction.cc)
+add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
+add_apps(makoCon examples/makoCon.cc)
 add_apps(simplePaxos examples/simplePaxos.cc)
 
 # Enable borrow checking for dbtest
@@ -716,3 +720,62 @@ add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(erpc_client src/mako/benchmarks/ut/erpc_client.cc)
 add_apps(erpc_server src/mako/benchmarks/ut/erpc_server.cc)
+
+# RPC benchmark binary
+add_executable(rpcbench test/rpcbench.cc test/benchmark_service.cc)
+target_include_directories(rpcbench PRIVATE
+    src
+    src/rrr
+    test
+)
+target_compile_options(rpcbench PRIVATE ${BENCH_CXXFLAGS})
+target_link_libraries(rpcbench
+    rrr
+    memdb
+    pthread
+    ${BENCH_LDFLAGS}
+    ${LIBEVENT_LDFLAGS}
+)
+
+# Build the necessary RRR and memdb libraries for rpcbench
+file(GLOB RRR_BENCH_SRC
+    "src/rrr/base/*.cpp"
+    "src/rrr/misc/*.cpp"
+    "src/rrr/rpc/*.cpp"
+    "src/rrr/reactor/*.cc"
+)
+
+# Add RRR library if not already built
+if(NOT TARGET rrr)
+    add_library(rrr STATIC ${RRR_BENCH_SRC})
+    target_include_directories(rrr PUBLIC
+        src
+        src/rrr
+    )
+    target_compile_options(rrr PUBLIC ${BENCH_CXXFLAGS})
+    target_link_libraries(rrr pthread ${Boost_LIBRARIES})
+    
+    # Add borrow checking for RRR library
+    if(ENABLE_BORROW_CHECKING)
+        add_borrow_check_target(rrr)
+        
+        # Create a convenience target to check only RRR library files
+        add_custom_target(borrow_check_rrr
+            DEPENDS borrow_check_all_rrr
+            COMMENT "Running borrow checker on RRR library files"
+        )
+    endif()
+endif()
+
+# Add memdb library if not already built
+if(NOT TARGET memdb)
+    file(GLOB MEMDB_BENCH_SRC "src/memdb/*.cc")
+    add_library(memdb STATIC ${MEMDB_BENCH_SRC})
+    target_include_directories(memdb PUBLIC
+        src
+        src/rrr
+        src/memdb
+    )
+    target_compile_options(memdb PUBLIC ${BENCH_CXXFLAGS})
+    target_link_libraries(memdb rrr pthread)
+endif()

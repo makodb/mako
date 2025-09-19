@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   ubuntu22-build:
+    platform: linux/amd64
     build:
       context: .
       dockerfile: Dockerfile.ubuntu22
@@ -10,9 +11,10 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace
-    command: /bin/bash -c "cd /workspace && rm -rf build && mkdir -p build && cd build && cmake .. && make -j32 dbtest"
+    command: /bin/bash -c "cd /workspace && rm -rf build && mkdir -p build && cd build && cmake .. && make -j $(nproc) dbtest"
     
   ubuntu22-dev:
+    platform: linux/amd64
     image: mako-build:ubuntu22
     container_name: mako-ubuntu22-dev
     volumes:

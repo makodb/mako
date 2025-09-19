@@ -17,6 +17,8 @@ using namespace std;
 
 namespace rrr {
 
+// @unsafe - Blocks on condition variable until ready
+// SAFETY: Proper pthread mutex/condvar usage
 void Future::wait() {
   Pthread_mutex_lock(&ready_m_);
   while (!ready_ && !timed_out_) {
@@ -25,6 +27,8 @@ void Future::wait() {
   Pthread_mutex_unlock(&ready_m_);
 }
 
+// @unsafe - Waits with timeout using pthread_cond_timedwait
+// SAFETY: Proper timeout calculation and pthread usage
 void Future::timed_wait(double sec) {
   Pthread_mutex_lock(&ready_m_);
   while (!ready_ && !timed_out_) {
@@ -56,6 +60,8 @@ void Future::timed_wait(double sec) {
   }
 }
 
+// @unsafe - Notifies waiters and triggers callback in coroutine
+// SAFETY: Protected by mutex, callback executed asynchronously
 void Future::notify_ready() {
   Pthread_mutex_lock(&ready_m_);
   if (!timed_out_) {
@@ -73,6 +79,8 @@ void Future::notify_ready() {
   }
 }
 
+// @unsafe - Cancels all pending futures with error
+// SAFETY: Protected by spinlock, proper refcount management
 void Client::invalidate_pending_futures() {
   list<Future*> futures;
   pending_fu_l_.lock();
@@ -93,6 +101,8 @@ void Client::invalidate_pending_futures() {
   }
 }
 
+// @unsafe - Closes socket and invalidates futures
+// SAFETY: Idempotent, proper cleanup sequence
 void Client::close() {
   if (status_ == CONNECTED) {
     pollmgr_->remove(this);
@@ -102,6 +112,8 @@ void Client::close() {
   invalidate_pending_futures();
 }
 
+// @unsafe - Establishes TCP/IPC connection to server
+// SAFETY: Proper socket creation, configuration, and error handling
 int Client::connect(const char* addr) {
   verify(status_ != CONNECTED);
   string addr_str(addr);
@@ -176,10 +188,13 @@ int Client::connect(const char* addr) {
   return 0;
 }
 
+// @safe - Simple error handler
 void Client::handle_error() {
   close();
 }
 
+// @unsafe - Writes buffered data to socket
+// SAFETY: Protected by spinlock, handles partial writes
 void Client::handle_write() {
   if (status_ != CONNECTED) {
     return;
@@ -194,6 +209,8 @@ void Client::handle_write() {
   out_l_.unlock();
 }
 
+// @unsafe - Reads and processes RPC responses
+// SAFETY: Protected by spinlock, validates packet structure
 void Client::handle_read() {
   if (status_ != CONNECTED) {
     return;
@@ -248,6 +265,7 @@ void Client::handle_read() {
   }
 }
 
+// @safe - Determines polling mode based on output buffer
 int Client::poll_mode() {
   int mode = Pollable::READ;
   out_l_.lock();
@@ -258,6 +276,8 @@ int Client::poll_mode() {
   return mode;
 }
 
+// @unsafe - Starts new RPC request with marshaling
+// SAFETY: Protected by spinlocks, proper refcounting
 Future* Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   out_l_.lock();
 
@@ -292,6 +312,8 @@ Future* Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   return (Future*) fu->ref_copy();
 }
 
+// @unsafe - Finalizes request packet with size header
+// SAFETY: Updates bookmark, enables write polling
 void Client::end_request() {
   // set reply size in packet
   if (bmark_ != nullptr) {
@@ -310,6 +332,8 @@ void Client::end_request() {
   out_l_.unlock();
 }
 
+// @unsafe - Constructs pool with PollMgr ownership
+// SAFETY: Proper refcounting of PollMgr
 ClientPool::ClientPool(PollMgr* pollmgr /* =? */,
                        int parallel_connections /* =? */)
     : parallel_connections_(parallel_connections) {
@@ -322,6 +346,8 @@ ClientPool::ClientPool(PollMgr* pollmgr /* =? */,
   }
 }
 
+// @unsafe - Destroys pool and all cached connections
+// SAFETY: Closes all clients and releases PollMgr
 ClientPool::~ClientPool() {
   for (auto& it : cache_) {
     for (int i = 0; i < parallel_connections_; i++) {
@@ -332,6 +358,8 @@ ClientPool::~ClientPool() {
   pollmgr_->release();
 }
 
+// @unsafe - Gets cached or creates new client connections
+// SAFETY: Protected by spinlock, handles connection failures gracefully
 Client* ClientPool::get_client(const string& addr) {
   Client* cl = nullptr;
   l_.lock();

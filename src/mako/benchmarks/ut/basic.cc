@@ -139,9 +139,9 @@ __thread HashWrapper *tprops = nullptr;
 
 class tmpObj {
     public:
-        bool is_dummy;
-        void set_is_dummy(bool is_dummy_t) { is_dummy = is_dummy_t; }
-        bool get_is_dummy() { return is_dummy; }
+        bool is_remote;
+        void set_is_remote(bool is_remote_t) { is_remote = is_remote_t; }
+        bool get_is_remote() { return is_remote; }
 } ;
 
 void testing_map_get() {
@@ -159,11 +159,11 @@ void testing_map_get() {
     std::cout << "elpased: " << t.lap_nano() << std::endl;;
 
     auto o = new tmpObj();
-    o->set_is_dummy(true);
+    o->set_is_remote(true);
     bool tk = true;
     t.lap_nano();
     for (int i=0; i<iter; i++) {
-        tk |= o->get_is_dummy();
+        tk |= o->get_is_remote();
     }
 
     std::cout << "elpased: " << t.lap_nano() << std::endl;

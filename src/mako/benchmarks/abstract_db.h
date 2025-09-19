@@ -31,7 +31,7 @@ public:
   abstract_db() {}
 
   // dtor should close db
-  virtual ~abstract_db() {}
+  virtual ~abstract_db();
 
   /**
    * an approximate max batch size for updates in a transaction.
@@ -141,7 +141,7 @@ public:
    * @return
    */
   virtual abstract_ordered_index *
-  open_index(unsigned short table_id) = 0;
+  get_index_by_table_id(unsigned short table_id) = 0;
 
   virtual abstract_ordered_index *
   open_index(const std::string &name,
@@ -151,6 +151,12 @@ public:
 
   virtual void
   close_index(abstract_ordered_index *idx) = 0;
+
+  virtual void preallocate_open_index() = 0;
+  virtual void init() = 0;
+
+  virtual abstract_ordered_index *
+  open_index(const std::string &name, int shard_index = -1) = 0;
 
   virtual void shard_abort_txn(void *txn) = 0;
   virtual int shard_validate() = 0;

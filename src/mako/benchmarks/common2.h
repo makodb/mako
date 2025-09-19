@@ -77,6 +77,13 @@ void modeMonitorRun(abstract_db *db, int thread_nums, bench_runner * R) {
     }
     //bench_runner * r = start_workers_tpcc(1 /*leader_config*/, db, thread_nums, true);
     start_workers_tpcc(1 /*leader_config*/, db, thread_nums, true, 1, R);
+    
+    if (BenchmarkConfig::getInstance().getIsReplicated()) {
+        Warning("######--------------###### send endLlogs #####---------------######");
+        std::string endLogInd = "";
+        for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
+            add_log_to_nc((char *)endLogInd.c_str(), 0, i);
+    }
 
     lk.unlock();
     sync_util::sync_logger::cv.notify_one();

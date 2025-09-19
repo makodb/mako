@@ -2,6 +2,7 @@
 #define _BENCHMARK_MBTA_WRAPPER_H_
 #pragma once
 #include <atomic>
+#include <cstdlib>
 #include "abstract_db.h"
 #include "abstract_ordered_index.h"
 #include "sto/Transaction.hh"
@@ -9,9 +10,12 @@
 #include "sto/Hashtable.hh"
 #include "sto/simple_str.hh"
 #include "sto/StringWrapper.hh"
-#include <unordered_map> 
+#include <unordered_map>
+#include <map>
+#include <tuple>
 #include "benchmarks/tpcc.h"
 #include "benchmarks/benchmark_config.h"
+#include "lib/common.h"
 
 // We have to do it on the coordinator instead of transaction.cc, because it only has a local copy of the readSet;
 #define GET_NODE_POINTER(val,len) reinterpret_cast<mako::Node *>((char*)(val+len-mako::BITS_OF_NODE));
@@ -66,54 +70,25 @@ std::atomic<long> ht_insert(0);
 std::atomic<long> ht_del(0);
 #endif
 
-namespace table_logger {
-	std::atomic<long> table_id (1);
-	static std::map<std::string, long> table_map = {};
-    static std::map<long, std::string> reversed_table_map = {};
-
-    /*
-	 * Generated new table id for each new table name
-	 * */
-	long GetNextTableID(const std::string &name){
-	  long _table_id=0;
-	  auto search = table_logger::table_map.find(name);
-	  if(search == table_logger::table_map.end()){
-		// not found
-		table_logger::table_map[name] = table_logger::table_id++;
-		_table_id = table_logger::table_map[name];
-        //std::cout << "Table: " << name << ", Id: " << _table_id << std::endl;
-        table_logger::reversed_table_map[_table_id] = name;
-	  } else {
-		_table_id = search->second;
-	  }
-	  return _table_id;
-	}
-
-    std::string getTableNameById(int table_id) {
-        return reversed_table_map[table_id];
-    }
-}
-
 class mbta_wrapper;
 
 // PS: we don't use mbta_wraper_norm.hh anymore (in rolis, mbta_wraper_norm is the alias of mbta_wraper)
 class mbta_ordered_index : public abstract_ordered_index {    // weihshen, the mbta_ordered_index of Masstrans we need
 public:
-  mbta_ordered_index(const std::string &name, mbta_wrapper *db, bool is_dummy=false) : mbta(), name(name), db(db) {
-    mbta.set_table_id(table_logger::GetNextTableID(name));
-    mbta.set_is_dummy(is_dummy);
+  mbta_ordered_index(const std::string &name, mbta_wrapper *db, bool is_remote=false) : mbta(), db(db) {
+    std::exit(EXIT_FAILURE);
   }
 
-  mbta_ordered_index(const std::string &name, const long table_id, mbta_wrapper *db, bool is_dummy=false) : mbta(), name(name), db(db) {
+  mbta_ordered_index(const std::string &name, const long table_id, mbta_wrapper *db, bool is_remote=false) : mbta(), db(db) {
       mbta.set_table_id(table_id);
-      mbta.set_is_dummy(is_dummy);
-      table_logger::table_id=mbta.get_table_id()+1;
+      mbta.set_is_remote(is_remote);
+      mbta.set_table_name(name);
   }
 
   std::string *arena(void);
 
   bool get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
-    if (!mbta.get_is_dummy()) {
+    if (!mbta.get_is_remote()) {
       STD_OP({
         bool ret = mbta.transGet(key, value);
         UPDATE_VS(value.data(),value.length())
@@ -142,7 +117,7 @@ public:
         }
       }
 
-      int32_t new_value = current_value + delta;
+      int32_t new_value = current_num + delta;
       std::string new_value_str = std::to_string(new_value);
       mbta.transPut(key, StringWrapper(new_value_str));
       
@@ -150,13 +125,21 @@ public:
     })
   }
 
-  bool get_is_dummy() {
-    return mbta.get_is_dummy();
+  bool get_is_remote() {
+    return mbta.get_is_remote();
+  }
+
+  void set_is_remote(bool s) {
+    mbta.set_is_remote(s) ;
   }
 
   int get_table_id() { // mbta_ordered_index
     return mbta.get_table_id();
   }
+
+  const std::string& get_table_name() const { return mbta.get_table_name(); }
+
+  void set_table_name(const std::string& t) { mbta.set_table_name(t); }
 
   // handle get request from a remote shard
   bool shard_get(lcdf::Str key, std::string &value, size_t max_bytes_read) {
@@ -195,8 +178,6 @@ public:
 #if OP_LOGGING
     mt_put++;
 #endif
-    // TODO: there's an overload of put that takes non-const std::string and silo seems to use move for those.
-    // may be worth investigating if we can use that optimization to avoid copying keys
     STD_OP({
         mbta.transPut(key, StringWrapper(value));
         return 0;
@@ -288,7 +269,6 @@ typedef MassTrans<std::string, versioned_str_struct, false/*opacity*/> mbta_type
 private:
 friend class mbta_wrapper;
 mbta_type mbta;
-const std::string name;
 std::map<std::string, std::string> properties;
 
 mbta_wrapper *db;
@@ -961,7 +941,27 @@ private:
 
 class mbta_wrapper : public abstract_db {
 public:
-  std::unordered_map<size_t,abstract_ordered_index *> table_instances ;
+  // tables for a database instance; we can pre-allocate many tables; 
+  // then do a mapping when user creates one in the code 
+
+  // table-id and index of this array is exactly same
+  std::vector<mbta_ordered_index *> global_table_instances ;
+  std::unordered_map<int, int> availableTable_id ;
+  // Track created tables by (name, shard_index) to avoid duplicates
+  std::map<std::tuple<std::string,int>, int> tables_taken;
+
+  mbta_wrapper() { /* Avoid doing something here! */}
+
+  void init() {
+    preallocate_open_index() ;
+
+    auto& benchConfig = BenchmarkConfig::getInstance();
+
+    for (int i=0; i<benchConfig.getNshards(); i++) {
+      availableTable_id[i] = i * mako::NUM_TABLES_PER_SHARD + 1 ;
+    }
+  }
+
   ssize_t txn_max_batch_size() const OVERRIDE { return 100; }
   
   void
@@ -1028,8 +1028,7 @@ public:
       TThread::sclient = new mako::ShardClient(BenchmarkConfig::getInstance().getConfig()->configFile,
                                                  BenchmarkConfig::getInstance().getCluster(),
                                                  BenchmarkConfig::getInstance().getShardIndex(),
-                                                 old,
-                                                 BenchmarkConfig::getInstance().getWorkloadType()); // only support tpcc for now
+                                                 old);
       //Notice("ParID[worker-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     } else {
       TThread::set_pid(TThread::id()%BenchmarkConfig::getInstance().getConfig()->warehouses);
@@ -1071,11 +1070,23 @@ public:
   }
 
   bool commit_txn(void *txn) {
-    return Sto::try_commit();
+    if (!Sto::in_progress()) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    if (!Sto::try_commit()) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    return true;
   }
 
   bool commit_txn_no_paxos(void *txn) {
-    return Sto::try_commit_no_paxos();
+    if (!Sto::in_progress()) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    if (!Sto::try_commit_no_paxos()) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    return true;
   }
 
   void abort_txn(void *txn) {
@@ -1115,34 +1126,89 @@ public:
   abstract_ordered_index *
   open_index(const std::string &name,
              size_t value_size_hint,
-	     bool mostly_append = false,
+	           bool mostly_append = false,
              bool use_hashtable = false) {
-    /*
-    if (use_hashtable) {
-      if (name.find("customer") == 0) 
-        return new ht_ordered_index_customer_key(name, this);
-      if (name.find("history") == 0)
-	return new ht_ordered_index_history_key(name, this);
-      if (name.find("oorder") == 0)
-	return new ht_ordered_index_oorder_key(name, this);
-      if (name.find("stock") == 0)
-        return new ht_ordered_index_stock_key(name, this);
-      return new ht_ordered_index_int(name, this);
-    }*/
+    std::cout << "deprecated function!" << std::endl;
+    std::exit(EXIT_FAILURE);
+
+    // We only actually create tables in preallocate_open_index now!
     auto ret = new mbta_ordered_index(name, this, name.find("dummy") != std::string::npos);
+    std::cout << "new table is createded with name: " << name << ", id: " << ret->get_table_id() << std::endl;
     return ret;
   }
 
-  // this function is not thread-safe, please pre-allocate all tables!!
+
   abstract_ordered_index *
-  open_index(unsigned short table_id) {
-    if (likely(table_instances.find(table_id) != table_instances.end())) {
-      return table_instances[table_id] ;
-    } else {
-      table_instances[table_id] = new mbta_ordered_index(std::to_string(table_id), table_id, this);
-      // grep -r 'new table is'|sort|cut -d ':' -f 3,3|sort -n
-      std::cout << "new table is created: " << table_id << std::endl;
-      return table_instances[table_id] ;
+  open_index(const std::string &name, int shard_index) { // This is allocate a new table
+    auto& benchConfig = BenchmarkConfig::getInstance();
+
+    if (shard_index == -1) {
+      shard_index = benchConfig.getShardIndex() ;
+    } 
+
+    if (tables_taken.find(std::make_tuple(name, shard_index)) != tables_taken.end() ) {
+      int table_id = tables_taken[std::make_tuple(name, shard_index)];
+      auto tbl = get_index_by_table_id(table_id) ;
+      std::cout << "existing table is createded with name: " << name 
+              << ", table-id: " << tbl->get_table_id()
+              << ", on shard-server id:" << shard_index << std::endl;
+      return tbl ;
+    }
+
+    int available_table_id = __sync_fetch_and_add(&availableTable_id[shard_index], 1);
+
+    // table-id is between [shard_index*mako::NUM_TABLES_PER_SHARD+1, shard_index*mako::NUM_TABLES_PER_SHARD+1+mako::NUM_TABLES_PER_SHARD]
+    if (!(available_table_id >= shard_index*mako::NUM_TABLES_PER_SHARD+1 
+        && available_table_id <= (shard_index*mako::NUM_TABLES_PER_SHARD+mako::NUM_TABLES_PER_SHARD))) {
+          std::cout << "We don't have sufficient tables for you, please don't create too many tables more than " 
+                    << mako::NUM_TABLES_PER_SHARD << " on each shard."
+                    << " Assigned table_id (strange):" << available_table_id
+                    << ", expected range is:" << (shard_index*mako::NUM_TABLES_PER_SHARD+1)
+                    << "," << (shard_index*mako::NUM_TABLES_PER_SHARD+mako::NUM_TABLES_PER_SHARD) 
+                    << ", shard_index: " << BenchmarkConfig::getInstance().getShardIndex()
+                    << ", shard_index(args) [strange]:" << shard_index << std::endl;
+          
+          std::cout << "All existing tables:" << std::endl;
+          for (const auto& [key, value] : tables_taken) {
+              const auto& [str, num] = key;  // unpack the tuple
+              std::cout << "(" << str << ", " << num << ") -> " << value << "\n";
+          }
+          
+          std::exit(EXIT_FAILURE);
+        }
+
+    auto tbl = global_table_instances[available_table_id];
+    tbl->set_table_name(name) ;
+    // Record this table to prevent duplicate creation for the same (name, shard)
+    tables_taken[std::make_tuple(name, shard_index)] = available_table_id;
+    std::cout << "new table is createded with name: " << name 
+              << ", table-id: " << tbl->get_table_id()
+              << ", on shard-server id:" << shard_index << std::endl;
+    return tbl;
+  }
+
+  // replay will use this function, otherwise NO; get table back;
+  abstract_ordered_index *
+  get_index_by_table_id(unsigned short table_id) {
+    return global_table_instances[table_id];
+  }
+
+  // Table-id starts from 1
+  void preallocate_open_index() {
+    auto& benchConfig = BenchmarkConfig::getInstance();
+    for (int i=0; i<=mako::NUM_TABLES_PER_SHARD * benchConfig.getNshards(); i++) {
+      int table_id = i;
+      auto tbl = new mbta_ordered_index(std::to_string(table_id), table_id, this);
+      int shard_index = (table_id - 1) / mako::NUM_TABLES_PER_SHARD;
+      if (table_id==0) {
+        shard_index = 0;  // table id 0 is not used!
+      }
+      if (shard_index == benchConfig.getShardIndex()) {
+        tbl->set_is_remote(false) ;
+      } else {
+        tbl->set_is_remote(true) ;
+      }
+      global_table_instances.push_back(tbl);
     }
   }
 

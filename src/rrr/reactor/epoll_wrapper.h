@@ -20,6 +20,7 @@
 
 namespace rrr {
 
+// @safe - Abstract interface for pollable file descriptors
 class Pollable: public rrr::RefCounted {
 protected:
 
@@ -32,17 +33,26 @@ public:
         READ = 0x1, WRITE = 0x2
     };
 
+    // @safe - Returns file descriptor
     virtual int fd() = 0;
+    // @safe - Returns current poll mode (READ/WRITE flags)
     virtual int poll_mode() = 0;
+    // @unsafe - Handles read events (implementation-specific)
     virtual void handle_read() = 0;
+    // @unsafe - Handles write events (implementation-specific)
     virtual void handle_write() = 0;
+    // @unsafe - Handles error events (implementation-specific)
     virtual void handle_error() = 0;
 };
 
 
+// @unsafe - Wrapper for epoll/kqueue system calls
+// SAFETY: Proper file descriptor management and error checking
 class Epoll {
  public:
 
+  // @unsafe - Creates epoll/kqueue file descriptor
+  // SAFETY: Verifies creation succeeded
   Epoll() {
 #ifdef USE_KQUEUE
     poll_fd_ = kqueue();
@@ -52,6 +62,8 @@ class Epoll {
     verify(poll_fd_ != -1);
   }
 
+  // @unsafe - Adds file descriptor to epoll/kqueue
+  // SAFETY: Uses system calls with proper error checking
   int Add(Pollable* poll) {
     auto poll_mode = poll->poll_mode();
     auto fd = poll->fd();
@@ -89,6 +101,8 @@ class Epoll {
     return 0;
   }
 
+  // @unsafe - Removes file descriptor from epoll/kqueue
+  // SAFETY: Uses system calls, ignores errors for already removed fds
   int Remove(Pollable* poll) {
     auto fd = poll->fd();
 #ifdef USE_KQUEUE
@@ -113,6 +127,8 @@ class Epoll {
     return 0;
   }
 
+  // @unsafe - Updates poll mode for file descriptor
+  // SAFETY: Uses system calls with proper event flag handling
   int Update(Pollable* poll, int new_mode, int old_mode) {
     auto fd = poll->fd();
 #ifdef USE_KQUEUE
@@ -170,6 +186,8 @@ class Epoll {
     return 0;
   }
 
+  // @unsafe - Waits for events and dispatches to handlers
+  // SAFETY: Uses system calls with timeout, calls virtual handlers
   void Wait() {
     const int max_nev = 100;
 #ifdef USE_KQUEUE

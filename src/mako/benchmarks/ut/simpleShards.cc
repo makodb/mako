@@ -41,8 +41,8 @@ public:
         open_tables["checking"] = checking;
         open_tables["saving"] = saving;
         for (int i=0; i<2; i++) {
-            abstract_ordered_index *table = simple_tpcc_worker::OpenTablesForTablespace(db, ("dummy_"+std::to_string(i)).c_str()) ;
-            open_tables["dummy_"+std::to_string(i)] = table;
+            abstract_ordered_index *table = simple_tpcc_worker::OpenTablesForTablespace(db, ("remote_"+std::to_string(i)).c_str()) ;
+            open_tables["remote_"+std::to_string(i)] = table;
         }
     }
 
@@ -65,7 +65,7 @@ public:
     }
 
     static abstract_ordered_index * OpenTablesForTablespace(abstract_db *db, const char *name) {
-        auto ret = db->open_index(name, 1, false, false); // create a table instance: mbta_ordered_index
+        auto ret = db->open_index(name); // create a table instance: mbta_ordered_index
         std::cout << "table-name: " << name << ", table_id: " << ret->get_table_id() << std::endl;
         return ret;
     }
@@ -75,8 +75,7 @@ public:
         TThread::sclient = new mako::ShardClient(config->configFile,
                                                  "localhost",
                                                  client_shardIndex,
-                                                 par_id,
-                                                 workload_type);
+                                                 par_id);
 
         for (size_t i=0; i<5; i++) {
             void *txn = db->new_txn(0, arena, txn_buf(), abstract_db::HINT_TPCC_NEW_ORDER);
@@ -85,9 +84,9 @@ public:
             open_tables["checking"]->get(txn, key, value);
             value = std::to_string(atoi(value.c_str()) + 10);
             open_tables["checking"]->put(txn, key, StringWrapper(value));
-            open_tables["dummy_0"]->get(txn, key, obj_v);  // the checking on the remote shard
+            open_tables["remote_0"]->get(txn, key, obj_v);  // the checking on the remote shard
             obj_v = std::to_string(atoi(obj_v.c_str()) - 10);
-            open_tables["dummy_0"]->put(txn, key, obj_v);
+            open_tables["remote_0"]->put(txn, key, obj_v);
             db->commit_txn(txn);
         }
 
@@ -110,11 +109,11 @@ public:
         std::string file=config->configFile;
         TThread::set_shard_index(server_shardIndex);
         map<string, vector<abstract_ordered_index *>> partitions;
-        map<string, vector<abstract_ordered_index *>> dummy_partitions;
+        map<string, vector<abstract_ordered_index *>> remote_partitions;
         mako::ShardServer *ss=new mako::ShardServer(config->configFile,
                                                         client_shardIndex, 
                                                         server_shardIndex, par_id);
-        ss->Register(db, queue, queue_response, open_tables, partitions, dummy_partitions);
+        ss->Register(db, queue, queue_response, open_tables, partitions, remote_partitions);
         ss->Run();  // it is event driven!
     }
 
@@ -197,7 +196,6 @@ int main(int argv, char **args) {
     int is_client=atoi(args[1]);
     abstract_db *db = new mbta_wrapper;
     config = new transport::Configuration("./config/local-shards2-warehouses1.yml");
-    workload_type = 0;
     cluster="localhost";
     auto worker = new simple_tpcc_worker(db) ;
     worker->init();

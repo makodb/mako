@@ -871,7 +871,13 @@ public:
   }
 
   bool commit_txn(void *txn) {
-    return Sto::try_commit();
+    if (!Sto::in_progress()) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    if (!Sto::try_commit()) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    return true;
   }
 
   void abort_txn(void *txn) {

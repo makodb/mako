@@ -33,7 +33,7 @@ void BenchmarkService::fast_prime(const i32& n, i8* flag) {
 void BenchmarkService::nop(const std::string&) {
     int cnt = g_nop_counter.next();
     if (cnt % 200000 == 0) {
-        Log::info("%d nop requests", cnt);
+        Log_info("%d nop requests", cnt);
     }
 }
 

@@ -4,14 +4,16 @@
 # Each shard should:
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 20%
+# 3. Followers replay at least 1000 batches
 
 echo "========================================="
 echo "Testing 1-shard setup with replication"
 echo "========================================="
 
-skill dbtest
+ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
-rm -f shard0*.log nfs_*.log
+rm -f shard0*.log nfs_sync_*
 
 # Start shard 0 in background
 echo "Starting shard 0..."

@@ -74,7 +74,8 @@ private:
   Pred pred_;
 
   unsigned long long int table_id;
-  bool is_dummy;
+  bool is_remote;
+  std::string table_name_;
 
   // used to mark whether a key is a bucket (for bucket version checks)
   // or a pointer (which will always have the lower 3 bits as 0)
@@ -315,17 +316,21 @@ public:
   unsigned long long int get_table_id() const override{
     return table_id;
   }
-  
+
+  const std::string& get_table_name() const { return table_name_; }
+
+  void set_table_name(const std::string& t) { table_name_ = t; }
+
   void set_table_id(const unsigned long long int tid){
   	table_id = tid;
   }
 
-  bool get_is_dummy() const override{
-    return is_dummy;
+  bool get_is_remote() const override{
+    return is_remote;
   }
 
-  void set_is_dummy(const bool is_dummy_t){
-    is_dummy = is_dummy_t;
+  void set_is_remote(const bool is_remote_t){
+    is_remote = is_remote_t;
   }
 
   bool lock(TransItem& item, Transaction& txn) override {

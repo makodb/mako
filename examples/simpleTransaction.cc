@@ -22,13 +22,10 @@ public:
         mbta_ordered_index::mbta_type::thread_init();
     }
 
-    static abstract_ordered_index* open_table(abstract_db *db, const char *name) {
-        return db->open_index(name, 1, false, false);
-    }
-
     void test_basic_transactions() {
         printf("\n--- Testing Basic Transactions ---\n");
-        static abstract_ordered_index *table = open_table(db, "customer_0");
+        static abstract_ordered_index *table = db->open_index("customer_0");
+        static abstract_ordered_index *table2 = db->open_index("customer_0"); // table and table2 are the exactly same!
         std::this_thread::sleep_for(std::chrono::seconds(1));
 
         // Write 5 keys
@@ -38,7 +35,10 @@ public:
             std::string value = "test_value_" + std::to_string(i) + 
                                std::string(mako::EXTRA_BITS_FOR_VALUE, 'B');
             try {
-                table->put(txn, key, StringWrapper(value));
+                if (i%2==0)
+                    table->put(txn, key, StringWrapper(value));
+                else
+                    table2->put(txn, key, StringWrapper(value));
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Write aborted: %s\n", key.c_str());
@@ -89,7 +89,7 @@ public:
 
     void test_overwritten_operations() {
         printf("\n--- Testing OverwrittenOperations ---\n");
-        static abstract_ordered_index *table = open_table(db, "overwritten_table");
+        static abstract_ordered_index *table = db->open_index("overwritten_table");
 
         // Write initial value
         // Add more extra bits in DO_STRUCT_COMMON_VALUE in previous codebase
@@ -178,7 +178,7 @@ void run_tests(abstract_db *db) {
 
 int main() {
     abstract_db *db = new mbta_wrapper;
-    
+    db->init() ;
     printf("=== Mako Transaction Tests  ===\n");
     
     auto config = new transport::Configuration(

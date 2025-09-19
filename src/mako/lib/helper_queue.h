@@ -4,6 +4,7 @@
 #include "rpc.h"
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 
 #define HELPER_QUEUE_SIZE 100
 
@@ -24,6 +25,8 @@ public:
     void suspend();
     void wakeup();
     bool fetch_one_req(erpc::ReqHandle **req_handle, size_t &msg_size);
+    void request_stop();
+    bool should_stop() const { return stop_flag_.load(std::memory_order_acquire); }
     int req_buffer_reader_idx;
     int req_buffer_writer_idx;
     int req_cnt;
@@ -37,6 +40,7 @@ private:
     int id;
     bool is_req;
     std::atomic<int> my_atomic_int;
+    std::atomic<bool> stop_flag_{false};
 };
 
 }

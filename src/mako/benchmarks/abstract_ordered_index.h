@@ -353,7 +353,7 @@ public:
 
   // mbta_ordered_index only has one mbta object which is the instance of MassTrans (TObject)
   virtual int get_table_id() = 0;
-  virtual bool get_is_dummy() = 0;
+  virtual bool get_is_remote() = 0;
 };
 
 #endif /* _ABSTRACT_ORDERED_INDEX_H_ */

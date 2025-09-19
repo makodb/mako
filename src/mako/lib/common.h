@@ -45,6 +45,7 @@ namespace mako
     };
 
     const int ADVANCER_MARKER_NUM = 2;
+    const int NUM_TABLES_PER_SHARD = 200; // for pre-allocated
 
   #if defined(MEGA_BENCHMARK)
     const int mega_batch_size = 100; // no more than max_batch_size?

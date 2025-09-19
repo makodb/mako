@@ -9,6 +9,5 @@
 	url = https://github.com/Jiyang-Wu/MakoCon
 	branch = NoQueueApproach
 [submodule "third-party/rustycpp"]
-	path = third-party/rustycpp
-	url = https://github.com/shuaimu/rustycpp
-	
+	path = third-party/rusty-cpp
+	url = https://github.com/shuaimu/rusty-cpp

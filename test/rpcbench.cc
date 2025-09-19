@@ -52,7 +52,7 @@ static void* stat_proc(void*) {
         int cnt = req_counter.peek_next();
         if (last_cnt != 0) {
             long int qps = cnt - last_cnt;
-            Log::info("qps: %ld", cnt - last_cnt);
+            Log_info("qps: %ld", cnt - last_cnt);
             summary.push_back(qps);
         }
         last_cnt = cnt;
@@ -63,7 +63,7 @@ static void* stat_proc(void*) {
     for (size_t i=0; i<summary.size(); i++) {
         sum += summary[i];
     }
-    Log::info("avg qps: %2.2f", ((float)sum)/summary.size());
+    Log_info("avg qps: %2.2f", ((float)sum)/summary.size());
     pthread_exit(nullptr);
     return nullptr;
 }
@@ -176,18 +176,18 @@ int main(int argc, char **argv) {
     }
     verify(is_server || is_client);
     if (is_server) {
-        Log::info("server will start at     %s", svr_addr);
+        Log_info("server will start at     %s", svr_addr);
     } else {
-        Log::info("client will connect to   %s", svr_addr);
+        Log_info("client will connect to   %s", svr_addr);
     }
-    Log::info("packet byte size:        %d", byte_size);
-    Log::info("epoll instances:         %d", epoll_instances);
-    Log::info("fast reqeust:            %s", fast_requests ? "true" : "false");
-    Log::info("running seconds:         %d", seconds);
-    Log::info("outgoing requests:       %d", outgoing_requests);
-    Log::info("client threads:          %d", client_threads);
-    Log::info("worker threads:          %d", worker_threads);
-    Log::info("vector size:             %d", rpc_bench_vector_size);
+    Log_info("packet byte size:        %d", byte_size);
+    Log_info("epoll instances:         %d", epoll_instances);
+    Log_info("fast reqeust:            %s", fast_requests ? "true" : "false");
+    Log_info("running seconds:         %d", seconds);
+    Log_info("outgoing requests:       %d", outgoing_requests);
+    Log_info("client threads:          %d", client_threads);
+    Log_info("worker threads:          %d", worker_threads);
+    Log_info("vector size:             %d", rpc_bench_vector_size);
 
     request_str = string(byte_size, 'x');
     poll = new PollMgr(epoll_instances);

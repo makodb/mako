@@ -34,7 +34,7 @@ clean:
 	@echo "Cleaning Rust library..."
 	@cd rust-lib && cargo clean 2>/dev/null || true
 	# Clean rusty-cpp
-	@rm -rf third-party/rustycpp/target || true
+	@rm -rf third-party/rusty-cpp/target || true
 
 
 
@@ -44,6 +44,7 @@ rebuild: clean all
 run: build
 	./$(BUILD_DIR)/dbtest
 	./$(BUILD_DIR)/simpleTransction
+	./$(BUILD_DIR)/simpleTransctionRep
 	./$(BUILD_DIR)/simplePaxos
 
 

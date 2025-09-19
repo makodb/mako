@@ -12,6 +12,7 @@ class Transaction;
 class TransItem;
 class TransProxy;
 
+// in Interface.hh, threadid_mask = type(0x1FF), range [0,511]
 #ifndef MAX_THREADS
 #define MAX_THREADS 460
 #endif
@@ -166,12 +167,12 @@ public:
     typedef uint64_t type;
     typedef int64_t signed_type;
     //    000  111  111  111
-#if defined(FAIL_NEW_VERSION)
-    static constexpr type threadid_mask = type(0xFF);
-    static constexpr type new_epoch_mask = type(0x100);
-#else
+// #if defined(FAIL_NEW_VERSION)
+//     static constexpr type threadid_mask = type(0xFF); // <= 255
+//     static constexpr type new_epoch_mask = type(0x100);
+// #else
     static constexpr type threadid_mask = type(0x1FF);
-#endif
+// #endif
     //    001  000  000  000
     static constexpr type lock_bit = type(0x200);
     // Used for data structures that don't use opacity. When they increment
@@ -249,27 +250,30 @@ public:
     }
 
     static bool try_lock(type& v, int here, uint8_t term) {
-#if defined(FAIL_NEW_VERSION)
-        type vv = v;
-        // here is the threadid_
-        //  __sync_bool_compare_and_swap(object, expected, desired);
-        // lock_bit:         001  000  000  000
-        // thread_mask:      000  011  111  111
-        // new_epoch_mask:   000  100  000  000
-        if (term>0){
-            // if lock_bit + epoch_mask is 10, 01, 00 -> lock (11), otherwise 11 -> fail
-            // This implemention works for just one-time failure, as we only use one bit to store epoch number.
-            if (!(vv & new_epoch_mask)) {
-                return bool_cmpxchg(&v, vv, vv | lock_bit | new_epoch_mask | here);
-            } else {
-                return try_lock(v, here);
-            }
-        } else {
-            return try_lock(v, here);
-        }
-#else
         return try_lock(v, here);
-#endif
+// FIXME: failure recovery requires epoch_number in the lock bit!
+// #if defined(FAIL_NEW_VERSION)
+//         type vv = v;
+//         // here is the threadid_
+//         //  __sync_bool_compare_and_swap(object, expected, desired);
+//         // lock_bit:         001  000  000  000
+//         // thread_mask:      000  011  111  111
+//         // new_epoch_mask:   000  100  000  000
+//         if (term>0){
+//             // if lock_bit + epoch_mask is 10, 01, 00 -> lock (11), otherwise 11 -> fail
+//             // This implemention works for just one-time failure, as we only use one bit to store epoch number.
+//             // FIXME
+//             if (!(vv & new_epoch_mask)) {
+//                 return bool_cmpxchg(&v, vv, vv | lock_bit | new_epoch_mask | here);
+//             } else {
+//                 return try_lock(v, here);
+//             }
+//         } else {
+//             return try_lock(v, here);
+//         }
+// #else
+//         return try_lock(v, here);
+// #endif
     }
 
     static void lock(type& v) {
@@ -750,7 +754,7 @@ public:
     }
     virtual void print(std::ostream& w, const TransItem& item) const;
     virtual unsigned long long int get_table_id() const;
-    virtual bool get_is_dummy() const;
+    virtual bool get_is_remote() const;
 };
 
 typedef TObject Shared;

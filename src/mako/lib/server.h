@@ -25,9 +25,9 @@ namespace mako
         ShardReceiver(std::string file);
         void Register(abstract_db *db,
                  const map<string, abstract_ordered_index *> &open_tables,
-                 const map<int, abstract_ordered_index *> &open_tables_table_id,
+                 const map<int, abstract_ordered_index *> &open_tables_table_id /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
-                 const map<string, vector<abstract_ordered_index *>> &dummy_partitions);
+                 const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
 
         // Message handlers.
         size_t ReceiveRequest(uint8_t reqType, char *reqBuf, char *respBuf);
@@ -68,8 +68,8 @@ namespace mako
         abstract_db *db;
         map<string, abstract_ordered_index *> open_tables;
         map<int, abstract_ordered_index *> open_tables_table_id;
-        map<string, vector<abstract_ordered_index *>> partitions;
-        map<string, vector<abstract_ordered_index *>> dummy_partitions;
+        // map<string, vector<abstract_ordered_index *>> partitions;
+        // map<string, vector<abstract_ordered_index *>> remote_partitions;
 
         uint64_t txn_flags = 0;
         std::string txn_obj_buf;
@@ -89,9 +89,9 @@ namespace mako
         void Register(abstract_db *db,
                  mako::HelperQueue *queue,
                  mako::HelperQueue *queue_res,
-                 const map<string, abstract_ordered_index *> &open_tables,
+                 const map<string, abstract_ordered_index *> &open_tables /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
-                 const map<string, vector<abstract_ordered_index *>> &dummy_partitions);
+                 const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
         void Run();
 
     protected:
@@ -109,8 +109,8 @@ namespace mako
         mako::HelperQueue *queue_response;
         map<string, abstract_ordered_index *> open_tables;
         map<int, abstract_ordered_index *> open_tables_table_id;
-        map<string, vector<abstract_ordered_index *>> partitions;
-        map<string, vector<abstract_ordered_index *>> dummy_partitions;
+        // map<string, vector<abstract_ordered_index *>> partitions;
+        // map<string, vector<abstract_ordered_index *>> remote_partitions;
     };
 }
 #endif

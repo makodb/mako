@@ -50,13 +50,21 @@ bool HelperQueue::fetch_one_req(erpc::ReqHandle **req_handle, size_t &msg_size) 
 
 void HelperQueue::suspend() {
     std::unique_lock<std::mutex> lock(condition_mutex);
-    cv.wait(lock, [this]{return !is_req_buffer_empty();});
+    cv.wait(lock, [this]{return stop_flag_.load(std::memory_order_acquire) || !is_req_buffer_empty();});
 }
 
 void HelperQueue::wakeup() { // NOTICE
     Panic("discard");
     // std::unique_lock<std::mutex> lock(condition_mutex);
     // cv.notify_one();
+}
+
+void HelperQueue::request_stop() {
+    {
+        std::lock_guard<std::mutex> lock(condition_mutex);
+        stop_flag_.store(true, std::memory_order_release);
+    }
+    cv.notify_all();
 }
 
 // -------------------------------------------------------------------------------------------

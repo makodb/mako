@@ -22,15 +22,23 @@ Configure and compile
 ```bash
 make 
 ```
-You should now see libmako.a and a few examples in the build folder.
+You should now see libmako.a and a few examples in the build folder, and run all examples via `./ci/ci.sh all`
 
+
+
+Testing out MakoCon
+
+```bash
+./build/makoCon 
+```
+<!-- 
 Run the helloworld:
 
 ```bash
 ./build/helloworld
 ```
 
-<!-- Config hosts
+Config hosts
 ```bash
 # if Multi-servers: Update bash/ips_{p1|p2|leader|learner}, bash/ips_{p1|p2|leader|learner}.pub, n_partitions 
 bash ./src/mako/update_config.sh 
@@ -89,7 +97,7 @@ cd ~/janus
 echo "eth" > env.txt
 
 sudo for bash/shard.sh is not rquired for socket-based transport
-``` -->
+``` 
 
 ## Helloworld - Minimal Example
 
@@ -256,3 +264,4 @@ make helloworld
 - **scoped_db_thread_ctx**: RAII wrapper for thread initialization
 - **scoped_str_arena**: RAII wrapper for arena management
 
+-->
