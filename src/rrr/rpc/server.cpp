@@ -163,7 +163,7 @@ void ServerConnection::handle_read() {
        }
     }
 
-    list<Request*> complete_requests; 
+    list<rusty::Box<Request>> complete_requests;
     n_peek = block_read_in.peek(&packet_size, sizeof(i32));
     if(n_peek == sizeof(i32)){
       int pckt_bytes = block_read_in.chnk_read_from_fd(socket_, packet_size + sizeof(i32) - block_read_in.content_size());
@@ -171,13 +171,13 @@ void ServerConnection::handle_read() {
         return;
       }
       verify(block_read_in.read(&packet_size, sizeof(i32)) == sizeof(i32));
-      Request* req = new Request;
-      verify(req->m.read_reuse_chnk(block_read_in, packet_size) == (size_t) packet_size);
+      rusty::Box<Request> req_box(new Request);
+      verify(req_box->m.read_reuse_chnk(block_read_in, packet_size) == (size_t) packet_size);
       //Log_info("server handle read: packet size %d and packet bytes %d and content size %d", packet_size, pckt_bytes, block_read_in.content_size());
       v64 v_xid;
-      req->m >> v_xid;
-      req->xid = v_xid.get();
-      complete_requests.push_back(req);
+      req_box->m >> v_xid;
+      req_box->xid = v_xid.get();
+      complete_requests.push_back(std::move(req_box));
 
     }
 
@@ -206,18 +206,18 @@ void ServerConnection::handle_read() {
     stat_server_batching(complete_requests.size());
 #endif // RPC_STATISTICS
 
-    for (auto& req: complete_requests) {
+    for (auto& req_box: complete_requests) {
 
-        if (req->m.content_size() < sizeof(i32)) {
+        if (req_box->m.content_size() < sizeof(i32)) {
             // rpc id not provided
-            begin_reply(req, EINVAL);
+            begin_reply(req_box.get(), EINVAL);
             end_reply();
-            delete req;
+            // req_box (Box) automatically deletes when going out of scope
             continue;
         }
 
         i32 rpc_id;
-        req->m >> rpc_id;
+        req_box->m >> rpc_id;
 
 #ifdef RPC_STATISTICS
         stat_server_rpc_counting(rpc_id);
@@ -227,8 +227,10 @@ void ServerConnection::handle_read() {
         if (it != server_->handlers_.end()) {
             // Use weak_self_ directly - no map lookup needed!
             auto weak_this = weak_self_;
-            Coroutine::CreateRun([it, req, weak_this] () {
-                it->second(req, weak_this);
+            // Move Box directly into lambda - CreateRun template handles move-only types
+            Coroutine::CreateRun([it, req_box = std::move(req_box), weak_this] () mutable {
+                // Move Box to handler - clean single ownership transfer!
+                it->second(std::move(req_box), weak_this);
                 // Lock weak_ptr to access block_read_in
                 auto sconn = weak_this.lock();
                 if (sconn) {
@@ -247,9 +249,9 @@ void ServerConnection::handle_read() {
             if (!surpress_warning) {
                 Log_error("rrr::ServerConnection: no handler for rpc_id=0x%08x", rpc_id);
             }
-            begin_reply(req, ENOENT);
+            begin_reply(req_box.get(), ENOENT);
             end_reply();
-            delete req;
+            // req_box (Box) automatically deletes when going out of scope
         }
     }
 }
@@ -593,7 +595,7 @@ int Server::start(const char* bind_addr) {
 }
 
 // @safe - Registers RPC handler
-int Server::reg(i32 rpc_id, const std::function<void(Request*, std::weak_ptr<ServerConnection>)>& func) {
+int Server::reg(i32 rpc_id, const std::function<void(rusty::Box<Request>, std::weak_ptr<ServerConnection>)>& func) {
     // disallow duplicate rpc_id
     if (handlers_.find(rpc_id) != handlers_.end()) {
         return EEXIST;

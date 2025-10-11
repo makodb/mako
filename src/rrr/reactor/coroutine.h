@@ -36,6 +36,10 @@ class Coroutine {
  public:
   static std::shared_ptr<Coroutine> CurrentCoroutine();
   // the argument cannot be a reference because it could be declared on stack.
+  // Template version that accepts move-only callables
+  template<typename Func>
+  static std::shared_ptr<Coroutine> CreateRun(Func&& func);
+  // Legacy version for backward compatibility
   static std::shared_ptr<Coroutine> CreateRun(std::function<void()> func);
 
   enum Status {INIT=0, STARTED, PAUSED, RESUMED, FINISHED, RECYCLED};
@@ -55,4 +59,13 @@ class Coroutine {
   void Continue();
   bool Finished();
 };
+
+// Template implementation for move-only callables
+template<typename Func>
+std::shared_ptr<Coroutine> Coroutine::CreateRun(Func&& func) {
+  // Wrap move-only callable in shared_ptr to make it copyable for std::function
+  auto func_ptr = std::make_shared<std::decay_t<Func>>(std::forward<Func>(func));
+  return CreateRun([func_ptr]() mutable { (*func_ptr)(); });
+}
+
 } // namespace rrr

@@ -243,9 +243,9 @@ class DeferredReply: public NoCopy {
 
 public:
 
-    DeferredReply(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn,
+    DeferredReply(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn,
                   const std::function<void()>& marshal_reply, const std::function<void()>& cleanup)
-        : req_(rusty::Box<rrr::Request>(req)), weak_sconn_(weak_sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
+        : req_(std::move(req)), weak_sconn_(weak_sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
 
     // @safe - Cleanup destructor with automatic cleanup
     // SAFETY: Proper cleanup order, Box automatically deletes req_
@@ -282,7 +282,7 @@ public:
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
-    std::unordered_map<i32, std::function<void(Request*, std::weak_ptr<ServerConnection>)>> handlers_;
+    std::unordered_map<i32, std::function<void(rusty::Box<Request>, std::weak_ptr<ServerConnection>)>> handlers_;
     rusty::Arc<PollThreadWorker> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
     ThreadPool* threadpool_;
     int server_sock_;
@@ -334,23 +334,23 @@ public:
      *     server_connection->end_reply();
      *
      *     // cleanup resource
-     *     delete request;
-     *     // No need to release, shared_ptr handles it
+     *     // Request is in rusty::Box - automatically deleted when Box goes out of scope
+     *     // Shared_ptr handles ServerConnection cleanup
      *  }
      */
     // @safe - Registers RPC handler function
-    int reg(i32 rpc_id, const std::function<void(Request*, std::weak_ptr<ServerConnection>)>& func);
+    int reg(i32 rpc_id, const std::function<void(rusty::Box<Request>, std::weak_ptr<ServerConnection>)>& func);
 
     template<class S>
-    int reg(i32 rpc_id, S* svc, void (S::*svc_func)(Request*, std::weak_ptr<ServerConnection>)) {
+    int reg(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, std::weak_ptr<ServerConnection>)) {
 
         // disallow duplicate rpc_id
         if (handlers_.find(rpc_id) != handlers_.end()) {
             return EEXIST;
         }
 
-        handlers_[rpc_id] = [svc, svc_func] (Request* req, std::weak_ptr<ServerConnection> sconn) {
-            (svc->*svc_func)(req, sconn);
+        handlers_[rpc_id] = [svc, svc_func] (rusty::Box<Request> req, std::weak_ptr<ServerConnection> sconn) {
+            (svc->*svc_func)(std::move(req), sconn);
         };
 
         return 0;

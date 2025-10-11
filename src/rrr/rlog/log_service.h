@@ -10,8 +10,8 @@ namespace rlog {
 class RLogService: public rrr::Service {
 public:
     enum {
-        LOG = 0x3c8d559f,
-        AGGREGATE_QPS = 0x46a873bf,
+        LOG = 0x58b97d46,
+        AGGREGATE_QPS = 0x4beb608a,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -28,11 +28,11 @@ public:
         return ret;
     }
     // these RPC handler functions need to be implemented by user
-    // for 'raw' handlers, remember to reply req, delete req; shared_ptr handles connection lifetime
+    // for 'raw' handlers, remember to reply and handle rusty::Box<Request>; weak_ptr requires lock() before use
     virtual void log(const rrr::i32& level, const std::string& source, const rrr::i64& msg_id, const std::string& message) = 0;
     virtual void aggregate_qps(const std::string& metric_name, const rrr::i32& increment) = 0;
 private:
-    void __log__wrapper__(rrr::Request* req, std::shared_ptr<rrr::ServerConnection> sconn) {
+    void __log__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         std::string in_1;
@@ -42,21 +42,25 @@ private:
         std::string in_3;
         req->m >> in_3;
         this->log(in_0, in_1, in_2, in_3);
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        // sconn automatically released by shared_ptr
+        auto sconn = weak_sconn.lock();
+        if (sconn) {
+            sconn->begin_reply(req.get());
+            sconn->end_reply();
+        }
+        // req (Box) automatically deleted when going out of scope
     }
-    void __aggregate_qps__wrapper__(rrr::Request* req, std::shared_ptr<rrr::ServerConnection> sconn) {
+    void __aggregate_qps__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         std::string in_0;
         req->m >> in_0;
         rrr::i32 in_1;
         req->m >> in_1;
         this->aggregate_qps(in_0, in_1);
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        // sconn automatically released by shared_ptr
+        auto sconn = weak_sconn.lock();
+        if (sconn) {
+            sconn->begin_reply(req.get());
+            sconn->end_reply();
+        }
+        // req (Box) automatically deleted when going out of scope
     }
 };
 

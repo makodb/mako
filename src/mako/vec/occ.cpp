@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cstdlib> // For std::stoi
 #include <csignal>
-#include <coroutine>
+// #include <coroutine> // C++20 feature, not used in this file
 #include <queue>
 #include <functional>
 
@@ -19,7 +19,7 @@ void handleSignal(int signal) {
     }
 }
 
-// g++ -std=c++20 -O2 -pthread occ.cpp -o occ
+// g++ -std=c++17 -O2 -pthread occ.cpp -o occ
 using namespace std;
 using namespace std::chrono;
 

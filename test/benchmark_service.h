@@ -32,16 +32,16 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
 class BenchmarkService: public rrr::Service {
 public:
     enum {
-        FAST_PRIME = 0x1bee6787,
-        FAST_DOT_PROD = 0x601fb371,
-        FAST_ADD = 0x1fd59346,
-        FAST_NOP = 0x5bf4392f,
-        FAST_VEC = 0x6d9e2181,
-        PRIME = 0x57b84304,
-        DOT_PROD = 0x2f0bc784,
-        ADD = 0x5c654f6f,
-        NOP = 0x174191bc,
-        SLEEP = 0x615a1d82,
+        FAST_PRIME = 0x5990b0cf,
+        FAST_DOT_PROD = 0x2a80ea93,
+        FAST_ADD = 0x698f29f2,
+        FAST_NOP = 0x694bfbb1,
+        FAST_VEC = 0x20ac9d99,
+        PRIME = 0x464f3243,
+        DOT_PROD = 0x3a58f24d,
+        ADD = 0x50df304a,
+        NOP = 0x5c25e9f8,
+        SLEEP = 0x403d1d9c,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -90,7 +90,7 @@ public:
         return ret;
     }
     // these RPC handler functions need to be implemented by user
-    // for 'raw' handlers, remember to reply req, delete req; shared_ptr handles connection lifetime
+    // for 'raw' handlers, remember to reply and handle rusty::Box<Request>; weak_ptr requires lock() before use
     virtual void fast_prime(const rrr::i32& n, rrr::i8* flag);
     virtual void fast_dot_prod(const point3& p1, const point3& p2, double* v);
     virtual void fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b);
@@ -102,20 +102,20 @@ public:
     virtual void nop(const std::string&);
     virtual void sleep(const double& sec);
 private:
-    void __fast_prime__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __fast_prime__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         rrr::i8 out_0;
         this->fast_prime(in_0, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
+            sconn->begin_reply(req.get());
             *sconn << out_0;
             sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __fast_dot_prod__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __fast_dot_prod__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         point3 in_0;
         req->m >> in_0;
         point3 in_1;
@@ -124,13 +124,13 @@ private:
         this->fast_dot_prod(in_0, in_1, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            *sconn << out_0;
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __fast_add__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __fast_add__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         rrr::v32 in_0;
         req->m >> in_0;
         rrr::v32 in_1;
@@ -139,50 +139,50 @@ private:
         this->fast_add(in_0, in_1, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            *sconn << out_0;
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __fast_nop__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __fast_nop__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         std::string in_0;
         req->m >> in_0;
         this->fast_nop(in_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __fast_vec__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __fast_vec__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         std::vector<rrr::i64> out_0;
         this->fast_vec(in_0, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            *sconn << out_0;
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __prime__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __prime__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         rrr::i8 out_0;
         this->prime(in_0, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            *sconn << out_0;
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __dot_prod__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __dot_prod__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         point3 in_0;
         req->m >> in_0;
         point3 in_1;
@@ -191,13 +191,13 @@ private:
         this->dot_prod(in_0, in_1, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            *sconn << out_0;
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __add__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __add__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         rrr::v32 in_0;
         req->m >> in_0;
         rrr::v32 in_1;
@@ -206,33 +206,33 @@ private:
         this->add(in_0, in_1, &out_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            *sconn << out_0;
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __nop__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __nop__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         std::string in_0;
         req->m >> in_0;
         this->nop(in_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
-    void __sleep__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __sleep__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
         double in_0;
         req->m >> in_0;
         this->sleep(in_0);
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
-        sconn->end_reply();
+            sconn->begin_reply(req.get());
+            sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
 };
 

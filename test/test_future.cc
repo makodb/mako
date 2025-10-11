@@ -38,21 +38,21 @@ public:
     }
     
 private:
-    void fast_echo_wrapper(Request* req, std::weak_ptr<ServerConnection> weak_sconn) {
+    void fast_echo_wrapper(rusty::Box<Request> req, std::weak_ptr<ServerConnection> weak_sconn) {
         call_count++;
         std::string input;
         req->m >> input;
 
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
+            sconn->begin_reply(req.get());
         *sconn << input;
         sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
 
-    void slow_echo_wrapper(Request* req, std::weak_ptr<ServerConnection> weak_sconn) {
+    void slow_echo_wrapper(rusty::Box<Request> req, std::weak_ptr<ServerConnection> weak_sconn) {
         call_count++;
         std::string input;
         req->m >> input;
@@ -63,14 +63,14 @@ private:
 
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
+            sconn->begin_reply(req.get());
             *sconn << input;
             sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
 
-    void get_value_wrapper(Request* req, std::weak_ptr<ServerConnection> weak_sconn) {
+    void get_value_wrapper(rusty::Box<Request> req, std::weak_ptr<ServerConnection> weak_sconn) {
         call_count++;
         i32 input;
         req->m >> input;
@@ -79,17 +79,17 @@ private:
 
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req);
+            sconn->begin_reply(req.get());
         *sconn << result;
         sconn->end_reply();
         }
-        delete req;
+        // req (Box) automatically deleted when going out of scope
     }
 
-    void error_method_wrapper(Request* req, std::weak_ptr<ServerConnection> weak_sconn) {
+    void error_method_wrapper(rusty::Box<Request> req, std::weak_ptr<ServerConnection> weak_sconn) {
         call_count++;
         // Don't reply - simulate an error
-        delete req;
+        // req (Box) automatically deleted when going out of scope
         // sconn automatically released by shared_ptr
     }
 };

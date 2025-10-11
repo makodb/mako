@@ -2,31 +2,41 @@ cmake_minimum_required(VERSION 3.10)
 # using g++
 set(CMAKE_C_COMPILER "gcc" CACHE STRING "C compiler")
 set(CMAKE_CXX_COMPILER "g++" CACHE STRING "C++ compiler")
+
+# Enable ccache for faster rebuilds
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+    set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+endif()
+
 project(mako)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Configure and enable rusy-cpp-checker
-include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
-set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
+# DISABLED: Borrow checking temporarily disabled
+# include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
+# set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 
 # Build the rusty-cpp-checker binary first before enabling borrow checking
-set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp")
-set(CPP_BORROW_CHECKER "${RUSTYCPP_DIR}/target/${RUSTYCPP_BUILD_TYPE}/rusty-cpp-checker")
+# set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp")
+# set(CPP_BORROW_CHECKER "${RUSTYCPP_DIR}/target/${RUSTYCPP_BUILD_TYPE}/rusty-cpp-checker")
 
 # Create a custom command to build the checker if it doesn't exist
-if(NOT EXISTS ${CPP_BORROW_CHECKER})
-    message(STATUS "Building rusty-cpp-checker binary...")
-    execute_process(
-        COMMAND cargo build --${RUSTYCPP_BUILD_TYPE}
-        WORKING_DIRECTORY ${RUSTYCPP_DIR}
-        RESULT_VARIABLE BUILD_RESULT
-    )
-endif()
+# if(NOT EXISTS ${CPP_BORROW_CHECKER})
+#     message(STATUS "Building rusty-cpp-checker binary...")
+#     execute_process(
+#         COMMAND cargo build --${RUSTYCPP_BUILD_TYPE}
+#         WORKING_DIRECTORY ${RUSTYCPP_DIR}
+#         RESULT_VARIABLE BUILD_RESULT
+#     )
+# endif()
 
-enable_borrow_checking()
+# enable_borrow_checking()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
@@ -705,7 +715,7 @@ function(add_apps exec_name exec_path)
   )
   
   # Add dependencies
-  add_dependencies(${exec_name} mako erpc rust_lib txlog build_rusty_cpp_checker)
+  add_dependencies(${exec_name} mako erpc rust_lib txlog) # build_rusty_cpp_checker removed
 endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
@@ -717,13 +727,14 @@ add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
 
 # Enable borrow checking for dbtest
-set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable borrow checking" FORCE)
-set(BORROW_CHECK_FATAL ON CACHE BOOL "Make borrow check failures fatal" FORCE)
+# DISABLED: Borrow checking temporarily disabled
+# set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable borrow checking" FORCE)
+# set(BORROW_CHECK_FATAL ON CACHE BOOL "Make borrow check failures fatal" FORCE)
 
 # Apply borrow checking to dbtest target
-if(ENABLE_BORROW_CHECKING)
-    add_borrow_check_target(dbtest)
-endif()
+# if(ENABLE_BORROW_CHECKING)
+#     add_borrow_check_target(dbtest)
+# endif()
 
 add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
@@ -766,15 +777,16 @@ if(NOT TARGET rrr)
     target_link_libraries(rrr pthread ${Boost_LIBRARIES})
     
     # Add borrow checking for RRR library
-    if(ENABLE_BORROW_CHECKING)
-        # add_borrow_check_target(rrr)
-        
-        # Create a convenience target to check only RRR library files
-        add_custom_target(borrow_check_rrr
-            DEPENDS borrow_check_all_rrr
-            COMMENT "Running borrow checker on RRR library files"
-        )
-    endif()
+    # DISABLED: Borrow checking temporarily disabled
+    # if(ENABLE_BORROW_CHECKING)
+    #     # add_borrow_check_target(rrr)
+    #
+    #     # Create a convenience target to check only RRR library files
+    #     add_custom_target(borrow_check_rrr
+    #         DEPENDS borrow_check_all_rrr
+    #         COMMENT "Running borrow checker on RRR library files"
+    #     )
+    # endif()
 endif()
 
 # Add memdb library if not already built

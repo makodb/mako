@@ -94,7 +94,7 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
     // This reference count will be decreased when shutting down server
     Py_XINCREF(func);
 
-    int ret = svr->reg(rpc_id, [func](Request* req, std::weak_ptr<ServerConnection> weak_sconn) {
+    int ret = svr->reg(rpc_id, [func](rusty::Box<Request> req, std::weak_ptr<ServerConnection> weak_sconn) {
         Marshal* output_m = NULL;
         int error_code = 0;
         {
@@ -118,7 +118,7 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
 
         auto sconn = weak_sconn.lock();
         if (sconn) {
-            sconn->begin_reply(req, error_code);
+            sconn->begin_reply(req.get(), error_code);
             if (output_m != NULL) {
                 *sconn << *output_m;
             }
@@ -129,8 +129,7 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
             delete output_m;
         }
 
-        // cleanup as required by simple-rpc
-        delete req;
+        // req (Box) automatically deleted when going out of scope
         // sconn automatically released by shared_ptr
     });
 

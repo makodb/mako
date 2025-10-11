@@ -51,14 +51,14 @@ def emit_service_and_proxy(service, f, rpc_table):
             f.writeln("return ret;")
         f.writeln("}")
         f.writeln("// these RPC handler functions need to be implemented by user")
-        f.writeln("// for 'raw' handlers, remember to reply req, delete req; weak_ptr requires lock() before use")
+        f.writeln("// for 'raw' handlers, remember to reply and handle rusty::Box<Request>; weak_ptr requires lock() before use")
         for func in service.functions:
             if service.abstract or func.abstract:
                 postfix = " = 0"
             else:
                 postfix = ""
             if func.attr == "raw":
-                f.writeln("virtual void %s(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn)%s;" % (func.name, postfix))
+                f.writeln("virtual void %s(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn)%s;" % (func.name, postfix))
             else:
                 func_args = []
                 for in_arg in func.input:
@@ -79,7 +79,7 @@ def emit_service_and_proxy(service, f, rpc_table):
         for func in service.functions:
             if func.attr == "raw":
                 continue
-            f.writeln("void __%s__wrapper__(rrr::Request* req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {" % func.name)
+            f.writeln("void __%s__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {" % func.name)
             with f.indent():
                 if func.attr == "defer":
                     invoke_with = []
@@ -116,7 +116,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                             f.writeln("delete out_%d;" % out_counter)
                             out_counter += 1
                     f.writeln("};");
-                    f.writeln("rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, weak_sconn, __marshal_reply__, __cleanup__);")
+                    f.writeln("rrr::DeferredReply* __defer__ = new rrr::DeferredReply(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
                     invoke_with += "__defer__",
                     f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
                 else: # normal and fast rpc
@@ -137,12 +137,12 @@ def emit_service_and_proxy(service, f, rpc_table):
                     f.writeln("auto sconn = weak_sconn.lock();")
                     f.writeln("if (sconn) {")
                     with f.indent():
-                        f.writeln("sconn->begin_reply(req);")
+                        f.writeln("sconn->begin_reply(req.get());")
                         for i in range(out_counter):
                             f.writeln("*sconn << out_%d;" % i)
                         f.writeln("sconn->end_reply();")
                     f.writeln("}")
-                    f.writeln("delete req;")
+                    f.writeln("// req (Box) automatically deleted when going out of scope")
             f.writeln("}")
     f.writeln("};")
     f.writeln()
