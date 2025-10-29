@@ -55,3 +55,4 @@ out-perf.masstree/*
 .cache/*
 cmake-build/*
 REFACTOR_ANALYSIS.md
+.kiro

@@ -921,6 +921,29 @@ private:
 
     void hard_check_opacity(TransItem* item, TransactionTid::type transaction_id);
     void stop(bool is_committed, unsigned* write_items, unsigned write_count);
+    
+    // Stop function helper functions
+    void handle_abort_logging(bool committed);
+    void handle_transaction_cleanup(bool committed, unsigned* writeset, unsigned nwriteset);
+    void finalize_transaction_state(bool committed);
+    
+    // Commit phase helper functions
+    enum class CommitPhaseResult { SUCCESS, ABORT };
+    bool validate_commit_preconditions();
+    bool handle_read_only_transaction();
+    CommitPhaseResult execute_commit_phase1(unsigned* writeset, unsigned& nwriteset);
+    CommitPhaseResult execute_commit_phase2(uint32_t& watermarkTimestamp);
+    CommitPhaseResult execute_commit_phase3(unsigned* writeset, unsigned nwriteset);
+    void extract_key_value_from_item(TransItem* item, std::string& key, std::string& value);
+    bool process_write_item_locking(TransItem* item, unsigned nwriteset);
+    bool install_write_operations(unsigned* writeset, unsigned nwriteset);
+    bool handle_sorted_writeset_locking(unsigned* writeset, unsigned nwriteset);
+    void handle_replication_serialization(unsigned nwriteset);
+    
+    // Serialization helper functions
+    size_t serialize_transaction_header(std::shared_ptr<StringAllocator> allocator_instance, uint32_t timestamp) const;
+    size_t serialize_transaction_items(std::shared_ptr<StringAllocator> allocator_instance, size_t initial_write_position) const;
+    void submit_serialized_log(std::shared_ptr<StringAllocator> allocator_instance, int batch_size) const;
 
     friend class TransProxy;
     friend class TransItem;
