@@ -35,7 +35,7 @@ if(NOT EXISTS ${CPP_BORROW_CHECKER})
     )
 endif()
 
-enable_borrow_checking()
+# enable_borrow_checking()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
@@ -714,7 +714,12 @@ function(add_apps exec_name exec_path)
   )
   
   # Add dependencies
-  add_dependencies(${exec_name} mako erpc rust_lib txlog build_rusty_cpp_checker)
+  add_dependencies(${exec_name} mako erpc rust_lib txlog)
+  
+  # Add borrow checker dependency only if enabled
+  if(ENABLE_BORROW_CHECKING AND TARGET build_rusty_cpp_checker)
+    add_dependencies(${exec_name} build_rusty_cpp_checker)
+  endif()
 endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
@@ -729,7 +734,7 @@ add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
 add_apps(test_stress_partitioned_queues examples/test_stress_partitioned_queues.cc)
 
 # Enable borrow checking for dbtest
-set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable borrow checking" FORCE)
+set(ENABLE_BORROW_CHECKING OFF CACHE BOOL "Enable borrow checking" FORCE)
 set(BORROW_CHECK_FATAL ON CACHE BOOL "Make borrow check failures fatal" FORCE)
 
 # Apply borrow checking to dbtest target

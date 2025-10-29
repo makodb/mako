@@ -26,7 +26,17 @@ typedef std::chrono::high_resolution_clock Clock;
 
 namespace util {
 
+// Configuration constants
 static bool enable_thread_yield = true;
+
+// Random number generator constants (from Java's implementation)
+static constexpr unsigned long RANDOM_MULTIPLIER = 0x5DEECE66DL;
+static constexpr unsigned long RANDOM_ADDEND = 0xBL;
+static constexpr unsigned long RANDOM_MASK = (1L << 48) - 1;
+
+// Time conversion constants
+static constexpr long NANOSECONDS_PER_MILLISECOND = 1000000L;
+static constexpr long NANOSECONDS_PER_SECOND = 1000000000L;
 
 // padded, aligned primitives
 template <typename T, bool Pedantic = true>
@@ -297,13 +307,13 @@ private:
   inline void
   set_seed0(unsigned long seed)
   {
-    this->seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1);
+    this->seed = (seed ^ RANDOM_MULTIPLIER) & RANDOM_MASK;
   }
 
   inline unsigned long
   next(unsigned int bits)
   {
-    seed = (seed * 0x5DEECE66DL + 0xBL) & ((1L << 48) - 1);
+    seed = (seed * RANDOM_MULTIPLIER + RANDOM_ADDEND) & RANDOM_MASK;
     return (unsigned long) (seed >> (48 - bits));
   }
 
@@ -340,7 +350,7 @@ pclock(char *msg, clockid_t cid)
   if (clock_gettime(cid, &ts) == -1)
     printf("%s [ERROR] clock_gettime", msg);
   else
-    printf("%s %4jd.%03ld\n", msg, (intmax_t) ts.tv_sec, ts.tv_nsec / 1000000);
+    printf("%s %4jd.%03ld\n", msg, (intmax_t) ts.tv_sec, ts.tv_nsec / NANOSECONDS_PER_MILLISECOND);
 }
 
 /**
@@ -380,18 +390,18 @@ public:
   inline uint64_t
   lap()
   {
-    uint64_t t0 = start;
-    uint64_t t1 = cur_usec();
-    start = t1;
-    return t1 - t0;
+    uint64_t previous_time = start;
+    uint64_t current_time = cur_usec();
+    start = current_time;
+    return current_time - previous_time;
   }
 
   inline uint64_t lap_nano()
   {
-    auto t0 = start_clock;
-    auto t1 = Clock::now();
-    start_clock = t1;
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    auto previous_time = start_clock;
+    auto current_time = Clock::now();
+    start_clock = current_time;
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(current_time - previous_time).count();
   }
 
   inline double
@@ -428,18 +438,18 @@ public:
   ~scoped_timer()
   {
     if (enabled) {
-      const double x = t.lap() / 1000.0; // ms
-      std::cerr << "timed region " << region << " took " << x << " ms" << std::endl;
+      const double elapsed_milliseconds = t.lap() / 1000.0; // ms
+      std::cerr << "timed region " << region << " took " << elapsed_milliseconds << " ms" << std::endl;
     }
   }
 };
 
 inline std::string
-next_key(const std::string &s)
+next_key(const std::string &key)
 {
-  std::string s0(s);
-  s0.resize(s.size() + 1);
-  return s0;
+  std::string next_key_str(key);
+  next_key_str.resize(key.size() + 1);
+  return next_key_str;
 }
 
 template <typename T, typename Container = std::vector<T> >
@@ -468,14 +478,14 @@ struct vec {
 };
 
 static inline std::vector<std::string>
-split(const std::string &s, char delim)
+split(const std::string &input_string, char delimiter)
 {
-  std::vector<std::string> elems;
-  std::stringstream ss(s);
-  std::string item;
-  while (std::getline(ss, item, delim))
-    elems.emplace_back(item);
-  return elems;
+  std::vector<std::string> elements;
+  std::stringstream string_stream(input_string);
+  std::string current_item;
+  while (std::getline(string_stream, current_item, delimiter))
+    elements.emplace_back(current_item);
+  return elements;
 }
 
 struct default_string_allocator {
@@ -488,7 +498,7 @@ struct default_string_allocator {
   inline void
   return_last(std::string *px)
   {
-    // XXX: check px in strs
+    // TODO: Implement validation that px exists in strs vector
   }
 private:
   std::vector<std::shared_ptr<std::string>> strs;
@@ -542,10 +552,10 @@ template <typename T>
 static std::vector<T>
 MakeRange(T start, T end)
 {
-  std::vector<T> ret;
-  for (T i = start; i < end; i++)
-    ret.push_back(i);
-  return ret;
+  std::vector<T> range_values;
+  for (T current_value = start; current_value < end; current_value++)
+    range_values.push_back(current_value);
+  return range_values;
 }
 
 struct timespec_utils {
@@ -558,14 +568,14 @@ struct timespec_utils {
 		// Perform the carry for the later subtraction by updating y.
 		struct timespec y2 = *y;
 		if (x->tv_nsec < y2.tv_nsec) {
-			int sec = (y2.tv_nsec - x->tv_nsec) / 1e9 + 1;
-			y2.tv_nsec -= 1e9 * sec;
-			y2.tv_sec += sec;
+			int seconds_to_borrow = (y2.tv_nsec - x->tv_nsec) / NANOSECONDS_PER_SECOND + 1;
+			y2.tv_nsec -= NANOSECONDS_PER_SECOND * seconds_to_borrow;
+			y2.tv_sec += seconds_to_borrow;
 		}
-		if (x->tv_nsec - y2.tv_nsec > 1e9) {
-			int sec = (x->tv_nsec - y2.tv_nsec) / 1e9;
-			y2.tv_nsec += 1e9 * sec;
-			y2.tv_sec -= sec;
+		if (x->tv_nsec - y2.tv_nsec > NANOSECONDS_PER_SECOND) {
+			int seconds_to_carry = (x->tv_nsec - y2.tv_nsec) / NANOSECONDS_PER_SECOND;
+			y2.tv_nsec += NANOSECONDS_PER_SECOND * seconds_to_carry;
+			y2.tv_sec -= seconds_to_carry;
 		}
 
 		// Compute the time remaining to wait.  tv_nsec is certainly
@@ -578,39 +588,39 @@ struct timespec_utils {
 template <typename T>
 struct RangeAwareParser {
   inline std::vector<T>
-  operator()(const std::string &s) const
+  operator()(const std::string &input_string) const
   {
-    std::vector<T> ret;
-    if (s.find('-') == std::string::npos) {
-      T t;
-      std::istringstream iss(s);
-      iss >> t;
-      ret.emplace_back(t);
+    std::vector<T> parsed_values;
+    if (input_string.find('-') == std::string::npos) {
+      T single_value;
+      std::istringstream input_stream(input_string);
+      input_stream >> single_value;
+      parsed_values.emplace_back(single_value);
     } else {
-      std::vector<std::string> toks(split(s, '-'));
-      ALWAYS_ASSERT(toks.size() == 2);
-      T t0, t1;
-      std::istringstream iss0(toks[0]), iss1(toks[1]);
-      iss0 >> t0;
-      iss1 >> t1;
-      for (T t = t0; t <= t1; t++)
-        ret.emplace_back(t);
+      std::vector<std::string> range_tokens(split(input_string, '-'));
+      ALWAYS_ASSERT(range_tokens.size() == 2);
+      T range_start, range_end;
+      std::istringstream start_stream(range_tokens[0]), end_stream(range_tokens[1]);
+      start_stream >> range_start;
+      end_stream >> range_end;
+      for (T current_value = range_start; current_value <= range_end; current_value++)
+        parsed_values.emplace_back(current_value);
     }
-    return ret;
+    return parsed_values;
   }
 };
 
 template <typename T, typename Parser>
 static std::vector<T>
-ParseCSVString(const std::string &s, Parser p = Parser())
+ParseCSVString(const std::string &csv_string, Parser parser = Parser())
 {
-  std::vector<T> ret;
-  std::vector<std::string> toks(split(s, ','));
-  for (auto &s : toks) {
-    auto values = p(s);
-    ret.insert(ret.end(), values.begin(), values.end());
+  std::vector<T> parsed_results;
+  std::vector<std::string> csv_tokens(split(csv_string, ','));
+  for (auto &token : csv_tokens) {
+    auto parsed_values = parser(token);
+    parsed_results.insert(parsed_results.end(), parsed_values.begin(), parsed_values.end());
   }
-  return ret;
+  return parsed_results;
 }
 
 template <typename T>
@@ -632,11 +642,11 @@ non_atomic_fetch_sub(std::atomic<T> &data, T arg)
 }
 
 static inline std::string
-to_lower(const std::string &s)
+to_lower(const std::string &input_string)
 {
-  std::string ret(s);
-  std::transform(ret.begin(), ret.end(), ret.begin(), ::tolower);
-  return ret;
+  std::string lowercase_result(input_string);
+  std::transform(lowercase_result.begin(), lowercase_result.end(), lowercase_result.begin(), ::tolower);
+  return lowercase_result;
 }
 
 } // namespace util
@@ -702,8 +712,8 @@ operator<<(std::ostream &o, const std::tuple<Types...> &t)
   return o;
 }
 
-// XXX: so nasty, but some things we want to explictly call their dtors we do
-// this anti-pattern all over the code base, might as well centralize it here
+// Manual destructor management for performance-critical code paths
+// This pattern is used throughout the codebase for explicit lifetime control
 template <typename T>
 class unmanaged {
 public:
