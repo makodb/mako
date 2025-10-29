@@ -116,10 +116,23 @@ void* Transaction::epoch_advancer(void*) {
     return nullptr;
 }
 
+// Helper function to access TransItem from transaction set
+inline TransItem* Transaction::get_transitem_at_index(unsigned transaction_index) const {
+    if (likely(transaction_index < tset_initial_capacity))
+        return const_cast<TransItem*>(&tset0_[transaction_index]);
+    else
+        return const_cast<TransItem*>(&tset_[transaction_index / tset_chunk][transaction_index % tset_chunk]);
+}
+
+// Helper function to get next TransItem in iteration
+inline TransItem* Transaction::get_next_transitem(TransItem* current_item, unsigned transaction_index) const {
+    return (transaction_index % tset_chunk ? current_item + 1 : const_cast<TransItem*>(tset_[transaction_index / tset_chunk]));
+}
+
 bool Transaction::preceding_duplicate_read(TransItem* needle) const {
     const TransItem* current_item = nullptr;
     for (unsigned transaction_index = 0; ; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(const_cast<TransItem*>(current_item), transaction_index);
         if (current_item == needle)
             return false;
         if (current_item->owner() == needle->owner() && current_item->key_ == needle->key_
@@ -161,7 +174,7 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type trans
     release_fence();
     TransItem* current_item = nullptr;
     for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(current_item, transaction_index);
         if (current_item->has_read()) {
             TXP_INCREMENT(txp_total_check_read);
             if (!current_item->owner()->check(*current_item, *this)
@@ -210,51 +223,63 @@ void Transaction::handle_abort_logging(bool committed) {
     TXP_ACCOUNT(txp_total_transbuffer, buf_.buffer_size());
 }
 
+// Helper function to unlock items from writeset
+void Transaction::unlock_writeset_items(unsigned* writeset, unsigned nwriteset) {
+    for (unsigned* idxit = writeset + nwriteset; idxit != writeset; ) {
+        --idxit;
+        TransItem* item = get_transitem_at_index(*idxit);
+        if (item->needs_unlock())
+            item->owner()->unlock(*item);
+    }
+}
+
+// Helper function to cleanup items from writeset
+void Transaction::cleanup_writeset_items(unsigned* writeset, unsigned nwriteset, bool committed) {
+    for (unsigned* idxit = writeset + nwriteset; idxit != writeset; ) {
+        --idxit;
+        TransItem* item = get_transitem_at_index(*idxit);
+        if (item->has_write()) // always true unless a user turns it off in install()/check()
+            item->owner()->cleanup(*item, committed);
+    }
+}
+
+// Helper function to unlock items in reverse order from transaction set
+void Transaction::unlock_transset_items_reverse() {
+    TransItem* it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
+    for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
+        it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+        if (it->needs_unlock())
+            it->owner()->unlock(*it);
+    }
+}
+
+// Helper function to cleanup items in reverse order from transaction set
+void Transaction::cleanup_transset_items_reverse(bool committed) {
+    TransItem* it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
+    for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
+        it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+        if (it->has_write())
+            it->owner()->cleanup(*it, committed);
+    }
+}
+
 void Transaction::handle_transaction_cleanup(bool committed, unsigned* writeset, unsigned nwriteset) {
-    TransItem* it;
     if (!any_writes_)
         return;
 
     if (committed && !STO_SORT_WRITESET) {
-        // Unlock items in reverse order for committed sorted transactions
-        for (unsigned* idxit = writeset + nwriteset; idxit != writeset; ) {
-            --idxit;
-            if (*idxit < tset_initial_capacity)
-                it = &tset0_[*idxit];
-            else
-                it = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
-            if (it->needs_unlock())
-                it->owner()->unlock(*it);
-        }
-        // Cleanup items in reverse order for committed sorted transactions
-        for (unsigned* idxit = writeset + nwriteset; idxit != writeset; ) {
-            --idxit;
-            if (*idxit < tset_initial_capacity)
-                it = &tset0_[*idxit];
-            else
-                it = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
-            if (it->has_write()) // always true unless a user turns it off in install()/check()
-                it->owner()->cleanup(*it, committed);
-        }
+        // Unlock and cleanup items in reverse order for committed sorted transactions
+        unlock_writeset_items(writeset, nwriteset);
+        cleanup_writeset_items(writeset, nwriteset, committed);
     } else {
         // Handle unsorted writeset or aborted transactions
         // in participant, we never invoke try_commit,
         // and no good way to set state_ = s_committing_locked; as try_commit do
         // so, we skip it blindly for participant
         if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
-            it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
-            for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-                it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
-                if (it->needs_unlock())
-                    it->owner()->unlock(*it);
-            }
+            unlock_transset_items_reverse();
         }
-        it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
-        for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-            it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
-            if (it->has_write())
-                it->owner()->cleanup(*it, committed);
-        }
+        cleanup_transset_items_reverse(committed);
     }
 }
 
@@ -273,11 +298,9 @@ bool Transaction::shard_try_lock_last_writeset() {
     assert(TThread::id() == threadid_);
 
     // find the last TransItem with write operation
-    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return true;
     for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
-        auto chunk_base = tset_[transaction_index / tset_chunk];
-        current_item = chunk_base + transaction_index % tset_chunk;
+        TransItem* current_item = get_transitem_at_index(transaction_index);
         if (current_item->has_write()) {
             if (!current_item->owner()->lock(*current_item, *this)) {
                 return false;
@@ -293,11 +316,9 @@ bool Transaction::shard_try_lock_last_writeset() {
 int Transaction::shard_validate() {
     assert(TThread::id() == threadid_);
 
-    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return 0;
     for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
-        auto chunk_base = tset_[transaction_index / tset_chunk];
-        current_item = chunk_base + transaction_index % tset_chunk;
+        TransItem* current_item = get_transitem_at_index(transaction_index);
         if (current_item->has_read()) {
             if (!current_item->owner()->check(*current_item, *this)
                 && (!may_duplicate_items_ || !preceding_duplicate_read(current_item))) {
@@ -346,11 +367,9 @@ void Transaction::shard_install(uint32_t timestamp) {
         __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, timestamp_delta);
     }
 
-    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return;
     for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
-        auto chunk_base = tset_[transaction_index / tset_chunk];
-        current_item = chunk_base + transaction_index % tset_chunk;
+        TransItem* current_item = get_transitem_at_index(transaction_index);
         if (current_item->has_write()) {
             current_item->owner()->install(*current_item, *this);
         }
@@ -361,13 +380,11 @@ void Transaction::shard_install(uint32_t timestamp) {
 void Transaction::shard_unlock(bool is_committed) {
     assert(TThread::id() == threadid_);
 
-    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return;
     
     // First pass: unlock all items that need unlocking
     for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
-        auto chunk_base = tset_[transaction_index / tset_chunk];
-        current_item = chunk_base + transaction_index % tset_chunk;
+        TransItem* current_item = get_transitem_at_index(transaction_index);
         if (current_item->needs_unlock()) {
             current_item->owner()->unlock(*current_item);
         }
@@ -376,8 +393,7 @@ void Transaction::shard_unlock(bool is_committed) {
     
     // Second pass: cleanup all write items
     for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
-        auto chunk_base = tset_[transaction_index / tset_chunk];
-        current_item = chunk_base + transaction_index % tset_chunk;
+        TransItem* current_item = get_transitem_at_index(transaction_index);
         if (current_item->has_write()) {
             current_item->owner()->cleanup(*current_item, is_committed);
         }
@@ -435,7 +451,7 @@ Transaction::CommitPhaseResult Transaction::execute_commit_phase1(unsigned* writ
 
     // Collect remote operations for batch processing
     for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(current_item, transaction_index);
         bool is_remote_operation = current_item->owner()->get_is_remote();
         
         if (current_item->has_write() && is_remote_operation) {
@@ -452,6 +468,7 @@ Transaction::CommitPhaseResult Transaction::execute_commit_phase1(unsigned* writ
     if (!remote_table_id_batch.empty()) {
         int remote_lock_result = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
         if (remote_lock_result > 0) {
+            mark_abort_because(nullptr, "remote batch lock failed");
             return CommitPhaseResult::ABORT;
         }
     }
@@ -459,12 +476,13 @@ Transaction::CommitPhaseResult Transaction::execute_commit_phase1(unsigned* writ
     // Process all transaction items for locking and validation
     current_item = nullptr;
     for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(current_item, transaction_index);
         
         if (current_item->has_write()) {
             writeset[nwriteset++] = transaction_index;
             
             if (!process_write_item_locking(current_item, nwriteset)) {
+                mark_abort_because(current_item, "write item locking failed");
                 return CommitPhaseResult::ABORT;
             }
         }
@@ -489,7 +507,7 @@ Transaction::CommitPhaseResult Transaction::execute_commit_phase2(uint32_t& wate
     TransItem* current_item = nullptr;
     
     for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(current_item, transaction_index);
         bool is_remote_operation = current_item->owner()->get_is_remote();
         
         if (!is_remote_operation && current_item->has_read()) {
@@ -512,6 +530,7 @@ Transaction::CommitPhaseResult Transaction::execute_commit_phase2(uint32_t& wate
         }
         
         if (validation_result > 0) {
+            mark_abort_because(nullptr, "remote validation failed");
             return CommitPhaseResult::ABORT;
         }
     }
@@ -600,11 +619,7 @@ bool Transaction::install_write_operations(unsigned* writeset, unsigned nwritese
 
     // Install all write operations
     for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
-        TransItem* write_item;
-        if (likely(*idxit < tset_initial_capacity))
-            write_item = &tset0_[*idxit];
-        else
-            write_item = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
+        TransItem* write_item = get_transitem_at_index(*idxit);
         
         TXP_INCREMENT(txp_total_w);
         write_item->owner()->install(*write_item, *this);
@@ -723,12 +738,7 @@ bool Transaction::try_commit(bool no_paxos) {
     return true;
 
 abort:
-    TXP_INCREMENT(txp_commit_time_aborts);
-    stop(false, nullptr, 0);
-    if (TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) {
-        TThread::sclient->remoteAbort();
-    }
-    return false;
+    return handle_commit_abort("commit phase abort");
 }
 
 // serialize transactions into log and then sent it out via Paxos
@@ -795,7 +805,7 @@ size_t Transaction::serialize_transaction_items(std::shared_ptr<StringAllocator>
     unsigned short int current_table_id = 0;
 
     for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(current_item, transaction_index);
         bool is_remote_item = current_item->owner()->get_is_remote();
         current_table_id = 0x0;
         if (!current_item->has_write() || is_remote_item) {
@@ -932,10 +942,8 @@ void Transaction::submit_serialized_log(std::shared_ptr<StringAllocator> allocat
 void Transaction::print_stats() {
     if (tset_size_ == 0) return;
     
-    TransItem* current_item = nullptr;
     for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
-        auto chunk_base = tset_[transaction_index / tset_chunk];
-        current_item = chunk_base + transaction_index % tset_chunk;
+        TransItem* current_item = get_transitem_at_index(transaction_index);
         versioned_str_struct *versioned_value = (*current_item).key<versioned_str_struct *>();
         std::string item_value = std::string(versioned_value->data(), versioned_value->length());
         std::string item_key = "";
@@ -970,7 +978,7 @@ void Transaction::print(std::ostream& output_stream) const {
     output_stream << "T0x" << (void*) this << " " << state_name(state_) << " [";
     const TransItem* current_item = nullptr;
     for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
-        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        current_item = get_next_transitem(const_cast<TransItem*>(current_item), transaction_index);
         if (transaction_index)
             output_stream << " ";
         current_item->owner()->print(output_stream, *current_item);
@@ -1016,4 +1024,21 @@ std::ostream& operator<<(std::ostream& output_stream, const TestTransaction& tes
 std::ostream& operator<<(std::ostream& output_stream, const TransactionGuard& transaction_guard) {
     transaction_guard.print(output_stream);
     return output_stream;
+}
+
+// Error handling helper functions implementation
+bool Transaction::handle_commit_abort(const char* reason, TransItem* item) {
+    TXP_INCREMENT(txp_commit_time_aborts);
+    if (item) {
+        mark_abort_because(item, reason);
+    }
+    cleanup_on_abort();
+    stop(false, nullptr, 0);
+    return false;
+}
+
+void Transaction::cleanup_on_abort() {
+    if (TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) {
+        TThread::sclient->remoteAbort();
+    }
 }

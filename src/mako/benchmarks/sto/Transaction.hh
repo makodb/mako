@@ -944,6 +944,20 @@ private:
     size_t serialize_transaction_header(std::shared_ptr<StringAllocator> allocator_instance, uint32_t timestamp) const;
     size_t serialize_transaction_items(std::shared_ptr<StringAllocator> allocator_instance, size_t initial_write_position) const;
     void submit_serialized_log(std::shared_ptr<StringAllocator> allocator_instance, int batch_size) const;
+    
+    // TransItem access helper functions
+    inline TransItem* get_transitem_at_index(unsigned transaction_index) const;
+    inline TransItem* get_next_transitem(TransItem* current_item, unsigned transaction_index) const;
+    
+    // Lock/unlock helper functions
+    void unlock_writeset_items(unsigned* writeset, unsigned nwriteset);
+    void cleanup_writeset_items(unsigned* writeset, unsigned nwriteset, bool committed);
+    void unlock_transset_items_reverse();
+    void cleanup_transset_items_reverse(bool committed);
+    
+    // Error handling helper functions
+    bool handle_commit_abort(const char* reason, TransItem* item = nullptr);
+    void cleanup_on_abort();
 
     friend class TransProxy;
     friend class TransItem;
