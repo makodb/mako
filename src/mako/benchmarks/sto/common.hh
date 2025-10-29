@@ -1,14 +1,11 @@
 #pragma once
 
+// Core Masstree includes - only what we actually use
 #include "masstree.hh"
-#include "kvthread.hh"
-#include "masstree_tcursor.hh"
-#include "masstree_insert.hh"
-#include "masstree_print.hh"
-#include "masstree_remove.hh"
-#include "masstree_scan.hh"
-#include "string.hh"
+#include "kvthread.hh"  // for threadinfo
+#include "string.hh"    // for Masstree::Str
 
+// STO-specific includes
 #include "StringWrapper.hh"
 #include "versioned_value.hh"
 #include "stuffed_str.hh"
@@ -19,31 +16,31 @@ struct versioned_str_struct : public versioned_str {
   typedef Masstree::Str value_type;
   typedef versioned_str::stuff_type version_type;
 
-  bool needsResize(const value_type& v) {
-    return needs_resize(v.length());
+  bool needsResize(const value_type& new_value) {
+    return needs_resize(new_value.length());
   }
-  bool needsResize(const std::string& v) {
-    return needs_resize(v.length());
+  bool needsResize(const std::string& new_value) {
+    return needs_resize(new_value.length());
   }
 
-  versioned_str_struct* resizeIfNeeded(const value_type& potential_new_value) {
-    // TODO: this cast is only safe because we have no ivars or virtual methods
-    return (versioned_str_struct*)this->reserve(versioned_str::size_for(potential_new_value.length()));
+  versioned_str_struct* resizeIfNeeded(const value_type& new_value) {
+    // Safe cast: versioned_str_struct has no instance variables or virtual methods
+    return static_cast<versioned_str_struct*>(this->reserve(versioned_str::size_for(new_value.length())));
   }
-  versioned_str_struct* resizeIfNeeded(const std::string& potential_new_value) {
-    // TODO: this cast is only safe because we have no ivars or virtual methods
-    return (versioned_str_struct*)this->reserve(versioned_str::size_for(potential_new_value.length()));
+  versioned_str_struct* resizeIfNeeded(const std::string& new_value) {
+    // Safe cast: versioned_str_struct has no instance variables or virtual methods  
+    return static_cast<versioned_str_struct*>(this->reserve(versioned_str::size_for(new_value.length())));
   }
 
   template <typename StringType>
-  inline void set_value(const StringType& v) {
-    auto *ret = this->replace(v.data(), v.length());
-    // we should already be the proper size at this point
-    (void)ret;
-    assert(ret == this);
+  inline void set_value(const StringType& new_value) {
+    auto *result = this->replace(new_value.data(), new_value.length());
+    // We should already be the proper size at this point
+    (void)result;
+    assert(result == this);
   }
   
-  // responsibility is on the caller of this method to make sure this read is atomic
+  // Responsibility is on the caller to ensure this read is atomic
   value_type read_value() {
     return Masstree::Str(this->data(), this->length());
   }
@@ -52,7 +49,7 @@ struct versioned_str_struct : public versioned_str {
     return stuff();
   }
 
-  inline void deallocate_rcu(threadinfo& ti) {
-    ti.deallocate_rcu(this, this->capacity() + sizeof(versioned_str_struct), memtag_value);
+  inline void deallocate_rcu(threadinfo& thread_info) {
+    thread_info.deallocate_rcu(this, this->capacity() + sizeof(versioned_str_struct), memtag_value);
   }
 };
