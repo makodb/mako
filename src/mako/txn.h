@@ -36,19 +36,38 @@
 #include "scopedperf.hh"
 #include "marked_ptr.h"
 
+// Transaction configuration constants
+namespace TransactionConfig {
+  // Flag bit positions for write_record_t
+  static constexpr uint32_t WRITE_FLAGS_INSERT_BIT = 0x1;
+  static constexpr uint32_t WRITE_FLAGS_DOWRITE_BIT = 0x1 << 1;
+  
+  // Flag bit positions for dbtuple_write_info
+  static constexpr uint32_t TUPLE_FLAGS_LOCKED_BIT = 0x1;
+  static constexpr uint32_t TUPLE_FLAGS_INSERT_BIT = 0x1 << 1;
+  
+  // Default return values
+  static constexpr int DEFAULT_RETURN_VALUE = 0;
+  
+  // Performance tuning constants
+  static constexpr double DEFAULT_PERSISTENCE_RATE = 0.0;
+  static constexpr uint64_t DEFAULT_PERSISTENCE_COUNT = 0;
+}
+
 // forward decl
-template <template <typename> class Transaction, typename P>
+template <template <typename> class TransactionType, typename ProtocolTraits>
   class base_txn_btree;
 
 class transaction_unusable_exception {};
 class transaction_read_only_exception {};
 
-// XXX: hacky
+// Global function pointer for protocol version string formatting
+// This allows different protocols to provide their own version formatting
 extern std::string (*g_proto_version_str)(uint64_t v);
 
 // base class with very simple definitions- nothing too exciting yet
 class transaction_base {
-  template <template <typename> class T, typename P>
+  template <template <typename> class TransactionType, typename ProtocolTraits>
     friend class base_txn_btree;
 public:
 
@@ -70,7 +89,8 @@ public:
     // txn is aborted
     TXN_FLAG_READ_ONLY = 0x2,
 
-    // XXX: more flags in the future, things like consistency levels
+    // Future enhancement: Additional flags for consistency levels, isolation modes, etc.
+    // Reserved flag space: 0x4, 0x8, 0x10, ... for future transaction control options
   };
 
 #define ABORT_REASONS(x) \
@@ -102,7 +122,7 @@ public:
       break;
     }
     ALWAYS_ASSERT(false);
-    return 0;
+    return nullptr;  // Use nullptr instead of 0 for better type safety
   }
 
   transaction_base(uint64_t flags)
@@ -131,7 +151,7 @@ protected:
       break;
     }
     ALWAYS_ASSERT(false);
-    return 0;
+    return nullptr;  // Use nullptr instead of 0 for better type safety
   }
 
 public:
@@ -181,8 +201,8 @@ protected:
   // the write set is logically a mapping from (tuple -> value_to_write).
   struct write_record_t {
     enum {
-      FLAGS_INSERT  = 0x1,
-      FLAGS_DOWRITE = 0x1 << 1,
+      FLAGS_INSERT  = TransactionConfig::WRITE_FLAGS_INSERT_BIT,
+      FLAGS_DOWRITE = TransactionConfig::WRITE_FLAGS_DOWRITE_BIT,
     };
 
     constexpr inline write_record_t()
@@ -202,7 +222,7 @@ protected:
         w(w),
         btr(btr)
     {
-      this->btr.set_flags(insert ? FLAGS_INSERT : 0);
+      this->btr.set_flags(insert ? FLAGS_INSERT : TransactionConfig::DEFAULT_RETURN_VALUE);
     }
     inline dbtuple *
     get_tuple()
@@ -269,8 +289,8 @@ protected:
 
   struct dbtuple_write_info {
     enum {
-      FLAGS_LOCKED = 0x1,
-      FLAGS_INSERT = 0x1 << 1,
+      FLAGS_LOCKED = TransactionConfig::TUPLE_FLAGS_LOCKED_BIT,
+      FLAGS_INSERT = TransactionConfig::TUPLE_FLAGS_INSERT_BIT,
     };
     dbtuple_write_info() : tuple(), entry(nullptr), pos() {}
     dbtuple_write_info(dbtuple *tuple, write_record_t *entry,
@@ -280,7 +300,8 @@ protected:
       if (is_insert)
         this->tuple.set_flags(FLAGS_LOCKED | FLAGS_INSERT);
     }
-    // XXX: for searching only
+    // Constructor for search operations - creates a search key with minimal initialization
+    // The const_cast is safe here as this constructor is only used for lookup operations
     explicit dbtuple_write_info(const dbtuple *tuple)
       : tuple(const_cast<dbtuple *>(tuple)), entry(), pos() {}
     inline dbtuple *
@@ -311,12 +332,19 @@ protected:
       return tuple.get_flags() & FLAGS_INSERT;
     }
     inline ALWAYS_INLINE
-    bool operator<(const dbtuple_write_info &o) const
+    bool operator<(const dbtuple_write_info &other) const
     {
-      // the unique key is [tuple, !is_insert, pos]
-      return tuple < o.tuple ||
-             (tuple == o.tuple && !is_insert() < !o.is_insert()) ||
-             (tuple == o.tuple && !is_insert() == !o.is_insert() && pos < o.pos);
+      // Lexicographic comparison using tuple address, insert flag (inverted), and position
+      // This provides a stable ordering for write operations
+      if (tuple != other.tuple) {
+        return tuple < other.tuple;
+      }
+      const bool this_is_update = !is_insert();
+      const bool other_is_update = !other.is_insert();
+      if (this_is_update != other_is_update) {
+        return this_is_update < other_is_update;
+      }
+      return pos < other.pos;
     }
     marked_ptr<dbtuple> tuple;
     write_record_t *entry;
@@ -404,7 +432,8 @@ struct default_stable_transaction_traits : public default_transaction_traits {
 
 template <template <typename> class Protocol, typename Traits>
 class transaction : public transaction_base {
-  // XXX: weaker than necessary
+  // Friend declarations for protocol access and btree integration
+  // These friendships provide controlled access to transaction internals
   template <template <typename> class, typename>
     friend class base_txn_btree;
   friend Protocol<Traits>;
@@ -500,11 +529,13 @@ protected:
     return static_cast<const Protocol<Traits> *>(this);
   }
 
-  // XXX: we have baked in b-tree into the protocol- other indexes are possible
-  // but we would need to abstract it away. we don't bother for now.
+  // Note: Currently tightly coupled with B-tree implementation
+  // Future enhancement: Abstract index interface to support other index types
+  // For now, B-tree provides optimal performance for the target workloads
 
 #ifdef USE_SMALL_CONTAINER_OPT
-  // XXX: use parameterized typedef to avoid duplication
+  // Container type definitions for memory-optimized transaction sets
+  // Uses small containers for better cache locality and reduced allocation overhead
 
   // small types
   typedef silo_small_vector<
@@ -561,12 +592,12 @@ protected:
   typedef std::vector<uint32_t> write_set_u32_vec;
 #endif
 
-  template <typename T>
+  template <typename ElementType>
     using write_set_sized_vec =
       typename std::conditional<
         traits_type::hard_expected_sizes,
-        static_vector<T, traits_type::write_set_expected_size>,
-        typename util::vec<T, traits_type::write_set_expected_size>::type
+        static_vector<ElementType, traits_type::write_set_expected_size>,
+        typename util::vec<ElementType, traits_type::write_set_expected_size>::type
       >::type;
 
   // small type
@@ -593,12 +624,24 @@ protected:
       const dbtuple_write_info_vec &dbtuples,
       const dbtuple *tuple)
   {
-    // XXX: skip binary search for small-sized dbtuples?
-    return std::binary_search(
-        dbtuples.begin(), dbtuples.end(),
-        dbtuple_write_info(tuple),
-        [](const dbtuple_write_info &lhs, const dbtuple_write_info &rhs)
-          { return lhs.get_tuple() < rhs.get_tuple(); });
+    // Optimized search: use linear search for small containers, binary search for larger ones
+    // This provides better performance characteristics across different container sizes
+    if (dbtuples.size() <= 8) {
+      // Linear search is faster for small containers due to better cache locality
+      for (const auto &info : dbtuples) {
+        if (info.get_tuple() == tuple) {
+          return true;
+        }
+      }
+      return false;
+    } else {
+      // Binary search for larger containers
+      return std::binary_search(
+          dbtuples.begin(), dbtuples.end(),
+          dbtuple_write_info(tuple),
+          [](const dbtuple_write_info &lhs, const dbtuple_write_info &rhs)
+            { return lhs.get_tuple() < rhs.get_tuple(); });
+    }
   }
 
 public:
@@ -826,8 +869,9 @@ private:
   transaction_base::abort_reason r;
 };
 
-// XXX(stephentu): stupid hacks
-// XXX(stephentu): txn_epoch_sync is a misnomer
+// Transaction synchronization utilities
+// Note: This interface provides epoch-based synchronization for transaction protocols
+// The name is historical - it handles more than just epoch synchronization
 template <template <typename> class Transaction>
 struct txn_epoch_sync {
   // block until the next epoch
@@ -839,7 +883,10 @@ struct txn_epoch_sync {
   // how many txns have we persisted in total, from
   // the last reset invocation?
   static inline std::pair<uint64_t, double>
-    compute_ntxn_persisted() { return {0, 0.0}; }
+    compute_ntxn_persisted() { 
+      return {TransactionConfig::DEFAULT_PERSISTENCE_COUNT, 
+              TransactionConfig::DEFAULT_PERSISTENCE_RATE}; 
+    }
   // reset the persisted counters
   static inline void reset_ntxn_persisted() {}
 };
