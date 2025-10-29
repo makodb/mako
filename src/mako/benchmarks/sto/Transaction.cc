@@ -63,22 +63,22 @@ static void __attribute__((used)) check_static_assertions() {
 
 void Transaction::initialize() {
     static_assert(tset_initial_capacity % tset_chunk == 0, "tset_initial_capacity not an even multiple of tset_chunk");
-    hash_base_ = 32768;
+    hash_base_ = TransactionConfig::HASH_BASE_RESET_THRESHOLD;
     tset_size_ = 0;
-    lrng_state_ = 12897;
-    for (unsigned i = 0; i != tset_initial_capacity / tset_chunk; ++i)
-        tset_[i] = &tset0_[i * tset_chunk];
-    for (unsigned i = tset_initial_capacity / tset_chunk; i != arraysize(tset_); ++i)
-        tset_[i] = nullptr;
+    lrng_state_ = TransactionConfig::DEFAULT_RANDOM_SEED;
+    for (unsigned chunk_index = 0; chunk_index != tset_initial_capacity / tset_chunk; ++chunk_index)
+        tset_[chunk_index] = &tset0_[chunk_index * tset_chunk];
+    for (unsigned chunk_index = tset_initial_capacity / tset_chunk; chunk_index != arraysize(tset_); ++chunk_index)
+        tset_[chunk_index] = nullptr;
 }
 
 Transaction::~Transaction() {
     if (in_progress())
         silent_abort();
-    TransItem* live = tset0_;
-    for (unsigned i = 0; i != arraysize(tset_); ++i, live += tset_chunk)
-        if (live != tset_[i])
-            delete[] tset_[i];
+    TransItem* live_chunk = tset0_;
+    for (unsigned chunk_index = 0; chunk_index != arraysize(tset_); ++chunk_index, live_chunk += tset_chunk)
+        if (live_chunk != tset_[chunk_index])
+            delete[] tset_[chunk_index];
 }
 
 void Transaction::refresh_tset_chunk() {
@@ -94,53 +94,53 @@ void* Transaction::epoch_advancer(void*) {
     if (fetch_and_add(&num_epoch_advancers, 1) != 0)
         std::cerr << "WARNING: more than one epoch_advancer thread\n";
 
-    // don't bother epoch'ing til things have picked up
-    usleep(100000);
+    // Wait for system initialization before starting epoch advancement
+    usleep(TransactionConfig::EPOCH_ADVANCE_DELAY_MICROSECONDS);
     while (global_epochs.run) {
-        epoch_type g = global_epochs.global_epoch;
-        epoch_type e = g;
-        for (auto& t : tinfo) {
-            if (t.epoch != 0 && signed_epoch_type(t.epoch - e) < 0)
-                e = t.epoch;
+        epoch_type current_global_epoch = global_epochs.global_epoch;
+        epoch_type minimum_active_epoch = current_global_epoch;
+        for (auto& thread_info : tinfo) {
+            if (thread_info.epoch != 0 && signed_epoch_type(thread_info.epoch - minimum_active_epoch) < 0)
+                minimum_active_epoch = thread_info.epoch;
         }
-        global_epochs.global_epoch = std::max(g + 1, epoch_type(1));
-        global_epochs.active_epoch = e;
+        global_epochs.global_epoch = std::max(current_global_epoch + 1, epoch_type(1));
+        global_epochs.active_epoch = minimum_active_epoch;
         global_epochs.recent_tid = Transaction::_TID;
 
         if (epoch_advance_callback)
             epoch_advance_callback(global_epochs.global_epoch);
 
-        usleep(100000);
+        usleep(TransactionConfig::EPOCH_ADVANCE_DELAY_MICROSECONDS);
     }
     fetch_and_add(&num_epoch_advancers, -1);
-    return NULL;
+    return nullptr;
 }
 
 bool Transaction::preceding_duplicate_read(TransItem* needle) const {
-    const TransItem* it = nullptr;
-    for (unsigned tidx = 0; ; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        if (it == needle)
+    const TransItem* current_item = nullptr;
+    for (unsigned transaction_index = 0; ; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        if (current_item == needle)
             return false;
-        if (it->owner() == needle->owner() && it->key_ == needle->key_
-            && it->has_read())
+        if (current_item->owner() == needle->owner() && current_item->key_ == needle->key_
+            && current_item->has_read())
             return true;
     }
 }
 
-void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
+void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type transaction_id) {
     // ignore opacity checks during commit; we're in the middle of checking
     // things anyway
     if (state_ == s_committing || state_ == s_committing_locked)
         return;
 
     // ignore if version hasn't changed
-    if (item && item->has_read() && item->read_value<TransactionTid::type>() == t)
+    if (item && item->has_read() && item->read_value<TransactionTid::type>() == transaction_id)
         return;
 
     // die on recursive opacity check; this is only possible for predicates
     if (unlikely(state_ == s_opacity_check)) {
-        mark_abort_because(item, "recursive opacity check", t);
+        mark_abort_because(item, "recursive opacity check", transaction_id);
     abort:
         TXP_INCREMENT(txp_hco_abort);
         abort();
@@ -148,30 +148,30 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
     assert(state_ == s_in_progress);
 
     TXP_INCREMENT(txp_hco);
-    if (TransactionTid::is_locked_elsewhere(t, threadid_)) {
+    if (TransactionTid::is_locked_elsewhere(transaction_id, threadid_)) {
         TXP_INCREMENT(txp_hco_lock);
-        mark_abort_because(item, "locked", t);
+        mark_abort_because(item, "locked", transaction_id);
         goto abort;
     }
-    if (t & TransactionTid::nonopaque_bit)
+    if (transaction_id & TransactionTid::nonopaque_bit)
         TXP_INCREMENT(txp_hco_invalid);
 
     state_ = s_opacity_check;
     start_tid_ = _TID;
     release_fence();
-    TransItem* it = nullptr;
-    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        if (it->has_read()) {
+    TransItem* current_item = nullptr;
+    for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        if (current_item->has_read()) {
             TXP_INCREMENT(txp_total_check_read);
-            if (!it->owner()->check(*it, *this)
-                && (!may_duplicate_items_ || !preceding_duplicate_read(it))) {
+            if (!current_item->owner()->check(*current_item, *this)
+                && (!may_duplicate_items_ || !preceding_duplicate_read(current_item))) {
                 mark_abort_because(item, "opacity check");
                 goto abort;
             }
-        } else if (it->has_predicate()) {
+        } else if (current_item->has_predicate()) {
             TXP_INCREMENT(txp_total_check_predicate);
-            if (!it->owner()->check_predicate(*it, *this, false)) {
+            if (!current_item->owner()->check_predicate(*current_item, *this, false)) {
                 mark_abort_because(item, "opacity check_predicate");
                 goto abort;
             }
@@ -247,63 +247,68 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
     }
 
 after_unlock:
-    // TODO: this will probably mess up with nested transactions
-    threadinfo_t& thr = tinfo[TThread::id()];
-    if (thr.trans_end_callback)
-        thr.trans_end_callback();
-    // XXX should reset trans_end_callback after calling it...
+    // Execute transaction end callback and clean up thread state
+    threadinfo_t& thread_info = tinfo[TThread::id()];
+    if (thread_info.trans_end_callback) {
+        thread_info.trans_end_callback();
+        // Reset callback after execution to prevent accidental reuse
+        thread_info.trans_end_callback = nullptr;
+    }
     state_ = s_aborted + committed;
 }
 
 bool Transaction::shard_try_lock_last_writeset() {
     assert(TThread::id() == threadid_);
 
-    // find the last TransItem
-    TransItem* it = nullptr;
+    // find the last TransItem with write operation
+    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return true;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            if (!it->owner()->lock(*it, *this)) {
+    for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
+        auto chunk_base = tset_[transaction_index / tset_chunk];
+        current_item = chunk_base + transaction_index % tset_chunk;
+        if (current_item->has_write()) {
+            if (!current_item->owner()->lock(*current_item, *this)) {
                 return false;
             }
-            it->__or_flags(TransItem::lock_bit);
+            current_item->__or_flags(TransItem::lock_bit);
             break;
         }
-        if (tidx == 0) break;
+        if (transaction_index == 0) break;
     }
     return true;
 }
 
 int Transaction::shard_validate() {
-    //print_stats();
     assert(TThread::id() == threadid_);
 
-    TransItem* it = nullptr;
+    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return 0;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_read()) {
-            if (!it->owner()->check(*it, *this)
-                && (!may_duplicate_items_ || !preceding_duplicate_read(it))) {
+    for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
+        auto chunk_base = tset_[transaction_index / tset_chunk];
+        current_item = chunk_base + transaction_index % tset_chunk;
+        if (current_item->has_read()) {
+            if (!current_item->owner()->check(*current_item, *this)
+                && (!may_duplicate_items_ || !preceding_duplicate_read(current_item))) {
                 return 1;
             }
         }
-        if (tidx == 0) break;
+        if (transaction_index == 0) break;
     }
     return 0;
 }
 
 void Transaction::shard_serialize_util(uint32_t timestamp) {
-    if (!BenchmarkConfig::getInstance().getIsReplicated()) {return ;}
+    if (!BenchmarkConfig::getInstance().getIsReplicated()) {return;}
+    
+    constexpr int SIMPLE_WORKLOAD_BATCH_SIZE = 2;
+    constexpr int NORMAL_WORKLOAD_BATCH_SIZE = 100;
+    
     #if defined(SIMPLE_WORKLOAD)
-        int small_batch_num=2;
+        int small_batch_size = SIMPLE_WORKLOAD_BATCH_SIZE;
     #else
-        int small_batch_num=100;
+        int small_batch_size = NORMAL_WORKLOAD_BATCH_SIZE;
     #endif
-    serialize_util(1 /* anything > 0 */, true, MAX_ARRAY_SIZE_IN_BYTES_SMALL, small_batch_num, timestamp);
+    serialize_util(1 /* anything > 0 */, true, MAX_ARRAY_SIZE_IN_BYTES_SMALL, small_batch_size, timestamp);
 }
 
 uint8_t Transaction::get_current_term() const {
@@ -324,43 +329,47 @@ void Transaction::shard_install(uint32_t timestamp) {
     tid_unique_ = timestamp;
 
     // Update local_id to catch up with single timestamp
-    int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
-    if (delta > 0) {
-        __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
+    int timestamp_delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
+    if (timestamp_delta > 0) {
+        __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, timestamp_delta);
     }
 
-    TransItem* it = nullptr;
+    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            it->owner()->install(*it, *this);
+    for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
+        auto chunk_base = tset_[transaction_index / tset_chunk];
+        current_item = chunk_base + transaction_index % tset_chunk;
+        if (current_item->has_write()) {
+            current_item->owner()->install(*current_item, *this);
         }
-        if (tidx == 0) break;
+        if (transaction_index == 0) break;
     }
 }
 
-void Transaction::shard_unlock(bool committed) {
+void Transaction::shard_unlock(bool is_committed) {
     assert(TThread::id() == threadid_);
 
-    TransItem* it = nullptr;
+    TransItem* current_item = nullptr;
     if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->needs_unlock()) {
-            it->owner()->unlock(*it);
+    
+    // First pass: unlock all items that need unlocking
+    for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
+        auto chunk_base = tset_[transaction_index / tset_chunk];
+        current_item = chunk_base + transaction_index % tset_chunk;
+        if (current_item->needs_unlock()) {
+            current_item->owner()->unlock(*current_item);
         }
-        if (tidx == 0) break;
+        if (transaction_index == 0) break;
     }
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            it->owner()->cleanup(*it, committed);
+    
+    // Second pass: cleanup all write items
+    for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
+        auto chunk_base = tset_[transaction_index / tset_chunk];
+        current_item = chunk_base + transaction_index % tset_chunk;
+        if (current_item->has_write()) {
+            current_item->owner()->cleanup(*current_item, is_committed);
         }
-        if (tidx == 0) break;
+        if (transaction_index == 0) break;
     }
 }
 
@@ -398,62 +407,62 @@ bool Transaction::try_commit(bool no_paxos) {
     uint32_t watermarkTimestamp = 0;
     writeset[0] = tset_size_;
 
-    //phase1
-    TransItem* it = nullptr;
+    //phase1: Collect remote write operations for batch locking
+    TransItem* current_item = nullptr;
 
     std::vector<int> remote_table_id_batch;
     std::vector<std::string> key_batch;
     std::vector<std::string> value_batch;
 
-    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_remote();
-        if (it->has_write() && isRemote) {
-            std::string key = "", val = "";
-            if (hasInsertOp(it)) {  // key_write_value_type
-                key = (*it).write_value<std::string>();
-                versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-                val = std::string(vvx->data(), vvx->length());
+    for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        bool is_remote_operation = current_item->owner()->get_is_remote();
+        if (current_item->has_write() && is_remote_operation) {
+            std::string operation_key = "", operation_value = "";
+            if (hasInsertOp(current_item)) {  // key_write_value_type
+                operation_key = (*current_item).write_value<std::string>();
+                versioned_str_struct *versioned_value = (*current_item).key<versioned_str_struct *>();
+                operation_value = std::string(versioned_value->data(), versioned_value->length());
             } else {
-                key = it->extra;
-                val = (*it).template write_value<std::string>();
+                operation_key = current_item->extra;
+                operation_value = (*current_item).template write_value<std::string>();
             }
-            remote_table_id_batch.push_back(it->owner()->get_table_id());
-            key_batch.push_back(key);
-            value_batch.push_back(val);
+            remote_table_id_batch.push_back(current_item->owner()->get_table_id());
+            key_batch.push_back(operation_key);
+            value_batch.push_back(operation_value);
         }
     }
 
-    int ret = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
-    if (ret > 0) {
+    int remote_lock_result = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
+    if (remote_lock_result > 0) {
         goto abort;
     }
 
-    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_remote();
-        if (it->has_write()) {
-            writeset[nwriteset++] = tidx;
+    for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        bool is_remote_operation = current_item->owner()->get_is_remote();
+        if (current_item->has_write()) {
+            writeset[nwriteset++] = transaction_index;
 #if !STO_SORT_WRITESET
-            //   nwriteset >= 1 should make more sense, not == 1
+            // Lock items immediately when not sorting writeset
             if (nwriteset >= 1) {
                 first_write_ = writeset[0];
                 state_ = s_committing_locked;
             }
-            if (!it->owner()->lock(*it, *this)) {
-                mark_abort_because(it, "commit lock");
+            if (!current_item->owner()->lock(*current_item, *this)) {
+                mark_abort_because(current_item, "commit lock");
                 goto abort;
             }
-            it->__or_flags(TransItem::lock_bit);
+            current_item->__or_flags(TransItem::lock_bit);
 #endif
         }
-        if (it->has_read()) {
+        if (current_item->has_read()) {
             TXP_INCREMENT(txp_total_r);
         }
-        else if (it->has_predicate()) {
+        else if (current_item->has_predicate()) {
             TXP_INCREMENT(txp_total_check_predicate);
-            if (!it->owner()->check_predicate(*it, *this, true)) {
-                mark_abort_because(it, "commit check_predicate");
+            if (!current_item->owner()->check_predicate(*current_item, *this, true)) {
+                mark_abort_because(current_item, "commit check_predicate");
                 goto abort;
             }
         }
@@ -462,23 +471,23 @@ bool Transaction::try_commit(bool no_paxos) {
     first_write_ = writeset[0];
 
 #if STO_SORT_WRITESET
-    std::sort(writeset, writeset + nwriteset, [&] (unsigned i, unsigned j) {
-        TransItem* ti = &tset_[i / tset_chunk][i % tset_chunk];
-        TransItem* tj = &tset_[j / tset_chunk][j % tset_chunk];
-        return *ti < *tj;
+    std::sort(writeset, writeset + nwriteset, [&] (unsigned index_i, unsigned index_j) {
+        TransItem* item_i = &tset_[index_i / tset_chunk][index_i % tset_chunk];
+        TransItem* item_j = &tset_[index_j / tset_chunk][index_j % tset_chunk];
+        return *item_i < *item_j;
     });
 
     if (nwriteset) {
         state_ = s_committing_locked;
         auto writeset_end = writeset + nwriteset;
-        for (auto it = writeset; it != writeset_end; ) {
-            TransItem* me = &tset_[*it / tset_chunk][*it % tset_chunk];
-            if (!me->owner()->lock(*me, *this)) {
-                mark_abort_because(me, "commit lock");
+        for (auto writeset_iterator = writeset; writeset_iterator != writeset_end; ) {
+            TransItem* write_item = &tset_[*writeset_iterator / tset_chunk][*writeset_iterator % tset_chunk];
+            if (!write_item->owner()->lock(*write_item, *this)) {
+                mark_abort_because(write_item, "commit lock");
                 goto abort;
             }
-            me->__or_flags(TransItem::lock_bit);
-            ++it;
+            write_item->__or_flags(TransItem::lock_bit);
+            ++writeset_iterator;
         }
     }
 #endif
@@ -505,15 +514,15 @@ bool Transaction::try_commit(bool no_paxos) {
 #endif
     }
 
-    //phase2
-    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_remote();
-        if (!isRemote && it->has_read()) {
+    //phase2: Validate local read operations
+    for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        bool is_remote_operation = current_item->owner()->get_is_remote();
+        if (!is_remote_operation && current_item->has_read()) {
             TXP_INCREMENT(txp_total_check_read);
-            if (!it->owner()->check(*it, *this) // this is just a version check
-                && (!may_duplicate_items_ || !preceding_duplicate_read(it))) {
-                mark_abort_because(it, "commit check");
+            if (!current_item->owner()->check(*current_item, *this) // this is just a version check
+                && (!may_duplicate_items_ || !preceding_duplicate_read(current_item))) {
+                mark_abort_because(current_item, "commit check");
                 goto abort;
             }
         }
@@ -521,24 +530,24 @@ bool Transaction::try_commit(bool no_paxos) {
 
     if (TThread::readset_shard_bits > 0) {
         // Single timestamp system: pass and receive single watermark
-        int ret=TThread::sclient->remoteValidate(watermarkTimestamp);
-        uint32_t currentWatermark = sync_util::sync_logger::single_watermark_.load(memory_order_acquire);
-        if(watermarkTimestamp > currentWatermark) {
+        int validation_result = TThread::sclient->remoteValidate(watermarkTimestamp);
+        uint32_t current_watermark = sync_util::sync_logger::single_watermark_.load(memory_order_acquire);
+        if(watermarkTimestamp > current_watermark) {
             // Update single watermark
             sync_util::sync_logger::single_watermark_.store(watermarkTimestamp, memory_order_release);
         }
-        if (ret > 0) {
+        if (validation_result > 0) {
             goto abort;
         }
     }
 
-    //phase3
+    //phase3: Install write operations
 #if STO_SORT_WRITESET
-    for (unsigned tidx = first_write_; tidx != tset_size_; ++tidx) {
-        it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
-        if (it->has_write()) {
+    for (unsigned transaction_index = first_write_; transaction_index != tset_size_; ++transaction_index) {
+        TransItem* write_item = &tset_[transaction_index / tset_chunk][transaction_index % tset_chunk];
+        if (write_item->has_write()) {
             TXP_INCREMENT(txp_total_w);
-            it->owner()->install(*it, *this);
+            write_item->owner()->install(*write_item, *this);
         }
     }
 #else
@@ -552,13 +561,14 @@ bool Transaction::try_commit(bool no_paxos) {
         }
 
         for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
+            TransItem* write_item;
             if (likely(*idxit < tset_initial_capacity))
-                it = &tset0_[*idxit];
+                write_item = &tset0_[*idxit];
             else
-                it = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
+                write_item = &tset_[*idxit / tset_chunk][*idxit % tset_chunk];
             TXP_INCREMENT(txp_total_w);
             // to ensure invalid-bit to be reset in transPut for remote tables on the coordinator shard
-            it->owner()->install(*it, *this);
+            write_item->owner()->install(*write_item, *this);
         }
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
 #if defined(FAIL_NEW_VERSION)
@@ -589,15 +599,19 @@ bool Transaction::try_commit(bool no_paxos) {
 
     if (BenchmarkConfig::getInstance().getIsReplicated()) {
         if (!no_paxos) {
+            constexpr int SIMPLE_WORKLOAD_LARGE_BATCH = 5;
+            constexpr int NORMAL_WORKLOAD_LARGE_BATCH = 400;
+            constexpr int MICRO_WORKLOAD_LARGE_BATCH = 3000;
+            
             #if defined(SIMPLE_WORKLOAD)
-                int large_batch_num=5;
+                int large_batch_size = SIMPLE_WORKLOAD_LARGE_BATCH;
             #else
-                int large_batch_num=400;
+                int large_batch_size = NORMAL_WORKLOAD_LARGE_BATCH;
             #endif
         
             if (TThread::get_is_micro())
-                large_batch_num=3000;
-            serialize_util(nwriteset, false, MAX_ARRAY_SIZE_IN_BYTES, large_batch_num, tid_unique_);
+                large_batch_size = MICRO_WORKLOAD_LARGE_BATCH;
+            serialize_util(nwriteset, false, MAX_ARRAY_SIZE_IN_BYTES, large_batch_size, tid_unique_);
         }
     }
 
@@ -617,164 +631,148 @@ abort:
 }
 
 // serialize transactions into log and then sent it out via Paxos
-inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int max_bytes_size, int batch_size, uint32_t timestamp) const {
-    if (nwriteset == 0) return;
+inline void Transaction::serialize_util(unsigned writeset_count, bool is_remote_operation, int max_bytes_size, int batch_size, uint32_t timestamp) const {
+    if (writeset_count == 0) return;
 
-    TransItem *it = nullptr;
-    size_t w = 0;
-    unsigned char *array = NULL;
+    TransItem *current_item = nullptr;
+    size_t write_position = 0;
+    unsigned char *serialization_array = nullptr;
 
-    static thread_local std::shared_ptr<StringAllocator> instance = std::shared_ptr<StringAllocator>(
+    static thread_local std::shared_ptr<StringAllocator> allocator_instance = std::shared_ptr<StringAllocator>(
             new StringAllocator(TThread::get_nshards(), max_bytes_size, batch_size));
-    array = instance->getLogOnly(w);
+    serialization_array = allocator_instance->getLogOnly(write_position);
 
-    unsigned short int _count = 0;  // 2bytes, the count of K-V pairs
-    unsigned short int table_id = 0; // 2 bytes
+    unsigned short int key_value_pair_count = 0;  // 2bytes, the count of K-V pairs
+    unsigned short int current_table_id = 0; // 2 bytes
 
 #if defined(TRACKING_LATENCY)
-    if (timestamp%1000==0&&TThread::getPartitionID()==4){
-        uint32_t cur_time = mako::getCurrentTimeMillis();
-        if (cur_time - start_time>= 5*1000 && cur_time - start_time <= 15*1000){ // time duration: [5,15]
-            sample_transaction_tracker[timestamp] = mako::getCurrentTimeMillis() ;
+    constexpr uint32_t LATENCY_SAMPLE_INTERVAL = 1000;
+    constexpr uint32_t LATENCY_TRACKING_PARTITION = 4;
+    constexpr uint32_t LATENCY_START_TIME_MS = 5 * 1000;
+    constexpr uint32_t LATENCY_END_TIME_MS = 15 * 1000;
+    
+    if (timestamp % LATENCY_SAMPLE_INTERVAL == 0 && TThread::getPartitionID() == LATENCY_TRACKING_PARTITION){
+        uint32_t current_time = mako::getCurrentTimeMillis();
+        if (current_time - start_time >= LATENCY_START_TIME_MS && current_time - start_time <= LATENCY_END_TIME_MS) {
+            sample_transaction_tracker[timestamp] = mako::getCurrentTimeMillis();
         }
     }
 #endif
 
-    int epoch = get_current_term();
+    int current_epoch = get_current_term();
     // Single timestamp system: use same timestamp for all shards
-    uint32_t tmp = epoch + timestamp * 10;
+    constexpr uint32_t TIMESTAMP_EPOCH_MULTIPLIER = 10;
+    uint32_t combined_timestamp = current_epoch + timestamp * TIMESTAMP_EPOCH_MULTIPLIER;
     // Single timestamp system: no need to loop over shards
-    instance->update_commit_id(tmp);
+    allocator_instance->update_commit_id(combined_timestamp);
     // 1. copy current Commit ID (single timestamp)
-    // memcpy(array + w, &instance->latest_commit_timestamp, sizeof(uint32_t));
-    memcpy(array + w, &tmp, sizeof(uint32_t));
-    w+= sizeof(uint32_t);
+    memcpy(serialization_array + write_position, &combined_timestamp, sizeof(uint32_t));
+    write_position += sizeof(uint32_t);
 
     // 2. copy the count of K-V pairs
-    w += sizeof(unsigned short int);
-    size_t w_tmp_c = w;
+    write_position += sizeof(unsigned short int);
+    size_t key_value_count_position = write_position;
 
     // 3. defer copying the len of K-V pairs
-    w += sizeof(unsigned int);
-    size_t w_tmp = w;
+    write_position += sizeof(unsigned int);
+    size_t key_value_length_position = write_position;
 
-    unsigned short len_of_K = 0;
-    unsigned short len_of_V = 0;
+    unsigned short key_length = 0;
+    unsigned short value_length = 0;
 
-    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        bool isRemote = it->owner()->get_is_remote();
-        table_id = 0x0;
-        if (!it->has_write() || isRemote) {
+    for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        bool is_remote_item = current_item->owner()->get_is_remote();
+        current_table_id = 0x0;
+        if (!current_item->has_write() || is_remote_item) {
             continue;
         }
-        _count++;
+        key_value_pair_count++;
 
         // 4. copy the length of key and content of key.
-        //    please note, it's not a typo, we have to get the key from transItem.write_value, NOT transItem.key!
-        //    check the implementation: MassTrans => trans_write => Sto::new_item(this, val) and add_write
-        //    also, due to different implementation purpose, we have to use different ways to retrieve key and value
-        std::string kkx = "";
-        if (hasInsertOp(it)) {
-            kkx = (*it).write_value<std::string>();
+        //    Note: we get the key from transItem.write_value, NOT transItem.key!
+        //    Check the implementation: MassTrans => trans_write => Sto::new_item(this, val) and add_write
+        //    Due to different implementation purposes, we use different ways to retrieve key and value
+        std::string operation_key = "";
+        if (hasInsertOp(current_item)) {
+            operation_key = (*current_item).write_value<std::string>();
         } else {
-            kkx = it->extra;
+            operation_key = current_item->extra;
         }
-        len_of_K = kkx.length();
-        if (len_of_K == 0) {
-            std::cout << "Error while read Key [Slow Exit now]" << std::endl;
-            //exit(1);
+        key_length = operation_key.length();
+        if (key_length == 0) {
+            std::cout << "Error while reading Key [Slow Exit now]" << std::endl;
+            // Note: Commented out exit(1) to prevent abrupt termination
         }
 
-        memcpy(array + w, (char *) &len_of_K, sizeof(unsigned short));
-        w += sizeof(unsigned short);
+        memcpy(serialization_array + write_position, (char *) &key_length, sizeof(unsigned short));
+        write_position += sizeof(unsigned short);
 
-        memcpy(array + w, (char *) kkx.data(), len_of_K);
-        w += len_of_K;
+        memcpy(serialization_array + write_position, (char *) operation_key.data(), key_length);
+        write_position += key_length;
 
         // 5. copy the length of value and content of value
-        if (hasInsertOp(it)) {
-            versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-            assert(vvx->length() > mako::EXTRA_BITS_FOR_VALUE);
-            len_of_V = vvx->length() - mako::EXTRA_BITS_FOR_VALUE;
-            memcpy(array + w, (char *) &len_of_V, sizeof(unsigned short));
-            w += sizeof(unsigned short);
+        if (hasInsertOp(current_item)) {
+            versioned_str_struct *versioned_value = (*current_item).key<versioned_str_struct *>();
+            assert(versioned_value->length() > mako::EXTRA_BITS_FOR_VALUE);
+            value_length = versioned_value->length() - mako::EXTRA_BITS_FOR_VALUE;
+            memcpy(serialization_array + write_position, (char *) &value_length, sizeof(unsigned short));
+            write_position += sizeof(unsigned short);
 
-            memcpy(array + w, (char *) vvx->data(), len_of_V);
-            w += len_of_V;
+            memcpy(serialization_array + write_position, (char *) versioned_value->data(), value_length);
+            write_position += value_length;
         } else {
-            std::string vvx = "";
-            if (hasDeleteOp(it)){
-                vvx = "B"; // no one cares the content for a deleted item
-                len_of_V = 1;
+            std::string operation_value = "";
+            if (hasDeleteOp(current_item)){
+                operation_value = "B"; // placeholder content for deleted item
+                value_length = 1;
             }else{
-                vvx = (*it).template write_value<std::string>();
-                assert(vvx.length() > mako::EXTRA_BITS_FOR_VALUE);
-                len_of_V = vvx.length() - mako::EXTRA_BITS_FOR_VALUE;
+                operation_value = (*current_item).template write_value<std::string>();
+                assert(operation_value.length() > mako::EXTRA_BITS_FOR_VALUE);
+                value_length = operation_value.length() - mako::EXTRA_BITS_FOR_VALUE;
             }
-            memcpy(array + w, (char *) &len_of_V, sizeof(unsigned short));
-            w += sizeof(unsigned short);
+            memcpy(serialization_array + write_position, (char *) &value_length, sizeof(unsigned short));
+            write_position += sizeof(unsigned short);
 
-            memcpy(array + w, (char *) vvx.data(), len_of_V);
-            w += len_of_V;
+            memcpy(serialization_array + write_position, (char *) operation_value.data(), value_length);
+            write_position += value_length;
         }
 
         // 6. copy table id
-        table_id = it->owner()->get_table_id();
-        if (hasDeleteOp(it)) {  // delete flag
-            table_id = table_id | (1 << 15); // 1 << ((sizeof(unsigned short)*8)-1) = 1 << 15
+        current_table_id = current_item->owner()->get_table_id();
+        if (hasDeleteOp(current_item)) {  // delete flag
+            constexpr unsigned short DELETE_FLAG_MASK = (1 << 15); // Set the highest bit for delete operations
+            current_table_id = current_table_id | DELETE_FLAG_MASK;
         }
-        if (table_id == 0) {
-            Warning("table_id can't be a zero here");
+        if (current_table_id == 0) {
+            Warning("table_id can't be zero here");
         }
-        memcpy(array + w, (char *) &table_id, sizeof(unsigned short));
-        w += sizeof(unsigned short);
+        memcpy(serialization_array + write_position, (char *) &current_table_id, sizeof(unsigned short));
+        write_position += sizeof(unsigned short);
     }
-    memcpy(array + w_tmp_c - sizeof(unsigned short int), (char *) &_count, sizeof(unsigned short int));
-    unsigned int len_of_KV = w - w_tmp;
-    memcpy(array + w_tmp - sizeof(unsigned int), (char *) &len_of_KV, sizeof(unsigned int));
+    memcpy(serialization_array + key_value_count_position - sizeof(unsigned short int), (char *) &key_value_pair_count, sizeof(unsigned short int));
+    unsigned int total_key_value_length = write_position - key_value_length_position;
+    memcpy(serialization_array + key_value_length_position - sizeof(unsigned int), (char *) &total_key_value_length, sizeof(unsigned int));
 
-    instance->update_ptr(w);
-    size_t pos = 0;
-    unsigned char *queueLog = instance->getLogOnly (pos);
-    if(instance->checkPushRequired()) {
-      assert(pos <= MAX_ARRAY_SIZE_IN_BYTES) ;
-      if(pos!=0) {
+    allocator_instance->update_ptr(write_position);
+    size_t queue_position = 0;
+    unsigned char *queue_log_buffer = allocator_instance->getLogOnly(queue_position);
+    if(allocator_instance->checkPushRequired()) {
+      assert(queue_position <= MAX_ARRAY_SIZE_IN_BYTES);
+      if(queue_position != 0) {
           // 7. latest_commit_id: single timestamp*10+term
-          memcpy (queueLog + pos, &instance->latest_commit_timestamp, sizeof(uint32_t));
-          pos += sizeof(uint32_t);
+          memcpy(queue_log_buffer + queue_position, &allocator_instance->latest_commit_timestamp, sizeof(uint32_t));
+          queue_position += sizeof(uint32_t);
           
           // 8. tracking purpose, the latency to commit a huge log
-          uint32_t st_time = mako::getCurrentTimeMillis();
-          memcpy (queueLog + pos, &st_time, sizeof(uint32_t));
-          pos += sizeof(uint32_t);
+          uint32_t start_time_ms = mako::getCurrentTimeMillis();
+          memcpy(queue_log_buffer + queue_position, &start_time_ms, sizeof(uint32_t));
+          queue_position += sizeof(uint32_t);
 
-          instance->update_ptr(pos);
+          allocator_instance->update_ptr(queue_position);
 
-          /*
-          int outstanding = get_outstanding_logs(TThread::getPartitionID ()) ;
-          if (outstanding>20){
-           usleep(10*1000); // wait 1 Paxos log time 
-          }
-           
-          while ((TThread::sclient == NULL) || !TThread::sclient->stopped) {
-            if (outstanding>20) {
-                usleep(50);
-            } else {
-                break;
-            }
-            outstanding = get_outstanding_logs(TThread::getPartitionID ()) ;
-          }
-          Warning("outstanding request: %d, par_id: %d", outstanding, TThread::getPartitionID ());
-          
-          // deal with logs from its corresponding threads
-          if (TThread::in_loading_phase){
-            Warning("add a log to nc, par_id:%d,", TThread::getPartitionID());
-            usleep(10*1000);
-          }*/
-
-        // FIX me: merge the logs from helper threads instead of a separate log
-        add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size); // the partitionID for the helper thread
+        // Submit log to network consensus layer
+        add_log_to_nc((char *)queue_log_buffer, queue_position, TThread::getPartitionID(), batch_size);
 
 #ifndef DISABLE_DISK
         // Asynchronously persist to RocksDB
@@ -786,20 +784,21 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
         static std::array<std::atomic<uint64_t>, 64> per_partition_fail{};
 
         // Capture the timestamp and partition ID for the callback
-        uint32_t persist_timestamp = instance->latest_commit_timestamp;
+        uint32_t persist_timestamp = allocator_instance->latest_commit_timestamp;
         int partition_id = TThread::getPartitionID();
 
-        persistence.persistAsync((const char*)queueLog, pos, shard_id, partition_id,
+        persistence.persistAsync((const char*)queue_log_buffer, queue_position, shard_id, partition_id,
             [persist_timestamp, partition_id](bool success) {
+                constexpr uint64_t SUCCESS_LOG_INTERVAL = 100;
                 if (success) {
                     // Update disk persistence timestamp for this partition
                     sync_util::sync_logger::updateDiskTimestamp(partition_id, persist_timestamp);
 
-                    uint64_t count = per_partition_success[partition_id].fetch_add(1, std::memory_order_relaxed) + 1;
-                    // Log every successful persist
-                    if (count % 100 == 0) {
+                    uint64_t success_count = per_partition_success[partition_id].fetch_add(1, std::memory_order_relaxed) + 1;
+                    // Log every SUCCESS_LOG_INTERVAL successful persists
+                    if (success_count % SUCCESS_LOG_INTERVAL == 0) {
                         std::cout << "[RocksDB Helper] par_id=" << partition_id
-                                      << ", success=" << count
+                                      << ", success=" << success_count
                                       << ", failed=" << per_partition_fail[partition_id].load()
                                       << std::endl;
                     }
@@ -811,27 +810,36 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
             });
 #endif
       }
-      instance->resetMemory();
+      allocator_instance->resetMemory();
     }
 }
 
 void Transaction::print_stats() {
     if (tset_size_ == 0) return;
-    TransItem* it = nullptr;
-    if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        versioned_str_struct *value = (*it).key<versioned_str_struct *>();
-        std::string val = std::string(value->data(), value->length());
-        std::string key = "";
-        if (hasInsertOp(it)) {  // key_write_value_type
-            key = (*it).write_value<std::string>();
+    
+    TransItem* current_item = nullptr;
+    for (unsigned transaction_index = tset_size_-1; transaction_index >= 0; --transaction_index) {
+        auto chunk_base = tset_[transaction_index / tset_chunk];
+        current_item = chunk_base + transaction_index % tset_chunk;
+        versioned_str_struct *versioned_value = (*current_item).key<versioned_str_struct *>();
+        std::string item_value = std::string(versioned_value->data(), versioned_value->length());
+        std::string item_key = "";
+        if (hasInsertOp(current_item)) {  // key_write_value_type
+            item_key = (*current_item).write_value<std::string>();
         } else {
-            key = it->extra;
+            item_key = current_item->extra;
         }
-        Warning("print[obj:%p], has_write: %d, has_read: %d, has_lock: %d, has_insert: %d, has_delete: %d, invalidate: %d, key: %s, value: %s", it, it->has_write(), it->has_read(), it->needs_unlock(), hasInsertOp(it), hasDeleteOp(it), it->has_flag(TransactionTid::user_bit), key.c_str(), val.c_str());
-        if (tidx == 0) break;
+        Warning("print[obj:%p], has_write: %d, has_read: %d, has_lock: %d, has_insert: %d, has_delete: %d, invalidate: %d, key: %s, value: %s", 
+                current_item, 
+                current_item->has_write(), 
+                current_item->has_read(), 
+                current_item->needs_unlock(), 
+                hasInsertOp(current_item), 
+                hasDeleteOp(current_item), 
+                current_item->has_flag(TransactionTid::user_bit), 
+                item_key.c_str(), 
+                item_value.c_str());
+        if (transaction_index == 0) break;
     }
 }
 
@@ -843,31 +851,31 @@ const char* Transaction::state_name(int state) {
         return "unknown-state";
 }
 
-void Transaction::print(std::ostream& w) const {
-    w << "T0x" << (void*) this << " " << state_name(state_) << " [";
-    const TransItem* it = nullptr;
-    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
-        it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
-        if (tidx)
-            w << " ";
-        it->owner()->print(w, *it);
+void Transaction::print(std::ostream& output_stream) const {
+    output_stream << "T0x" << (void*) this << " " << state_name(state_) << " [";
+    const TransItem* current_item = nullptr;
+    for (unsigned transaction_index = 0; transaction_index != tset_size_; ++transaction_index) {
+        current_item = (transaction_index % tset_chunk ? current_item + 1 : tset_[transaction_index / tset_chunk]);
+        if (transaction_index)
+            output_stream << " ";
+        current_item->owner()->print(output_stream, *current_item);
     }
-    w << "]\n";
+    output_stream << "]\n";
 }
 
 void Transaction::print() const {
     print(std::cerr);
 }
 
-void TObject::print(std::ostream& w, const TransItem& item) const {
-    w << "{" << typeid(*this).name() << " " << (void*) this << "." << item.key<void*>();
+void TObject::print(std::ostream& output_stream, const TransItem& item) const {
+    output_stream << "{" << typeid(*this).name() << " " << (void*) this << "." << item.key<void*>();
     if (item.has_read())
-        w << " R" << item.read_value<void*>();
+        output_stream << " R" << item.read_value<void*>();
     if (item.has_write())
-        w << " =" << item.write_value<void*>();
+        output_stream << " =" << item.write_value<void*>();
     if (item.has_predicate())
-        w << " P" << item.predicate_value<void*>();
-    w << "}";
+        output_stream << " P" << item.predicate_value<void*>();
+    output_stream << "}";
 }
 
 unsigned long long int TObject::get_table_id() const {
@@ -880,17 +888,17 @@ bool TObject::get_is_remote() const {
     return false;
 }
 
-std::ostream& operator<<(std::ostream& w, const Transaction& txn) {
-    txn.print(w);
-    return w;
+std::ostream& operator<<(std::ostream& output_stream, const Transaction& transaction) {
+    transaction.print(output_stream);
+    return output_stream;
 }
 
-std::ostream& operator<<(std::ostream& w, const TestTransaction& txn) {
-    txn.print(w);
-    return w;
+std::ostream& operator<<(std::ostream& output_stream, const TestTransaction& test_transaction) {
+    test_transaction.print(output_stream);
+    return output_stream;
 }
 
-std::ostream& operator<<(std::ostream& w, const TransactionGuard& txn) {
-    txn.print(w);
-    return w;
+std::ostream& operator<<(std::ostream& output_stream, const TransactionGuard& transaction_guard) {
+    transaction_guard.print(output_stream);
+    return output_stream;
 }

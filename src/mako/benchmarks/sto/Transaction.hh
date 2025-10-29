@@ -59,6 +59,15 @@ namespace TransactionConfig {
     static constexpr unsigned TRANSACTION_SIZE_LIMIT = 20000;
     static constexpr double DEBUG_HASH_COLLISION_FRACTION = 0.00001;
     static constexpr double DEBUG_ABORT_FRACTION = 0.0001;
+    
+    // Random number generation
+    static constexpr uint32_t DEFAULT_RANDOM_SEED = 12897;
+    
+    // Epoch timing constants
+    static constexpr unsigned EPOCH_ADVANCE_DELAY_MICROSECONDS = 100000;
+    static constexpr unsigned PAXOS_LOG_WAIT_MICROSECONDS = 10000;
+    static constexpr unsigned OUTSTANDING_LOG_THRESHOLD = 20;
+    static constexpr unsigned RETRY_DELAY_MICROSECONDS = 50;
 }
 
 #ifndef STO_PROFILE_COUNTERS
