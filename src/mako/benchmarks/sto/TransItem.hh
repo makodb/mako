@@ -44,25 +44,25 @@ class TransItem {
     }
 
     bool has_write() const {
-        return flags() & write_bit;
+        return s_ & write_bit;
     }
     bool has_read() const {
-        return flags() & read_bit;
+        return s_ & read_bit;
     }
     bool has_predicate() const {
-        return flags() & predicate_bit;
+        return s_ & predicate_bit;
     }
     bool has_stash() const {
-        return flags() & stash_bit;
+        return s_ & stash_bit;
     }
     bool needs_unlock() const {
-        return flags() & lock_bit;
+        return s_ & lock_bit;
     }
     bool same_item(const TransItem& x) const {
         return !((s_ ^ x.s_) & owner_mask) && key_ == x.key_;
     }
     bool has_flag(flags_type f) const {
-        return flags() & f;
+        return s_ & f;
     }
 
     template <typename T>
@@ -142,7 +142,7 @@ class TransItem {
         if (has_stash())
             return Packer<T>::unpack(rdata_);
         else
-            return std::move(default_value);
+            return default_value;
     }
 
     inline bool operator==(const TransItem& x) const {
@@ -151,8 +151,10 @@ class TransItem {
     inline bool operator<(const TransItem& x) const {
         // we compare keys and THEN shared objects here so that read and write keys with the same value
         // are next to each other
-        return key_ < x.key_
-            || (key_ == x.key_ && (s_ & owner_mask) < (x.s_ & owner_mask));
+        if (key_ != x.key_) {
+            return key_ < x.key_;
+        }
+        return (s_ & owner_mask) < (x.s_ & owner_mask);
     }
 
     flags_type flags() const {
@@ -184,7 +186,7 @@ class TransItem {
         return *this;
     }
 
-    std::string get_extra() {
+    const std::string& get_extra() const {
         return extra;
     }
 
@@ -238,7 +240,7 @@ class TransProxy {
         return item().has_stash();
     }
     bool has_flag(TransItem::flags_type f) const {
-        return item().flags() & f;
+        return item().has_flag(f);
     }
 
     template <typename T>
@@ -314,7 +316,7 @@ class TransProxy {
         return item().write_value<T>();
     }
     template <typename T>
-    const T& write_value(const T& default_value) {
+    const T& write_value(const T& default_value) const {
         if (item().has_write())
             return item().write_value<T>();
         else
@@ -340,7 +342,7 @@ class TransProxy {
     }
     template <typename T>
     T stash_value(T default_value) const {
-        return item().stash_value<T>(std::move(default_value));
+        return item().stash_value<T>(default_value);
     }
 
     TransProxy& remove_read() { // XXX should also cleanup_read
