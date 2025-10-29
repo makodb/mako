@@ -12,10 +12,17 @@ class Transaction;
 class TransItem;
 class TransProxy;
 
-// in Interface.hh, threadid_mask = type(0x1FF), range [0,511]
+// Transaction system constants
 #ifndef MAX_THREADS
 #define MAX_THREADS 460
 #endif
+
+// Thread ID mask constants - threadid_mask = type(0x1FF), range [0,511]
+static constexpr int DEFAULT_ERPC_SERVERS = 2;
+static constexpr int MULTIVERSION_DISABLED = 1;
+static constexpr int MULTIVERSION_ENABLED = 0;
+static constexpr int DEFAULT_MODE = 0;
+static constexpr int NO_CHECKING_MODE = 1;
 
 
 class TThread {
@@ -24,9 +31,9 @@ class TThread {
     static __thread int shard_index;  // current shard_index
     static __thread int the_id; // thread-id
     static __thread int pid; // partition-id
-    // MODE: 0 => default, 1 => no checking in_process
+    // MODE: DEFAULT_MODE => default, NO_CHECKING_MODE => no checking in_process
     static __thread int the_mode;
-    // ROLE: 1 => disable multi-version, 0 => enable multi-version
+    // ROLE: MULTIVERSION_DISABLED => disable multi-version, MULTIVERSION_ENABLED => enable multi-version
     static __thread int the_role;
     // counter for reclaim 
     static __thread int the_counter;
@@ -74,7 +81,7 @@ public:
             return the_num_erpc_server;
         else{
             Warning("using default erpc_num, please ensure it is expected");
-            return 2;
+            return DEFAULT_ERPC_SERVERS;
         }
     }
 
@@ -82,7 +89,7 @@ public:
         return is_worker_leader;
     }
 
-    static void set_num_eprc_server(int nn) { the_num_erpc_server = nn; }
+    static void set_num_eprc_server(int num_servers) { the_num_erpc_server = num_servers; }
 
     static void set_is_micro(int is_micro) { the_is_micro = is_micro; }
 
@@ -101,35 +108,35 @@ public:
     }
 
     static void enable_multiverison(){
-        the_role = 0;
+        the_role = MULTIVERSION_ENABLED;
     }
 
     static void disable_multiversion(){
-        the_role = 1;
+        the_role = MULTIVERSION_DISABLED;
     }
 
     static bool is_multiversion(){
-        return the_role == 0;
+        return the_role == MULTIVERSION_ENABLED;
     }
 
-    static void set_shard_index(int ss) {
-        shard_index = ss;
+    static void set_shard_index(int shard_idx) {
+        shard_index = shard_idx;
     }
 
     static int get_shard_index() {
         return shard_index;
     }
 
-    static void set_nshards(int ss) {
-        nshards = ss;
+    static void set_nshards(int num_shards) {
+        nshards = num_shards;
     }
 
     static int get_nshards() {
         return nshards;
     }
 
-    static void set_warehouses(int ss) {
-        warehouses = ss;
+    static void set_warehouses(int num_warehouses) {
+        warehouses = num_warehouses;
     }
 
     static int get_warehouses() {
@@ -153,12 +160,12 @@ public:
         pid = id;
     }
 
-    static void set_tprops(std::string k, int v) {
-        tprops->set_tprops(k, v);
+    static void set_tprops(std::string key, int value) {
+        tprops->set_tprops(key, value);
     }
 
-    static int get_tprops(std::string k) {
-        return tprops->get_tprops(k);
+    static int get_tprops(std::string key) {
+        return tprops->get_tprops(key);
     }
 };
 
@@ -185,20 +192,20 @@ public:
     //100 000  000  000  000
     static constexpr type increment_value = type(0x4000);
 
-    // TODO: probably remove these once RBTree stops referencing them.
-    static void lock_read(type& v) {
+    // Note: These methods may be removed once RBTree stops referencing them
+    static void lock_read(type& version) {
         while (1) {
-            type vv = v;
-            if (!(vv & lock_bit) && bool_cmpxchg(&v, vv, vv+1))
+            type current_version = version;
+            if (!(current_version & lock_bit) && bool_cmpxchg(&version, current_version, current_version+1))
                 break;
             relax_fence();
         }
         acquire_fence();
     }
-    static void lock_write(type& v) {
+    static void lock_write(type& version) {
         while (1) {
-            type vv = v;
-            if ((vv & threadid_mask) == 0 && !(vv & lock_bit) && bool_cmpxchg(&v, vv, vv | lock_bit))
+            type current_version = version;
+            if ((current_version & threadid_mask) == 0 && !(current_version & lock_bit) && bool_cmpxchg(&version, current_version, current_version | lock_bit))
                 break;
             relax_fence();
         }
@@ -206,52 +213,52 @@ public:
     }
     // for use with lock_write() and lock_read() (should probably be a different class altogether...)
     // it could theoretically be useful to have an opacity-safe reader-writer lock (which this is not currently)
-    static void inc_write_version(type& v) {
-        assert(is_locked(v));
-        type new_v = (v + increment_value);
+    static void inc_write_version(type& version) {
+        assert(is_locked(version));
+        type new_version = (version + increment_value);
         release_fence();
-        v = new_v;
+        version = new_version;
     }
-    static void unlock_read(type& v) {
-        auto prev = __sync_fetch_and_add(&v, -1);
-        (void)prev;
-        assert(prev > 0);
+    static void unlock_read(type& version) {
+        auto previous_value = __sync_fetch_and_add(&version, -1);
+        (void)previous_value;
+        assert(previous_value > 0);
     }
-    static void unlock_write(type& v) {
-        v = v & ~lock_bit;
-    }
-
-
-    static bool is_locked(type v) {
-        return v & lock_bit;
-    }
-    static bool is_locked_here(type v) {
-        return (v & (lock_bit | threadid_mask)) == (lock_bit | TThread::id());
-    }
-    static bool is_locked_here(type v, int here) {
-        return (v & (lock_bit | threadid_mask)) == (lock_bit | here);
-    }
-    static bool is_locked_elsewhere(type v) {
-        type m = v & (lock_bit | threadid_mask);
-        return m != 0 && m != (lock_bit | TThread::id());
-    }
-    static bool is_locked_elsewhere(type v, int here) {
-        type m = v & (lock_bit | threadid_mask);
-        return m != 0 && m != (lock_bit | here);
+    static void unlock_write(type& version) {
+        version = version & ~lock_bit;
     }
 
-    static bool try_lock(type& v) {
-        type vv = v;
-        return bool_cmpxchg(&v, vv & ~lock_bit, vv | lock_bit | TThread::id());
+
+    static bool is_locked(type version) {
+        return version & lock_bit;
     }
-    static bool try_lock(type& v, int here) {
-        type vv = v;
-        return bool_cmpxchg(&v, vv & ~lock_bit, vv | lock_bit | here);
+    static bool is_locked_here(type version) {
+        return (version & (lock_bit | threadid_mask)) == (lock_bit | TThread::id());
+    }
+    static bool is_locked_here(type version, int thread_id) {
+        return (version & (lock_bit | threadid_mask)) == (lock_bit | thread_id);
+    }
+    static bool is_locked_elsewhere(type version) {
+        type mask_result = version & (lock_bit | threadid_mask);
+        return mask_result != 0 && mask_result != (lock_bit | TThread::id());
+    }
+    static bool is_locked_elsewhere(type version, int thread_id) {
+        type mask_result = version & (lock_bit | threadid_mask);
+        return mask_result != 0 && mask_result != (lock_bit | thread_id);
     }
 
-    static bool try_lock(type& v, int here, uint8_t term) {
-        return try_lock(v, here);
-// FIXME: failure recovery requires epoch_number in the lock bit!
+    static bool try_lock(type& version) {
+        type current_version = version;
+        return bool_cmpxchg(&version, current_version & ~lock_bit, current_version | lock_bit | TThread::id());
+    }
+    static bool try_lock(type& version, int thread_id) {
+        type current_version = version;
+        return bool_cmpxchg(&version, current_version & ~lock_bit, current_version | lock_bit | thread_id);
+    }
+
+    static bool try_lock(type& version, int thread_id, uint8_t term) {
+        return try_lock(version, thread_id);
+// Note: failure recovery requires epoch_number in the lock bit - currently not implemented
 // #if defined(FAIL_NEW_VERSION)
 //         type vv = v;
 //         // here is the threadid_
@@ -276,39 +283,39 @@ public:
 // #endif
     }
 
-    static void lock(type& v) {
-        while (!try_lock(v))
+    static void lock(type& version) {
+        while (!try_lock(version))
             relax_fence();
         acquire_fence();
     }
-    static void lock(type& v, int here) {
-        while (!try_lock(v, here))
+    static void lock(type& version, int thread_id) {
+        while (!try_lock(version, thread_id))
             relax_fence();
         acquire_fence();
     }
-    static void unlock(type& v) {
-        assert(is_locked_here(v));
-        type new_v = v & ~(lock_bit | threadid_mask);
+    static void unlock(type& version) {
+        assert(is_locked_here(version));
+        type new_version = version & ~(lock_bit | threadid_mask);
         release_fence();
-        v = new_v;
+        version = new_version;
     }
-    static void unlock(type& v, int here) {
-        (void) here;
-        assert(is_locked_here(v, here));
-        type new_v = v & ~(lock_bit | threadid_mask);
+    static void unlock(type& version, int thread_id) {
+        (void) thread_id;
+        assert(is_locked_here(version, thread_id));
+        type new_version = version & ~(lock_bit | threadid_mask);
         release_fence();
-        v = new_v;
+        version = new_version;
     }
-    static type unlocked(type v) {
-      return v & ~(lock_bit | threadid_mask);
+    static type unlocked(type version) {
+      return version & ~(lock_bit | threadid_mask);
     }
 
-    static void set_version(type& v, type new_v) {
-        assert(is_locked_here(v));
-        assert(!(new_v & (lock_bit | threadid_mask)));
-        new_v |= lock_bit | TThread::id();
+    static void set_version(type& version, type new_version) {
+        assert(is_locked_here(version));
+        assert(!(new_version & (lock_bit | threadid_mask)));
+        new_version |= lock_bit | TThread::id();
         release_fence();
-        v = new_v;
+        version = new_version;
     }
     static void set_version(type& v, type new_v, int here) {
         assert(is_locked_here(v, here));
@@ -494,9 +501,9 @@ public:
         TransactionTid::inc_nonopaque_version(v_);
     }
 
-    bool check_version(TVersion old_vers) const {
-        // XXX opacity <- THis comment is irrelevant on new API
-        return TransactionTid::check_version(v_, old_vers.v_);
+    bool check_version(TVersion old_version) const {
+        // Note: opacity comment is irrelevant with current API
+        return TransactionTid::check_version(v_, old_version.v_);
     }
     bool check_version(TVersion old_vers, int here) const {
         return TransactionTid::check_version(v_, old_vers.v_, here);
@@ -715,15 +722,15 @@ public:
         }
     }
 
-    bool check_version(TCommutativeVersion old_vers, bool locked_by_us = false) const {
-        int lock = locked_by_us ? 1 : 0;
-        return v_ == (old_vers.v_ | lock);
+    bool check_version(TCommutativeVersion old_version, bool locked_by_us = false) const {
+        int lock_flag = locked_by_us ? 1 : 0;
+        return v_ == (old_version.v_ | lock_flag);
     }
 
-    friend std::ostream& operator<<(std::ostream& w, TCommutativeVersion v) {
-        // XXX: not super accurate for this but meh
-        TransactionTid::print(v.value(), w);
-        return w;
+    friend std::ostream& operator<<(std::ostream& writer, TCommutativeVersion version) {
+        // Note: using TransactionTid::print for approximate representation
+        TransactionTid::print(version.value(), writer);
+        return writer;
     }
 
 private:
