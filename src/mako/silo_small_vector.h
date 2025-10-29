@@ -9,9 +9,13 @@
 #include "masstree/compiler.hh"
 
 /**
- * References are not guaranteed to be stable across mutation
- *
- * XXX(stephentu): allow custom allocator
+ * A small vector optimization container that stores elements inline for small sizes
+ * and switches to heap allocation for larger sizes.
+ * 
+ * References are not guaranteed to be stable across mutation operations.
+ * 
+ * @tparam T The element type
+ * @tparam SmallSize The number of elements to store inline before switching to heap allocation
  */
 template <typename T, size_t SmallSize = SMALL_SIZE_VEC>
 class silo_small_vector {
@@ -30,27 +34,27 @@ public:
   typedef const T & const_reference;
   typedef size_t size_type;
 
-  silo_small_vector() : n(0), large_elems(0) {}
+  silo_small_vector() : small_size_(0), large_elems(0) {}
   ~silo_small_vector()
   {
     clearDestructive();
   }
 
   silo_small_vector(const silo_small_vector &that)
-    : n(0), large_elems(0)
+    : small_size_(0), large_elems(0)
   {
     assignFrom(that);
   }
 
   // not efficient, don't use in performance critical parts
-  silo_small_vector(std::initializer_list<T> l)
-    : n(0), large_elems(nullptr)
+  silo_small_vector(std::initializer_list<T> init_list)
+    : small_size_(0), large_elems(nullptr)
   {
-    if (l.size() > SmallSize) {
-      large_elems = new large_vector_type(l);
+    if (init_list.size() > SmallSize) {
+      large_elems = new large_vector_type(init_list);
     } else {
-      for (auto &p : l)
-        push_back(p);
+      for (const auto &element : init_list)
+        push_back(element);
     }
   }
 
@@ -66,7 +70,7 @@ public:
   {
     if (unlikely(large_elems))
       return large_elems->size();
-    return n;
+    return small_size_;
   }
 
   inline bool
@@ -80,15 +84,19 @@ public:
   {
     if (unlikely(large_elems))
       return large_elems->front();
-    INVARIANT(n > 0);
-    INVARIANT(n <= SmallSize);
-    return *ptr();
+    INVARIANT(small_size_ > 0);
+    INVARIANT(small_size_ <= SmallSize);
+    return *buffer_ptr();
   }
 
   inline const_reference
   front() const
   {
-    return const_cast<silo_small_vector *>(this)->front();
+    if (unlikely(large_elems))
+      return large_elems->front();
+    INVARIANT(small_size_ > 0);
+    INVARIANT(small_size_ <= SmallSize);
+    return *buffer_ptr();
   }
 
   inline reference
@@ -96,15 +104,19 @@ public:
   {
     if (unlikely(large_elems))
       return large_elems->back();
-    INVARIANT(n > 0);
-    INVARIANT(n <= SmallSize);
-    return ptr()[n - 1];
+    INVARIANT(small_size_ > 0);
+    INVARIANT(small_size_ <= SmallSize);
+    return buffer_ptr()[small_size_ - 1];
   }
 
   inline const_reference
   back() const
   {
-    return const_cast<silo_small_vector *>(this)->back();
+    if (unlikely(large_elems))
+      return large_elems->back();
+    INVARIANT(small_size_ > 0);
+    INVARIANT(small_size_ <= SmallSize);
+    return buffer_ptr()[small_size_ - 1];
   }
 
   inline void
@@ -114,10 +126,10 @@ public:
       large_elems->pop_back();
       return;
     }
-    INVARIANT(n > 0);
+    INVARIANT(small_size_ > 0);
     if (!is_trivially_destructible)
-      ptr()[n - 1].~T();
-    n--;
+      buffer_ptr()[small_size_ - 1].~T();
+    small_size_--;
   }
 
   inline void
@@ -139,66 +151,81 @@ public:
   emplace_back(Args &&... args)
   {
     if (unlikely(large_elems)) {
-      INVARIANT(!n);
+      INVARIANT(!small_size_);
       large_elems->emplace_back(std::forward<Args>(args)...);
       return;
     }
-    if (unlikely(n == SmallSize)) {
-      large_elems = new large_vector_type(ptr(), ptr() + n);
+    if (unlikely(small_size_ == SmallSize)) {
+      large_elems = new large_vector_type(buffer_ptr(), buffer_ptr() + small_size_);
       large_elems->emplace_back(std::forward<Args>(args)...);
-      n = 0;
+      small_size_ = 0;
       return;
     }
-    INVARIANT(n < SmallSize);
-    new (&(ptr()[n++])) T(std::forward<Args>(args)...);
+    INVARIANT(small_size_ < SmallSize);
+    new (&(buffer_ptr()[small_size_++])) T(std::forward<Args>(args)...);
   }
 
   inline reference
-  operator[](int i)
+  operator[](int index)
   {
     if (unlikely(large_elems))
-      return large_elems->operator[](i);
-    return ptr()[i];
+      return large_elems->operator[](index);
+    return buffer_ptr()[index];
   }
 
   inline const_reference
-  operator[](int i) const
+  operator[](int index) const
   {
-    return const_cast<silo_small_vector *>(this)->operator[](i);
+    if (unlikely(large_elems))
+      return large_elems->operator[](index);
+    return buffer_ptr()[index];
   }
 
   void
   clear()
   {
     if (unlikely(large_elems)) {
-      INVARIANT(!n);
+      INVARIANT(!small_size_);
       large_elems->clear();
       return;
     }
     if (!is_trivially_destructible)
-      for (size_t i = 0; i < n; i++)
-        ptr()[i].~T();
-    n = 0;
+      for (size_t element_index = 0; element_index < small_size_; element_index++)
+        buffer_ptr()[element_index].~T();
+    small_size_ = 0;
   }
 
   inline void
-  reserve(size_t n)
+  reserve(size_t capacity)
   {
-    if (unlikely(large_elems))
-      large_elems->reserve(n);
+    if (unlikely(large_elems)) {
+      large_elems->reserve(capacity);
+    } else if (capacity > SmallSize) {
+      // Logic improvement: Pre-allocate large vector if requested capacity exceeds small size
+      large_elems = new large_vector_type();
+      large_elems->reserve(capacity);
+      // Move existing small elements to large vector
+      for (size_t element_index = 0; element_index < small_size_; element_index++) {
+        large_elems->emplace_back(std::move(buffer_ptr()[element_index]));
+        if (!is_trivially_destructible)
+          buffer_ptr()[element_index].~T();
+      }
+      small_size_ = 0;
+    }
+    // If capacity <= SmallSize and we're using small storage, no action needed
   }
 
   // non-standard API
-  inline bool is_small_type() const { return !large_elems; }
+  inline bool is_using_small_buffer() const { return !large_elems; }
 
   template <typename Compare = std::less<T>>
   inline void
-  sort(Compare c = Compare())
+  sort(Compare comparator = Compare())
   {
     if (unlikely(large_elems))
-      std::sort(large_elems->begin(), large_elems->end(), c);
+      std::sort(large_elems->begin(), large_elems->end(), comparator);
     else
-      std::sort(small_begin(), small_end(), c);
+      std::sort(small_buffer_begin(), small_buffer_end(), comparator);
   }
 
 private:
@@ -207,346 +234,352 @@ private:
   clearDestructive()
   {
     if (unlikely(large_elems)) {
-      INVARIANT(!n);
+      INVARIANT(!small_size_);
       delete large_elems;
-      large_elems = NULL;
+      large_elems = nullptr;  // Use nullptr instead of NULL
       return;
     }
     if (!is_trivially_destructible)
-      for (size_t i = 0; i < n; i++)
-        ptr()[i].~T();
-    n = 0;
+      for (size_t element_index = 0; element_index < small_size_; element_index++)
+        buffer_ptr()[element_index].~T();
+    small_size_ = 0;
   }
 
-  template <typename ObjType>
-  class small_iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
+  /**
+   * Iterator for small vector elements stored in inline buffer
+   */
+  template <typename ElementType>
+  class small_buffer_iterator : public std::iterator<std::bidirectional_iterator_tag, ElementType> {
     friend class silo_small_vector;
   public:
-    inline small_iterator_() : p(0) {}
+    inline small_buffer_iterator() : element_ptr(nullptr) {}
 
-    template <typename O>
-    inline small_iterator_(const small_iterator_<O> &other)
-      : p(other.p)
+    template <typename OtherElementType>
+    inline small_buffer_iterator(const small_buffer_iterator<OtherElementType> &other)
+      : element_ptr(other.element_ptr)
     {}
 
-    inline ObjType &
+    inline ElementType &
     operator*() const
     {
-      return *p;
+      return *element_ptr;
     }
 
-    inline ObjType *
+    inline ElementType *
     operator->() const
     {
-      return p;
+      return element_ptr;
     }
 
     inline bool
-    operator==(const small_iterator_ &o) const
+    operator==(const small_buffer_iterator &other) const
     {
-      return p == o.p;
+      return element_ptr == other.element_ptr;
     }
 
     inline bool
-    operator!=(const small_iterator_ &o) const
+    operator!=(const small_buffer_iterator &other) const
     {
-      return !operator==(o);
+      return !operator==(other);
     }
 
     inline bool
-    operator<(const small_iterator_ &o) const
+    operator<(const small_buffer_iterator &other) const
     {
-      return p < o.p;
+      return element_ptr < other.element_ptr;
     }
 
     inline bool
-    operator>=(const small_iterator_ &o) const
+    operator>=(const small_buffer_iterator &other) const
     {
-      return !operator<(o);
+      return !operator<(other);
     }
 
     inline bool
-    operator>(const small_iterator_ &o) const
+    operator>(const small_buffer_iterator &other) const
     {
-      return p > o.p;
+      return element_ptr > other.element_ptr;
     }
 
     inline bool
-    operator<=(const small_iterator_ &o) const
+    operator<=(const small_buffer_iterator &other) const
     {
-      return !operator>(o);
+      return !operator>(other);
     }
 
-    inline small_iterator_ &
-    operator+=(int n)
+    inline small_buffer_iterator &
+    operator+=(int offset)
     {
-      p += n;
+      element_ptr += offset;
       return *this;
     }
 
-    inline small_iterator_ &
-    operator-=(int n)
+    inline small_buffer_iterator &
+    operator-=(int offset)
     {
-      p -= n;
+      element_ptr -= offset;
       return *this;
     }
 
-    inline small_iterator_
-    operator+(int n) const
+    inline small_buffer_iterator
+    operator+(int offset) const
     {
-      small_iterator_ cpy = *this;
-      return cpy += n;
+      small_buffer_iterator iterator_copy = *this;
+      return iterator_copy += offset;
     }
 
-    inline small_iterator_
-    operator-(int n) const
+    inline small_buffer_iterator
+    operator-(int offset) const
     {
-      small_iterator_ cpy = *this;
-      return cpy -= n;
+      small_buffer_iterator iterator_copy = *this;
+      return iterator_copy -= offset;
     }
 
     inline intptr_t
-    operator-(const small_iterator_ &o) const
+    operator-(const small_buffer_iterator &other) const
     {
-      return p - o.p;
+      return element_ptr - other.element_ptr;
     }
 
-    inline small_iterator_ &
+    inline small_buffer_iterator &
     operator++()
     {
-      ++p;
+      ++element_ptr;
       return *this;
     }
 
-    inline small_iterator_
+    inline small_buffer_iterator
     operator++(int)
     {
-      small_iterator_ cur = *this;
+      small_buffer_iterator current_iterator = *this;
       ++(*this);
-      return cur;
+      return current_iterator;
     }
 
-    inline small_iterator_ &
+    inline small_buffer_iterator &
     operator--()
     {
-      --p;
+      --element_ptr;
       return *this;
     }
 
-    inline small_iterator_
+    inline small_buffer_iterator
     operator--(int)
     {
-      small_iterator_ cur = *this;
+      small_buffer_iterator current_iterator = *this;
       --(*this);
-      return cur;
+      return current_iterator;
     }
 
   protected:
-    inline small_iterator_(ObjType *p) : p(p) {}
+    inline small_buffer_iterator(ElementType *element_ptr) : element_ptr(element_ptr) {}
 
   private:
-    ObjType *p;
+    ElementType *element_ptr;
   };
 
-  template <typename ObjType, typename SmallTypeIter, typename LargeTypeIter>
-  class iterator_ : public std::iterator<std::bidirectional_iterator_tag, ObjType> {
+  /**
+   * Unified iterator that works with both small buffer and large vector storage
+   */
+  template <typename ElementType, typename SmallBufferIterator, typename LargeVectorIterator>
+  class unified_iterator : public std::iterator<std::bidirectional_iterator_tag, ElementType> {
     friend class silo_small_vector;
   public:
-    inline iterator_() : large(false) {}
+    inline unified_iterator() : is_large_storage(false) {}
 
-    template <typename O, typename S, typename L>
-    inline iterator_(const iterator_<O, S, L> &other)
-      : large(other.large),
-        small_it(other.small_it),
-        large_it(other.large_it)
+    template <typename OtherElementType, typename OtherSmallIterator, typename OtherLargeIterator>
+    inline unified_iterator(const unified_iterator<OtherElementType, OtherSmallIterator, OtherLargeIterator> &other)
+      : is_large_storage(other.is_large_storage),
+        small_buffer_iter(other.small_buffer_iter),
+        large_vector_iter(other.large_vector_iter)
     {}
 
-    inline ObjType &
+    inline ElementType &
     operator*() const
     {
-      if (unlikely(large))
-        return *large_it;
-      return *small_it;
+      if (unlikely(is_large_storage))
+        return *large_vector_iter;
+      return *small_buffer_iter;
     }
 
-    inline ObjType *
+    inline ElementType *
     operator->() const
     {
-      if (unlikely(large))
-        return &(*large_it);
-      return &(*small_it);
+      if (unlikely(is_large_storage))
+        return &(*large_vector_iter);
+      return &(*small_buffer_iter);
     }
 
     inline bool
-    operator==(const iterator_ &o) const
+    operator==(const unified_iterator &other) const
     {
-      if (unlikely(large))
-        return large_it == o.large_it;
-      return small_it == o.small_it;
+      if (unlikely(is_large_storage))
+        return large_vector_iter == other.large_vector_iter;
+      return small_buffer_iter == other.small_buffer_iter;
     }
 
     inline bool
-    operator!=(const iterator_ &o) const
+    operator!=(const unified_iterator &other) const
     {
-      return !operator==(o);
+      return !operator==(other);
     }
 
     inline bool
-    operator<(const iterator_ &o) const
+    operator<(const unified_iterator &other) const
     {
-      if (unlikely(large))
-        return large_it < o.large_it;
-      return small_it < o.small_it;
+      if (unlikely(is_large_storage))
+        return large_vector_iter < other.large_vector_iter;
+      return small_buffer_iter < other.small_buffer_iter;
     }
 
     inline bool
-    operator>=(const iterator_ &o) const
+    operator>=(const unified_iterator &other) const
     {
-      return !operator<(o);
+      return !operator<(other);
     }
 
     inline bool
-    operator>(const iterator_ &o) const
+    operator>(const unified_iterator &other) const
     {
-      if (unlikely(large))
-        return large_it > o.large_it;
-      return small_it > o.small_it;
+      if (unlikely(is_large_storage))
+        return large_vector_iter > other.large_vector_iter;
+      return small_buffer_iter > other.small_buffer_iter;
     }
 
     inline bool
-    operator<=(const iterator_ &o) const
+    operator<=(const unified_iterator &other) const
     {
-      return !operator>(o);
+      return !operator>(other);
     }
 
-    inline iterator_ &
-    operator+=(int n)
+    inline unified_iterator &
+    operator+=(int offset)
     {
-      if (unlikely(large))
-        large_it += n;
+      if (unlikely(is_large_storage))
+        large_vector_iter += offset;
       else
-        small_it += n;
+        small_buffer_iter += offset;
       return *this;
     }
 
-    inline iterator_ &
-    operator-=(int n)
+    inline unified_iterator &
+    operator-=(int offset)
     {
-      if (unlikely(large))
-        large_it -= n;
+      if (unlikely(is_large_storage))
+        large_vector_iter -= offset;
       else
-        small_it -= n;
+        small_buffer_iter -= offset;
       return *this;
     }
 
-    inline iterator_
-    operator+(int n) const
+    inline unified_iterator
+    operator+(int offset) const
     {
-      iterator_ cpy = *this;
-      return cpy += n;
+      unified_iterator iterator_copy = *this;
+      return iterator_copy += offset;
     }
 
-    inline iterator_
-    operator-(int n) const
+    inline unified_iterator
+    operator-(int offset) const
     {
-      iterator_ cpy = *this;
-      return cpy -= n;
+      unified_iterator iterator_copy = *this;
+      return iterator_copy -= offset;
     }
 
     inline intptr_t
-    operator-(const iterator_ &o) const
+    operator-(const unified_iterator &other) const
     {
-      if (unlikely(large))
-        return large_it - o.large_it;
+      if (unlikely(is_large_storage))
+        return large_vector_iter - other.large_vector_iter;
       else
-        return small_it - o.small_it;
+        return small_buffer_iter - other.small_buffer_iter;
     }
 
-    inline iterator_ &
+    inline unified_iterator &
     operator++()
     {
-      if (unlikely(large))
-        ++large_it;
+      if (unlikely(is_large_storage))
+        ++large_vector_iter;
       else
-        ++small_it;
+        ++small_buffer_iter;
       return *this;
     }
 
-    inline iterator_
+    inline unified_iterator
     operator++(int)
     {
-      iterator_ cur = *this;
+      unified_iterator current_iterator = *this;
       ++(*this);
-      return cur;
+      return current_iterator;
     }
 
-    inline iterator_ &
+    inline unified_iterator &
     operator--()
     {
-      if (unlikely(large))
-        --large_it;
+      if (unlikely(is_large_storage))
+        --large_vector_iter;
       else
-        --small_it;
+        --small_buffer_iter;
       return *this;
     }
 
-    inline iterator_
+    inline unified_iterator
     operator--(int)
     {
-      iterator_ cur = *this;
+      unified_iterator current_iterator = *this;
       --(*this);
-      return cur;
+      return current_iterator;
     }
 
   protected:
-    iterator_(SmallTypeIter small_it)
-      : large(false), small_it(small_it), large_it() {}
-    iterator_(LargeTypeIter large_it)
-      : large(true), small_it(), large_it(large_it) {}
+    unified_iterator(SmallBufferIterator small_buffer_iter)
+      : is_large_storage(false), small_buffer_iter(small_buffer_iter), large_vector_iter() {}
+    unified_iterator(LargeVectorIterator large_vector_iter)
+      : is_large_storage(true), small_buffer_iter(), large_vector_iter(large_vector_iter) {}
 
   private:
-    bool large;
-    SmallTypeIter small_it;
-    LargeTypeIter large_it;
+    bool is_large_storage;
+    SmallBufferIterator small_buffer_iter;
+    LargeVectorIterator large_vector_iter;
   };
 
-  typedef small_iterator_<T> small_iterator;
-  typedef small_iterator_<const T> const_small_iterator;
-  typedef typename large_vector_type::iterator large_iterator;
-  typedef typename large_vector_type::const_iterator const_large_iterator;
+  typedef small_buffer_iterator<T> small_buffer_iter;
+  typedef small_buffer_iterator<const T> const_small_buffer_iter;
+  typedef typename large_vector_type::iterator large_vector_iter;
+  typedef typename large_vector_type::const_iterator const_large_vector_iter;
 
-  inline small_iterator
-  small_begin()
+  inline small_buffer_iter
+  small_buffer_begin()
   {
     INVARIANT(!large_elems);
-    return small_iterator(ptr());
+    return small_buffer_iter(buffer_ptr());
   }
 
-  inline const_small_iterator
-  small_begin() const
+  inline const_small_buffer_iter
+  small_buffer_begin() const
   {
     INVARIANT(!large_elems);
-    return const_small_iterator(ptr());
+    return const_small_buffer_iter(buffer_ptr());
   }
 
-  inline small_iterator
-  small_end()
+  inline small_buffer_iter
+  small_buffer_end()
   {
     INVARIANT(!large_elems);
-    return small_iterator(ptr() + n);
+    return small_buffer_iter(buffer_ptr() + small_size_);
   }
 
-  inline const_small_iterator
-  small_end() const
+  inline const_small_buffer_iter
+  small_buffer_end() const
   {
     INVARIANT(!large_elems);
-    return const_small_iterator(ptr() + n);
+    return const_small_buffer_iter(buffer_ptr() + small_size_);
   }
 
 public:
 
-  typedef iterator_<T, small_iterator, large_iterator> iterator;
-  typedef iterator_<const T, const_small_iterator, const_large_iterator> const_iterator;
+  typedef unified_iterator<T, small_buffer_iter, large_vector_iter> iterator;
+  typedef unified_iterator<const T, const_small_buffer_iter, const_large_vector_iter> const_iterator;
 
   typedef std::reverse_iterator<iterator> reverse_iterator;
   typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
@@ -556,7 +589,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->begin());
-    return iterator(small_begin());
+    return iterator(small_buffer_begin());
   }
 
   inline const_iterator
@@ -564,7 +597,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->begin());
-    return const_iterator(small_begin());
+    return const_iterator(small_buffer_begin());
   }
 
   inline iterator
@@ -572,7 +605,7 @@ public:
   {
     if (unlikely(large_elems))
       return iterator(large_elems->end());
-    return iterator(small_end());
+    return iterator(small_buffer_end());
   }
 
   inline const_iterator
@@ -580,7 +613,7 @@ public:
   {
     if (unlikely(large_elems))
       return const_iterator(large_elems->end());
-    return const_iterator(small_end());
+    return const_iterator(small_buffer_end());
   }
 
   inline reverse_iterator
@@ -609,38 +642,38 @@ public:
 
 private:
   void
-  assignFrom(const silo_small_vector &that)
+  assignFrom(const silo_small_vector &source)
   {
-    if (unlikely(this == &that))
+    if (unlikely(this == &source))
       return;
     clearDestructive();
-    if (unlikely(that.large_elems)) {
-      large_elems = new large_vector_type(*that.large_elems);
+    if (unlikely(source.large_elems)) {
+      large_elems = new large_vector_type(*source.large_elems);
     } else {
-      INVARIANT(that.n <= SmallSize);
+      INVARIANT(source.small_size_ <= SmallSize);
       if (is_trivially_copyable) {
-        NDB_MEMCPY(ptr(), that.ptr(), that.n * sizeof(T));
+        NDB_MEMCPY(buffer_ptr(), source.buffer_ptr(), source.small_size_ * sizeof(T));
       } else {
-        for (size_t i = 0; i < that.n; i++)
-          new (&(ptr()[i])) T(that.ptr()[i]);
+        for (size_t element_index = 0; element_index < source.small_size_; element_index++)
+          new (&(buffer_ptr()[element_index])) T(source.buffer_ptr()[element_index]);
       }
-      n = that.n;
+      small_size_ = source.small_size_;
     }
   }
 
   inline ALWAYS_INLINE T *
-  ptr()
+  buffer_ptr()
   {
     return reinterpret_cast<T *>(&small_elems_buf[0]);
   }
 
   inline ALWAYS_INLINE const T *
-  ptr() const
+  buffer_ptr() const
   {
     return reinterpret_cast<const T *>(&small_elems_buf[0]);
   }
 
-  size_t n;
+  size_t small_size_;
   char small_elems_buf[sizeof(T) * SmallSize];
   large_vector_type *large_elems;
 };
