@@ -255,10 +255,41 @@ private:
   advance_system_sync_epoch(
       const std::vector<std::vector<unsigned>> &assignments);
 
+  static uint64_t
+  advance_idle_thread_epochs(
+      const std::vector<std::vector<unsigned>> &assignments,
+      uint64_t best_tick_inc);
+
+  static void
+  aggregate_persistence_stats(uint64_t syssync, uint64_t min_so_far);
+
   // makes copy on purpose
   static void writer(
       unsigned id, int fd,
       std::vector<unsigned> assignment);
+
+  static void initialize_writer_context(unsigned id);
+
+  static size_t collect_buffers_for_writing(
+      const std::vector<unsigned> &assignment,
+      std::vector<iovec> &iovs,
+      std::vector<pbuffer *> &pxs,
+      uint64_t cur_sync_epoch_ex,
+      bool sense,
+      uint64_t epoch_prefixes[2][NMAXCORES],
+      size_t &nbyteswritten);
+
+  static void perform_disk_write(
+      int fd, 
+      const std::vector<iovec> &iovs, 
+      size_t nbufswritten, 
+      size_t nbyteswritten);
+
+  static void update_metadata_after_write(
+      unsigned id,
+      const std::vector<unsigned> &assignment,
+      bool dosense,
+      uint64_t epoch_prefixes[2][NMAXCORES]);
 
   static void persister(
       std::vector<std::vector<unsigned>> assignments);
@@ -570,6 +601,19 @@ protected:
 
   static void
   clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq);
+
+  static void
+  initialize_cleanup_context(threadctx &ctx, uint64_t ro_tick_geq);
+
+  static void
+  process_regular_tuple_deletion(delete_entry &delent);
+
+  static bool
+  process_logical_tuple_deletion(
+      delete_entry &delent, 
+      threadctx &ctx,
+      bool &in_rcu,
+      size_t &niters_with_rcu);
 
   // helper methods
   static inline txn_logger::pbuffer *

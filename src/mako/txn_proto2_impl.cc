@@ -13,6 +13,40 @@
 using namespace std;
 using namespace util;
 
+// Configuration constants for epochs and timeouts
+namespace {
+  // Sleep and timing constants
+  static const uint64_t EPOCH_SLEEP_MICROSECONDS = 100000;  // usleep(100000)
+  static const uint64_t HASH_BASE_MULTIPLIER = 32768;       // hash*base*=32768
+  static const size_t MAX_LOCK_RETRY_ATTEMPTS = 3;          // for (size_t c = 0; c < 3; c++)
+  static const size_t MAX_RCU_ITERATIONS = 128;             // max_niters_with_rcu = 128
+  static const uint64_t NANOSECONDS_PER_SECOND_LOCAL = 1000000000UL; // ONE_SECOND_NS
+  static const uint64_t MICROSECONDS_TO_NANOSECONDS = 1000; // * 1000 conversion
+}
+
+// Helper functions for thread-local context management
+namespace thread_context_helpers {
+  
+  // Helper to perform sleep with proper time conversion
+  inline void sleep_for_duration(uint64_t duration_usec) {
+    const uint64_t sleep_ns = duration_usec * MICROSECONDS_TO_NANOSECONDS;
+    struct timespec t;
+    t.tv_sec  = sleep_ns / NANOSECONDS_PER_SECOND_LOCAL;
+    t.tv_nsec = sleep_ns % NANOSECONDS_PER_SECOND_LOCAL;
+    nanosleep(&t, nullptr);
+  }
+  
+  // Helper to attempt lock acquisition with retry
+  inline bool try_acquire_lock_with_retry(spinlock& lock) {
+    for (size_t attempt = 0; attempt < MAX_LOCK_RETRY_ATTEMPTS; attempt++) {
+      if (lock.try_lock()) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
                     /** logger subsystem **/
 /*{{{*/
 bool txn_logger::g_persist = false;
@@ -134,48 +168,30 @@ txn_logger::persister(
     const uint64_t last_loop_usec = loop_timer.lap();
     const uint64_t delay_time_usec = ticker::tick_us;
     if (last_loop_usec < delay_time_usec) {
-      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
-      struct timespec t;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-      nanosleep(&t, nullptr);
+      thread_context_helpers::sleep_for_duration(delay_time_usec - last_loop_usec);
     }
     advance_system_sync_epoch(assignments);
   }
 }
 
-void
-txn_logger::advance_system_sync_epoch(
-    const vector<vector<unsigned>> &assignments)
+// Helper function to advance idle thread epochs
+uint64_t
+txn_logger::advance_idle_thread_epochs(
+    const vector<vector<unsigned>> &assignments,
+    uint64_t best_tick_inc)
 {
   uint64_t min_so_far = numeric_limits<uint64_t>::max();
-  const uint64_t best_tick_ex =
-    ticker::s_instance.global_current_tick();
-  // special case 0
-  const uint64_t best_tick_inc =
-    best_tick_ex ? (best_tick_ex - 1) : 0;
-
-  for (size_t i = 0; i < assignments.size(); i++)
-    for (auto j : assignments[i])
+  
+  for (size_t i = 0; i < assignments.size(); i++) {
+    for (auto j : assignments[i]) {
       for (size_t k = j; k < NMAXCORES; k += g_nworkers) {
         persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
-        // we need to arbitrarily advance threads which are not "doing
-        // anything", so they don't drag down the persistence of the system. if
-        // we can see that a thread is NOT in a guarded section AND its
-        // core->logger queue is empty, then that means we can advance its sync
-        // epoch up to best_tick_inc, b/c it is guaranteed that the next time
-        // it does any actions will be in epoch > best_tick_inc
+        
+        // Try to advance idle threads to prevent system lag
         if (!ctx.persist_buffers_.peek()) {
           spinlock &l = ticker::s_instance.lock_for(k);
           if (!l.is_locked()) {
-            bool did_lock = false;
-            for (size_t c = 0; c < 3; c++) {
-              if (l.try_lock()) {
-                did_lock = true;
-                break;
-              }
-            }
-            if (did_lock) {
+            if (thread_context_helpers::try_acquire_lock_with_retry(l)) {
               if (!ctx.persist_buffers_.peek()) {
                 min_so_far = min(min_so_far, best_tick_inc);
                 per_thread_sync_epochs_[i].epochs_[k].store(
@@ -187,108 +203,109 @@ txn_logger::advance_system_sync_epoch(
             }
           }
         }
+        
         min_so_far = min(
-            per_thread_sync_epochs_[i].epochs_[k].load(
-              memory_order_acquire),
+            per_thread_sync_epochs_[i].epochs_[k].load(memory_order_acquire),
             min_so_far);
       }
+    }
+  }
+  
+  return min_so_far;
+}
 
-  const uint64_t syssync =
-    system_sync_epoch_->load(memory_order_acquire);
+// Helper function to aggregate persistence statistics
+void
+txn_logger::aggregate_persistence_stats(uint64_t syssync, uint64_t min_so_far)
+{
+  const uint64_t now_us = timer::cur_usec();
+  
+  for (size_t i = 0; i < g_persist_stats.size(); i++) {
+    auto &ps = g_persist_stats[i];
+    for (uint64_t e = syssync + 1; e <= min_so_far; e++) {
+      auto &pes = ps.d_[e % g_max_lag_epochs];
+      const uint64_t ntxns_in_epoch = pes.ntxns_.load(memory_order_acquire);
+      const uint64_t start_us = pes.earliest_start_us_.load(memory_order_acquire);
+      
+      INVARIANT(now_us >= start_us);
+      non_atomic_fetch_add(ps.ntxns_persisted_, ntxns_in_epoch);
+      non_atomic_fetch_add(
+          ps.latency_numer_,
+          (now_us - start_us) * ntxns_in_epoch);
+      
+      pes.ntxns_.store(0, memory_order_release);
+      pes.earliest_start_us_.store(0, memory_order_release);
+    }
+  }
+}
+
+void
+txn_logger::advance_system_sync_epoch(
+    const vector<vector<unsigned>> &assignments)
+{
+  const uint64_t best_tick_ex = ticker::s_instance.global_current_tick();
+  const uint64_t best_tick_inc = best_tick_ex ? (best_tick_ex - 1) : 0;
+
+  uint64_t min_so_far = advance_idle_thread_epochs(assignments, best_tick_inc);
+  
+  const uint64_t syssync = system_sync_epoch_->load(memory_order_acquire);
 
   INVARIANT(min_so_far < numeric_limits<uint64_t>::max());
   INVARIANT(syssync <= min_so_far);
 
-  // need to aggregate from [syssync + 1, min_so_far]
-  const uint64_t now_us = timer::cur_usec();
-  for (size_t i = 0; i < g_persist_stats.size(); i++) {
-    auto &ps = g_persist_stats[i];
-    for (uint64_t e = syssync + 1; e <= min_so_far; e++) {
-        auto &pes = ps.d_[e % g_max_lag_epochs];
-        const uint64_t ntxns_in_epoch = pes.ntxns_.load(memory_order_acquire);
-        const uint64_t start_us = pes.earliest_start_us_.load(memory_order_acquire);
-        INVARIANT(now_us >= start_us);
-        non_atomic_fetch_add(ps.ntxns_persisted_, ntxns_in_epoch);
-        non_atomic_fetch_add(
-            ps.latency_numer_,
-            (now_us - start_us) * ntxns_in_epoch);
-        pes.ntxns_.store(0, memory_order_release);
-        pes.earliest_start_us_.store(0, memory_order_release);
-    }
-  }
-
+  aggregate_persistence_stats(syssync, min_so_far);
   system_sync_epoch_->store(min_so_far, memory_order_release);
 }
 
+// Helper function to initialize writer context
 void
-txn_logger::writer(
-    unsigned id, int fd,
-    vector<unsigned> assignment)
+txn_logger::initialize_writer_context(unsigned id)
 {
-
   if (g_pin_loggers_to_numa_nodes) {
     ALWAYS_ASSERT(!numa_run_on_node(id % numa_num_configured_nodes()));
     ALWAYS_ASSERT(!sched_yield());
   }
+}
 
-  vector<iovec> iovs(
-      min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
-  vector<pbuffer *> pxs;
-  timer loop_timer;
-
-  // XXX: sense is not useful for now, unless we want to
-  // fsync in the background...
-  bool sense = false; // cur is at sense, prev is at !sense
-  uint64_t epoch_prefixes[2][NMAXCORES];
-
-  NDB_MEMSET(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
-  NDB_MEMSET(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
-
-  // NOTE: a core id in the persistence system really represets
-  // all cores in the regular system modulo g_nworkers
-  size_t nbufswritten = 0, nbyteswritten = 0;
-  for (;;) {
-
-    const uint64_t last_loop_usec = loop_timer.lap();
-    const uint64_t delay_time_usec = ticker::tick_us;
-    // don't allow this loop to proceed less than an epoch's worth of time,
-    // so we can batch IO
-    if (last_loop_usec < delay_time_usec && nbufswritten < iovs.size()) {
-      const uint64_t sleep_ns = (delay_time_usec - last_loop_usec) * 1000;
-      struct timespec t;
-      t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-      t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-      nanosleep(&t, nullptr);
-    }
-
-    // we need g_persist_stats[cur_sync_epoch_ex % g_nmax_loggers]
-    // to remain untouched (until the syncer can catch up), so we
-    // cannot read any buffers with epoch >=
-    // (cur_sync_epoch_ex + g_max_lag_epochs)
-    const uint64_t cur_sync_epoch_ex =
-      system_sync_epoch_->load(memory_order_acquire) + 1;
-    nbufswritten = nbyteswritten = 0;
-    for (auto idx : assignment) {
-      INVARIANT(idx >= 0 && idx < g_nworkers);
-      for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
-        persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
-        ctx.persist_buffers_.peekall(pxs);
-        for (auto px : pxs) {
-          INVARIANT(px);
-          INVARIANT(!px->io_scheduled_);
-          INVARIANT(nbufswritten <= iovs.size());
-          INVARIANT(px->header()->nentries_);
-          INVARIANT(px->core_id_ == k);
-          if (nbufswritten == iovs.size()) {
-            ++g_evt_logger_writev_limit_met;
-            goto process;
-          }
-          if (transaction_proto2_static::EpochId(px->header()->last_tid_) >=
-              cur_sync_epoch_ex + g_max_lag_epochs) {
-            ++g_evt_logger_max_lag_wait;
-            break;
-          }
-          iovs[nbufswritten].iov_base = (void *) &px->buf_start_[0];
+// Helper function to collect buffers for writing
+size_t
+txn_logger::collect_buffers_for_writing(
+    const vector<unsigned> &assignment,
+    vector<iovec> &iovs,
+    vector<pbuffer *> &pxs,
+    uint64_t cur_sync_epoch_ex,
+    bool sense,
+    uint64_t epoch_prefixes[2][NMAXCORES],
+    size_t &nbyteswritten)
+{
+  size_t nbufswritten = 0;
+  nbyteswritten = 0;
+  
+  for (auto idx : assignment) {
+    INVARIANT(idx >= 0 && idx < g_nworkers);
+    for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
+      persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
+      ctx.persist_buffers_.peekall(pxs);
+      
+      for (auto px : pxs) {
+        INVARIANT(px);
+        INVARIANT(!px->io_scheduled_);
+        INVARIANT(nbufswritten <= iovs.size());
+        INVARIANT(px->header()->nentries_);
+        INVARIANT(px->core_id_ == k);
+        
+        if (nbufswritten == iovs.size()) {
+          ++g_evt_logger_writev_limit_met;
+          return nbufswritten;
+        }
+        
+        if (transaction_proto2_static::EpochId(px->header()->last_tid_) >=
+            cur_sync_epoch_ex + g_max_lag_epochs) {
+          ++g_evt_logger_max_lag_wait;
+          break;
+        }
+        
+        iovs[nbufswritten].iov_base = (void *) &px->buf_start_[0];
 
 #ifdef LOGGER_UNSAFE_REDUCE_BUFFER_SIZE
   #define PXLEN(px) (((px)->curoff_ < 4) ? (px)->curoff_ : ((px)->curoff_ / 4))
@@ -296,115 +313,161 @@ txn_logger::writer(
   #define PXLEN(px) ((px)->curoff_)
 #endif
 
-          const size_t pxlen = PXLEN(px);
-
-          iovs[nbufswritten].iov_len = pxlen;
-          evt_avg_log_buffer_iov_len.offer(pxlen);
-          px->io_scheduled_ = true;
-          nbufswritten++;
-          nbyteswritten += pxlen;
+        const size_t pxlen = PXLEN(px);
+        iovs[nbufswritten].iov_len = pxlen;
+        evt_avg_log_buffer_iov_len.offer(pxlen);
+        px->io_scheduled_ = true;
+        nbufswritten++;
+        nbyteswritten += pxlen;
 
 #ifdef CHECK_INVARIANTS
-          auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
-          auto px_cid = px->core_id_;
-          if (last_tid_cid != px_cid) {
-            cerr << "header: " << *px->header() << endl;
-            cerr << g_proto_version_str(last_tid_cid) << endl;
-            cerr << "last_tid_cid: " << last_tid_cid << endl;
-            cerr << "px_cid: " << px_cid << endl;
-          }
+        auto last_tid_cid = transaction_proto2_static::CoreId(px->header()->last_tid_);
+        auto px_cid = px->core_id_;
+        if (last_tid_cid != px_cid) {
+          cerr << "header: " << *px->header() << endl;
+          cerr << g_proto_version_str(last_tid_cid) << endl;
+          cerr << "last_tid_cid: " << last_tid_cid << endl;
+          cerr << "px_cid: " << px_cid << endl;
+        }
 #endif
 
-          const uint64_t px_epoch =
-            transaction_proto2_static::EpochId(px->header()->last_tid_);
-          INVARIANT(
-              transaction_proto2_static::CoreId(px->header()->last_tid_) ==
-              px->core_id_);
-          INVARIANT(epoch_prefixes[sense][k] <= px_epoch);
-          INVARIANT(px_epoch > 0);
-          epoch_prefixes[sense][k] = px_epoch - 1;
-          auto &pes = g_persist_stats[k].d_[px_epoch % g_max_lag_epochs];
-          if (!pes.ntxns_.load(memory_order_acquire))
-            pes.earliest_start_us_.store(px->earliest_start_us_, memory_order_release);
-          non_atomic_fetch_add(pes.ntxns_, px->header()->nentries_);
-          g_evt_avg_log_entry_ntxns.offer(px->header()->nentries_);
-        }
+        const uint64_t px_epoch =
+          transaction_proto2_static::EpochId(px->header()->last_tid_);
+        INVARIANT(
+            transaction_proto2_static::CoreId(px->header()->last_tid_) ==
+            px->core_id_);
+        INVARIANT(epoch_prefixes[sense][k] <= px_epoch);
+        INVARIANT(px_epoch > 0);
+        epoch_prefixes[sense][k] = px_epoch - 1;
+        
+        auto &pes = g_persist_stats[k].d_[px_epoch % g_max_lag_epochs];
+        if (!pes.ntxns_.load(memory_order_acquire))
+          pes.earliest_start_us_.store(px->earliest_start_us_, memory_order_release);
+        non_atomic_fetch_add(pes.ntxns_, px->header()->nentries_);
+        g_evt_avg_log_entry_ntxns.offer(px->header()->nentries_);
+      }
+    }
+  }
+  
+  return nbufswritten;
+}
+
+// Helper function to perform actual disk write
+void
+txn_logger::perform_disk_write(int fd, const vector<iovec> &iovs, size_t nbufswritten, size_t nbyteswritten)
+{
+  if (!g_fake_writes) {
+#ifdef ENABLE_EVENT_COUNTERS
+    timer write_timer;
+#endif
+    const ssize_t ret = writev(fd, &iovs[0], nbufswritten);
+    if (unlikely(ret == -1)) {
+      perror("writev");
+      ALWAYS_ASSERT(false);
+    }
+
+    if (g_call_fsync) {
+      const int fret = fdatasync(fd);
+      if (unlikely(fret == -1)) {
+        perror("fdatasync");
+        ALWAYS_ASSERT(false);
       }
     }
 
-  process:
+#ifdef ENABLE_EVENT_COUNTERS
+    {
+      g_evt_avg_logger_bytes_per_writev.offer(nbyteswritten);
+      const double bytes_per_sec =
+        double(nbyteswritten)/(write_timer.lap_ms() / 1000.0);
+      g_evt_avg_logger_bytes_per_sec.offer(bytes_per_sec);
+    }
+#endif
+  }
+}
+
+// Helper function to update metadata after write
+void
+txn_logger::update_metadata_after_write(
+    unsigned id,
+    const vector<unsigned> &assignment,
+    bool dosense,
+    uint64_t epoch_prefixes[2][NMAXCORES])
+{
+  epoch_array &ea = per_thread_sync_epochs_[id];
+  for (auto idx: assignment) {
+    for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
+      const uint64_t x0 = ea.epochs_[k].load(memory_order_acquire);
+      const uint64_t x1 = epoch_prefixes[dosense][k];
+      if (x1 > x0)
+        ea.epochs_[k].store(x1, memory_order_release);
+
+      persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
+      pbuffer *px, *px0;
+      while ((px = ctx.persist_buffers_.peek()) && px->io_scheduled_) {
+#ifdef LOGGER_STRIDE_OVER_BUFFER
+        {
+          const size_t pxlen = PXLEN(px);
+          const size_t stridelen = 1;
+          for (size_t p = 0; p < pxlen; p += stridelen)
+            if ((&px->buf_start_[0])[p] & 0xF)
+              non_atomic_fetch_add(ea.dummy_work_, 1UL);
+        }
+#endif
+        px0 = ctx.persist_buffers_.deq();
+        INVARIANT(px == px0);
+        INVARIANT(px->header()->nentries_);
+        px0->reset();
+        INVARIANT(ctx.init_);
+        INVARIANT(px0->core_id_ == k);
+        ctx.all_buffers_.enq(px0);
+      }
+    }
+  }
+}
+
+void
+txn_logger::writer(
+    unsigned id, int fd,
+    vector<unsigned> assignment)
+{
+  initialize_writer_context(id);
+
+  vector<iovec> iovs(
+      min(size_t(IOV_MAX), g_nworkers * g_perthread_buffers));
+  vector<pbuffer *> pxs;
+  timer loop_timer;
+
+  bool sense = false; // cur is at sense, prev is at !sense
+  uint64_t epoch_prefixes[2][NMAXCORES];
+
+  NDB_MEMSET(&epoch_prefixes[0], 0, sizeof(epoch_prefixes[0]));
+  NDB_MEMSET(&epoch_prefixes[1], 0, sizeof(epoch_prefixes[1]));
+
+  size_t nbufswritten = 0, nbyteswritten = 0;
+  for (;;) {
+    const uint64_t last_loop_usec = loop_timer.lap();
+    const uint64_t delay_time_usec = ticker::tick_us;
+    
+    // Batch IO by waiting for epoch duration
+    if (last_loop_usec < delay_time_usec && nbufswritten < iovs.size()) {
+      thread_context_helpers::sleep_for_duration(delay_time_usec - last_loop_usec);
+    }
+
+    const uint64_t cur_sync_epoch_ex =
+      system_sync_epoch_->load(memory_order_acquire) + 1;
+      
+    nbufswritten = collect_buffers_for_writing(
+        assignment, iovs, pxs, cur_sync_epoch_ex, sense, epoch_prefixes, nbyteswritten);
+
     if (!nbufswritten) {
-      // XXX: should probably sleep here
       nop_pause();
       continue;
     }
 
     const bool dosense = sense;
+    perform_disk_write(fd, iovs, nbufswritten, nbyteswritten);
+    update_metadata_after_write(id, assignment, dosense, epoch_prefixes);
 
-    if (!g_fake_writes) {
-#ifdef ENABLE_EVENT_COUNTERS
-      timer write_timer;
-#endif
-      const ssize_t ret = writev(fd, &iovs[0], nbufswritten);
-      if (unlikely(ret == -1)) {
-        perror("writev");
-        ALWAYS_ASSERT(false);
-      }
-
-      if (g_call_fsync) {
-        const int fret = fdatasync(fd);
-        if (unlikely(fret == -1)) {
-          perror("fdatasync");
-          ALWAYS_ASSERT(false);
-        }
-      }
-
-#ifdef ENABLE_EVENT_COUNTERS
-      {
-        g_evt_avg_logger_bytes_per_writev.offer(nbyteswritten);
-        const double bytes_per_sec =
-          double(nbyteswritten)/(write_timer.lap_ms() / 1000.0);
-        g_evt_avg_logger_bytes_per_sec.offer(bytes_per_sec);
-      }
-#endif
-    }
-
-    // update metadata from previous write
-    //
-    // return all buffers that have been io_scheduled_ - we can do this as
-    // soon as write returns. we take care to return to the proper buffer
-    epoch_array &ea = per_thread_sync_epochs_[id];
-    for (auto idx: assignment) {
-      for (size_t k = idx; k < NMAXCORES; k += g_nworkers) {
-        const uint64_t x0 = ea.epochs_[k].load(memory_order_acquire);
-        const uint64_t x1 = epoch_prefixes[dosense][k];
-        if (x1 > x0)
-          ea.epochs_[k].store(x1, memory_order_release);
-
-        persist_ctx &ctx = persist_ctx_for(k, INITMODE_NONE);
-        pbuffer *px, *px0;
-        while ((px = ctx.persist_buffers_.peek()) && px->io_scheduled_) {
-#ifdef LOGGER_STRIDE_OVER_BUFFER
-          {
-            const size_t pxlen = PXLEN(px);
-            const size_t stridelen = 1;
-            for (size_t p = 0; p < pxlen; p += stridelen)
-              if ((&px->buf_start_[0])[p] & 0xF)
-                non_atomic_fetch_add(ea.dummy_work_, 1UL);
-          }
-#endif
-          px0 = ctx.persist_buffers_.deq();
-          INVARIANT(px == px0);
-          INVARIANT(px->header()->nentries_);
-          px0->reset();
-          INVARIANT(ctx.init_);
-          INVARIANT(px0->core_id_ == k);
-          ctx.all_buffers_.enq(px0);
-        }
-      }
-    }
-
-    // bump the sense
     sense = !sense;
   }
 }
@@ -487,11 +550,7 @@ transaction_proto2_static::InitGC()
 static void
 sleep_ro_epoch()
 {
-  const uint64_t sleep_ns = transaction_proto2_static::ReadOnlyEpochUsec * 1000;
-  struct timespec t;
-  t.tv_sec  = sleep_ns / ONE_SECOND_NS;
-  t.tv_nsec = sleep_ns % ONE_SECOND_NS;
-  nanosleep(&t, nullptr);
+  thread_context_helpers::sleep_for_duration(transaction_proto2_static::ReadOnlyEpochUsec);
 }
 
 void
@@ -543,15 +602,10 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
 //}
 //#endif
 
+// Helper function to initialize cleanup context
 void
-transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
+transaction_proto2_static::initialize_cleanup_context(threadctx &ctx, uint64_t ro_tick_geq)
 {
-  INVARIANT(!rcu::s_instance.in_rcu_region());
-  INVARIANT(ctx.last_reaped_epoch_ <= ro_tick_geq);
-  INVARIANT(ctx.scratch_.empty());
-  if (ctx.last_reaped_epoch_ == ro_tick_geq)
-    return;
-
 #ifdef ENABLE_EVENT_COUNTERS
   const uint64_t now = timer::cur_usec();
   if (ctx.last_reaped_timestamp_us_ > 0) {
@@ -561,6 +615,122 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   ctx.last_reaped_timestamp_us_ = now;
 #endif
   ctx.last_reaped_epoch_ = ro_tick_geq;
+}
+
+// Helper function to process regular tuple deletion
+void
+transaction_proto2_static::process_regular_tuple_deletion(delete_entry &delent)
+{
+#ifdef CHECK_INVARIANTS
+  const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+  const uint64_t last_consistent_tid = ComputeReadOnlyTid(last_tick_ex - 1);
+  
+  if (delent.trigger_tid_ > last_consistent_tid) {
+    cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
+    cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
+    cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+    cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
+    cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+  }
+  INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
+  delent.tuple()->opaque.store(0, std::memory_order_release);
+#endif
+  dbtuple::release_no_rcu(delent.tuple());
+}
+
+// Helper function to process logical tuple deletion
+bool
+transaction_proto2_static::process_logical_tuple_deletion(
+    delete_entry &delent, 
+    threadctx &ctx,
+    bool &in_rcu,
+    size_t &niters_with_rcu)
+{
+  INVARIANT(!delent.tuple_ahead_);
+  INVARIANT(delent.btr_);
+  
+  ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
+  
+#ifdef CHECK_INVARIANTS
+  const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
+  const uint64_t last_consistent_tid = ComputeReadOnlyTid(last_tick_ex - 1);
+  
+  if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
+    cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
+    cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
+    cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
+  }
+  INVARIANT(delent.tuple()->version == delent.trigger_tid_);
+  INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
+  INVARIANT(delent.tuple()->is_deleting());
+#endif
+
+  if (unlikely(!delent.tuple()->is_latest())) {
+    // Requeue for later processing
+    const uint64_t my_ro_tick = to_read_only_tick(
+        ticker::s_instance.global_current_tick());
+    ctx.queue_.enqueue(
+        delete_entry(
+          nullptr,
+          MakeTid(CoreMask, NumIdMask >> NumIdShift, (my_ro_tick + 1) * ReadOnlyEpochMultiplier - 1),
+          delent.tuple(),
+          marked_ptr<string>(),
+          nullptr),
+        my_ro_tick);
+    ++g_evt_proto_gc_delete_requeue;
+    
+    // Reclaim string ptrs
+    string *spx = delent.key_.get();
+    if (unlikely(spx))
+      ctx.pool_.emplace_back(spx);
+    return false; // Skip this entry
+  }
+
+#ifdef CHECK_INVARIANTS
+  delent.tuple()->opaque.store(0, std::memory_order_release);
+#endif
+
+  // Extract key from tuple or string pointer
+  varkey k;
+  string *spx = delent.key_.get();
+  if (likely(!spx)) {
+    k = varkey(delent.tuple()->get_value_start(), delent.tuple()->size);
+  } else {
+    k = varkey(*spx);
+    ctx.pool_.emplace_back(spx);
+  }
+
+  // Enter RCU region if needed
+  if (!in_rcu) {
+    char rcu_guard[sizeof(scoped_rcu_base<false>)];
+    memset(rcu_guard, 0, sizeof(rcu_guard));
+    new (&rcu_guard[0]) scoped_rcu_base<false>();
+    niters_with_rcu = 0;
+    in_rcu = true;
+  }
+
+  // Remove from btree and free
+  typename concurrent_btree::value_type removed = 0;
+  const bool did_remove = delent.btr_->remove(k, &removed);
+  ALWAYS_ASSERT(did_remove);
+  INVARIANT(removed == (typename concurrent_btree::value_type) delent.tuple());
+  delent.tuple()->clear_latest();
+  dbtuple::release(delent.tuple());
+  
+  return true; // Successfully processed
+}
+
+void
+transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
+{
+  INVARIANT(!rcu::s_instance.in_rcu_region());
+  INVARIANT(ctx.last_reaped_epoch_ <= ro_tick_geq);
+  INVARIANT(ctx.scratch_.empty());
+  
+  if (ctx.last_reaped_epoch_ == ro_tick_geq)
+    return;
+
+  initialize_cleanup_context(ctx, ro_tick_geq);
 
 #ifdef CHECK_INVARIANTS
   const uint64_t last_tick_ex = ticker::s_instance.global_last_tick_exclusive();
@@ -571,10 +741,10 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   INVARIANT(to_read_only_tick(last_tick_ex) > ro_tick_geq);
 #endif
 
-  // XXX: hacky
+  // RCU management macros
   char rcu_guard[sizeof(scoped_rcu_base<false>)];
   memset(rcu_guard, 0, sizeof(rcu_guard));
-  const size_t max_niters_with_rcu = 128;
+  const size_t max_niters_with_rcu = MAX_RCU_ITERATIONS;
 #define ENTER_RCU() \
     do { \
       new (&rcu_guard[0]) scoped_rcu_base<false>(); \
@@ -588,109 +758,41 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
   ctx.scratch_.empty_accept_from(ctx.queue_, ro_tick_geq);
   ctx.scratch_.transfer_freelist(ctx.queue_);
   px_queue &q = ctx.scratch_;
+  
   if (q.empty())
     return;
+
   bool in_rcu = false;
   size_t niters_with_rcu = 0, n = 0;
+  
   for (auto it = q.begin(); it != q.end(); ++it, ++n, ++niters_with_rcu) {
     auto &delent = *it;
     INVARIANT(delent.tuple()->opaque.load(std::memory_order_acquire) == 1);
+    
     if (!delent.key_.get_flags()) {
-      // guaranteed to be gc-able now (even w/o RCU)
-#ifdef CHECK_INVARIANTS
-      if (delent.trigger_tid_ > last_consistent_tid /*|| !IsBlocked(delent.tuple_ahead_, delent.tuple(), last_consistent_tid) */) {
-        cerr << "tuple ahead     : " << g_proto_version_str(delent.tuple_ahead_->version) << endl;
-        cerr << "tuple ahead     : " << *delent.tuple_ahead_ << endl;
-        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-        cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
-        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
-        cerr << "last_tick_ex    : " << last_tick_ex << endl;
-        cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
-        cerr << "rcu_block_tick  : " << it.tick() << endl;
-      }
-      INVARIANT(delent.trigger_tid_ <= last_consistent_tid);
-      delent.tuple()->opaque.store(0, std::memory_order_release);
-#endif
-      dbtuple::release_no_rcu(delent.tuple());
+      // Regular tuple deletion
+      process_regular_tuple_deletion(delent);
     } else {
-      INVARIANT(!delent.tuple_ahead_);
-      INVARIANT(delent.btr_);
-      // check if an element preceeds the (deleted) tuple before doing the delete
-      ::lock_guard<dbtuple> lg_tuple(delent.tuple(), false);
-#ifdef CHECK_INVARIANTS
-      if (!delent.tuple()->is_not_behind(last_consistent_tid)) {
-        cerr << "trigger tid     : " << g_proto_version_str(delent.trigger_tid_) << endl;
-        cerr << "tuple           : " << g_proto_version_str(delent.tuple()->version) << endl;
-        cerr << "last_consist_tid: " << g_proto_version_str(last_consistent_tid) << endl;
-        cerr << "last_tick_ex    : " << last_tick_ex << endl;
-        cerr << "ro_tick_geq     : " << ro_tick_geq << endl;
-        cerr << "rcu_block_tick  : " << it.tick() << endl;
+      // Logical tuple deletion
+      if (!process_logical_tuple_deletion(delent, ctx, in_rcu, niters_with_rcu)) {
+        continue; // Entry was requeued, skip to next
       }
-      INVARIANT(delent.tuple()->version == delent.trigger_tid_);
-      INVARIANT(delent.tuple()->is_not_behind(last_consistent_tid));
-      INVARIANT(delent.tuple()->is_deleting());
-#endif
-      if (unlikely(!delent.tuple()->is_latest())) {
-        // requeue it up, except this time as a regular delete
-        const uint64_t my_ro_tick = to_read_only_tick(
-            ticker::s_instance.global_current_tick());
-        ctx.queue_.enqueue(
-            delete_entry(
-              nullptr,
-              MakeTid(CoreMask, NumIdMask >> NumIdShift, (my_ro_tick + 1) * ReadOnlyEpochMultiplier - 1),
-              delent.tuple(),
-              marked_ptr<string>(),
-              nullptr),
-            my_ro_tick);
-        ++g_evt_proto_gc_delete_requeue;
-        // reclaim string ptrs
-        string *spx = delent.key_.get();
-        if (unlikely(spx))
-          ctx.pool_.emplace_back(spx);
-        continue;
-      }
-#ifdef CHECK_INVARIANTS
-      delent.tuple()->opaque.store(0, std::memory_order_release);
-#endif
-      // if delent.key_ is nullptr, then the key is stored in the tuple
-      // record storage location, and the size field contains the length of
-      // the key
-      //
-      // otherwise, delent.key_ is a pointer to a string containing the
-      // key
-      varkey k;
-      string *spx = delent.key_.get();
-      if (likely(!spx)) {
-        k = varkey(delent.tuple()->get_value_start(), delent.tuple()->size);
-      } else {
-        k = varkey(*spx);
-        ctx.pool_.emplace_back(spx);
-      }
-
-      if (!in_rcu) {
-        ENTER_RCU();
-        niters_with_rcu = 0;
-        in_rcu = true;
-      }
-      typename concurrent_btree::value_type removed = 0;
-      const bool did_remove = delent.btr_->remove(k, &removed);
-      ALWAYS_ASSERT(did_remove);
-      INVARIANT(removed == (typename concurrent_btree::value_type) delent.tuple());
-      delent.tuple()->clear_latest();
-      dbtuple::release(delent.tuple()); // rcu free it
     }
 
+    // Manage RCU region duration
     if (in_rcu && niters_with_rcu >= max_niters_with_rcu) {
       EXIT_RCU();
       niters_with_rcu = 0;
       in_rcu = false;
     }
   }
+  
   q.clear();
   g_evt_avg_proto_gc_queue_len.offer(n);
 
   if (in_rcu)
     EXIT_RCU();
+    
   INVARIANT(!rcu::s_instance.in_rcu_region());
 }
 
