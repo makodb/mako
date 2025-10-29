@@ -842,6 +842,19 @@ protected:
   handle_last_tuple_in_group(
       dbtuple_write_info &info, bool did_group_insert);
 
+  // Helper functions for commit process
+  bool validate_transaction_state(bool doThrow);
+  void prepare_write_set(dbtuple_write_info_vec &write_tuples);
+  bool lock_write_nodes(dbtuple_write_info_vec &write_tuples, std::pair<bool, tid_t> &commit_tid_pair);
+  bool validate_read_set(const dbtuple_write_info_vec &write_tuples);
+  void commit_write_records(dbtuple_write_info_vec &write_tuples, tid_t commit_transaction_id);
+  void handle_commit_abort(dbtuple_write_info_vec &write_tuples, 
+                          std::pair<bool, tid_t> &commit_tid_pair, 
+                          bool doThrow);
+  
+  // Helper function for read validation failures
+  void handle_read_validation_failure(transaction_base::abort_reason abort_reason);
+
   read_set_map read_set;
   write_set_map write_set;
   absent_set_map absent_set;
