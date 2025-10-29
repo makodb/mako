@@ -56,7 +56,7 @@ set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
 # RUST
-set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target/release")
+set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/makocon/mako/rust-lib/target/release")
 set(RUST_LIB_NAME "rust_redis")
 set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
 
@@ -64,9 +64,9 @@ set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
 add_custom_command(
     OUTPUT ${RUST_LIB_PATH}
     COMMAND cargo build --release
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.toml
-            ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/lib.rs
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/third-party/makocon/mako/rust-lib
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third-party/makocon/mako/rust-lib/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/third-party/makocon/mako/rust-lib/src/lib.rs
     COMMENT "Building Rust library if needed"
 )
 
@@ -998,4 +998,3 @@ if(BUILD_TESTS)
     message(STATUS "Run tests with: make run_tests")
     message(STATUS "Or individually: make test && ctest")
 endif()
-
