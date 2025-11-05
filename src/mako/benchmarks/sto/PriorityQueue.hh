@@ -11,270 +11,389 @@ class PriorityQueue: public TObject {
     typedef TransactionTid::type Version;
     typedef versioned_value_struct<T> versioned_value;
     
+    // Transaction item flags
     static constexpr TransItem::flags_type insert_tag = TransItem::user0_bit;
     static constexpr TransItem::flags_type delete_tag = TransItem::user0_bit<<1;
     static constexpr TransItem::flags_type dirty_tag = TransItem::user0_bit<<2;
 
-    static constexpr Version insert_bit = TransactionTid::user_bit; // XXX get rid of this
-    static constexpr Version delete_bit = TransactionTid::user_bit<<1; // XXX get rid of this
-    static constexpr Version dirty_bit = TransactionTid::user_bit<<2; // XXX get rid of this
+    // Version bits for tracking element state
+    static constexpr Version insert_bit = TransactionTid::user_bit;
+    static constexpr Version delete_bit = TransactionTid::user_bit<<1;
+    static constexpr Version dirty_bit = TransactionTid::user_bit<<2;
 
-    static constexpr int pop_key = -2;
-    static constexpr int empty_key = -3;
-    static constexpr int top_key = -4;
+    // Special transaction keys
+    static constexpr int POP_KEY = -2;
+    static constexpr int EMPTY_KEY = -3;
+    static constexpr int TOP_KEY = -4;
+    
+    // Constants
+    static constexpr int INVALID_THREAD_ID = -1;
+    static constexpr T EMPTY_QUEUE_VALUE = -1;
 public:
     PriorityQueue() : heap_() {
-        size_ = 0;
-        poplock_ = 0;
-        popversion_ = 0;
-        dirtytid_ = -1;
-        dirtyval_ = -1;
-        dirtycount_ = 0;
+        heap_size_ = 0;
+        pop_lock_ = 0;
+        pop_version_ = 0;
+        dirty_thread_id_ = INVALID_THREAD_ID;
+        dirty_min_value_ = EMPTY_QUEUE_VALUE;
+        dirty_operation_count_ = 0;
     }
 
-    // Adds v to the priority queue
-    void add(versioned_value* v) {
-        int child = size_;
-        if (child >= heap_.size()) {
-            heap_.push_back(v);
+    // Adds element to the priority queue
+    void add(versioned_value* new_element) {
+        int child_index = heap_size_;
+        if (child_index >= heap_.size()) {
+            heap_.push_back(new_element);
         } else {
-            heap_[child] = v;
+            heap_[child_index] = new_element;
         }
-        size_++;
+        heap_size_++;
 
-        while (child > 0) {
-            int parent = (child - 1) / 2;
-            versioned_value* before = heap_[parent];
-            int old = child;
-            versioned_value* parent_val = heap_[parent];
-            if (heap_[child]->read_value() > parent_val->read_value()) {
-                swap(child, parent);
-                child = parent;
+        bubble_up(child_index);
+    }
+    
+private:
+    // Helper to maintain heap property by bubbling element up
+    void bubble_up(int child_index) {
+        while (child_index > 0) {
+            int parent_index = (child_index - 1) / 2;
+            if (should_swap_with_parent(child_index, parent_index)) {
+                swap(child_index, parent_index);
+                child_index = parent_index;
             } else {
                 return;
             }
         }
     }
     
+    // Helper to determine if child should be swapped with parent
+    bool should_swap_with_parent(int child_index, int parent_index) const {
+        return heap_[child_index]->read_value() > heap_[parent_index]->read_value();
+    }
+    
+public:
+    
     // Removes the maximum element from the heap
-    versioned_value* removeMax(versioned_value* expVal = NULL) {
-        int bottom  = --size_;
-        if (bottom < 0) {
-            return NULL;
-        }
-        if (bottom == 0) {
-            versioned_value* res = heap_[0];
-            return res;
+    versioned_value* removeMax(versioned_value* expected_value = nullptr) {
+        if (heap_size_ <= 0) {
+            return nullptr;
         }
         
-        versioned_value* res = heap_[0];
-
-        if (expVal != NULL && res != expVal) {
-            unlock(&poplock_);
+        versioned_value* max_element = heap_[0];
+        
+        if (expected_value != nullptr && max_element != expected_value) {
+            unlock(&pop_lock_);
             Sto::abort();
-            return NULL;
+            return nullptr;
         }
-        swap(bottom, 0);
         
-        int child = 0;
-        int parent = 0;
-        while (2*parent < size_ - 1) {
-            int left = parent * 2 + 1;
-            int right = (parent * 2) + 2;
-            if (right >= size_) {
-                if (left >= size_) {
-                    break;
-                }
-                if (heap_[left]->read_value() > heap_[parent]->read_value()) {
-                    swap(parent, left);
-                    parent = left;
-                } else {
-                    break;
-                }
-
+        heap_size_--;
+        
+        if (heap_size_ == 0) {
+            return max_element;
+        }
+        
+        // Move last element to root and restore heap property
+        heap_[0] = heap_[heap_size_];
+        bubble_down(0);
+        
+        return max_element;
+    }
+    
+private:
+    // Helper to maintain heap property by bubbling element down
+    void bubble_down(int parent_index) {
+        while (has_children(parent_index)) {
+            int larger_child_index = find_larger_child(parent_index);
+            if (should_swap_with_child(parent_index, larger_child_index)) {
+                swap(parent_index, larger_child_index);
+                parent_index = larger_child_index;
             } else {
-                if (heap_[left]->read_value() > heap_[right]->read_value()) {
-                    child = left;
-                } else {
-                    child = right;
-                }
-                if (heap_[child]->read_value() > heap_[parent]->read_value()) {
-                    swap(parent, child);
-                    parent = child;
-                } else {
-                    break;
-                }
+                break;
             }
         }
-        return res;
     }
+    
+    // Helper to check if node has children
+    bool has_children(int parent_index) const {
+        return (2 * parent_index + 1) < heap_size_;
+    }
+    
+    // Helper to find the larger child of a parent node
+    int find_larger_child(int parent_index) const {
+        int left_child = parent_index * 2 + 1;
+        int right_child = parent_index * 2 + 2;
+        
+        if (right_child >= heap_size_) {
+            return left_child; // Only left child exists
+        }
+        
+        return compare_elements(left_child, right_child) > 0 ? left_child : right_child;
+    }
+    
+    // Helper to compare two elements in the heap
+    int compare_elements(int index1, int index2) const {
+        T value1 = heap_[index1]->read_value();
+        T value2 = heap_[index2]->read_value();
+        if (value1 > value2) return 1;
+        if (value1 < value2) return -1;
+        return 0;
+    }
+    
+    // Helper to determine if parent should be swapped with child
+    bool should_swap_with_child(int parent_index, int child_index) const {
+        return heap_[child_index]->read_value() > heap_[parent_index]->read_value();
+    }
+    
+public:
     
     versioned_value* getMax() {
-        assert(TransactionTid::is_locked_here(poplock_));
-        if (size_ == 0) {
-            return NULL;
+        assert(TransactionTid::is_locked_here(pop_lock_));
+        if (heap_size_ == 0) {
+            return nullptr;
         }
-        while(1) {
-            versioned_value* val = heap_[0];
-            auto item = Sto::item(this, val);
-            if (is_inserted(val->version())) {
-                if (has_insert(item)) {
-                    // push then pop
-                    return val;
-                } else {
-                    // Some other transaction is inserting a node with high priority
-                    unlock(&poplock_);
-                    Sto::abort();
-                    return NULL;
-                }
-            } else if (is_deleted(val->version())) {
-                removeMax(val);
-                if (size_ == 0) return NULL;
+        
+        while (true) {
+            versioned_value* max_candidate = heap_[0];
+            auto transaction_item = Sto::item(this, max_candidate);
+            
+            if (is_inserted(max_candidate->version())) {
+                return handle_inserted_max_candidate(transaction_item, max_candidate);
+            } else if (is_deleted(max_candidate->version())) {
+                removeMax(max_candidate);
+                if (heap_size_ == 0) return nullptr;
             } else {
-                return val;
+                return max_candidate;
             }
         }
     }
     
-    void push_nontrans(T v) {
-        lock(&poplock_);
-        versioned_value* val = versioned_value::make(v, TransactionTid::increment_value + insert_bit);
-        add(val);
-        unlock(&poplock_);
+private:
+    // Helper to handle max candidate that was inserted by a transaction
+    versioned_value* handle_inserted_max_candidate(TransProxy& transaction_item, versioned_value* max_candidate) {
+        if (has_insert(transaction_item)) {
+            // Current transaction inserted this element (push then pop)
+            return max_candidate;
+        } else {
+            // Another transaction is inserting a high priority element
+            unlock(&pop_lock_);
+            Sto::abort();
+            return nullptr;
+        }
     }
     
-    void push(T v) {
-        lock(&poplock_); // TODO: locking this is not required, but performance seems to be better with this
-                            // Can also try readers-writers lock
-        if (dirtytid_ != -1 && dirtytid_ != TThread::id() && v > dirtyval_) {
-            unlock(&poplock_);
+public:
+    
+    void push_nontrans(T value) {
+        lock(&pop_lock_);
+        versioned_value* new_element = versioned_value::make(value, TransactionTid::increment_value + insert_bit);
+        add(new_element);
+        unlock(&pop_lock_);
+    }
+    
+    void push(T value) {
+        lock(&pop_lock_); // Performance note: locking improves performance, could use readers-writers lock
+        
+        if (conflicts_with_dirty_state(value)) {
+            unlock(&pop_lock_);
             Sto::abort();
             return;
         }
-        versioned_value* val = versioned_value::make(v, TransactionTid::increment_value + insert_bit);
-        add(val);
-        Sto::item(this, val).add_write(v).add_flags(insert_tag);
-        unlock(&poplock_);
         
+        versioned_value* new_element = versioned_value::make(value, TransactionTid::increment_value + insert_bit);
+        add(new_element);
+        Sto::item(this, new_element).add_write(value).add_flags(insert_tag);
+        unlock(&pop_lock_);
     }
+    
+private:
+    // Helper to check if push conflicts with dirty queue state
+    bool conflicts_with_dirty_state(T value) const {
+        return dirty_thread_id_ != INVALID_THREAD_ID && 
+               dirty_thread_id_ != TThread::id() && 
+               value > dirty_min_value_;
+    }
+    
+public:
     
     T pop() {
-        // Check if we previously read the top element.
-        auto top_item = Sto::check_item(this, top_key);
-        versioned_value* read_val = NULL;
-        if (top_item != NULL && top_item->has_read()) {
-            read_val = (*top_item).template read_value<versioned_value*>();
-        }
-        // Check if we previously saw the queue as empty.
-        auto empty_item = Sto::check_item(this, empty_key);
-        bool read_empty = empty_item != NULL && empty_item->has_read();
+        auto previous_reads = get_previous_transaction_reads();
         
-        if (size_ == 0) {
-            if (read_val != NULL) {
-                Sto::abort();
-            }
-            else Sto::item(this, empty_key).add_read(0);
-            // XXX opacity
-            Sto::item(this, pop_key).add_read(TransactionTid::unlocked(popversion_));
-            return -1;
+        if (heap_size_ == 0) {
+            return handle_empty_queue_pop(previous_reads.previously_read_value);
         }
         
-        lock(&poplock_);
-        if (dirtytid_ != -1 && dirtytid_ != TThread::id()) {
-            // queue is in dirty state
-            unlock(&poplock_);
+        lock(&pop_lock_);
+        if (is_queue_dirty_by_other_transaction()) {
+            unlock(&pop_lock_);
             Sto::abort();
-            return -1;
+            return EMPTY_QUEUE_VALUE;
         }
         
-        versioned_value* val = getMax();
-        // If we already read the top value, then either val = read_val or val is pushed by the current transaction
-        bool shouldBeInserted = false;
-        if (read_empty && val != NULL) shouldBeInserted = true;
-        if (read_val != NULL && read_val->read_value() == val->read_value()) { // TODO: Should we compare values or versioned_values?
-            top_item->remove_read();
-        } else if (read_val != NULL) {
-            shouldBeInserted = true;
-        }
-        auto item = Sto::item(this, val);
-        if (shouldBeInserted && !has_insert(item)) {
-                unlock(&poplock_);
-                Sto::abort();
-                return -1;
+        versioned_value* max_element = getMax();
+        if (!validate_pop_consistency(max_element, previous_reads)) {
+            unlock(&pop_lock_);
+            Sto::abort();
+            return EMPTY_QUEUE_VALUE;
         }
         
-        if (val == NULL) {
-            Sto::item(this, empty_key).add_read(0);
-            Sto::item(this, pop_key).add_read(TransactionTid::unlocked(popversion_));
-            unlock(&poplock_);
-            return -1;
-        }
-        if (dirtytid_ == -1 || val->read_value() < dirtyval_) {
-            dirtyval_ = val->read_value();
-            fence();
-        }
-        dirtytid_ = TThread::id();
-        
-        removeMax(val);
-        unlock(&poplock_);
-        
-        if (has_insert(item)) {
-            item.add_flags(delete_tag);
-        } else {
-            item.add_write(0).add_flags(delete_tag);
-            dirtycount_++;
+        if (max_element == nullptr) {
+            return handle_empty_queue_after_lock();
         }
         
+        update_dirty_state(max_element);
+        removeMax(max_element);
+        unlock(&pop_lock_);
         
-        Sto::item(this, pop_key).add_write(0);
-        return val->read_value();
+        mark_element_for_deletion(max_element);
+        Sto::item(this, POP_KEY).add_write(0);
+        return max_element->read_value();
     }
     
-    T top() {
-        if (size_ == 0) {
-            Sto::item(this, empty_key).add_read(0);
-            return -1;
+private:
+    // Structure to hold previous transaction reads
+    struct PreviousReads {
+        versioned_value* previously_read_value;
+        bool previously_read_empty;
+        TransProxy* top_item;
+    };
+    
+    // Helper to get previous transaction reads
+    PreviousReads get_previous_transaction_reads() {
+        PreviousReads reads;
+        reads.top_item = Sto::check_item(this, TOP_KEY);
+        reads.previously_read_value = nullptr;
+        
+        if (reads.top_item != nullptr && reads.top_item->has_read()) {
+            reads.previously_read_value = reads.top_item->template read_value<versioned_value*>();
         }
         
-        Sto::item(this, pop_key).add_read(TransactionTid::unlocked(popversion_));
-        acquire_fence();
-        if (size_ == 0) {
-            Sto::item(this, empty_key).add_read(0);
-            return -1;
-        }
+        auto empty_item = Sto::check_item(this, EMPTY_KEY);
+        reads.previously_read_empty = empty_item != nullptr && empty_item->has_read();
         
-        lock(&poplock_);
-        if (dirtytid_ != -1 && dirtytid_ != TThread::id()) {
-            // queue is in dirty state
-            unlock(&poplock_);
+        return reads;
+    }
+    
+    // Helper to handle pop from empty queue
+    T handle_empty_queue_pop(versioned_value* previously_read_value) {
+        if (previously_read_value != nullptr) {
             Sto::abort();
         }
-        versioned_value* val = getMax();
-        unlock(&poplock_);
-        if (val == NULL) {
-            Sto::item(this, empty_key).add_read(0);
-            return -1;
+        Sto::item(this, EMPTY_KEY).add_read(0);
+        Sto::item(this, POP_KEY).add_read(TransactionTid::unlocked(pop_version_));
+        return EMPTY_QUEUE_VALUE;
+    }
+    
+    // Helper to check if queue is dirty by another transaction
+    bool is_queue_dirty_by_other_transaction() const {
+        return dirty_thread_id_ != INVALID_THREAD_ID && dirty_thread_id_ != TThread::id();
+    }
+    
+    // Helper to validate pop consistency with previous reads
+    bool validate_pop_consistency(versioned_value* max_element, const PreviousReads& previous_reads) {
+        bool should_be_inserted = false;
+        
+        if (previous_reads.previously_read_empty && max_element != nullptr) {
+            should_be_inserted = true;
         }
-        T retval = val->read_value();
-        Sto::item(this, val).add_read(val->version());
-        Sto::item(this, top_key).add_read(val);
-        return retval;
+        
+        if (previous_reads.previously_read_value != nullptr) {
+            if (previous_reads.previously_read_value->read_value() == max_element->read_value()) {
+                // Note: Comparing values rather than versioned_values for consistency
+                previous_reads.top_item->remove_read();
+            } else {
+                should_be_inserted = true;
+            }
+        }
+        
+        if (should_be_inserted) {
+            auto transaction_item = Sto::item(this, max_element);
+            return has_insert(transaction_item);
+        }
+        
+        return true;
+    }
+    
+    // Helper to handle empty queue after acquiring lock
+    T handle_empty_queue_after_lock() {
+        Sto::item(this, EMPTY_KEY).add_read(0);
+        Sto::item(this, POP_KEY).add_read(TransactionTid::unlocked(pop_version_));
+        unlock(&pop_lock_);
+        return EMPTY_QUEUE_VALUE;
+    }
+    
+    // Helper to update dirty state when popping
+    void update_dirty_state(versioned_value* max_element) {
+        T element_value = max_element->read_value();
+        if (dirty_thread_id_ == INVALID_THREAD_ID || element_value < dirty_min_value_) {
+            dirty_min_value_ = element_value;
+            fence();
+        }
+        dirty_thread_id_ = TThread::id();
+    }
+    
+    // Helper to mark element for deletion
+    void mark_element_for_deletion(versioned_value* element) {
+        auto transaction_item = Sto::item(this, element);
+        if (has_insert(transaction_item)) {
+            transaction_item.add_flags(delete_tag);
+        } else {
+            transaction_item.add_write(0).add_flags(delete_tag);
+            dirty_operation_count_++;
+        }
+    }
+    
+public:
+    
+    T top() {
+        if (heap_size_ == 0) {
+            Sto::item(this, EMPTY_KEY).add_read(0);
+            return EMPTY_QUEUE_VALUE;
+        }
+        
+        Sto::item(this, POP_KEY).add_read(TransactionTid::unlocked(pop_version_));
+        acquire_fence();
+        
+        if (heap_size_ == 0) {
+            Sto::item(this, EMPTY_KEY).add_read(0);
+            return EMPTY_QUEUE_VALUE;
+        }
+        
+        lock(&pop_lock_);
+        if (is_queue_dirty_by_other_transaction()) {
+            unlock(&pop_lock_);
+            Sto::abort();
+        }
+        
+        versioned_value* max_element = getMax();
+        unlock(&pop_lock_);
+        
+        if (max_element == nullptr) {
+            Sto::item(this, EMPTY_KEY).add_read(0);
+            return EMPTY_QUEUE_VALUE;
+        }
+        
+        T top_value = max_element->read_value();
+        Sto::item(this, max_element).add_read(max_element->version());
+        Sto::item(this, TOP_KEY).add_read(max_element);
+        return top_value;
     }
     
     int unsafe_size() {
-        return size_; // TODO: this is not transactional yet
+        return heap_size_; // Note: this is not transactional yet
     }
     
-    void lock(versioned_value *e) {
-        lock(&e->version());
-    }
-    void unlock(versioned_value *e) {
-        unlock(&e->version());
+    void lock(versioned_value* element) {
+        lock(&element->version());
     }
     
-    bool lock(TransItem& item, Transaction& txn) override {
-        return item.key<int>() != pop_key
-            || txn.try_lock(item, popversion_);
+    void unlock(versioned_value* element) {
+        unlock(&element->version());
+    }
+    
+    bool lock(TransItem& item, Transaction& transaction) override {
+        return item.key<int>() != POP_KEY
+            || transaction.try_lock(item, pop_version_);
     }
     
     bool check(TransItem& item, Transaction&) override {
@@ -322,61 +441,85 @@ public:
     }
     
     
-    void install(TransItem& item, Transaction& t) override {
-        if (item.key<int>() == pop_key){
+    void install(TransItem& item, Transaction& transaction) override {
+        if (item.key<int>() == POP_KEY){
             if (Opacity) {
-                TransactionTid::set_version(popversion_, t.commit_tid());
+                TransactionTid::set_version(pop_version_, transaction.commit_tid());
             } else {
-                TransactionTid::inc_nonopaque_version(popversion_);
+                TransactionTid::inc_nonopaque_version(pop_version_);
             }
         } else {
-            auto e = item.key<versioned_value*>();
+            auto element = item.key<versioned_value*>();
             if (has_insert(item)) {
-                erase_inserted(&e->version());
+                erase_inserted(&element->version());
             }
         }
     }
     
     void unlock(TransItem& item) override {
-        if (item.key<int>() == pop_key)
-            unlock(&popversion_);
+        if (item.key<int>() == POP_KEY)
+            unlock(&pop_version_);
     }
 
     void cleanup(TransItem& item, bool committed) override {
-        if (committed && dirtytid_ == TThread::id()) {
-            dirtytid_ = -1;
+        if (committed && dirty_thread_id_ == TThread::id()) {
+            dirty_thread_id_ = INVALID_THREAD_ID;
         }
+        
         if (!committed) {
-            if(has_insert(item) && has_delete(item)) {
-                // Do nothing
-                return;
-            }
-            if (has_insert(item)) {
-                auto e = item.key<versioned_value*>();
-                mark_deleted(&e->version());
-                fence();
-                erase_inserted(&e->version());
-            } else if (has_delete(item)) {
-                auto e = item.key<versioned_value*>();
-                auto v = e->read_value();
-                versioned_value* val = versioned_value::make(v, TransactionTid::increment_value);
-                lock(&poplock_);
-                add(val);
-                unlock(&poplock_);
-                fence();
-                dirtycount_--;
-                if (dirtycount_ == 0) {
-                    assert(dirtytid_ == TThread::id());
-                    dirtytid_ = -1;
-                }
-            }
+            handle_transaction_abort(item);
         }
     }
     
+private:
+    // Helper to handle transaction abort cleanup
+    void handle_transaction_abort(TransItem& item) {
+        if (has_insert(item) && has_delete(item)) {
+            // Insert then delete in same transaction - no cleanup needed
+            return;
+        }
+        
+        if (has_insert(item)) {
+            cleanup_aborted_insert(item);
+        } else if (has_delete(item)) {
+            cleanup_aborted_delete(item);
+        }
+    }
+    
+    // Helper to cleanup aborted insert operation
+    void cleanup_aborted_insert(TransItem& item) {
+        auto element = item.key<versioned_value*>();
+        mark_deleted(&element->version());
+        fence();
+        erase_inserted(&element->version());
+    }
+    
+    // Helper to cleanup aborted delete operation
+    void cleanup_aborted_delete(TransItem& item) {
+        auto element = item.key<versioned_value*>();
+        auto element_value = element->read_value();
+        versioned_value* restored_element = versioned_value::make(element_value, TransactionTid::increment_value);
+        
+        lock(&pop_lock_);
+        add(restored_element);
+        unlock(&pop_lock_);
+        fence();
+        
+        dirty_operation_count_--;
+        if (dirty_operation_count_ == 0) {
+            assert(dirty_thread_id_ == TThread::id());
+            dirty_thread_id_ = INVALID_THREAD_ID;
+        }
+    }
+    
+public:
+    
     // Used for debugging
     void print() {
-        for (int i =0; i < size_; i++) {
-            std::cout << heap_[i]->read_value() << "[" << (!is_inserted(heap_[i]->version()) && !is_deleted(heap_[i]->version())) << "] ";
+        for (int index = 0; index < heap_size_; index++) {
+            versioned_value* element = heap_[index];
+            bool is_normal_state = !is_inserted(element->version()) && !is_deleted(element->version());
+            std::cout << element->read_value() << "[" << is_normal_state << "] ";
         }
         std::cout << std::endl;
     }
@@ -450,19 +593,19 @@ private:
     }
 
 
-    void swap(int i, int j) {
-        versioned_value* tmp = heap_[i];
-        heap_[i] = heap_[j];
-        heap_[j] = tmp;
+    void swap(int index1, int index2) {
+        versioned_value* temp = heap_[index1];
+        heap_[index1] = heap_[index2];
+        heap_[index2] = temp;
     }
     
-    std::vector<versioned_value *> heap_;
-    Version poplock_;
-    Version popversion_;
-    int size_;
-    int dirtyval_; // min value popped by a transaction that dirtied the queue
-    int dirtytid_; // thread id of the transaction that dirtied the queue
-    int dirtycount_; // number of pops by the transaction that dirtied the queue
+    std::vector<versioned_value*> heap_;
+    Version pop_lock_;
+    Version pop_version_;
+    int heap_size_;
+    int dirty_min_value_; // min value popped by a transaction that dirtied the queue
+    int dirty_thread_id_; // thread id of the transaction that dirtied the queue
+    int dirty_operation_count_; // number of pops by the transaction that dirtied the queue
     
     
 };
