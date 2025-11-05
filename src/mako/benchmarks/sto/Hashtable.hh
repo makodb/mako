@@ -15,22 +15,22 @@
 #define READ_MY_WRITES 1
 #endif 
 
-template <typename K, typename V, bool Opacity = true, unsigned Init_size = 129, typename W = V, typename Hash = std::hash<K>, typename Pred = std::equal_to<K>>
+template <typename KeyType, typename ValueType, bool Opacity = true, unsigned InitialSize = 129, typename WriteValueType = ValueType, typename HashFunction = std::hash<KeyType>, typename KeyPredicate = std::equal_to<KeyType>>
 #ifdef STO_NO_STM
 class Hashtable {
 #else
 class Hashtable : public TObject {
 #endif
 public:
-    typedef K Key;
-    typedef K key_type;
-    typedef V Value;
-    typedef W Value_type;
+    typedef KeyType Key;
+    typedef KeyType key_type;
+    typedef ValueType Value;
+    typedef WriteValueType Value_type;
 
     typedef typename std::conditional<Opacity, TVersion, TNonopaqueVersion>::type Version_type;
     typedef typename std::conditional<Opacity, TWrapped<Value>, TNonopaqueWrapped<Value>>::type wrapped_type;
 
-    typedef V write_value_type;
+    typedef ValueType write_value_type;
 
     static constexpr typename Version_type::type invalid_bit = TransactionTid::user_bit;
 private:
@@ -70,8 +70,8 @@ private:
   typedef std::vector<bucket_entry> MapType;
   // this is the hashtable itself, an array of bucket_entry's
   MapType map_;
-  Hash hasher_;
-  Pred pred_;
+  HashFunction hasher_;
+  KeyPredicate pred_;
 
   unsigned long long int table_id;
   bool is_remote;
@@ -85,19 +85,19 @@ private:
   static constexpr TransItem::flags_type delete_bit = TransItem::user0_bit<<1;
 
 public:
-  Hashtable(unsigned size = Init_size, Hash h = Hash(), Pred p = Pred()) : map_(), hasher_(h), pred_(p) {
+  Hashtable(unsigned size = InitialSize, HashFunction h = HashFunction(), KeyPredicate p = KeyPredicate()) : map_(), hasher_(h), pred_(p) {
     map_.resize(size);
   }
 
-  inline size_t hash(const Key& k) {
+  inline size_t hash(const Key& k) const {
     return hasher_(k);
   }
 
-  inline size_t nbuckets() {
+  inline size_t nbuckets() const {
     return map_.size();
   }
 
-  inline size_t bucket(const Key& k) {
+  inline size_t bucket(const Key& k) const {
     return hash(k) % nbuckets();
   }
 
@@ -105,39 +105,25 @@ public:
   // returns true if found false if not
   template <typename KT, typename VT>
   bool transGet(const KT& k, VT& retval) {
-    bucket_entry& buck = buck_entry(k);
-    Version_type buck_version = buck.version;
-    fence();
-    internal_elem *e = find(buck, k);
-    if (e) {
-      auto item = t_read_only_item(e);
-      if (!validity_check(item, e)) {
-        Sto::abort();
+    auto lookup = lookup_element(k);
+    
+    if (lookup.found) {
+      auto item = t_read_only_item(lookup.element);
+      if (!validate_element_access(item, lookup.element)) {
         return false;
       }
-#if READ_MY_WRITES
-      // deleted
-      if (has_delete(item)) {
-        return false;
+      
+      // Check for read-my-writes scenarios
+      if (handle_deleted_element_read(item, retval)) {
+        return item.has_write(); // true if we found a write, false if deleted
       }
-      if (item.has_write()) {
-        retval = item.template write_value<write_value_type>();
-        return true;
-      }
-#endif
-      //Version_type elem_vers;
-      // "atomic" read of both the current value and the version #
-      //atomicRead(e, elem_vers, retval);
-      // check both node changes and node deletes
-      //item.add_read(elem_vers);
-      //if (Opacity)
-      //  check_opacity(e->version);
-      retval = e->value.read(item, e->version);
+      
+      // Normal read path
+      retval = lookup.element->value.read(item, lookup.element->version);
       return true;
     } else {
-      Sto::item(this, pack_bucket(bucket(k))).observe(Version_type(buck_version.unlocked()));
-      //if (Opacity)
-      //  check_opacity(buck.version);
+      // Element not found - observe bucket version for consistency
+      Sto::item(this, pack_bucket(bucket(k))).observe(Version_type(lookup.bucket_version.unlocked()));
       return false;
     }
   }
@@ -145,54 +131,55 @@ public:
 #if HASHTABLE_DELETE
   // returns true if successful
   bool transDelete(const Key& k) {
-    bucket_entry& buck = buck_entry(k);
-    Version_type buck_version = buck.version;
-    fence();
-    internal_elem *e = find(buck, k);
-    if (e) {
-      Version_type elemvers = e->version;
+    auto lookup = lookup_element(k);
+    
+    if (lookup.found) {
+      Version_type elemvers = lookup.element->version;
       fence();
-      auto item = t_item(e);
-      bool valid = e->valid();
+      auto item = t_item(lookup.element);
+      bool valid = lookup.element->valid();
+      
 #if READ_MY_WRITES
       if (!valid && has_insert(item)) {
-        // we're deleting our own insert. special case this to just remove element and just check for no insert at commit
-        _remove(e);
-        // no way to remove an item (would be pretty inefficient)
-        // so we just unmark all attributes so the item is ignored
-        item.remove_read().remove_write().clear_flags(insert_bit | delete_bit);
-        // insert-then-delete still can only succeed if no one else inserts this node so we add a check for that
-        Sto::item(this, pack_bucket(bucket(k))).observe(Version_type(buck_version.unlocked()));
-        return true;
-      } else
+        // Special case: deleting our own insert
+        return handle_delete_own_insert(lookup.element, item, k, lookup.bucket_version);
+      }
 #endif
+      
       if (!valid) {
         Sto::abort();
         return false;
       }
-      assert(valid);
+      
 #if READ_MY_WRITES
-      // we already deleted!
       if (has_delete(item)) {
-        return false;
+        return false; // Already deleted in this transaction
       }
 #endif
-      // we need to make sure this bucket didn't change (e.g. what was once there got removed)
+      
+      // Mark for deletion
       item.observe(elemvers);
-      //if (Opacity)
-      //  check_opacity(e->version);
-      // we use delete_bit to detect deletes so we don't need any other data
-      // for deletes, just to mark it as a write
       item.add_write().add_flags(delete_bit);
       return true;
     } else {
-      // add a read that yes this element doesn't exist
-      Sto::item(this, pack_bucket(bucket(k))).observe(Version_type(buck_version.unlocked()));
-      //if (Opacity)
-      //  check_opacity(buck.version);
+      // Element doesn't exist - observe bucket for consistency
+      Sto::item(this, pack_bucket(bucket(k))).observe(Version_type(lookup.bucket_version.unlocked()));
       return false;
     }
   }
+  
+private:
+  // Helper for handling delete of own insert
+  bool handle_delete_own_insert(internal_elem* element, TransProxy& item, const Key& k, Version_type bucket_version) {
+    _remove(element);
+    // Clear all transaction item attributes
+    item.remove_read().remove_write().clear_flags(insert_bit | delete_bit);
+    // Still need to check that no one else inserts this key
+    Sto::item(this, pack_bucket(bucket(k))).observe(Version_type(bucket_version.unlocked()));
+    return true;
+  }
+  
+public:
 #endif
 
 private:
@@ -313,24 +300,28 @@ public:
     return el->version.check_version(read_version);
   }
 
-  unsigned long long int get_table_id() const override{
+  unsigned long long int get_table_id() const override {
     return table_id;
   }
 
-  const std::string& get_table_name() const { return table_name_; }
-
-  void set_table_name(const std::string& t) { table_name_ = t; }
-
-  void set_table_id(const unsigned long long int tid){
-  	table_id = tid;
+  const std::string& get_table_name() const { 
+    return table_name_; 
   }
 
-  bool get_is_remote() const override{
+  void set_table_name(const std::string& table_name) { 
+    table_name_ = table_name; 
+  }
+
+  void set_table_id(const unsigned long long int table_id) {
+    table_id = table_id;
+  }
+
+  bool get_is_remote() const override {
     return is_remote;
   }
 
-  void set_is_remote(const bool is_remote_t){
-    is_remote = is_remote_t;
+  void set_is_remote(const bool is_remote) {
+    is_remote = is_remote;
   }
 
   bool lock(TransItem& item, Transaction& txn) override {
@@ -408,37 +399,42 @@ public:
 
 #endif /* STO_NO_STM */
 
-  bool is_locked(internal_elem *el) {
-    return is_locked(el->version);
+  bool is_locked(const internal_elem *element) const {
+    return is_locked(element->version);
   }
 
-  void print_stats() {
-    int tot_count = 0;
+  void print_stats() const {
+    int total_count = 0;
     int max_chaining = 0;
     int num_empty = 0;
 
     for (unsigned i = 0; i < map_.size(); ++i) {
-      bucket_entry& buck = map_[i];
+      const bucket_entry& buck = map_[i];
       if (!buck.head) {
         num_empty++;
         continue;
       }
-      int ct = 0;
-      internal_elem * list = buck.head;
+      int chain_length = 0;
+      const internal_elem* list = buck.head;
       while (list) {
-        ct++;
-        tot_count++;
+        chain_length++;
+        total_count++;
         list = list->next;
       }
 
-      if (ct > max_chaining) max_chaining = ct;
+      if (chain_length > max_chaining) {
+        max_chaining = chain_length;
+      }
     }
 
-    printf("Total count: %d, Empty buckets: %d, Avg chaining: %f, Max chaining: %d\n", tot_count, num_empty, ((double)(tot_count))/(map_.size() - num_empty), max_chaining);
+    double avg_chaining = (map_.size() - num_empty) > 0 ? 
+                         static_cast<double>(total_count) / (map_.size() - num_empty) : 0.0;
+    printf("Total count: %d, Empty buckets: %d, Avg chaining: %f, Max chaining: %d\n", 
+           total_count, num_empty, avg_chaining, max_chaining);
   }
 
     void print(std::ostream& w, const TransItem& item) const override {
-        w << "{Hashtable<" << typeid(K).name() << "," << typeid(V).name() << "> " << (void*) this;
+        w << "{Hashtable<" << typeid(KeyType).name() << "," << typeid(ValueType).name() << "> " << (void*) this;
         if (is_bucket(item)) {
             w << ".b[" << bucket_key(item) << "]";
             if (item.has_read())
@@ -454,16 +450,17 @@ public:
         w << "}";
     }
 
-  void print() {
+  void print() const {
     printf("Hashtable:\n");
     for (unsigned i = 0; i < map_.size(); ++i) {
-      bucket_entry& buck = map_[i];
+      const bucket_entry& buck = map_[i];
       if (!buck.head)
         continue;
       printf("bucket %d (version %d): ", i, buck.version);
-      internal_elem *list = buck.head;
+      const internal_elem* list = buck.head;
       while (list) {
-        printf("key: %d, val: %d, version: %d, valid: %d ; ", list->key, list->value, list->version, list->valid());
+        printf("key: %d, val: %d, version: %d, valid: %d ; ", 
+               list->key, list->value, list->version, list->valid());
         list = list->next;
       }
       printf("\n");
@@ -686,14 +683,72 @@ public:
   bool nontrans_remove(const Key& k, Value& oldval) { if (read(k,oldval)) return remove(k); else return false; }
 
 private:
+  // Helper functions for common transactional patterns
+  
+  // Common pattern: get bucket and check for element existence
+  struct ElementLookupResult {
+    bucket_entry* bucket;
+    internal_elem* element;
+    Version_type bucket_version;
+    bool found;
+    
+    ElementLookupResult(bucket_entry* b, internal_elem* e, Version_type bv) 
+      : bucket(b), element(e), bucket_version(bv), found(e != nullptr) {}
+  };
+  
+  ElementLookupResult lookup_element(const Key& k) {
+    bucket_entry& buck = buck_entry(k);
+    Version_type buck_version = buck.version;
+    fence();
+    internal_elem* e = find(buck, k);
+    return ElementLookupResult(&buck, e, buck_version);
+  }
+  
+  // Common pattern: validate element and check for transaction conflicts
+  bool validate_element_access(TransProxy& item, internal_elem* element) const {
+    if (!validity_check(item, element)) {
+      Sto::abort();
+      return false;
+    }
+    return true;
+  }
+  
+  // Common pattern: handle read-my-writes for deleted elements
+  template<typename ReturnType>
+  bool handle_deleted_element_read(const TransProxy& item, ReturnType& retval) const {
+#if READ_MY_WRITES
+    if (has_delete(item)) {
+      return false; // Element was deleted in this transaction
+    }
+    if (item.has_write()) {
+      retval = item.template write_value<write_value_type>();
+      return true;
+    }
+#endif
+    return false; // Continue with normal read path
+  }
+
   bucket_entry& buck_entry(const Key& k) {
+    return map_[bucket(k)];
+  }
+  
+  const bucket_entry& buck_entry(const Key& k) const {
     return map_[bucket(k)];
   }
 
   // looks up a key's internal_elem, given its bucket
   internal_elem* find(bucket_entry& buck, const Key& k) {
-    internal_elem *list = buck.head;
-    while (list && ! pred_(list->key, k)) {
+    internal_elem* list = buck.head;
+    while (list && !pred_(list->key, k)) {
+      list = list->next;
+    }
+    return list;
+  }
+  
+  // const version of find
+  const internal_elem* find(const bucket_entry& buck, const Key& k) const {
+    const internal_elem* list = buck.head;
+    while (list && !pred_(list->key, k)) {
       list = list->next;
     }
     return list;
@@ -703,17 +758,22 @@ private:
   internal_elem* elem(const Key& k) {
     return find(buck_entry(k), k);
   }
-
-  bool has_delete(const TransItem& item) {
-      return item.flags() & delete_bit;
+  
+  // const version of elem
+  const internal_elem* elem(const Key& k) const {
+    return find(buck_entry(k), k);
   }
 
-  bool has_insert(const TransItem& item) {
-      return item.flags() & insert_bit;
+  bool has_delete(const TransItem& item) const {
+    return item.flags() & delete_bit;
   }
 
-  bool validity_check(const TransItem& item, internal_elem *e) {
-    return has_insert(item) || e->valid();
+  bool has_insert(const TransItem& item) const {
+    return item.flags() & insert_bit;
+  }
+
+  bool validity_check(const TransItem& item, const internal_elem* element) const {
+    return has_insert(item) || element->valid();
   }
 
 #if 0
@@ -726,39 +786,43 @@ private:
 #endif
 
   static bool is_bucket(const TransItem& item) {
-      return is_bucket(item.key<void*>());
+    return is_bucket(item.key<void*>());
   }
+  
   static bool is_bucket(void* key) {
-      return (uintptr_t)key & bucket_bit;
+    return (uintptr_t)key & bucket_bit;
   }
+  
   static unsigned bucket_key(const TransItem& item) {
-      assert(is_bucket(item));
-      return (uintptr_t) item.key<void*>() >> 1;
+    assert(is_bucket(item));
+    return (uintptr_t)item.key<void*>() >> 1;
   }
-  void* pack_bucket(unsigned bucket) {
-      return (void*) ((bucket << 1) | bucket_bit);
-  }
-
-  static bool is_locked(Version_type &v) {
-    return v.is_locked();
-  }
-  static void lock(Version_type& v) {
-    v.lock();
-  }
-  static void unlock(Version_type& v) {
-    v.unlock();
+  
+  void* pack_bucket(unsigned bucket_index) const {
+    return (void*)((bucket_index << 1) | bucket_bit);
   }
 
-  template <bool markValid>
-  void insert_locked(bucket_entry& buck, const Key& k, const Value& val) {
-    assert(is_locked(buck.version));
-    auto new_head = new internal_elem(k, val, markValid);
-    internal_elem *cur_head = buck.head;
-    new_head->next = cur_head;
-    buck.head = new_head;
-    // TODO(nate): this means we'll always have to do a hard opacity check on 
-    // the bucket version (but I don't think we can get a commit tid yet).
-    buck.version.inc_nonopaque_version();
+  static bool is_locked(const Version_type& version) {
+    return version.is_locked();
+  }
+  
+  static void lock(Version_type& version) {
+    version.lock();
+  }
+  
+  static void unlock(Version_type& version) {
+    version.unlock();
+  }
+
+  template <bool MarkValid>
+  void insert_locked(bucket_entry& bucket, const Key& key, const Value& value) {
+    assert(is_locked(bucket.version));
+    auto new_element = new internal_elem(key, value, MarkValid);
+    internal_elem* current_head = bucket.head;
+    new_element->next = current_head;
+    bucket.head = new_element;
+    // Update bucket version to reflect the insertion
+    bucket.version.inc_nonopaque_version();
   }
 
 #if 0
@@ -777,15 +841,15 @@ private:
   }
 #endif
 
-  TransProxy t_item(internal_elem* e) {
-    return Sto::item(this, e);
+  TransProxy t_item(internal_elem* element) {
+    return Sto::item(this, element);
   }
 
-  TransProxy t_read_only_item(internal_elem* e) {
+  TransProxy t_read_only_item(internal_elem* element) {
 #if READ_MY_WRITES
-    return Sto::read_item(this, e);
+    return Sto::read_item(this, element);
 #else
-    return Sto::fresh_item(this, e);
+    return Sto::fresh_item(this, element);
 #endif
   }
 };
