@@ -971,13 +971,15 @@ public:
     //txn_epoch_sync<Transaction>::finish();
   }
 
-  // for the helper thread, loader == true, source == 1
+  // Initialize thread-local state for worker or loader threads
+  // Parameters: loader=true for data loading threads, source=1 for helper threads
+  // Note: ShardClient allocated here is NOT explicitly freed - relies on thread termination cleanup
   void
   thread_init(bool loader, int source)
   {
-    static int tidcounter = 0;
-    static int partition_id = 0; // to distinguish different worker thread
-    TThread::set_id(__sync_fetch_and_add(&tidcounter, 1));
+    static int thread_id_counter = 0;
+    static int worker_partition_id = 0; // Partition ID for worker threads
+    TThread::set_id(__sync_fetch_and_add(&thread_id_counter, 1));
     TThread::set_mode(0); // checking in-progress
     TThread::set_num_eprc_server(BenchmarkConfig::getInstance().getNumErpcServer());
     TThread::set_is_micro(BenchmarkConfig::getInstance().getIsMicro());
@@ -1004,7 +1006,8 @@ public:
     TThread::isRemoteShard = false;
     TThread::skipBeforeRemotePayment = 0;
     if(!loader) {
-      size_t old = __sync_fetch_and_add(&partition_id, 1);
+      // Worker thread: assign unique partition ID and create ShardClient for cross-shard communication
+      size_t old = __sync_fetch_and_add(&worker_partition_id, 1);
       TThread::set_pid (old);
 
       TThread::sclient = new mako::ShardClient(BenchmarkConfig::getInstance().getConfig()->configFile,
@@ -1013,14 +1016,14 @@ public:
                                                  old);
       //Notice("ParID[worker-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     } else {
+      // Loader thread: partition ID based on warehouse assignment
       TThread::set_pid(TThread::id()%BenchmarkConfig::getInstance().getConfig()->warehouses);
       //Notice("ParID[load-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     }
     
+    // First thread initializes global Masstree state and epoch advancer thread
     if (TThread::id() == 0) {
-      // someone has to do this (they don't provide us with a general init callback)
       mbta_ordered_index::mbta_type::static_init();
-      // need this too
       pthread_t advancer;
       pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
       pthread_detach(advancer);
@@ -1040,6 +1043,7 @@ public:
     return sizeof(Transaction);
   }
 
+  // Thread-local arena for string allocations - set per transaction in new_txn()
   static __thread str_arena *thr_arena;
   void *new_txn(
                 uint64_t txn_flags,

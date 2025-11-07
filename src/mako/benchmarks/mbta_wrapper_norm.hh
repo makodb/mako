@@ -1,3 +1,4 @@
+// Normalized variant of mbta_wrapper - simplified version without some optimizations
 #pragma once
 #include <atomic>
 #include "abstract_db.h"

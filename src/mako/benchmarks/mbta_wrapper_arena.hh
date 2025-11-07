@@ -1,3 +1,4 @@
+// Arena-based memory allocation variant of mbta_wrapper - uses custom arena allocator
 #pragma once
 
 #include "abstract_db.h"

@@ -46,7 +46,10 @@ public:
   typedef typename Box::version_type Version;
   typedef typename std::conditional<Opacity, TVersion, TNonopaqueVersion>::type tversion_type;
 
+  // Thread-local threadinfo for Masstree operations
+  // Lifecycle: Initialized in thread_init(), managed by Masstree RCU
   static __thread threadinfo_type mythreadinfo;
+  
   unsigned long long int table_id;
   bool is_remote;
   std::string table_name_;
@@ -100,6 +103,8 @@ public:
     is_remote = is_remote_t;
   }
 
+  // Initialize thread-local Masstree threadinfo and register RCU callbacks
+  // Must be called once per thread before any Masstree operations
   static void thread_init() {
 #if !RCU
     mythreadinfo.ti = new threadinfo;
@@ -109,9 +114,10 @@ public:
       auto* ti = threadinfo::make(threadinfo::TI_PROCESS, TThread::id());
       mythreadinfo.ti = ti;
     }
-    if (MAX_THREADS<=TThread::id()) {
-      Panic("the id is so large, %d-%d", MAX_THREADS, TThread::id());
+    if (MAX_THREADS <= TThread::id()) {
+      Panic("Thread ID %d exceeds MAX_THREADS %d", TThread::id(), MAX_THREADS);
     }
+    // Register RCU callbacks for transaction lifecycle
     Transaction::tinfo[TThread::id()].trans_start_callback = [] () {
       mythreadinfo.ti->rcu_start();
     };

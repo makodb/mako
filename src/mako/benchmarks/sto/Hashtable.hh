@@ -320,8 +320,8 @@ public:
     return is_remote;
   }
 
-  void set_is_remote(const bool is_remote) {
-    is_remote = is_remote;
+  void set_is_remote(const bool is_remote_param) {
+    this->is_remote = is_remote_param;
   }
 
   bool lock(TransItem& item, Transaction& txn) override {

@@ -228,7 +228,9 @@ void Transaction::unlock_writeset_items(unsigned* writeset, unsigned nwriteset) 
     for (unsigned* idxit = writeset + nwriteset; idxit != writeset; ) {
         --idxit;
         TransItem* item = get_transitem_at_index(*idxit);
-        if (item->needs_unlock())
+        bool is_remote = item->owner()->get_is_remote();
+        // Only unlock local items - remote items are unlocked via remote RPC
+        if (!is_remote && item->needs_unlock())
             item->owner()->unlock(*item);
     }
 }
@@ -481,7 +483,9 @@ Transaction::CommitPhaseResult Transaction::execute_commit_phase1(unsigned* writ
         if (current_item->has_write()) {
             writeset[nwriteset++] = transaction_index;
             
-            if (!process_write_item_locking(current_item, nwriteset)) {
+            // Only lock local items - remote items are already locked via remoteBatchLock
+            bool is_remote_operation = current_item->owner()->get_is_remote();
+            if (!is_remote_operation && !process_write_item_locking(current_item, nwriteset)) {
                 mark_abort_because(current_item, "write item locking failed");
                 return CommitPhaseResult::ABORT;
             }
@@ -617,12 +621,15 @@ bool Transaction::install_write_operations(unsigned* writeset, unsigned nwritese
         __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, timestamp_delta);
     }
 
-    // Install all write operations
+    // Install all write operations (local items only - remote items installed via remoteInstall)
     for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
         TransItem* write_item = get_transitem_at_index(*idxit);
+        bool is_remote = write_item->owner()->get_is_remote();
         
-        TXP_INCREMENT(txp_total_w);
-        write_item->owner()->install(*write_item, *this);
+        if (!is_remote) {
+            TXP_INCREMENT(txp_total_w);
+            write_item->owner()->install(*write_item, *this);
+        }
     }
 
     // Handle remote installation if needed
