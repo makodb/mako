@@ -30,8 +30,8 @@ nohup ./build/simpleTransactionRep 2 1 $trd localhost 0 > simple-shard1-localhos
 SHARD1_PID=$!
 
 # Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 30
+echo "Running experiments"
+sleep 20
 
 # Kill the processes
 echo "Stopping shards..."

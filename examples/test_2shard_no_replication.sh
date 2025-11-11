@@ -33,8 +33,8 @@ nohup bash bash/shard.sh 2 1 $trd localhost > ${log_prefix}_shard1-$trd.log 2>&1
 SHARD1_PID=$!
 
 # Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 50
+echo "Running experiments for 15 seconds..."
+sleep 35
 
 # Kill the processes
 echo "Stopping shards..."

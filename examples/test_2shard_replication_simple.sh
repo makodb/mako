@@ -46,8 +46,8 @@ nohup ./build/simpleTransactionRep 2 1 $trd p1 1  > simple-shard1-p1.log 2>&1 &
 PID_S1_P1=$!
 
 # Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 60
+echo "Running experiments"
+sleep 30
 
 # Kill ALL processes from both shards
 echo "Stopping shards..."
