@@ -3,6 +3,15 @@
 
 set -e  # Exit on error
 
+# Minimal optional flag: --runtime <seconds>
+if [[ "${1:-}" == "--runtime" ]]; then
+    export CI_RUNTIME_SEC="${2:-}"
+    shift 2
+elif [[ "${1:-}" == --runtime=* ]]; then
+    export CI_RUNTIME_SEC="${1#*=}"
+    shift 1
+fi
+
 # Function to check for hanging processes after a test
 check_for_hanging_processes() {
     local test_name="$1"

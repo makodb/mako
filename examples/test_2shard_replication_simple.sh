@@ -47,7 +47,11 @@ PID_S1_P1=$!
 
 # Wait for experiments to run
 echo "Running experiments"
-sleep 30
+if [ -n "${CI_RUNTIME_SEC}" ]; then
+    sleep $((CI_RUNTIME_SEC + 15))
+else
+    sleep 30
+fi
 
 # Kill ALL processes from both shards
 echo "Stopping shards..."

@@ -54,8 +54,13 @@ nohup bash bash/shard.sh 2 1 $trd p1 0 1 > ${log_prefix}_shard1-p1.log 2>&1 &
 SHARD1_P1_PID=$!
 
 # Wait for experiments to run
-echo "Running experiments for 15 seconds..."
-sleep 45
+if [ -n "${CI_RUNTIME_SEC}" ]; then
+    echo "Running experiments for ${CI_RUNTIME_SEC} seconds..."
+    sleep $((CI_RUNTIME_SEC + 30))
+else
+    echo "Running experiments for 15 seconds..."
+    sleep 45
+fi
 
 # Kill the processes - FORCE KILL ALL
 echo "Stopping shards..."
