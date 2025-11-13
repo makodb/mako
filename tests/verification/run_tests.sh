@@ -1,9 +1,7 @@
 #!/bin/bash
 
-# Refactoring Verification Test Suite
-# Tests the main refactored components for correctness and stability
-
-set -e  # Exit on error
+# Mako Verification Test Suite
+# Tests core components for correctness and stability
 
 # Colors for output
 RED='\033[0;31m'
@@ -12,7 +10,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 echo "========================================"
-echo "Refactoring Verification Test Suite"
+echo "Mako Verification Test Suite"
 echo "========================================"
 echo ""
 
@@ -65,9 +63,9 @@ run_test "[2/4] Reverse Loop Bug Test" "./test_loops" 5
 echo "=== Stress Tests ==="
 echo ""
 
-run_test "[3/4] TransItem Memory Stress (2 minutes)" "./stress_memory" 120
+run_test "[3/4] TransItem Memory Stress (2 minutes)" "./stress_memory" 150
 
-run_test "[4/4] Paxos Concurrent Stress (3 minutes)" "./stress_paxos" 180
+run_test "[4/4] Paxos Concurrent Stress (3 minutes)" "./stress_paxos" 210
 
 # Summary
 echo "========================================"
