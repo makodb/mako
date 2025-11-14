@@ -61,6 +61,7 @@ static void __attribute__((used)) check_static_assertions() {
     static_assert(sizeof(threadinfo_t) % 128 == 0, "threadinfo is 2-cache-line aligned");
 }
 
+// @safe
 void Transaction::initialize() {
     static_assert(tset_initial_capacity % tset_chunk == 0, "tset_initial_capacity not an even multiple of tset_chunk");
     hash_base_ = 32768;
@@ -81,6 +82,7 @@ Transaction::~Transaction() {
             delete[] tset_[i];
 }
 
+// @safe
 void Transaction::refresh_tset_chunk() {
     assert(tset_size_ % tset_chunk == 0);
     assert(tset_size_ < tset_max_capacity);
@@ -116,6 +118,7 @@ void* Transaction::epoch_advancer(void*) {
     return NULL;
 }
 
+// @safe
 bool Transaction::preceding_duplicate_read(TransItem* needle) const {
     const TransItem* it = nullptr;
     for (unsigned tidx = 0; ; ++tidx) {
@@ -255,6 +258,7 @@ after_unlock:
     state_ = s_aborted + committed;
 }
 
+// @safe
 bool Transaction::shard_try_lock_last_writeset() {
     assert(TThread::id() == threadid_);
 
@@ -276,6 +280,7 @@ bool Transaction::shard_try_lock_last_writeset() {
     return true;
 }
 
+// @safe
 int Transaction::shard_validate() {
     //print_stats();
     assert(TThread::id() == threadid_);
@@ -296,6 +301,7 @@ int Transaction::shard_validate() {
     return 0;
 }
 
+// @unsafe: calls unsafe serialize_util function
 void Transaction::shard_serialize_util(uint32_t timestamp) {
     if (!BenchmarkConfig::getInstance().getIsReplicated()) {return ;}
     #if defined(SIMPLE_WORKLOAD)
@@ -306,8 +312,9 @@ void Transaction::shard_serialize_util(uint32_t timestamp) {
     serialize_util(1 /* anything > 0 */, true, MAX_ARRAY_SIZE_IN_BYTES_SMALL, small_batch_num, timestamp);
 }
 
+// @safe
 uint8_t Transaction::get_current_term() const {
-    if(callback_){
+    if(callback_ != nullptr){
         if(!current_term_)
             current_term_ = callback_();
     }else{
@@ -617,6 +624,7 @@ abort:
 }
 
 // serialize transactions into log and then sent it out via Paxos
+// @unsafe: performs low-level memory operations with memcpy and raw pointers
 inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int max_bytes_size, int batch_size, uint32_t timestamp) const {
     if (nwriteset == 0) return;
 

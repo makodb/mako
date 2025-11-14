@@ -477,6 +477,7 @@ namespace mako
         return static_cast<size_t>(ms * 1000 * 1000 * freq_ghz);
     }
 
+    // @safe
     static uint64_t getCurrentTimeMillis() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();

@@ -753,7 +753,9 @@ public:
         (void) item, (void) committed;
     }
     virtual void print(std::ostream& w, const TransItem& item) const;
+    // @safe
     virtual unsigned long long int get_table_id() const;
+    // @safe
     virtual bool get_is_remote() const;
 };
 

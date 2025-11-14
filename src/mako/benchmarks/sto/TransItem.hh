@@ -43,28 +43,36 @@ class TransItem {
         return reinterpret_cast<TObject*>(s_ & pointer_mask);
     }
 
+    // @safe
     bool has_write() const {
         return flags() & write_bit;
     }
+    // @safe
     bool has_read() const {
         return flags() & read_bit;
     }
+    // @safe
     bool has_predicate() const {
         return flags() & predicate_bit;
     }
+    // @safe
     bool has_stash() const {
         return flags() & stash_bit;
     }
+    // @safe
     bool needs_unlock() const {
         return flags() & lock_bit;
     }
+    // @safe
     bool same_item(const TransItem& x) const {
         return !((s_ ^ x.s_) & owner_mask) && key_ == x.key_;
     }
+    // @safe
     bool has_flag(flags_type f) const {
         return flags() & f;
     }
 
+    // @safe
     template <typename T>
     const T& key() const {
         return Packer<T>::unpack(key_);
@@ -196,9 +204,11 @@ private:
     void* wdata_;
     std::string extra;
 
+    // @safe
     void __rm_flags(flags_type flags) {
         s_ = s_ & ~flags;
     }
+    // @safe
     void __or_flags(flags_type flags) {
         s_ = s_ | flags;
     }

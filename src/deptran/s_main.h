@@ -17,19 +17,32 @@ void register_for_follower_par_id(std::function<void(const char*&, int, int)>, u
 void register_for_follower_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>, 
                                          uint32_t);
 void register_for_leader(std::function<void(const char*, int)>, uint32_t);
+// @safe
 void register_leader_election_callback(std::function<void(int)>);
+// @safe
 void register_for_leader_par_id(std::function<void(const char*&, int, int)>, uint32_t);
+// @safe
 void register_for_leader_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>, 
                                        uint32_t);
+// @safe
 void submit(const char*, int, uint32_t);
+// @safe
 void add_log(const char*, int, uint32_t);
+// @safe
 void add_log_without_queue(const char*, int, uint32_t);
+// @safe
 void add_log_to_nc(const char*, int, uint32_t, int = 0);
+// @safe
 void wait_for_submit(uint32_t);
+// @safe
 void microbench_paxos_queue();
+// @safe
 void pre_shutdown_step();
+// @safe
 int get_epoch();
+// @safe
 void set_epoch(int = -1);
+// @safe
 void upgrade_p1_to_leader();
 
 // auxiliary functions

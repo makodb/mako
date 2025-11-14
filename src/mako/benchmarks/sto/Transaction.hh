@@ -166,6 +166,7 @@ class StringAllocator{
 //   static void setSTOBatchSize(size_t k){
 //     kSizeLimit = k;
 //   }
+  // @safe
   bool checkPushRequired(){
     if (curr_pos + 1 > max_bytes_size)
         Warning("checkPushRequired: buffer[%d/%d] is not enough!!!!, entries: %d, batch_size: %d", curr_pos, max_bytes_size, entries, batch_size);
@@ -179,16 +180,19 @@ class StringAllocator{
 	  return LOG+curr_pos-size;
     }
   }
+  // @safe
   unsigned char * getLogOnly(size_t& pos){
     pos = curr_pos;
 	return LOG;
   }
 
+  // @safe
   void resetMemory(){
     curr_pos = 0;
     entries = 0;
     latest_commit_timestamp = 0;
   }
+  // @safe
   bool checkLimits(size_t newLogLen){
   	return (curr_pos + newLogLen) < max_bytes_size;
   }
@@ -203,15 +207,18 @@ class StringAllocator{
 	entries++;
   }*/
 
+  // @safe
   inline void update_ptr(const size_t& w){
     entries++;
     curr_pos=w;
   }
 
+  // @safe
   size_t get_max_bytes_size() {
     return max_bytes_size;
   }
 
+  // @safe
   inline void update_commit_id(const uint32_t cid) {
     // Single timestamp system: just track the maximum timestamp
     latest_commit_timestamp = std::max(latest_commit_timestamp, cid);
