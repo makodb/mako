@@ -671,6 +671,10 @@ target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
+# Enable borrow checking for mako library
+# if(ENABLE_BORROW_CHECKING)
+#     add_borrow_check_target(mako)
+# endif()
 
 # ------------------------------------- build apps -----------------------------------------------
 

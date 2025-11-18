@@ -127,10 +127,15 @@ class BenchmarkConfig {
       int getRetryAbortedTransaction() const { return retry_aborted_transaction_; }
       int getNoResetCounters() const { return no_reset_counters_; }
       int getBackoffAbortedTransaction() const { return backoff_aborted_transaction_; }
+      // @safe
       int getUseHashtable() const { return use_hashtable_; }
+      // @safe
       int getIsMicro() const { return is_micro_; }
+      // @safe
       int getIsReplicated() const { return is_replicated_; }
+      // @safe
       std::string getPaxosProcName() const { return paxos_proc_name_; }
+      // @safe
       int getLeaderConfig() const { return paxos_proc_name_==mako::LOCALHOST_CENTER; }
       const std::vector<std::string>& getPaxosConfigFile() const { return paxos_config_file_; }
       

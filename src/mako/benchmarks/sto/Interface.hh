@@ -752,6 +752,7 @@ public:
     virtual void cleanup(TransItem& item, bool committed) {
         (void) item, (void) committed;
     }
+    // @unsafe: uses TransItem template methods
     virtual void print(std::ostream& w, const TransItem& item) const;
     // @safe
     virtual unsigned long long int get_table_id() const;

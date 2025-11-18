@@ -39,6 +39,7 @@ class TransItem {
         : s_(reinterpret_cast<ownerstore_type>(owner)), key_(k) {
     }
 
+    // @unsafe: uses reinterpret_cast
     TObject* owner() const {
         return reinterpret_cast<TObject*>(s_ & pointer_mask);
     }

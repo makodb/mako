@@ -11,6 +11,7 @@ thread_local void *buf = NULL;
 thread_local string obj_k;
 thread_local string obj_v;
 
+// @unsafe: uses memcpy and reinterpret_cast with raw pointers
 void keystore_encode3_v2(std::string& s, uint32_t x) {
     assert(s.length()>mako::EXTRA_BITS_FOR_VALUE);
     memcpy ((void *)(s.data() + s.length() - mako::EXTRA_BITS_FOR_VALUE), &x, mako::BITS_OF_TT);
@@ -19,12 +20,14 @@ void keystore_encode3_v2(std::string& s, uint32_t x) {
     header->data_size = 0;
 }
 
+// @unsafe: uses memcpy with raw pointers
 inline uint32_t keystore_decode3_v2(const std::string& s){
     uint32_t cid=0;
     memcpy (&cid, (void *) (s.data () + s.length() - mako::EXTRA_BITS_FOR_VALUE), mako::BITS_OF_TT);
     return cid;
 }
 
+// @unsafe: calls unsafe keystore_decode3_v2
 bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
 {
     uint32_t commit_id_new = keystore_decode3_v2(newValue);
@@ -33,6 +36,7 @@ bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
     return (commit_id_new%10 > commit_id_old%10) || (commit_id_new/10 > commit_id_old/10);
 }
 
+// @unsafe: uses reinterpret_cast and memcpy with raw pointers
 size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                                                  uint32_t cid,  /* timestamp on current shard */
                                                  unsigned short int count,
