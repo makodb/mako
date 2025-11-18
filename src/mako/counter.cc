@@ -22,7 +22,7 @@ event_ctx::event_counters_lock()
   return s_lock;
 }
 
-// @safe
+// @unsafe: uses std::max
 void
 event_ctx::stat(counter_data &d)
 {

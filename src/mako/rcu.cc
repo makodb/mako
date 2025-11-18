@@ -398,9 +398,9 @@ rcu_stress_test()
   cerr << "rcu stress test completed" << endl;
 }
 
-// @safe
+// @unsafe: calls unsafe rcu_stress_test
 void
 rcu::Test()
 {
-  rcu_stress_test(); // @safe: rcu_stress_test is safe (declared in rcu.h)
+  rcu_stress_test();
 }
