@@ -11,6 +11,9 @@
 #include "static_vector.h"
 #include "counter.h"
 
+// @safe
+extern "C" char* getenv(const char* name);
+
 using namespace util;
 
 static event_counter evt_allocator_total_region_usage(
@@ -19,6 +22,7 @@ static event_counter evt_allocator_total_region_usage(
 // page+alloc routines taken from masstree
 
 #ifdef MEMCHECK_MAGIC
+// @unsafe: uses pointer arithmetic and casts
 const allocator::pgmetadata *
 allocator::PointerToPgMetadata(const void *p)
 {
@@ -38,6 +42,7 @@ allocator::PointerToPgMetadata(const void *p)
 }
 #endif
 
+// @unsafe: uses fopen, getline, and raw pointers
 size_t
 allocator::GetHugepageSizeImpl()
 {
@@ -59,21 +64,24 @@ allocator::GetHugepageSizeImpl()
   return size;
 }
 
+// @safe
 size_t
 allocator::GetPageSizeImpl()
 {
   return sysconf(_SC_PAGESIZE);
 }
 
+// @safe
 bool
 allocator::UseMAdvWillNeed()
 {
-  static const char *px = getenv("DISABLE_MADV_WILLNEED");
+  static const char *px = getenv("DISABLE_MADV_WILLNEED"); // @safe: getenv is safe
   static const std::string s = px ? to_lower(px) : "";
   static const bool use_madv = !(s == "1" || s == "true");
   return use_madv;
 }
 
+// @unsafe: uses mmap and numa operations
 void
 allocator::Initialize(size_t ncpus, size_t maxpercore)
 {
@@ -137,6 +145,7 @@ allocator::Initialize(size_t ncpus, size_t maxpercore)
   s_init = true;
 }
 
+// @safe
 void
 allocator::DumpStats()
 {
@@ -151,6 +160,7 @@ allocator::DumpStats()
   }
 }
 
+// @unsafe: uses raw pointer arithmetic and casts
 static void *
 initialize_page(void *page, const size_t pagesize, const size_t unit)
 {
@@ -187,6 +197,7 @@ initialize_page(void *page, const size_t pagesize, const size_t unit)
   return first;
 }
 
+// @unsafe: calls unsafe initialize_page
 void *
 allocator::AllocateArenas(size_t cpu, size_t arena)
 {
@@ -210,6 +221,7 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   return initialize_page(mypx, hugepgsize, (arena + 1) * AllocAlignment);
 }
 
+// @unsafe: calls unsafe AllocateUnmanagedWithLock
 void *
 allocator::AllocateUnmanaged(size_t cpu, size_t nhugepgs)
 {
@@ -218,6 +230,7 @@ allocator::AllocateUnmanaged(size_t cpu, size_t nhugepgs)
   return AllocateUnmanagedWithLock(pc, nhugepgs); // releases lock
 }
 
+// @unsafe: uses mmap and raw pointer operations
 void *
 allocator::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs)
 {
@@ -263,6 +276,7 @@ allocator::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs)
   return mypx;
 }
 
+// @unsafe: uses reinterpret_cast with raw pointers
 void
 allocator::ReleaseArenas(void **arenas)
 {
@@ -307,6 +321,7 @@ allocator::ReleaseArenas(void **arenas)
   }
 }
 
+// @unsafe: uses numa operations
 static void
 numa_hint_memory_placement(void *px, size_t sz, unsigned node)
 {
@@ -316,6 +331,7 @@ numa_hint_memory_placement(void *px, size_t sz, unsigned node)
   numa_free_nodemask(bm);
 }
 
+// @unsafe: uses mmap and numa operations
 void
 allocator::FaultRegion(size_t cpu)
 {

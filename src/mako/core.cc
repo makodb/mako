@@ -4,9 +4,13 @@
 #include "core.h"
 #include "util.h"
 
+// @safe
+extern "C" long sysconf(int name);
+
 using namespace std;
 using namespace util;
 
+// @unsafe: uses atomic operations and goto
 int
 coreid::allocate_contiguous_aligned_block(unsigned n, unsigned alignment)
 {
@@ -23,6 +27,7 @@ retry:
   return rounded;
 }
 
+// @safe
 unsigned
 coreid::num_cpus_online()
 {

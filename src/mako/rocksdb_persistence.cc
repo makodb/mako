@@ -7,19 +7,35 @@
 #include <rocksdb/write_batch.h>
 #include "../deptran/s_main.h"
 
+// @safe
+template<typename T>
+class lock_guard;
+
+// @safe
+template<typename T>
+bool operator==(const T& a, const T& b);
+
+// @safe
+template<typename T>
+bool operator!=(const T& a, const T& b);
+
 namespace mako {
 
+// @safe
 RocksDBPersistence::RocksDBPersistence() {}
 
+// @safe
 RocksDBPersistence::~RocksDBPersistence() {
     shutdown();
 }
 
+// @safe
 RocksDBPersistence& RocksDBPersistence::getInstance() {
     static RocksDBPersistence instance;
     return instance;
 }
 
+// @unsafe: uses file I/O and threading
 bool RocksDBPersistence::initialize(const std::string& db_path, size_t num_partitions, size_t num_threads,
                                     uint32_t shard_id, uint32_t num_shards) {
     if (initialized_) {
@@ -104,6 +120,7 @@ bool RocksDBPersistence::initialize(const std::string& db_path, size_t num_parti
     return true;
 }
 
+// @unsafe: uses threading and file I/O
 void RocksDBPersistence::shutdown() {
     if (!initialized_) {
         return;
@@ -152,6 +169,7 @@ void RocksDBPersistence::shutdown() {
     initialized_ = false;
 }
 
+// @safe
 std::string RocksDBPersistence::generateKey(uint32_t shard_id, uint32_t partition_id,
                                            uint32_t epoch, uint64_t seq_num) {
     std::stringstream ss;
@@ -163,10 +181,12 @@ std::string RocksDBPersistence::generateKey(uint32_t shard_id, uint32_t partitio
     return ss.str();
 }
 
+// @safe
 uint32_t RocksDBPersistence::getCurrentEpoch() const {
     return current_epoch_.load();
 }
 
+// @unsafe: uses file I/O
 void RocksDBPersistence::setEpoch(uint32_t epoch) {
     uint32_t old_epoch = current_epoch_.exchange(epoch);
     if (old_epoch != epoch && initialized_) {
@@ -176,6 +196,7 @@ void RocksDBPersistence::setEpoch(uint32_t epoch) {
     }
 }
 
+// @unsafe: uses file I/O
 bool RocksDBPersistence::writeMetadata(uint32_t shard_id, uint32_t num_shards) {
     if (!initialized_ || partition_dbs_.empty()) {
         return false;
@@ -212,6 +233,7 @@ bool RocksDBPersistence::writeMetadata(uint32_t shard_id, uint32_t num_shards) {
     }
 }
 
+// @unsafe: uses lock_guard
 uint64_t RocksDBPersistence::getNextSequenceNumber(uint32_t partition_id) {
     std::lock_guard<std::mutex> lock(seq_mutex_);
     auto it = sequence_numbers_.find(partition_id);
@@ -222,6 +244,7 @@ uint64_t RocksDBPersistence::getNextSequenceNumber(uint32_t partition_id) {
     return it->second.fetch_add(1);  // Fetch current value and then increment
 }
 
+// @unsafe: uses raw pointers and threading
 std::future<bool> RocksDBPersistence::persistAsync(const char* data, size_t size,
                                                    uint32_t shard_id, uint32_t partition_id,
                                                    std::function<void(bool)> callback) {
@@ -309,6 +332,7 @@ std::future<bool> RocksDBPersistence::persistAsync(const char* data, size_t size
     return future;
 }
 
+// @unsafe: uses file I/O and threading
 void RocksDBPersistence::workerThread(size_t worker_id, size_t total_workers) {
     // Each worker processes a subset of partitions in round-robin fashion
     std::vector<size_t> my_partitions;
@@ -397,6 +421,7 @@ void RocksDBPersistence::workerThread(size_t worker_id, size_t total_workers) {
     // fprintf(stderr, "[RocksDB Worker %zu] Shutting down\n", worker_id);
 }
 
+// @unsafe: uses file I/O
 bool RocksDBPersistence::flushAll() {
     if (partition_dbs_.empty()) {
         return false;
@@ -436,6 +461,7 @@ bool RocksDBPersistence::flushAll() {
     return all_success;
 }
 
+// @unsafe: uses lock_guard
 void RocksDBPersistence::handlePersistComplete(uint32_t partition_id, uint64_t sequence_number,
                                               std::function<void(bool)> callback, bool success,
                                               std::chrono::high_resolution_clock::time_point enqueue_time,
@@ -466,6 +492,7 @@ void RocksDBPersistence::handlePersistComplete(uint32_t partition_id, uint64_t s
     processOrderedCallbacks(partition_id);
 }
 
+// @unsafe: called with locks held, uses lock_guard indirectly
 void RocksDBPersistence::processOrderedCallbacks(uint32_t partition_id) {
     // Called with partition_states_mutex_ and state->state_mutex held
     auto it = partition_states_.find(partition_id);
@@ -560,6 +587,7 @@ void RocksDBPersistence::processOrderedCallbacks(uint32_t partition_id) {
     }
 }
 
+// @unsafe: uses file I/O
 bool RocksDBPersistence::parseMetadata(const std::string& db_path, uint32_t& epoch, uint32_t& shard_id,
                                        uint32_t& num_shards, size_t& num_partitions, size_t& num_workers,
                                        int64_t& timestamp) {

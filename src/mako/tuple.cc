@@ -23,6 +23,7 @@ event_counter dbtuple::g_evt_dbtuple_inplace_buf_insufficient_on_spill("dbtuple_
 event_avg_counter dbtuple::g_evt_avg_record_spill_len("avg_record_spill_len");
 static event_avg_counter evt_avg_dbtuple_chain_length("avg_dbtuple_chain_len");
 
+// @safe
 dbtuple::~dbtuple()
 {
   CheckMagic();
@@ -41,6 +42,7 @@ dbtuple::~dbtuple()
 
 }
 
+// @unsafe: calls release with raw pointer
 void
 dbtuple::gc_this()
 {
@@ -49,6 +51,7 @@ dbtuple::gc_this()
   release(this);
 }
 
+// @safe
 string
 dbtuple::VersionInfoStr(version_t v)
 {
@@ -64,6 +67,7 @@ dbtuple::VersionInfoStr(version_t v)
   return buf.str();
 }
 
+// @unsafe: uses raw pointer cast to char*
 static ostream &
 format_tuple(ostream &o, const dbtuple &t)
 {
@@ -76,6 +80,7 @@ format_tuple(ostream &o, const dbtuple &t)
   return o;
 }
 
+// @unsafe: calls unsafe format_tuple
 void
 dbtuple::print(ostream &o, unsigned len) const
 {
@@ -97,6 +102,7 @@ dbtuple::print(ostream &o, unsigned len) const
   }
 }
 
+// @unsafe: calls unsafe print
 ostream &
 operator<<(ostream &o, const dbtuple &t)
 {

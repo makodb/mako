@@ -6,6 +6,7 @@ using namespace std;
 using namespace util;
 using namespace private_;
 
+// @safe
 map<string, event_ctx *> &
 event_ctx::event_counters()
 {
@@ -13,6 +14,7 @@ event_ctx::event_counters()
   return s_counters;
 }
 
+// @safe
 spinlock &
 event_ctx::event_counters_lock()
 {
@@ -20,6 +22,7 @@ event_ctx::event_counters_lock()
   return s_lock;
 }
 
+// @safe
 void
 event_ctx::stat(counter_data &d)
 {
@@ -29,7 +32,7 @@ event_ctx::stat(counter_data &d)
     d.type_ = counter_data::TYPE_AGG;
     uint64_t m = 0;
     for (size_t i = 0; i < coreid::NMaxCores; i++) {
-      m = max(m, static_cast<event_ctx_avg *>(this)->highs_[i]);
+      m = std::max(m, static_cast<event_ctx_avg *>(this)->highs_[i]);
     }
     uint64_t s = 0;
     for (size_t i = 0; i < coreid::NMaxCores; i++)
@@ -39,6 +42,7 @@ event_ctx::stat(counter_data &d)
   }
 }
 
+// @unsafe: uses lock_guard
 map<string, counter_data>
 event_counter::get_all_counters()
 {
@@ -56,6 +60,7 @@ event_counter::get_all_counters()
   return ret;
 }
 
+// @unsafe: uses lock_guard
 void
 event_counter::reset_all_counters()
 {
@@ -72,6 +77,7 @@ event_counter::reset_all_counters()
     }
 }
 
+// @unsafe: uses lock_guard
 bool
 event_counter::stat(const string &name, counter_data &d)
 {
@@ -81,7 +87,7 @@ event_counter::stat(const string &name, counter_data &d)
   {
     ::lock_guard<spinlock> sl(l);
     auto it = evts.find(name);
-    if (it != evts.end())
+    if (it != evts.end()) // @safe: operator!= is safe
       ctx = it->second;
   }
   if (!ctx)
@@ -91,6 +97,7 @@ event_counter::stat(const string &name, counter_data &d)
 }
 
 #ifdef ENABLE_EVENT_COUNTERS
+// @safe
 event_counter::event_counter(const string &name)
   : ctx_(name, false)
 {
@@ -100,6 +107,7 @@ event_counter::event_counter(const string &name)
   evts[name] = ctx_.obj();
 }
 
+// @safe
 event_avg_counter::event_avg_counter(const string &name)
   : ctx_(name)
 {
@@ -109,10 +117,12 @@ event_avg_counter::event_avg_counter(const string &name)
   evts[name] = ctx_.obj();
 }
 #else
+// @safe
 event_counter::event_counter(const string &name)
 {
 }
 
+// @safe
 event_avg_counter::event_avg_counter(const string &name)
 {
 }

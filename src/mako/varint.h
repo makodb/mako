@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "macros.h"
 
+// @safe
 // read unsigned varint32 from buffer. assumes the buffer will have enough size
 inline const uint8_t *
 read_uvint32_slow(const uint8_t *buf, uint32_t *value)
@@ -32,6 +33,7 @@ done:
  *
  * Assumes buf points to a well encoded varint
  */
+// @safe
 inline ALWAYS_INLINE const uint8_t *
 read_uvint32(const uint8_t *buf, uint32_t *value)
 {
@@ -135,6 +137,7 @@ failsafe_skip_uvint32(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
  * write uint32_t as unsigned varint32 to buffer. assumes the buffer will have
  * enough size. returns the position in buf after the value has been written
  */
+// @safe
 inline uint8_t *
 write_uvint32(uint8_t *buf, uint32_t value)
 {

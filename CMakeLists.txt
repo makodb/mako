@@ -1002,4 +1002,3 @@ if(BUILD_TESTS)
     message(STATUS "Run tests with: make run_tests")
     message(STATUS "Or individually: make test && ctest")
 endif()
-
