@@ -13,6 +13,12 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+
+// RustyCpp Safety Status: string.hh
+// This file defines the owning String type (copy-on-write reference counted)
+// Accessor operations are @safe
+// Mutating / allocation operations are @unsafe with explicit SAFETY notes
+
 #ifndef LCDF_STRING_HH
 #define LCDF_STRING_HH
 #include "string_base.hh"
@@ -357,11 +363,13 @@ inline void String::memo_type::initialize(uint32_t capacity, uint32_t dirty) {
 /** @endcond never */
 
 /** @brief Construct an empty String (with length 0). */
+// @safe - Initializes to shared empty buffer
 inline String::String()
     : _r{String_generic::empty_data, 0, 0} {
 }
 
 /** @brief Construct a copy of the String @a x. */
+// @safe - Increases reference count on shared representation
 inline String::String(const String& x)
     : _r(x._r) {
     _r.ref();
@@ -369,6 +377,7 @@ inline String::String(const String& x)
 
 #if HAVE_CXX_RVALUE_REFERENCES
 /** @brief Move-construct a String from @a x. */
+// @safe - Transfers ownership of representation without allocation
 inline String::String(String &&x)
     : _r(x._r) {
     x._r.reset_ref();
@@ -376,6 +385,7 @@ inline String::String(String &&x)
 #endif
 
 /** @brief Construct a copy of the string @a str. */
+// @unsafe - Calls assign() which manipulates reference counts and raw pointers
 template <typename T>
 inline String::String(const String_base<T> &str) {
     assign(str.data(), str.length(), false);
@@ -385,6 +395,7 @@ inline String::String(const String_base<T> &str) {
     @param cstr a null-terminated C string
     @return A String containing the characters of @a cstr, up to but not
     including the terminating null character. */
+// @unsafe - Calls assign() which copies from raw pointer
 inline String::String(const char* cstr) {
     if (LCDF_CONSTANT_CSTR(cstr))
         _r.assign(cstr, strlen(cstr), 0);
@@ -398,6 +409,7 @@ inline String::String(const char* cstr) {
     @param len number of characters to take from @a s.  If @a len @< 0,
     then takes @c strlen(@a s) characters.
     @return A String containing @a len characters of @a s. */
+// @unsafe - Calls assign() which manipulates raw pointers and allocation
 inline String::String(const char* s, int len) {
     if (LCDF_CONSTANT_CSTR(s))
         _r.assign(s, len, 0);
@@ -431,23 +443,27 @@ inline String::String(const unsigned char* first, const unsigned char* last) {
 }
 
 /** @brief Construct a String from a std::string. */
+// @unsafe - Calls assign() which manipulates raw pointers and allocation
 inline String::String(const std::string& str) {
     assign(str.data(), str.length(), false);
 }
 
 /** @brief Construct a String equal to "true" or "false" depending on the
     value of @a x. */
+// @safe - Points to static bool_data table
 inline String::String(bool x)
     : _r{String_generic::bool_data + (-x & 6), 5 - x, 0} {
     // bool_data equals "false\0true\0"
 }
 
 /** @brief Construct a String containing the single character @a c. */
+// @unsafe - Calls assign() to copy single byte
 inline String::String(char c) {
     assign(&c, 1, false);
 }
 
 /** @overload */
+// @unsafe - Calls assign() to copy single byte
 inline String::String(unsigned char c) {
     assign(reinterpret_cast<char*>(&c), 1, false);
 }
@@ -465,11 +481,13 @@ inline String::~String() {
 /** @brief Return a const reference to an empty String.
 
     May be quicker than String::String(). */
+// @safe - Returns reference to static null string representation
 inline const String& String::make_empty() {
     return reinterpret_cast<const String &>(null_string_rep);
 }
 
 /** @brief Return a String containing @a len unknown characters. */
+// @unsafe - Uses append_uninitialized to allocate mutable buffer
 inline String String::make_uninitialized(int len) {
     String s;
     s.append_uninitialized(len);
@@ -488,6 +506,7 @@ inline const String& String::make_zero() {
 
     @warning The String implementation may access @a cstr's terminating null
     character. */
+// @unsafe - Returns String referencing external storage; uses hard_make_stable for dynamic input
 inline String String::make_stable(const char *cstr) {
     if (LCDF_CONSTANT_CSTR(cstr))
         return String(cstr, strlen(cstr), null_memo());
@@ -502,6 +521,7 @@ inline String String::make_stable(const char *cstr) {
 
     @warning The String implementation may access @a s[@a len], which
     should remain constant even though it's not part of the String. */
+// @unsafe - Returns String referencing external storage; uses hard_make_stable for dynamic input
 inline String String::make_stable(const char* s, int len) {
     if (__builtin_constant_p(len) && len >= 0)
         return String(s, len, null_memo());
@@ -521,6 +541,7 @@ inline String String::make_stable(const char* s, int len) {
 
     @warning The String implementation may access *@a last, which should
     remain constant even though it's not part of the String. */
+// @unsafe - Returns String referencing external storage
 inline String String::make_stable(const char* first, const char* last) {
     return String(first, (first < last ? last - first : 0), null_memo());
 }
@@ -535,11 +556,13 @@ inline String String::make_stable(const String_base<T>& str) {
 
     Only the first length() characters are valid, and the string
     might not be null-terminated. */
+// @safe - Returns pointer to internal data
 inline const char* String::data() const {
     return _r.data;
 }
 
 /** @brief Return the string's length. */
+// @safe - Returns stored length
 inline int String::length() const {
     return _r.length;
 }
@@ -550,6 +573,7 @@ inline int String::length() const {
     this->length() doesn't change.  Returns a corresponding C string
     pointer.  The returned pointer is semi-temporary; it will persist until
     the string is destroyed or appended to. */
+// @unsafe - May mutate internal buffer and call append_uninitialized to add terminator
 inline const char* String::c_str() const {
     // See also hard_c_str().
 #if HAVE_OPTIMIZE_SIZE || __OPTIMIZE_SIZE__
@@ -582,6 +606,7 @@ inline const char* String::c_str() const {
     this->begin() or greater than this->end()), but this should be
     considered a programming error; a future version may generate a warning
     for this case. */
+// @safe - Returns substring referencing shared data when bounds valid
 inline String String::substring(const char* first, const char* last) const {
     if (first < last && first >= _r.data && last <= _r.data + _r.length) {
         _r.ref();
@@ -590,6 +615,7 @@ inline String String::substring(const char* first, const char* last) const {
         return String();
 }
 /** @overload */
+// @unsafe - Uses reinterpret_cast for unsigned char pointers but otherwise safe bounds checks
 inline String String::substring(const unsigned char* first, const unsigned char* last) const {
     return substring(reinterpret_cast<const char*>(first),
                      reinterpret_cast<const char*>(last));
@@ -600,12 +626,14 @@ inline String String::substring(const unsigned char* first, const unsigned char*
     @param first pointer to the first substring character
     @param last pointer one beyond the last substring character
     @pre begin() <= @a first <= @a last <= end() */
+// @safe - Fast substring assumes valid bounds (debug assert)
 inline String String::fast_substring(const char* first, const char* last) const {
     assert(begin() <= first && first <= last && last <= end());
     _r.ref();
     return String(first, last - first, _r.memo());
 }
 /** @overload */
+// @unsafe - Uses reinterpret_cast for unsigned char pointers but relies on caller for bounds
 inline String String::fast_substring(const unsigned char* first, const unsigned char* last) const {
     return fast_substring(reinterpret_cast<const char*>(first),
                           reinterpret_cast<const char*>(last));
@@ -622,10 +650,12 @@ inline String String::fast_substring(const unsigned char* first, const unsigned 
 
     @note String::substr() is intended to behave like Perl's
     substr(). */
+// @safe - Delegates to substr(int,int) which performs bounds checks
 inline String String::substr(int pos) const {
     return substr((pos <= -_r.length ? 0 : pos), _r.length);
 }
 
+// @safe - Assign from existing representation with reference counting
 inline void String::assign(const rep_type& rep) {
     rep.ref();
     _r.deref();
@@ -633,11 +663,13 @@ inline void String::assign(const rep_type& rep) {
 }
 
 /** @brief Assign this string to @a x. */
+// @safe - Delegates to assign(rep)
 inline void String::assign(const String& x) {
     assign(x._r);
 }
 
 /** @brief Assign this string to @a x. */
+// @safe - Copy assignment shares representation
 inline String& String::operator=(const String& x) {
     assign(x);
     return *this;
@@ -659,6 +691,7 @@ inline String& String::operator=(String&& x) {
 #endif
 
 /** @brief Assign this string to the C string @a cstr. */
+// @unsafe - Copies from raw C string, may allocate
 inline void String::assign(const char* cstr) {
     if (LCDF_CONSTANT_CSTR(cstr)) {
         deref();
@@ -668,6 +701,7 @@ inline void String::assign(const char* cstr) {
 }
 
 /** @brief Assign this string to the C string @a cstr. */
+// @unsafe - Delegates to assign(const char*)
 inline String& String::operator=(const char* cstr) {
     assign(cstr);
     return *this;
@@ -687,34 +721,41 @@ inline String& String::operator=(const String_base<T>& str) {
 }
 
 /** @brief Assign this string to the std::string @a str. */
+/** @brief Assign this string to the std::string @a str. */
+// @unsafe - Copies data from std::string into memo buffer
 inline void String::assign(const std::string& str) {
     assign(str.data(), str.length(), true);
 }
 
 /** @brief Assign this string to the std::string @a str. */
+// @unsafe - Delegates to assign(std::string)
 inline String& String::operator=(const std::string& str) {
     assign(str);
     return *this;
 }
 
 /** @brief Assign this string to string [@a first, @a last). */
+// @unsafe - Copies range of characters, may allocate
 inline void String::assign(const char *first, const char *last) {
     assign(first, last - first, true);
 }
 
 /** @brief Swap the values of this string and @a x. */
+// @safe - Swaps representations atomically
 inline void String::swap(String &x) {
     using std::swap;
     swap(_r, x._r);
 }
 
 /** @brief Append @a x to this string. */
+// @unsafe - Mutates buffer by appending data (may allocate)
 inline void String::append(const String& x) {
     append(x.data(), x.length(), x._r.memo());
 }
 
 /** @brief Append the null-terminated C string @a cstr to this string.
     @param cstr data to append */
+// @unsafe - Appends null-terminated C string (may allocate)
 inline void String::append(const char* cstr) {
     if (LCDF_CONSTANT_CSTR(cstr))
         append(cstr, strlen(cstr), absent_memo());
@@ -727,6 +768,7 @@ inline void String::append(const char* cstr) {
     @param len length of data
 
     If @a len @< 0, treats @a s as a null-terminated C string. */
+// @unsafe - Appends explicit-length data (may allocate)
 inline void String::append(const char* s, int len) {
     append(s, len, absent_memo());
 }
@@ -734,6 +776,7 @@ inline void String::append(const char* s, int len) {
 /** @brief Appends the data from @a first to @a last to this string.
 
     Does nothing if @a first @>= @a last. */
+// @unsafe - Appends range if non-empty
 inline void String::append(const char* first, const char* last) {
     if (first < last)
         append(first, last - first);
@@ -747,6 +790,7 @@ inline void String::append(const unsigned char* first,
 
 /** @brief Append @a x to this string.
     @return *this */
+// @unsafe - Mutates string by appending another String
 inline String& String::operator+=(const String &x) {
     append(x.data(), x.length(), x._r.memo());
     return *this;
@@ -754,6 +798,7 @@ inline String& String::operator+=(const String &x) {
 
 /** @brief Append the null-terminated C string @a cstr to this string.
     @return *this */
+// @unsafe - Mutates string by appending C string
 inline String& String::operator+=(const char* cstr) {
     append(cstr);
     return *this;
@@ -761,6 +806,7 @@ inline String& String::operator+=(const char* cstr) {
 
 /** @brief Append the character @a c to this string.
     @return *this */
+// @unsafe - Mutates string by appending character
 inline String &String::operator+=(char c) {
     append(&c, 1);
     return *this;
@@ -775,12 +821,14 @@ inline String &String::operator+=(const String_base<T> &x) {
 }
 
 /** @brief Test if the String's data is shared or stable. */
+// @safe - Checks memo refcount to determine sharing
 inline bool String::is_shared() const {
     memo_type* m = _r.memo();
     return !m || m->refcount != 1;
 }
 
 /** @brief Test if the String's data is stable. */
+// @safe - Determines if string references stable storage
 inline bool String::is_stable() const {
     return !_r.memo();
 }
@@ -788,6 +836,7 @@ inline bool String::is_stable() const {
 /** @brief Return a unique version of this String.
 
     The return value shares no data with any other non-stable String. */
+// @unsafe - May allocate new storage when copying data
 inline String String::unique() const {
     memo_type* m = _r.memo();
     if (!m || m->refcount == 1)
@@ -800,6 +849,7 @@ inline String String::unique() const {
 
     After calling this function, this String shares no more than 256 bytes
     of data with any other non-stable String. */
+// @unsafe - May allocate and copy data to shrink sharing
 inline void String::shrink_to_fit() {
     memo_type* m = _r.memo();
     if (m && m->refcount > 1 && (uint32_t) _r.length + 256 < m->capacity)
@@ -807,6 +857,7 @@ inline void String::shrink_to_fit() {
 }
 
 /** @brief Return the unsigned char* version of mutable_data(). */
+// @unsafe - Returns mutable pointer along with reinterpret_cast
 inline unsigned char* String::mutable_udata() {
     return reinterpret_cast<unsigned char*>(mutable_data());
 }

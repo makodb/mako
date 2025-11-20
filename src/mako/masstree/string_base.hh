@@ -13,6 +13,12 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+
+// RustyCpp Safety Status: string_base.hh
+// This file defines the base class for all string types (CRTP pattern)
+// Most operations are @safe as they operate on const data with explicit lengths
+// Some use @unsafe for reinterpret_cast but are internally sound
+
 #ifndef STRING_BASE_HH
 #define STRING_BASE_HH
 #include "compiler.hh"
@@ -34,41 +40,97 @@ class String_generic {
     static const char base64_encoding_table[65];
     static const unsigned char base64_decoding_map[256];
     enum { out_of_memory_length = 14 };
+    
+    // @safe - Check if pointer is in out-of-memory range
+    // SAFETY: Simple pointer comparison, no memory access
     static bool out_of_memory(const char* s) {
         return unlikely(s >= out_of_memory_data
                         && s <= out_of_memory_data + out_of_memory_length);
     }
+    
+    // @safe - Compare two strings for equality
+    // SAFETY: Uses memcmp with explicit lengths, no out-of-bounds access
     static bool equals(const char* a, int a_len, const char* b, int b_len) {
         return a_len == b_len && memcmp(a, b, a_len) == 0;
     }
+    
+    // @safe - Lexicographically compare two strings
+    // SAFETY: Operates only on const char arrays with explicit lengths
     static int compare(const char* a, int a_len, const char* b, int b_len);
+    
+    // @unsafe - Uses reinterpret_cast for unsigned char pointers
+    // SAFETY: Cast from unsigned char* to char* is safe (same representation)
     static inline int compare(const unsigned char* a, int a_len,
                               const unsigned char* b, int b_len) {
         return compare(reinterpret_cast<const char*>(a), a_len,
                        reinterpret_cast<const char*>(b), b_len);
     }
+    
+    // @safe - Natural order string comparison
+    // SAFETY: Operates only on const char arrays with explicit lengths
     static int natural_compare(const char* a, int a_len, const char* b, int b_len);
+    
+    // @unsafe - Uses reinterpret_cast for unsigned char pointers
+    // SAFETY: Cast from unsigned char* to char* is safe (same representation)
     static int natural_compare(const unsigned char* a, int a_len,
                                const unsigned char* b, int b_len) {
         return natural_compare(reinterpret_cast<const char*>(a), a_len,
                                reinterpret_cast<const char*>(b), b_len);
     }
+    
+    // @safe - Check if string starts with prefix
+    // SAFETY: Uses memcmp with explicit lengths, validates a_len >= b_len
     static bool starts_with(const char *a, int a_len, const char *b, int b_len) {
         return a_len >= b_len && memcmp(a, b, b_len) == 0;
     }
+    // @safe - Find character from left with bounds checking
+    // SAFETY: Validates start index, searches within string bounds
     static int find_left(const char *s, int len, int start, char x);
+    
+    // @safe - Find substring from left with bounds checking
+    // SAFETY: Validates start index, searches within string bounds
     static int find_left(const char *s, int len, int start, const char *x, int x_len);
+    
+    // @safe - Find character from right with bounds checking
+    // SAFETY: Validates start index, searches within string bounds
     static int find_right(const char *s, int len, int start, char x);
+    
+    // @safe - Find substring from right with bounds checking
+    // SAFETY: Validates start index, searches within string bounds
     static int find_right(const char *s, int len, int start, const char *x, int x_len);
+    
+    // @safe - Glob pattern matching
+    // SAFETY: Operates on const char arrays with explicit lengths
     static bool glob_match(const char* s, int slen, const char* pattern, int plen);
+    
+    // @safe - Trim whitespace from left
+    // SAFETY: Only reads from string, returns substring view
     template <typename T> static inline typename T::substring_type ltrim(const T &str);
+    
+    // @safe - Trim whitespace from right
+    // SAFETY: Only reads from string, returns substring view
     template <typename T> static inline typename T::substring_type rtrim(const T &str);
+    
+    // @safe - Trim whitespace from both ends
+    // SAFETY: Only reads from string, returns substring view
     template <typename T> static inline typename T::substring_type trim(const T &str);
+    
+    // @safe - Compute hash code of string
+    // SAFETY: Operates on const char array with explicit length
     static hashcode_t hashcode(const char *s, int len);
+    
+    // @safe - Compute hash code from pointer range
+    // SAFETY: Computes length from pointer difference, then calls hashcode
     static hashcode_t hashcode(const char *first, const char *last) {
         return hashcode(first, last - first);
     }
+    
+    // @safe - Parse string to integer
+    // SAFETY: Only reads from string within bounds
     static long to_i(const char* first, const char* last);
+    
+    // @safe - Convert nibble to hex character
+    // SAFETY: Pure computation, no memory access
     static char upper_hex_nibble(int n) {
         return n + (n > 9 ? 'A' - 10 : '0');
     }
@@ -84,12 +146,20 @@ class String_base {
     typedef const_unsigned_iterator unsigned_iterator;
     typedef int (String_base<T>::*unspecified_bool_type)() const;
 
+    // @safe - Returns const pointer to string data
+    // SAFETY: Delegates to derived class, returns const pointer
     const char* data() const {
         return static_cast<const T*>(this)->data();
     }
+    
+    // @safe - Returns string length
+    // SAFETY: Delegates to derived class, returns integer value
     int length() const {
         return static_cast<const T*>(this)->length();
     }
+    
+    // @safe - Returns string size (same as length)
+    // SAFETY: Delegates to derived class, returns integer value
     int size() const {
         return static_cast<const T*>(this)->length();
     }
@@ -98,89 +168,134 @@ class String_base {
 
         Only the first length() characters are valid, and the string data
         might not be null-terminated. @sa data() */
+    // @unsafe - Uses reinterpret_cast for unsigned char pointer
+    // SAFETY: Cast from char* to unsigned char* is safe (same representation)
     const unsigned char* udata() const {
         return reinterpret_cast<const unsigned char*>(data());
     }
+    
     /** @brief Return an iterator for the beginning of the string.
 
         String iterators are simply pointers into string data, so they are
         quite efficient. @sa String::data */
+    // @safe - Returns iterator to beginning
+    // SAFETY: Returns pointer to string data
     const_iterator begin() const {
         return data();
     }
+    
     /** @brief Return an iterator for the end of the string.
 
         The result points one character beyond the last character in the
         string. */
+    // @safe - Returns iterator to end
+    // SAFETY: Computes pointer offset from data() and length()
     const_iterator end() const {
         return data() + length();
     }
+    
     /** @brief Return an unsigned iterator for the beginning of the string.
 
         This is equivalent to reinterpret_cast<const unsigned char
         *>(begin()). */
+    // @unsafe - Uses reinterpret_cast for unsigned char pointer
+    // SAFETY: Cast from char* to unsigned char* is safe (same representation)
     const_unsigned_iterator ubegin() const {
         return reinterpret_cast<const_unsigned_iterator>(data());
     }
+    
     /** @brief Return an unsigned iterator for the end of the string.
 
         This is equivalent to reinterpret_cast<const unsigned char
         *>(end()). */
+    // @unsafe - Uses reinterpret_cast for unsigned char pointer
+    // SAFETY: Cast from char* to unsigned char* is safe (same representation)
     const_unsigned_iterator uend() const {
         return reinterpret_cast<const_unsigned_iterator>(data() + length());
     }
     /** @brief Test if the string is nonempty. */
+    // @safe - Boolean conversion operator
+    // SAFETY: Only checks length, no memory access
     operator unspecified_bool_type() const {
         return length() ? &String_base<T>::length : 0;
     }
+    
     /** @brief Test if the string is empty. */
+    // @safe - Negation operator
+    // SAFETY: Only checks length, no memory access
     bool operator!() const {
         return length() == 0;
     }
+    
     /** @brief Test if the string is empty. */
+    // @safe - Empty check
+    // SAFETY: Only checks length, no memory access
     bool empty() const {
         return length() == 0;
     }
+    
     /** @brief Test if the string is an out-of-memory string. */
+    // @safe - Out-of-memory check
+    // SAFETY: Delegates to String_generic::out_of_memory which performs safe pointer comparison
     bool out_of_memory() const {
         return String_generic::out_of_memory(data());
     }
+    
     /** @brief Return the @a i th character in the string.
 
         Does not check bounds. @sa at() */
+    // @safe - Array access without bounds checking
+    // SAFETY: Caller must ensure i is within bounds
     const char& operator[](int i) const {
         return data()[i];
     }
+    
     /** @brief Return the @a i th character in the string.
 
         Checks bounds: an assertion will fail if @a i is less than 0 or not
         less than length(). @sa operator[] */
+    // @safe - Array access with bounds checking
+    // SAFETY: Assert validates bounds before access
     const char& at(int i) const {
         assert(unsigned(i) < unsigned(length()));
         return data()[i];
     }
+    
     /** @brief Return the first character in the string.
 
         Does not check bounds. Same as (*this)[0]. */
+    // @safe - First character access
+    // SAFETY: Caller must ensure string is non-empty
     const char& front() const {
         return data()[0];
     }
+    
     /** @brief Return the last character in the string.
 
         Does not check bounds. Same as (*this)[length() - 1]. */
+    // @safe - Last character access
+    // SAFETY: Caller must ensure string is non-empty
     const char& back() const {
         return data()[length() - 1];
     }
     /** @brief Test if this string is equal to the C string @a cstr. */
+    // @safe - String equality comparison
+    // SAFETY: Delegates to String_generic::equals which uses memcmp with explicit lengths
     bool equals(const char *cstr) const {
         return String_generic::equals(data(), length(), cstr, strlen(cstr));
     }
+    
     /** @brief Test if this string is equal to the first @a len characters
         of @a s. */
+    // @safe - String equality comparison with explicit length
+    // SAFETY: Delegates to String_generic::equals which uses memcmp with explicit lengths
     bool equals(const char *s, int len) const {
         return String_generic::equals(data(), length(), s, len);
     }
+    
     /** @brief Test if this string is equal to @a x. */
+    // @safe - String equality comparison
+    // SAFETY: Delegates to String_generic::equals which uses memcmp with explicit lengths
     template <typename TT>
     bool equals(const String_base<TT>& x) const {
         return String_generic::equals(data(), length(), x.data(), x.length());
@@ -191,35 +306,55 @@ class String_base {
         less than @a cstr in lexicographic order, and positive if this
         string is greater than @a cstr. Lexicographic order treats
         characters as unsigned. */
+    // @safe - String comparison
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     int compare(const char* cstr) const {
         return String_generic::compare(data(), length(), cstr, strlen(cstr));
     }
+    
     /** @brief Compare this string with the first @a len characters of @a
         s. */
+    // @safe - String comparison with explicit length
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     int compare(const char* s, int len) const {
         return String_generic::compare(data(), length(), s, len);
     }
+    
     /** @brief Compare this string with @a x. */
+    // @safe - String comparison
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     template <typename TT>
     int compare(const String_base<TT>& x) const {
         return String_generic::compare(data(), length(), x.data(), x.length());
     }
+    
     /** @brief Compare strings @a a and @a b. */
+    // @safe - Static string comparison
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     template <typename TT, typename UU>
     static int compare(const String_base<TT>& a, const String_base<UU>& b) {
         return String_generic::compare(a.data(), a.length(), b.data(), b.length());
     }
+    
     /** @brief Compare strings @a a and @a b. */
+    // @safe - Static string comparison
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     template <typename UU>
     static int compare(const char* a, const String_base<UU> &b) {
         return String_generic::compare(a, strlen(a), b.data(), b.length());
     }
+    
     /** @brief Compare strings @a a and @a b. */
+    // @safe - Static string comparison
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     template <typename TT>
     static int compare(const String_base<TT>& a, const char* b) {
         return String_generic::compare(a.data(), a.length(), b, strlen(b));
     }
+    
     /** @brief Compare strings @a a and @a b. */
+    // @safe - Static string comparison
+    // SAFETY: Delegates to String_generic::compare which operates on const char arrays with explicit lengths
     static int compare(const char* a, const char* b) {
         return String_generic::compare(a, strlen(a), b, strlen(b));
     }
@@ -232,39 +367,62 @@ class String_base {
         byte-for-byte identical), negative if this string is less than @a
         cstr in natural order, and positive if this string is greater
         than @a cstr in natural order. */
+    // @safe - Natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     int natural_compare(const char *cstr) const {
         return String_generic::natural_compare(data(), length(), cstr, strlen(cstr));
     }
+    
     /** @brief Compare this string with the first @a len characters of @a
         s using natural order. */
+    // @safe - Natural order string comparison with explicit length
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     int natural_compare(const char *s, int len) const {
         return String_generic::natural_compare(data(), length(), s, len);
     }
+    
     /** @brief Compare this string with @a x using natural order. */
+    // @safe - Natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     template <typename TT>
     int natural_compare(const String_base<TT> &x) const {
         return String_generic::natural_compare(data(), length(), x.data(), x.length());
     }
+    
     /** @brief Compare strings @a a and @a b using natural order. */
+    // @safe - Static natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     template <typename TT, typename UU>
     static int natural_compare(const String_base<TT> &a, const String_base<UU> &b) {
         return String_generic::natural_compare(a.data(), a.length(), b.data(), b.length());
     }
+    
     /** @brief Compare strings @a a and @a b using natural order. */
+    // @safe - Static natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     template <typename UU>
     static int natural_compare(const char* a, const String_base<UU> &b) {
         return String_generic::natural_compare(a, strlen(a), b.data(), b.length());
     }
+    
     /** @brief Compare strings @a a and @a b using natural order. */
+    // @safe - Static natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     template <typename TT>
     static int natural_compare(const String_base<TT>& a, const char* b) {
         return String_generic::natural_compare(a.data(), a.length(), b, strlen(b));
     }
+    
     /** @brief Compare strings @a a and @a b using natural order. */
+    // @safe - Static natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     static int natural_compare(const char* a, const char* b) {
         return String_generic::natural_compare(a, strlen(a), b, strlen(b));
     }
+    
     /** @brief Compare strings @a a and @a b using natural order. */
+    // @safe - Static natural order string comparison
+    // SAFETY: Delegates to String_generic::natural_compare which operates on const char arrays with explicit lengths
     static int natural_compare(const std::string& a, const std::string& b) {
         return String_generic::natural_compare(a.data(), a.length(), b.data(), b.length());
     }
@@ -277,75 +435,107 @@ class String_base {
         }
     };
     /** @brief Test if this string begins with the C string @a cstr. */
+    // @safe - Prefix check
+    // SAFETY: Delegates to String_generic::starts_with which uses memcmp with explicit lengths
     bool starts_with(const char *cstr) const {
         return String_generic::starts_with(data(), length(), cstr, strlen(cstr));
     }
+    
     /** @brief Test if this string begins with the first @a len characters
         of @a s. */
+    // @safe - Prefix check with explicit length
+    // SAFETY: Delegates to String_generic::starts_with which uses memcmp with explicit lengths
     bool starts_with(const char *s, int len) const {
         return String_generic::starts_with(data(), length(), s, len);
     }
+    
     /** @brief Test if this string begins with @a x. */
+    // @safe - Prefix check
+    // SAFETY: Delegates to String_generic::starts_with which uses memcmp with explicit lengths
     template <typename TT>
     bool starts_with(const String_base<TT> &x) const {
         return String_generic::starts_with(data(), length(), x.data(), x.length());
     }
+    
     /** @brief Search for a character in this string.
 
         Return the index of the leftmost occurrence of @a c, starting at
         index @a start and working up to the end of the string. Return -1 if
         the character is not found. */
+    // @safe - Character search from left
+    // SAFETY: Delegates to String_generic::find_left which validates start index and searches within bounds
     int find_left(char x, int start = 0) const {
         return String_generic::find_left(data(), length(), start, x);
     }
+    
     /** @brief Search for the C string @a cstr as a substring in this string.
 
         Return the index of the leftmost occurrence of @a cstr, starting at
         index @a start. Return -1 if the substring is not found. */
+    // @safe - Substring search from left
+    // SAFETY: Delegates to String_generic::find_left which validates start index and searches within bounds
     int find_left(const char *cstr, int start = 0) const {
         return String_generic::find_left(data(), length(), start, cstr, strlen(cstr));
     }
+    
     /** @brief Search for @a x as a substring in this string.
 
         Return the index of the leftmost occurrence of @a x, starting at
         index @a start. Return -1 if the substring is not found. */
+    // @safe - Substring search from left
+    // SAFETY: Delegates to String_generic::find_left which validates start index and searches within bounds
     template <typename TT>
     int find_left(const String_base<TT> &x, int start = 0) const {
         return String_generic::find_left(data(), length(), start, x.data(), x.length());
     }
+    
     /** @brief Search backwards for a character in this string.
 
         Return the index of the rightmost occurrence of @a c, starting at
         index @a start and working up to the end of the string. Return -1 if
         the character is not found. */
+    // @safe - Character search from right
+    // SAFETY: Delegates to String_generic::find_right which validates start index and searches within bounds
     int find_right(char c, int start = INT_MAX) const {
         return String_generic::find_right(data(), length(), start, c);
     }
+    
     /** @brief Search backwards for the C string @a cstr as a substring in
         this string.
 
         Return the index of the rightmost occurrence of @a cstr, starting
         at index @a start. Return -1 if the substring is not found. */
+    // @safe - Substring search from right
+    // SAFETY: Delegates to String_generic::find_right which validates start index and searches within bounds
     int find_right(const char *cstr, int start = INT_MAX) const {
         return String_generic::find_right(data(), length(), start, cstr, strlen(cstr));
     }
+    
     /** @brief Search backwards for @a x as a substring in this string.
 
         Return the index of the rightmost occurrence of @a x, starting at
         index @a start. Return -1 if the substring is not found. */
+    // @safe - Substring search from right
+    // SAFETY: Delegates to String_generic::find_right which validates start index and searches within bounds
     template <typename TT>
     int find_right(const String_base<TT> &x, int start = INT_MAX) const {
         return String_generic::find_right(data(), length(), start, x.data(), x.length());
     }
+    
     /** @brief Test if this string matches the glob @a pattern.
 
         Glob pattern syntax allows * (any number of characters), ? (one
         arbitrary character), [] (character classes, possibly negated), and
         \\ (escaping). */
+    // @safe - Glob pattern matching
+    // SAFETY: Delegates to String_generic::glob_match which operates on const char arrays with explicit lengths
     bool glob_match(const char* pattern) const {
         return String_generic::glob_match(data(), length(), pattern, strlen(pattern));
     }
+    
     /** @overload */
+    // @safe - Glob pattern matching
+    // SAFETY: Delegates to String_generic::glob_match which operates on const char arrays with explicit lengths
     template <typename TT>
     bool glob_match(const String_base<TT>& pattern) const {
         return String_generic::glob_match(data(), length(), pattern.data(), pattern.length());
@@ -359,125 +549,186 @@ class String_base {
         @invariant If last1 - first1 == last2 - first2 and memcmp(first1,
         first2, last1 - first1) == 0, then hashcode(first1, last1) ==
         hashcode(first2, last2). */
+    // @safe - Static hash code computation
+    // SAFETY: Delegates to String_generic::hashcode which operates on const char arrays with explicit lengths
     static hashcode_t hashcode(const char *first, const char *last) {
         return String_generic::hashcode(first, last);
     }
+    
     /** @brief Return a 32-bit hash function of the characters in this string. */
+    // @safe - Hash code computation
+    // SAFETY: Delegates to String_generic::hashcode which operates on const char arrays with explicit lengths
     hashcode_t hashcode() const {
         return String_generic::hashcode(data(), length());
     }
 
     /** @brief Return the integer value of this string. */
+    // @safe - Parse string to integer
+    // SAFETY: Delegates to String_generic::to_i which only reads from string within bounds
     long to_i() const {
         return String_generic::to_i(begin(), end());
     }
 
+    // @safe - Encode JSON (partial, returns iterator to last processed position)
+    // SAFETY: Only reads from string, writes to encoder through safe interface
     template <typename E>
     const_iterator encode_json_partial(E& e) const;
+    
+    // @safe - Encode JSON (complete)
+    // SAFETY: Only reads from string, writes to encoder through safe interface
     template <typename E>
     inline void encode_json(E& e) const;
+    
+    // @safe - Encode base64
+    // SAFETY: Only reads from string, writes to encoder through safe interface
     template <typename E>
     void encode_base64(E& e, bool pad = false) const;
+    
+    // @safe - Decode base64
+    // SAFETY: Only reads from string, writes to encoder through safe interface
     template <typename E>
     bool decode_base64(E& e) const;
+    
+    // @safe - Encode URI component
+    // SAFETY: Only reads from string, writes to encoder through safe interface
     template <typename E>
     void encode_uri_component(E& e) const;
 
     /** @brief Return this string as a std::string. */
+    // @safe - Conversion to std::string
+    // SAFETY: Creates std::string from iterator range, copies data
     inline operator std::string() const {
         return std::string(begin(), end());
     }
 
   protected:
+    // @safe - Protected default constructor
+    // SAFETY: Default constructor, no initialization needed
     String_base() = default;
 };
 
+// @safe - Equality operator
+// SAFETY: Delegates to equals() which uses safe comparison
 template <typename T, typename U>
 inline bool operator==(const String_base<T> &a, const String_base<U> &b) {
     return a.equals(b);
 }
 
+// @safe - Equality operator with std::string
+// SAFETY: Delegates to equals() which uses safe comparison
 template <typename T>
 inline bool operator==(const String_base<T> &a, const std::string &b) {
     return a.equals(b.data(), b.length());
 }
 
+// @safe - Equality operator with std::string (reversed)
+// SAFETY: Delegates to equals() which uses safe comparison
 template <typename T>
 inline bool operator==(const std::string &a, const String_base<T> &b) {
     return b.equals(a.data(), a.length());
 }
 
+// @safe - Equality operator with C string
+// SAFETY: Delegates to equals() which uses safe comparison
 template <typename T>
 inline bool operator==(const String_base<T> &a, const char *b) {
     return a.equals(b, strlen(b));
 }
 
+// @safe - Equality operator with C string (reversed)
+// SAFETY: Delegates to equals() which uses safe comparison
 template <typename T>
 inline bool operator==(const char *a, const String_base<T> &b) {
     return b.equals(a, strlen(a));
 }
 
+// @safe - Inequality operator
+// SAFETY: Delegates to equality operator
 template <typename T, typename U>
 inline bool operator!=(const String_base<T> &a, const String_base<U> &b) {
     return !(a == b);
 }
 
+// @safe - Inequality operator with std::string
+// SAFETY: Delegates to equality operator
 template <typename T>
 inline bool operator!=(const String_base<T> &a, const std::string &b) {
     return !(a == b);
 }
 
+// @safe - Inequality operator with std::string (reversed)
+// SAFETY: Delegates to equality operator
 template <typename T>
 inline bool operator!=(const std::string &a, const String_base<T> &b) {
     return !(a == b);
 }
 
+// @safe - Inequality operator with C string
+// SAFETY: Delegates to equality operator
 template <typename T>
 inline bool operator!=(const String_base<T> &a, const char *b) {
     return !(a == b);
 }
 
+// @safe - Inequality operator with C string (reversed)
+// SAFETY: Delegates to equality operator
 template <typename T>
 inline bool operator!=(const char *a, const String_base<T> &b) {
     return !(a == b);
 }
 
+// @safe - Less-than operator
+// SAFETY: Delegates to compare() which uses safe comparison
 template <typename T, typename U>
 inline bool operator<(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) < 0;
 }
 
+// @safe - Less-than-or-equal operator
+// SAFETY: Delegates to compare() which uses safe comparison
 template <typename T, typename U>
 inline bool operator<=(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) <= 0;
 }
 
+// @safe - Greater-than-or-equal operator
+// SAFETY: Delegates to compare() which uses safe comparison
 template <typename T, typename U>
 inline bool operator>=(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) >= 0;
 }
 
+// @safe - Greater-than operator
+// SAFETY: Delegates to compare() which uses safe comparison
 template <typename T, typename U>
 inline bool operator>(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) > 0;
 }
 
+// @safe - Stream output operator
+// SAFETY: Writes string data to stream using explicit length
 template <typename T>
 inline std::ostream &operator<<(std::ostream &f, const String_base<T> &str) {
     return f.write(str.data(), str.length());
 }
 
+// @safe - Hash code function
+// SAFETY: Delegates to String_generic::hashcode which operates on const char arrays with explicit lengths
 template <typename T>
 inline hashcode_t hashcode(const String_base<T>& x) {
     return String_generic::hashcode(x.data(), x.length());
 }
 
 // boost's spelling
+// @safe - Hash value function (boost compatibility)
+// SAFETY: Delegates to String_generic::hashcode which operates on const char arrays with explicit lengths
 template <typename T>
 inline size_t hash_value(const String_base<T>& x) {
     return String_generic::hashcode(x.data(), x.length());
 }
 
+// @safe - Trim whitespace from left
+// SAFETY: Only reads from string, uses isspace on valid characters, returns substring view
 template <typename T>
 inline typename T::substring_type String_generic::ltrim(const T &str) {
     const char *b = str.begin(), *e = str.end();
@@ -486,6 +737,8 @@ inline typename T::substring_type String_generic::ltrim(const T &str) {
     return str.fast_substring(b, e);
 }
 
+// @safe - Trim whitespace from right
+// SAFETY: Only reads from string, uses isspace on valid characters, returns substring view
 template <typename T>
 inline typename T::substring_type String_generic::rtrim(const T &str) {
     const char *b = str.begin(), *e = str.end();
@@ -494,6 +747,8 @@ inline typename T::substring_type String_generic::rtrim(const T &str) {
     return str.fast_substring(b, e);
 }
 
+// @safe - Trim whitespace from both ends
+// SAFETY: Only reads from string, uses isspace on valid characters, returns substring view
 template <typename T>
 inline typename T::substring_type String_generic::trim(const T &str) {
     const char *b = str.begin(), *e = str.end();
@@ -515,6 +770,9 @@ inline typename T::substring_type String_generic::trim(const T &str) {
 # define LCDF_MAKE_STRING_HASH(type)
 #endif
 
+// @safe - Encode JSON (partial implementation)
+// SAFETY: Only reads from const string, writes to encoder through safe interface
+//         Bounds checking ensures s + 2 < end before accessing s[1] and s[2]
 template <typename T> template <typename E>
 typename String_base<T>::const_iterator String_base<T>::encode_json_partial(E& enc) const {
     const char *last = this->begin(), *end = this->end();
@@ -571,12 +829,17 @@ typename String_base<T>::const_iterator String_base<T>::encode_json_partial(E& e
     return last;
 }
 
+// @safe - Encode JSON (complete implementation)
+// SAFETY: Only reads from const string, writes to encoder through safe interface
 template <typename T> template <typename E>
 inline void String_base<T>::encode_json(E& enc) const {
     const char* last = encode_json_partial(enc);
     enc.append(last, end());
 }
 
+// @safe - Encode base64
+// SAFETY: Only reads from const string, writes to encoder through safe interface
+//         Uses unsigned char* iterators which are safe casts
 template <typename T> template <typename E>
 void String_base<T>::encode_base64(E& enc, bool pad) const {
     char* out = enc.reserve(((length() + 2) * 4) / 3);
@@ -604,6 +867,9 @@ void String_base<T>::encode_base64(E& enc, bool pad) const {
     enc.set_end(out);
 }
 
+// @safe - Decode base64
+// SAFETY: Only reads from const string, writes to encoder through safe interface
+//         Uses unsigned char* iterators which are safe casts
 template <typename T> template <typename E>
 bool String_base<T>::decode_base64(E& enc) const {
     char* out = enc.reserve((length() * 3) / 4 + 1);
@@ -636,6 +902,8 @@ bool String_base<T>::decode_base64(E& enc) const {
     return true;
 }
 
+// @safe - Encode URI component
+// SAFETY: Only reads from const string, writes to encoder through safe interface
 template <typename T> template <typename E>
 void String_base<T>::encode_uri_component(E& enc) const {
     const char *last = this->begin(), *end = this->end();
