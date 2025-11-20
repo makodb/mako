@@ -32,6 +32,11 @@
  * is legally binding.
  */
 
+// RustyCpp Safety Status: string.cc
+// Implements owning String operations including allocation, reference counting, and encoders
+// Functions that manipulate raw pointers/memo structures are @unsafe
+// Pure computation/lookup helpers are @safe
+
 #include "string.hh"
 #include "straccum.hh"
 #include <stdio.h>

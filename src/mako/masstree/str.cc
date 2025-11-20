@@ -13,9 +13,16 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+
+// RustyCpp Safety Status: str.cc
+// This file defines static constants for Str
+// @safe - Static constant initialization with compile-time known values
+
 #include "str.hh"
 namespace lcdf {
 
+// @safe - Static constant for maximum key value (257 bytes of 0xFF)
+// SAFETY: Compile-time initialized constant string, immutable after initialization
 const Str Str::maxkey("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
                       "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
                       "\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF"
