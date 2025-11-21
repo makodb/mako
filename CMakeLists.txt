@@ -671,10 +671,199 @@ target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
-# Enable borrow checking for mako library
-# if(ENABLE_BORROW_CHECKING)
-#     add_borrow_check_target(mako)
-# endif()
+# ==============================================================================
+# STO Borrow Checking 
+# ==============================================================================
+
+if(ENABLE_BORROW_CHECKING)
+    # 1. Target File
+    set(STO_BORROW_CHECK_FILES
+        "${W}/benchmarks/sto/Transaction.cc"
+        "${W}/benchmarks/sto/TRcu.cc"
+    )
+
+    # 2. Build the Include List Manually
+    set(MAKO_INCLUDE_FLAGS "")
+
+    # --- Core Project Paths ---
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src/mako")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src/rrr")  # Fixes 'rpc.h not found'
+    
+    # --- Third Party Paths ---
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src")
+    
+    # corresponds to ${ERPC_PATH}/third_party/asio/include
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include")
+
+    # --- System Libraries (Boost, LibEvent) ---
+    if(Boost_INCLUDE_DIRS)
+        foreach(dir ${Boost_INCLUDE_DIRS})
+            list(APPEND MAKO_INCLUDE_FLAGS "-I${dir}")
+        endforeach()
+    endif()
+
+    if(LIBEVENT_INCLUDE_DIRS)
+        foreach(dir ${LIBEVENT_INCLUDE_DIRS})
+            list(APPEND MAKO_INCLUDE_FLAGS "-I${dir}")
+        endforeach()
+    endif()
+
+    # 3. Build Definitions
+    get_target_property(MAKO_COMPILE_DEFS mako COMPILE_DEFINITIONS)
+    set(MAKO_DEFINE_FLAGS "")
+    if(MAKO_COMPILE_DEFS)
+        foreach(def ${MAKO_COMPILE_DEFS})
+            list(APPEND MAKO_DEFINE_FLAGS "-D${def}")
+        endforeach()
+    endif()
+
+    # Add definitions required for parsing logic
+    list(APPEND MAKO_DEFINE_FLAGS "-DCACHE_LINE_SIZE=64")
+    list(APPEND MAKO_DEFINE_FLAGS "-DCONFIG_H=\"${CONFIG_H}\"")
+    list(APPEND MAKO_DEFINE_FLAGS "-DSTO_OPACITY=${OPACITY}")
+    list(APPEND MAKO_DEFINE_FLAGS "-DREAD_MY_WRITES=${STO_RMW}")
+    list(APPEND MAKO_DEFINE_FLAGS "-DHASHTABLE=${HASHTABLE}")
+
+    # 4. Create Targets
+    set(STO_BORROW_CHECK_TARGETS "")
+    foreach(source_file ${STO_BORROW_CHECK_FILES})
+        get_filename_component(file_name ${source_file} NAME_WE)
+        set(target_name "borrow_check_sto_${file_name}")
+        get_filename_component(source_abs ${source_file} ABSOLUTE)
+
+        add_custom_target(${target_name}
+            COMMAND ${CPP_BORROW_CHECKER} ${source_abs} ${MAKO_INCLUDE_FLAGS} ${MAKO_DEFINE_FLAGS}
+            COMMENT "Borrow checking ${file_name}.cc"
+            VERBATIM
+        )
+
+        if(COMMAND ensure_checker_built)
+             ensure_checker_built(${target_name})
+        else()
+             add_dependencies(${target_name} build_rusty_cpp_checker)
+        endif()
+
+        list(APPEND STO_BORROW_CHECK_TARGETS ${target_name})
+    endforeach()
+
+    add_custom_target(borrow_check_sto
+        DEPENDS ${STO_BORROW_CHECK_TARGETS}
+        COMMENT "Running borrow checker on STO files"
+    )
+    
+    message(STATUS "STO borrow checking enabled (Failproof Include Mode)")
+else()
+    add_custom_target(borrow_check_sto
+        COMMAND ${CMAKE_COMMAND} -E echo "Borrow checking disabled"
+    )
+endif()
+
+# ==============================================================================
+# Silo/Core Borrow Checking 
+# ==============================================================================
+
+if(ENABLE_BORROW_CHECKING)
+    # 1. Define Silo/Core source files
+    set(SILO_BORROW_CHECK_FILES
+        "${W}/allocator.cc"
+        "${W}/core.cc"
+        "${W}/counter.cc"
+        "${W}/memory.cc"
+        "${W}/rcu.cc"
+        "${W}/ticker.cc"
+        "${W}/varint.cc"
+        "${W}/rocksdb_persistence.cc"
+        "${W}/stats_server.cc"
+        
+        #"${W}/tuple.cc"
+        #"${W}/txn.cc" 
+        #"${W}/benchmarks/bid.cc" 
+        #"${W}/benchmarks/queue.cc" 
+        #"${W}/benchmarks/encstress.cc" 
+        # "${W}/benchmarks/rpc_setup.cc" 
+        # "${W}/benchmarks/bench.cc"
+    )
+
+    # 2. Build Include List Manually
+    set(MAKO_INCLUDE_FLAGS "")
+
+    # --- Core Project Paths ---
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src/mako")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/src/rrr")
+    
+    # --- Third Party Paths ---
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src")
+    list(APPEND MAKO_INCLUDE_FLAGS "-I${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include")
+
+    # --- System Libraries ---
+    if(Boost_INCLUDE_DIRS)
+        foreach(dir ${Boost_INCLUDE_DIRS})
+            list(APPEND MAKO_INCLUDE_FLAGS "-I${dir}")
+        endforeach()
+    endif()
+
+    if(LIBEVENT_INCLUDE_DIRS)
+        foreach(dir ${LIBEVENT_INCLUDE_DIRS})
+            list(APPEND MAKO_INCLUDE_FLAGS "-I${dir}")
+        endforeach()
+    endif()
+
+    # 3. Build Definitions
+    get_target_property(MAKO_COMPILE_DEFS mako COMPILE_DEFINITIONS)
+    set(MAKO_DEFINE_FLAGS "")
+    if(MAKO_COMPILE_DEFS)
+        foreach(def ${MAKO_COMPILE_DEFS})
+            list(APPEND MAKO_DEFINE_FLAGS "-D${def}")
+        endforeach()
+    endif()
+
+    list(APPEND MAKO_DEFINE_FLAGS "-DCACHE_LINE_SIZE=64")
+    list(APPEND MAKO_DEFINE_FLAGS "-DCONFIG_H=\"${CONFIG_H}\"")
+    list(APPEND MAKO_DEFINE_FLAGS "-DSTO_OPACITY=${OPACITY}")
+    list(APPEND MAKO_DEFINE_FLAGS "-DREAD_MY_WRITES=${STO_RMW}")
+    list(APPEND MAKO_DEFINE_FLAGS "-DHASHTABLE=${HASHTABLE}")
+
+    # 4. Create Targets
+    set(SILO_BORROW_CHECK_TARGETS "")
+    foreach(source_file ${SILO_BORROW_CHECK_FILES})
+        get_filename_component(file_name ${source_file} NAME_WE)
+        set(target_name "borrow_check_silo_${file_name}")
+        get_filename_component(source_abs ${source_file} ABSOLUTE)
+
+        add_custom_target(${target_name}
+            COMMAND ${CPP_BORROW_CHECKER} ${source_abs} ${MAKO_INCLUDE_FLAGS} ${MAKO_DEFINE_FLAGS}
+            COMMENT "Borrow checking Silo Core: ${file_name}.cc"
+            VERBATIM
+        )
+
+        if(COMMAND ensure_checker_built)
+             ensure_checker_built(${target_name})
+        else()
+             add_dependencies(${target_name} build_rusty_cpp_checker)
+        endif()
+
+        list(APPEND SILO_BORROW_CHECK_TARGETS ${target_name})
+    endforeach()
+
+    # 5. Master Target
+    add_custom_target(borrow_check_silo
+        DEPENDS ${SILO_BORROW_CHECK_TARGETS}
+        COMMENT "Running borrow checker on Silo/Core files"
+    )
+    
+    list(LENGTH SILO_BORROW_CHECK_FILES SILO_FILE_COUNT)
+    message(STATUS "Silo/Core borrow checking enabled for ${SILO_FILE_COUNT} files")
+else()
+    add_custom_target(borrow_check_silo
+        COMMAND ${CMAKE_COMMAND} -E echo "Borrow checking disabled"
+    )
+endif()
 
 # ------------------------------------- build apps -----------------------------------------------
 
