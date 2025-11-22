@@ -59,3 +59,4 @@ Check out the doc directory to find more about how to build the system on older 
 | janus          | 64c8s1p   | tpcc      | concurrent_100 | OK     	 | 37.72s |
 | janus          | 3c3s3r1p  | tpcc      | concurrent_100 | OK     	 | 38.43s |
 
+README update to test the access of the repository.
