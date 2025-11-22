@@ -5,7 +5,7 @@ services:
     platform: linux/amd64
     build:
       context: .
-      dockerfile: Dockerfile.ubuntu22
+      dockerfile: rdma utils/Dockerfile.mako
     image: mako-build:ubuntu22
     container_name: mako-ubuntu22
     volumes:
