@@ -47,8 +47,36 @@ pkg_check_modules(DPDK REQUIRED libdpdk)
 # RDMA support (optional)
 if(ENABLE_RDMA)
     message(STATUS "RDMA support enabled")
+    message(STATUS "Checking for RDMA libraries...")
     pkg_check_modules(IBVERBS REQUIRED libibverbs)
-    pkg_check_modules(RDMACM REQUIRED librdmacm)
+    pkg_check_modules(RDMACM librdmacm)
+    
+    # If pkg-config fails, try finding libraries manually
+    if(NOT RDMACM_FOUND)
+        message(STATUS "librdmacm not found via pkg-config, trying manual search...")
+        find_library(RDMACM_LIBRARY
+            NAMES rdmacm
+            PATHS /usr/lib /usr/lib/x86_64-linux-gnu /usr/local/lib
+        )
+        find_path(RDMACM_INCLUDE_DIR
+            NAMES rdma/rdma_cma.h
+            PATHS /usr/include /usr/local/include
+        )
+        
+        if(RDMACM_LIBRARY AND RDMACM_INCLUDE_DIR)
+            message(STATUS "Found librdmacm manually: ${RDMACM_LIBRARY}")
+            set(RDMACM_LIBRARIES ${RDMACM_LIBRARY})
+            set(RDMACM_INCLUDE_DIRS ${RDMACM_INCLUDE_DIR})
+            set(RDMACM_FOUND TRUE)
+        else()
+            message(FATAL_ERROR 
+                "librdmacm not found. Required for RDMA support.\n"
+                "Install it with: sudo apt-get install librdmacm-dev\n"
+                "Or run: make install-deps\n"
+                "Or run: bash apt_packages.sh")
+        endif()
+    endif()
+    
     add_definitions(-DENABLE_RDMA)
     message(STATUS "RDMA libraries found: libibverbs, librdmacm")
 else()

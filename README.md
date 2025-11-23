@@ -60,7 +60,7 @@ git clone --recursive https://github.com/makodb/mako.git
 cd mako
 
 # 2. Install dependencies
-bash apt_packages.sh
+make install-deps  # or: bash apt_packages.sh
 source install_rustc.sh
 
 # 3. Build (use fewer cores on PC, e.g., -j4)

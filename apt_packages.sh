@@ -35,7 +35,7 @@ sudo apt-get --assume-yes install librocksdb-dev
 
 sudo apt-get --assume-yes install build-essential cmake libudev-dev libnl-3-dev  
 sudo apt-get --assume-yes install libnl-route-3-dev ninja-build pkg-config valgrind python3-dev
-sudo apt-get --assume-yes install libnuma-dev libibverbs-dev libgflags-dev numactl
+sudo apt-get --assume-yes install libnuma-dev libibverbs-dev librdmacm-dev libgflags-dev numactl
 sudo apt-get --assume-yes install cython3 python3-docutils pandoc make cmake
 sudo apt-get --assume-yes install libjemalloc-dev libpmem-dev net-tools ifmetric
 sudo apt-get --assume-yes install python3 python3-pip

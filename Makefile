@@ -3,9 +3,30 @@
 # Variables
 BUILD_DIR = build
 
-.PHONY: all configure build clean rebuild run test test-verbose test-parallel
+.PHONY: all configure build clean rebuild run test test-verbose test-parallel check-deps install-deps
 
 all: build
+
+# Check if required dependencies are installed (optional - won't fail build)
+check-deps:
+	@echo "Checking for common dependencies..."
+	@if ! pkg-config --exists librdmacm 2>/dev/null; then \
+		if ! dpkg -l | grep -q "^ii.*librdmacm-dev"; then \
+			echo "NOTE: librdmacm-dev is not installed (required for RDMA support)"; \
+			echo "      Run 'make install-deps' to install it, or 'bash apt_packages.sh'"; \
+		fi; \
+	fi; \
+	if ! pkg-config --exists libibverbs 2>/dev/null; then \
+		if ! dpkg -l | grep -q "^ii.*libibverbs-dev"; then \
+			echo "NOTE: libibverbs-dev is not installed (required for RDMA support)"; \
+			echo "      Run 'make install-deps' to install it, or 'bash apt_packages.sh'"; \
+		fi; \
+	fi
+
+# Install dependencies (requires sudo)
+install-deps:
+	@echo "Installing dependencies..."
+	@bash apt_packages.sh
 
 configure:
 	cmake -S . -B $(BUILD_DIR) 
