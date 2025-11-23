@@ -44,6 +44,17 @@ enable_borrow_checking()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
+# RDMA support (optional)
+if(ENABLE_RDMA)
+    message(STATUS "RDMA support enabled")
+    pkg_check_modules(IBVERBS REQUIRED libibverbs)
+    pkg_check_modules(RDMACM REQUIRED librdmacm)
+    add_definitions(-DENABLE_RDMA)
+    message(STATUS "RDMA libraries found: libibverbs, librdmacm")
+else()
+    message(STATUS "RDMA support disabled (use -DENABLE_RDMA=ON to enable)")
+endif()
+
 # Find Python for txlog library
 find_package(Python3 COMPONENTS Development REQUIRED)
 
@@ -205,6 +216,7 @@ option(DISABLE_DISK "Disable disk persistence" ON)
 option(FAIL_NEW_VERSION "Enable fail new version" ON)
 option(SIMULATE_ONE_SHARD_PER_THREAD "Simulate one shard per thread" OFF)
 option(TRACKING_ROLLBACK "Enable rollback tracking" OFF)
+option(ENABLE_RDMA "Enable RDMA transport support" OFF)
 
 # Masstree configuration
 set(MASSTREE_CONFIG "CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER} --enable-max-key-len=1024")
@@ -572,6 +584,7 @@ file(GLOB RRR_SRC
     "src/rrr/pylib/simplerpc/_pyrpc.cpp"
     "src/rrr/rpc/*.cpp"
     "src/rrr/rpc/*.hpp"
+    "src/rrr/transport/*.cc"
     "src/rrr/utils/*.h"
     "src/rrr/rrr.h"
     "src/rrr/rrr.hpp"
@@ -616,6 +629,18 @@ target_include_directories(txlog PRIVATE
     ${Boost_INCLUDE_DIRS}
     ${Python3_INCLUDE_DIRS}
 )
+
+# Add RDMA libraries if enabled
+if(ENABLE_RDMA)
+    target_include_directories(txlog PRIVATE
+        ${IBVERBS_INCLUDE_DIRS}
+        ${RDMACM_INCLUDE_DIRS}
+    )
+    target_link_libraries(txlog
+        ${IBVERBS_LIBRARIES}
+        ${RDMACM_LIBRARIES}
+    )
+endif()
 
 target_compile_options(txlog PRIVATE ${BENCH_CXXFLAGS})
 target_compile_definitions(txlog PRIVATE CONFIG_H=\"${CONFIG_H}\")
@@ -676,6 +701,15 @@ target_include_directories(mako PUBLIC
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
+
+# Add RDMA includes if enabled
+if(ENABLE_RDMA)
+    target_include_directories(mako PUBLIC
+        ${IBVERBS_INCLUDE_DIRS}
+        ${RDMACM_INCLUDE_DIRS}
+    )
+endif()
+
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
@@ -787,7 +821,19 @@ if(NOT TARGET rrr)
     )
     target_compile_options(rrr PUBLIC ${BENCH_CXXFLAGS})
     target_link_libraries(rrr pthread ${Boost_LIBRARIES})
-
+    
+    # Add RDMA libraries if enabled
+    if(ENABLE_RDMA)
+        target_include_directories(rrr PUBLIC
+            ${IBVERBS_INCLUDE_DIRS}
+            ${RDMACM_INCLUDE_DIRS}
+        )
+        target_link_libraries(rrr
+            ${IBVERBS_LIBRARIES}
+            ${RDMACM_LIBRARIES}
+        )
+    endif()
+    
     # Add borrow checking for RRR library
     if(ENABLE_BORROW_CHECKING)
         add_borrow_check_target(rrr)
@@ -964,6 +1010,15 @@ if(BUILD_TESTS)
     target_compile_options(test_and_event PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_and_event ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_and_event COMMAND test_and_event)
+    
+    # RDMA Transport Tests (only if RDMA is enabled)
+    if(ENABLE_RDMA)
+        add_executable(test_rdma_transport test/test_rdma_transport.cc)
+        target_include_directories(test_rdma_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} ${IBVERBS_INCLUDE_DIRS} ${RDMACM_INCLUDE_DIRS})
+        target_compile_options(test_rdma_transport PRIVATE ${TEST_COMPILE_OPTIONS})
+        target_link_libraries(test_rdma_transport ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} ${IBVERBS_LIBRARIES} ${RDMACM_LIBRARIES} pthread)
+        add_test(NAME test_rdma_transport COMMAND test_rdma_transport)
+    endif()
 
     # Transport Backend Tests (Comprehensive)
     # Tests use mock implementations to avoid mako/eRPC dependencies

@@ -13,6 +13,8 @@
 #include "reactor/coroutine.h"
 #include "server.hpp"
 #include "utils.hpp"
+#include "transport/transport.h"  // Only for RDMA support
+#include <cstring>
 
 // External safety annotations for atomic operations
 // @external: {
@@ -111,7 +113,16 @@ SpinLock ServerConnection::rpc_id_missing_l_s;
 // @unsafe - Initializes connection and updates counter
 // SAFETY: Counter operations are thread-safe
 ServerConnection::ServerConnection(Server* server, int socket)
-        : server_(server), socket_(socket), status_(CONNECTED) {
+        : server_(server), socket_(socket), rdma_transport_(nullptr), status_(CONNECTED) {
+    // increase number of open connections
+    server_->sconns_ctr_.next(1);
+    block_read_in.init_block_read(100000000);
+}
+
+// @unsafe - Initializes RDMA connection and updates counter
+// SAFETY: Counter operations are thread-safe
+ServerConnection::ServerConnection(Server* server, std::shared_ptr<Transport> rdma_transport)
+        : server_(server), socket_(-1), rdma_transport_(rdma_transport), status_(CONNECTED) {
     // increase number of open connections
     server_->sconns_ctr_.next(1);
     block_read_in.init_block_read(100000000);
@@ -172,24 +183,44 @@ void ServerConnection::handle_read() {
         return;
     }
 
-    //read packet size first
-    i32 packet_size;
-    int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
-    if(n_peek < sizeof(i32)){
-      int bytes_read = block_read_in.chnk_read_from_fd(socket_, sizeof(i32)-n_peek);
-
-      //Log_info("bytes read from socket %d", bytes_read);
-       if (block_read_in.content_size() < sizeof(i32)) {
-          return;
-       }
+    // Handle RDMA differently from TCP
+    if (rdma_transport_) {
+        // For RDMA: read from transport and copy to block_read_in
+        char buf[4096];
+        ssize_t n = rdma_transport_->read(buf, sizeof(buf));
+        if (n > 0) {
+            block_read_in.write(buf, n);
+        } else {
+            return;  // No data available
+        }
+    } else {
+        // TCP: use standard socket read
+        //read packet size first
+        i32 packet_size;
+        int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
+        if(n_peek < sizeof(i32)){
+          int bytes_read = block_read_in.chnk_read_from_fd(socket_, sizeof(i32)-n_peek);
+          if (block_read_in.content_size() < sizeof(i32)) {
+              return;
+          }
+        }
     }
 
     list<rusty::Box<Request>> complete_requests;
-    n_peek = block_read_in.peek(&packet_size, sizeof(i32));
+    i32 packet_size;
+    int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
     if(n_peek == sizeof(i32)){
-      int pckt_bytes = block_read_in.chnk_read_from_fd(socket_, packet_size + sizeof(i32) - block_read_in.content_size());
-      if(block_read_in.content_size() < packet_size + sizeof(i32)){
-        return;
+      // For TCP, read remaining packet data
+      if (!rdma_transport_) {
+          int pckt_bytes = block_read_in.chnk_read_from_fd(socket_, packet_size + sizeof(i32) - block_read_in.content_size());
+          if(block_read_in.content_size() < packet_size + sizeof(i32)){
+            return;
+          }
+      } else {
+          // For RDMA, data is already in block_read_in from handle_read above
+          if(block_read_in.content_size() < packet_size + sizeof(i32)){
+            return;
+          }
       }
       verify(block_read_in.read(&packet_size, sizeof(i32)) == sizeof(i32));
       auto req = rusty::Box<Request>(new Request());
@@ -280,7 +311,7 @@ void ServerConnection::handle_read() {
     }
 }
 
-// @unsafe - Writes buffered data to socket
+// @unsafe - Writes buffered data to socket or RDMA transport
 // SAFETY: Protected by output spinlock
 void ServerConnection::handle_write() {
     if (status_ == CLOSED) {
@@ -288,7 +319,35 @@ void ServerConnection::handle_write() {
     }
 
     out_l_.lock();
-    out_.write_to_fd(socket_);
+    
+    // Handle RDMA differently from TCP
+    if (rdma_transport_) {
+        // For RDMA: copy data from Marshal to transport and send
+        while (!out_.empty()) {
+            size_t data_size = out_.content_size();
+            if (data_size > 0) {
+                char* buf = new char[data_size];
+                size_t read_size = out_.read(buf, data_size);
+                
+                // Send via RDMA
+                ssize_t sent = rdma_transport_->write(buf, read_size);
+                if (sent > 0) {
+                    // Data sent successfully
+                } else {
+                    // Would block or error
+                    delete[] buf;
+                    break;
+                }
+                delete[] buf;
+            } else {
+                break;
+            }
+        }
+    } else {
+        // TCP: use standard socket write
+        out_.write_to_fd(socket_);
+    }
+    
     if (out_.empty()) {
         server_->poll_thread_worker_.as_ref().unwrap()->update_mode(*this, Pollable::READ);
     }
@@ -322,8 +381,12 @@ void ServerConnection::close() {
             auto& conn = const_cast<ServerConnection&>(*self.unwrap());
             server_->poll_thread_worker_.as_ref().unwrap()->remove(conn);
             status_ = CLOSED;
-            ::close(socket_);
-            Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_);
+            if (rdma_transport_) {
+                rdma_transport_->close();
+            } else {
+                ::close(socket_);
+            }
+            Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), fd());
         }
     }
 }
@@ -491,14 +554,32 @@ void Server::server_loop(struct addrinfo* svr_addr) {
     status_ = STOPPED;
 }
 
-// @unsafe - Accepts new client connections
+// @unsafe - Accepts new client connections (TCP or RDMA)
 // @unsafe - Calls unsafe Log::debug for connection logging
 // SAFETY: Thread-safe with server connection lock
 void ServerListener::handle_read() {
-//  fd_set fds;
-//  FD_ZERO(&fds);
-//  FD_SET(server_sock_, &fds);
-
+  // Handle RDMA connections
+  if (rdma_listener_) {
+    while (true) {
+      auto client_transport = rdma_listener_->accept();
+      if (!client_transport) {
+        break;  // No more connections available
+      }
+      
+      Log_debug("server@%s got new RDMA client, fd=%d", this->addr_.c_str(), client_transport->fd());
+      
+      // Create ServerConnection with RDMA transport
+      auto sconn = std::make_shared<ServerConnection>(server_, client_transport);
+      sconn->weak_self_ = sconn;
+      server_->sconns_l_.lock();
+      server_->sconns_.insert(sconn);
+      server_->sconns_l_.unlock();
+      server_->poll_thread_worker_->add(sconn);
+    }
+    return;
+  }
+  
+  // Handle TCP connections (original code)
   while (true) {
 #ifdef USE_IPC
     struct sockaddr_un fsaun;
@@ -523,16 +604,50 @@ void ServerListener::handle_read() {
   }
 }
 
-// @safe - Closes server socket using safe external annotation
+// @safe - Closes server socket or RDMA listener
 void ServerListener::close() {
-  ::close(server_sock_);
+  if (rdma_listener_) {
+    rdma_listener_->close();
+    rdma_listener_ = nullptr;
+  } else {
+    ::close(server_sock_);
+  }
 }
 
-// @safe - Creates listener socket and binds to address
+// @safe - Creates listener socket and binds to address, or RDMA listener if "rdma://" prefix detected
 // All socket operations are marked safe via external annotations
 ServerListener::ServerListener(Server* server, string addr) {
   server_ = server;
   addr_ = addr;
+  
+  // Check for RDMA protocol prefix
+  if (addr.find("rdma://") == 0) {
+    // Use RDMA transport
+    string rdma_addr = addr.substr(7);  // Skip "rdma://" prefix
+    rdma_listener_ = create_rdma_transport(rdma_addr.c_str());
+    if (!rdma_listener_) {
+      Log_error("rrr::Server: failed to create RDMA transport for %s", rdma_addr.c_str());
+      verify(0);  // Fatal error
+      return;
+    }
+    
+    if (rdma_listener_->bind(rdma_addr.c_str()) != 0) {
+      Log_error("rrr::Server: failed to bind RDMA transport to %s", rdma_addr.c_str());
+      verify(0);
+      return;
+    }
+    
+    if (rdma_listener_->listen() != 0) {
+      Log_error("rrr::Server: failed to listen on RDMA transport %s", rdma_addr.c_str());
+      verify(0);
+      return;
+    }
+    
+    Log_debug("rrr::Server: started on %s using RDMA transport", rdma_addr.c_str());
+    return;  // RDMA setup complete, skip TCP socket code
+  }
+  
+  // Default: Use original TCP socket code
   size_t idx = addr.find(":");
   if (idx == string::npos) {
     Log_error("rrr::Server: bad bind address: %s", addr.c_str());

@@ -180,6 +180,8 @@ class Client: public Pollable {
 
     // Interior mutability for use with Arc (const methods need to modify state)
     rusty::Cell<int> sock_;
+    // Note: RDMA transport support would need to be added here if needed
+    // std::shared_ptr<Transport> rdma_transport_;  // Only used for RDMA connections
     enum {
         NEW, CONNECTED, CLOSED
     };
@@ -284,6 +286,8 @@ public:
     void close() const;
 
     int fd() const {
+        // Note: RDMA transport support would need to be added here if needed
+        // For now, using the standard socket fd
         return sock_.get();
     }
 

@@ -70,12 +70,23 @@ RUN apt-get update && apt-get install -y \
 RUN apt-get update && apt-get install -y \
     libnuma-dev \
     libibverbs-dev \
+    librdmacm-dev \
     libgflags-dev \
     libnl-3-dev \
     libnl-route-3-dev \
     libsystemd-dev \
     libdpdk-dev \
     libpmem-dev \
+    rdma-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SoftRoCE (RXE) for RDMA testing in Docker
+# Note: SoftRoCE requires kernel modules which may not be available in Docker
+# This is a placeholder - actual SoftRoCE setup requires privileged mode
+RUN apt-get update && apt-get install -y \
+    rdma-core \
+    ibverbs-utils \
+    rdma-core-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python and development tools

@@ -95,6 +95,7 @@ class ServerListener: public Pollable {
   struct addrinfo* p_svr_addr_{nullptr};
 
   int server_sock_{0};
+  // std::shared_ptr<Transport> rdma_listener_;  // Only used for RDMA connections (not yet integrated)
   
   // @safe - Returns constant poll mode
   int poll_mode() const override {
@@ -116,7 +117,11 @@ class ServerListener: public Pollable {
   void close();
 
   // @safe - Returns file descriptor
-  int fd() const override {return server_sock_;}
+  int fd() const override {
+    // Note: RDMA transport support would need to be added here if needed
+    // For now, using the standard server socket
+    return server_sock_;
+  }
   
   // @safe - Constructor with proper error handling
   ServerListener(Server* s, std::string addr);
@@ -153,6 +158,7 @@ class ServerConnection: public Pollable {
 
     Server* server_;
     int socket_;
+    // std::shared_ptr<Transport> rdma_transport_;  // Only used for RDMA connections (not yet integrated)
 
     rusty::Option<rusty::Box<Marshal::bookmark>> bmark_;
 
@@ -186,9 +192,13 @@ public:
     ~ServerConnection();
 
 
-    // @unsafe - Initializes connection with socket
+    // @unsafe - Initializes connection with socket (TCP)
     // SAFETY: Increments server connection counter
     ServerConnection(Server* server, int socket);
+    
+    // @unsafe - Initializes connection with RDMA transport
+    // SAFETY: Increments server connection counter
+    ServerConnection(Server* server, std::shared_ptr<Transport> rdma_transport);
 
     /**
      * Start a reply message. Must be paired with end_reply().
@@ -231,6 +241,8 @@ public:
     }
 
     int fd() const override {
+        // Note: RDMA transport support would need to be added here if needed
+        // For now, using the standard socket
         return socket_;
     }
 
