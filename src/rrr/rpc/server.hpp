@@ -12,6 +12,7 @@
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
+#include "transport/transport.h"  // For RDMA transport support
 
 // External safety annotations for system functions used in this module
 // @external: {
