@@ -113,12 +113,17 @@ SpinLock ServerConnection::rpc_id_missing_l_s;
 // @unsafe - Initializes connection and updates counter
 // SAFETY: Counter operations are thread-safe
 ServerConnection::ServerConnection(Server* server, int socket)
-        : server_(server), socket_(socket), rdma_transport_(nullptr), status_(CONNECTED) {
+        : server_(server), socket_(socket)
+#ifdef ENABLE_RDMA
+        , rdma_transport_(nullptr)
+#endif
+        , status_(CONNECTED) {
     // increase number of open connections
     server_->sconns_ctr_.next(1);
     block_read_in.init_block_read(100000000);
 }
 
+#ifdef ENABLE_RDMA
 // @unsafe - Initializes RDMA connection and updates counter
 // SAFETY: Counter operations are thread-safe
 ServerConnection::ServerConnection(Server* server, std::shared_ptr<Transport> rdma_transport)
@@ -127,6 +132,7 @@ ServerConnection::ServerConnection(Server* server, std::shared_ptr<Transport> rd
     server_->sconns_ctr_.next(1);
     block_read_in.init_block_read(100000000);
 }
+#endif
 
 // @safe - Updates connection counter
 ServerConnection::~ServerConnection() {
@@ -170,7 +176,7 @@ void ServerConnection::end_reply() {
     // only update poll mode if connection is still active
     // (connection might have closed while handler was running)
     if (status_ == CONNECTED) {
-        server_->poll_thread_worker_.as_ref().unwrap()->update_mode(*this, Pollable::READ | Pollable::WRITE);
+        server_->poll_thread_worker_.unwrap_ref()->update_mode(*this, Pollable::READ | Pollable::WRITE);
     }
 
     out_l_.unlock();
@@ -183,7 +189,12 @@ void ServerConnection::handle_read() {
         return;
     }
 
+    list<rusty::Box<Request>> complete_requests;
+    i32 packet_size;
+    int n_peek;
+
     // Handle RDMA differently from TCP
+#ifdef ENABLE_RDMA
     if (rdma_transport_) {
         // For RDMA: read from transport and copy to block_read_in
         char buf[4096];
@@ -194,34 +205,38 @@ void ServerConnection::handle_read() {
             return;  // No data available
         }
     } else {
+#endif
         // TCP: use standard socket read
         //read packet size first
-        i32 packet_size;
-        int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
+        n_peek = block_read_in.peek(&packet_size, sizeof(i32));
         if(n_peek < sizeof(i32)){
           int bytes_read = block_read_in.chnk_read_from_fd(socket_, sizeof(i32)-n_peek);
           if (block_read_in.content_size() < sizeof(i32)) {
               return;
           }
         }
+#ifdef ENABLE_RDMA
     }
+#endif
 
-    list<rusty::Box<Request>> complete_requests;
-    i32 packet_size;
-    int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
+    n_peek = block_read_in.peek(&packet_size, sizeof(i32));
     if(n_peek == sizeof(i32)){
       // For TCP, read remaining packet data
+#ifdef ENABLE_RDMA
       if (!rdma_transport_) {
+#endif
           int pckt_bytes = block_read_in.chnk_read_from_fd(socket_, packet_size + sizeof(i32) - block_read_in.content_size());
           if(block_read_in.content_size() < packet_size + sizeof(i32)){
             return;
           }
+#ifdef ENABLE_RDMA
       } else {
           // For RDMA, data is already in block_read_in from handle_read above
           if(block_read_in.content_size() < packet_size + sizeof(i32)){
             return;
           }
       }
+#endif
       verify(block_read_in.read(&packet_size, sizeof(i32)) == sizeof(i32));
       auto req = rusty::Box<Request>(new Request());
       verify(req->m.read_reuse_chnk(block_read_in, packet_size) == (size_t) packet_size);
@@ -321,6 +336,7 @@ void ServerConnection::handle_write() {
     out_l_.lock();
     
     // Handle RDMA differently from TCP
+#ifdef ENABLE_RDMA
     if (rdma_transport_) {
         // For RDMA: copy data from Marshal to transport and send
         while (!out_.empty()) {
@@ -344,12 +360,15 @@ void ServerConnection::handle_write() {
             }
         }
     } else {
+#endif
         // TCP: use standard socket write
         out_.write_to_fd(socket_);
+#ifdef ENABLE_RDMA
     }
+#endif
     
     if (out_.empty()) {
-        server_->poll_thread_worker_.as_ref().unwrap()->update_mode(*this, Pollable::READ);
+        server_->poll_thread_worker_.unwrap_ref()->update_mode(*this, Pollable::READ);
     }
     out_l_.unlock();
 }
@@ -379,13 +398,17 @@ void ServerConnection::close() {
         if (self.is_some()) {
             // Arc gives const access, need to cast to call remove()
             auto& conn = const_cast<ServerConnection&>(*self.unwrap());
-            server_->poll_thread_worker_.as_ref().unwrap()->remove(conn);
+            server_->poll_thread_worker_.unwrap_ref()->remove(conn);
             status_ = CLOSED;
+#ifdef ENABLE_RDMA
             if (rdma_transport_) {
                 rdma_transport_->close();
             } else {
+#endif
                 ::close(socket_);
+#ifdef ENABLE_RDMA
             }
+#endif
             Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), fd());
         }
     }
@@ -448,13 +471,13 @@ Server::~Server() {
     for (auto& it: sconns) {
         auto& conn = const_cast<ServerConnection&>(*it);
         conn.close();
-        poll_thread_worker_.as_ref().unwrap()->remove(conn);
+        poll_thread_worker_.unwrap_ref()->remove(conn);
     }
 
     if (sp_server_listener_.is_some()) {
-        auto& listener = const_cast<ServerListener&>(*sp_server_listener_.as_ref().unwrap());
+        auto& listener = const_cast<ServerListener&>(*sp_server_listener_.unwrap_ref());
         listener.close();
-        poll_thread_worker_.as_ref().unwrap()->remove(listener);
+        poll_thread_worker_.unwrap_ref()->remove(listener);
         sp_server_listener_ = rusty::None;  // Reset to None
     }
 
@@ -545,7 +568,7 @@ void Server::server_loop(struct addrinfo* svr_addr) {
             const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
             sconns_.insert(sconn.clone());  // Insert Arc into set
             sconns_l_.unlock();
-            poll_thread_worker_.as_ref().unwrap()->add(sconn);
+            poll_thread_worker_.unwrap_ref()->add(sconn);
         }
     }
 
@@ -559,6 +582,7 @@ void Server::server_loop(struct addrinfo* svr_addr) {
 // SAFETY: Thread-safe with server connection lock
 void ServerListener::handle_read() {
   // Handle RDMA connections
+#ifdef ENABLE_RDMA
   if (rdma_listener_) {
     while (true) {
       auto client_transport = rdma_listener_->accept();
@@ -578,6 +602,7 @@ void ServerListener::handle_read() {
     }
     return;
   }
+#endif
   
   // Handle TCP connections (original code)
   while (true) {
@@ -597,7 +622,7 @@ void ServerListener::handle_read() {
       server_->sconns_l_.lock();
       server_->sconns_.insert(sconn.clone());  // Insert Arc into set
       server_->sconns_l_.unlock();
-      server_->poll_thread_worker_.as_ref().unwrap()->add(sconn);
+      server_->poll_thread_worker_.unwrap_ref()->add(sconn);
     } else {
       break;
     }
@@ -606,12 +631,16 @@ void ServerListener::handle_read() {
 
 // @safe - Closes server socket or RDMA listener
 void ServerListener::close() {
+#ifdef ENABLE_RDMA
   if (rdma_listener_) {
     rdma_listener_->close();
     rdma_listener_ = nullptr;
   } else {
+#endif
     ::close(server_sock_);
+#ifdef ENABLE_RDMA
   }
+#endif
 }
 
 // @safe - Creates listener socket and binds to address, or RDMA listener if "rdma://" prefix detected
@@ -621,6 +650,7 @@ ServerListener::ServerListener(Server* server, string addr) {
   addr_ = addr;
   
   // Check for RDMA protocol prefix
+#ifdef ENABLE_RDMA
   if (addr.find("rdma://") == 0) {
     // Use RDMA transport
     string rdma_addr = addr.substr(7);  // Skip "rdma://" prefix
@@ -646,6 +676,7 @@ ServerListener::ServerListener(Server* server, string addr) {
     Log_debug("rrr::Server: started on %s using RDMA transport", rdma_addr.c_str());
     return;  // RDMA setup complete, skip TCP socket code
   }
+#endif
   
   // Default: Use original TCP socket code
   size_t idx = addr.find(":");
@@ -770,7 +801,7 @@ int Server::start(const char* bind_addr) {
   }
   string addr(bind_addr, strlen(bind_addr));
   sp_server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(this, addr));
-  poll_thread_worker_.as_ref().unwrap()->add(sp_server_listener_.as_ref().unwrap().clone());
+  poll_thread_worker_.unwrap_ref()->add(sp_server_listener_.unwrap_ref().clone());
   return 0;
 }
 

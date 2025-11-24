@@ -72,7 +72,7 @@ static void* stat_proc(void*) {
 }
 
 static void* client_proc(void*) {
-    auto cl = Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto cl = Client::create(poll_thread_worker_.unwrap_ref());
     verify(cl->connect(svr_addr) == 0);
     FutureAttr fu_attr;
     i32 rpc_id;
@@ -242,7 +242,7 @@ int main(int argc, char **argv) {
 
     // Shutdown PollThreadWorker with proper locking
     {
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        poll_thread_worker_.unwrap_ref()->shutdown();
     }
     thrpool->release();
     return 0;

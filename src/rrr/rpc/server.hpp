@@ -226,7 +226,7 @@ public:
     // helper function, do some work in background
     int run_async(const std::function<void()>& f);
 
-    // @safe - Marshals data into output buffer
+    // @unsafe - Marshals data into output buffer
     // @lifetime: (&'a, const T&) -> &'a
     template<class T>
     ServerConnection& operator <<(const T& v) {
@@ -234,7 +234,7 @@ public:
         return *this;
     }
 
-    // @safe - Marshals data from another Marshal
+    // @unsafe - Marshals data from another Marshal
     // @lifetime: (&'a, Marshal&) -> &'a
     ServerConnection& operator <<(Marshal& m) {
         this->out_.read_from_marshal(m, m.content_size());

@@ -68,7 +68,7 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
 
     // Create server to listen for incoming requests
     // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
-    server_ = new rrr::Server(poll_thread_worker_.as_ref().unwrap().clone());
+    server_ = new rrr::Server(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
 
     // Register request handlers for all request types
     // Note: We capture both req_type and 'this' in the lambda
@@ -126,7 +126,7 @@ void RrrRpcBackend::Shutdown() {
     // Shutdown poll thread worker explicitly (after server is deleted)
     if (poll_thread_worker_.is_some()) {
         Notice("RrrRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()");
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        poll_thread_worker_.unwrap_ref()->shutdown();
         Notice("RrrRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed");
         poll_thread_worker_ = rusty::None;
         Notice("RrrRpcBackend::Shutdown: poll_thread_worker_ reset to None");
@@ -212,7 +212,7 @@ rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t 
     }
 
     // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
-    rusty::Arc<rrr::Client> client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap().clone());
+    rusty::Arc<rrr::Client> client = rrr::Client::create(poll_thread_worker_.unwrap_ref().clone());
 
     // Connect to destination
     int port = std::atoi(config_.shard(shard_idx, clusterRoleSentTo).port.c_str()) + server_id;

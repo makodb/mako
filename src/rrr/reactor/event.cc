@@ -38,7 +38,7 @@ using std::function;
 void Event::Wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
-  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_ == std::this_thread::get_id());
+  verify(Reactor::sp_reactor_th_.unwrap_ref()->thread_id_ == std::this_thread::get_id());
   if (status_ == DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_ == INIT);
   if (IsReady()) {

@@ -19,7 +19,7 @@ ClientWorker::~ClientWorker() {
 
   // Shutdown PollThreadWorker if we own it
   if (poll_thread_worker_.is_some()) {
-    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    poll_thread_worker_.unwrap_ref()->shutdown();
   }
 }
 
@@ -157,16 +157,15 @@ void ClientWorker::Work() {
     Log_info("closed loop clients.");
     verify(n_concurrent_ > 0);
     int n = n_concurrent_;
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this] () {
+    auto sp_one_time_job = std::make_shared<OneTimeJob>([this] () {
       for (uint32_t n_tx = 0; n_tx < n_concurrent_; n_tx++) {
         auto coo = CreateCoordinator(n_tx);
         Log_debug("create coordinator %d", coo->coo_id_);
         this->DispatchRequest(coo);
       }
-    }));
-    // Cast OneTimeJob to Job base class for PollThreadWorker
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    poll_thread_worker_.as_ref().unwrap()->add(arc_job_base);
+    });
+    auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+    poll_thread_worker_.unwrap_ref()->add(sp_job);
   } else {
     Log_info("open loop clients.");
     const std::chrono::nanoseconds wait_time
@@ -180,12 +179,11 @@ void ClientWorker::Work() {
       while (tps < config_->client_rate_ && timer_->elapsed() < duration) {
         auto coo = FindOrCreateCoordinator();
         if (coo != nullptr) {
-          auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this, coo] () {
+          auto sp_one_time_job = std::make_shared<OneTimeJob>([this, coo] () {
             this->DispatchRequest(coo);
-          }));
-          // Cast OneTimeJob to Job base class
-          auto arc_job_base = rusty::Arc<Job>(arc_job);
-          poll_thread_worker_.as_ref().unwrap()->add(arc_job_base);
+          });
+          auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+          poll_thread_worker_.unwrap_ref()->add(sp_job);
           txn_count++;
           elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>
               (std::chrono::steady_clock::now() - start);
@@ -293,7 +291,7 @@ ClientWorker::ClientWorker(
   num_txn.store(0);
   success.store(0);
   num_try.store(0);
-  commo_ = frame_->CreateCommo(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+  commo_ = frame_->CreateCommo(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
   commo_->loc_id_ = my_site_.locale_id;
   forward_requests_to_leader_ =
       (config->replica_proto_ == MODE_MULTI_PAXOS && site_info.locale_id != 0) ? true

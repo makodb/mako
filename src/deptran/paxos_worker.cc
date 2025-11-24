@@ -193,7 +193,7 @@ void PaxosWorker::SetupService() {
   if (rep_frame_ != nullptr) {
     services_ = rep_frame_->CreateRpcServices(site_info_->id,
                                               rep_sched_,
-                                              svr_poll_thread_worker_.as_ref().unwrap(),
+                                              svr_poll_thread_worker_.unwrap_ref(),
                                               scsi_);
     Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d",
       site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
@@ -202,7 +202,7 @@ void PaxosWorker::SetupService() {
   thread_pool_g = new base::ThreadPool(num_threads);
 
   // init rrr::Server
-  rpc_server_ = new rrr::Server(svr_poll_thread_worker_.as_ref().unwrap(), thread_pool_g);
+  rpc_server_ = new rrr::Server(svr_poll_thread_worker_.unwrap_ref(), thread_pool_g);
 
   // reg services
   for (auto service : services_) {
@@ -241,7 +241,7 @@ void PaxosWorker::SetupHeartbeat() {
   scsi_ = new ServerControlServiceImpl(timeout);
   svr_hb_poll_thread_worker_g = PollThreadWorker::create();
   hb_thread_pool_g = new rrr::ThreadPool(1);
-  hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
+  hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.unwrap_ref(), hb_thread_pool_g);
   hb_rpc_server_->reg(scsi_);
 
   auto port = site_info_->port + CtrlPortDelta;
@@ -522,11 +522,11 @@ void* PaxosWorker::StartReadAccept(void* arg){
     if(cnt <= 0)continue;
     std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
     //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, sub]() {
+    auto sp_one_time_job = std::make_shared<OneTimeJob>([&pw, sub]() {
       pw->BulkSubmit(sub);
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    pw->GetPollThreadWorker()->add(arc_job_base);
+    });
+    auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+    pw->GetPollThreadWorker()->add(sp_job);
     sent += cnt;
     if(sent % 2 == 0)Log_info("Total submits %d", sent);
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -542,8 +542,8 @@ void PaxosWorker::AddAcceptNc(shared_ptr<Coordinator> coord) {
   all_coords[bulk_writer++] = coord;
 }
 
-void PaxosWorker::submitJob(rusty::Arc<Job> arc_job){
-	GetPollThreadWorker()->add(arc_job);
+void PaxosWorker::submitJob(std::shared_ptr<Job> sp_job){
+	GetPollThreadWorker()->add(sp_job);
 }
 
 void* PaxosWorker::StartReadAcceptNc(void* arg){
@@ -570,16 +570,16 @@ void* PaxosWorker::StartReadAcceptNc(void* arg){
     if(cnt == 0)continue;
     std::vector<shared_ptr<Coordinator>> curr2(current.begin(), current.begin() + cnt);
     //Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)curr2.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, curr2]() {
+    auto sp_one_time_job = std::make_shared<OneTimeJob>([&pw, curr2]() {
       pw->BulkSubmit(curr2);
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
+    });
+    auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
     /*Log_info("alalslal %d %d %d", cnt, (int)pw->n_tot, (int)pw->n_current);
     if(pw->n_current + cnt >= pw->n_tot){
 	    pw->finish_cond.bcast();
     }*/
     auto strt = std::chrono::high_resolution_clock::now();
-    pw->submitJob(arc_job_base);
+    pw->submitJob(sp_job);
     auto endt = std::chrono::high_resolution_clock::now();
     sent += cnt;
     //if(sent % 2 == 0)Log_info("The number of submitted entries is %d %d", sent, cnt);
@@ -652,10 +652,10 @@ PaxosWorker::~PaxosWorker() {
 
   // Shutdown PollThreadWorkers if we own them
   if (svr_poll_thread_worker_.is_some()) {
-    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
+    svr_poll_thread_worker_.unwrap_ref()->shutdown();
   }
   if (svr_hb_poll_thread_worker_g.is_some()) {
-    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
+    svr_hb_poll_thread_worker_g.unwrap_ref()->shutdown();
   }
 }
 
@@ -688,11 +688,11 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
     auto sp_coo = shared_ptr<Coordinator>(coord);
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
-    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this, curr2]() {
+    auto sp_one_time_job = std::make_shared<OneTimeJob>([this, curr2]() {
       this->BulkSubmit(curr2);
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    submitJob(arc_job_base);
+    });
+    auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+    submitJob(sp_job);
   } else{
     coord->Submit(sp_m);
   }

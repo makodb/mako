@@ -117,7 +117,7 @@ protected:
         poll_thread_worker_ = rusty::Some(rrr::PollThreadWorker::create());
 
         // Create server
-        server_ = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server_ = new rrr::Server(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
 
         // Register request handlers for test request types
         for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
@@ -133,9 +133,9 @@ protected:
         server_running_ = true;
 
         // Create client
-        client_ = rusty::Some(rrr::Client::create(poll_thread_worker_.as_ref().unwrap()));
+        client_ = rusty::Some(rrr::Client::create(poll_thread_worker_.unwrap_ref()));
         std::string connect_addr = "127.0.0.1:" + std::to_string(port_);
-        ASSERT_EQ(client_.as_ref().unwrap()->connect(connect_addr.c_str()), 0)
+        ASSERT_EQ(client_.unwrap_ref()->connect(connect_addr.c_str()), 0)
             << "Failed to connect to " << connect_addr;
 
         // Wait for connection to establish
@@ -144,7 +144,7 @@ protected:
 
     void TearDown() override {
         if (client_.is_some()) {
-            client_.as_ref().unwrap()->close();
+            client_.unwrap_ref()->close();
             client_ = rusty::None;
         }
 
@@ -154,7 +154,7 @@ protected:
         }
 
         if (poll_thread_worker_.is_some()) {
-            poll_thread_worker_.as_ref().unwrap()->shutdown();
+            poll_thread_worker_.unwrap_ref()->shutdown();
             poll_thread_worker_ = rusty::None;
         }
     }
@@ -197,7 +197,7 @@ protected:
 
 TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
     // Send a simple request
-    auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+    auto fu_result = client_.unwrap_ref()->begin_request(TEST_REQ_TYPE_START);
     ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request";
     auto fu = fu_result.unwrap();
 
@@ -205,10 +205,10 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
     std::string request_data = "Hello, Transport!";
     rrr::Marshal m;
     m.write(request_data.data(), request_data.size());
-    *client_.as_ref().unwrap() << m;
+    *client_.unwrap_ref() << m;
 
     // Send request
-    client_.as_ref().unwrap()->end_request();
+    client_.unwrap_ref()->end_request();
 
     // Wait for response
     fu->wait();
@@ -233,15 +233,15 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
 TEST_F(RrrRpcDirectTest, MultipleRequestTypes) {
     // Test sending different request types
     for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
-        auto fu_result = client_.as_ref().unwrap()->begin_request(req_type);
+        auto fu_result = client_.unwrap_ref()->begin_request(req_type);
         ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request type " << (int)req_type;
         auto fu = fu_result.unwrap();
 
         std::string data = "Request_" + std::to_string(req_type);
         rrr::Marshal m;
         m.write(data.data(), data.size());
-        *client_.as_ref().unwrap() << m;
-        client_.as_ref().unwrap()->end_request();
+        *client_.unwrap_ref() << m;
+        client_.unwrap_ref()->end_request();
 
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
@@ -265,15 +265,15 @@ TEST_F(RrrRpcDirectTest, ConcurrentRequests) {
 
     // Send all requests without waiting
     for (int i = 0; i < num_requests; i++) {
-        auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+        auto fu_result = client_.unwrap_ref()->begin_request(TEST_REQ_TYPE_START);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
 
         std::string data = "Concurrent_" + std::to_string(i);
         rrr::Marshal m;
         m.write(data.data(), data.size());
-        *client_.as_ref().unwrap() << m;
-        client_.as_ref().unwrap()->end_request();
+        *client_.unwrap_ref() << m;
+        client_.unwrap_ref()->end_request();
 
         futures.push_back(std::move(fu));
     }
@@ -292,14 +292,14 @@ TEST_F(RrrRpcDirectTest, LargePayload) {
     const size_t payload_size = 1024 * 1024;
     std::vector<char> large_data(payload_size, 'X');
 
-    auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+    auto fu_result = client_.unwrap_ref()->begin_request(TEST_REQ_TYPE_START);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
     rrr::Marshal m;
     m.write(large_data.data(), large_data.size());
-    *client_.as_ref().unwrap() << m;
-    client_.as_ref().unwrap()->end_request();
+    *client_.unwrap_ref() << m;
+    client_.unwrap_ref()->end_request();
 
     fu->wait();
     EXPECT_EQ(fu->get_error_code(), 0);
@@ -323,7 +323,7 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
     for (int t = 0; t < num_threads; t++) {
         threads.emplace_back([this, t, requests_per_thread, &success_count]() {
             // Each thread creates its own client
-            auto thread_client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
+            auto thread_client = rrr::Client::create(poll_thread_worker_.unwrap_ref());
             int ret = thread_client->connect(("127.0.0.1:" + std::to_string(port_)).c_str());
             if (ret != 0) return;
 
@@ -359,15 +359,15 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
 }
 
 TEST_F(RrrRpcDirectTest, RequestWithTimeout) {
-    auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+    auto fu_result = client_.unwrap_ref()->begin_request(TEST_REQ_TYPE_START);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
     std::string data = "Timeout_Test";
     rrr::Marshal m;
     m.write(data.data(), data.size());
-    *client_.as_ref().unwrap() << m;
-    client_.as_ref().unwrap()->end_request();
+    *client_.unwrap_ref() << m;
+    client_.unwrap_ref()->end_request();
 
     // Use timed_wait instead of wait
     fu->timed_wait(5.0);  // 5 second timeout
@@ -383,7 +383,7 @@ TEST_F(RrrRpcDirectTest, StressThroughput) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < num_requests; i++) {
-        auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+        auto fu_result = client_.unwrap_ref()->begin_request(TEST_REQ_TYPE_START);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
 
@@ -391,8 +391,8 @@ TEST_F(RrrRpcDirectTest, StressThroughput) {
         uint32_t seq = i;
         rrr::Marshal m;
         m.write(&seq, sizeof(seq));
-        *client_.as_ref().unwrap() << m;
-        client_.as_ref().unwrap()->end_request();
+        *client_.unwrap_ref() << m;
+        client_.unwrap_ref()->end_request();
 
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
@@ -421,15 +421,15 @@ TEST_F(RrrRpcDirectTest, StressPipelined) {
 
         // Send batch
         for (int i = 0; i < batch_size; i++) {
-            auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+            auto fu_result = client_.unwrap_ref()->begin_request(TEST_REQ_TYPE_START);
             if (fu_result.is_err()) continue;
             auto fu = fu_result.unwrap();
 
             uint32_t seq = batch * batch_size + i;
             rrr::Marshal m;
             m.write(&seq, sizeof(seq));
-            *client_.as_ref().unwrap() << m;
-            client_.as_ref().unwrap()->end_request();
+            *client_.unwrap_ref() << m;
+            client_.unwrap_ref()->end_request();
 
             futures.push_back(std::move(fu));
         }
@@ -466,13 +466,13 @@ protected:
 
     void TearDown() override {
         if (poll_thread_worker_.is_some()) {
-            poll_thread_worker_.as_ref().unwrap()->shutdown();
+            poll_thread_worker_.unwrap_ref()->shutdown();
         }
     }
 };
 
 TEST_F(ConnectionResilienceTest, ConnectToNonExistentServer) {
-    auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto client = rrr::Client::create(poll_thread_worker_.unwrap_ref());
     int result = client->connect("127.0.0.1:19999");
     EXPECT_NE(result, 0);
     client->close();
@@ -482,7 +482,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     std::atomic<int> request_count{0};
 
     // Start server
-    auto server = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+    auto server = new rrr::Server(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
     server->reg(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         request_count++;
         auto sconn_opt = weak_sconn.upgrade();
@@ -495,7 +495,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(port_)).c_str()), 0);
 
     // Connect client
-    auto client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto client = rrr::Client::create(poll_thread_worker_.unwrap_ref());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
@@ -514,7 +514,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     client->close();
     std::this_thread::sleep_for(milliseconds(100));
 
-    auto client2 = rrr::Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto client2 = rrr::Client::create(poll_thread_worker_.unwrap_ref());
     ASSERT_EQ(client2->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
     std::this_thread::sleep_for(milliseconds(100));
 

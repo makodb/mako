@@ -55,23 +55,23 @@ protected:
     void SetUp() override {
         poll_thread_worker_ = rusty::Some(PollThreadWorker::create());
         // Clone the Arc to keep our copy for the client - use as_ref() to borrow
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
         service = new BenchService();
 
         server->reg(service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
 
-        client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(base_port)).c_str()), 0);
+        client = rusty::Some(Client::create(poll_thread_worker_.unwrap_ref()));
+        ASSERT_EQ(client.unwrap_ref()->connect(("127.0.0.1:" + std::to_string(base_port)).c_str()), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
 
     void TearDown() override {
-        client.as_ref().unwrap()->close();
+        client.unwrap_ref()->close();
         delete service;
         delete server;
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        poll_thread_worker_.unwrap_ref()->shutdown();
         std::this_thread::sleep_for(milliseconds(100));
     }
 
@@ -106,12 +106,12 @@ TEST_F(FutureBenchmark, CreateReleaseThroughput) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
+        auto fu_result = client.unwrap_ref()->begin_request(BenchService::ECHO);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
         i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << val;
+        client.unwrap_ref()->end_request();
         // Arc auto-released (fire-and-forget)
     }
 
@@ -128,12 +128,12 @@ TEST_F(FutureBenchmark, CreateWaitReleaseThroughput) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
+        auto fu_result = client.unwrap_ref()->begin_request(BenchService::ECHO);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
         i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << val;
+        client.unwrap_ref()->end_request();
 
         fu->wait();
         i32 result;
@@ -160,12 +160,12 @@ TEST_F(FutureBenchmark, BatchOperations) {
 
         // Create batch
         for (int i = 0; i < batch_size; i++) {
-            auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
+            auto fu_result = client.unwrap_ref()->begin_request(BenchService::ECHO);
             ASSERT_TRUE(fu_result.is_ok());
             auto fu = fu_result.unwrap();
             i32 val = batch * batch_size + i;
-            *client.as_ref().unwrap() << val;
-            client.as_ref().unwrap()->end_request();
+            *client.unwrap_ref() << val;
+            client.unwrap_ref()->end_request();
             futures.push_back(fu);
         }
 
@@ -191,12 +191,12 @@ TEST_F(FutureBenchmark, RefCopyOverhead) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
+        auto fu_result = client.unwrap_ref()->begin_request(BenchService::ECHO);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
         i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << val;
+        client.unwrap_ref()->end_request();
 
         // Simulate passing Future around (Arc copies)
         auto fu_copy1 = fu;
@@ -226,12 +226,12 @@ TEST_F(FutureBenchmark, CallbackOverhead) {
             f->get_reply() >> result;
         });
 
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO, attr);
+        auto fu_result = client.unwrap_ref()->begin_request(BenchService::ECHO, attr);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
         i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << val;
+        client.unwrap_ref()->end_request();
 
         fu->wait();
         // Arc auto-released

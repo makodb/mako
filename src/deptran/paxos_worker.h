@@ -660,7 +660,7 @@ public:
   void AddAccept(shared_ptr<Coordinator>);
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
-  void submitJob(rusty::Arc<Job>);
+  void submitJob(std::shared_ptr<Job>);
   int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
   int SendHeartBeat(shared_ptr<HeartBeatLog>);
   int SendSyncLog(shared_ptr<SyncLogRequest>);
@@ -681,7 +681,7 @@ public:
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
   void register_apply_callback_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>);
   rusty::Arc<rrr::PollThreadWorker> GetPollThreadWorker(){
-      return svr_poll_thread_worker_.as_ref().unwrap();
+      return svr_poll_thread_worker_.unwrap_ref();
   }
 };
 

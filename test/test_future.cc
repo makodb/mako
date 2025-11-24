@@ -122,15 +122,15 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThreadWorker::create());
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
         service = new TestFutureService();
 
         server->reg(service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
-        client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+        client = rusty::Some(Client::create(poll_thread_worker_.unwrap_ref()));
+        ASSERT_EQ(client.unwrap_ref()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
 
         std::this_thread::sleep_for(milliseconds(50));
     }
@@ -140,12 +140,12 @@ protected:
         service->should_delay = false;
         service->delay_ms = 100;
 
-        client.as_ref().unwrap()->close();
+        client.unwrap_ref()->close();
         delete service;
         delete server;  // Server destructor waits for connections to close
 
         // Shutdown PollThreadWorker
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        poll_thread_worker_.unwrap_ref()->shutdown();
 
         // Give time for cleanup to complete
         std::this_thread::sleep_for(milliseconds(100));
@@ -157,12 +157,12 @@ int FutureTest::test_counter = 0;
 
 TEST_F(FutureTest, BasicFutureCreation) {
     // Create a future through an RPC call
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     // Wait for completion
     fu->wait();
@@ -181,12 +181,12 @@ TEST_F(FutureTest, FutureReadyCheck) {
     service->should_delay = true;
     service->delay_ms = 100;
 
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::SLOW_ECHO);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::SLOW_ECHO);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     // Should not be ready immediately (probably)
     // This is a bit racy but usually works
@@ -201,12 +201,12 @@ TEST_F(FutureTest, FutureReadyCheck) {
 }
 
 TEST_F(FutureTest, FutureWait) {
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     // wait() should block until ready
     fu->wait();
@@ -251,12 +251,12 @@ TEST_F(FutureTest, FutureCallback) {
         callback_error_code = f->get_error_code();
     });
 
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO, attr);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO, attr);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     fu->wait();
 
@@ -271,11 +271,11 @@ TEST_F(FutureTest, FutureCallback) {
 
 TEST_F(FutureTest, FutureGetReply) {
     i32 n = 17;
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::GET_VALUE);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::GET_VALUE);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    *client.as_ref().unwrap() << n;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << n;
+    client.unwrap_ref()->end_request();
 
     // get_reply() should wait internally
     Marshal& reply = fu->get_reply();
@@ -290,10 +290,10 @@ TEST_F(FutureTest, FutureGetReply) {
 
 TEST_F(FutureTest, FutureErrorCode) {
     // Test with invalid RPC ID
-    auto fu_result = client.as_ref().unwrap()->begin_request(99999);
+    auto fu_result = client.unwrap_ref()->begin_request(99999);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    client.as_ref().unwrap()->end_request();
+    client.unwrap_ref()->end_request();
 
     fu->wait();
 
@@ -309,12 +309,12 @@ TEST_F(FutureTest, MultipleFuturesConcurrent) {
 
     // Create multiple futures
     for (int i = 0; i < num_futures; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+        auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
         std::string input = "test_" + std::to_string(i);
-        *client.as_ref().unwrap() << input;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << input;
+        client.unwrap_ref()->end_request();
         futures.push_back(std::move(fu));
     }
 
@@ -334,12 +334,12 @@ TEST_F(FutureTest, MultipleFuturesConcurrent) {
 
 TEST_F(FutureTest, FutureReleaseWithoutWait) {
     // Create a future but don't wait for it
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
     ASSERT_TRUE(fu_result.is_ok());
     rusty::Option<rusty::Arc<Future>> fu = rusty::Some(fu_result.unwrap());
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     // Arc released without waiting - should be safe (fire-and-forget)
     fu = rusty::None;  // Explicit release
@@ -355,11 +355,11 @@ TEST_F(FutureTest, StressTestManyFutures) {
     // Create many futures rapidly
     for (int i = 0; i < num_futures; i++) {
         i32 n = i;
-        auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::GET_VALUE);
+        auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::GET_VALUE);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        *client.as_ref().unwrap() << n;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << n;
+        client.unwrap_ref()->end_request();
         futures.push_back(std::move(fu));
     }
 
@@ -381,12 +381,12 @@ TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
     service->should_delay = true;
     service->delay_ms = 200;
 
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::SLOW_ECHO);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::SLOW_ECHO);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     std::atomic<int> wait_count{0};
     const int num_threads = 5;
@@ -415,12 +415,12 @@ TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
 
 TEST_F(FutureTest, TimedWaitWithQuickResponse) {
     // Test timed_wait when response comes quickly
-    auto fu_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+    auto fu_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string input = "test";
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     // Wait for up to 5 seconds (but should complete much faster)
     fu->timed_wait(5.0);
@@ -433,26 +433,26 @@ TEST_F(FutureTest, TimedWaitWithQuickResponse) {
 
 TEST_F(FutureTest, MixedSyncAsync) {
     // Create some futures
-    auto fu1_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+    auto fu1_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
     std::string input1 = "first";
-    *client.as_ref().unwrap() << input1;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input1;
+    client.unwrap_ref()->end_request();
 
-    auto fu2_result = client.as_ref().unwrap()->begin_request(TestFutureService::GET_VALUE);
+    auto fu2_result = client.unwrap_ref()->begin_request(TestFutureService::GET_VALUE);
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
     i32 val = 50;
-    *client.as_ref().unwrap() << val;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << val;
+    client.unwrap_ref()->end_request();
 
-    auto fu3_result = client.as_ref().unwrap()->begin_request(TestFutureService::FAST_ECHO);
+    auto fu3_result = client.unwrap_ref()->begin_request(TestFutureService::FAST_ECHO);
     ASSERT_TRUE(fu3_result.is_ok());
     auto fu3 = fu3_result.unwrap();
     std::string input3 = "third";
-    *client.as_ref().unwrap() << input3;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input3;
+    client.unwrap_ref()->end_request();
 
     // Wait for them in different order
     fu2->wait();

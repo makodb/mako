@@ -23,7 +23,7 @@ rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
   if (Reactor::sp_running_coro_th_.is_none()) {
     return rusty::None;
   }
-  return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
+  return rusty::Some(Reactor::sp_running_coro_th_.unwrap_ref().clone());
 }
 
 // @safe - Creates and runs a new coroutine with rusty::Rc ownership
@@ -45,9 +45,9 @@ Reactor::GetReactor() {
     Log_debug("create a coroutine scheduler");
     sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());  // In-place construction
     // Use as_ref() to borrow, then initialize thread_id_ - safe because we just created it
-    const_cast<Reactor&>(*sp_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id();
+    const_cast<Reactor&>(*sp_reactor_th_.unwrap_ref()).thread_id_ = std::this_thread::get_id();
   }
-  return sp_reactor_th_.as_ref().unwrap().clone();
+  return sp_reactor_th_.unwrap_ref().clone();
 }
 
 /**
@@ -64,7 +64,7 @@ Reactor::CreateRunCoroutine(std::move_only_function<void()> func) const {
     sp_coro = rusty::Some(available_coros_.back().clone());
     available_coros_.pop_back();
     // Rc provides const access, use const_cast to modify (safe: single-threaded)
-    auto& coro = const_cast<Coroutine&>(*sp_coro.as_ref().unwrap());
+    auto& coro = const_cast<Coroutine&>(*sp_coro.unwrap_ref());
     coro.func_ = std::move(func);
     // Reset boost_coro_task_ when reusing a recycled coroutine for a new function
     coro.boost_coro_task_ = rusty::None;
@@ -75,15 +75,15 @@ Reactor::CreateRunCoroutine(std::move_only_function<void()> func) const {
 
   // Save old coroutine context - clone to avoid moving
   auto sp_old_coro = sp_running_coro_th_.is_some()
-    ? rusty::Some(sp_running_coro_th_.as_ref().unwrap().clone())
+    ? rusty::Some(sp_running_coro_th_.unwrap_ref().clone())
     : rusty::Option<rusty::Rc<Coroutine>>{};
-  sp_running_coro_th_ = rusty::Some(sp_coro.as_ref().unwrap().clone());
+  sp_running_coro_th_ = rusty::Some(sp_coro.unwrap_ref().clone());
 
   if (sp_coro.is_none()) {
     Log_error("[DEBUG] CreateRunCoroutine: sp_coro is null!");
   }
   verify(sp_coro.is_some());
-  auto pair = coros_.insert(sp_coro.as_ref().unwrap().clone());
+  auto pair = coros_.insert(sp_coro.unwrap_ref().clone());
   if (!pair.second) {
     Log_error("[DEBUG] CreateRunCoroutine: Failed to insert coroutine into coros_ set!");
     Log_error("[DEBUG] coros_ size before insert: %zu", coros_.size());
@@ -92,16 +92,16 @@ Reactor::CreateRunCoroutine(std::move_only_function<void()> func) const {
   verify(pair.second);
   verify(coros_.size() > 0);
 
-  sp_coro.as_ref().unwrap()->Run();
-  if (sp_coro.as_ref().unwrap()->Finished()) {
-    coros_.erase(sp_coro.as_ref().unwrap().clone());
+  sp_coro.unwrap_ref()->Run();
+  if (sp_coro.unwrap_ref()->Finished()) {
+    coros_.erase(sp_coro.unwrap_ref().clone());
   }
 
   Loop();
 
   // yielded or finished, reset to old coro.
   sp_running_coro_th_ = sp_old_coro;
-  return sp_coro.as_ref().unwrap().clone();
+  return sp_coro.unwrap_ref().clone();
 }
 
 // @safe - Checks timeout events and moves ready ones to ready list with std::shared_ptr
@@ -203,23 +203,23 @@ void Reactor::ContinueCoro(rusty::Rc<Coroutine> sp_coro) const {
 //  verify(!sp_running_coro_th_.is_none()); // disallow nested coros
   // Clone to avoid moving - must preserve the old value
   auto sp_old_coro = sp_running_coro_th_.is_some()
-    ? rusty::Some(sp_running_coro_th_.as_ref().unwrap().clone())
+    ? rusty::Some(sp_running_coro_th_.unwrap_ref().clone())
     : rusty::Option<rusty::Rc<Coroutine>>{};
   sp_running_coro_th_ = rusty::Some(sp_coro.clone());
-  verify(!sp_running_coro_th_.as_ref().unwrap()->Finished());
+  verify(!sp_running_coro_th_.unwrap_ref()->Finished());
   if (sp_coro->status_ == Coroutine::INIT) {
     sp_coro->Run();
   } else {
     // PAUSED or RECYCLED
-    sp_running_coro_th_.as_ref().unwrap()->Continue();
+    sp_running_coro_th_.unwrap_ref()->Continue();
   }
-  if (sp_running_coro_th_.as_ref().unwrap()->Finished()) {
+  if (sp_running_coro_th_.unwrap_ref()->Finished()) {
     if (REUSING_CORO) {
       // Rc provides const access, use const_cast to modify (safe: single-threaded)
       const_cast<Coroutine&>(*sp_coro).status_ = Coroutine::RECYCLED;
-      available_coros_.push_back(sp_running_coro_th_.as_ref().unwrap().clone());
+      available_coros_.push_back(sp_running_coro_th_.unwrap_ref().clone());
     }
-    coros_.erase(sp_running_coro_th_.as_ref().unwrap().clone());
+    coros_.erase(sp_running_coro_th_.unwrap_ref().clone());
   }
   sp_running_coro_th_ = sp_old_coro;
 }
@@ -294,20 +294,20 @@ void PollThreadWorker::TriggerJob() const {
   set_sp_jobs_.clear();
   (*lock_job_).unlock();
 
-  // Process Arc<Job> jobs
+  // Process shared_ptr<Job> jobs
   auto it = jobs_exec.begin();
   while (it != jobs_exec.end()) {
     auto sp_job = *it;
-    // Arc provides const access, but Job methods need mutable access
+    // shared_ptr provides const access, but Job methods need mutable access
     // Safe: we're managing the job lifecycle and calling virtual methods
-    Job* job_ptr = const_cast<Job*>(sp_job.get());
+    Job* job_ptr = sp_job.get();
     if (job_ptr->Ready()) {
-      // IMPORTANT: Capture sp_job by value to keep the Arc alive!
+      // IMPORTANT: Capture sp_job by value to keep the shared_ptr alive!
       // If the coroutine yields, we need to keep the Job alive until it resumes.
       // Previously we captured only job_ptr (raw pointer), which caused use-after-free
-      // when the Arc was erased from jobs_exec below and the Job was destroyed.
+      // when the shared_ptr was erased from jobs_exec below and the Job was destroyed.
       Coroutine::CreateRun([sp_job]() {
-        Job* job_ptr = const_cast<Job*>(sp_job.get());
+        Job* job_ptr = sp_job.get();
         job_ptr->Work();
       });
       it = jobs_exec.erase(it);
@@ -395,14 +395,14 @@ void PollThreadWorker::poll_loop() const {
 }
 
 // @safe - Thread-safe job addition with polymorphic Arc
-void PollThreadWorker::add(rusty::Arc<Job> sp_job) const {
+void PollThreadWorker::add(std::shared_ptr<Job> sp_job) const {
   (*lock_job_).lock();
   set_sp_jobs_.insert(sp_job);
   (*lock_job_).unlock();
 }
 
-// @safe - Thread-safe job removal with polymorphic Arc
-void PollThreadWorker::remove(rusty::Arc<Job> sp_job) const {
+// @safe - Thread-safe job removal with polymorphic shared_ptr
+void PollThreadWorker::remove(std::shared_ptr<Job> sp_job) const {
   (*lock_job_).lock();
   set_sp_jobs_.erase(sp_job);
   (*lock_job_).unlock();

@@ -16,7 +16,7 @@ Communicator::Communicator(rusty::Option<rusty::Arc<PollThreadWorker>> poll_thre
   if (poll_thread_worker.is_none())
     rpc_poll_ = rusty::Some(PollThreadWorker::create());
   else
-    rpc_poll_ = rusty::Some(poll_thread_worker.as_ref().unwrap().clone());
+    rpc_poll_ = rusty::Some(poll_thread_worker.unwrap_ref().clone());
   auto config = Config::GetConfig();
   // create more client per server
   int proxy_batch_size = 1 ;
@@ -86,7 +86,7 @@ Communicator::~Communicator() {
 
   // Shutdown PollThreadWorker if we own it
   if (rpc_poll_.is_some()) {
-    rpc_poll_.as_ref().unwrap()->shutdown();
+    rpc_poll_.unwrap_ref()->shutdown();
   }
 }
 
@@ -138,7 +138,7 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
   snprintf(addr, sizeof(addr), "%s:%d", site.host.c_str(), site.port);
 
   auto start = std::chrono::steady_clock::now();
-  auto rpc_cli = rrr::Client::create(rpc_poll_.as_ref().unwrap());
+  auto rpc_cli = rrr::Client::create(rpc_poll_.unwrap_ref());
   double elapsed;
   int attempt = 0;
   do {
@@ -168,7 +168,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
                             std::chrono::milliseconds timeout) {
   string addr = site.GetHostAddr();
   auto start = std::chrono::steady_clock::now();
-  auto rpc_cli = rrr::Client::create(rpc_poll_.as_ref().unwrap());
+  auto rpc_cli = rrr::Client::create(rpc_poll_.unwrap_ref());
   double elapsed;
   int attempt = 0;
   do {

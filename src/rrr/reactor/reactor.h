@@ -151,8 +151,9 @@ private:
     mutable std::unordered_map<int, rusty::Arc<Pollable>> fd_to_pollable_;
     mutable std::unordered_map<int, int> mode_; // fd->mode
 
-    // Uses rusty::Arc<Job> for polymorphic thread-safe reference counting
-    mutable std::set<rusty::Arc<Job>> set_sp_jobs_;
+    // Uses std::shared_ptr<Job> for polymorphic thread-safe reference counting
+    // Note: Arc doesn't support polymorphism, so we use shared_ptr for Job storage
+    mutable std::set<std::shared_ptr<Job>> set_sp_jobs_;
 
     mutable std::unordered_set<int> pending_remove_;  // Store fds to remove
     mutable rusty::Box<SpinLock> pending_remove_l_;
@@ -199,10 +200,10 @@ public:
     void update_mode(Pollable& poll, int new_mode) const;
 
     // Frequent Job
-    // Thread-safe job management with polymorphic Arc
-    // SAFETY: Arc provides built-in polymorphism support, protected by spinlock
-    void add(rusty::Arc<Job> sp_job) const;
-    void remove(rusty::Arc<Job> sp_job) const;
+    // Thread-safe job management with polymorphic shared_ptr
+    // SAFETY: shared_ptr provides built-in polymorphism support, protected by spinlock
+    void add(std::shared_ptr<Job> sp_job) const;
+    void remove(std::shared_ptr<Job> sp_job) const;
 
     // For testing: get number of epoll Remove() calls
     int get_remove_count() const { return poll_.remove_count_.load(); }

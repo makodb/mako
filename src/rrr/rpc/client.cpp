@@ -35,8 +35,8 @@ namespace rrr {
 
 // @unsafe - Uses rusty::Condvar (low-level sync primitive)
 void Future::wait() const {
-  std::unique_lock<std::mutex> lock(*condvar_m_.get());
-  ready_cond_.get()->wait(lock, [this]() {
+  std::unique_lock<std::mutex> lock(condvar_m_);
+  ready_cond_.wait(lock, [this]() {
     auto guard = state_.lock();
     return guard->ready || guard->timed_out;
   });
@@ -44,10 +44,10 @@ void Future::wait() const {
 
 // @unsafe - Uses rusty::Condvar for timed waiting (low-level sync)
 void Future::timed_wait(double sec) const {
-  std::unique_lock<std::mutex> lock(*condvar_m_.get());
+  std::unique_lock<std::mutex> lock(condvar_m_);
 
   auto duration = std::chrono::duration<double>(sec);
-  bool success = ready_cond_.get()->wait_for(lock, duration, [this]() {
+  bool success = ready_cond_.wait_for(lock, duration, [this]() {
     auto guard = state_.lock();
     return guard->ready || guard->timed_out;
   });
@@ -85,7 +85,7 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
     should_callback = guard->ready;
   }
   // Notify after releasing state lock
-  ready_cond_.get()->notify_all();
+  ready_cond_.notify_all();
 
   // Execute callback outside lock to avoid deadlock
   if (should_callback && attr_.callback != nullptr) {
@@ -101,12 +101,12 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // SAFETY: Protected by spinlock, proper refcount management
 void Client::invalidate_pending_futures() const {
   list<rusty::Arc<Future>> futures;
-  pending_fu_l_.get()->lock();
+  pending_fu_l_.lock();
   for (auto& it: *pending_fu_.borrow()) {
     futures.push_back(it.second);  // Copy Arc
   }
   pending_fu_.borrow_mut()->clear();  // Clear map (releases its Arc references)
-  pending_fu_l_.get()->unlock();
+  pending_fu_l_.unlock();
 
   for (auto& fu: futures) {
     fu->error_code_.set(ENOTCONN);
@@ -240,7 +240,7 @@ void Client::handle_write() {
     return;
   }
 
-  out_l_.get()->lock();
+  out_l_.lock();
   // Note: RDMA transport support would need to be added here if needed
   // For now, using the standard TCP socket write
   out_.borrow_mut()->write_to_fd(sock_.get());
@@ -248,7 +248,7 @@ void Client::handle_write() {
     //Log_info("Client handle_write setting read mode here...");
     poll_thread_worker_->update_mode(*this, Pollable::READ);
   }
-  out_l_.get()->unlock();
+  out_l_.unlock();
 }
 
 // @unsafe - Reads and processes RPC responses
@@ -279,16 +279,16 @@ void Client::handle_read() {
 
       *in_.borrow_mut() >> v_reply_xid >> v_error_code;
 
-      pending_fu_l_.get()->lock();
+      pending_fu_l_.lock();
       auto it = pending_fu_.borrow_mut()->find(v_reply_xid.get());
       if (it != pending_fu_.borrow_mut()->end()) {
         rusty::Arc<Future> fu = it->second;  // Copy Arc (refcount still 2)
         verify(fu->xid_ == v_reply_xid.get());
         pending_fu_.borrow_mut()->erase(it);  // Remove from map (refcount 2→1)
-        pending_fu_l_.get()->unlock();
+        pending_fu_l_.unlock();
 
         fu->error_code_.set(v_error_code.get());
-        fu->reply_.get()->read_from_marshal(*in_.borrow_mut(),
+        fu->reply_.read_from_marshal(*in_.borrow_mut(),
                                             packet_size - v_reply_xid.val_size()
                                                 - v_error_code.val_size());
 
@@ -297,7 +297,7 @@ void Client::handle_read() {
         // Arc auto-released when scope exits (refcount 1→0 if user released theirs)
       } else {
         // the future might timed out
-        pending_fu_l_.get()->unlock();
+        pending_fu_l_.unlock();
       }
 
     } else {
@@ -311,36 +311,36 @@ void Client::handle_read() {
 // SAFETY: Uses RefCell borrow operations
 int Client::poll_mode() const {
   int mode = Pollable::READ;
-  out_l_.get()->lock();
+  out_l_.lock();
   if (!out_.borrow()->empty()) {
     mode |= Pollable::WRITE;
   }
-  out_l_.get()->unlock();
+  out_l_.unlock();
   return mode;
 }
 
 // @unsafe - Starts new RPC request with marshaling
 // SAFETY: Protected by spinlocks, proper refcounting
 FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) const {
-  out_l_.get()->lock();
+  out_l_.lock();
 
   if (status_.get() != CONNECTED) {
     return FutureResult::Err(ENOTCONN);
   }
 
   auto fu = Future::create(xid_counter_.borrow_mut()->next(), attr);
-  pending_fu_l_.get()->lock();
+  pending_fu_l_.lock();
   pending_fu_.borrow_mut()->insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
-  pending_fu_l_.get()->unlock();
+  pending_fu_l_.unlock();
   //Log_info("Starting a new request with rpc_id %ld,xid_:%llu", rpc_id,fu->xid_);
   // check if the client gets closed in the meantime
   if (status_.get() != CONNECTED) {
-    pending_fu_l_.get()->lock();
+    pending_fu_l_.lock();
     auto it = pending_fu_.borrow_mut()->find(fu->xid_);
     if (it != pending_fu_.borrow_mut()->end()) {
       pending_fu_.borrow_mut()->erase(it);  // Arc auto-released when removed from map
     }
-    pending_fu_l_.get()->unlock();
+    pending_fu_l_.unlock();
 
     return FutureResult::Err(ENOTCONN);
   }
@@ -373,7 +373,7 @@ void Client::end_request() const {
   // const_cast needed: Arc gives const access but update_mode() needs non-const reference
   poll_thread_worker_->update_mode(const_cast<Client&>(*this), Pollable::READ | Pollable::WRITE);
 
-  out_l_.get()->unlock();
+  out_l_.unlock();
 }
 
 // @unsafe - Constructs pool with PollThreadWorker ownership
@@ -401,7 +401,7 @@ ClientPool::~ClientPool() {
 
   // Shutdown PollThreadWorker if we own it
   if (poll_thread_worker_.is_some()) {
-    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    poll_thread_worker_.unwrap_ref()->shutdown();
   }
 }
 
@@ -417,7 +417,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     std::vector<rusty::Arc<Client>> parallel_clients;
     bool ok = true;
     for (int i = 0; i < parallel_connections_; i++) {
-      auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
+      auto client = Client::create(this->poll_thread_worker_.unwrap_ref().clone());
       if (client->connect(addr.c_str()) != 0) {
         ok = false;
         break;

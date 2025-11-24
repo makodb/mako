@@ -46,7 +46,7 @@ void Coroutine::Run() const {
   auto task = std::bind(&Coroutine::BoostRunWrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
   boost_coro_task_ = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));
 #ifdef USE_BOOST_COROUTINE1
-  (*boost_coro_task_.as_ref().unwrap())();
+  (*boost_coro_task_.unwrap_ref())();
 #endif
 }
 

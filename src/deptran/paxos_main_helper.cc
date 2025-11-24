@@ -400,11 +400,12 @@ void submit(const char* log, int len, uint32_t par_id) {
         std::copy(log, log + len, std::back_inserter(log_str));
         worker->IncSubmit();
 
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&worker,log_str,len,par_id] () {
+        auto sp_one_time_job = std::make_shared<OneTimeJob>([&worker,log_str,len,par_id] () {
             worker->Submit(log_str.data(),len, par_id);
-        }));
-        auto arc_job_base = rusty::Arc<Job>(arc_job);
-        worker->GetPollThreadWorker()->add(arc_job_base);
+        });
+        // Convert shared_ptr<OneTimeJob> to shared_ptr<Job> using aliasing constructor
+        auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+        worker->GetPollThreadWorker()->add(sp_job);
         submit_tot++;
     }
 }
@@ -521,14 +522,14 @@ void send_no_ops_to_all_workers(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
   auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncNoOpLog, ess](){
+  auto sp_one_time_job = std::make_shared<OneTimeJob>([pw, syncNoOpLog, ess](){
     int val = pw->SendSyncNoOpLog(syncNoOpLog);
     if(val == -1){
       ess->stuff_after_election_cond_.bcast();
     }
-  }));
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
+  });
+  auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+  pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
   es->stuff_after_election_mutex_.lock();
   es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
   es->stuff_after_election_mutex_.unlock();
@@ -544,14 +545,14 @@ void send_sync_logs(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncLog = createSyncLog(epoch, es->machine_id);
   auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncLog, ess](){
+  auto sp_one_time_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
   if(val == -1){
     ess->stuff_after_election_cond_.bcast();
   }
- }));
- auto arc_job_base = rusty::Arc<Job>(arc_job);
- pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
+ });
+ auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+ pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
  es->stuff_after_election_mutex_.lock();
  es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
  es->stuff_after_election_mutex_.unlock();
@@ -654,7 +655,7 @@ void send_bulk_prep(int send_epoch){
   auto pw = pxs_workers_g.back();
   auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
   auto ess = es;
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, bp_log, ess]() {
+  auto sp_one_time_job = std::make_shared<OneTimeJob>([&pw, bp_log, ess]() {
       int val = pw->SendBulkPrepare(bp_log);
       if(val != -1){
         ess->state_lock();
@@ -663,9 +664,9 @@ void send_bulk_prep(int send_epoch){
         ess->state_unlock();
       }
       ess->election_cond.bcast();
-  }));
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
+  });
+  auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+  pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
 }
 
 // marker:ansh
@@ -730,7 +731,7 @@ void* heartbeatMonitor(void* arg){
      auto pw = pxs_workers_g.back();
      auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
      auto ess = es;
-     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, hb_log, ess]() {
+     auto sp_one_time_job = std::make_shared<OneTimeJob>([pw, hb_log, ess]() {
         int val = pw->SendHeartBeat(hb_log);
         if(val != -1){
           ess->state_lock();
@@ -738,9 +739,9 @@ void* heartbeatMonitor(void* arg){
           ess->set_epoch(val);
           ess->state_unlock();
         }
-    }));
-    auto arc_job_base = rusty::Arc<Job>(arc_job);
-    pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
+    });
+    auto sp_job = std::shared_ptr<Job>(sp_one_time_job, sp_one_time_job.get());
+    pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
   }
    pthread_exit(nullptr);
    return nullptr;

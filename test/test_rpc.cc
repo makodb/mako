@@ -82,7 +82,7 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThreadWorker::create());
 
         // Server now takes Option<Arc<PollThreadWorker>> - use as_ref() to borrow and clone
-        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
+        server = new Server(rusty::Some(poll_thread_worker_.unwrap_ref().clone()));
         service = new TestService();
 
         server->reg(service);
@@ -90,31 +90,31 @@ protected:
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
-        client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+        client = rusty::Some(Client::create(poll_thread_worker_.unwrap_ref()));
+        ASSERT_EQ(client.unwrap_ref()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
 
     void TearDown() override {
-        client.as_ref().unwrap()->close();
+        client.unwrap_ref()->close();
 
         delete service;
         delete server;  // Server destructor waits for connections to close
 
         // Shutdown PollThreadWorker (const method, no lock needed)
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        poll_thread_worker_.unwrap_ref()->shutdown();
     }
 };
 
 TEST_F(RPCTest, BasicNop) {
     std::string input = "Hello, RPC!";
-    auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
     fu->wait();
 
     EXPECT_EQ(fu->get_error_code(), 0);
@@ -128,11 +128,11 @@ TEST_F(RPCTest, MultipleRequests) {
 
     for (int i = 0; i < num_requests; i++) {
         std::string input = "Request_" + std::to_string(i);
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        *client.as_ref().unwrap() << input;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << input;
+        client.unwrap_ref()->end_request();
         futures.push_back(std::move(fu));
     }
 
@@ -155,11 +155,11 @@ TEST_F(RPCTest, ConcurrentRequests) {
         threads.emplace_back([&, t]() {
             for (int i = 0; i < requests_per_thread; i++) {
                 std::string input = "Thread_" + std::to_string(t) + "_Request_" + std::to_string(i);
-                auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+                auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
                 if (fu_result.is_err()) continue;
                 auto fu = fu_result.unwrap();
-                *client.as_ref().unwrap() << input;
-                client.as_ref().unwrap()->end_request();
+                *client.unwrap_ref() << input;
+                client.unwrap_ref()->end_request();
                 fu->wait();
 
                 if (fu->get_error_code() == 0) {
@@ -181,11 +181,11 @@ TEST_F(RPCTest, ConcurrentRequests) {
 TEST_F(RPCTest, LargePayload) {
     std::string large_input(1000000, 'X');
 
-    auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    *client.as_ref().unwrap() << large_input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << large_input;
+    client.unwrap_ref()->end_request();
     fu->wait();
 
     EXPECT_EQ(fu->get_error_code(), 0);
@@ -195,12 +195,12 @@ TEST_F(RPCTest, LargePayload) {
 TEST_F(RPCTest, DifferentMethods) {
     // Test NOP
     {
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::NOP);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::NOP);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu_nop = fu_result.unwrap();
         std::string dummy = "";
-        *client.as_ref().unwrap() << dummy;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << dummy;
+        client.unwrap_ref()->end_request();
         fu_nop->wait();
         EXPECT_EQ(fu_nop->get_error_code(), 0);
         // Arc auto-released
@@ -209,11 +209,11 @@ TEST_F(RPCTest, DifferentMethods) {
     // Test PRIME with prime number
     {
         i32 prime_input = 17;
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::PRIME);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::PRIME);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu_prime = fu_result.unwrap();
-        *client.as_ref().unwrap() << prime_input;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << prime_input;
+        client.unwrap_ref()->end_request();
         fu_prime->wait();
 
         EXPECT_EQ(fu_prime->get_error_code(), 0);
@@ -226,11 +226,11 @@ TEST_F(RPCTest, DifferentMethods) {
     // Test PRIME with composite number
     {
         i32 composite_input = 24;
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::PRIME);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::PRIME);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu_composite = fu_result.unwrap();
-        *client.as_ref().unwrap() << composite_input;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << composite_input;
+        client.unwrap_ref()->end_request();
         fu_composite->wait();
 
         i8 composite_result;
@@ -243,11 +243,11 @@ TEST_F(RPCTest, DifferentMethods) {
 TEST_F(RPCTest, TimeoutHandling) {
     // Test timed_wait functionality with a fast request
     std::string input = "timeout_test";
-    auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     // This should complete quickly (no delay)
     fu->timed_wait(1.0);  // Wait up to 1 second
@@ -269,11 +269,11 @@ TEST_F(RPCTest, CallbackMechanism) {
     });
 
     std::string input = "callback_test";
-    auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP, attr);
+    auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP, attr);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    *client.as_ref().unwrap() << input;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input;
+    client.unwrap_ref()->end_request();
 
     fu->wait();
 
@@ -284,10 +284,10 @@ TEST_F(RPCTest, CallbackMechanism) {
 }
 
 TEST_F(RPCTest, InvalidRequest) {
-    auto fu_result = client.as_ref().unwrap()->begin_request(99999);
+    auto fu_result = client.unwrap_ref()->begin_request(99999);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    client.as_ref().unwrap()->end_request();
+    client.unwrap_ref()->end_request();
     fu->wait();
 
     EXPECT_NE(fu->get_error_code(), 0);
@@ -295,12 +295,12 @@ TEST_F(RPCTest, InvalidRequest) {
 }
 
 TEST_F(RPCTest, EmptyPayload) {
-    auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
     std::string dummy = "";
-    *client.as_ref().unwrap() << dummy;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << dummy;
+    client.unwrap_ref()->end_request();
     fu->wait();
 
     EXPECT_EQ(fu->get_error_code(), 0);
@@ -309,33 +309,33 @@ TEST_F(RPCTest, EmptyPayload) {
 
 TEST_F(RPCTest, ConnectionResilience) {
     std::string input1 = "before_reconnect";
-    auto fu1_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu1_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
-    *client.as_ref().unwrap() << input1;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input1;
+    client.unwrap_ref()->end_request();
     fu1->wait();
 
     EXPECT_EQ(fu1->get_error_code(), 0);
     // Arc auto-released
 
-    client.as_ref().unwrap()->close();
+    client.unwrap_ref()->close();
     client = rusty::None;  // Release the Arc
 
     std::this_thread::sleep_for(milliseconds(100));
 
     // Create new client using factory method
-    client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-    ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+    client = rusty::Some(Client::create(poll_thread_worker_.unwrap_ref()));
+    ASSERT_EQ(client.unwrap_ref()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
 
     std::this_thread::sleep_for(milliseconds(100));
 
     std::string input2 = "after_reconnect";
-    auto fu2_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu2_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
-    *client.as_ref().unwrap() << input2;
-    client.as_ref().unwrap()->end_request();
+    *client.unwrap_ref() << input2;
+    client.unwrap_ref()->end_request();
     fu2->wait();
 
     EXPECT_EQ(fu2->get_error_code(), 0);
@@ -347,12 +347,12 @@ TEST_F(RPCTest, PipelinedRequests) {
     std::vector<rusty::Arc<Future>> futures;
 
     for (int i = 0; i < num_requests; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
         std::string dummy = "";
-        *client.as_ref().unwrap() << dummy;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << dummy;
+        client.unwrap_ref()->end_request();
         futures.push_back(std::move(fu));
     }
 
@@ -372,11 +372,11 @@ TEST_F(RPCTest, SlowClientFastServer) {
 
     for (int i = 0; i < 100; i++) {
         std::string input = "Request_" + std::to_string(i);
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::FAST_NOP);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        *client.as_ref().unwrap() << input;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << input;
+        client.unwrap_ref()->end_request();
         futures.push_back(std::move(fu));
 
         std::this_thread::sleep_for(milliseconds(10));
@@ -400,11 +400,11 @@ TEST_F(RPCTest, FastClientSlowServer) {
 
     for (int i = 0; i < num_requests; i++) {
         std::string input = "Request_" + std::to_string(i);
-        auto fu_result = client.as_ref().unwrap()->begin_request(benchmark::BenchmarkService::NOP);
+        auto fu_result = client.unwrap_ref()->begin_request(benchmark::BenchmarkService::NOP);
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        *client.as_ref().unwrap() << input;
-        client.as_ref().unwrap()->end_request();
+        *client.unwrap_ref() << input;
+        client.unwrap_ref()->end_request();
         futures.push_back(std::move(fu));
     }
 
@@ -431,12 +431,12 @@ protected:
 
     void TearDown() override {
         // Shutdown PollThreadWorker (const method, no lock needed)
-        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        poll_thread_worker_.unwrap_ref()->shutdown();
     }
 };
 
 TEST_F(ConnectionErrorTest, ConnectToNonExistentServer) {
-    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto client = Client::create(poll_thread_worker_.unwrap_ref());
 
     int result = client->connect("127.0.0.1:9999");
 
@@ -447,7 +447,7 @@ TEST_F(ConnectionErrorTest, ConnectToNonExistentServer) {
 }
 
 TEST_F(ConnectionErrorTest, InvalidAddress) {
-    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto client = Client::create(poll_thread_worker_.unwrap_ref());
 
     int result = client->connect("invalid_address:1234");
 
@@ -458,7 +458,7 @@ TEST_F(ConnectionErrorTest, InvalidAddress) {
 }
 
 TEST_F(ConnectionErrorTest, InvalidPort) {
-    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
+    auto client = Client::create(poll_thread_worker_.unwrap_ref());
 
     int result = client->connect("127.0.0.1:99999");
 
@@ -479,7 +479,7 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
     // Clone the Arc for each thread to test Arc's thread-safety
     for (int thread_id = 0; thread_id < num_threads; thread_id++) {
         // Clone Arc for this thread
-        auto worker_clone = poll_thread_worker_.as_ref().unwrap().clone();
+        auto worker_clone = poll_thread_worker_.unwrap_ref().clone();
 
         // Spawn thread with explicit parameter passing (enforces Send trait)
         auto handle = rusty::thread::spawn(

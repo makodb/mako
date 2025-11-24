@@ -109,7 +109,7 @@ protected:
     void TearDown() override {
         // Shutdown PollThreadWorker with proper locking
         {
-            poll_thread_worker_.as_ref().unwrap()->shutdown();
+            poll_thread_worker_.unwrap_ref()->shutdown();
         }
     }
     
@@ -135,12 +135,12 @@ TEST_F(ReactorTest, AddRemoveFd) {
     auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1));
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.unwrap_ref()->add(p);
     }
 
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref);
     }
 
     close(fd1);
@@ -161,7 +161,7 @@ TEST_F(ReactorTest, PollReadEvent) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.unwrap_ref()->add(p);
     }
 
     // Write data to trigger read event
@@ -175,7 +175,7 @@ TEST_F(ReactorTest, PollReadEvent) {
 
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref);
     }
     close(fd1);
     close(fd2);
@@ -192,7 +192,7 @@ TEST_F(ReactorTest, PollWriteEvent) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.unwrap_ref()->add(p);
     }
 
     // Socket should be immediately writable
@@ -202,7 +202,7 @@ TEST_F(ReactorTest, PollWriteEvent) {
 
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref);
     }
     close(fd1);
     close(fd2);
@@ -229,8 +229,8 @@ TEST_F(ReactorTest, MultipleEvents) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p1);
-        poll_thread_worker_.as_ref().unwrap()->add(p2);
+        poll_thread_worker_.unwrap_ref()->add(p1);
+        poll_thread_worker_.unwrap_ref()->add(p2);
     }
 
     // Trigger both events
@@ -243,9 +243,9 @@ TEST_F(ReactorTest, MultipleEvents) {
 
     {
         Pollable& pollable_ref1 = const_cast<Pollable&>(static_cast<const Pollable&>(*p1));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref1);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref1);
         Pollable& pollable_ref2 = const_cast<Pollable&>(static_cast<const Pollable&>(*p2));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref2);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref2);
     }
 
     close(fd1);
@@ -271,7 +271,7 @@ TEST_F(ReactorTest, UpdateMode) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.unwrap_ref()->add(p);
     }
 
     // Initially only READ mode
@@ -284,7 +284,7 @@ TEST_F(ReactorTest, UpdateMode) {
     p->set_mode(Pollable::WRITE);
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->update_mode(pollable_ref, Pollable::WRITE);
+        poll_thread_worker_.unwrap_ref()->update_mode(pollable_ref, Pollable::WRITE);
     }
 
     std::this_thread::sleep_for(milliseconds(100));
@@ -292,7 +292,7 @@ TEST_F(ReactorTest, UpdateMode) {
 
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref);
     }
     close(fd1);
     close(fd2);
@@ -309,7 +309,7 @@ TEST_F(ReactorTest, ErrorHandling) {
     });
 
     {
-        poll_thread_worker_.as_ref().unwrap()->add(p);
+        poll_thread_worker_.unwrap_ref()->add(p);
     }
 
     // Close the other end to trigger error/hangup
@@ -322,7 +322,7 @@ TEST_F(ReactorTest, ErrorHandling) {
 
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref);
     }
     close(fd1);
 }
@@ -439,7 +439,7 @@ TEST_F(ReactorTest, StressTest) {
         });
 
         {
-            poll_thread_worker_.as_ref().unwrap()->add(p);
+            poll_thread_worker_.unwrap_ref()->add(p);
         }
         pollables.push_back(p);
     }
@@ -461,7 +461,7 @@ TEST_F(ReactorTest, StressTest) {
     {
         for (auto p : pollables) {
             Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->remove(pollable_ref);
+        poll_thread_worker_.unwrap_ref()->remove(pollable_ref);
         }
     }
 

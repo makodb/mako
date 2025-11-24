@@ -5,6 +5,7 @@
 
 #include <unordered_map>
 #include <mutex>
+#include <condition_variable>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -66,11 +67,11 @@ class Future { // @unsafe
     rusty::Cell<i32> error_code_;  // Cell for interior mutability of Copy type
 
     FutureAttr attr_;
-    rusty::UnsafeCell<Marshal> reply_;  // UnsafeCell for interior mutability in unsafe class
+    mutable Marshal reply_;  // Regular member in unsafe class
 
     rusty::Mutex<State> state_;  // Mutex provides its own interior mutability
-    rusty::UnsafeCell<rusty::Condvar> ready_cond_;  // UnsafeCell for Condvar
-    rusty::UnsafeCell<std::mutex> condvar_m_;  // UnsafeCell for std::mutex
+    mutable std::condition_variable ready_cond_;  // Regular member in unsafe class
+    mutable std::mutex condvar_m_;  // Regular member in unsafe class
 
     // @unsafe - Notifies waiters using rusty::Condvar (low-level sync operation)
     // Takes Arc<Future> self parameter for callback safety
@@ -91,9 +92,9 @@ class Future { // @unsafe
 public:
 
     // Factory method for Arc creation
-    // @safe - Creates Future wrapped in Arc for memory safety
+    // @unsafe - Creates Future wrapped in Arc for memory safety
     static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
-        return rusty::Arc<Future>::make(xid, attr);
+        return rusty::Arc<Future>::make_in_place(xid, attr);
     }
 
     // @safe - Uses rusty::Mutex for thread-safe access
@@ -119,10 +120,10 @@ public:
     // @lifetime: (&'a) -> &'a
     // Note: Returns non-const reference even though method is const
     // This is safe because get_reply() ensures the Future is ready
-    // @unsafe - Dereferences UnsafeCell pointer
+    // @unsafe - Returns reference to reply
     Marshal& get_reply() const {
         wait();
-        return *reply_.get();
+        return const_cast<Marshal&>(reply_);
     }
 
     // @unsafe - Calls unsafe wait()
@@ -193,8 +194,8 @@ class Client: public Pollable {
     rusty::RefCell<Counter> xid_counter_;
     rusty::RefCell<std::unordered_map<i64, rusty::Arc<Future>>> pending_fu_;
 
-    rusty::UnsafeCell<SpinLock> pending_fu_l_;
-    rusty::UnsafeCell<SpinLock> out_l_;
+    mutable SpinLock pending_fu_l_;
+    mutable SpinLock out_l_;
 
     // @unsafe - Cancels all pending futures
     // SAFETY: Protected by spinlock
@@ -226,7 +227,7 @@ public:
     // @unsafe - Returns Arc<Client> with explicit reference counting
     // SAFETY: Arc provides thread-safe reference counting with polymorphism support
     static rusty::Arc<Client> create(rusty::Arc<PollThreadWorker> poll_thread_worker) {
-        auto client = rusty::Arc<Client>::make(poll_thread_worker);
+        auto client = rusty::Arc<Client>::make_in_place(poll_thread_worker);
         // Initialize weak self-reference for poll thread registration
         // weak_self_ is mutable, so no const_cast needed
         *client->weak_self_.borrow_mut() = client;
