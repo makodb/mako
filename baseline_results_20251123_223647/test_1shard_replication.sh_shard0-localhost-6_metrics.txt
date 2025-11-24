@@ -1,0 +1,50 @@
+========================================
+Mako Benchmark Metrics Extraction
+Log file: test_1shard_replication.sh_shard0-localhost-6.log
+========================================
+
+=== CORE PERFORMANCE METRICS ===
+
+Runtime: 30.7502 sec
+Total Commits: 922464
+Aggregate Throughput: 29998.6 ops/sec
+Avg Per-Core Throughput: 4999.77 ops/sec/core
+Persist Throughput: 29998.6 ops/sec
+
+=== LATENCY METRICS ===
+
+Average Latency: 0.198408 ms
+Persist Latency: 0 ms
+
+=== ABORT METRICS ===
+
+Aggregate Abort Rate: 5.46338 aborts/sec
+Avg Per-Core Abort Rate: 0.910563 aborts/sec/core
+
+=== TPC-C TRANSACTION METRICS ===
+
+--- NewOrder Transaction ---
+    NewOrder_local_commit_latency: 0.203103 ms
+    NewOrder_local_abort_ratio: 9.89946e-05
+    NewOrder_remote_ratio: 0 %
+    NewOrder_remote_abort_ratio: -nan %
+    NewOrder_remote_commit_latency: -nan ms
+
+--- Payment Transaction ---
+    Payment_local_commit_latency: 0.0679924 ms
+    Payment_local_abort_ratio: 5.03444e-06
+    Payment_remote_ratio: 0 %
+    Payment_remote_abort_ratio: -nan %
+
+--- Delivery Transaction ---
+    Delivery_local_commit_latency: 0.902281 ms
+
+--- OrderStatus Transaction ---
+    OrderStatus_local_commit_latency: 0.0539834 ms
+
+--- StockLevel Transaction ---
+    StockLevel_local_commit_latency: 0.999795 ms
+
+========================================
+Extraction Complete
+========================================

@@ -1,0 +1,728 @@
+=========================================
+Configuration:
+=========================================
+  Number of shards:  1
+  Shard index:       0
+  Number of threads: 6
+  Cluster:           localhost
+  Micro benchmark:   disabled
+  Replicated mode:   enabled
+=========================================
+20251023-22:36.49-517569(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:78] 2025-11-23 22:36:49.518 | PWD : /home/marumalla/mako
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:276] 2025-11-23 22:36:49.518 | starting process 221618
+I [/home/marumalla/mako/src/deptran/config.cc:290] 2025-11-23 22:36:49.518 | LoadYML: config/1leader_2followers/paxos6_shardidx0.yml
+I [/home/marumalla/mako/src/deptran/config.cc:290] 2025-11-23 22:36:49.519 | LoadYML: config/occ_paxos.yml
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:285] 2025-11-23 22:36:49.519 | server_infos, number of sites: 6, proc_name: localhost
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:291] 2025-11-23 22:36:49.525 | parition id of each Paxos group is 5, site-name: s106, site-id: 20
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:291] 2025-11-23 22:36:49.531 | parition id of each Paxos group is 4, site-name: s105, site-id: 16
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:291] 2025-11-23 22:36:49.537 | parition id of each Paxos group is 3, site-name: s104, site-id: 12
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:291] 2025-11-23 22:36:49.543 | parition id of each Paxos group is 2, site-name: s103, site-id: 8
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:291] 2025-11-23 22:36:49.549 | parition id of each Paxos group is 1, site-name: s102, site-id: 4
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:291] 2025-11-23 22:36:49.554 | parition id of each Paxos group is 0, site-name: s101, site-id: 0
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:297] 2025-11-23 22:36:49.554 | running machine-id: 0
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:92] 2025-11-23 22:36:49.555 | launching site: 0, bind address 0.0.0.0:7001
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:92] 2025-11-23 22:36:49.555 | launching site: 4, bind address 0.0.0.0:7002
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:198] 2025-11-23 22:36:49.556 | [service]loc_id: 0, name: s101, proc: localhost, id: 0
+starting server at 0.0.0.0:7001
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:221] 2025-11-23 22:36:49.557 | Server s101 ready at 0.0.0.0:7001
+I [/home/marumalla/mako/src/deptran/communicator.cc:14] 2025-11-23 22:36:49.557 | setup paxos communicator
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.557 | connect to site: 127.0.0.1:7001 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.557 | connect to site: 127.0.0.1:7101 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:198] 2025-11-23 22:36:49.557 | [service]loc_id: 0, name: s102, proc: localhost, id: 4
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:49.557 | rrr::Client: connect(127.0.0.1:7101): Connection refused
+starting server at 0.0.0.0:7002
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:221] 2025-11-23 22:36:49.557 | Server s102 ready at 0.0.0.0:7002
+I [/home/marumalla/mako/src/deptran/communicator.cc:14] 2025-11-23 22:36:49.557 | setup paxos communicator
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.557 | connect to site: 127.0.0.1:7001 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.557 | connect to site: 127.0.0.1:7101 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:49.557 | rrr::Client: connect(127.0.0.1:7101): Connection refused
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:92] 2025-11-23 22:36:49.557 | launching site: 10, bind address 0.0.0.0:7005
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:92] 2025-11-23 22:36:49.558 | launching site: c, bind address 0.0.0.0:7004
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:92] 2025-11-23 22:36:49.558 | launching site: 8, bind address 0.0.0.0:7003
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:106] 2025-11-23 22:36:49.558 | waiting for server setup threads.
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:92] 2025-11-23 22:36:49.559 | launching site: 14, bind address 0.0.0.0:7006
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:198] 2025-11-23 22:36:49.562 | [service]loc_id: 0, name: s105, proc: localhost, id: 16
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:198] 2025-11-23 22:36:49.564 | [service]loc_id: 0, name: s104, proc: localhost, id: 12
+starting server at 0.0.0.0:7005
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:221] 2025-11-23 22:36:49.564 | Server s105 ready at 0.0.0.0:7005
+I [/home/marumalla/mako/src/deptran/communicator.cc:14] 2025-11-23 22:36:49.564 | setup paxos communicator
+starting server at 0.0.0.0:7004
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:221] 2025-11-23 22:36:49.565 | Server s104 ready at 0.0.0.0:7004
+I [/home/marumalla/mako/src/deptran/communicator.cc:14] 2025-11-23 22:36:49.565 | setup paxos communicator
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.565 | connect to site: 127.0.0.1:7001 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.565 | connect to site: 127.0.0.1:7101 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:49.565 | rrr::Client: connect(127.0.0.1:7101): Connection refused
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.564 | connect to site: 127.0.0.1:7001 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.565 | connect to site: 127.0.0.1:7101 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:49.565 | rrr::Client: connect(127.0.0.1:7101): Connection refused
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:198] 2025-11-23 22:36:49.569 | [service]loc_id: 0, name: s103, proc: localhost, id: 8
+starting server at 0.0.0.0:7003
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:221] 2025-11-23 22:36:49.569 | Server s103 ready at 0.0.0.0:7003
+I [/home/marumalla/mako/src/deptran/communicator.cc:14] 2025-11-23 22:36:49.569 | setup paxos communicator
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.569 | connect to site: 127.0.0.1:7001 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.569 | connect to site: 127.0.0.1:7101 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:49.569 | rrr::Client: connect(127.0.0.1:7101): Connection refused
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:198] 2025-11-23 22:36:49.570 | [service]loc_id: 0, name: s106, proc: localhost, id: 20
+starting server at 0.0.0.0:7006
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:221] 2025-11-23 22:36:49.570 | Server s106 ready at 0.0.0.0:7006
+I [/home/marumalla/mako/src/deptran/communicator.cc:14] 2025-11-23 22:36:49.570 | setup paxos communicator
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.570 | connect to site: 127.0.0.1:7001 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:49.570 | connect to site: 127.0.0.1:7101 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:49.570 | rrr::Client: connect(127.0.0.1:7101): Connection refused
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.557 | connect to site: 127.0.0.1:7101 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.557 | connect to site: 127.0.0.1:7201 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.557 | connect to site: 127.0.0.1:7301 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.557 | connect to site: 127.0.0.1:7002 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.557 | connect to site: 127.0.0.1:7102 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.557 | connect to site: 127.0.0.1:7202 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7302 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7003 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7103 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7203 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7303 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7004 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7104 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7204 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7304 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7005 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7105 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7205 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7305 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7006 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.558 | connect to site: 127.0.0.1:7106 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:50.558 | rrr::Client: connect(127.0.0.1:7106): Connection refused
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7101 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7201 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7301 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7002 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7102 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7202 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7302 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7003 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7103 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7203 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.559 | connect to site: 127.0.0.1:7303 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7004 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7104 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7204 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7304 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7005 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7105 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7205 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7305 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7006 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.560 | connect to site: 127.0.0.1:7106 (attempt 0)
+E [/home/marumalla/mako/src/rrr/rpc/client.cpp:194] 2025-11-23 22:36:50.560 | rrr::Client: connect(127.0.0.1:7106): Connection refused
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7101 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7201 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7301 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7002 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7102 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7202 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7302 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7003 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7103 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7203 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7303 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7004 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7104 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.565 | connect to site: 127.0.0.1:7204 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7304 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7005 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7105 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7101 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7201 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7301 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7002 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7102 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7202 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7205 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7302 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7305 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7003 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7103 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7006 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.566 | connect to site: 127.0.0.1:7203 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7303 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7004 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7104 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7204 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7304 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7005 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7105 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7205 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7305 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7006 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7106 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7206 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.567 | connect to site: 127.0.0.1:7306 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.568 | connect to site: 127.0.0.1:7106 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:103] 2025-11-23 22:36:50.568 | site 16 launched!
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.568 | connect to site: 127.0.0.1:7206 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.568 | connect to site: 127.0.0.1:7306 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:103] 2025-11-23 22:36:50.568 | site 12 launched!
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.569 | connect to site: 127.0.0.1:7101 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.569 | connect to site: 127.0.0.1:7201 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.569 | connect to site: 127.0.0.1:7301 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.569 | connect to site: 127.0.0.1:7002 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7102 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7202 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7302 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7003 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7103 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7203 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7303 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7004 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7104 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7101 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.570 | connect to site: 127.0.0.1:7201 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7301 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7204 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7002 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7102 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7202 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7304 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7302 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7003 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7103 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7005 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7203 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7105 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7303 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7004 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7205 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7305 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7104 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.Disk persistence disabled by DISABLE_DISK flag
+cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7006 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7204 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7106 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7304 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7206 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.571 | connect to site: 127.0.0.1:7005 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7306 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7105 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:103] 2025-11-23 22:36:50.572 | site 8 launched!
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7205 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7305 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7006 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7106 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7206 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:50.572 | connect to site: 127.0.0.1:7306 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:103] 2025-11-23 22:36:50.572 | site 20 launched!
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:51.558 | connect to site: 127.0.0.1:7106 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:51.558 | connect to site: 127.0.0.1:7206 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:51.558 | connect to site: 127.0.0.1:7306 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:103] 2025-11-23 22:36:51.559 | site 0 launched!
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:51.560 | connect to site: 127.0.0.1:7106 (attempt 1)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:51.560 | connect to site: 127.0.0.1:7206 (attempt 0)
+I [/home/marumalla/mako/src/deptran/communicator.cc:175] 2025-11-23 22:36:51.560 | connect to site: 127.0.0.1:7306 (attempt 0)
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:103] 2025-11-23 22:36:51.560 | site 4 launched!
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:110] 2025-11-23 22:36:51.561 | done waiting for server setup threads.
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:255] 2025-11-23 22:36:51.561 | heartbeat setup for s101 on 0.0.0.0:17001
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:255] 2025-11-23 22:36:51.561 | heartbeat setup for s102 on 0.0.0.0:17002
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:255] 2025-11-23 22:36:51.561 | heartbeat setup for s103 on 0.0.0.0:17003
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:255] 2025-11-23 22:36:51.561 | heartbeat setup for s104 on 0.0.0.0:17004
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:255] 2025-11-23 22:36:51.561 | heartbeat setup for s105 on 0.0.0.0:17005
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:255] 2025-11-23 22:36:51.562 | heartbeat setup for s106 on 0.0.0.0:17006
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:117] 2025-11-23 22:36:51.562 | server workers' communicators setup
+allocator::Initialize()
+  hugepgsize: 2097152
+  use MADV_WILLNEED: 1
+  mmap() region [0x7ef0ea400000, 0x7ef12ae00000)
+cpu0 owns [0x7ef0ea400000, 0x7ef0f5000000)
+cpu1 owns [0x7ef0f5000000, 0x7ef0ffc00000)
+cpu2 owns [0x7ef0ffc00000, 0x7ef10a800000)
+cpu3 owns [0x7ef10a800000, 0x7ef115400000)
+cpu4 owns [0x7ef115400000, 0x7ef120000000)
+cpu5 owns [0x7ef120000000, 0x7ef12ac00000)
+Database Benchmark:
+  pid: 221618
+settings:
+  num-cpus    : 4
+  num-threads : 6
+  shardIndex  : 0
+  paxos_proc_name  : localhost
+  nshards     : 1
+  is_micro    : 0
+  is_replicated : 1
+  var-encode  : yes
+  allocator   : jemalloc
+system properties:
+  tuple_prefetch          : no
+  btree_node_prefetch     : yes
+tpcc settings:
+  cross_partition_transactions : 1
+  read_only_snapshots          : 1
+  partition_locks              : 0
+  separate_tree_per_partition  : 1
+  new_order_remote_item_pct    : 1
+  new_order_fast_id_gen        : 1
+  uniform_item_dist            : 0
+  order_status_scan_hack       : 0
+  workload_mix                 : [45, 43, 4, 4, 4]
+new table is createded with name: customer_0, table-id: 1, on shard-server id:0
+new table is createded with name: customer_1, table-id: 2, on shard-server id:0
+new table is createded with name: customer_2, table-id: 3, on shard-server id:0
+new table is createded with name: customer_3, table-id: 4, on shard-server id:0
+new table is createded with name: customer_4, table-id: 5, on shard-server id:0
+new table is createded with name: customer_5, table-id: 6, on shard-server id:0
+new table is createded with name: customer_name_idx_0, table-id: 7, on shard-server id:0
+new table is createded with name: customer_name_idx_1, table-id: 8, on shard-server id:0
+new table is createded with name: customer_name_idx_2, table-id: 9, on shard-server id:0
+new table is createded with name: customer_name_idx_3, table-id: 10, on shard-server id:0
+new table is createded with name: customer_name_idx_4, table-id: 11, on shard-server id:0
+new table is createded with name: customer_name_idx_5, table-id: 12, on shard-server id:0
+new table is createded with name: district_0, table-id: 13, on shard-server id:0
+new table is createded with name: district_1, table-id: 14, on shard-server id:0
+new table is createded with name: district_2, table-id: 15, on shard-server id:0
+new table is createded with name: district_3, table-id: 16, on shard-server id:0
+new table is createded with name: district_4, table-id: 17, on shard-server id:0
+new table is createded with name: district_5, table-id: 18, on shard-server id:0
+new table is createded with name: history_0, table-id: 19, on shard-server id:0
+new table is createded with name: history_1, table-id: 20, on shard-server id:0
+new table is createded with name: history_2, table-id: 21, on shard-server id:0
+new table is createded with name: history_3, table-id: 22, on shard-server id:0
+new table is createded with name: history_4, table-id: 23, on shard-server id:0
+new table is createded with name: history_5, table-id: 24, on shard-server id:0
+new table is createded with name: new_order_0, table-id: 25, on shard-server id:0
+new table is createded with name: new_order_1, table-id: 26, on shard-server id:0
+new table is createded with name: new_order_2, table-id: 27, on shard-server id:0
+new table is createded with name: new_order_3, table-id: 28, on shard-server id:0
+new table is createded with name: new_order_4, table-id: 29, on shard-server id:0
+new table is createded with name: new_order_5, table-id: 30, on shard-server id:0
+new table is createded with name: oorder_0, table-id: 31, on shard-server id:0
+new table is createded with name: oorder_1, table-id: 32, on shard-server id:0
+new table is createded with name: oorder_2, table-id: 33, on shard-server id:0
+new table is createded with name: oorder_3, table-id: 34, on shard-server id:0
+new table is createded with name: oorder_4, table-id: 35, on shard-server id:0
+new table is createded with name: oorder_5, table-id: 36, on shard-server id:0
+new table is createded with name: oorder_c_id_idx_0, table-id: 37, on shard-server id:0
+new table is createded with name: oorder_c_id_idx_1, table-id: 38, on shard-server id:0
+new table is createded with name: oorder_c_id_idx_2, table-id: 39, on shard-server id:0
+new table is createded with name: oorder_c_id_idx_3, table-id: 40, on shard-server id:0
+new table is createded with name: oorder_c_id_idx_4, table-id: 41, on shard-server id:0
+new table is createded with name: oorder_c_id_idx_5, table-id: 42, on shard-server id:0
+new table is createded with name: order_line_0, table-id: 43, on shard-server id:0
+new table is createded with name: order_line_1, table-id: 44, on shard-server id:0
+new table is createded with name: order_line_2, table-id: 45, on shard-server id:0
+new table is createded with name: order_line_3, table-id: 46, on shard-server id:0
+new table is createded with name: order_line_4, table-id: 47, on shard-server id:0
+new table is createded with name: order_line_5, table-id: 48, on shard-server id:0
+new table is createded with name: stock_0, table-id: 49, on shard-server id:0
+new table is createded with name: stock_1, table-id: 50, on shard-server id:0
+new table is createded with name: stock_2, table-id: 51, on shard-server id:0
+new table is createded with name: stock_3, table-id: 52, on shard-server id:0
+new table is createded with name: stock_4, table-id: 53, on shard-server id:0
+new table is createded with name: stock_5, table-id: 54, on shard-server id:0
+new table is createded with name: stock_data_0, table-id: 55, on shard-server id:0
+new table is createded with name: stock_data_1, table-id: 56, on shard-server id:0
+new table is createded with name: stock_data_2, table-id: 57, on shard-server id:0
+new table is createded with name: stock_data_3, table-id: 58, on shard-server id:0
+new table is createded with name: stock_data_4, table-id: 59, on shard-server id:0
+new table is createded with name: stock_data_5, table-id: 60, on shard-server id:0
+new table is createded with name: warehouse_0, table-id: 61, on shard-server id:0
+new table is createded with name: warehouse_1, table-id: 62, on shard-server id:0
+new table is createded with name: warehouse_2, table-id: 63, on shard-server id:0
+new table is createded with name: warehouse_3, table-id: 64, on shard-server id:0
+new table is createded with name: warehouse_4, table-id: 65, on shard-server id:0
+new table is createded with name: warehouse_5, table-id: 66, on shard-server id:0
+new table is createded with name: item, table-id: 67, on shard-server id:0
+20251023-22:36.54-564124(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:36.54-564242(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+[TRANSPORT] Using default: rrr
+[TRANSPORT] Using default: rrr
+20251023-22:36.54-564486(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:36.54-564573(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31011 (listening on 0.0.0.0:31011)
+20251023-22:36.54-564601(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31011
+20251023-22:36.54-564629(us) 221618 * RunEventLoop    (rrr_rpc_backend.cc:518): RrrRpcBackend::RunEventLoop: Starting event loop
+20251023-22:36.54-564902(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:36.54-564979(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31012 (listening on 0.0.0.0:31012)
+20251023-22:36.54-565008(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31012
+20251023-22:36.54-565035(us) 221618 * RunEventLoop    (rrr_rpc_backend.cc:518): RrrRpcBackend::RunEventLoop: Starting event loop
+20251023-22:36.54-567411(us) 221618 ! run             (bench.cc:357):     # of loaders size:6
+start worker:2388
+[INFO] finished loading warehouse
+[INFO]   * average warehouse record length: 97 bytes
+PinToWarehouseId(): coreid=3 pinned to whse=1 (partid=0)
+PinToWarehouseId(): coreid=PinToWarehouseId(): coreid=3 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=3 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=3 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=3 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=3 pinned to whse=6 (partid=5)
+1 pinned to whse=1 (partid=0)
+[INFO] finished loading district
+[INFO]   * average district record length: 99 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=1 (partid=0)
+num batches: 30
+PinToWarehouseId(): coreid=4 pinned to whse=1 (partid=0)
+[INFO] finished loading item
+[INFO]   * average item record length: 84.1739 bytes
+PinToWarehouseId(): coreid=5 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=4 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=5 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=4 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=1 pinned to whse=2 (partid=1)
+PinToWarehouseId(): coreid=5 pinned to whse=6 (partid=5)
+[INFO] finished loading order
+[INFO]   * average order_line record length: 11.2511 bytes
+[INFO]   * average oorder record length: 7.88727 bytes
+[INFO]   * average new_order record length: 12 bytes
+PinToWarehouseId(): coreid=4 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=4 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=1 pinned to whse=3 (partid=2)
+PinToWarehouseId(): coreid=4 pinned to whse=6 (partid=5)
+[INFO] finished loading customer
+[INFO]   * average customer record length: 153.954 bytes 
+PinToWarehouseId(): coreid=1 pinned to whse=4 (partid=3)
+PinToWarehouseId(): coreid=1 pinned to whse=5 (partid=4)
+PinToWarehouseId(): coreid=1 pinned to whse=6 (partid=5)
+[INFO] finished loading stock
+[INFO]   * average stock record length: 8 bytes
+timed region dataloading took 9291.09 ms
+DB size: 4225.56 MB
+[0, 0, 0] txns persisted in loading phase
+20251023-22:37.03-858645(us) 221618 ! run             (bench.cc:410):     # of nthreads:6
+starting benchmark...
+--------------Finish loading data and wait for others completing load phase ------------
+tpcc: worker id 8 => warehouses [1, 2)
+tpcc: worker id 9 => warehouses [2, 3)
+tpcc: worker id 10 => warehouses [3, 4)
+tpcc: worker id 11 => warehouses [4, 5)
+tpcc: worker id 12 => warehouses [5, 6)
+tpcc: worker id 13 => warehouses [6, 7)
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+No JEMALLOC_NO_RENAME
+20251023-22:37.03-865050(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-865577(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-865769(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-865908(us) 221618 * [TRANSPORT] Using default: rrr
+ParseOldFormat  (configuration.cc:66): Using old configuration format
+[TRANSPORT] Using default: rrr
+20251023-22:37.03-866089(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:37.03-866172(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31000 (listening on 0.0.0.0:31000)No JEMALLOC_NO_RENAME
+
+20251023-22:37.03-866222(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31000
+20251023-22:37.03-866651(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-866805(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-866944(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+[TRANSPORT] Using default: rrr
+20251023-22:37.03-867584(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-867919(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-868258(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+[TRANSPORT] Using default: rrr
+20251023-22:37.03-868541(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+[TRANSPORT] Using default: rrr
+20251023-22:37.03-868775(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:37.03-868827(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-868884(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31003 (listening on 0.0.0.0:31003)
+20251023-22:37.03-868917(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31003
+20251023-22:37.03-869084(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:37.03-869542(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31005 (listening on 0.0.0.0:31005)
+20251023-22:37.03-870207(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31005
+20251023-22:37.03-870756(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-870837(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+[TRANSPORT] Using default: rrr
+20251023-22:37.03-871077(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:37.03-871136(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31001 (listening on 0.0.0.0:31001)
+20251023-22:37.03-871163(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31001
+20251023-22:37.03-871444(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-871567(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:37.03-871620(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31004 (listening on 0.0.0.0:31004)
+20251023-22:37.03-871645(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31004
+20251023-22:37.03-871739(us) 221618 * Initialize      (rrr_rpc_backend.cc:58): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20251023-22:37.03-871911(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-871973(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-872190(us) 221618 * Initialize      (rrr_rpc_backend.cc:88): RrrRpcBackend initialized on 127.0.0.1:31002 (listening on 0.0.0.0:31002)
+20251023-22:37.03-872226(us) 221618 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31002
+20251023-22:37.03-873132(us) 221618 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20251023-22:37.03-874435(us) 221618 ! run             (bench.cc:461):     start the running time, runTime:30
+20251023-22:37.03-874486(us) 221618 ! run             (bench.cc:473):     runtime time left:30000 ms, bool:1
+we can start a advancer
+start the advancer thread...
+20251023-22:37.04-888232(us) 221618 ! run             (bench.cc:473):     runtime time left:29000 ms, bool:1
+20251023-22:37.05-915319(us) 221618 ! run             (bench.cc:473):     runtime time left:28000 ms, bool:1
+20251023-22:37.06-933889(us) 221618 ! run             (bench.cc:473):     runtime time left:27000 ms, bool:1
+20251023-22:37.07-962495(us) 221618 ! run             (bench.cc:473):     runtime time left:26000 ms, bool:1
+20251023-22:37.08-985361(us) 221618 ! run             (bench.cc:473):     runtime time left:25000 ms, bool:1
+20251023-22:37.10-8373(us) 221618 ! run             (bench.cc:473):     runtime time left:24000 ms, bool:1
+20251023-22:37.11-34209(us) 221618 ! run             (bench.cc:473):     runtime time left:23000 ms, bool:1
+20251023-22:37.12-66081(us) 221618 ! run             (bench.cc:473):     runtime time left:22000 ms, bool:1
+20251023-22:37.13-89215(us) 221618 ! run             (bench.cc:473):     runtime time left:21000 ms, bool:1
+20251023-22:37.14-110300(us) 221618 ! run             (bench.cc:473):     runtime time left:20000 ms, bool:1
+20251023-22:37.15-128184(us) 221618 ! run             (bench.cc:473):     runtime time left:19000 ms, bool:1
+20251023-22:37.16-145599(us) 221618 ! run             (bench.cc:473):     runtime time left:18000 ms, bool:1
+20251023-22:37.17-163794(us) 221618 ! run             (bench.cc:473):     runtime time left:17000 ms, bool:1
+20251023-22:37.18-194707(us) 221618 ! run             (bench.cc:473):     runtime time left:16000 ms, bool:1
+20251023-22:37.19-209121(us) 221618 ! run             (bench.cc:473):     runtime time left:15000 ms, bool:1
+20251023-22:37.20-234939(us) 221618 ! run             (bench.cc:473):     runtime time left:14000 ms, bool:1
+20251023-22:37.21-251932(us) 221618 ! run             (bench.cc:473):     runtime time left:13000 ms, bool:1
+20251023-22:37.22-273823(us) 221618 ! run             (bench.cc:473):     runtime time left:12000 ms, bool:1
+20251023-22:37.23-305748(us) 221618 ! run             (bench.cc:473):     runtime time left:11000 ms, bool:1
+20251023-22:37.24-360307(us) 221618 ! run             (bench.cc:473):     runtime time left:10000 ms, bool:1
+20251023-22:37.25-378919(us) 221618 ! run             (bench.cc:473):     runtime time left:9000 ms, bool:1
+20251023-22:37.26-408878(us) 221618 ! run             (bench.cc:473):     runtime time left:8000 ms, bool:1
+20251023-22:37.27-434062(us) 221618 ! run             (bench.cc:473):     runtime time left:7000 ms, bool:1
+20251023-22:37.28-457665(us) 221618 ! run             (bench.cc:473):     runtime time left:6000 ms, bool:1
+20251023-22:37.29-492219(us) 221618 ! run             (bench.cc:473):     runtime time left:5000 ms, bool:1
+20251023-22:37.30-516330(us) 221618 ! run             (bench.cc:473):     runtime time left:4000 ms, bool:1
+20251023-22:37.31-533184(us) 221618 ! run             (bench.cc:473):     runtime time left:3000 ms, bool:1
+20251023-22:37.32-549728(us) 221618 ! run             (bench.cc:473):     runtime time left:2000 ms, bool:1
+20251023-22:37.33-571303(us) 221618 ! run             (bench.cc:473):     runtime time left:1000 ms, bool:1
+20251023-22:37.34-587521(us) 221618 ! run             (bench.cc:483):     runtime_plus:0
+[SHUTDOWN] Setting running=false to stop database worker threads
+[SHUTDOWN] Calling first stop() to stop client transports
+20251023-22:37.34-587661(us) 221618 ! stop            (bench.cc:332):     stop all erpc clients. set stop=false
+20251023-22:37.34-587701(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.34-587734(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.34-587765(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.34-587795(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.34-587826(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.34-587937(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.34-587969(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.34-587999(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.34-588028(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.34-588058(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-588092(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+20251023-22:37.34-588125(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.34-588154(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.34-588184(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.34-588213(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.34-588241(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.34-588271(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.34-588312(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.34-588341(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.34-588387(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.34-588411(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-588436(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+20251023-22:37.34-588461(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.34-588487(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.34-588512(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.34-588535(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.34-588557(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+jump out the while loop
+20251023-22:37.34-588580(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.34-588625(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.34-588650(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.34-588673(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.34-588695(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-588720(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+20251023-22:37.34-588745(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.34-588769(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.34-588791(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.34-588816(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.34-588840(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.34-588865(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.34-588889(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.34-588913(us) 221618 * jump out the while loop
+Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.34-589092(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.34-589120(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-589146(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+20251023-22:37.34-589173(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.34-589198(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.34-589224(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.34-589249(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.34-589274(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.34-589316(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.34-589350(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.34-589375(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.34-589401(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.34-589426(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-589451(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+20251023-22:37.34-589476(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.34-589504(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.34-589532(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.34-589555(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.34-589578(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.34-589601(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.34-589624(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.34-589645(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.34-589669(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.34-589692(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-589716(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+[SHUTDOWN] First stop() completed
+[SHUTDOWN] Joining 6 worker threads
+[SHUTDOWN] Joining worker 0
+jump out the while loop
+20251023-22:37.34-590000(us) 221618 * PrintStats      (rrr_rpc_backend.cc:689): RrrRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+jump out the while loop
+20251023-22:37.34-590290(us) 221618 * PrintStats      (rrr_rpc_backend.cc:689): RrrRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+jump out the while loop
+20251023-22:37.34-590377(us) 221618 * PrintStats      (rrr_rpc_backend.cc:689): RrrRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-590410(us) 221618 * PrintStats      (rrr_rpc_backend.cc:689): RrrRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+jump out the while loop
+20251023-22:37.34-591258(us) 221618 * PrintStats      (rrr_rpc_backend.cc:689): RrrRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.34-591477(us) 221618 * PrintStats      (rrr_rpc_backend.cc:689): RrrRpcBackend request stats: msg_size_req_sent: 0 bytes, counter: 0, avg: -nan
+[SHUTDOWN] Worker 0 joined
+[SHUTDOWN] Joining worker 1
+[SHUTDOWN] Worker 1 joined
+[SHUTDOWN] Joining worker 2
+[SHUTDOWN] Worker 2 joined
+[SHUTDOWN] Joining worker 3
+[SHUTDOWN] Worker 3 joined
+[SHUTDOWN] Joining worker 4
+[SHUTDOWN] Worker 4 joined
+[SHUTDOWN] Joining worker 5
+[SHUTDOWN] Worker 5 joined
+[SHUTDOWN] All workers joined
+[SHUTDOWN] Calling stop_erpc_server()
+[STOP_SERVER] Stopping 2 server transports
+[STOP_SERVER] Stopping server transport 0
+20251023-22:37.35-604726(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.35-605370(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.35-605415(us) 221618 * RunEventLoop    (rrr_rpc_backend.cc:583): RrrRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+20251023-22:37.35-605483(us) 221618 * RunEventLoop    (rrr_rpc_backend.cc:587): RrrRpcBackend::RunEventLoop: Exited cleanly
+20251023-22:37.35-605510(us) 221618 * erpc_server     (rpc_setup.cc:121): the erpc_server is terminated on shardIdx:0, alpha:0!
+20251023-22:37.35-606314(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.35-606590(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.35-606617(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.35-607110(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.35-607133(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.35-607156(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.35-607180(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.35-607572(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.35-607610(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+[STOP_SERVER] Server transport 0 stopped
+[STOP_SERVER] Stopping server transport 1
+20251023-22:37.35-608032(us) 221618 * Stop            (rrr_rpc_backend.cc:599): RrrRpcBackend::Stop: BEGIN - Setting stop flag
+20251023-22:37.35-608983(us) 221618 * Stop            (rrr_rpc_backend.cc:602): RrrRpcBackend::Stop: Waiting for event loop to exit...
+20251023-22:37.35-609031(us) 221618 * RunEventLoop    (rrr_rpc_backend.cc:583): RrrRpcBackend::RunEventLoop: Stop flag detected, exiting event loop
+20251023-22:37.35-609078(us) 221618 * RunEventLoop    (rrr_rpc_backend.cc:587): RrrRpcBackend::RunEventLoop: Exited cleanly
+20251023-22:37.35-609105(us) 221618 * erpc_server     (rpc_setup.cc:121): the erpc_server is terminated on shardIdx:0, alpha:1!
+20251023-22:37.35-619165(us) 221618 * Stop            (rrr_rpc_backend.cc:618): RrrRpcBackend::Stop: Event loop exited successfully
+20251023-22:37.35-619545(us) 221618 * Stop            (rrr_rpc_backend.cc:622): RrrRpcBackend::Stop: Signaling 0 request queues to stop
+20251023-22:37.35-620221(us) 221618 * Stop            (rrr_rpc_backend.cc:630): RrrRpcBackend::Stop: Signaling 0 response queues to stop
+20251023-22:37.35-620255(us) 221618 * Stop            (rrr_rpc_backend.cc:641): RrrRpcBackend::Stop: Server cleanup deferred to destructor
+20251023-22:37.35-621055(us) 221618 * Stop            (rrr_rpc_backend.cc:644): RrrRpcBackend::Stop: Closing client connections
+20251023-22:37.35-621088(us) 221618 * Stop            (rrr_rpc_backend.cc:648): RrrRpcBackend::Stop: Found 0 client connections to close
+20251023-22:37.35-621121(us) 221618 * Stop            (rrr_rpc_backend.cc:668): RrrRpcBackend::Stop: Closed 0 client connections
+20251023-22:37.35-621147(us) 221618 * Stop            (rrr_rpc_backend.cc:680): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20251023-22:37.35-621801(us) 221618 * Stop            (rrr_rpc_backend.cc:683): RrrRpcBackend::Stop: END
+[STOP_SERVER] Server transport 1 stopped
+[STOP_SERVER] All server transports stopped
+[SHUTDOWN] stop_erpc_server() completed
+[SHUTDOWN] Calling second stop()
+20251023-22:37.35-623433(us) 221618 ! stop            (bench.cc:332):     stop all erpc clients. set stop=false
+[SHUTDOWN] Second stop() completed
+[SHUTDOWN] Calling do_txn_finish()
+[SHUTDOWN] do_txn_finish() completed
+--- n_commits per partition ---
+ par_id: 0, n_commits: 149896
+ par_id: 1, n_commits: 149910
+ par_id: 2, n_commits: 154699
+ par_id: 3, n_commits: 154804
+ par_id: 4, n_commits: 152559
+ par_id: 5, n_commits: 160596
+--- benchmark statistics ---
+runtime: 30.7502 sec
+memory delta: 3461.67 MB
+n_commits: 922464
+latency_numer_us: 183024276
+latency_numer_us_remote: 0
+memory delta rate: 112.574 MB/sec
+logical memory delta: 58.4008 MB
+logical memory delta rate: 1.8992 MB/sec
+agg_nosync_throughput: 29999.8 ops/sec
+avg_nosync_per_core_throughput: 4999.96 ops/sec/core
+agg_throughput: 29998.6 ops/sec
+avg_per_core_throughput: 4999.77 ops/sec/core
+agg_persist_throughput: 29998.6 ops/sec
+avg_per_core_persist_throughput: 4999.77 ops/sec/core
+avg_latency: 0.198408 ms
+avg_persist_latency: 0 ms
+agg_abort_rate: 5.46338 aborts/sec
+avg_per_core_abort_rate: 0.910563 aborts/sec/core
+  NewOrder_local_commit_latency: 0.203103 ms
+  NewOrder_local_abort_latency: 1.2836 ms
+  NewOrder_local_abort_ratio: 9.89946e-05
+  Payment_local_commit_latency: 0.0679924 ms
+  Payment_local_abort_latency: 0.005506 ms
+  Payment_local_abort_ratio: 5.03444e-06
+  Delivery_local_commit_latency: 0.902281 ms
+  Delivery_local_abort_latency: -nan ms
+  Delivery_local_abort_ratio: 0
+  OrderStatus_local_commit_latency: 0.0539834 ms
+  OrderStatus_local_abort_latency: -nan ms
+  OrderStatus_local_abort_ratio: 0
+  StockLevel_local_commit_latency: 0.999795 ms
+  StockLevel_local_abort_latency: 2.78249 ms
+  StockLevel_local_abort_ratio: 0.00337355
+  NewOrder_remote_ratio: 0 %
+  NewOrder_remote_abort_ratio: -nan %
+  NewOrder_remote_commit_latency: -nan ms
+  NewOrder_remote_abort_latency: -nan ms
+  Payment_remote_ratio: 0 %
+  Payment_remote_abort_ratio: -nan %
+  Payment_remote_commit_latency: -nan ms
+  Payment_remote_abort_latency: -nan ms
+--- system counters (for benchmark) ---
+--- perf counters (if enabled, for benchmark) ---
+--- allocator stats ---
+[allocator] ncpus=6
+[allocator] cpu=0 fully_faulted?=0 remaining=180355072 bytes
+[allocator] cpu=1 fully_faulted?=0 remaining=180355072 bytes
+[allocator] cpu=2 fully_faulted?=0 remaining=180355072 bytes
+[allocator] cpu=3 fully_faulted?=0 remaining=180355072 bytes
+[allocator] cpu=4 fully_faulted?=0 remaining=180355072 bytes
+[allocator] cpu=5 fully_faulted?=0 remaining=180355072 bytes
+---------------------------------------
+--- system counters for n_comits ---
+[STOP_SERVER] Stopping 2 server transports
+[STOP_SERVER] Stopping server transport 0
+20251023-22:37.35-632086(us) 221618 * Stop            (rrr_rpc_backend.cc:595): RrrRpcBackend::Stop: Already stopped, returning
+[STOP_SERVER] Server transport 0 stopped
+[STOP_SERVER] Stopping server transport 1
+20251023-22:37.35-633634(us) 221618 * Stop            (rrr_rpc_backend.cc:595): RrrRpcBackend::Stop: Already stopped, returning
+[STOP_SERVER] Server transport 1 stopped
+[STOP_SERVER] All server transports stopped
+20251023-22:37.35-633969(us) 221618 ! send_end_signal (mako.hh:834):      ######--------------###### send endLlogs #####---------------######
+20251023-22:37.35-634438(us) 221618 * db_close        (mako.hh:861):      Leader sent end signal, waiting 3 seconds for propagation...
+20251023-22:37.35-685375(us) 221618 ! operator()      (mako.hh:391):      Recieved a zero length log
+20251023-22:37.35-685490(us) 221618 ! operator()      (mako.hh:391):      Recieved a zero length log
+20251023-22:37.35-685872(us) 221618 ! operator()      (mako.hh:391):      Recieved a zero length log
+20251023-22:37.35-685989(us) 221618 ! operator()      (mako.hh:391):      Recieved a zero length log
+20251023-22:37.35-686312(us) 221618 ! operator()      (mako.hh:391):      Recieved a zero length log
+20251023-22:37.35-686863(us) 221618 ! operator()      (mako.hh:391):      Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:140] 2025-11-23 22:37:35.685 | Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:140] 2025-11-23 22:37:35.685 | Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:140] 2025-11-23 22:37:35.685 | Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:140] 2025-11-23 22:37:35.685 | Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:140] 2025-11-23 22:37:35.686 | Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:140] 2025-11-23 22:37:35.686 | Recieved a zero length log
+I [/home/marumalla/mako/src/deptran/paxos/commo.cc:468] 2025-11-23 22:37:38.707 | received an error message
+I [/home/marumalla/mako/src/deptran/paxos/commo.cc:468] 2025-11-23 22:37:38.737 | received an error message
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:999] 2025-11-23 22:37:40.635 | shutdown Server Control Service after task finish total submit 0
+I [/home/marumalla/mako/src/deptran/benchmark_control_rpc.cc:43] 2025-11-23 22:37:40.635 | Shutdown Server Control Service
+I [/home/marumalla/mako/src/deptran/benchmark_control_rpc.cc:43] 2025-11-23 22:37:40.635 | Shutdown Server Control Service
+I [/home/marumalla/mako/src/deptran/benchmark_control_rpc.cc:43] 2025-11-23 22:37:40.635 | Shutdown Server Control Service
+I [/home/marumalla/mako/src/deptran/benchmark_control_rpc.cc:43] 2025-11-23 22:37:40.635 | Shutdown Server Control Service
+I [/home/marumalla/mako/src/deptran/benchmark_control_rpc.cc:43] 2025-11-23 22:37:40.635 | Shutdown Server Control Service
+I [/home/marumalla/mako/src/deptran/benchmark_control_rpc.cc:43] 2025-11-23 22:37:40.635 | Shutdown Server Control Service
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:311] 2025-11-23 22:37:40.637 | all server workers have shut down.
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:288] 2025-11-23 22:37:40.737 | site s101 deleting services, num: 1 0 348 348
+I [/home/marumalla/mako/src/deptran/paxos/server.h:47] 2025-11-23 22:37:40.788 | site par 0, loc 0: prepare 0, accept 348, commit 348
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:288] 2025-11-23 22:37:40.791 | site s102 deleting services, num: 1 0 359 359
+I [/home/marumalla/mako/src/deptran/paxos/server.h:47] 2025-11-23 22:37:40.842 | site par 1, loc 0: prepare 0, accept 359, commit 359
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:288] 2025-11-23 22:37:40.843 | site s103 deleting services, num: 1 0 362 362
+I [/home/marumalla/mako/src/deptran/paxos/server.h:47] 2025-11-23 22:37:40.844 | site par 2, loc 0: prepare 0, accept 362, commit 362
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:288] 2025-11-23 22:37:40.849 | site s104 deleting services, num: 1 0 375 375
+I [/home/marumalla/mako/src/deptran/paxos/server.h:47] 2025-11-23 22:37:40.900 | site par 3, loc 0: prepare 0, accept 375, commit 375
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:288] 2025-11-23 22:37:40.903 | site s105 deleting services, num: 1 0 803 803
+I [/home/marumalla/mako/src/deptran/paxos/server.h:47] 2025-11-23 22:37:40.953 | site par 4, loc 0: prepare 0, accept 803, commit 803
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:288] 2025-11-23 22:37:40.958 | site s106 deleting services, num: 1 0 363 363
+I [/home/marumalla/mako/src/deptran/paxos/server.h:47] 2025-11-23 22:37:41.009 | site par 5, loc 0: prepare 0, accept 363, commit 363
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:649] 2025-11-23 22:37:41.062 | Ending worker with n_tot 348 and n_current 348
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:649] 2025-11-23 22:37:41.068 | Ending worker with n_tot 359 and n_current 359
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:649] 2025-11-23 22:37:41.080 | Ending worker with n_tot 362 and n_current 362
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:649] 2025-11-23 22:37:41.092 | Ending worker with n_tot 375 and n_current 375
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:649] 2025-11-23 22:37:41.097 | Ending worker with n_tot 803 and n_current 803
+I [/home/marumalla/mako/src/deptran/paxos_worker.cc:649] 2025-11-23 22:37:41.102 | Ending worker with n_tot 363 and n_current 363
+I [/home/marumalla/mako/src/deptran/paxos_main_helper.cc:332] 2025-11-23 22:37:41.115 | exit process.
+END of advancer

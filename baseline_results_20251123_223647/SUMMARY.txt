@@ -1,0 +1,25 @@
+Mako Baseline Metrics Summary
+Generated: Sun Nov 23 22:39:17 UTC 2025
+========================================
+
+=== test_1shard_replication.sh_shard0-localhost-6 ===
+
+Aggregate Throughput: 29998.6 ops/sec
+Average Latency: 0.198408 ms
+Aggregate Abort Rate: 5.46338 aborts/sec
+    NewOrder_remote_abort_ratio: -nan %
+
+=== test_2shard_replication.sh_rrr_shard0-localhost ===
+
+Aggregate Throughput: 6853.86 ops/sec
+Average Latency: 0.303249 ms
+Aggregate Abort Rate: 21.8802 aborts/sec
+    NewOrder_remote_abort_ratio: 1.03032 %
+
+=== test_2shard_replication.sh_rrr_shard1-localhost ===
+
+Aggregate Throughput: 5571.4 ops/sec
+Average Latency: 0.29768 ms
+Aggregate Abort Rate: 20.4297 aborts/sec
+    NewOrder_remote_abort_ratio: 1.36886 %
+

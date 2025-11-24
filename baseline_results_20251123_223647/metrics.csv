@@ -1,0 +1,4 @@
+Configuration,Throughput (ops/sec),Latency (ms),Abort Rate (aborts/sec),Remote Abort Ratio (%)
+test_1shard_replication.sh_shard0-localhost-6,29998.6,0.198408,Rate:,-nan
+test_2shard_replication.sh_rrr_shard0-localhost,6853.86,0.303249,Rate:,1.03032
+test_2shard_replication.sh_rrr_shard1-localhost,5571.4,0.29768,Rate:,1.36886
