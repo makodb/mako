@@ -1,3 +1,8 @@
+#ifdef CONFIG_H
+#include CONFIG_H
+#endif
+#include "masstree/config.h"
+
 #include "tuple.h"
 #include "txn.h"
 

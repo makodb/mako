@@ -41,7 +41,7 @@ ndb_thread::join()
   thd_.join();
 }
 
-// @safe
+// @unsafe
 // can be overloaded by subclasses
 void
 ndb_thread::run()

@@ -1,3 +1,8 @@
+#ifdef CONFIG_H
+#include CONFIG_H
+#endif
+#include "masstree/config.h"
+
 #include "rocksdb_persistence.h"
 #include <sstream>
 #include <iomanip>
@@ -7,17 +12,22 @@
 #include <rocksdb/write_batch.h>
 #include "../deptran/s_main.h"
 
+#include <unordered_map>  
+#include <memory>       
+#include <atomic>         
+#include <functional>    
+
 // @safe
 template<typename T>
 class lock_guard;
 
-// @safe
-template<typename T>
-bool operator==(const T& a, const T& b);
+// // @safe
+// template<typename T>
+// bool operator==(const T& a, const T& b);
 
-// @safe
-template<typename T>
-bool operator!=(const T& a, const T& b);
+// // @safe
+// template<typename T>
+// bool operator!=(const T& a, const T& b);
 
 namespace mako {
 

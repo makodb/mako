@@ -19,7 +19,7 @@ rpc_test/bin
 conf
 tmp_conf*.xml
 benchmark*.log
-log*
+*log
 .idea
 *.o
 *.orig
