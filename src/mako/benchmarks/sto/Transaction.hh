@@ -237,6 +237,8 @@ class StringAllocator{
   }
 };
 
+
+
 inline std::unordered_map<uint32_t, uint32_t> sample_transaction_tracker ;  // local timestamp => updated time (millisecond)
 
 // TRANSACTION macros that can be used to wrap transactional code

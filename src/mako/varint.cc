@@ -32,3 +32,11 @@ varint::Test()
     do_test(r.next_u32());
   cerr << "varint tests passed" << endl;
 }
+
+// // @safe - VIOLATION: This function is marked @safe but directly performs pointer operations
+// uint32_t
+// test_violation_pointer_in_safe_function() {
+//   uint32_t value = 42;
+//   uint32_t* ptr = &value;  // Address-of operation - violation in @safe context
+//   return *ptr;  // Dereference operation - violation in @safe context
+// }

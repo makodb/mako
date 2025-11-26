@@ -421,6 +421,7 @@ target_include_directories(mako PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${HOME}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")

@@ -23,6 +23,7 @@
 #include "prefetch.h"
 #include "ownership_checker.h"
 
+
 // debugging tool
 //#define TUPLE_LOCK_OWNERSHIP_CHECKING
 
