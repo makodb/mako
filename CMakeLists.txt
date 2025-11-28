@@ -545,4 +545,5 @@ if(BUILD_TESTS)
     add_test(NAME shard1ReplicationSimple COMMAND bash -c "bash ./examples/test_1shard_replication_simple.sh" WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
     add_custom_target(run_tests COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure)
-endif()
+endif()# Tests subdirectory
+add_subdirectory(tests)
