@@ -48,7 +48,9 @@ namespace private_ {
   // (this is a purposeful memory leak)
   struct event_ctx {
 
+    // @unsafe: singleton static lifetime
     static std::map<std::string, event_ctx *> &event_counters();
+    // @unsafe: singleton static lifetime
     static spinlock &event_counters_lock();
 
     // tag to avoid making event_ctx virtual
@@ -98,19 +100,9 @@ public:
 #endif
   }
 
-  inline ALWAYS_INLINE event_counter &
-  operator++()
-  {
-    inc();
-    return *this;
-  }
-
-  inline ALWAYS_INLINE event_counter &
-  operator+=(uint64_t i)
-  {
-    inc(i);
-    return *this;
-  }
+  // Declarations only - implementation below
+  event_counter & operator++();
+  event_counter & operator+=(uint64_t i);
 
   // WARNING: an expensive operation!
   static std::map<std::string, counter_data> get_all_counters();
@@ -125,6 +117,24 @@ private:
   unmanaged<private_::event_ctx> ctx_;
 #endif
 };
+
+// Implementations moved outside class to ensure checker respects @unsafe annotation
+
+// @unsafe: returns *this ref
+inline ALWAYS_INLINE event_counter &
+event_counter::operator++()
+{
+  inc();
+  return *this;
+}
+
+// @unsafe: returns *this ref
+inline ALWAYS_INLINE event_counter &
+event_counter::operator+=(uint64_t i)
+{
+  inc(i);
+  return *this;
+}
 
 class event_avg_counter {
 public:

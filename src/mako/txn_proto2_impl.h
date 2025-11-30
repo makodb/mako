@@ -298,7 +298,7 @@ private:
       }
       ctx.init_ = true;
     }
-    return ctx;
+    return g_persist_ctxs[core_id];
   }
 
   // static state

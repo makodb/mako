@@ -15,10 +15,10 @@
 using namespace std;
 using namespace util;
 
-// @safe
+// @unsafe
 static string
 proto1_version_str(uint64_t v) UNUSED;
-// @safe
+// @unsafe
 static string
 proto1_version_str(uint64_t v)
 {
@@ -27,10 +27,10 @@ proto1_version_str(uint64_t v)
   return b.str();
 }
 
-// @safe
+// @unsafe
 static string
 proto2_version_str(uint64_t v) UNUSED;
-// @safe
+// @unsafe
 static string
 proto2_version_str(uint64_t v)
 {

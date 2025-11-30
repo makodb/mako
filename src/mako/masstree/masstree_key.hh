@@ -152,7 +152,8 @@ class key {
 
     // @safe - pure comparison
     int compare(ikey_type ikey, int keylenx) const {
-        int cmp = ::compare(this->ikey(), ikey);
+        int cmp;
+        unsafe { cmp = ::compare(this->ikey(), ikey); }
         if (cmp == 0) {
             int al = this->length();
             if (al > ikey_size)
@@ -217,7 +218,7 @@ class key {
         if (has_suffix()) {
             ++ikey0_;
             len_ = 1;
-            return unlikely(!ikey0_);
+            unsafe { return unlikely(!ikey0_); }
         } else {
             ++len_;
             return false;

@@ -6,7 +6,7 @@ using namespace std;
 using namespace util;
 using namespace private_;
 
-// @safe
+// @unsafe
 map<string, event_ctx *> &
 event_ctx::event_counters()
 {
@@ -14,7 +14,7 @@ event_ctx::event_counters()
   return s_counters;
 }
 
-// @safe
+// @unsafe
 spinlock &
 event_ctx::event_counters_lock()
 {

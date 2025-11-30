@@ -14,6 +14,9 @@
 // @safe
 extern "C" char* getenv(const char* name);
 
+// @safe
+extern "C" long sysconf(int name);
+
 using namespace util;
 
 static event_counter evt_allocator_total_region_usage(
@@ -30,8 +33,8 @@ allocator::PointerToPgMetadata(const void *p)
   if (unlikely(!ManagesPointer(p)))
     return nullptr;
   const size_t cpu = PointerToCpu(p);
-  const regionctx &pc = g_regions[cpu];
-  if (p >= pc.region_begin)
+  // Avoid local reference binding - directly access g_regions to satisfy borrow checker
+  if (p >= g_regions[cpu].region_begin)
     return nullptr;
   // round pg down to page
   p = (const void *) ((uintptr_t)p & ~(hugepgsize-1));
@@ -207,17 +210,16 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
   INVARIANT(g_maxpercore);
   static const size_t hugepgsize = GetHugepageSize();
 
-  regionctx &pc = g_regions[cpu];
-  pc.lock.lock();
-  if (likely(pc.arenas[arena])) {
+  g_regions[cpu].lock.lock();
+  if (likely(g_regions[cpu].arenas[arena])) {
     // claim
-    void *ret = pc.arenas[arena];
-    pc.arenas[arena] = nullptr;
-    pc.lock.unlock();
+    void *ret = g_regions[cpu].arenas[arena];
+    g_regions[cpu].arenas[arena] = nullptr;
+    g_regions[cpu].lock.unlock();
     return ret;
   }
 
-  void * const mypx = AllocateUnmanagedWithLock(pc, 1); // releases lock
+  void * const mypx = AllocateUnmanagedWithLock(g_regions[cpu], 1); // releases lock
   return initialize_page(mypx, hugepgsize, (arena + 1) * AllocAlignment);
 }
 
@@ -225,9 +227,8 @@ allocator::AllocateArenas(size_t cpu, size_t arena)
 void *
 allocator::AllocateUnmanaged(size_t cpu, size_t nhugepgs)
 {
-  regionctx &pc = g_regions[cpu];
-  pc.lock.lock();
-  return AllocateUnmanagedWithLock(pc, nhugepgs); // releases lock
+  g_regions[cpu].lock.lock();
+  return AllocateUnmanagedWithLock(g_regions[cpu], nhugepgs); // releases lock
 }
 
 // @unsafe: uses mmap and raw pointer operations
@@ -309,14 +310,13 @@ allocator::ReleaseArenas(void **arenas)
   }
   for (auto &p : m) {
     INVARIANT(!p.second.empty());
-    regionctx &pc = g_regions[p.first];
-    lock_guard<spinlock> l(pc.lock);
+    lock_guard<spinlock> l(g_regions[p.first].lock);
     for (size_t arena = 0; arena < MAX_ARENAS; arena++) {
       INVARIANT(bool(p.second[arena].first) == bool(p.second[arena].second));
       if (!p.second[arena].first)
         continue;
-      *reinterpret_cast<void **>(p.second[arena].second) = pc.arenas[arena];
-      pc.arenas[arena] = p.second[arena].first;
+      *reinterpret_cast<void **>(p.second[arena].second) = g_regions[p.first].arenas[arena];
+      g_regions[p.first].arenas[arena] = p.second[arena].first;
     }
   }
 }
@@ -337,29 +337,28 @@ allocator::FaultRegion(size_t cpu)
 {
   static const size_t hugepgsize = GetHugepageSize();
   ALWAYS_ASSERT(cpu < g_ncpus);
-  regionctx &pc = g_regions[cpu];
-  if (pc.region_faulted)
+  if (g_regions[cpu].region_faulted)
     return;
-  lock_guard<std::mutex> l1(pc.fault_lock);
-  lock_guard<spinlock> l(pc.lock); // exclude other users of the allocator
-  if (pc.region_faulted)
+  lock_guard<std::mutex> l1(g_regions[cpu].fault_lock);
+  lock_guard<spinlock> l(g_regions[cpu].lock); // exclude other users of the allocator
+  if (g_regions[cpu].region_faulted)
     return;
   // mmap the entire region + memset it for faulting
-  if (reinterpret_cast<uintptr_t>(pc.region_begin) % hugepgsize)
+  if (reinterpret_cast<uintptr_t>(g_regions[cpu].region_begin) % hugepgsize)
     ALWAYS_ASSERT(false);
   const size_t sz =
-    reinterpret_cast<uintptr_t>(pc.region_end) -
-    reinterpret_cast<uintptr_t>(pc.region_begin);
-  void * const x = mmap(pc.region_begin, sz, PROT_READ | PROT_WRITE,
+    reinterpret_cast<uintptr_t>(g_regions[cpu].region_end) -
+    reinterpret_cast<uintptr_t>(g_regions[cpu].region_begin);
+  void * const x = mmap(g_regions[cpu].region_begin, sz, PROT_READ | PROT_WRITE,
       MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
   if (unlikely(x == MAP_FAILED)) {
     perror("mmap");
     std::cerr << "  cpu" << cpu
-              << " [" << pc.region_begin << ", " << pc.region_end << ")"
+              << " [" << g_regions[cpu].region_begin << ", " << g_regions[cpu].region_end << ")"
               << std::endl;
     ALWAYS_ASSERT(false);
   }
-  ALWAYS_ASSERT(x == pc.region_begin);
+  ALWAYS_ASSERT(x == g_regions[cpu].region_begin);
   const int advice =
     UseMAdvWillNeed() ? MADV_HUGEPAGE | MADV_WILLNEED : MADV_HUGEPAGE;
   if (madvise(x, sz, advice)) {
@@ -367,22 +366,22 @@ allocator::FaultRegion(size_t cpu)
     ALWAYS_ASSERT(false);
   }
   numa_hint_memory_placement(
-      pc.region_begin,
-      (uintptr_t)pc.region_end - (uintptr_t)pc.region_begin,
+      g_regions[cpu].region_begin,
+      (uintptr_t)g_regions[cpu].region_end - (uintptr_t)g_regions[cpu].region_begin,
       numa_node_of_cpu(cpu));
   const size_t nfaults =
-    ((uintptr_t)pc.region_end - (uintptr_t)pc.region_begin) / hugepgsize;
+    ((uintptr_t)g_regions[cpu].region_end - (uintptr_t)g_regions[cpu].region_begin) / hugepgsize;
   std::cerr << "cpu" << cpu << " starting faulting region ("
-            << intptr_t(pc.region_end) - intptr_t(pc.region_begin)
+            << intptr_t(g_regions[cpu].region_end) - intptr_t(g_regions[cpu].region_begin)
             << " bytes / " << nfaults << " hugepgs)" << std::endl;
   timer t;
-  for (char *px = (char *) pc.region_begin;
-       px < (char *) pc.region_end;
+  for (char *px = (char *) g_regions[cpu].region_begin;
+       px < (char *) g_regions[cpu].region_end;
        px += CACHELINE_SIZE)
     *px = 0xDE;
   std::cerr << "cpu" << cpu << " finished faulting region in "
             << t.lap_ms() << " ms" << std::endl;
-  pc.region_faulted = true;
+  g_regions[cpu].region_faulted = true;
 }
 
 void *allocator::g_memstart = nullptr;

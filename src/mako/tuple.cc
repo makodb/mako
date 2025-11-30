@@ -28,7 +28,7 @@ event_counter dbtuple::g_evt_dbtuple_inplace_buf_insufficient_on_spill("dbtuple_
 event_avg_counter dbtuple::g_evt_avg_record_spill_len("avg_record_spill_len");
 static event_avg_counter evt_avg_dbtuple_chain_length("avg_dbtuple_chain_len");
 
-// @safe
+// @unsafe: uses hexify/pointer arithmetic
 dbtuple::~dbtuple()
 {
   CheckMagic();
@@ -49,7 +49,6 @@ dbtuple::~dbtuple()
 
 // @unsafe: calls release with raw pointer
 void
-// @unsafe - enqueues tuple for RCU reclamation assuming caller holds proper locks
 dbtuple::gc_this()
 {
   INVARIANT(rcu::s_instance.in_rcu_region());
@@ -57,7 +56,7 @@ dbtuple::gc_this()
   release(this);
 }
 
-// @safe
+// @unsafe: uses ostringstream
 string
 dbtuple::VersionInfoStr(version_t v)
 {

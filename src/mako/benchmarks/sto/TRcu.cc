@@ -1,6 +1,6 @@
 #include "TRcu.hh"
 
-// @safe
+// @unsafe: calls unsafe TRcuGroup::make
 TRcuSet::TRcuSet()
     : clean_epoch_(0) {
     unsigned capacity = (4080 - sizeof(TRcuGroup)) / sizeof(TRcuGroup::TRcuElement);
@@ -8,7 +8,7 @@ TRcuSet::TRcuSet()
     // ngroups_ = 1;
 }
 
-// @safe
+// @unsafe: calls unsafe TRcuGroup::free
 TRcuSet::~TRcuSet() {
     while (first_) {
         TRcuGroup* next = first_->next_;
@@ -42,7 +42,7 @@ void TRcuSet::check() {
     // assert(ngroups_ > 0);
 }
 
-// @safe
+// @unsafe: calls unsafe TRcuGroup::make
 void TRcuSet::grow() {
     if (!current_->next_) {
         unsigned capacity = (16368 - sizeof(TRcuGroup)) / sizeof(TRcuGroup::TRcuElement);

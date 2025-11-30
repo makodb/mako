@@ -343,8 +343,8 @@ public:
   }
 #endif
 
+  // @unsafe
   inline version_t
-  // @unsafe - directly spins on header bits to acquire tuple lock without higher-level guard
   lock(bool write_intent)
   {
     // XXX: implement SPINLOCK_BACKOFF
@@ -379,8 +379,8 @@ public:
     return hdr;
   }
 
+  // @unsafe
   inline void
-  // @unsafe - clears lock/write bits and bumps version using manual bit fiddling
   unlock()
   {
     CheckMagic();
@@ -637,6 +637,7 @@ private:
 
   // written to be non-recursive
   template <typename Reader, typename StringAllocator>
+  // @unsafe
   static ReadStatus
   record_at_chain(
       const dbtuple *starting, tid_t t, tid_t &start_t,
@@ -682,6 +683,7 @@ private:
   // we force one level of inlining, but don't force record_at_chain()
   // to be inlined
   template <typename Reader, typename StringAllocator>
+  // @unsafe
   inline ALWAYS_INLINE ReadStatus
   record_at(
       tid_t t, tid_t &start_t,
@@ -764,6 +766,7 @@ public:
    * is an error- this will cause deadlock
    */
   template <typename Reader, typename StringAllocator>
+  // @unsafe
   inline ALWAYS_INLINE ReadStatus
   stable_read(
       tid_t t, tid_t &start_t,
@@ -856,6 +859,7 @@ public:
    * Note: if this != ret.first, then we need a tree replacement
    */
   template <typename Transaction>
+  // @unsafe
   write_record_ret
   write_record_at(const Transaction *txn, tid_t t,
                   const void *v, tuple_writer_t writer)
@@ -995,6 +999,7 @@ public:
   // internally anyways, so we might as well grab more usable space (really
   // just internal vs external fragmentation)
 
+  // @unsafe
   static inline dbtuple *
   alloc_first(size_type sz, bool acquire_lock)
   {
@@ -1013,6 +1018,7 @@ public:
         sz, alloc_sz - sizeof(dbtuple), acquire_lock);
   }
 
+  // @unsafe
   static inline dbtuple *
   // @unsafe - performs placement-new using RCU-managed memory
   alloc(tid_t version, struct dbtuple *base, bool set_latest)
@@ -1030,6 +1036,7 @@ public:
         version, base, alloc_sz - sizeof(dbtuple), set_latest);
   }
 
+  // @unsafe
   static inline dbtuple *
   alloc_spill(tid_t version, const_record_type value, size_type oldsz,
               size_type newsz, struct dbtuple *next, bool set_latest,
@@ -1075,6 +1082,7 @@ public:
     destruct_and_free(n);
   }
 
+  // @unsafe
   static inline void
   // @unsafe - schedules RCU reclamation of raw tuple memory
   release(dbtuple *n)
@@ -1086,6 +1094,7 @@ public:
     rcu::s_instance.free_with_fn(n, deleter);
   }
 
+  // @unsafe
   static inline void
   // @unsafe - immediately frees tuple storage without RCU deferral
   release_no_rcu(dbtuple *n)

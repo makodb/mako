@@ -39,7 +39,7 @@ RocksDBPersistence::~RocksDBPersistence() {
     shutdown();
 }
 
-// @safe
+// @unsafe
 RocksDBPersistence& RocksDBPersistence::getInstance() {
     static RocksDBPersistence instance;
     return instance;
@@ -179,7 +179,7 @@ void RocksDBPersistence::shutdown() {
     initialized_ = false;
 }
 
-// @safe
+// @unsafe: uses stringstream
 std::string RocksDBPersistence::generateKey(uint32_t shard_id, uint32_t partition_id,
                                            uint32_t epoch, uint64_t seq_num) {
     std::stringstream ss;
@@ -191,9 +191,14 @@ std::string RocksDBPersistence::generateKey(uint32_t shard_id, uint32_t partitio
     return ss.str();
 }
 
-// @safe
+// @unsafe: uses atomic load
 uint32_t RocksDBPersistence::getCurrentEpoch() const {
     return current_epoch_.load();
+}
+
+// @unsafe: uses atomic load
+size_t RocksDBPersistence::getPendingWrites() const {
+    return pending_writes_.load();
 }
 
 // @unsafe: uses file I/O

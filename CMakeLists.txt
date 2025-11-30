@@ -281,8 +281,11 @@ set(BORROW_CHECKER_INCLUDE_PATHS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr/rpc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/masstree-beta
+    /usr/include/tirpc
 )
 
 # Make config paths visible to the borrow checker (will be turned into -include)
@@ -710,6 +713,56 @@ target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
+# ============================================================================
+# BORROW CHECKER REGISTRATION SILO/STO
+# ============================================================================
+
+if(ENABLE_BORROW_CHECKING)
+    message(STATUS "--- Configuring Mako Root & STO Borrow Checks ---")
+
+    # 1. Mako Root Files
+    file(GLOB MAKO_ROOT_SRCS 
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/*.cc" 
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/*.c"
+    )
+
+    # 2. STO Benchmark Files (Recursive)
+    file(GLOB_RECURSE STO_SRCS 
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/sto/*.cc" 
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/sto/*.c"
+    )
+
+    # 3. Exclude problematic files
+    # Exclude clp.c (Resolves "duplicate target borrow_check_clp" collision)
+    list(FILTER STO_SRCS EXCLUDE REGEX ".*/clp\\.c$")
+    
+    # Exclude vector.cc (Resolves "rpc.h file not found" fatal error)
+    list(FILTER STO_SRCS EXCLUDE REGEX ".*/vector\\.cc$")
+
+    # Combine lists
+    set(TARGET_BORROW_SRCS ${MAKO_ROOT_SRCS} ${STO_SRCS})
+    
+    # Debug output
+    list(LENGTH TARGET_BORROW_SRCS FILE_COUNT)
+    message(STATUS "Found ${FILE_COUNT} files to check in src/mako/ and benchmarks/sto/")
+
+    # 4. Register checks
+    foreach(SRC ${TARGET_BORROW_SRCS})
+        get_filename_component(STEM ${SRC} NAME_WE)
+        set(CHECK_TARGET "borrow_check_${STEM}")
+
+        if(NOT TARGET ${CHECK_TARGET})
+            add_borrow_check(${SRC})
+            add_dependencies(mako ${CHECK_TARGET})
+        else()
+            # If a collision still happens, just link the existing target
+            message(STATUS "Linking existing borrow check target: ${CHECK_TARGET}")
+            add_dependencies(mako ${CHECK_TARGET})
+        endif()
+    endforeach()
+    
+    message(STATUS "--- End Mako Borrow Checks Configuration ---")
+endif()
 
 # ------------------------------------- build apps -----------------------------------------------
 

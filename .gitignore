@@ -55,3 +55,11 @@ out-perf.masstree/*
 .cache/*
 cmake-build/*
 *.stamp
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CPackConfig.cmake
+CPackSourceConfig.cmake
+compile_commands.json
+CTestTestfile.cmake
+lib/*.a
