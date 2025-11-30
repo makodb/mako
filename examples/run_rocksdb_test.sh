@@ -18,7 +18,9 @@ make -j32
 
 # Clean test directories
 echo "2. Cleaning test RocksDB directories..."
-rm -rf /tmp/test_rocksdb* /tmp/mako_rocksdb* /tmp/rocksdb_ordered*
+# Get current username for cleanup
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_test_rocksdb* /tmp/${USERNAME}_mako_rocksdb* /tmp/${USERNAME}_rocksdb_ordered* /tmp/${USERNAME}_test_stress_partitioned*
 
 # Run test
 echo "3. Running RocksDB persistence tests..."
@@ -101,10 +103,11 @@ fi
 # Verify RocksDB files were created
 echo ""
 echo "8. Verifying RocksDB persistence files..."
-if ls /tmp/test_rocksdb*/CURRENT > /dev/null 2>&1 || ls /tmp/rocksdb_ordered*/CURRENT > /dev/null 2>&1; then
+USERNAME=$(whoami)
+if ls /tmp/${USERNAME}_test_rocksdb*/CURRENT > /dev/null 2>&1 || ls /tmp/${USERNAME}_rocksdb_ordered*/CURRENT > /dev/null 2>&1; then
     echo "   ✓ RocksDB database files created successfully"
     echo "   Database locations:"
-    for dir in /tmp/test_rocksdb* /tmp/rocksdb_ordered* /tmp/test_stress_partitioned*; do
+    for dir in /tmp/${USERNAME}_test_rocksdb* /tmp/${USERNAME}_rocksdb_ordered* /tmp/${USERNAME}_test_stress_partitioned*; do
         if [ -d "$dir" ]; then
             echo "     - $dir ($(du -sh $dir | cut -f1))"
         fi

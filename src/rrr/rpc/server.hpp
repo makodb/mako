@@ -1,5 +1,6 @@
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -57,6 +58,7 @@ struct Request {
 class Service {
 public:
     virtual ~Service() {}
+    // @safe - Virtual method for service registration
     virtual int __reg_to__(Server*) = 0;
 };
 
@@ -95,26 +97,27 @@ class ServerListener: public Pollable {
   int server_sock_{0};
   
   // @safe - Returns constant poll mode
-  int poll_mode() {
+  int poll_mode() const override {
     return Pollable::READ;
   }
-  
+
   // @safe - Not implemented, will abort if called
-  void handle_write() {verify(0);}
-  
+  // Returns MODE_NO_CHANGE since ServerListener never handles write
+  int handle_write() override {verify(0); return Pollable::MODE_NO_CHANGE;}
+
   // @unsafe - Calls unsafe Log::debug for connection logging
   // SAFETY: Thread-safe with server connection lock
-  void handle_read();
-  
+  void handle_read() override;
+
   // @safe - Not implemented, will abort if called
-  void handle_error() {verify(0);}
-  
+  void handle_error() override {verify(0);}
+
   // @safe - Closes server socket
   // Close is marked safe via external annotation
   void close();
-  
+
   // @safe - Returns file descriptor
-  int fd() {return server_sock_;}
+  int fd() const override {return server_sock_;}
   
   // @safe - Constructor with proper error handling
   ServerListener(Server* s, std::string addr);
@@ -131,22 +134,28 @@ class ServerListener: public Pollable {
   };
 };
 
+// Forward declaration
+class ServerConnection;
+
+// Type alias for Arc weak reference
+using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
+
 // @unsafe - Handles individual client connections
-// SAFETY: Thread-safe with spinlocks, proper shared_ptr lifetime management
+// SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
 class ServerConnection: public Pollable {
 
     friend class Server;
     friend class ServerListener;
 
     Marshal in_, out_;
-    SpinLock out_l_;
+    mutable SpinLock out_l_;
 
     Marshal block_read_in;
 
     Server* server_;
     int socket_;
 
-    rusty::Box<Marshal::bookmark> bmark_;
+    rusty::Option<rusty::Box<Marshal::bookmark>> bmark_;
 
     enum {
         CONNECTED, CLOSED
@@ -154,7 +163,7 @@ class ServerConnection: public Pollable {
 
     // Weak pointer to self, initialized after creation
     // Used to pass weak reference to async handlers
-    std::weak_ptr<ServerConnection> weak_self_;
+    WeakServerConnection weak_self_;
 
     // get_shared() is now inherited from Pollable base class
 
@@ -207,43 +216,77 @@ public:
     // helper function, do some work in background
     int run_async(const std::function<void()>& f);
 
+    // @safe - Marshals data into output buffer
+    // @lifetime: (&'a, const T&) -> &'a
     template<class T>
     ServerConnection& operator <<(const T& v) {
         this->out_ << v;
         return *this;
     }
 
+    // @safe - Marshals data from another Marshal
+    // @lifetime: (&'a, Marshal&) -> &'a
     ServerConnection& operator <<(Marshal& m) {
         this->out_.read_from_marshal(m, m.content_size());
         return *this;
     }
 
-    int fd() {
+    int fd() const override {
         return socket_;
     }
 
     // @safe - Returns poll mode based on output buffer
-    int poll_mode();
+    int poll_mode() const override;
     // @unsafe - Writes buffered data to socket
     // SAFETY: Protected by output spinlock
-    void handle_write();
+    // Returns new poll mode, or MODE_NO_CHANGE if no update needed
+    int handle_write() override;
     // @unsafe - Reads and processes RPC requests
     // SAFETY: Creates coroutines for handlers
-    void handle_read();
+    void handle_read() override;
     // @safe - Error handler
-    void handle_error();
+    void handle_error() override;
+
+    // Comparison operator for std::unordered_set<rusty::Arc<ServerConnection>>
+    friend bool operator==(const rusty::Arc<ServerConnection>& lhs, const rusty::Arc<ServerConnection>& rhs) {
+        return lhs.get() == rhs.get();
+    }
+
+    // Hash function for std::unordered_set
+    friend struct std::hash<rusty::Arc<ServerConnection>>;
 };
+
+} // namespace rrr
+
+// Hash specializations for rusty::Arc types
+namespace std {
+template<>
+struct hash<rusty::Arc<rrr::ServerConnection>> {
+    size_t operator()(const rusty::Arc<rrr::ServerConnection>& arc) const {
+        return hash<const rrr::ServerConnection*>()(arc.get());
+    }
+};
+
+template<>
+struct hash<rusty::Arc<rrr::ServerListener>> {
+    size_t operator()(const rusty::Arc<rrr::ServerListener>& arc) const {
+        return hash<const rrr::ServerListener*>()(arc.get());
+    }
+};
+}
+
+namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies
 class DeferredReply: public NoCopy {
     rusty::Box<rrr::Request> req_;
-    std::weak_ptr<rrr::ServerConnection> weak_sconn_;
+    WeakServerConnection weak_sconn_;
     std::function<void()> marshal_reply_;
     std::function<void()> cleanup_;
 
 public:
 
-    DeferredReply(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn,
+    DeferredReply(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn,
                   const std::function<void()>& marshal_reply, const std::function<void()>& cleanup)
         : req_(std::move(req)), weak_sconn_(weak_sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
 
@@ -263,12 +306,14 @@ public:
 
     // @unsafe - Sends reply and self-deletes
     // SAFETY: Locks weak_ptr before use, gracefully handles closed connections
+    // Uses const_cast because Arc::get() returns const pointer but we need to mutate
     void reply() {
-        auto sconn = weak_sconn_.lock();
-        if (sconn) {
-            sconn->begin_reply(*req_);
+        auto sconn_opt = weak_sconn_.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<ServerConnection&>(*sconn).begin_reply(*req_);
             marshal_reply_();
-            sconn->end_reply();
+            const_cast<ServerConnection&>(*sconn).end_reply();
         } else {
             // Connection closed, silently drop reply
             Log_debug("Connection closed before reply sent, dropping reply");
@@ -282,17 +327,17 @@ public:
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
-    using RequestHandler = std::function<void(rusty::Box<Request>, std::weak_ptr<ServerConnection>)>;
+    using RequestHandler = std::function<void(rusty::Box<Request>, WeakServerConnection)>;
     std::unordered_map<i32, RequestHandler> handlers_;
-    rusty::Arc<PollThreadWorker> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
     ThreadPool* threadpool_;
     int server_sock_;
 
     Counter sconns_ctr_;
 
     SpinLock sconns_l_;
-    std::unordered_set<std::shared_ptr<ServerConnection>> sconns_{};
-    std::shared_ptr<ServerListener> sp_server_listener_{};
+    std::unordered_set<rusty::Arc<ServerConnection>> sconns_{};
+    rusty::Option<rusty::Arc<ServerListener>> sp_server_listener_;
 
     enum {
         NEW, RUNNING, STOPPING, STOPPED
@@ -306,9 +351,9 @@ class Server: public NoCopy {
 public:
     std::string addr_;
 
-    // @unsafe - Creates server with optional PollThreadWorker
-    // SAFETY: Shared ownership of PollThreadWorker via Arc<Mutex<>>
-    Server(rusty::Arc<PollThreadWorker> poll_thread_worker = rusty::Arc<PollThreadWorker>(), ThreadPool* thrpool = nullptr);
+    // @unsafe - Creates server with optional PollThread
+    // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
+    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None, ThreadPool* thrpool = nullptr);
     // @unsafe - Destroys server and all connections
     // SAFETY: Waits for all connections to close
     virtual ~Server();
@@ -341,15 +386,16 @@ public:
     // @safe - Registers RPC handler function
     int reg(i32 rpc_id, const RequestHandler& func);
 
+    // @unsafe
     template<class S>
-    int reg(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, std::weak_ptr<ServerConnection>)) {
+    int reg(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, WeakServerConnection)) {
 
         // disallow duplicate rpc_id
         if (handlers_.find(rpc_id) != handlers_.end()) {
             return EEXIST;
         }
 
-        handlers_[rpc_id] = [svc, svc_func] (rusty::Box<Request> req, std::weak_ptr<ServerConnection> sconn) {
+        handlers_[rpc_id] = [svc, svc_func] (rusty::Box<Request> req, WeakServerConnection sconn) {
             (svc->*svc_func)(std::move(req), sconn);
         };
 

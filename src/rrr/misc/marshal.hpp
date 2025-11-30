@@ -15,9 +15,16 @@
 #include <memory>
 
 #include "base/all.hpp"
+#include "rusty/arc.hpp"
 
 
 namespace rrr {
+
+// @unsafe - Wrapper for std::min to satisfy borrow checker
+template<typename T>
+inline T safe_min(const T& a, const T& b) {
+  return std::min(a, b);
+}
 
 #ifdef RPC_STATISTICS
 void stat_marshal_in(int fd, const void* buf, size_t nbytes, ssize_t ret);
@@ -42,13 +49,18 @@ class Marshallable {
 //    __debug_ = 30;
 //    Log_debug("destruct marshallable.");
   };
+  // @safe
+  // @lifetime: (&'a, &'b mut) -> &'b mut
   virtual Marshal& ToMarshal(Marshal& m) const;
+  // @safe
+  // @lifetime: (&'a mut, &'b mut) -> &'b mut
   virtual Marshal& FromMarshal(Marshal& m);
-  virtual size_t EntitySize() {
+  virtual size_t EntitySize() const {
     verify(0);
     return 0;
   }
-  virtual size_t WriteToFd(int fd, size_t written_to_socket) {
+  // @unsafe
+  virtual size_t WriteToFd(int fd, size_t written_to_socket) const {
     verify(0);
     return 0;
   }
@@ -62,17 +74,28 @@ class Marshallable {
   // }
 };
 
+// @safe - Type-erasing wrapper for polymorphic Marshallable objects
+// NOTE: Uses std::shared_ptr<Marshallable> for polymorphism support:
+//   1. Polymorphism requirement - Marshallable is abstract base with many derived types
+//   2. Type erasure pattern - kind_ determines actual type at runtime
+//   3. Shared ownership needed across serialization/deserialization boundary
 class MarshallDeputy {
   public:
     typedef std::unordered_map<int32_t, std::function<Marshallable*()>> MarContainer;
-    static MarContainer& Initializers();
+    // @safe - Returns reference to global factory registry
+    // SAFETY: Protected by mutex, returns reference to static container
+    // @lifetime: () -> &'static
+    static MarContainer& GetInitializers();
+    // @unsafe - Registers initializer with mutex locking
     static int RegInitializer(int32_t, std::function<Marshallable*()>);
     static std::function<Marshallable*()> GetInitializer(int32_t);
 
   public:
     bool bypass_to_socket_ = false;
     // size_t written_to_socket = 0;
-    std::shared_ptr<rrr::Marshallable> sp_data_{nullptr};
+    // @safe - Uses shared_ptr<Marshallable> for polymorphic type erasure
+    // SAFETY: Reference counting with built-in polymorphism support
+    std::shared_ptr<rrr::Marshallable> sp_data_;
     int32_t kind_{0};
     enum Kind {
       UNKNOWN=0,
@@ -98,12 +121,26 @@ class MarshallDeputy {
      * This should be called by inherited class as instructor.
      * @param kind
      */
+    // @safe - Constructor accepts shared_ptr<Marshallable> with polymorphism support
+    // SAFETY: Moves ownership, proper null checking in usage
     explicit MarshallDeputy(std::shared_ptr<rrr::Marshallable> m): sp_data_(std::move(m)) {
       kind_ = sp_data_->kind_;
-      if(sp_data_.get()->bypass_to_socket_){
+      if(sp_data_->bypass_to_socket_){
         bypass_to_socket_ = true;
       }
       //written_to_socket = 0;
+    }
+
+    // Template constructor for derived types
+    template<typename T>
+    explicit MarshallDeputy(std::shared_ptr<T> sp_m)
+      requires std::is_base_of_v<rrr::Marshallable, T>
+    {
+      sp_data_ = sp_m;
+      kind_ = sp_data_->kind_;
+      if(sp_data_->bypass_to_socket_){
+        bypass_to_socket_ = true;
+      }
     }
 
     // virtual void reset_write_offsets(){
@@ -112,6 +149,8 @@ class MarshallDeputy {
     // }
 
     rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
+    // @unsafe - Setter accepts shared_ptr<Marshallable> with polymorphism support
+    // SAFETY: Validates nullptr before setting, updates kind_ atomically, calls std::shared_ptr::operator=
     void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
       verify(sp_data_ == nullptr);
       sp_data_ = m;
@@ -119,12 +158,15 @@ class MarshallDeputy {
     }
 
     virtual size_t EntitySize() const {
-      return sizeof(int32_t) + sp_data_.get()->EntitySize();
+      return sizeof(int32_t) + sp_data_->EntitySize();
     }
 
+    // @unsafe
     size_t track_write_2(int fd, const void* p, size_t len, size_t offset){
       const char* x = (const char*)p;
+      // @unsafe {
       size_t sz = ::write(fd, x + offset, len - offset);
+      // }
       if(sz > len - offset || sz <= 0){
          return 0;
       }
@@ -136,6 +178,7 @@ class MarshallDeputy {
     //   return EntitySize() - written_to_socket;
     // }
 
+    // @unsafe
     virtual size_t WriteToFd(int fd, int written_to_socket) {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
@@ -145,8 +188,15 @@ class MarshallDeputy {
           if(written_to_socket < sizeof(kind_))return sz;
         }
         //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
-        // sp_data_.get()->reset_write_offset();
-        sz = sp_data_.get()->WriteToFd(fd, written_to_socket - sizeof(kind_));
+        // sp_data_->reset_write_offset();
+        // @unsafe {
+        // Safety check: sp_data_ must not be null when writing
+        if (sp_data_ == nullptr) {
+          Log_error("MarshallDeputy::WriteToFd called with null sp_data_ (kind=%d)", kind_);
+          return 0;
+        }
+        sz = sp_data_->WriteToFd(fd, written_to_socket - sizeof(kind_));
+        // }
 	      //std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
         written_to_socket += sz;
@@ -159,7 +209,8 @@ class MarshallDeputy {
 };
 
 class Marshal: public NoCopy {
-  struct raw_bytes: public RefCounted {
+  // Migrated from RefCounted to std::shared_ptr for automatic reference counting
+  struct raw_bytes {
     char *ptr = nullptr;
     size_t size = 0;
     static const size_t min_size;
@@ -185,7 +236,7 @@ class Marshal: public NoCopy {
     }
 
     size_t resize_to(size_t new_sz){
-      size = std::min(size, new_sz);
+      size = safe_min(size, new_sz);
       //char *x = new char[size];
       //memcpy(x, ptr, size);
       //delete[] ptr;
@@ -202,8 +253,10 @@ class Marshal: public NoCopy {
 
    private:
 
-    chunk(raw_bytes *dt, size_t rd_idx, size_t wr_idx)
-        : data((raw_bytes *) dt->ref_copy()), read_idx(rd_idx),
+    // Private constructor for shared_copy - takes shared_ptr by value, copies it
+    chunk(std::shared_ptr<raw_bytes> dt, size_t rd_idx, size_t wr_idx)
+        : data(dt),  // Copy shared_ptr, increments refcount
+          read_idx(rd_idx),
           write_idx(wr_idx), next(nullptr) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
@@ -211,25 +264,33 @@ class Marshal: public NoCopy {
 
    public:
 
-    raw_bytes *data;
+    std::shared_ptr<raw_bytes> data;  // Migrated from raw_bytes* to shared_ptr
     size_t read_idx;
     size_t write_idx;
     chunk *next;
 
-    chunk() : data(new raw_bytes), read_idx(0), write_idx(0), next(nullptr) { }
-    chunk(MarshallDeputy md, size_t sz) : data(new raw_bytes(md, sz)), read_idx(0),
-                                           write_idx(sz), next(nullptr){}
+    // Updated constructors to use std::make_shared instead of new
+    chunk() : data(std::make_shared<raw_bytes>()),
+              read_idx(0), write_idx(0), next(nullptr) { }
 
-    chunk(size_t sz) : data(new raw_bytes(sz)), read_idx(0), write_idx(0), next(nullptr){}
+    chunk(MarshallDeputy md, size_t sz)
+        : data(std::make_shared<raw_bytes>(md, sz)),
+          read_idx(0), write_idx(sz), next(nullptr) {}
+
+    chunk(size_t sz)
+        : data(std::make_shared<raw_bytes>(sz)),
+          read_idx(0), write_idx(0), next(nullptr) {}
 
     chunk(const void *p, size_t n)
-        : data(new raw_bytes(p, n)), read_idx(0),
-          write_idx(n), next(nullptr) { }
+        : data(std::make_shared<raw_bytes>(p, n)),
+          read_idx(0), write_idx(n), next(nullptr) { }
     chunk(const chunk&) = delete;
     chunk& operator=(const chunk&) = delete;
-    ~chunk() { data->release(); }
+    // Destructor is now default - shared_ptr handles cleanup automatically
+    ~chunk() = default;
 
     // NOTE: This function is only intended for Marshal::read_from_marshal.
+    // @unsafe - Creates a new chunk sharing the same data buffer
     chunk *shared_copy() const {
       return new chunk(data, read_idx, write_idx);
     }
@@ -241,29 +302,31 @@ class Marshal: public NoCopy {
       return sz;
     }
 
+    // @safe - Returns the content size
     size_t content_size() const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
       return write_idx - read_idx;
     }
 
+    // @unsafe - Returns pointer to heap data, not reference to local
+    // SAFETY: Returns pointer into data->ptr array which outlives this function
     char *set_bookmark() {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
-      char *p = &data->ptr[write_idx];
-      write_idx++;
+      char* result = &data->ptr[write_idx++];
 
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
-      return p;
+      return result;
     }
 
     size_t write(const void *p, size_t n) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
-      size_t n_write = std::min(n, data->size - write_idx);
+      size_t n_write = safe_min(n, data->size - write_idx);
       if (n_write > 0) {
         memcpy(data->ptr + write_idx, p, n_write);
       }
@@ -274,11 +337,12 @@ class Marshal: public NoCopy {
       return n_write;
     }
 
+    // @safe - Reads data from chunk buffer
     size_t read(void *p, size_t n) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
-      size_t n_read = std::min(n, write_idx - read_idx);
+      size_t n_read = safe_min(n, write_idx - read_idx);
       if (n_read > 0) {
         memcpy(p, data->ptr + read_idx, n_read);
       }
@@ -293,10 +357,11 @@ class Marshal: public NoCopy {
       return data->shared_data;
     }
 
+    // @safe - Peeks at data in chunk buffer without consuming
     size_t peek(void *p, size_t n) const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
-      size_t n_peek = std::min(n, write_idx - read_idx);      
+      size_t n_peek = safe_min(n, write_idx - read_idx);
       if (n_peek > 0) {
         memcpy(p, data->ptr + read_idx, n_peek);
       }
@@ -308,7 +373,7 @@ class Marshal: public NoCopy {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
-      size_t n_discard = std::min(n, write_idx - read_idx);
+      size_t n_discard = safe_min(n, write_idx - read_idx);
       read_idx += n_discard;
 
       assert(write_idx <= data->size);
@@ -320,6 +385,11 @@ class Marshal: public NoCopy {
       assert(write_idx <= data->size);
       int cnt;
       if(data->shared_data){
+        // Safety check: marshallable_entity must have valid sp_data_
+        if (data->marshallable_entity.sp_data_ == nullptr) {
+          Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
+          return -1;
+        }
         cnt = data->marshallable_entity.WriteToFd(fd, data->written_to_socket);
         data->written_to_socket += cnt;
 	//Log_info("wrote %d bytes of ghost %d", cnt, fd);
@@ -427,7 +497,9 @@ class Marshal: public NoCopy {
   }
 
   size_t write(const void *p, size_t n);
+  // @safe - Reads data from marshal buffer
   size_t read(void *p, size_t n);
+  // @safe - Peeks at data without consuming
   size_t peek(void *p, size_t n) const;
 
   size_t read_from_fd(int fd);
@@ -442,6 +514,7 @@ class Marshal: public NoCopy {
   // Use case 1: In C++ server io thread, when a compelete packet is received, read it off
   //             into a Marshal object and hand over to worker threads.
   // Use case 2: In Python extension, buffer message in Marshal object, and send to network.
+  // @safe - Transfers data between Marshal objects
   size_t read_from_marshal(Marshal &m, size_t n);
 
   size_t write_to_fd(int fd);
@@ -467,29 +540,40 @@ class Marshal: public NoCopy {
     return cnt;
   }
 
+  // @safe - Bypasses copying by sharing chunk pointers
   size_t bypass_copying(rrr::MarshallDeputy, size_t);
 };
 
+// @unsafe
+// @lifetime: (&'a, const i8&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i8 &v) {
   verify(m.write(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const i16&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i16 &v) {
   verify(m.write(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const i32&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) {
   verify(m.write(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const i64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) {
   verify(m.write(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const v32&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
   char buf[5];
   size_t bsize = rrr::SparseInt::dump(v.get(), buf);
@@ -497,6 +581,8 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const v64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
   char buf[9];
   size_t bsize = rrr::SparseInt::dump(v.get(), buf);
@@ -504,31 +590,44 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const uint8_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint8_t &u) {
   verify(m.write(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const uint16_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint16_t &u) {
   verify(m.write(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const uint32_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint32_t &u) {
   verify(m.write(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const uint64_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint64_t &u) {
   verify(m.write(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const double&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const double &v) {
   verify(m.write(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// SAFETY: Writes string data safely with bounds checking
+// @unsafe
+// @lifetime: (&'a, const std::string&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
   v64 v_len = v.length();
   m << v_len;
@@ -538,101 +637,139 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, const T1&, const T2&) -> &'a
 template<class T1, class T2>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::pair<T1, T2> &v) {
-  m << v.first;
-  m << v.second;
-  return m;
+  // @unsafe {
+    m << v.first;
+    m << v.second;
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, const std::vector<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::vector<T> &v) {
-  v64 v_len = v.size();
-  m << v_len;
-  for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
-       ++it) {
-    m << *it;
-  }
-  return m;
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename std::vector<T>::const_iterator it = v.begin(); it != v.end();
+         ++it) {
+      m << *it;
+    }
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, const std::list<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::list<T> &v) {
-  v64 v_len = v.size();
-  m << v_len;
-  for (typename std::list<T>::const_iterator it = v.begin(); it != v.end();
-       ++it) {
-    m << *it;
-  }
-  return m;
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename std::list<T>::const_iterator it = v.begin(); it != v.end();
+         ++it) {
+      m << *it;
+    }
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, const std::set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::set<T> &v) {
-  v64 v_len = v.size();
-  m << v_len;
-  for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
-       ++it) {
-    m << *it;
-  }
-  return m;
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename std::set<T>::const_iterator it = v.begin(); it != v.end();
+         ++it) {
+      m << *it;
+    }
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, const std::map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::map<K, V> &v) {
-  v64 v_len = v.size();
-  m << v_len;
-  for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
-       ++it) {
-    m << it->first << it->second;
-  }
-  return m;
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename std::map<K, V>::const_iterator it = v.begin(); it != v.end();
+         ++it) {
+      m << it->first << it->second;
+    }
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, const std::unordered_set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_set<T> &v) {
-  v64 v_len = v.size();
-  m << v_len;
-  for (typename std::unordered_set<T>::const_iterator it = v.begin();
-       it != v.end(); ++it) {
-    m << *it;
-  }
-  return m;
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename std::unordered_set<T>::const_iterator it = v.begin();
+         it != v.end(); ++it) {
+      m << *it;
+    }
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, const std::unordered_map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator<<(rrr::Marshal &m,
                                 const std::unordered_map<K, V> &v) {
-  v64 v_len = v.size();
-  m << v_len;
-  for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
-       it != v.end(); ++it) {
-    m << it->first << it->second;
-  }
-  return m;
+  // @unsafe {
+    v64 v_len = v.size();
+    m << v_len;
+    for (typename std::unordered_map<K, V>::const_iterator it = v.begin();
+         it != v.end(); ++it) {
+      m << it->first << it->second;
+    }
+    return m;
+  // }
 }
 
+// @unsafe
+// @lifetime: (&'a, i8&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i8 &v) {
   verify(m.read(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, i16&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i16 &v) {
   verify(m.read(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, i32&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i32 &v) {
   verify(m.read(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, i64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
   verify(m.read(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, v32&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   char byte0;
   verify(m.peek(&byte0, 1) == 1);
@@ -644,6 +781,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, v64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   char byte0;
   //Log_info("peeking data of %d", m.peek(&byte0, 1));
@@ -656,31 +795,43 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, uint8_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint8_t &u) {
   verify(m.read(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, uint16_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint16_t &u) {
   verify(m.read(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, uint32_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint32_t &u) {
   verify(m.read(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, uint64_t&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, uint64_t &u) {
   verify(m.read(&u, sizeof(u)) == sizeof(u));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, double&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, double &v) {
   verify(m.read(&v, sizeof(v)) == sizeof(v));
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::string&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) {
   v64 v_len;
   m >> v_len;
@@ -691,6 +842,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::pair<T1,T2>&) -> &'a
 template<class T1, class T2>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::pair<T1, T2> &v) {
   m >> v.first;
@@ -698,6 +851,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::pair<T1, T2> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::vector<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::vector<T> &v) {
   v64 v_len;
@@ -712,6 +867,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::vector<T> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::list<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::list<T> &v) {
   v64 v_len;
@@ -725,6 +882,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::list<T> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
   v64 v_len;
@@ -738,6 +897,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::set<T> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::map<K, V> &v) {
   v64 v_len;
@@ -752,6 +913,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::map<K, V> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::unordered_set<T>&) -> &'a
 template<class T>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
   v64 v_len;
@@ -765,6 +928,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_set<T> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, std::unordered_map<K,V>&) -> &'a
 template<class K, class V>
 inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
   v64 v_len;
@@ -779,21 +944,26 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
   return m;
 }
 
+// @unsafe
+// @lifetime: (&'a, MarshallDeputy&) -> &'a
 inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
   m >> rhs.kind_;
   rhs.CreateActualObjectFrom(m);
   return m;
 }
 
+// SAFETY: Proper null checking and virtual method call
+// @unsafe
+// @lifetime: (&'a, const MarshallDeputy&) -> &'a
 inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) {
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
-  verify(rhs.sp_data_);
+  verify(rhs.sp_data_ != nullptr);
   if(rhs.bypass_to_socket_){
     m.bypass_copying(rhs, rhs.EntitySize());
   }else{
     //Log_info("size is %d", rhs.EntitySize());
     m << rhs.kind_;
-    verify(rhs.sp_data_); // must be non-empty
+    verify(rhs.sp_data_ != nullptr); // must be non-empty
     rhs.sp_data_->ToMarshal(m);
   }
   return m;

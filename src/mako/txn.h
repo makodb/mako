@@ -693,6 +693,7 @@ protected:
   // NOTE: !ret.first => !ret.second
   // NOTE: assumes key/value are stable
   std::pair< dbtuple *, bool >
+  // @unsafe - allocates and inserts raw dbtuple nodes into the concurrent btree
   try_insert_new_tuple(
       concurrent_btree &btr,
       const std::string *key,
@@ -702,9 +703,11 @@ protected:
   // reads the contents of tuple into v
   // within this transaction context
   template <typename ValueReader>
+  // @unsafe - reads from raw dbtuple pointers without lifetime tracking
   bool
   do_tuple_read(const dbtuple *tuple, ValueReader &value_reader);
 
+  // @unsafe - records versioned node pointers from the underlying tree
   void
   do_node_read(const typename concurrent_btree::node_opaque_t *n, uint64_t version);
 

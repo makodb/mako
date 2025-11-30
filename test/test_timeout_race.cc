@@ -124,7 +124,7 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
                 // Create inner coroutine to set event ready
                 auto reactor = Reactor::GetReactor();
                 reactor->CreateRunCoroutine([sp_event]() {
-                    Coroutine::CurrentCoroutine()->Yield();
+                    Coroutine::CurrentCoroutine().unwrap()->Yield();
                     sp_event->Set(1);
                 });
             }

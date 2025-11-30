@@ -14,7 +14,7 @@
 using namespace janus;
 
 static ClientControlServiceImpl *ccsi_g = nullptr;
-static rrr::PollThreadWorker *cli_poll_thread_worker_g = nullptr;
+static rrr::PollThread *cli_poll_thread_worker_g = nullptr;
 static rrr::Server *cli_hb_server_g = nullptr;
 
 static vector<ServerWorker> svr_workers_g = {};
@@ -32,7 +32,7 @@ void client_setup_heartbeat(int num_clients) {  // HERE!!!
     // setup controller rpc server
     ccsi_g = new ClientControlServiceImpl(num_clients, txn_types);
     int n_io_threads = 1;
-    cli_poll_thread_worker_g = new rrr::PollThreadWorker(n_io_threads);
+    cli_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
     base::ThreadPool *thread_pool = new base::ThreadPool(1);
     cli_hb_server_g = new rrr::Server(cli_poll_thread_worker_g, thread_pool);
     cli_hb_server_g->reg(ccsi_g);

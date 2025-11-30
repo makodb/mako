@@ -10,7 +10,7 @@ namespace helloworld_client {
 class HelloworldClientService: public rrr::Service {
 public:
     enum {
-        TXN_READ = 0x49077f6b,
+        TXN_READ = 0x5d097a6b,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -23,17 +23,18 @@ public:
         return ret;
     }
     // these RPC handler functions need to be implemented by user
-    // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_ptr requires lock() before use
+    // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
     virtual void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply* defer) = 0;
 private:
-    void __txn_read__wrapper__(rusty::Box<rrr::Request> req, std::weak_ptr<rrr::ServerConnection> weak_sconn) {
+    void __txn_read__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<rrr::i64>* in_0 = new std::vector<rrr::i64>;
         req->m >> *in_0;
         rrr::i32* out_0 = new rrr::i32;
         auto __marshal_reply__ = [=] {
-            auto sconn = weak_sconn.lock();
-            if (sconn) {
-                *sconn << *out_0;
+            auto sconn_opt = weak_sconn.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                const_cast<rrr::ServerConnection&>(*sconn) << *out_0;
             }
         };
         auto __cleanup__ = [=] {
@@ -50,24 +51,27 @@ protected:
     rrr::Client* __cl__;
 public:
     HelloworldClientProxy(rrr::Client* cl): __cl__(cl) { }
-    rrr::Future* async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(HelloworldClientService::TXN_READ, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << _req;
+    rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(HelloworldClientService::TXN_READ, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << _req;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val) {
-        rrr::Future* __fu__ = this->async_txn_read(_req);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_txn_read(_req);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *val;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
 };

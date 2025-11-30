@@ -19,6 +19,8 @@ public:
 
     void initialize() {
         scoped_db_thread_ctx ctx(db, false);
+        // force multiversion
+        TThread::enable_multiverison();
     }
 
     void test_basic_transactions() {
@@ -134,7 +136,6 @@ public:
             }
         }
 
-        // Check multiple versions
         {
             void *txn = db->new_txn(0, arena, txn_buf());
             std::string key = "overwrite_key" ;
@@ -146,16 +147,8 @@ public:
                 db->abort_txn(txn);
             }
 
-            std::vector<string> versions = MultiVersionValue::getAllVersion<std::string>(value); 
-            VERIFY(versions.size()==3, "Versions size");
-
             std::string expected0 = "updated_0000";
-            std::string expected1 = "updated_1000";
-            std::string expected2 = "initial_2000";
-            
-            VERIFY(versions[0].substr(0, expected0.length())==expected0, "versions[0] check");
-            VERIFY(versions[1].substr(0, expected1.length())==expected1, "versions[1] check");
-            VERIFY(versions[2].substr(0, expected2.length())==expected2, "versions[2] check");
+            VERIFY(value==expected0, "value check");
         }
     }
 

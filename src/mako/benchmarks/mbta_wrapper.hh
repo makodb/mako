@@ -94,7 +94,10 @@ public:
     if (!mbta.get_is_remote()) {
       STD_OP({
         bool ret = mbta.transGet(key, value);
-        UPDATE_VS(value.data(),value.length())
+        if (ret) {
+          UPDATE_VS(value.data(),value.length())
+          if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        }
         return ret;
       });
     } else {
@@ -102,7 +105,10 @@ public:
       if (ret>0) {
         throw abstract_db::abstract_abort_exception();
       }
-      UPDATE_VS(value.data(),value.length())
+      if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+        UPDATE_VS(value.data(),value.length())
+        value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+      }
       return true;
     }
   }
@@ -138,7 +144,7 @@ public:
     mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 
     STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
-      return callback.invoke(key.data(), key.length(), value);
+    return callback.invoke(key.data(), key.length(), value);
     }, arena));
     return true;
   }
@@ -200,6 +206,8 @@ mt_scan++;
 #endif    
 mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);;
   return callback.invoke(key.data(), key.length(), value);
 }, arena));
 }
@@ -212,7 +220,10 @@ void scanRemoteOne(void *txn,
   if (ret>0) {
     throw abstract_db::abstract_abort_exception();
   }
-  UPDATE_VS(value.data(),value.length())
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+    UPDATE_VS(value.data(),value.length())
+    value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+  }
 }
 
 void rscan(void *txn,
@@ -226,6 +237,8 @@ mt_rscan++;
 #endif
 mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);;
   return callback.invoke(key.data(), key.length(), value);
 }, arena));
 #endif
@@ -984,7 +997,11 @@ public:
 #if defined(DISABLE_MULTI_VERSION)
     TThread::disable_multiversion();
 #else
-    TThread::enable_multiverison();
+    if (BenchmarkConfig::getInstance().getIsReplicated()) {
+      TThread::enable_multiverison();
+    }else{
+      TThread::disable_multiversion();
+    }
 #endif
     TThread::set_shard_index(BenchmarkConfig::getInstance().getShardIndex());
     TThread::set_nshards(BenchmarkConfig::getInstance().getNshards());
@@ -1134,7 +1151,6 @@ public:
       std::cout << "existing table is createded with name: " << name 
               << ", table-id: " << tbl->get_table_id()
               << ", on shard-server id:" << shard_index << std::endl;
-      mako::setup_update_table(table_id, tbl);
       return tbl ;
     }
 

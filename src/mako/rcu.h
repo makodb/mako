@@ -27,14 +27,17 @@ public:
       void* ptr;
       intptr_t action;
 
+      // @unsafe - stores either size (negative) or function pointer (positive)
       inline delete_entry(void* ptr, size_t sz)
           : ptr(ptr), action(-sz) {
           INVARIANT(action < 0);
       }
+      // @unsafe - captures raw deleter function pointer
       inline delete_entry(void* ptr, deleter_t fn)
           : ptr(ptr), action(reinterpret_cast<uintptr_t>(fn)) {
           INVARIANT(action > 0);
       }
+      // @unsafe - executes deferred free/deleter on raw pointer
       void run(rcu::sync& s) {
           if (action < 0)
               s.dealloc(ptr, -action);
@@ -89,6 +92,7 @@ public:
     friend class rcu;
     template <bool> friend class scoped_rcu_base;
   public:
+    // @unsafe - raw queues of pending frees; guarded by depth_/ticker
     px_queue queue_;
     px_queue scratch_;
     unsigned depth_; // 0 indicates no rcu region
@@ -146,7 +150,9 @@ public:
     // free-ing it. is meant for reasonably large allocations (order of pages)
     void *alloc_static(size_t sz);
 
+    // @unsafe - returns raw pointer to allocator arena
     void dealloc(void *p, size_t sz);
+    // @unsafe - enqueues free to occur after grace period
     void dealloc_rcu(void *p, size_t sz);
 
     // try to release local arenas back to the allocator based on some simple
@@ -173,12 +179,14 @@ public:
   };
 
   // thin forwarders
+  // @unsafe - performs raw memory allocation from the RCU arena
   inline void *
   alloc(size_t sz)
   {
     return mysync().alloc(sz);
   }
 
+  // @unsafe - allocates static arena memory without borrow tracking
   inline void *
   alloc_static(size_t sz)
   {
@@ -187,12 +195,14 @@ public:
 
   // this releases memory back to the allocator subsystem
   // this should NOT be used to free objects!
+  // @unsafe - frees raw memory blocks; caller must ensure lifetime ordering
   inline void
   dealloc(void *p, size_t sz)
   {
     return mysync().dealloc(p, sz);
   }
 
+  // @unsafe - schedules deferred free on raw pointer
   void dealloc_rcu(void *p, size_t sz);
 
   inline bool
@@ -207,6 +217,7 @@ public:
     mysync().do_cleanup();
   }
 
+  // @unsafe - invokes arbitrary deleter on raw pointer
   void free_with_fn(void *p, deleter_t fn);
 
   template <typename T>

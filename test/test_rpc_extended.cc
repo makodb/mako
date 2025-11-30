@@ -73,7 +73,7 @@ public:
 
 class ExtendedRPCTest : public ::testing::Test {
 protected:
-    rusty::Arc<PollThreadWorker> poll_thread_worker_;
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
     Server* server;
     ExtendedTestService* service;
     static constexpr int test_port_base = 9000;
@@ -83,11 +83,11 @@ protected:
     void SetUp() override {
         current_port = test_port_base + port_offset++;
 
-        // Create PollThreadWorker Arc<Mutex<>>
-        poll_thread_worker_ = PollThreadWorker::create();
+        // Create PollThread Arc<Mutex<>>
+        poll_thread_worker_ = rusty::Some(PollThread::create());
 
-        // Server now takes Arc<Mutex<>>
-        server = new Server(poll_thread_worker_);
+        // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
+        server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
         service = new ExtendedTestService();
         server->reg(service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(current_port)).c_str()), 0);
@@ -96,9 +96,9 @@ protected:
     void TearDown() override {
         if (service) delete service;
         if (server) delete server;
-        // Shutdown PollThreadWorker with proper locking
+        // Shutdown PollThread with proper locking
         {
-            poll_thread_worker_->shutdown();
+            poll_thread_worker_.as_ref().unwrap()->shutdown();
         }
     }
 };
@@ -108,30 +108,32 @@ std::atomic<int> ExtendedRPCTest::port_offset{0};
 // Test 1: Multiple clients connecting to the same server
 TEST_F(ExtendedRPCTest, MultipleClients) {
     const int num_clients = 10;
-    std::vector<std::shared_ptr<Client>> clients;
+    std::vector<rusty::Arc<Client>> clients;
 
     // Create multiple clients
     for (int i = 0; i < num_clients; i++) {
-        auto client = std::make_shared<Client>(poll_thread_worker_);
+        auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
         ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
         clients.push_back(client);
     }
 
     // Each client makes a request
-    std::vector<Future*> futures;
+    std::vector<rusty::Arc<Future>> futures;
     for (int i = 0; i < num_clients; i++) {
         std::string input = "Client_" + std::to_string(i);
-        Future* fu = clients[i]->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = clients[i]->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        ASSERT_TRUE(fu_result.is_ok());
+        auto fu = fu_result.unwrap();
         *clients[i] << input;
         clients[i]->end_request();
-        futures.push_back(fu);
+        futures.push_back(std::move(fu));
     }
 
     // Wait for all requests
-    for (auto fu : futures) {
+    for (auto& fu : futures) {
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
-        fu->release();
+        // Arc auto-released
     }
 
     EXPECT_EQ(service->call_count, num_clients);
@@ -139,55 +141,59 @@ TEST_F(ExtendedRPCTest, MultipleClients) {
     // Cleanup
     for (auto client : clients) {
         client->close();
-        // shared_ptr handles cleanup automatically
+        // Arc handles cleanup automatically
     }
 }
 
 // Test 2: Client reconnection after disconnect
 TEST_F(ExtendedRPCTest, ClientReconnection) {
-    auto client = std::make_shared<Client>(poll_thread_worker_);
+    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     // Make initial request
-    Future* fu1 = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu1_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    ASSERT_TRUE(fu1_result.is_ok());
+    auto fu1 = fu1_result.unwrap();
     std::string input1 = "Request1";
     *client << input1;
     client->end_request();
     fu1->wait();
     EXPECT_EQ(fu1->get_error_code(), 0);
-    fu1->release();
+    // Arc auto-released
 
     // Disconnect
     client->close();
-    client.reset();  // Release the shared_ptr
+    // Arc doesn't have reset() - just reassign or let it go out of scope
 
     // Wait a bit
     std::this_thread::sleep_for(milliseconds(100));
 
     // Create new client for reconnection
-    client = std::make_shared<Client>(poll_thread_worker_);
+    client = Client::create(poll_thread_worker_.as_ref().unwrap());
 
     // Reconnect
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     // Make another request
-    Future* fu2 = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    auto fu2_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    ASSERT_TRUE(fu2_result.is_ok());
+    auto fu2 = fu2_result.unwrap();
     std::string input2 = "Request2";
     *client << input2;
     client->end_request();
     fu2->wait();
     EXPECT_EQ(fu2->get_error_code(), 0);
-    fu2->release();
+    // Arc auto-released
 
     EXPECT_EQ(service->call_count, 2);
 
     client->close();
-    // shared_ptr handles cleanup automatically
+    // Arc handles cleanup automatically
 }
 
 // Test 3: Request timeout handling
 TEST_F(ExtendedRPCTest, RequestTimeout) {
-    auto client = std::make_shared<Client>(poll_thread_worker_);
+    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     // Set service to delay longer than timeout
@@ -195,7 +201,9 @@ TEST_F(ExtendedRPCTest, RequestTimeout) {
     service->delay_ms = 5000; // 5 seconds
 
     // Make request with timeout
-    Future* fu = client->begin_request(benchmark::BenchmarkService::NOP);
+    auto fu_result = client->begin_request(benchmark::BenchmarkService::NOP);
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
     std::string input = "Timeout test";
     *client << input;
     client->end_request();
@@ -210,10 +218,9 @@ TEST_F(ExtendedRPCTest, RequestTimeout) {
     auto elapsed = duration_cast<milliseconds>(steady_clock::now() - start).count();
     EXPECT_GE(elapsed, 900); // At least 900ms passed
     EXPECT_LE(elapsed, 1200); // But not more than 1.2 seconds
-
-    fu->release();
+        // Arc auto-released
     client->close();
-    // shared_ptr handles cleanup automatically
+    // Arc handles cleanup automatically
 }
 
 // Test 4: Rapid connect/disconnect cycles
@@ -221,21 +228,22 @@ TEST_F(ExtendedRPCTest, RapidConnectDisconnect) {
     const int num_cycles = 20;
 
     for (int i = 0; i < num_cycles; i++) {
-        auto client = std::make_shared<Client>(poll_thread_worker_);
+        auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
         ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
         // Make a quick request
-        Future* fu = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        if (fu_result.is_err()) continue;
+        auto fu = fu_result.unwrap();
         std::string input = "Cycle_" + std::to_string(i);
         *client << input;
         client->end_request();
         fu->wait();
 
         EXPECT_EQ(fu->get_error_code(), 0);
-        fu->release();
-
+        // Arc auto-released
         client->close();
-        // shared_ptr handles cleanup automatically
+        // Arc handles cleanup automatically
 
         // Small delay to avoid overwhelming the system
         std::this_thread::sleep_for(milliseconds(10));
@@ -246,15 +254,17 @@ TEST_F(ExtendedRPCTest, RapidConnectDisconnect) {
 
 // Test 5: Mixed payload sizes
 TEST_F(ExtendedRPCTest, MixedPayloadSizes) {
-    auto client = std::make_shared<Client>(poll_thread_worker_);
+    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     std::vector<int> sizes = {1, 10, 100, 1000, 10000, 100000, 1000000};
-    std::vector<Future*> futures;
+    std::vector<rusty::Arc<Future>> futures;
 
     for (int size : sizes) {
         std::string payload(size, 'A' + (size % 26));
-        Future* fu = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        if (fu_result.is_err()) continue;
+        auto fu = fu_result.unwrap();
         *client << payload;
         client->end_request();
         futures.push_back(fu);
@@ -263,31 +273,33 @@ TEST_F(ExtendedRPCTest, MixedPayloadSizes) {
     for (auto fu : futures) {
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
-        fu->release();
+        // Arc auto-released
     }
 
     EXPECT_EQ(service->call_count, static_cast<int>(sizes.size()));
 
     client->close();
-    // shared_ptr handles cleanup automatically
+    // Arc handles cleanup automatically
 }
 
 // Test 6: Burst traffic pattern
 TEST_F(ExtendedRPCTest, BurstTraffic) {
-    auto client = std::make_shared<Client>(poll_thread_worker_);
+    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     const int burst_size = 100;
     const int num_bursts = 5;
 
     for (int burst = 0; burst < num_bursts; burst++) {
-        std::vector<Future*> futures;
+        std::vector<rusty::Arc<Future>> futures;
 
         // Send burst
         auto start = steady_clock::now();
         for (int i = 0; i < burst_size; i++) {
             std::string input = "Burst_" + std::to_string(burst) + "_" + std::to_string(i);
-            Future* fu = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+            auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+            if (fu_result.is_err()) continue;
+            auto fu = fu_result.unwrap();
             *client << input;
             client->end_request();
             futures.push_back(fu);
@@ -297,7 +309,7 @@ TEST_F(ExtendedRPCTest, BurstTraffic) {
         for (auto fu : futures) {
             fu->wait();
             EXPECT_EQ(fu->get_error_code(), 0);
-            fu->release();
+        // Arc auto-released
         }
 
         auto end = steady_clock::now();
@@ -313,35 +325,41 @@ TEST_F(ExtendedRPCTest, BurstTraffic) {
     EXPECT_EQ(service->call_count, burst_size * num_bursts);
 
     client->close();
-    // shared_ptr handles cleanup automatically
+    // Arc handles cleanup automatically
 }
 
 // Test 7: Interleaved request types
 TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
-    auto client = std::make_shared<Client>(poll_thread_worker_);
+    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
-    std::vector<Future*> futures;
+    std::vector<rusty::Arc<Future>> futures;
 
     // Mix different request types
     for (int i = 0; i < 20; i++) {
         if (i % 3 == 0) {
             // NOP request
-            Future* fu = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+            auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+            if (fu_result.is_err()) continue;
+            auto fu = fu_result.unwrap();
             std::string input = "NOP_" + std::to_string(i);
             *client << input;
             client->end_request();
             futures.push_back(fu);
         } else if (i % 3 == 1) {
             // PRIME request
-            Future* fu = client->begin_request(benchmark::BenchmarkService::PRIME);
+            auto fu_result = client->begin_request(benchmark::BenchmarkService::PRIME);
+            if (fu_result.is_err()) continue;
+            auto fu = fu_result.unwrap();
             i32 n = 7 + i;
             *client << n;
             client->end_request();
             futures.push_back(fu);
         } else {
             // FAST_VEC request
-            Future* fu = client->begin_request(benchmark::BenchmarkService::FAST_VEC);
+            auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_VEC);
+            ASSERT_TRUE(fu_result.is_ok());
+            auto fu = fu_result.unwrap();
             i32 n = 10;
             *client << n;
             client->end_request();
@@ -366,29 +384,30 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
             EXPECT_EQ(result.size(), 10);
             vec_count++;
         }
-
-        futures[i]->release();
+            // Arc auto-released
     }
 
     EXPECT_EQ(service->call_count, 20);
 
     client->close();
-    // shared_ptr handles cleanup automatically
+    // Arc handles cleanup automatically
 }
 
 // Test 8: Pipelined requests (send multiple before waiting)
 TEST_F(ExtendedRPCTest, PipelinedRequests) {
-    auto client = std::make_shared<Client>(poll_thread_worker_);
+    auto client = Client::create(poll_thread_worker_.as_ref().unwrap());
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     const int pipeline_depth = 50;
-    std::vector<Future*> futures;
+    std::vector<rusty::Arc<Future>> futures;
 
     // Send all requests without waiting
     auto start = steady_clock::now();
     for (int i = 0; i < pipeline_depth; i++) {
         std::string input = "Pipelined_" + std::to_string(i);
-        Future* fu = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        if (fu_result.is_err()) continue;
+        auto fu = fu_result.unwrap();
         *client << input;
         client->end_request();
         futures.push_back(fu);
@@ -398,7 +417,7 @@ TEST_F(ExtendedRPCTest, PipelinedRequests) {
     for (auto fu : futures) {
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
-        fu->release();
+        // Arc auto-released
     }
     auto end = steady_clock::now();
 
@@ -408,7 +427,7 @@ TEST_F(ExtendedRPCTest, PipelinedRequests) {
     EXPECT_EQ(service->call_count, pipeline_depth);
 
     client->close();
-    // shared_ptr handles cleanup automatically
+    // Arc handles cleanup automatically
 }
 
 int main(int argc, char** argv) {

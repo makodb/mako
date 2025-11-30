@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Schemaless value storage with JSON field access
+// Stores arbitrary key-value pairs with dynamic field modification
+// SAFETY: Uses threadinfo allocator, JSON parsing, and dynamic sizing
+
 #ifndef VALUE_BAG_HH
 #define VALUE_BAG_HH
 #include "kvthread.hh"
@@ -118,15 +122,18 @@ inline lcdf::Str value_bag<O>::col(int i) const {
 }
 
 template <typename O>
+// @unsafe - returns slice into caller-managed backing storage
 inline lcdf::Str value_bag<O>::row_string() const {
     return Str(d_.s_, d_.pos_[d_.ncol_]);
 }
 
+// @unsafe - releases raw bag memory
 template <typename O> template <typename ALLOC>
 inline void value_bag<O>::deallocate(ALLOC& ti) {
     ti.deallocate(this, size(), memtag_value);
 }
 
+// @unsafe - schedules raw bag memory free
 template <typename O> template <typename ALLOC>
 inline void value_bag<O>::deallocate_rcu(ALLOC& ti) {
     ti.deallocate_rcu(this, size(), memtag_value);
@@ -135,6 +142,7 @@ inline void value_bag<O>::deallocate_rcu(ALLOC& ti) {
 // prerequisite: [first, last) is an array [column, value, column, value, ...]
 // each column is unsigned; the columns are strictly increasing;
 // each value is a string
+// @unsafe - rebuilds bag via unchecked pointer math and raw memcpy
 template <typename O> template <typename ALLOC>
 value_bag<O>* value_bag<O>::update(const Json* first, const Json* last,
                                    kvtimestamp_t ts, ALLOC& ti) const

@@ -31,6 +31,7 @@
  */
 
 #include "../src/mako/rocksdb_persistence.h"
+#include "../src/mako/util.h"
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -252,8 +253,9 @@ int main() {
 
     auto& persistence = RocksDBPersistence::getInstance();
 
-    // Initialize with temp directory
-    std::string db_path = "/tmp/rocksdb_ordered_test_" + std::to_string(getpid());
+    // Add username prefix to avoid conflicts when multiple users run on the same server
+    std::string username = util::get_current_username();
+    std::string db_path = "/tmp/" + username + "_rocksdb_ordered_test_" + std::to_string(getpid());
     if (!persistence.initialize(db_path, 4, 4)) {
         std::cerr << "Failed to initialize RocksDB persistence" << std::endl;
         return 1;

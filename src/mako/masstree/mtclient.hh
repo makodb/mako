@@ -13,12 +13,19 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Network client for Masstree key-value server
+// Provides KVConn for socket-based communication with mtd server
+// SAFETY: Uses raw sockets, network buffer management
+
 #ifndef KVC_HH
 #define KVC_HH 1
 #include "kvproto.hh"
 #include "kvrow.hh"
 #include "json.hh"
 #include "msgpack.hh"
+#include "kvio.hh"
+#include "str.hh"
+#include "string.hh"
 #include <sys/socket.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -28,8 +35,13 @@
 #include <queue>
 #include <vector>
 
+// @unsafe - network client owns raw sockets and byte buffers without RustyCpp tracking
 class KVConn {
   public:
+    using Json = lcdf::Json;
+    using Str = lcdf::Str;
+    using String = lcdf::String;
+
     KVConn(const char *server, int port, int target_core = -1)
         : inbuf_(new char[inbufsz]), inbufpos_(0), inbuflen_(0),
           j_(Json::make_array()) {

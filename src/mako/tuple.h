@@ -216,6 +216,7 @@ private:
 
   // creates a record at version derived from base
   // (inheriting its value).
+  // @unsafe - copies existing tuple bytes into a new record without lifetime tracking
   dbtuple(tid_t version,
           struct dbtuple *base,
           size_type alloc_size,
@@ -251,6 +252,7 @@ private:
 
   // creates a spill record, copying in the *old* value if necessary, but
   // setting the size to the *new* value
+  // @unsafe - builds spill records with manual memcpy and unchecked size math
   dbtuple(tid_t version,
           const_record_type r,
           size_type old_size,
@@ -342,6 +344,7 @@ public:
 #endif
 
   inline version_t
+  // @unsafe - directly spins on header bits to acquire tuple lock without higher-level guard
   lock(bool write_intent)
   {
     // XXX: implement SPINLOCK_BACKOFF
@@ -377,6 +380,7 @@ public:
   }
 
   inline void
+  // @unsafe - clears lock/write bits and bumps version using manual bit fiddling
   unlock()
   {
     CheckMagic();
@@ -994,6 +998,7 @@ public:
   static inline dbtuple *
   alloc_first(size_type sz, bool acquire_lock)
   {
+    // @unsafe - allocates raw dbtuple storage via rcu allocator and placement new
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
     const size_t max_alloc_sz =
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
@@ -1009,8 +1014,10 @@ public:
   }
 
   static inline dbtuple *
+  // @unsafe - performs placement-new using RCU-managed memory
   alloc(tid_t version, struct dbtuple *base, bool set_latest)
   {
+    // @unsafe - allocates and constructs dbtuple directly from RCU pool
     const size_t max_alloc_sz =
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
@@ -1028,6 +1035,7 @@ public:
               size_type newsz, struct dbtuple *next, bool set_latest,
               bool copy_old_value)
   {
+    // @unsafe - uses raw allocations and placement new to build spill tuple
     INVARIANT(oldsz <= std::numeric_limits<node_size_type>::max());
     INVARIANT(newsz <= std::numeric_limits<node_size_type>::max());
 
@@ -1068,6 +1076,7 @@ public:
   }
 
   static inline void
+  // @unsafe - schedules RCU reclamation of raw tuple memory
   release(dbtuple *n)
   {
     if (unlikely(!n))
@@ -1078,6 +1087,7 @@ public:
   }
 
   static inline void
+  // @unsafe - immediately frees tuple storage without RCU deferral
   release_no_rcu(dbtuple *n)
   {
     if (unlikely(!n))

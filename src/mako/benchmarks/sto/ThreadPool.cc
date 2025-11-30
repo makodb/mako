@@ -62,8 +62,10 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
         offset += sizeof(unsigned short int) ;
 
         // 4. content of V, add an extra sizeof(uint64) bytes
-        //obj_v.assign(buffer + offset, *len_of_V + mako::EXTRA_BITS_FOR_VALUE); // might cause coredump due to freed memory
         obj_v.resize(*len_of_V + mako::EXTRA_BITS_FOR_VALUE);
+        // reset next_ptr on followers (no multi-version)
+        mako::Node *next_ptr = reinterpret_cast<mako::Node *>((char*)(obj_v.data()+obj_v.length()-mako::BITS_OF_NODE));
+        next_ptr->data_size = 0;
         memcpy((char*)obj_v.c_str(),buffer+offset, *len_of_V);
         offset += *len_of_V;
 

@@ -367,7 +367,7 @@ public:
   int length = 0;
   std::string log_entry;  // for the serialization over the network, syncLog using shared_ptr as well
   shared_ptr<char> operation_test;
-  char len_v64[9];
+  mutable char len_v64[9];
 
   LogEntry() : Marshallable(MarshallDeputy::CONTAINER_CMD){
     bypass_to_socket_ = false;
@@ -381,18 +381,18 @@ public:
 
   virtual Marshal& ToMarshal(Marshal&) const override;
   virtual Marshal& FromMarshal(Marshal&) override;
-  size_t EntitySize() override {
+  size_t EntitySize() const override {
     return sizeof(int) + length_as_v64() + length;
   }
 
-  size_t length_as_v64(){
+  size_t length_as_v64() const {
     v64 v_len = length;
     size_t bsize = rrr::SparseInt::dump(v_len.get(), len_v64);
     //Log_info("size of v64 obj is %d", bsize);
     return bsize;
   }
 
-  size_t WriteToFd(int fd, size_t written_to_socket) override {
+  size_t WriteToFd(int fd, size_t written_to_socket) const override {
     size_t sz = 0, prev = written_to_socket;
     //Log_info("stepping here, writing length");
     if(written_to_socket < sizeof(int)){
@@ -452,7 +452,7 @@ public:
   vector<slotid_t> slots{};
   vector<ballot_t> ballots{};
   vector<shared_ptr<MarshallDeputy>> cmds{};
-  char *serialized_slots = nullptr;
+  mutable char *serialized_slots = nullptr;
 
   BulkPaxosCmd() : Marshallable(MarshallDeputy::CMD_BLK_PXS) {
     bypass_to_socket_ = false;
@@ -508,7 +508,7 @@ public:
       return m;
   }
 
-  size_t EntitySize() override {
+  size_t EntitySize() const override {
     size_t sz = 0;
     sz += 4*sizeof(int32_t);
     for(int i = 0; i < slots.size(); i++){
@@ -519,7 +519,7 @@ public:
     return sz;
   }
 
-  size_t serialize_slots_ballots(){
+  size_t serialize_slots_ballots() const {
     int32_t batch = slots.size();
     size_t total_sz = 4*sizeof(int32_t) + batch*(sizeof(slotid_t) + sizeof(ballot_t));
     if(serialized_slots != nullptr){
@@ -546,7 +546,7 @@ public:
     return total_sz;
   }
 
-  size_t WriteToFd(int fd, size_t written_to_socket) override {
+  size_t WriteToFd(int fd, size_t written_to_socket) const override {
     size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
     //Log_info("written here %d %d", to_write, written_to_socket);
     if(written_to_socket < to_write){
@@ -606,7 +606,7 @@ public:
   std::atomic<int> n_submit{0};
   std::atomic<int> n_tot{0};
   SubmitPool* submit_pool = nullptr;
-  rusty::Arc<rrr::PollThreadWorker> svr_poll_thread_worker_;
+  rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
   vector<rrr::Service*> services_ = {};
   rrr::Server* rpc_server_ = nullptr;
   base::ThreadPool* thread_pool_g = nullptr;
@@ -621,7 +621,7 @@ public:
   int bulk_reader = 0;
 
 
-  rusty::Arc<rrr::PollThreadWorker> svr_hb_poll_thread_worker_g;
+  rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
   ServerControlServiceImpl* scsi_ = nullptr;
   rrr::Server* hb_rpc_server_ = nullptr;
   base::ThreadPool* hb_thread_pool_g = nullptr;
@@ -660,7 +660,7 @@ public:
   void AddAccept(shared_ptr<Coordinator>);
   void AddAcceptNc(shared_ptr<Coordinator>);
   void AddReplayEntry(Marshallable&);
-  void submitJob(std::shared_ptr<Job>);
+  void submitJob(rusty::Arc<Job>);
   int SendBulkPrepare(shared_ptr<BulkPrepareLog>);
   int SendHeartBeat(shared_ptr<HeartBeatLog>);
   int SendSyncLog(shared_ptr<SyncLogRequest>);
@@ -680,8 +680,8 @@ public:
   void register_apply_callback(std::function<void(const char*, int)>);
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
   void register_apply_callback_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>);
-  rusty::Arc<rrr::PollThreadWorker> GetPollThreadWorker(){
-      return svr_poll_thread_worker_;
+  rusty::Arc<rrr::PollThread> GetPollThread(){
+      return svr_poll_thread_worker_.as_ref().unwrap();
   }
 };
 

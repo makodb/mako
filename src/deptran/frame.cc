@@ -291,7 +291,7 @@ TxData* Frame::CreateTxnCommand(TxRequest& req, shared_ptr<TxnRegistry> reg) {
 //  return CreateTxnCommand(req, reg);
 //}
 
-Communicator* Frame::CreateCommo(rusty::Arc<PollThreadWorker> poll_thread_worker) {
+Communicator* Frame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   commo_ = new Communicator(poll_thread_worker);
   return commo_;
 }
@@ -397,7 +397,7 @@ Workload * Frame::CreateTxGenerator() {
 
 vector<rrr::Service *> Frame::CreateRpcServices(uint32_t site_id,
                                                 TxLogServer *dtxn_sched,
-                                                rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
+                                                rusty::Arc<rrr::PollThread> poll_thread_worker,
                                                 ServerControlServiceImpl *scsi) {
   auto config = Config::GetConfig();
   auto result = std::vector<Service *>();

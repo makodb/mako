@@ -221,6 +221,7 @@ txn_logger::advance_system_sync_epoch(
 }
 
 void
+// @unsafe - drains log buffers with manual iovec construction and raw pbuffer reuse
 txn_logger::writer(
     unsigned id, int fd,
     vector<unsigned> assignment)
@@ -544,6 +545,7 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
 //#endif
 
 void
+// @unsafe - reclaims tuples using manual RCU guards and raw pointer mutation of btree nodes
 transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
 {
   INVARIANT(!rcu::s_instance.in_rcu_region());

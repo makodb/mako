@@ -13,6 +13,20 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe
+namespace mtclient_unsafe_file {} // Network client - all functions use sockets/pthread
+// Masstree key/value client for network testing
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: circular_int::*
+// @external_unsafe: lcdf::String_base::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::String_generic::*
+// @external_unsafe: lcdf::Json::*
+// @external_unsafe: kvtest_client::*
+// @external_unsafe: KVConn::*
+// @external_unsafe: threadinfo::*
 
 #include <stdio.h>
 #include <stdlib.h>

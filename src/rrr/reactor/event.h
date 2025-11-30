@@ -7,14 +7,24 @@
 #include <vector>
 #include "../base/all.hpp"
 #include <rusty/rusty.hpp>
+#include "coroutine.h"
+
+// External safety annotations for std::shared_ptr and Event operations
+// @external: {
+//   std::enable_shared_from_this::shared_from_this: [unsafe, () -> std::shared_ptr<auto>]
+//   std::make_shared: [unsafe, (auto...) -> std::shared_ptr<auto>]
+//   std::shared_ptr::operator*: [unsafe, () -> auto&]
+//   std::shared_ptr::operator->: [unsafe, () -> auto*]
+//   std::shared_ptr::get: [unsafe, () -> auto*]
+//   std::shared_ptr::operator=: [unsafe, (const std::shared_ptr<auto>&) -> std::shared_ptr<auto>&]
+//   std::vector::push_back: [unsafe, (auto) -> void]
+// }
 
 namespace rrr {
-using std::shared_ptr;
 using std::function;
 using std::vector;
 
 class Reactor;
-class Coroutine;
 class Event : public std::enable_shared_from_this<Event> {
 //class Event {
  public:
@@ -29,7 +39,8 @@ class Event : public std::enable_shared_from_this<Event> {
   //   shared_ptr to the coroutine it is.
   // In this case there is no shared pointer to the event.
   // When the stack that contains the event frees, the event frees.
-  std::weak_ptr<Coroutine> wp_coro_{}; 
+  // Weak reference to coroutine using rusty::rc::Weak with proper reference counting
+  rusty::rc::Weak<Coroutine> wp_coro_{}; 
 
   virtual void Wait(uint64_t timeout=0) final;
 
@@ -39,7 +50,7 @@ class Event : public std::enable_shared_from_this<Event> {
   }
 
   virtual bool Test();
-  virtual bool IsReady() {return test_(0);}
+  virtual bool IsReady() const {return test_(0);}
 
   friend Reactor;
 // protected:
@@ -67,7 +78,7 @@ class IntEvent : public Event {
     return t;
   };
 
-  bool IsReady() override {
+  bool IsReady() const override {
     if (test_) {
       return test_(value_);
     } else {
@@ -79,13 +90,13 @@ class IntEvent : public Event {
 class SharedIntEvent {
  public:
   int value_{};
-  vector<shared_ptr<IntEvent>> events_;
+  vector<std::shared_ptr<IntEvent>> events_;
   int Set(int& v) {
     auto ret = value_;
     value_ = v;
-    for (auto sp_ev : events_) {
+    for (auto& sp_ev : events_) {
       if (sp_ev->status_ <= Event::WAIT)
-      sp_ev->Set(v);
+        sp_ev->Set(v);
     }
     return ret;
   }
@@ -95,7 +106,7 @@ class SharedIntEvent {
 
 class NeverEvent: public Event {
  public:
-  bool IsReady() override {
+  bool IsReady() const override {
     return false;
   }
 };
@@ -105,7 +116,7 @@ class TimeoutEvent : public Event {
   uint64_t wakeup_time_{0};
   TimeoutEvent(uint64_t wait_us_): wakeup_time_{Time::now()+wait_us_} {}
 
-  bool IsReady() override {
+  bool IsReady() const override {
 //    Log_debug("test timeout");
     return (Time::now() > wakeup_time_);
   }
@@ -113,7 +124,7 @@ class TimeoutEvent : public Event {
 
 class OrEvent : public Event {
  public:
-  vector<shared_ptr<Event>> events_;
+  vector<std::shared_ptr<Event>> events_;
 
   void AddEvent() {
     // empty func for recursive variadic parameters
@@ -121,7 +132,7 @@ class OrEvent : public Event {
 
   template<typename X, typename... Args>
   void AddEvent(X& x, Args&... rest) {
-    events_.push_back(std::dynamic_pointer_cast<Event>(x));
+    events_.push_back(x);
     AddEvent(rest...);
   }
 
@@ -130,41 +141,41 @@ class OrEvent : public Event {
     AddEvent(args...);
   }
 
-  bool IsReady() override {
-    return std::any_of(events_.begin(), events_.end(), [](shared_ptr<Event> e){return e->IsReady();});
+  bool IsReady() const override {
+    return std::any_of(events_.begin(), events_.end(), [](const std::shared_ptr<Event>& e){return e->IsReady();});
   }
 };
 
 class AndEvent : public Event {
  public:
-  vector<shared_ptr<Event>> events_;
+  vector<std::shared_ptr<Event>> events_;
 
   // Default constructor
   AndEvent() {}
-  
+
   // Constructor for vector of events
-  explicit AndEvent(const vector<shared_ptr<Event>>& evs) : events_(evs) {}
+  explicit AndEvent(const vector<std::shared_ptr<Event>>& evs) : events_(evs) {}
 
   void AddEvent() {
     // empty func for recursive variadic parameters
   }
 
   template<typename... Args>
-  void AddEvent(shared_ptr<Event> x, Args... rest) {
+  void AddEvent(std::shared_ptr<Event> x, Args... rest) {
     events_.push_back(x);
     AddEvent(rest...);
   }
 
   template<typename... Args>
-  AndEvent(shared_ptr<Event> first, Args... rest) {
+  AndEvent(std::shared_ptr<Event> first, Args... rest) {
     AddEvent(first, rest...);
   }
 
-  bool IsReady() override {
+  bool IsReady() const override {
     // All events must be ready (or DONE) for AndEvent to be ready
-    return std::all_of(events_.begin(), events_.end(), 
-                       [](shared_ptr<Event> e) {
-                         return e && (e->IsReady() || e->status_ == Event::DONE);
+    return std::all_of(events_.begin(), events_.end(),
+                       [](const std::shared_ptr<Event>& e) {
+                         return e->IsReady() || e->status_ == Event::DONE;
                        });
   }
 };

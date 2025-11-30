@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Key permutation array for sorted key access in Masstree nodes
+// Encodes key ordering in packed bit fields for cache-efficient iteration
+// SAFETY: Uses bit manipulation and packed integer representation
+
 #ifndef KPERMUTER_HH
 #define KPERMUTER_HH
 #include "string.hh"
@@ -20,19 +24,24 @@
 class identity_kpermuter {
     int size_;
   public:
+    // @safe - pure value initialization
     identity_kpermuter(int size)
         : size_(size) {
     }
 
+    // @safe - returns stored value
     int size() const {
         return size_;
     }
+    // @safe - identity mapping
     int operator[](int i) const {
         return i;
     }
+    // @safe - trivial comparison
     bool operator==(const identity_kpermuter&) const {
         return true;
     }
+    // @safe - trivial comparison
     bool operator!=(const identity_kpermuter&) const {
         return false;
     }
@@ -64,14 +73,17 @@ template <int width> class kpermuter {
     enum { max_width = (int) (sizeof(storage_type) * 2 - 1) };
     enum { size_bits = 4 };
 
+    // @safe - default construction
     /** @brief Construct an uninitialized permuter. */
     kpermuter() {
     }
+    // @safe - value initialization
     /** @brief Construct a permuter with value @a x. */
     kpermuter(value_type x)
         : x_(x) {
     }
 
+    // @safe - pure bit arithmetic
     /** @brief Return an empty permuter with size 0.
 
         Elements will be allocated in order 0, 1, ..., @a width - 1. */
@@ -79,6 +91,7 @@ template <int width> class kpermuter {
         value_type p = (value_type) info::initial_value >> ((max_width - width) << 2);
         return p & ~(value_type) 15;
     }
+    // @safe - pure bit arithmetic
     /** @brief Return a permuter with size @a n.
 
         The returned permutation has size() @a n. For 0 <= i < @a n,
@@ -91,25 +104,31 @@ template <int width> class kpermuter {
             | n;
     }
 
+    // @safe - pure bit extraction
     /** @brief Return the permuter's size. */
     int size() const {
         return x_ & 15;
     }
+    // @safe - pure bit extraction
     /** @brief Return the permuter's element @a i.
         @pre 0 <= i < width */
     int operator[](int i) const {
         return (x_ >> ((i << 2) + 4)) & 15;
     }
+    // @safe - delegates to safe operator[]
     int back() const {
         return (*this)[width - 1];
     }
+    // @safe - returns stored value
     value_type value() const {
         return x_;
     }
+    // @safe - pure bit arithmetic
     value_type value_from(int i) const {
         return x_ >> ((i + 1) << 2);
     }
 
+    // @safe - pure bit manipulation on owned value
     void set_size(int n) {
         x_ = (x_ & ~(value_type) 15) | n;
     }
@@ -131,6 +150,7 @@ template <int width> class kpermuter {
         <li>Given j with j == i, q[j] == x</li>
         <li>Given j with i < j < q.size(), q[j] == p[j-1] && q[j] != x</li>
         </ul> */
+    // @unsafe - updates packed permutation bits without additional bounds/lifetime tracking
     int insert_from_back(int i) {
         int value = back();
         // increment size, leave lower slots unchanged
@@ -141,6 +161,7 @@ template <int width> class kpermuter {
             | ((x_ << 4) & ~(((value_type) 256 << (i << 2)) - 1));
         return value;
     }
+    // @safe - pure bit manipulation on owned value
     /** @brief Insert an unallocated element from position @a si at position @a di.
         @pre 0 <= @a di < @a width
         @pre size() < @a width
@@ -176,6 +197,7 @@ template <int width> class kpermuter {
         <li>Given j with i <= j < q.size(), q[j] == p[j+1]</li>
         <li>q[q.size()] == p[i]</li>
         </ul> */
+    // @unsafe - mutates packed permutation bits directly
     void remove(int i) {
         (void) width;
         if (int(x_ & 15) == i + 1)
@@ -192,6 +214,7 @@ template <int width> class kpermuter {
                 | (((x_ & rot_mask) << rot_amount) & rot_mask);
         }
     }
+    // @safe - pure bit manipulation on owned value
     /** @brief Remove the element at position @a i to the back.
         @pre 0 <= @a i < @a size()
         @pre size() < @a width
@@ -220,6 +243,7 @@ template <int width> class kpermuter {
             // shift removed element up
             | ((x & mask) << ((width - i - 1) << 2));
     }
+    // @safe - pure bit manipulation on owned value
     /** @brief Rotate the permuter's elements between @a i and size().
         @pre 0 <= @a i <= @a j <= size()
 
@@ -243,11 +267,13 @@ template <int width> class kpermuter {
             | ((x >> ((j - i) << 2)) & ~mask)
             | ((x & ~mask) << ((width - j) << 2));
     }
+    // @safe - pure bit manipulation on owned value
     /** @brief Exchange the elements at positions @a i and @a j. */
     void exchange(int i, int j) {
         value_type diff = ((x_ >> (i << 2)) ^ (x_ >> (j << 2))) & 240;
         x_ ^= (diff << (i << 2)) | (diff << (j << 2));
     }
+    // @safe - pure bit manipulation on owned value
     /** @brief Exchange positions of values @a x and @a y. */
     void exchange_values(int x, int y) {
         value_type diff = 0, p = x_;
@@ -258,15 +284,19 @@ template <int width> class kpermuter {
         x_ ^= diff;
     }
 
+    // @unsafe - uses String class with interior mutability
     lcdf::String unparse() const;
 
+    // @safe - value comparison
     bool operator==(const kpermuter<width>& x) const {
         return x_ == x.x_;
     }
+    // @safe - value comparison
     bool operator!=(const kpermuter<width>& x) const {
         return !(*this == x);
     }
 
+    // @safe - pure bit extraction
     static inline int size(value_type p) {
         return p & 15;
     }
@@ -311,12 +341,14 @@ template <typename T> struct has_permuter_type {
 template <typename T, bool HP = has_permuter_type<T>::value> struct key_permuter {};
 template <typename T> struct key_permuter<T, true> {
     typedef typename T::permuter_type type;
+    // @unsafe - delegates to T::permutation() without safety guarantees
     static type permutation(const T& n) {
         return n.permutation();
     }
 };
 template <typename T> struct key_permuter<T, false> {
     typedef identity_kpermuter type;
+    // @unsafe - calls n.size() without safety guarantees
     static type permutation(const T& n) {
         return identity_kpermuter(n.size());
     }

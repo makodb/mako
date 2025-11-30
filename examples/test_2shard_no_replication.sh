@@ -15,17 +15,21 @@ rm -f nfs_sync_*
 trd=${1:-6}
 script_name="$(basename "$0")"
 
+# Determine transport type and create unique log prefix
+transport="${MAKO_TRANSPORT:-rrr}"
+log_prefix="${script_name}_${transport}"
+
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
-nohup bash bash/shard.sh 2 0 $trd localhost > ${script_name}_shard0-$trd.log 2>&1 &
+nohup bash bash/shard.sh 2 0 $trd localhost > ${log_prefix}_shard0-$trd.log 2>&1 &
 SHARD0_PID=$!
 sleep 2
 
 # Start shard 1 in background
 echo "Starting shard 1..."
-nohup bash bash/shard.sh 2 1 $trd localhost > ${script_name}_shard1-$trd.log 2>&1 &
+nohup bash bash/shard.sh 2 1 $trd localhost > ${log_prefix}_shard1-$trd.log 2>&1 &
 SHARD1_PID=$!
 
 # Wait for experiments to run
@@ -46,7 +50,7 @@ failed=0
 
 # Check each shard's output
 for i in 0 1; do
-    log="${script_name}_shard${i}-$trd.log"
+    log="${log_prefix}_shard${i}-$trd.log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
@@ -61,7 +65,7 @@ for i in 0 1; do
     if grep -q "agg_persist_throughput" "$log"; then
         echo "  ✓ Found 'agg_persist_throughput' keyword"
         # Show the line for reference
-        grep "agg_persist_throughput" "$log" | tail -1 | sed 's/^/    /'
+        grep "agg_persist_throughput" "$log" | tail -n 1 | sed 's/^/    /'
     else
         echo "  ✗ 'agg_persist_throughput' keyword not found"
         failed=1
@@ -70,7 +74,7 @@ for i in 0 1; do
     # Check NewOrder_remote_abort_ratio
     if grep -q "NewOrder_remote_abort_ratio:" "$log"; then
         # Extract the abort ratio value
-        abort_ratio=$(grep "NewOrder_remote_abort_ratio:" "$log" | tail -1 | awk '{print $2}')
+        abort_ratio=$(grep "NewOrder_remote_abort_ratio:" "$log" | tail -n 1 | awk '{print $2}')
         
         if [ -z "$abort_ratio" ]; then
             echo "  ✗ Could not extract NewOrder_remote_abort_ratio value"
@@ -104,7 +108,7 @@ else
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check ${script_name}_shard*-$trd for details"
-    tail -10 ${script_name}_shard0-$trd.log ${script_name}_shard1-$trd.log
+    echo "Check ${log_prefix}_shard*-$trd for details"
+    tail -n 10 ${log_prefix}_shard0-$trd.log ${log_prefix}_shard1-$trd.log
     exit 1
 fi

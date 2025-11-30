@@ -13,12 +13,16 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// buffered read and write for kvc/kvd.
-// stdio is good but not quite what I want.
-// need to be able to check if any input
-// available, and do non-blocking check.
-// also, fwrite just isn't very fast, at
-// least on the Mac.
+// Buffered I/O implementation using raw malloc and file descriptors
+// All functions are @unsafe - use malloc/free and raw I/O
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: malloc
+// @external_unsafe: free
+// @external_unsafe: read
+// @external_unsafe: write
+// @external_unsafe: memcpy
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -31,7 +35,7 @@
 #include "kvio.hh"
 
 
-// API to allocate a new kvout.
+// @unsafe - calls malloc() to allocate untracked heap memory and returns raw pointer
 kvout* new_kvout(int fd, int buflen) {
     kvout* kv = (kvout*) malloc(sizeof(kvout));
     assert(kv);
@@ -43,7 +47,7 @@ kvout* new_kvout(int fd, int buflen) {
     return kv;
 }
 
-// API to allocate a new kvout for a buffer, no fd.
+// @unsafe - calls malloc() to allocate untracked heap memory and returns raw pointer
 kvout* new_bufkvout() {
     kvout *kv = (kvout*) malloc(sizeof(kvout));
     assert(kv);
@@ -56,14 +60,13 @@ kvout* new_bufkvout() {
     return kv;
 }
 
-// API to clear out a buf kvout.
+// @unsafe - dereferences raw kvout* pointer without ownership verification
 void kvout_reset(kvout* kv) {
     assert(kv->fd < 0);
     kv->n = 0;
 }
 
-// API to free a kvout.
-// does not close() the fd.
+// @unsafe - calls free() on untracked heap memory without ownership verification
 void free_kvout(kvout* kv) {
     if (kv->buf)
         free(kv->buf);
@@ -71,6 +74,7 @@ void free_kvout(kvout* kv) {
     free(kv);
 }
 
+// @unsafe - calls POSIX write() syscall with raw buffer pointer arithmetic
 void kvflush(kvout* kv) {
     assert(kv->fd >= 0);
     size_t sent = 0;
@@ -89,7 +93,7 @@ void kvflush(kvout* kv) {
     kv->n = 0;
 }
 
-// API
+// @unsafe - calls realloc() which may invalidate existing pointers to the buffer
 void kvout::grow(unsigned want) {
     if (fd >= 0)
         kvflush(this);
@@ -101,6 +105,7 @@ void kvout::grow(unsigned want) {
     assert(buf);
 }
 
+// @unsafe - calls memcpy() with raw void* pointer and performs buffer pointer arithmetic
 int kvwrite(kvout* kv, const void* buf, unsigned n) {
     if (kv->n + n > kv->capacity && kv->fd >= 0)
         kvflush(kv);

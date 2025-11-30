@@ -18,7 +18,8 @@ if [ ! -f "./build/rocksdb_replay_app" ]; then
 fi
 
 # Check if RocksDB data exists
-ROCKSDB_DIR=$(ls -d /tmp/mako_rocksdb_shard0_leader_pid*_partition0 2>/dev/null | head -1 | sed 's/_partition0$//')
+USERNAME=${USER:-unknown}
+ROCKSDB_DIR=$(ls -d /tmp/${USERNAME}_mako_rocksdb_shard0_leader_pid*_partition0 2>/dev/null | head -1 | sed 's/_partition0$//')
 
 if [ -z "$ROCKSDB_DIR" ]; then
     echo "Error: No RocksDB data found"

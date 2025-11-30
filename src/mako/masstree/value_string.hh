@@ -13,10 +13,16 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Single-string value type for Masstree rows
+// Stores inline variable-length string data with timestamp
+// SAFETY: Uses threadinfo allocator, inline data buffer
+
 #ifndef VALUE_STRING_HH
 #define VALUE_STRING_HH
 #include "compiler.hh"
 #include "json.hh"
+#include "kvthread.hh"
+#include "timestamp.hh"
 
 class value_string {
   public:
@@ -113,11 +119,13 @@ inline lcdf::Str value_string::col(index_type idx) const {
     }
 }
 
+// @unsafe - frees raw value_string memory
 template <typename ALLOC>
 inline void value_string::deallocate(ALLOC& ti) {
     ti.deallocate(this, size(), memtag_value);
 }
 
+// @unsafe - schedules raw value_string memory free
 inline void value_string::deallocate_rcu(threadinfo& ti) {
     ti.deallocate_rcu(this, size(), memtag_value);
 }
@@ -130,6 +138,7 @@ inline size_t value_string::shallow_size() const {
     return shallow_size(vallen_);
 }
 
+// @unsafe - constructs new value_string via raw allocations
 template <typename ALLOC>
 value_string* value_string::update(const Json* first, const Json* last,
                                    kvtimestamp_t ts, ALLOC& ti) const {
@@ -152,12 +161,14 @@ value_string* value_string::update(const Json* first, const Json* last,
     return row;
 }
 
+// @unsafe - calls update which allocates raw buffers
 inline value_string* value_string::create(const Json* first, const Json* last,
                                           kvtimestamp_t ts, threadinfo& ti) {
     value_string empty;
     return empty.update(first, last, ts, ti);
 }
 
+// @unsafe - builds new row by memcpy into freshly allocated buffer
 inline value_string* value_string::create1(Str value,
                                            kvtimestamp_t ts,
                                            threadinfo& ti) {
@@ -172,6 +183,7 @@ inline void value_string::deallocate_rcu_after_update(const Json*, const Json*, 
     deallocate_rcu(ti);
 }
 
+// @unsafe - frees raw buffer on failed update
 inline void value_string::deallocate_after_failed_update(const Json*, const Json*, threadinfo& ti) {
     deallocate(ti);
 }

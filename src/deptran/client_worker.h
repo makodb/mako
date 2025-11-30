@@ -18,7 +18,7 @@ class TxReply;
 
 class ClientWorker {
  public:
-  rusty::Arc<PollThreadWorker> poll_thread_worker_;
+  rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
   Frame* frame_{nullptr};
   Communicator* commo_{nullptr};
   cliid_t cli_id_;
@@ -52,7 +52,7 @@ class ClientWorker {
                Config::SiteInfo &site_info,
                Config *config,
                ClientControlServiceImpl *ccsi,
-               rusty::Arc<PollThreadWorker> poll_thread_worker);
+               rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
   ClientWorker() = delete;
   ~ClientWorker();
   // This is called from a different thread.

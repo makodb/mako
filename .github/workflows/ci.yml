@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ mako-dev ]
+    branches: [ mako-dev, mako-weihai ]
   workflow_dispatch:
 
 # Cancel superseded runs when you push new commits to the same PR/branch
@@ -19,6 +19,10 @@ jobs:
       matrix:
         build_type: [Release]
         run_number: [1, 2, 3]
+    env:
+      RUN_INDEX: ${{ matrix.run_number }}     # 1, 2, or 3 (per matrix job)
+      RUN_NUM: ${{ github.run_number }}       # monotonically increasing per workflow
+      RUN_ID: ${{ github.run_id }}            # unique per workflow run
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,9 +36,14 @@ jobs:
           echo "RUNNER_TEMP=$RUNNER_TEMP"
           echo "RUNNER_TOOL_CACHE=$RUNNER_TOOL_CACHE"
           echo "RUN_NUMBER=${{ matrix.run_number }}"
+          echo "RUN_NUM=${{ github.run_number }}"
+          echo "RUN_ID=${{ github.run_id }}"
 
       - name: Compile
-        run: ./ci/ci.sh compile 
+        run: ./ci/ci.sh compile
+
+      - name: Run tests - RRR unit tests
+        run: ./ci/ci.sh rrrTests
 
       - name: Run tests - simple transaction
         run: ./ci/ci.sh simpleTransaction
@@ -42,14 +51,20 @@ jobs:
       - name: Run tests - simple replication
         run: ./ci/ci.sh simplePaxos 
 
-      - name: Run tests - simple 2 shards without replication 
+      - name: Run tests - simple 2 shards without replication (RRR)
         run: ./ci/ci.sh shardNoReplication
-      
+
+      - name: Run tests - simple 2 shards without replication (eRPC)
+        run: ./ci/ci.sh shardNoReplicationErpc
+
       - name: Run tests - simple 1 shard with replication - dbtest
         run: ./ci/ci.sh shard1Replication
 
-      - name: Run tests - simple 2 shard with replication - dbtest
+      - name: Run tests - simple 2 shard with replication - dbtest (RRR)
         run: ./ci/ci.sh shard2Replication
+
+      - name: Run tests - simple 2 shard with replication - dbtest (eRPC)
+        run: ./ci/ci.sh shard2ReplicationErpc
 
       - name: Run tests - simple 1 shard with replication - simpleTransactionRep
         run: ./ci/ci.sh shard1ReplicationSimple
@@ -62,4 +77,4 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: ./ci/clean.sh
+        run: ./ci/ci.sh cleanup

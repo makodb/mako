@@ -15,7 +15,7 @@ build: configure
 	cmake --build $(BUILD_DIR) --parallel $(if $(filter -j%,$(MAKEFLAGS)),$(subst -j,,$(filter -j%,$(MAKEFLAGS))),4)  
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) 2>/dev/null || true
 	# Remove all test files
 	rm -rf /tmp/test_*
 	# Remove all disk db
@@ -42,9 +42,8 @@ clean:
 	@cd rust-lib && cargo clean 2>/dev/null || true
 	# Clean rusty-cpp
 	@rm -rf third-party/rusty-cpp/target || true
-
-
-
+	# rebuild rpc
+	bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
 
 rebuild: clean all
 

@@ -110,7 +110,7 @@ class ClassicServiceImpl : public ClassicService {
   ClassicServiceImpl() = delete;
 
   ClassicServiceImpl(TxLogServer* sched,
-                     rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
+                     rusty::Arc<rrr::PollThread> poll_thread_worker,
                      ServerControlServiceImpl* scsi = NULL);
 
   void RccDispatch(const vector<SimpleCommand>& cmd,

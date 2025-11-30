@@ -78,27 +78,29 @@ void check_current_path() {
     Log_info("PWD : %s", path.string().c_str());
 }
 
-
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
     auto config = Config::GetConfig();
-    
+
     int i = 0;
     vector<std::thread> setup_ths;
     for (auto& site_info : server_sites) {
-        setup_ths.push_back(std::thread([&site_info, &i, &config]() {
+        // Capture the index by value to avoid race condition
+        int thread_index = i++;
+        // Make a copy in the loop so each thread lambda captures its own snapshot
+        auto site_info_for_thread = site_info;
+        setup_ths.push_back(std::thread([site_info_for_thread, thread_index, &config]() mutable {
             Log_info("launching site: %x, bind address %s",
-                     site_info.id,
-                     site_info.GetBindAddress().c_str());
-            auto& worker = pxs_workers_g[i++];
-            //worker->site_info_ = const_cast<Config::SiteInfo*>(&config->SiteById(site_info.id));
-            // setup frame and scheduler
-            //worker->SetupBase();
-            // start server service
+                     site_info_for_thread.id,
+                     site_info_for_thread.GetBindAddress().c_str());
+            auto& worker = pxs_workers_g[thread_index];
+            // start server service FIRST so it can receive connections
             worker->SetupService();
-            // setup communicator
+            // THEN setup communicator (connects to other sites)
+            // Note: there is a small race window where Next() callback could fire
+            // before commo_ is set - the Next() code must handle commo_==nullptr
             worker->SetupCommo();
             worker->InitQueueRead();
-            Log_info("site %d launched!", (int)site_info.id);
+            Log_info("site %d launched!", (int)site_info_for_thread.id);
         }));
     }
     Log_info("waiting for server setup threads.");
@@ -311,9 +313,17 @@ int shutdown_paxos() {
     fflush(stderr);
     fflush(stdout);
 
+    // Add a small delay to allow network operations to complete gracefully
+    // This prevents crashes during cleanup when connections are still active
+    usleep(100 * 1000); // 100ms delay
+
     for (auto& worker : pxs_workers_g) {
         worker->ShutDown();
     }
+
+    // Another small delay before clearing workers
+    usleep(50 * 1000); // 50ms delay
+
     pxs_workers_g.clear();
 
     RandomGenerator::destroy();
@@ -390,10 +400,11 @@ void submit(const char* log, int len, uint32_t par_id) {
         std::copy(log, log + len, std::back_inserter(log_str));
         worker->IncSubmit();
 
-        auto sp_job = std::make_shared<OneTimeJob>([&worker,log_str,len,par_id] () {
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&worker,log_str,len,par_id] () {
             worker->Submit(log_str.data(),len, par_id);
-        });
-        worker->GetPollThreadWorker()->add(sp_job);
+        }));
+        auto arc_job_base = rusty::Arc<Job>(arc_job);
+        worker->GetPollThread()->add(arc_job_base);
         submit_tot++;
     }
 }
@@ -410,20 +421,26 @@ static tp firstTime;
 static tp endTime;
 static bool debug = false;
 void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
-  //Log_info("add_log_to_nc, par_id:%d, len:%d, es->mid:%d, isLeader:%d, batch_size:%d",par_id,len,es->machine_id, pxs_workers_g[par_id]->is_leader, batch_size);
-  //pxs_workers_g[par_id]->election_state_lock.lock();
-  if(!pxs_workers_g[par_id]->is_leader){
-    if(es->machine_id != 0)
-	     Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
-  //pxs_workers_g[par_id]->election_state_lock.unlock();
+  // Find the worker for this partition by iterating, don't assume index == partition_id
+  for (auto& worker : pxs_workers_g) {
+    if (worker->site_info_->partition_id_ != par_id) {
+      continue;
+    }
+
+    // Check if this worker is the leader for this partition
+    if(!worker->is_leader){
+      if(es->machine_id != 0)
+        Log_info("Did not find to be leader, len: %d,par_id:%d",len,par_id);
+      return;
+    }
+
+    // Submit the log
+    add_log_without_queue((char*)log, len, par_id);
     return;
   }
-  //pxs_workers_g[par_id]->election_state_lock.unlock();
 
-	// l_.lock();
-	// len = len;
-	add_log_without_queue((char*)log, len, par_id);
-	// l_.unlock();
+  // If we get here, no worker found for this partition
+  Log_error("add_log_to_nc: no worker found for par_id %d", par_id);
 }
 
 void* PollSubQNc(void* arg){
@@ -504,13 +521,14 @@ void send_no_ops_to_all_workers(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncNoOpLog = createSyncNoOpLog(epoch, es->machine_id);
   auto ess = es;
-  auto sp_job = std::make_shared<OneTimeJob>([pw, syncNoOpLog, ess](){
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncNoOpLog, ess](){
     int val = pw->SendSyncNoOpLog(syncNoOpLog);
     if(val == -1){
       ess->stuff_after_election_cond_.bcast();
     }
-  });
-  pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
+  }));
+  auto arc_job_base = rusty::Arc<Job>(arc_job);
+  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
   es->stuff_after_election_mutex_.lock();
   es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
   es->stuff_after_election_mutex_.unlock();
@@ -526,13 +544,14 @@ void send_sync_logs(int epoch){
   auto pw = pxs_workers_g.back();
   auto syncLog = createSyncLog(epoch, es->machine_id);
   auto ess = es;
-  auto sp_job = std::make_shared<OneTimeJob>([pw, syncLog, ess](){
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
   if(val == -1){
     ess->stuff_after_election_cond_.bcast();
   }
- });
- pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
+ }));
+ auto arc_job_base = rusty::Arc<Job>(arc_job);
+ pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
  es->stuff_after_election_mutex_.lock();
  es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
  es->stuff_after_election_mutex_.unlock();
@@ -635,7 +654,7 @@ void send_bulk_prep(int send_epoch){
   auto pw = pxs_workers_g.back();
   auto bp_log = createBulkPrepare(send_epoch, pw->site_info_->locale_id);
   auto ess = es;
-  auto sp_job = std::make_shared<OneTimeJob>([&pw, bp_log, ess]() {
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, bp_log, ess]() {
       int val = pw->SendBulkPrepare(bp_log);
       if(val != -1){
         ess->state_lock();
@@ -644,8 +663,9 @@ void send_bulk_prep(int send_epoch){
         ess->state_unlock();
       }
       ess->election_cond.bcast();
-  });
-  pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
+  }));
+  auto arc_job_base = rusty::Arc<Job>(arc_job);
+  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
 }
 
 // marker:ansh
@@ -710,7 +730,7 @@ void* heartbeatMonitor(void* arg){
      auto pw = pxs_workers_g.back();
      auto hb_log = createHeartBeat(send_epoch, pw->site_info_->locale_id);
      auto ess = es;
-     auto sp_job = std::make_shared<OneTimeJob>([pw, hb_log, ess]() {
+     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, hb_log, ess]() {
         int val = pw->SendHeartBeat(hb_log);
         if(val != -1){
           ess->state_lock();
@@ -718,16 +738,17 @@ void* heartbeatMonitor(void* arg){
           ess->set_epoch(val);
           ess->state_unlock();
         }
-    });
-    pxs_workers_g.back()->GetPollThreadWorker()->add(sp_job);
+    }));
+    auto arc_job_base = rusty::Arc<Job>(arc_job);
+    pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
   }
    pthread_exit(nullptr);
    return nullptr;
 }
 
 void* heartbeatBackground(void* arg) {
-  auto poll_arc = PollThreadWorker::create();
-  auto rpc_cli = std::make_shared<rrr::Client>(poll_arc);
+  auto poll_arc = PollThread::create();
+  auto rpc_cli = rrr::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
@@ -737,7 +758,8 @@ void* heartbeatBackground(void* arg) {
      usleep(100 * 1000); // retry to connect
   }
 
-  ServerControlProxy *client_proxy = new ServerControlProxy(rpc_cli.get());
+  // Arc::get() returns const T*, but proxy doesn't mutate client
+  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
   while (es->running) {
     size_t connected = client_proxy->server_heart_beat();
     if (connected==0){
@@ -751,8 +773,8 @@ void* heartbeatBackground(void* arg) {
 
 // between distant datacenters
 void* heartbeatBackground2(void* arg) {
-  auto poll_arc = PollThreadWorker::create();
-  auto rpc_cli = std::make_shared<rrr::Client>(poll_arc);
+  auto poll_arc = PollThread::create();
+  auto rpc_cli = rrr::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0); // tie to the partition0
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
@@ -762,7 +784,8 @@ void* heartbeatBackground2(void* arg) {
      usleep(100 * 1000); // retry to connect
   }
 
-  ServerControlProxy *client_proxy = new ServerControlProxy(rpc_cli.get());
+  // Arc::get() returns const T*, but proxy doesn't mutate client
+  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
   while (es->running) {
     size_t connected = client_proxy->server_heart_beat();
     if (connected==0){
@@ -1084,7 +1107,7 @@ nc_pclock(char *msg, clockid_t cid)
 
 void *nc_start_server(void *input) {
     NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
-    auto poll_arc = PollThreadWorker::create();
+    auto poll_arc = PollThread::create();
     base::ThreadPool *tp = new base::ThreadPool();  // never use it
     rrr::Server *server = new rrr::Server(poll_arc, tp);
 

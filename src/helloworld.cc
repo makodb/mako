@@ -64,7 +64,7 @@ void *nc_start_client(void *input) {
 
 void nc_setup_client(int nkeys, int nthreads, int run) {
   for (int i=0; i<nthreads; i++) {
-    rrr::PollThreadWorker *pm = new rrr::PollThreadWorker();
+    rrr::PollThread *pm = new rrr::PollThread();
     rrr::Client *client = new rrr::Client(pm);
     auto port_s=std::to_string(10010+i);
     while (client->connect((std::string(server_ip)+":"+port_s).c_str())!=0) {
@@ -90,7 +90,7 @@ void nc_setup_client(int nkeys, int nthreads, int run) {
 
 void *nc_start_server2(void *input) {
     HelloworldClientServiceImpl *impl = new HelloworldClientServiceImpl();
-    rrr::PollThreadWorker *pm = new rrr::PollThreadWorker(); // starting a coroutine
+    rrr::PollThread *pm = new rrr::PollThread(); // starting a coroutine
     base::ThreadPool *tp = new base::ThreadPool();  // never use it
     rrr::Server *server = new rrr::Server(pm, tp);
 

@@ -3561,7 +3561,7 @@ protected:
   make_loaders()
   {
     vector<bench_loader *> ret;
-    if (TThread::get_is_micro()) {
+    if (BenchmarkConfig::getInstance().getIsMicro()) {
       ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions));
       return ret;
     }
@@ -3653,7 +3653,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
     mako::stop_erpc_server();
     return rc; // rc is same object as r below
   }
-  if (TThread::get_is_micro()) {
+  if (BenchmarkConfig::getInstance().getIsMicro()) {
     unsigned default_mix_for_micro[] = {50, 50, 0, 0, 0};
     std::copy_n(default_mix_for_micro, 5, g_txn_workload_mix);
   }

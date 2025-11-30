@@ -13,10 +13,17 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - MVCC columnar value type with row versioning
+// Supports snapshot isolation with version chaining for concurrent reads
+// SAFETY: Uses threadinfo allocator, version tracking, copy-on-write
+
 #ifndef VALUE_VERSIONED_ARRAY_HH
 #define VALUE_VERSIONED_ARRAY_HH
 #include "compiler.hh"
+#include "kvthread.hh"
+#include "timestamp.hh"
 #include "value_array.hh"
+using lcdf::Str;
 
 struct rowversion {
     rowversion() {
@@ -158,11 +165,13 @@ inline size_t value_versioned_array::shallow_size() const {
     return shallow_size(ncol_);
 }
 
+// @unsafe - allocates new row with raw pointer arithmetic
 inline value_versioned_array* value_versioned_array::create(const Json* first, const Json* last, kvtimestamp_t ts, threadinfo& ti) {
     value_versioned_array empty;
     return empty.update(first, last, ts, ti, true);
 }
 
+// @unsafe - constructs row via direct allocator access
 inline value_versioned_array* value_versioned_array::create1(Str value, kvtimestamp_t ts, threadinfo& ti) {
     value_versioned_array* row = (value_versioned_array*) ti.allocate(shallow_size(1), memtag_value);
     row->ts_ = ts;
@@ -172,6 +181,7 @@ inline value_versioned_array* value_versioned_array::create1(Str value, kvtimest
     return row;
 }
 
+// @unsafe - schedules raw struct deallocation
 inline void value_versioned_array::deallocate_rcu_after_update(const Json*, const Json*, threadinfo& ti) {
     ti.deallocate_rcu(this, shallow_size(), memtag_value);
 }
@@ -181,6 +191,7 @@ inline void value_versioned_array::deallocate_after_failed_update(const Json*, c
 }
 
 template <typename PARSER>
+// @unsafe - parses into raw buffer without extra checks
 value_versioned_array*
 value_versioned_array::checkpoint_read(PARSER& par, kvtimestamp_t ts,
                                        threadinfo& ti) {

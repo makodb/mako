@@ -10,10 +10,10 @@ echo "========================================="
 # Clean up old log files
 rm -f nfs_sync_*
 rm -f simple-shard0*.log simple-shard1*.log
-rm -rf /tmp/mako_rocksdb_shard*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 
@@ -101,6 +101,30 @@ for i in 0 1; do
     
 done
 
+# Check all 8 logs for data integrity verification
+echo ""
+echo "Checking data integrity verification in all logs:"
+echo "-----------------"
+for shard in 0 1; do
+    for log_suffix in localhost learner p2 p1; do
+        log="simple-shard${shard}-${log_suffix}.log"
+
+        if [ ! -f "$log" ]; then
+            echo "  ✗ $log: Log file not found"
+            failed=1
+            continue
+        fi
+
+        # Check for "ALL VERIFICATIONS PASSED" message
+        if grep -q "ALL VERIFICATIONS PASSED" "$log"; then
+            echo "  ✓ $log: Data integrity verified"
+        else
+            echo "  ✗ $log: Data integrity verification FAILED or not found"
+            failed=1
+        fi
+    done
+done
+
 echo ""
 echo "========================================="
 if [ $failed -eq 0 ]; then
@@ -113,7 +137,7 @@ else
     echo ""
     echo "Debug information:"
     echo "Check simple-shard0-localhost.log and simple-shard1-localhost.log for details"
-    tail -10 simple-shard0-localhost.log 
+    tail -10 simple-shard0-localhost.log
     tail -10 simple-shard1-localhost.log
     exit 1
 fi

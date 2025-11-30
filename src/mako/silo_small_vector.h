@@ -18,7 +18,7 @@ class silo_small_vector {
   typedef std::vector<T> large_vector_type;
 
   static const bool is_trivially_destructible =
-    mass::is_trivially_destructible<T>::value;
+    std::is_trivially_destructible<T>::value;
 
   // std::is_trivially_copyable not supported in g++-4.7
   static const bool is_trivially_copyable = std::is_scalar<T>::value;

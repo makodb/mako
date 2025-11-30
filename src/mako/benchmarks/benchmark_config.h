@@ -17,6 +17,24 @@ enum {
   RUNMODE_OPS  = 1
 };
 
+// Forward declarations
+class abstract_db;
+class abstract_ordered_index;
+
+// Per-shard state for multi-shard mode
+struct ShardContext {
+    int shard_index;                                              // Shard index (0, 1, 2, ...)
+    std::string cluster_role;                                     // Cluster role (localhost, p1, p2, learner)
+    abstract_db* db;                                              // Per-shard database instance
+    FastTransport* transport;                                     // Per-shard transport
+    std::vector<FastTransport*> server_transports;                // Per-shard server transports
+    std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders;          // Request queues
+    std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_response; // Response queues
+    std::map<int, abstract_ordered_index*> open_tables;           // Per-shard tables
+
+    ShardContext() : shard_index(-1), db(nullptr), transport(nullptr) {}
+};
+
 class BenchmarkConfig {
   private:
       // Private constructor with default values
@@ -91,6 +109,9 @@ class BenchmarkConfig {
       std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_;
       std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_response_;
       std::atomic<int> set_server_transport_{0};
+
+      // Multi-shard support: per-shard contexts
+      std::map<int, ShardContext> shard_contexts_;
 
 
   public:
@@ -194,6 +215,28 @@ class BenchmarkConfig {
       // Getters and setters for watermark tracking
       std::vector<std::pair<uint32_t, uint32_t>>& getAdvanceWatermarkTracker() { return advanceWatermarkTracker_; }
       const std::vector<std::pair<uint32_t, uint32_t>>& getAdvanceWatermarkTracker() const { return advanceWatermarkTracker_; }
+
+      // Multi-shard context management
+      std::map<int, ShardContext>& getShardContexts() { return shard_contexts_; }
+      const std::map<int, ShardContext>& getShardContexts() const { return shard_contexts_; }
+
+      ShardContext* getShardContext(int shard_index) {
+          auto it = shard_contexts_.find(shard_index);
+          return (it != shard_contexts_.end()) ? &it->second : nullptr;
+      }
+
+      const ShardContext* getShardContext(int shard_index) const {
+          auto it = shard_contexts_.find(shard_index);
+          return (it != shard_contexts_.end()) ? &it->second : nullptr;
+      }
+
+      void addShardContext(int shard_index, const ShardContext& context) {
+          shard_contexts_[shard_index] = context;
+      }
+
+      bool hasMultipleShards() const {
+          return shard_contexts_.size() > 1;
+      }
 };
 
 // (no global runtime accessors)

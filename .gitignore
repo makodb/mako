@@ -54,3 +54,4 @@ nfs_sync_*
 out-perf.masstree/*
 .cache/*
 cmake-build/*
+*.stamp

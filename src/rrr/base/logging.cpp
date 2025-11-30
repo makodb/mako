@@ -6,6 +6,14 @@
 #include "threading.hpp"
 #include "logging.hpp"
 
+// External safety annotations for functions used in this module
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
 namespace rrr {
 
 int Log::level_s = Log::DEBUG;

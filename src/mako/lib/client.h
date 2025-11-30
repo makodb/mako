@@ -191,7 +191,7 @@ namespace mako
         };
 
         transport::Configuration config;
-        uint32_t lastReqId;
+        std::atomic<uint32_t> lastReqId;
         PendingRequestK crtReqK;
         Transport *transport;
         uint64_t clientid;

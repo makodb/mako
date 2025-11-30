@@ -61,6 +61,12 @@ make -j32
 
 # RocksDB persistence and partitioned queues tests
 ./ci/ci.sh rocksdbTests
+
+# Shard fault tolerance test (reboots shards to test independent operation)
+./ci/ci.sh shardFaultTolerance
+
+# Multi-shard single-process mode (runs multiple shards in one process)
+./ci/ci.sh multiShardSingleProcess
 ```
 
 ## Code Architecture
@@ -81,11 +87,28 @@ The system implements multiple distributed transaction protocols:
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture
-The system supports multiple transport mechanisms:
+
+**Mako supports two RPC backends** (switchable at runtime):
+- **rrr/rpc** (default): Portable TCP/IP-based RPC (~10-50 μs latency)
+- **eRPC**: High-performance RDMA-based RPC (~1-2 μs latency)
+
+**Switching backends:**
+```bash
+# Use rrr/rpc (default)
+./build/dbtest config/mako_tpcc.yml
+
+# Use eRPC
+MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
+```
+
+Both backends implement the same `TransportBackend` interface for transport-agnostic request/response handling.
+
+**See [doc/transport_backends.md](doc/transport_backends.md) for complete documentation.**
+
+**Legacy Deptran transports:**
 - Standard Ethernet via `src/rrr/` RPC framework
 - DPDK for kernel bypass (`DPDK_ENABLED` flag)
 - InfiniBand/RDMA support (`src/deptran/rcc_rpc.cpp`)
-- eRPC integration for high-performance networking
 
 ### Configuration System
 - **Host configuration**: `config/hosts*.yml` defines cluster topology and network settings

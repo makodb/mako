@@ -13,10 +13,24 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// Versioned columnar array value type for Masstree rows
+// All functions use raw allocator and memset/memcpy - @unsafe
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: circular_int::*
+// @external_unsafe: lcdf::String_base::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::Json::*
+// @external_unsafe: threadinfo::*
+// @external_unsafe: memset
+// @external_unsafe: memcpy
+
 #include "kvrow.hh"
 #include "value_versioned_array.hh"
 #include <string.h>
 
+// @unsafe - uses threadinfo allocator for raw memory and memset() without RAII
 value_versioned_array* value_versioned_array::make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti) {
     value_versioned_array* row = (value_versioned_array*) ti.allocate(shallow_size(ncol), memtag_value);
     row->ts_ = ts;
@@ -26,6 +40,7 @@ value_versioned_array* value_versioned_array::make_sized_row(int ncol, kvtimesta
     return row;
 }
 
+// @unsafe - uses memcpy() on raw column data and modifies storage via raw pointer
 void value_versioned_array::snapshot(value_versioned_array*& storage,
                                      const std::vector<index_type>& f, threadinfo& ti) const {
     if (!storage || storage->ncol_cap_ < ncol_) {
@@ -47,6 +62,7 @@ void value_versioned_array::snapshot(value_versioned_array*& storage,
     }
 }
 
+// @unsafe - uses threadinfo allocator, memcpy()/memset(), and fence() memory barrier
 value_versioned_array*
 value_versioned_array::update(const Json* first, const Json* last,
                               kvtimestamp_t ts, threadinfo& ti,
@@ -84,12 +100,14 @@ value_versioned_array::update(const Json* first, const Json* last,
     return row;
 }
 
+// @unsafe - calls threadinfo::deallocate() to free raw memory without RAII
 void value_versioned_array::deallocate(threadinfo &ti) {
     for (short i = 0; i < ncol_; ++i)
         value_array::deallocate_column(cols_[i], ti);
     ti.deallocate(this, shallow_size(), memtag_value);
 }
 
+// @unsafe - schedules deferred free via RCU without ownership verification
 void value_versioned_array::deallocate_rcu(threadinfo &ti) {
     for (short i = 0; i < ncol_; ++i)
         value_array::deallocate_column_rcu(cols_[i], ti);

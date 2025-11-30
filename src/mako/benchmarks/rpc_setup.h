@@ -34,6 +34,9 @@ void setup_erpc_server();
 // Stop all eRPC servers previously started by setup_erpc_server().
 void stop_erpc_server();
 
+// Initialize per thread
+void initialize_per_thread(abstract_db *db) ;
+
 } // namespace mako
 
 #endif // MAKO_BENCHMARKS_RPC_SETUP_H

@@ -22,6 +22,7 @@
 #include "lib/fasttransport.h"
 #include "deptran/s_main.h"
 #include "benchmarks/sto/sync_util.hh"
+#include "rpc_setup.h"
 #include <chrono>
 #include <thread>
 
@@ -144,7 +145,12 @@ bench_worker::run()
 
         // Unpaused previous blocked threads if any
         for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-           shardClientAll[par_id]->setBlocking(false);
+           auto it = shardClientAll.find(par_id);
+           if (it != shardClientAll.end() && it->second != nullptr) {
+             it->second->setBlocking(false);
+           } else {
+             Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
+           }
         }
         break;
       }
@@ -326,7 +332,12 @@ bench_runner::stop() { // invoke inside run function; stop all ShardClient insta
   Warning("stop all erpc clients. set stop=false");
   auto& benchConfig = BenchmarkConfig::getInstance();
   for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   shardClientAll[par_id]->stop();
+   auto it = shardClientAll.find(par_id);
+   if (it != shardClientAll.end() && it->second != nullptr) {
+     it->second->stop();
+   } else {
+     Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
+   }
   }
 }
 
@@ -489,14 +500,34 @@ bench_runner::run()
    sync_util::sync_logger::client_control2(3, benchConfig.getShardIndex());
   }
   if (benchConfig.getRunMode() == RUNMODE_TIME) {
+    cerr << "[SHUTDOWN] Setting running=false to stop database worker threads" << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
-  stop(); // stop erpc clients
+  cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
+  stop(); // stop erpc clients (unblocks outstanding RPCs)
+  cerr << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
-  for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
+
+  cerr << "[SHUTDOWN] Joining " << BenchmarkConfig::getInstance().getNthreads() << " worker threads" << endl;
+  for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
+     cerr << "[SHUTDOWN] Joining worker " << i << endl;
      workers[i]->join();
+     cerr << "[SHUTDOWN] Worker " << i << " joined" << endl;
+  }
+  cerr << "[SHUTDOWN] All workers joined" << endl;
+
+  // Stop server transports AFTER workers exit to ensure they can finish processing
+  cerr << "[SHUTDOWN] Calling stop_erpc_server()" << endl;
+  mako::stop_erpc_server();
+  cerr << "[SHUTDOWN] stop_erpc_server() completed" << endl;
+
+  cerr << "[SHUTDOWN] Calling second stop()" << endl;
+  stop(); // ensure transports are torn down after workers exit
+  cerr << "[SHUTDOWN] Second stop() completed" << endl;
   const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
+  cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
+  cerr << "[SHUTDOWN] do_txn_finish() completed" << endl;
   //  usleep(100000);
   size_t n_commits = 0;
   size_t n_aborts = 0;

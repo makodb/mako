@@ -1,3 +1,13 @@
+// MsgPack binary serialization format parser
+// Functions that parse raw buffers are @unsafe
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::Json::*
+// @external_unsafe: malloc
+// @external_unsafe: memcpy
+
 #include "msgpack.hh"
 namespace msgpack {
 
@@ -16,6 +26,7 @@ const uint8_t nbytes[] = {
 };
 }
 
+// @unsafe - uses reinterpret_cast and raw uint8_t* pointer arithmetic for parsing
 const uint8_t* streaming_parser::consume(const uint8_t* first,
                                          const uint8_t* last,
                                          const String& str) {
@@ -206,6 +217,7 @@ const uint8_t* streaming_parser::consume(const uint8_t* first,
     return first;
 }
 
+// @unsafe - uses reinterpret_cast to convert uint8_t* to char* and advances raw pointer
 parser& parser::operator>>(Str& x) {
     uint32_t len;
     if ((uint32_t) *s_ - format::ffixstr < format::nfixstr) {
@@ -227,6 +239,7 @@ parser& parser::operator>>(Str& x) {
     return *this;
 }
 
+// @unsafe - delegates to unsafe operator>>(Str&) which uses raw pointer arithmetic
 parser& parser::operator>>(String& x) {
     Str s;
     *this >> s;

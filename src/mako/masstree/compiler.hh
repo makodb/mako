@@ -13,8 +13,13 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// Compiler intrinsics, memory fences, and type traits
+// Provides portable wrappers for atomic operations and compiler hints
+// SAFETY: Contains memory barriers, likely/unlikely macros, type manipulation
+
 #ifndef MASSTREE_COMPILER_HH
 #define MASSTREE_COMPILER_HH 1
+#include "config.h"
 #include <stdint.h>
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>
@@ -68,6 +73,7 @@
  * @return 0 if @a x = 0; otherwise the index of first bit set, where the
  * most significant bit is numbered 1.
  */
+// @unsafe - bit-twiddling helpers with raw intrinsics
 inline int ffs_msb(unsigned x) {
     return (x ? __builtin_clz(x) + 1 : 0);
 }
@@ -974,6 +980,7 @@ inline uint64_t read_tsc(void)
     return ((uint64_t)low) | (((uint64_t)high) << 32);
 }
 
+// @unsafe
 template <typename T>
 inline int compare(T a, T b) {
     if (a == b)

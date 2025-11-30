@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Test harness framework for Masstree benchmarking
+// Provides workload generators, statistics collection, and result reporting
+// SAFETY: Uses global state, random generators, and test client interfaces
+
 #ifndef KVTEST_HH
 #define KVTEST_HH
 #include "json.hh"
@@ -44,6 +48,7 @@ inline Json kvtest_set_time(const Json& result, const lcdf::String& base, N n, d
     return x;
 }
 
+// @unsafe - allocates/uses raw buffers for workload generation
 template <typename C>
 void kvtest_sync_rw1_seed(C &client, int seed)
 {
@@ -108,6 +113,7 @@ unsigned kvtest_rw1puts_seed(C& client, int seed) {
 // do a bunch of inserts to distinct keys, then check that they all showed up.
 // sometimes overwrites, but only w/ same value.
 // different clients might use same key sometimes.
+// @unsafe - allocates/uses raw buffers for workload generation
 template <typename C>
 void kvtest_rw1_seed(C &client, int seed)
 {
@@ -164,6 +170,7 @@ void kvtest_rw1(C &client)
 // do a bunch of inserts to distinct keys, then check that they all showed up.
 // sometimes overwrites, but only w/ same value.
 // different clients might use same key sometimes.
+// @unsafe - allocates/uses raw buffers for workload generation
 template <typename C>
 void kvtest_rw1long_seed(C &client, int seed)
 {

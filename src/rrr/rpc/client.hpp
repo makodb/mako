@@ -1,7 +1,10 @@
 #pragma once
-#include <rusty/arc.hpp>
+#include <rusty/rusty.hpp>
+#include <rusty/result.hpp>
+#include <rusty/cell.hpp>
 
 #include <unordered_map>
+#include <mutex>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -15,111 +18,135 @@
 //   setsockopt: [unsafe, (int, int, int, const void*, socklen_t) -> int]
 //   getaddrinfo: [unsafe, (const char*, const char*, const struct addrinfo*, struct addrinfo**) -> int]
 //   freeaddrinfo: [unsafe, (struct addrinfo*) -> void]
-//   gai_strerror: [safe, (int) -> const char*]
+//   gai_strerror: [unsafe, (int) -> const char*]
 //   memset: [unsafe, (void*, int, size_t) -> void*]
 //   strcpy: [unsafe, (char*, const char*) -> char*]
+//   std::lock_guard: [safe, (std::mutex&) -> void]
+//   std::unique_lock: [safe, (std::mutex&) -> void]
+//   std::chrono::duration: [safe, (double) -> void]
+//   std::function: [safe, (auto) -> void]
+//   std::vector::push_back: [safe, (auto) -> void]
+//   rrr::Log::error: [unsafe]
+//   Log_error: [unsafe]
 // }
 
 namespace rrr {
 
 class Future;
+// @unsafe - Forward declaration of Client class
 class Client;
+
+// Type alias for Future result (replaces nullable Future* returns)
+// Ok(Arc<Future>) on success, Err(error_code) on failure
+using FutureResult = rusty::Result<rusty::Arc<Future>, i32>;
 
 // @safe - Simple attribute struct for Future callbacks
 struct FutureAttr {
-    FutureAttr(const std::function<void(Future*)>& cb = std::function<void(Future*)>()) : callback(cb) { }
+    FutureAttr(const std::function<void(rusty::Arc<Future>)>& cb = std::function<void(rusty::Arc<Future>)>()) : callback(cb) { }
 
     // callback should be fast, otherwise it hurts rpc performance
-    std::function<void(Future*)> callback;
+    // Receives Arc<Future> for lifetime safety (callback keeps Future alive)
+    std::function<void(rusty::Arc<Future>)> callback;
 };
 
-// @safe - Thread-safe future for async RPC results
-class Future: public RefCounted {
-    friend class Client;
+// Thread-safe future for async RPC results using low-level synchronization
+// Uses mutable fields and condition variables which require unsafe operations
+// MIGRATED: Now uses rusty::Arc<Future> instead of RefCounted for memory safety
+class Future { // @unsafe
+    friend class rusty::Arc<Future>;  // Allow Arc to construct/destroy
+    friend class Client;              // Client needs to call private constructor and set error
+
+    struct State {
+        bool ready = false;
+        bool timed_out = false;
+    };
 
     i64 xid_;
-    i32 error_code_;
+    rusty::Cell<i32> error_code_;  // Cell for interior mutability of Copy type
 
     FutureAttr attr_;
-    Marshal reply_;
+    rusty::UnsafeCell<Marshal> reply_;  // UnsafeCell for interior mutability in unsafe class
 
-    bool ready_;
-    bool timed_out_;
-    pthread_cond_t ready_cond_;
-    pthread_mutex_t ready_m_;
+    rusty::Mutex<State> state_;  // Mutex provides its own interior mutability
+    rusty::UnsafeCell<rusty::Condvar> ready_cond_;  // UnsafeCell for Condvar
+    rusty::UnsafeCell<std::mutex> condvar_m_;  // UnsafeCell for std::mutex
 
-    // @unsafe - Notifies waiters and triggers callbacks
-    // SAFETY: Protected by mutex, callback executed in coroutine
-    void notify_ready();
+    // @unsafe - Notifies waiters using rusty::Condvar (low-level sync operation)
+    // Takes Arc<Future> self parameter for callback safety
+    void notify_ready(rusty::Arc<Future> self) const;
 
-protected:
+    // Private destructor - only Arc can delete
+    // @safe - RAII destructors handle cleanup automatically
+    ~Future() = default;
 
-    // protected destructor as required by RefCounted.
-    // @unsafe - Destroys pthread primitives
-    // SAFETY: Called only when refcount reaches zero
-    ~Future() {
-        Pthread_mutex_destroy(&ready_m_);
-        Pthread_cond_destroy(&ready_cond_);
+    // Private constructor - only Arc factory can create
+    // @safe - Default initialization with RAII primitives
+    Future(i64 xid, const FutureAttr& attr = FutureAttr())
+            : xid_(xid), error_code_(0), attr_(attr), reply_(), state_(State{}),
+              ready_cond_(), condvar_m_() {
+        // RAII: UnsafeCells initialize with default-constructed values
     }
 
 public:
 
-    // @unsafe - Initializes pthread primitives
-    // SAFETY: Mutex and condvar properly destroyed in destructor
-    Future(i64 xid, const FutureAttr& attr = FutureAttr())
-            : xid_(xid), error_code_(0), attr_(attr), ready_(false), timed_out_(false) {
-        Pthread_mutex_init(&ready_m_, nullptr);
-        Pthread_cond_init(&ready_cond_, nullptr);
+    // Factory method for Arc creation
+    // @safe - Creates Future wrapped in Arc for memory safety
+    static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
+        return rusty::Arc<Future>::make(xid, attr);
     }
 
-    // @unsafe - Thread-safe ready check
+    // @safe - Uses rusty::Mutex for thread-safe access
+    bool ready() const {
+        auto guard = state_.lock();
+        return guard->ready;
+    }
+
+    // @unsafe - Blocks on rusty::Condvar (low-level sync operation)
+    void wait() const;
+
+    // @unsafe - Timed wait using rusty::Condvar (low-level sync operation)
+    void timed_wait(double sec) const;
+
+    // @unsafe - Thread-safe timed_out check (non-blocking)
     // SAFETY: Protected by mutex
-    bool ready() {
-        Pthread_mutex_lock(&ready_m_);
-        bool r = ready_;
-        Pthread_mutex_unlock(&ready_m_);
-        return r;
+    bool timed_out() const {
+        auto guard = state_.lock();
+        return guard->timed_out;
     }
 
-    // wait till reply done
-    // @unsafe - Blocks on condition variable
-    // SAFETY: Proper pthread condvar usage
-    void wait();
-
-    // @unsafe - Timed wait with timeout
-    // SAFETY: Proper pthread timed wait usage
-    void timed_wait(double sec);
-
-    Marshal& get_reply() {
+    // Returns reference to reply with lifetime tied to Future
+    // @lifetime: (&'a) -> &'a
+    // Note: Returns non-const reference even though method is const
+    // This is safe because get_reply() ensures the Future is ready
+    // @unsafe - Dereferences UnsafeCell pointer
+    Marshal& get_reply() const {
         wait();
-        return reply_;
+        return *reply_.get();
     }
 
-    i32 get_error_code() {
+    // @unsafe - Calls unsafe wait()
+    i32 get_error_code() const {
         wait();
-        return error_code_;
-    }
-
-    // @safe - Null-safe release helper
-    static inline void safe_release(Future* fu) {
-        if (fu != nullptr) {
-            fu->release();
-        }
+        return error_code_.get();
     }
 };
 
 // @safe - RAII container for managing multiple futures
+// MIGRATED: Now uses Arc<Future> for automatic memory management
 class FutureGroup {
 private:
-    std::vector<Future*> futures_;
+    std::vector<rusty::Arc<Future>> futures_;
 
 public:
-    void add(Future* f) {
-        if (f == nullptr) {
+    // @unsafe - Adds future to group (calls Log_error)
+    void add(rusty::Arc<Future> f) {
+        if (!f) {  // Check Arc validity (empty Arc check)
+            // @unsafe {
             Log_error("Invalid Future object passed to FutureGroup!");
+            // }
             return;
         }
-        futures_.push_back(f);
+        futures_.push_back(std::move(f));
     }
 
     void wait_all() {
@@ -130,38 +157,45 @@ public:
 
     ~FutureGroup() {
         wait_all();
-        for (auto& f : futures_) {
-            f->release();
-        }
+        // Arc auto-released when vector destroyed - no manual release needed
     }
 };
 
-// @unsafe - RPC client with socket management and marshaling
-// SAFETY: Proper socket lifecycle and thread-safe pending futures
-class Client: public Pollable, public std::enable_shared_from_this<Client> {
-    Marshal in_, out_;
+// @unsafe - RPC client with socket management and marshaling using Arc
+// SAFETY: Uses mutable SpinLocks for thread-safe interior mutability
+// Client is accessed from multiple threads (main + PollThread), so SpinLocks provide synchronization
+// MIGRATED: Now uses rusty::Arc<Client> with explicit weak self-reference instead of shared_from_this()
+class Client: public Pollable {
+    rusty::RefCell<Marshal> in_;
+    rusty::RefCell<Marshal> out_;
 
     /**
-     * Shared Arc<Mutex<>> to PollThreadWorker - thread-safe access
+     * Shared Arc to PollThread - thread-safe access
      */
-    rusty::Arc<PollThreadWorker> poll_thread_worker_;
+    rusty::Arc<PollThread> poll_thread_worker_;
 
-    int sock_;
+    // Weak self-reference for registration with poll thread worker
+    // Initialized by set_weak_self() after Arc creation
+    rusty::RefCell<rusty::sync::Weak<Client>> weak_self_;
+
+    // Interior mutability for use with Arc (const methods need to modify state)
+    rusty::Cell<int> sock_;
     enum {
         NEW, CONNECTED, CLOSED
-    } status_;
+    };
+    rusty::Cell<int> status_;
 
-    rusty::Box<Marshal::bookmark> bmark_;
+    rusty::RefCell<rusty::Option<rusty::Box<Marshal::bookmark>>> bmark_;
 
-    Counter xid_counter_;
-    std::unordered_map<i64, Future*> pending_fu_;
+    rusty::RefCell<Counter> xid_counter_;
+    rusty::RefCell<std::unordered_map<i64, rusty::Arc<Future>>> pending_fu_;
 
-    SpinLock pending_fu_l_;
-    SpinLock out_l_;
+    rusty::UnsafeCell<SpinLock> pending_fu_l_;
+    rusty::UnsafeCell<SpinLock> out_l_;
 
     // @unsafe - Cancels all pending futures
     // SAFETY: Protected by spinlock
-    void invalidate_pending_futures();
+    void invalidate_pending_futures() const;
 
 public:
 
@@ -172,96 +206,131 @@ public:
     }
 
 
-    Client(rusty::Arc<PollThreadWorker> poll_thread_worker): poll_thread_worker_(poll_thread_worker), sock_(-1), status_(NEW) { }
+    Client(rusty::Arc<PollThread> poll_thread_worker):
+        in_(),              // Default-constructs RefCell<Marshal>
+        out_(),             // Default-constructs RefCell<Marshal>
+        poll_thread_worker_(poll_thread_worker),
+        weak_self_(),       // Default-constructs RefCell<Weak<Client>>
+        sock_(-1),
+        status_(NEW),
+        bmark_(),           // Default-constructs RefCell<Option<Box<bookmark>>>
+        xid_counter_(),     // Default-constructs RefCell<Counter>
+        pending_fu_(),      // Default-constructs RefCell<map>
+        pending_fu_l_(),    // Default-constructs mutable SpinLock
+        out_l_() { }        // Default-constructs mutable SpinLock
 
-    // Factory method to create Client with shared_ptr and add to poll_thread_worker
-    static std::shared_ptr<Client> create(rusty::Arc<PollThreadWorker> poll_thread_worker) {
-        auto client = std::make_shared<Client>(poll_thread_worker);
-        // Note: Client is added to poll_thread_worker when connect() is called
+    // Factory method to create Client with Arc
+    // @unsafe - Returns Arc<Client> with explicit reference counting
+    // SAFETY: Arc provides thread-safe reference counting with polymorphism support
+    static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
+        auto client = rusty::Arc<Client>::make(poll_thread_worker);
+        // Initialize weak self-reference for poll thread registration
+        // weak_self_ is mutable, so no const_cast needed
+        *client->weak_self_.borrow_mut() = client;
         return client;
     }
 
+    // Set weak self-reference (alternative to factory if Arc created elsewhere)
+    void set_weak_self(const rusty::Arc<Client>& self) {
+        *weak_self_.borrow_mut() = self;
+    }
+
     /**
-     * Start a new request. Must be paired with end_request(), even if nullptr returned.
+     * Start a new request. Must be paired with end_request().
      *
      * The request packet format is: <size> <xid> <rpc_id> <arg1> <arg2> ... <argN>
+     *
+     * Returns Result<Arc<Future>, i32>:
+     *   - Ok(Arc<Future>) on success
+     *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
     // @unsafe - Begins RPC request with marshaling
-    // SAFETY: Protected by spinlock, returns refcounted Future
-    Future* begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr());
+    // SAFETY: Protected by spinlock, returns Arc<Future> for memory safety
+    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const;
 
     // @unsafe - Completes request packet
     // SAFETY: Must be called after begin_request
-    void end_request();
+    void end_request() const;
 
+    // @unsafe - Marshals data into output buffer
+    // SAFETY: Protected by RefCell borrow checks
+    // @lifetime: (&'a, const T&) -> &'a
     template<class T>
-    Client& operator <<(const T& v) {
-        if (status_ == CONNECTED) {
-            this->out_ << v;
+    const Client& operator <<(const T& v) const {
+        if (status_.get() == CONNECTED) {
+            *this->out_.borrow_mut() << v;
         }
         return *this;
     }
 
     // NOTE: this function is used *internally* by Python extension
-    Client& operator <<(Marshal& m) {
-        if (status_ == CONNECTED) {
-            this->out_.read_from_marshal(m, m.content_size());
+    // @unsafe - Marshals data from another Marshal
+    // SAFETY: Protected by RefCell borrow checks
+    // @lifetime: (&'a, Marshal&) -> &'a
+    const Client& operator <<(Marshal& m) const {
+        if (status_.get() == CONNECTED) {
+            this->out_.borrow_mut()->read_from_marshal(m, m.content_size());
         }
         return *this;
     }
 
     // @unsafe - Establishes TCP connection
     // SAFETY: Proper socket creation and cleanup on failure
-    int connect(const char* addr);
+    int connect(const char* addr) const;
 
     // reentrant, could be called multiple times
     // @unsafe - Closes socket and cleans up
     // SAFETY: Idempotent, properly invalidates futures
-    void close();
+    void close() const;
 
-    int fd() {
-        return sock_;
+    int fd() const {
+        return sock_.get();
     }
 
-    // @safe - Returns current poll mode based on output buffer
-    int poll_mode();
+    // @unsafe - Returns current poll mode based on output buffer
+    // SAFETY: Uses RefCell borrow operations
+    int poll_mode() const;
     // @unsafe - Processes incoming data
     // SAFETY: Protected by spinlock for pending futures
     void handle_read();
     // @unsafe - Sends buffered data
     // SAFETY: Protected by output spinlock
-    void handle_write();
-    // @safe - Error handler that closes connection
+    // Returns new poll mode, or MODE_NO_CHANGE if no update needed
+    int handle_write() override;
+    // @unsafe - Error handler that closes connection
     void handle_error();
 
 };
 
-// @safe - Thread-safe pool of client connections
+// @safe - Thread-safe pool of client connections using Arc
+// MIGRATED: Now uses rusty::Arc<Client> for cached connections
 class ClientPool: public NoCopy {
     rrr::Rand rand_;
 
-    // owns a shared reference to PollThreadWorker
-    rusty::Arc<rrr::PollThreadWorker> poll_thread_worker_;
+    // owns a shared reference to PollThread
+    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker_;
 
     // guard cache_
     SpinLock l_;
-    std::map<std::string, std::vector<std::shared_ptr<Client>>> cache_;
+    // @safe - Uses rusty::Arc<Client> for thread-safe reference counting
+    // SAFETY: Arc provides thread-safe reference counting with polymorphism support
+    std::map<std::string, std::vector<rusty::Arc<Client>>> cache_;
     int parallel_connections_;
 
 public:
 
-    // @unsafe - Creates pool with optional PollThreadWorker
-    // SAFETY: Shared ownership of PollThreadWorker
-    ClientPool(rusty::Arc<rrr::PollThreadWorker> poll_thread_worker = rusty::Arc<rrr::PollThreadWorker>(), int parallel_connections = 1);
-    // @unsafe - Closes all cached connections
-    // SAFETY: Properly releases all clients and PollThreadWorker
+    // @safe - Creates pool with optional PollThread
+    // SAFETY: Shared ownership of PollThread
+    ClientPool(rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker = rusty::None, int parallel_connections = 1);
+    // @safe - Closes all cached connections
+    // SAFETY: Properly releases all clients and PollThread via Arc
     ~ClientPool();
 
     // return cached client connection
-    // on error, return nullptr
-    // @unsafe - Gets or creates client connection
-    // SAFETY: Protected by spinlock, handles connection failures
-    std::shared_ptr<rrr::Client> get_client(const std::string& addr);
+    // on error, return None
+    // @safe - Gets or creates client connection, returns Option<Arc<Client>>
+    // SAFETY: Protected by spinlock, handles connection failures, Arc for thread-safe reference counting
+    rusty::Option<rusty::Arc<rrr::Client>> get_client(const std::string& addr);
 
 };
 

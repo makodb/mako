@@ -21,13 +21,13 @@ class Communicator;
 class Frame;
 class ServerWorker {
  public:
-  rusty::Arc<rrr::PollThreadWorker> svr_poll_thread_worker_;
+  rusty::Arc<rrr::PollThread> svr_poll_thread_worker_;
   base::ThreadPool *svr_thread_pool_ = nullptr;
   vector<rrr::Service*> services_ = {};
   rrr::Server *rpc_server_ = nullptr;
   base::ThreadPool *thread_pool_g = nullptr;
 
-  rusty::Arc<rrr::PollThreadWorker> svr_hb_poll_thread_worker_g;
+  rusty::Arc<rrr::PollThread> svr_hb_poll_thread_worker_g;
   ServerControlServiceImpl *scsi_ = nullptr;
   rrr::Server *hb_rpc_server_ = nullptr;
   base::ThreadPool *hb_thread_pool_g = nullptr;

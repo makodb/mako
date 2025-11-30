@@ -44,7 +44,7 @@ TxLogServer *JanusFrame::CreateScheduler() {
 vector<rrr::Service *>
 JanusFrame::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
-                              rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
+                              rusty::Arc<rrr::PollThread> poll_thread_worker,
                               ServerControlServiceImpl *scsi) {
   return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
 }
@@ -64,7 +64,7 @@ shared_ptr<Tx> JanusFrame::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-Communicator *JanusFrame::CreateCommo(rusty::Arc<PollThreadWorker> poll) {
+Communicator *JanusFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
   return new JanusCommo(poll);
 }
 

@@ -32,6 +32,7 @@
 #include <atomic>
 #include <cstring>
 #include "../src/mako/rocksdb_persistence.h"
+#include "../src/mako/util.h"
 
 using namespace std;
 using namespace mako;
@@ -48,8 +49,12 @@ void test_basic_persistence() {
 
     auto& persistence = RocksDBPersistence::getInstance();
 
+    // Add username prefix to avoid conflicts when multiple users run on the same server
+    string username = util::get_current_username();
+    string db_path = "/tmp/" + username + "_test_rocksdb";
+
     // Initialize RocksDB with 2 partitions
-    if (!persistence.initialize("/tmp/test_rocksdb", 2, 2)) {
+    if (!persistence.initialize(db_path, 2, 2)) {
         cerr << "Failed to initialize RocksDB!" << endl;
         return;
     }
@@ -80,7 +85,11 @@ void test_concurrent_writes() {
 
     auto& persistence = RocksDBPersistence::getInstance();
 
-    if (!persistence.initialize("/tmp/test_rocksdb_concurrent", 4, 4)) {
+    // Add username prefix to avoid conflicts when multiple users run on the same server
+    string username = util::get_current_username();
+    string db_path = "/tmp/" + username + "_test_rocksdb_concurrent";
+
+    if (!persistence.initialize(db_path, 4, 4)) {
         cerr << "Failed to initialize RocksDB!" << endl;
         return;
     }
@@ -151,7 +160,11 @@ void test_large_data() {
 
     auto& persistence = RocksDBPersistence::getInstance();
 
-    if (!persistence.initialize("/tmp/test_rocksdb_large", 4, 4)) {
+    // Add username prefix to avoid conflicts when multiple users run on the same server
+    string username = util::get_current_username();
+    string db_path = "/tmp/" + username + "_test_rocksdb_large";
+
+    if (!persistence.initialize(db_path, 4, 4)) {
         cerr << "Failed to initialize RocksDB!" << endl;
         return;
     }

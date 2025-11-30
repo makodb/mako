@@ -35,16 +35,16 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  bool IsReady() override {
+  bool IsReady() const override {
     if (timeouted_) {
       // TODO add time out support
       return true;
     }
-    if (Yes()) {
+    if (const_cast<QuorumEvent*>(this)->Yes()) {
 //      Log_debug("voted: %d is equal or greater than quorum: %d",
 //                (int)n_voted_yes_, (int) quorum_);
       return true;
-    } else if (No()) {
+    } else if (const_cast<QuorumEvent*>(this)->No()) {
       return true;
     }
 //    Log_debug("voted: %d is smaller than quorum: %d",

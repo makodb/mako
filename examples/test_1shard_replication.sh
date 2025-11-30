@@ -13,10 +13,10 @@ echo "========================================="
 trd=${1:-6}
 script_name="$(basename "$0")"
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
 rm -f nfs_sync_*
-rm -rf /tmp/mako_rocksdb_shard*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 # Start shard 0 in background
 echo "Starting shard 0..."
@@ -34,8 +34,12 @@ sleep 60
 
 # Kill the processes
 echo "Stopping shards..."
-kill $SHARD0_PID 2>/dev/null
-wait $SHARD0_PID 2>/dev/null
+# Kill all dbtest processes (all 4 instances with different cluster names)
+pkill -9 -f "dbtest.*shard-index 0" 2>/dev/null || true
+sleep 2
+# Original cleanup for good measure
+kill $SHARD0_PID 2>/dev/null || true
+wait $SHARD0_PID 2>/dev/null || true
 
 echo ""
 echo "========================================="

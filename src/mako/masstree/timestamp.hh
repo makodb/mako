@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Timestamp utilities using RDTSC and gettimeofday
+// Provides high-resolution timing for performance measurement
+// SAFETY: Uses inline assembly (rdtsc), system calls
+
 #ifndef TIMESTAMP_HH
 #define TIMESTAMP_HH
 #include "compiler.hh"
@@ -32,12 +36,14 @@
 
 typedef uint64_t kvtimestamp_t;
 
+// @unsafe - reads wall clock without safety guarantees
 inline kvtimestamp_t timestamp() {
     struct timeval tv;
     gettimeofday(&tv, 0);
     return ((kvtimestamp_t) tv.tv_sec << 32) | (unsigned int)tv.tv_usec;
 }
 
+// @safe - pure arithmetic on value types
 inline kvtimestamp_t timestamp_sub(kvtimestamp_t a, kvtimestamp_t b) {
     a -= b;
     if (KVTS_LOWPART(a) > 999999)
@@ -47,12 +53,14 @@ inline kvtimestamp_t timestamp_sub(kvtimestamp_t a, kvtimestamp_t b) {
 
 extern kvtimestamp_t initial_timestamp;
 
+// @unsafe - reads wall clock without safety guarantees
 inline double now() {
     struct timeval tv;
     gettimeofday(&tv, 0);
     return tv.tv_sec + tv.tv_usec / 1000000.0;
 }
 
+// @unsafe - converts double seconds into raw timespec fields
 inline struct timespec &set_timespec(struct timespec &x, double y) {
     double ipart = floor(y);
     x.tv_sec = (long) ipart;

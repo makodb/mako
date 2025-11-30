@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Reference-counted string with shared substrings
+// Provides copy-on-write semantics and efficient substring operations
+// SAFETY: Uses raw pointer rep with memo reference counting
+
 #ifndef LCDF_STRING_HH
 #define LCDF_STRING_HH
 #include "string_base.hh"
@@ -20,6 +24,7 @@
 #include <utility>
 namespace lcdf {
 
+// @unsafe - has mutable field _r for c_str() support
 class String : public String_base<String> {
     struct memo_type;
   public:
@@ -225,6 +230,8 @@ class String : public String_base<String> {
         friend class StringAccum;
     };
 
+    // @unsafe - returns reference to internal representation
+    // @lifetime: (&'a) -> &'a
     const rep_type& internal_rep() const {
         return _r;
     }
@@ -465,6 +472,8 @@ inline String::~String() {
 /** @brief Return a const reference to an empty String.
 
     May be quicker than String::String(). */
+// @unsafe - returns reference to static data
+// @lifetime: () -> &'static
 inline const String& String::make_empty() {
     return reinterpret_cast<const String &>(null_string_rep);
 }
@@ -477,6 +486,8 @@ inline String String::make_uninitialized(int len) {
 }
 
 /** @brief Return a const reference to the string "0". */
+// @unsafe - returns reference to static data
+// @lifetime: () -> &'static
 inline const String& String::make_zero() {
     return reinterpret_cast<const String&>(zero_string_rep);
 }

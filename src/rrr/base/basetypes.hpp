@@ -14,14 +14,43 @@
 
 // External safety annotations for system functions used in this module
 // @external: {
-//   gettimeofday: [safe, (struct timeval*, struct timezone*) -> int]
-//   clock_gettime: [safe, (clockid_t, struct timespec*) -> int]
-//   select: [safe, (int, fd_set*, fd_set*, fd_set*, struct timeval*) -> int]
-//   pthread_self: [safe, () -> pthread_t]
+//   gettimeofday: [unsafe, (struct timeval*, struct timezone*) -> int]
+//   clock_gettime: [unsafe, (clockid_t, struct timespec*) -> int]
+//   select: [unsafe, (int, fd_set*, fd_set*, fd_set*, struct timeval*) -> int]
+//   pthread_self: [unsafe, () -> pthread_t]
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+//   std::mt19937::operator(): [unsafe]
 // }
 // Note: struct types like 'timeval' are not functions - they're filtered out in the AST parser
 
 namespace rrr {
+
+// @unsafe - Wrapper for atomic store to satisfy borrow checker
+template<typename T>
+inline void atomic_store_relaxed(std::atomic<T>& atomic_var, T value) {
+  atomic_var.store(value, std::memory_order_relaxed);
+}
+
+// @unsafe - Wrapper for atomic load to satisfy borrow checker
+template<typename T>
+inline T atomic_load_relaxed(const std::atomic<T>& atomic_var) {
+  return atomic_var.load(std::memory_order_relaxed);
+}
+
+// @unsafe - Wrapper for atomic fetch_add to satisfy borrow checker
+template<typename T>
+inline T atomic_fetch_add_acq_rel(std::atomic<T>& atomic_var, T value) {
+  return atomic_var.fetch_add(value, std::memory_order_acq_rel);
+}
+
+// @unsafe - Wrapper for atomic fetch_sub to satisfy borrow checker
+template<typename T>
+inline T atomic_fetch_sub_acq_rel(std::atomic<T>& atomic_var, T value) {
+  return atomic_var.fetch_sub(value, std::memory_order_acq_rel);
+}
 
 typedef int8_t i8;
 typedef int16_t i16;
@@ -54,9 +83,11 @@ class v32 {
     i32 val_;
 public:
     v32(i32 v = 0): val_(v) { }
+    // @safe - Simple assignment
     void set(i32 v) {
         val_ = v;
     }
+    // @safe - Simple const getter
     i32 get() const {
         return val_;
     }
@@ -69,10 +100,13 @@ public:
 class v64 {
     i64 val_;
 public:
+    // @safe - Simple value initialization
     v64(i64 v = 0): val_(v) { }
+    // @safe - Simple assignment
     void set(i64 v) {
         val_ = v;
     }
+    // @safe - Simple const getter
     i64 get() const {
         return val_;
     }
@@ -113,19 +147,21 @@ protected:
     virtual ~RefCounted() = 0;
 public:
     RefCounted(): refcnt_(1) {}
-    // @safe - Atomic read of reference count
+    // SAFETY: Atomic read of reference count, thread-safe
+    // @unsafe
     int ref_count() const {
-        return refcnt_.load(std::memory_order_relaxed);
+        return atomic_load_relaxed(refcnt_);
     }
-    // @safe - Atomic increment of reference count
+    // SAFETY: Atomic increment of reference count, thread-safe
+    // @unsafe
     RefCounted* ref_copy() {
-        refcnt_.fetch_add(1, std::memory_order_acq_rel);
+        atomic_fetch_add_acq_rel(refcnt_, 1);
         return this;
     }
-    // @unsafe - May delete this object
     // SAFETY: Thread-safe via atomic; deletes when refcount reaches 0
+    // @unsafe
     int release() {
-        int r = refcnt_.fetch_sub(1, std::memory_order_acq_rel) - 1;
+        int r = atomic_fetch_sub_acq_rel(refcnt_, 1) - 1;
         verify(r >= 0);
         if (r == 0) {
             delete this;
@@ -135,32 +171,38 @@ public:
 };
 inline RefCounted::~RefCounted() {}
 
-// @safe
+// @unsafe - All methods call external unsafe atomic operations
+// SAFETY: Thread-safe atomic counter
 class Counter: public NoCopy {
     std::atomic<i64> next_;
 public:
-    // @safe
+    // @safe - Constructor doesn't call external functions
     Counter(i64 start = 0) : next_(start) { }
-    // @safe
+    // SAFETY: Atomic read, thread-safe
+    // @unsafe
     i64 peek_next() const {
-        return next_.load(std::memory_order_relaxed);
+        return atomic_load_relaxed(next_);
     }
-    // @safe
+    // SAFETY: Atomic increment, thread-safe
+    // @unsafe
     i64 next(i64 step = 1) {
-        return next_.fetch_add(step, std::memory_order_acq_rel);
+        return atomic_fetch_add_acq_rel(next_, step);
     }
-    // @safe
+    // SAFETY: Atomic write, thread-safe
+    // @unsafe
     void reset(i64 start = 0) {
-        next_.store(start, std::memory_order_relaxed);
+        atomic_store_relaxed(next_, start);
     }
 };
 
-// @safe - Time utilities using system calls marked as safe in external annotations
+// @unsafe - Time utilities using external unsafe system calls
+// SAFETY: clock_gettime and select are POSIX-compliant system calls
 class Time {
 public:
     static const uint64_t RRR_USEC_PER_SEC = 1000000;
 
-    // @safe - Uses clock_gettime which is marked safe in external annotations
+    // SAFETY: Properly initializes timespec struct, POSIX-compliant
+    // @unsafe
     static uint64_t now(bool accurate = false) {
       struct timespec spec;
 #ifdef __APPLE__
@@ -175,7 +217,8 @@ public:
       return spec.tv_sec * RRR_USEC_PER_SEC + spec.tv_nsec/1000;
     }
 
-    // @safe - Uses select which is marked safe in external annotations
+    // SAFETY: Properly initializes timeval struct, POSIX-compliant
+    // @unsafe
     static void sleep(uint64_t t) {
         struct timeval tv;
         tv.tv_usec = t % RRR_USEC_PER_SEC;
@@ -202,21 +245,25 @@ private:
     struct timeval end_;
 };
 
-// @safe - Thread-local random number generator
+// @unsafe - Thread-local random number generator calling external unsafe functions
+// SAFETY: Uses std::mt19937 which is thread-safe per instance
 class Rand: public NoCopy {
     std::mt19937 rand_;
 public:
-    // @safe - Seeds using current time and thread ID
+    // @safe - Constructor seeds the generator
     Rand();
-    // @safe - Returns next random number
+    // SAFETY: Thread-safe, each instance is independent
+    // @unsafe
     std::mt19937::result_type next() {
         return rand_();
     }
-    // @safe - Returns random number in range [lower, upper)
+    // SAFETY: Thread-safe, each instance is independent
+    // @unsafe
     std::mt19937::result_type next(int lower, int upper) {
         return lower + rand_() % (upper - lower);
     }
-    // @safe - Operator() for STL compatibility
+    // SAFETY: Thread-safe, each instance is independent
+    // @unsafe
     std::mt19937::result_type operator() () {
         return rand_();
     }
@@ -259,7 +306,7 @@ class MergedEnumerator: public Enumerator<T> {
     std::priority_queue<merge_helper, std::vector<merge_helper>> q_;
 
 public:
-    // @unsafe - Takes non-owning raw pointer
+    // @unsafe
     void add_source(Enumerator<T>* src) {
         if (src && src->has_next()) {
             q_.push(merge_helper(src->next(), src));

@@ -93,9 +93,9 @@ class Communicator {
  public:
   const int CONNECT_TIMEOUT_MS = 120*1000;
   const int CONNECT_SLEEP_MS = 1000;
-  rusty::Arc<rrr::PollThreadWorker> rpc_poll_;
+  rusty::Option<rusty::Arc<rrr::PollThread>> rpc_poll_;
   locid_t loc_id_ = -1;
-  map<siteid_t, std::shared_ptr<rrr::Client>> rpc_clients_{};
+  map<siteid_t, rusty::Arc<rrr::Client>> rpc_clients_{};
   map<siteid_t, ClassicProxy *> rpc_proxies_{};
   map<parid_t, vector<SiteProxyPair>> rpc_par_proxies_{};
   map<parid_t, SiteProxyPair> leader_cache_ = {};
@@ -103,7 +103,7 @@ class Communicator {
   std::atomic_bool client_leaders_connected_;
   std::vector<std::thread> threads;
 
-  Communicator(rusty::Arc<PollThreadWorker> poll_mgr = rusty::Arc<PollThreadWorker>());
+  Communicator(rusty::Option<rusty::Arc<PollThread>> poll_mgr = rusty::None);
   virtual ~Communicator();
 
   SiteProxyPair RandomProxyForPartition(parid_t partition_id) const;
@@ -126,7 +126,7 @@ class Communicator {
 
   void SendStart(SimpleCommand& cmd,
                  int32_t output_size,
-                 std::function<void(Future *fu)> &callback);
+                 std::function<void(rusty::Arc<Future> fu)> &callback);
   void BroadcastDispatch(shared_ptr<vector<shared_ptr<SimpleCommand>>> vec_piece_data,
                          Coordinator *coo,
                          const std::function<void(int res, TxnOutput &)> &) ;

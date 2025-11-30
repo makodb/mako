@@ -78,9 +78,9 @@ TEST(CoroutineTest, yield) {
   int x = 0;
   auto coro1 = Coroutine::CreateRun([&x] () {
     x = 1;
-    Coroutine::CurrentCoroutine()->Yield();
+    Coroutine::CurrentCoroutine().unwrap()->Yield();
     x = 2;
-    Coroutine::CurrentCoroutine()->Yield();
+    Coroutine::CurrentCoroutine().unwrap()->Yield();
     x = 3;
   });
   ASSERT_EQ(x, 1);
@@ -90,18 +90,100 @@ TEST(CoroutineTest, yield) {
   ASSERT_EQ(x, 3);
 }
 
-shared_ptr<Coroutine> xxx() {
+rusty::Rc<Coroutine> xxx() {
     int x;
     auto coro1 = Coroutine::CreateRun([&x] () {
         x = 1;
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
     });
     return coro1;
 }
 
 TEST(CoroutineTest, destruct) {
-    shared_ptr<Coroutine> c = xxx();
+    rusty::Rc<Coroutine> c = xxx();
     c->Continue();
+}
+
+// Test destroying a paused coroutine (one that has yielded but not finished)
+TEST(CoroutineTest, destroy_paused_coroutine) {
+    std::cout << "=== Testing destruction of paused coroutine ===" << std::endl;
+
+    int destructor_called = 0;
+    int step = 0;
+
+    {
+        auto coro = Coroutine::CreateRun([&step, &destructor_called] () {
+            std::cout << "Coroutine: Starting execution, step=" << step << std::endl;
+            step = 1;
+
+            std::cout << "Coroutine: About to yield (step=1)" << std::endl;
+            Coroutine::CurrentCoroutine().unwrap()->Yield();
+
+            // This should NOT be reached if we destroy the coroutine
+            std::cout << "Coroutine: Resumed after first yield, step=" << step << std::endl;
+            step = 2;
+
+            std::cout << "Coroutine: About to yield again (step=2)" << std::endl;
+            Coroutine::CurrentCoroutine().unwrap()->Yield();
+
+            // This should definitely NOT be reached
+            std::cout << "Coroutine: Final execution, step=" << step << std::endl;
+            step = 3;
+            destructor_called = 1;
+        });
+
+        ASSERT_EQ(step, 1);  // Coroutine should have run until first yield
+        std::cout << "Main: Coroutine yielded with step=" << step << std::endl;
+
+        // Now we exit the scope WITHOUT calling Continue()
+        // The coroutine is still paused (has not finished execution)
+        std::cout << "Main: About to destroy paused coroutine" << std::endl;
+    }
+
+    // After scope exit, the Rc<Coroutine> is destroyed
+    std::cout << "Main: Coroutine destroyed, step=" << step << std::endl;
+    std::cout << "Main: destructor_called=" << destructor_called << std::endl;
+
+    // The coroutine should have been destroyed while paused
+    ASSERT_EQ(step, 1);  // Should still be 1, never reached step 2 or 3
+    ASSERT_EQ(destructor_called, 0);  // Destructor logic never ran
+
+    std::cout << "=== Test completed successfully ===" << std::endl;
+}
+
+// Test destroying a paused coroutine that allocates resources
+TEST(CoroutineTest, destroy_paused_coroutine_with_cleanup) {
+    std::cout << "=== Testing destruction of paused coroutine with cleanup ===" << std::endl;
+
+    bool* heap_flag = new bool(false);
+    int cleanup_step = 0;
+
+    {
+        auto coro = Coroutine::CreateRun([&cleanup_step, heap_flag] () {
+            std::cout << "Coroutine: Allocating local resource" << std::endl;
+            int local_var = 42;
+            cleanup_step = 1;
+
+            std::cout << "Coroutine: local_var=" << local_var << ", yielding..." << std::endl;
+            Coroutine::CurrentCoroutine().unwrap()->Yield();
+
+            // If this runs, it means the coroutine was properly resumed
+            std::cout << "Coroutine: Resumed! Setting heap flag" << std::endl;
+            *heap_flag = true;
+            cleanup_step = 2;
+        });
+
+        ASSERT_EQ(cleanup_step, 1);
+        ASSERT_FALSE(*heap_flag);
+        std::cout << "Main: Destroying paused coroutine with local_var still on stack" << std::endl;
+    }
+
+    std::cout << "Main: After destruction, cleanup_step=" << cleanup_step << std::endl;
+    ASSERT_EQ(cleanup_step, 1);  // Should not have progressed
+    ASSERT_FALSE(*heap_flag);     // Should not have been set
+
+    delete heap_flag;
+    std::cout << "=== Test completed successfully ===" << std::endl;
 }
 
 TEST(CoroutineTest, wait_die_lock) {
@@ -109,7 +191,7 @@ TEST(CoroutineTest, wait_die_lock) {
   auto coro1 = Coroutine::CreateRun([&a] () {
     uint64_t req_id = a.Lock(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id, true);
-    Coroutine::CurrentCoroutine()->Yield();
+    Coroutine::CurrentCoroutine().unwrap()->Yield();
     Log_debug("aborting lock from coroutine 1.");
     a.abort(req_id);
   });

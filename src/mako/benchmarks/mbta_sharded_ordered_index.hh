@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "abstract_ordered_index.h"
+#include "benchmarks/benchmark_config.h"
 
 class mbta_sharded_ordered_index {
 public:
@@ -113,6 +114,9 @@ public:
         size_t shard_count,
         const std::function<abstract_ordered_index *(size_t)> &open_fn);
 
+  // Return the shard ID for a given key (for cross-shard detection)
+  int check_shard(const lcdf::Str &key) const;
+
 private:
   static size_t hash_key(const lcdf::Str &key);
 
@@ -172,8 +176,13 @@ inline void mbta_sharded_ordered_index::scan(
     const std::string *end_key,
     abstract_ordered_index::scan_callback &callback,
     str_arena *arena) {
-  for (auto *shard : shard_tables_) {
-    shard->scan(txn, start_key, end_key, callback, arena);
+  for (int i=0; i<shard_tables_.size(); i++) {
+    // TODO: Please note that, we don't support scan across multiple tables and multiple shards
+    //       To support it, we should implement a scanRemoteAll RPCs
+    if (i==BenchmarkConfig::getInstance().getShardIndex()) {
+      auto *shard = shard_tables_[i];
+      shard->scan(txn, start_key, end_key, callback, arena);
+    }
   }
 }
 
@@ -183,8 +192,13 @@ inline void mbta_sharded_ordered_index::rscan(
     const std::string *end_key,
     abstract_ordered_index::scan_callback &callback,
     str_arena *arena) {
-  for (auto *shard : shard_tables_) {
-    shard->rscan(txn, start_key, end_key, callback, arena);
+  for (int i=0; i<shard_tables_.size(); i++) {
+    // TODO: Please note that, we don't support scan across multiple tables and multiple shards
+    //       To support it, we should implement a scanRemoteAll RPCs
+    if (i==BenchmarkConfig::getInstance().getShardIndex()) {
+      auto *shard = shard_tables_[i];
+      shard->rscan(txn, start_key, end_key, callback, arena);
+    }
   }
 }
 
@@ -245,6 +259,14 @@ mbta_sharded_ordered_index::pick_shard(const lcdf::Str &key) const {
   }
   size_t shard = hash_key(key) % shard_tables_.size();
   return shard_tables_[shard];
+}
+
+inline int
+mbta_sharded_ordered_index::check_shard(const lcdf::Str &key) const {
+  if (shard_tables_.size() == 1) {
+    return 0;
+  }
+  return static_cast<int>(hash_key(key) % shard_tables_.size());
 }
 
 #endif  // MAKO_BENCHMARKS_MBTA_SHARDED_ORDERED_INDEX_HH

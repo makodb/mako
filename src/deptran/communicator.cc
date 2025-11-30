@@ -10,13 +10,13 @@
 
 namespace janus {
 
-Communicator::Communicator(rusty::Arc<PollThreadWorker> poll_thread_worker) {
+Communicator::Communicator(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   Log_info("setup paxos communicator");
   vector<string> addrs;
-  if (!poll_thread_worker)
-    rpc_poll_ = PollThreadWorker::create();
+  if (poll_thread_worker.is_none())
+    rpc_poll_ = rusty::Some(PollThread::create());
   else
-    rpc_poll_ = poll_thread_worker;
+    rpc_poll_ = rusty::Some(poll_thread_worker.as_ref().unwrap().clone());
   auto config = Config::GetConfig();
   // create more client per server
   int proxy_batch_size = 1 ;
@@ -84,9 +84,9 @@ Communicator::~Communicator() {
   }
   rpc_clients_.clear();
 
-  // Shutdown PollThreadWorker if we own it
-  if (rpc_poll_) {
-    rpc_poll_->shutdown();
+  // Shutdown PollThread if we own it
+  if (rpc_poll_.is_some()) {
+    rpc_poll_.as_ref().unwrap()->shutdown();
   }
 }
 
@@ -138,14 +138,15 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
   snprintf(addr, sizeof(addr), "%s:%d", site.host.c_str(), site.port);
 
   auto start = std::chrono::steady_clock::now();
-  auto rpc_cli = std::make_shared<rrr::Client>(rpc_poll_);
+  auto rpc_cli = rrr::Client::create(rpc_poll_.as_ref().unwrap());
   double elapsed;
   int attempt = 0;
   do {
     Log_info("connect to client site: %s (attempt %d)", addr, attempt++);
     auto connect_result = rpc_cli->connect(addr);
     if (connect_result == SUCCESS) {
-      ClientControlProxy* rpc_proxy = new ClientControlProxy(rpc_cli.get());
+      // Arc::get() returns const T*, but proxy doesn't mutate client
+      ClientControlProxy* rpc_proxy = new ClientControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
       Log_debug("connect to client site: %s success!", addr);
       return std::make_pair(SUCCESS, rpc_proxy);
@@ -158,7 +159,7 @@ Communicator::ConnectToClientSite(Config::SiteInfo& site,
   } while (elapsed < timeout.count());
   Log_info("timeout connecting to client %s", addr);
   rpc_cli->close();
-  // shared_ptr handles cleanup automatically
+  // Arc handles cleanup automatically
   return std::make_pair(FAILURE, nullptr);
 }
 
@@ -167,14 +168,15 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
                             std::chrono::milliseconds timeout) {
   string addr = site.GetHostAddr();
   auto start = std::chrono::steady_clock::now();
-  auto rpc_cli = std::make_shared<rrr::Client>(rpc_poll_);
+  auto rpc_cli = rrr::Client::create(rpc_poll_.as_ref().unwrap());
   double elapsed;
   int attempt = 0;
   do {
     Log_info("connect to site: %s (attempt %d)", addr.c_str(), attempt++);
     auto connect_result = rpc_cli->connect(addr.c_str());
     if (connect_result == SUCCESS) {
-      ClassicProxy* rpc_proxy = new ClassicProxy(rpc_cli.get());
+      // Arc::get() returns const T*, but proxy doesn't mutate client
+      ClassicProxy* rpc_proxy = new ClassicProxy(const_cast<rrr::Client*>(rpc_cli.get()));
       rpc_clients_.insert(std::make_pair(site.id, rpc_cli));
       rpc_proxies_.insert(std::make_pair(site.id, rpc_proxy));
       Log_debug("connect to site: %s success!", addr.c_str());
@@ -188,7 +190,7 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
   } while (elapsed < timeout.count());
   Log_info("timeout connecting to %s", addr.c_str());
   rpc_cli->close();
-  // shared_ptr handles cleanup automatically
+  // Arc handles cleanup automatically
   return std::make_pair(FAILURE, nullptr);
 }
 
@@ -212,7 +214,7 @@ void Communicator::BroadcastDispatch(
   auto par_id = sp_vec_piece->at(0)->PartitionId();
   rrr::FutureAttr fuattr;
   fuattr.callback =
-      [coo, this, callback](Future* fu) {
+      [coo, this, callback](rusty::Arc<Future> fu) {
         int32_t ret;
         TxnOutput outputs;
         fu->get_reply() >> ret >> outputs;
@@ -224,28 +226,30 @@ void Communicator::BroadcastDispatch(
   auto proxy = pair_leader_proxy.second;
   shared_ptr<VecPieceData> sp_vpd(new VecPieceData);
   sp_vpd->sp_vec_piece_data_ = sp_vec_piece;
-  MarshallDeputy md(sp_vpd); // ????
+  // Use shared_ptr directly for MarshallDeputy
+  MarshallDeputy md(sp_vpd);
   auto future = proxy->async_Dispatch(cmd_id, md, fuattr);
-  Future::safe_release(future);
+  // Arc auto-released (fire-and-forget pattern)
   // FIXME fix this, this cause occ and perhaps 2pl to fail
   for (auto& pair : rpc_par_proxies_[par_id]) {
     if (pair.first != pair_leader_proxy.first) {
       rrr::FutureAttr fuattr;
       fuattr.callback =
-          [coo, this, callback](Future* fu) {
+          [coo, this, callback](rusty::Arc<Future> fu) {
             int32_t ret;
             TxnOutput outputs;
             fu->get_reply() >> ret >> outputs;
             // do nothing
           };
-      Future::safe_release(pair.second->async_Dispatch(cmd_id, md, fuattr));
+      auto fu_result = pair.second->async_Dispatch(cmd_id, md, fuattr);
+      // Arc auto-released (fire-and-forget pattern)
     }
   }
 }
 
 void Communicator::SendStart(SimpleCommand& cmd,
                              int32_t output_size,
-                             std::function<void(Future* fu)>& callback) {
+                             std::function<void(rusty::Arc<Future> fu)>& callback) {
   verify(0);
 }
 
@@ -254,8 +258,8 @@ void Communicator::SendPrepare(groupid_t gid,
                                std::vector<int32_t>& sids,
                                const function<void(int)>& callback) {
   FutureAttr fuattr;
-  std::function<void(Future*)> cb =
-      [this, callback](Future* fu) {
+  std::function<void(rusty::Arc<Future>)> cb =
+      [this, callback](rusty::Arc<Future> fu) {
         int res;
         fu->get_reply() >> res;
         callback(res);
@@ -266,7 +270,8 @@ void Communicator::SendPrepare(groupid_t gid,
             sids.size(),
             gid,
             tid);
-  Future::safe_release(proxy->async_Prepare(tid, sids, fuattr));
+  auto fu_result = proxy->async_Prepare(tid, sids, fuattr);
+  // Arc auto-released (fire-and-forget pattern)
 }
 
 void Communicator::___LogSent(parid_t pid, txnid_t tid) {
@@ -287,10 +292,11 @@ void Communicator::SendCommit(parid_t pid,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = [callback](Future*) { callback(); };
+  fuattr.callback = [callback](rusty::Arc<Future>) { callback(); };
   ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   Log_debug("SendCommit to %ld tid:%ld\n", pid, tid);
-  Future::safe_release(proxy->async_Commit(tid, fuattr));
+  auto fu_result = proxy->async_Commit(tid, fuattr);
+  // Arc auto-released (fire-and-forget pattern)
 }
 
 void Communicator::SendAbort(parid_t pid, txnid_t tid,
@@ -299,10 +305,11 @@ void Communicator::SendAbort(parid_t pid, txnid_t tid,
   ___LogSent(pid, tid);
 #endif
   FutureAttr fuattr;
-  fuattr.callback = [callback](Future*) { callback(); };
+  fuattr.callback = [callback](rusty::Arc<Future>) { callback(); };
   ClassicProxy* proxy = LeaderProxyForPartition(pid).second;
   Log_debug("SendAbort to %ld tid:%ld\n", pid, tid);
-  Future::safe_release(proxy->async_Abort(tid, fuattr));
+  auto fu_result = proxy->async_Abort(tid, fuattr);
+  // Arc auto-released (fire-and-forget pattern)
 }
 
 void Communicator::SendUpgradeEpoch(epoch_t curr_epoch,
@@ -315,14 +322,15 @@ void Communicator::SendUpgradeEpoch(epoch_t curr_epoch,
     for (auto& pair: proxies) {
       FutureAttr fuattr;
       auto& site_id = pair.first;
-      function<void(Future*)> cb = [callback, par_id, site_id](Future* fu) {
+      function<void(rusty::Arc<Future>)> cb = [callback, par_id, site_id](rusty::Arc<Future> fu) {
         int32_t res;
         fu->get_reply() >> res;
         callback(par_id, site_id, res);
       };
       fuattr.callback = cb;
       auto proxy = (ClassicProxy*) pair.second;
-      Future::safe_release(proxy->async_UpgradeEpoch(curr_epoch, fuattr));
+      auto fu_result = proxy->async_UpgradeEpoch(curr_epoch, fuattr);
+      // Arc auto-released (fire-and-forget pattern)
     }
   }
 }
@@ -333,9 +341,10 @@ void Communicator::SendTruncateEpoch(epoch_t old_epoch) {
     auto& proxies = pair.second;
     for (auto& pair: proxies) {
       FutureAttr fuattr;
-      fuattr.callback = [](Future*) {};
+      fuattr.callback = [](rusty::Arc<Future>) {};
       auto proxy = (ClassicProxy*) pair.second;
-      Future::safe_release(proxy->async_TruncateEpoch(old_epoch));
+      auto fu_result = proxy->async_TruncateEpoch(old_epoch);
+      // Arc auto-released (fire-and-forget pattern)
     }
   }
 }
@@ -359,13 +368,13 @@ void Communicator::SendForwardTxnRequest(
   dispatch_request.tx_type = req.tx_type_;
 
   FutureAttr future;
-  future.callback = [callback](Future* f) {
+  future.callback = [callback](rusty::Arc<Future> f) {
     TxReply reply;
     f->get_reply() >> reply;
     callback(reply);
   };
-  Future::safe_release(leader_proxy->async_DispatchTxn(dispatch_request,
-                                                       future));
+  auto fu_result = leader_proxy->async_DispatchTxn(dispatch_request, future);
+  // Arc auto-released (fire-and-forget pattern)
 }
 
 vector<shared_ptr<MessageEvent>>
@@ -383,13 +392,12 @@ Communicator::BroadcastMessage(shardid_t shard_id,
     FutureAttr fuattr;
     auto msg_ev = std::make_shared<MessageEvent>(shard_id, site_id);
     events.push_back(msg_ev);
-    fuattr.callback = [msg_ev] (Future* fu) {
+    fuattr.callback = [msg_ev] (rusty::Arc<Future> fu) {
       auto& marshal = fu->get_reply();
       marshal >> msg_ev->msg_;
       msg_ev->Set(1);
     };
-    Future* f = nullptr;
-    Future::safe_release(f);
+    // TODO: Actually send the RPC (currently this function is not implemented)
   }
   return events;
 }

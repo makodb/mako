@@ -68,7 +68,7 @@ TxLogServer *MultiPaxosFrame::CreateScheduler() {
   return sch;
 }
 
-Communicator *MultiPaxosFrame::CreateCommo(rusty::Arc<PollThreadWorker> poll) {
+Communicator *MultiPaxosFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
   // We only have 1 instance of MultiPaxosFrame object that is returned from
   // GetFrame method. MultiPaxosCommo currently seems ok to share among the
   // clients of this method.
@@ -81,7 +81,7 @@ Communicator *MultiPaxosFrame::CreateCommo(rusty::Arc<PollThreadWorker> poll) {
 vector<rrr::Service *>
 MultiPaxosFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
-                                   rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
+                                   rusty::Arc<rrr::PollThread> poll_thread_worker,
                                    ServerControlServiceImpl *scsi) {
   auto config = Config::GetConfig();
   auto result = std::vector<Service *>();

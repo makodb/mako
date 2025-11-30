@@ -37,8 +37,8 @@ using std::function;
 
 void Event::Wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
-  verify(Reactor::sp_reactor_th_);
-  verify(Reactor::sp_reactor_th_->thread_id_ == std::this_thread::get_id());
+  verify(Reactor::sp_reactor_th_.is_some());
+  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_ == std::this_thread::get_id());
   if (status_ == DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_ == INIT);
   if (IsReady()) {
@@ -54,10 +54,14 @@ void Event::Wait(uint64_t timeout) {
     // the event may be created in a different coroutine.
     // this value is set when wait is called.
     // for now only one coroutine can wait on an event.
-    auto sp_coro = Coroutine::CurrentCoroutine();
-    verify(sp_coro);
-    auto& waiting_events =
-          Reactor::GetReactor()->waiting_events_;  // Timeout???
+    auto sp_coro_opt = Coroutine::CurrentCoroutine();
+    verify(sp_coro_opt.is_some());  // Can't wait outside a coroutine
+    auto sp_coro = sp_coro_opt.unwrap();
+
+    // Rc gives const access, use const_cast for mutation (safe: thread-local)
+    auto reactor_rc = Reactor::GetReactor();
+    auto& reactor = const_cast<Reactor&>(*reactor_rc);
+    auto& waiting_events = reactor.waiting_events_;
     waiting_events.push_back(shared_from_this());
 
     if (timeout > 0) {
@@ -65,12 +69,12 @@ void Event::Wait(uint64_t timeout) {
       wakeup_time_ = now + timeout;
       //Log_info("WAITING: %p", shared_from_this());
       // Log_info("wake up %lld, now %lld", wakeup_time_, now);
-      auto& timeout_events = Reactor::GetReactor()->timeout_events_;
+      auto& timeout_events = reactor.timeout_events_;
       timeout_events.push_back(shared_from_this());
     }
     // TODO optimize timeout_events, sort by wakeup time.
 //      auto it = timeout_events.end();
-//      timeout_events.push_back(shared_from_this());
+//      timeout_events.push_back(rc_this_event);
 //      while (it != events.begin()) {
 //        it--;
 //        auto& it_event = *it;
@@ -79,7 +83,7 @@ void Event::Wait(uint64_t timeout) {
 //          break;
 //        }
 //      }
-//      events.insert(it, shared_from_this());
+//      events.insert(it, rc_this_event);
     wp_coro_ = sp_coro;
     status_ = WAIT;
     sp_coro->Yield();
@@ -93,8 +97,8 @@ bool Event::Test() {
       // wait has not been called, do nothing until wait happens.
       status_ = DONE;
     } else if (status_ == WAIT) {
-      auto sp_coro = wp_coro_.lock();
-      verify(sp_coro);
+      auto option_coro = wp_coro_.upgrade();
+      verify(option_coro.is_some());
       verify(status_ != DEBUG);
       status_ = READY;
     } else if (status_ == READY) {
@@ -111,9 +115,13 @@ bool Event::Test() {
 }
 
 Event::Event() {
-  auto coro = Coroutine::CurrentCoroutine();
-//  verify(coro);
-  wp_coro_ = coro;
+  auto coro_opt = Coroutine::CurrentCoroutine();
+  // It's OK if no coroutine is running - event might be created outside a coroutine
+  // and Wait() called later from within one
+  if (coro_opt.is_some()) {
+    wp_coro_ = coro_opt.unwrap();
+  }
+  // Otherwise wp_coro_ stays as default empty weak pointer
 }
 
 bool IntEvent::TestTrigger() {

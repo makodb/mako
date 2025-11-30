@@ -14,40 +14,83 @@ echo "========================================="
 #rm -f shard0*.log shard1*.log
 rm -f nfs_sync_*
 rm -f simple-shard0*.log simple-shard1*.log
-rm -rf /tmp/mako_rocksdb_shard*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+
+trd=6
+script_name="$(basename "$0")"
+
+# Determine transport type and create unique log prefix
+transport="${MAKO_TRANSPORT:-rrr}"
+log_prefix="${script_name}_${transport}"
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
-trd=6
-nohup bash bash/shard.sh 2 0 $trd localhost 0 1 > shard0-localhost.log 2>&1 &
-nohup bash bash/shard.sh 2 0 $trd learner 0 1 > shard0-learner.log 2>&1 &
-nohup bash bash/shard.sh 2 0 $trd p2 0 1 > shard0-p2.log 2>&1 &
+nohup bash bash/shard.sh 2 0 $trd localhost 0 1 > ${log_prefix}_shard0-localhost.log 2>&1 &
+SHARD0_LOCALHOST_PID=$!
+nohup bash bash/shard.sh 2 0 $trd learner 0 1 > ${log_prefix}_shard0-learner.log 2>&1 &
+SHARD0_LEARNER_PID=$!
+nohup bash bash/shard.sh 2 0 $trd p2 0 1 > ${log_prefix}_shard0-p2.log 2>&1 &
+SHARD0_P2_PID=$!
 sleep 1
-nohup bash bash/shard.sh 2 0 $trd p1 0 1 > shard0-p1.log 2>&1 &
-SHARD0_PID=$!
+nohup bash bash/shard.sh 2 0 $trd p1 0 1 > ${log_prefix}_shard0-p1.log 2>&1 &
+SHARD0_P1_PID=$!
 
 sleep 2
 
 # Start shard 1 in background
 echo "Starting shard 1..."
-nohup bash bash/shard.sh 2 1 $trd localhost 0 1 > shard1-localhost.log 2>&1 &
-nohup bash bash/shard.sh 2 1 $trd learner 0 1 > shard1-learner.log 2>&1 &
-nohup bash bash/shard.sh 2 1 $trd p2 0 1 > shard1-p2.log 2>&1 &
+nohup bash bash/shard.sh 2 1 $trd localhost 0 1 > ${log_prefix}_shard1-localhost.log 2>&1 &
+SHARD1_LOCALHOST_PID=$!
+nohup bash bash/shard.sh 2 1 $trd learner 0 1 > ${log_prefix}_shard1-learner.log 2>&1 &
+SHARD1_LEARNER_PID=$!
+nohup bash bash/shard.sh 2 1 $trd p2 0 1 > ${log_prefix}_shard1-p2.log 2>&1 &
+SHARD1_P2_PID=$!
 sleep 1
-nohup bash bash/shard.sh 2 1 $trd p1 0 1 > shard1-p1.log 2>&1 &
-SHARD1_PID=$!
+nohup bash bash/shard.sh 2 1 $trd p1 0 1 > ${log_prefix}_shard1-p1.log 2>&1 &
+SHARD1_P1_PID=$!
 
 # Wait for experiments to run
 echo "Running experiments for 30 seconds..."
-sleep 60
+sleep 70
 
-# Kill the processes
+# Kill the processes - FORCE KILL ALL
 echo "Stopping shards..."
-kill $SHARD0_PID $SHARD1_PID 2>/dev/null
-wait $SHARD0_PID $SHARD1_PID 2>/dev/null
+
+# First, kill the parent bash scripts to prevent them from respawning dbtest
+pkill -9 -f "bash/shard.sh" 2>/dev/null || true
+
+# Kill all dbtest processes immediately with SIGKILL
+pkill -9 dbtest 2>/dev/null || true
+killall -9 dbtest 2>/dev/null || true
+
+# Wait for OS to clean up
+sleep 2
+
+# Check for and kill any remaining processes including zombies
+remaining=$(ps aux | grep "dbtest" | grep -v grep | wc -l)
+if [ "$remaining" -gt 0 ]; then
+    echo "WARNING: $remaining dbtest processes still present after kill attempt"
+    ps aux | grep "dbtest" | grep -v grep
+
+    # Get PIDs and kill individually
+    pids=$(ps aux | grep "dbtest" | grep -v grep | awk '{print $2}')
+    for pid in $pids; do
+        echo "Force killing PID $pid"
+        kill -9 $pid 2>/dev/null || true
+    done
+
+    sleep 1
+fi
+
+# Final verification - reap zombie processes by explicitly waiting on child PIDs
+# This ensures zombie processes are reaped by their parent (this script)
+for pid in $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID \
+           $SHARD1_LOCALHOST_PID $SHARD1_LEARNER_PID $SHARD1_P2_PID $SHARD1_P1_PID; do
+    wait $pid 2>/dev/null || true
+done
 
 echo ""
 echo "========================================="
@@ -58,11 +101,11 @@ failed=0
 
 # Check each shard's output
 for i in 0 1; do
-    log="shard${i}-localhost.log"
+    log="${log_prefix}_shard${i}-localhost.log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
-    
+
     if [ ! -f "$log" ]; then
         echo "  ✗ Log file not found"
         failed=1
@@ -116,11 +159,10 @@ else
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check shard0-localhost.log and shard1-localhost.log for details"
-    tail -10 shard0-localhost.log 
-    tail -10 shard1-localhost.log
+    echo "Check ${log_prefix}_shard*-localhost.log for details"
+    tail -10 ${log_prefix}_shard0-localhost.log
+    tail -10 ${log_prefix}_shard1-localhost.log
     exit 1
 fi
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null

@@ -142,6 +142,7 @@ struct txn_btree_ {
     }
 
     // input [buf, buf+sz) is old value
+    // @unsafe - copies raw bytes into caller-managed buffer
     inline void
     operator()(uint8_t *buf, size_t sz)
     {
@@ -153,6 +154,7 @@ struct txn_btree_ {
     const std::string *v;
   };
 
+  // @unsafe - writes tuple bytes directly into raw buffer using NDB_MEMCPY
   static size_t
   tuple_writer(dbtuple::TupleWriterMode mode, const void *v, uint8_t *p, size_t sz)
   {

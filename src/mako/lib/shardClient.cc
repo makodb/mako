@@ -48,9 +48,12 @@ namespace mako
     }
 
     void ShardClient::stop() {
-        FastTransport *ftport= (FastTransport *)transport;
-        ftport->Stop();
+        if (stopped) {
+            return;
+        }
         stopped = true;
+        auto *ftport = static_cast<FastTransport *>(transport);
+        ftport->Stop();
     }
 
     void ShardClient::setBreakTimeout(bool bt=false) {
@@ -66,6 +69,7 @@ namespace mako
     bool ShardClient::getBreakTimeout() {
         return isBreakTimeout;
     }
+
 
     void ShardClient::GetCallback(char *respBuf) {
         /* Replies back from a shard. */

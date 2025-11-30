@@ -5,16 +5,32 @@
 #include "reactor/event.h"
 #include "reactor/reactor.h"
 
+// External safety annotations for atomic operations and STL functions
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+//   std::map::erase: [unsafe]
+//   std::list::erase: [unsafe]
+//   std::list::emplace_back: [unsafe]
+//   std::vector::push_back: [unsafe]
+//   std::function::function: [unsafe]
+// }
+
+
 
 namespace rrr {
 
 
+// @unsafe - Creates std::function objects from lambdas
 uint64_t ALock::Lock(uint64_t owner,
                      type_t type,
                      uint64_t priority) {
 
   IntEvent& proceed = Reactor::CreateEvent<IntEvent>(); // init 0, 1 as ready
   uint64_t ret_id = 0;
+  // @unsafe {
   std::function<void(uint64_t)> _yes_callback
       = [&proceed, &ret_id](uint64_t id) {
         ret_id = id;
@@ -30,6 +46,7 @@ uint64_t ALock::Lock(uint64_t owner,
 //        proceed.Set(1); // TODO why this caused problem???
         return 0;
       };
+  // }
   vlock(owner,
         _yes_callback,
         _no_callback,
@@ -44,6 +61,7 @@ void ALock::DisableWound(uint64_t lock_req_id) {
   // TODO
 }
 
+// @unsafe
 WaitDieALock::~WaitDieALock() {
     verify(!done_);
     done_ = true;
@@ -488,9 +506,12 @@ uint64_t TimeoutALock::vlock(uint64_t owner,
         uint64_t tm_now = rrr::Time::now();
         uint64_t tm_out = tm_now + tm_wait_;
         auto& alarm = get_alarm_s();
+        // @unsafe - Lambda captures reference to req
+        // @unsafe {
         req.alarm_id_ = alarm.add(tm_out, [this, &req] () {
                 this->do_timeout(req);
                 });
+        // }
     } else {
         // tm_wait_ = 0
         // do nothing, no callback after release the lock_;
@@ -630,11 +651,14 @@ void TimeoutALock::abort(uint64_t id) {
 }
 
 
+// @unsafe - Uses std::function and std::vector
 TimeoutALock::~TimeoutALock() {
     //    return;
 
     // free all the lockes and trigger timeout for those waiting.
+    // @unsafe {
     std::vector<std::function<void(void)>> tocall;
+    // }
     //        lock_.lock();
     auto& alarm = get_alarm_s();
     auto it = requests_.begin();

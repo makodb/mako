@@ -24,7 +24,7 @@ class TxData;
 class MultiPaxosCommo : public Communicator {
  public:
   MultiPaxosCommo() = delete;
-  MultiPaxosCommo(rusty::Arc<PollThreadWorker>);
+  MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
 
   int proxy_batch_size = 1 ;
   int current_proxy_batch_idx = 0;

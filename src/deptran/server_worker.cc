@@ -14,7 +14,7 @@ void ServerWorker::SetupHeartbeat() {
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   scsi_ = new ServerControlServiceImpl(timeout);
   int n_io_threads = 1;
-//  svr_hb_poll_thread_worker_g = new rrr::PollThreadWorker(n_io_threads);
+//  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_;
 //  hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_thread_pool_g = svr_thread_pool_;
@@ -126,8 +126,8 @@ void ServerWorker::SetupService() {
   // set running mode and initialize transaction manager.
   std::string bind_addr = site_info_->GetBindAddress();
 
-  // init rrr::PollThreadWorker
-  svr_poll_thread_worker_ = PollThreadWorker::create();
+  // init rrr::PollThread
+  svr_poll_thread_worker_ = PollThread::create();
 //  svr_thread_pool_ = new rrr::ThreadPool(1);
 
   // init service implementation
@@ -240,7 +240,7 @@ void ServerWorker::ShutDown() {
 }
 
 ServerWorker::~ServerWorker() {
-  // Shutdown PollThreadWorkers if we own them
+  // Shutdown PollThreads if we own them
   if (svr_poll_thread_worker_) {
     svr_poll_thread_worker_->shutdown();
   }

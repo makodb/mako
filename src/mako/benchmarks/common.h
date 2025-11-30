@@ -11,8 +11,11 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <iostream>
+#include <atomic>
+#include <chrono>
 #include <fstream>
 #include <thread>
+#include "benchmarks/benchmark_config.h"
 //#include "lib/memcached_client.h"
 
 class HashWrapper {
@@ -38,6 +41,40 @@ class HashWrapper {
 namespace mako {
     class NFSSync {
 public:
+        static int mark_shard_up_and_wait() {
+            mako::NFSSync::mark_current_shard_up() ;
+            mako::NFSSync::wait_for_all_up() ;
+            return 0;
+        }
+
+        static int mark_current_shard_up() {
+            auto& cfg = BenchmarkConfig::getInstance();
+            std::string filename = std::string("nfs_sync_") + std::to_string(cfg.getShardIndex()) ;
+            std::ofstream outfile(filename);
+            if (!outfile) {
+                std::cerr << "Failed to open file for writing: " << filename << std::endl;
+                return 1;
+            }
+            outfile << "DONE";
+            return 0;
+        }
+
+        static void wait_for_all_up() {
+            auto& cfg = BenchmarkConfig::getInstance();
+            for (int i=0; i<cfg.getConfig()->nshards; i++) {
+                std::string filename = std::string("nfs_sync_") + std::to_string(i) ;
+                while (1) {
+                    std::ifstream infile(filename);
+                    if (infile) {
+                        std::cout << "shard:" << i << " up..." << std::endl;
+                        break;
+                    }
+                    usleep(0);
+                }
+            }
+            std::cout << "wait_for_all_up setup finish!" << std::endl;
+        }
+
         static int set_key(std::string kk, const char *value, const char*host, int port) {
             std::string filename = std::string("nfs_sync_") + host + "_" + std::to_string(port) + "_" + kk;
             std::ofstream outfile(filename);

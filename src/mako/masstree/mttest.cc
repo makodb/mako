@@ -13,6 +13,54 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe
+namespace mttest_unsafe_file {} // Sets file_default to Unsafe for borrow checker
+// Masstree comprehensive test harness and benchmarking tool
+// Performs multi-threaded insert/lookup/scan tests with configurable workloads
+// SAFETY: Uses raw sockets, POSIX threads, global state, and unchecked casts
+// EXCLUDED FROM BORROW CHECK: Uses kvthread allocator (void* return limitation)
+//
+// External safety annotations for circular_int, string, and Masstree operations
+// @external: {
+//   lcdf::Str::Str: [unsafe]
+//   min: [unsafe]
+//   __builtin_expect: [unsafe]
+// }
+// @external_unsafe: circular_int::*
+// @external_unsafe: lcdf::String_base::*
+// @external_unsafe: lcdf::String_base<*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::String_generic::*
+// @external_unsafe: lcdf::StringAccum::*
+// @external_unsafe: lcdf::Json::*
+// @external_unsafe: lcdf::Str::*
+// @external_unsafe: Masstree::leafvalue::*
+// @external_unsafe: Masstree::leafvalue<*
+// @external_unsafe: Masstree::key::*
+// @external_unsafe: Masstree::key<*
+// @external_unsafe: Masstree::leaf::*
+// @external_unsafe: Masstree::leaf<*
+// @external_unsafe: Masstree::*
+// @external_unsafe: query::*
+// @external_unsafe: threadinfo::*
+// @external_unsafe: kvtest_client::*
+// @external_unsafe: nodeversion::*
+// @external_unsafe: string_slice::*
+// @external_unsafe: string_slice<*
+// @external_unsafe: compare
+// @external_unsafe: ::compare
+// @external_unsafe: compare<*
+// @external_unsafe: assign
+// @external_unsafe: ::assign
+// @external_unsafe: assign<*
+// @external_unsafe: lcdf::Str::assign
+// @external_unsafe: Str::assign
+// @external_unsafe: permutation
+// @external_unsafe: data
+// @external_unsafe: length
+// @external_unsafe: kpermuter::*
+// @external_unsafe: kpermuter<*
+// @external_unsafe: unknown
 // -*- mode: c++ -*-
 // mttest: key/value tester
 //

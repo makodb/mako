@@ -49,7 +49,7 @@ class Frame {
 
   virtual Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sch);
   virtual TxLogServer *CreateScheduler();
-  virtual Communicator *CreateCommo(rusty::Arc<PollThreadWorker> poll_thread_worker = rusty::Arc<PollThreadWorker>());
+  virtual Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
   // for only dtxn
   Sharding *CreateSharding();
   Sharding *CreateSharding(Sharding *sd);
@@ -66,7 +66,7 @@ class Frame {
   Workload *CreateTxGenerator();
   virtual vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
                                                    TxLogServer *dtxn_sched,
-                                                   rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
+                                                   rusty::Arc<rrr::PollThread> poll_thread_worker,
                                                    ServerControlServiceImpl *scsi);
 };
 

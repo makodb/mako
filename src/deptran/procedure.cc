@@ -9,7 +9,7 @@ namespace janus {
 static int volatile x1 =
     MarshallDeputy::RegInitializer(MarshallDeputy::CMD_VEC_PIECE,
                                    [] () -> Marshallable* {
-                                     return new VecPieceData;
+                                     return new VecPieceData();
                                    });
 
 TxWorkspace::TxWorkspace() {

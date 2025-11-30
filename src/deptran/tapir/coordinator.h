@@ -35,7 +35,7 @@ class CoordinatorTapir : public CoordinatorClassic {
   void Decide();
 
   void Accept();
-  void AcceptAck(phase_t phase, parid_t par_id, Future *fu);
+  void AcceptAck(phase_t phase, parid_t par_id, rusty::Arc<Future> fu);
 
   void Restart() override;
   void GotoNextPhase() override;

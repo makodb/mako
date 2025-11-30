@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - String-to-integer slice conversion for key comparison
+// Extracts 64-bit chunks from strings with endianness handling
+// SAFETY: Uses memcpy, big-endian byte swap for comparison
+
 #ifndef STRING_SLICE_HH
 #define STRING_SLICE_HH 1
 #include "str.hh"
@@ -39,6 +43,7 @@ template <typename T> struct string_slice {
     static constexpr int size = (int) sizeof(T);
 
     /** @brief Return a T containing data from a string's prefix. */
+    // @unsafe - interprets raw bytes as T; caller must ensure alignment/length
     static T make(const char *s, int len) {
         if (len <= 0)
             return 0;
@@ -69,6 +74,7 @@ template <typename T> struct string_slice {
         This function acts like make(), but can use single memory accesses for
         short strings. These accesses may observe data outside the range [@a
         s, @a s + len). */
+    // @unsafe - performs unaligned/bounds-relaxed reads from caller buffer
     static T make_sloppy(const char *s, int len) {
         if (len <= 0)
             return 0;
@@ -108,6 +114,7 @@ template <typename T> struct string_slice {
         after this function returns, @a buf contains a string equal to the
         original @a s, except that trailing null characters have been
         removed. */
+    // @unsafe - writes raw bytes into caller-provided buffer
     static int unparse_comparable(char *buf, int buflen, T value) {
         union_type u(host_to_net_order(value));
         int l = size;
@@ -124,6 +131,7 @@ template <typename T> struct string_slice {
         If @a value was created by string_slice::make_comparable(s, @a len),
         then after this function returns, @a buf contains a string equal to
         the first @a len bytes of s. */
+    // @unsafe - writes raw bytes into caller-provided buffer
     static int unparse_comparable(char *buf, int buflen, T value, int len) {
         union_type u(host_to_net_order(value));
         int l = std::min(std::min(len, size), buflen);
@@ -142,6 +150,7 @@ template <typename T> struct string_slice {
 
         Always returns the same result as "memcmp(@a a, @a b, @a len) == 0",
         but can be faster on some machines. */
+    // @unsafe - performs raw unaligned reads from caller buffers
     static bool equals_sloppy(const char *a, const char *b, int len) {
 #if HAVE_UNALIGNED_ACCESS
         if (len <= size) {

@@ -14,6 +14,16 @@
  * is legally binding.
  */
 // -*- c-basic-offset: 4 -*-
+// JSON parsing and serialization implementation
+// Most functions use malloc/pointer operations - @unsafe marked individually
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::StringAccum::*
+// @external_unsafe: malloc
+// @external_unsafe: free
+
 #include "json.hh"
 #include "compiler.hh"
 #include <ctype.h>
@@ -62,12 +72,14 @@ static const String object_string("[Object]", 8);
 
 // Array internals
 
+// @unsafe - uses new[] for raw buffer and placement new for construction
 Json::ArrayJson* Json::ArrayJson::make(int n) {
     int cap = n < 8 ? 8 : n;
     char* buf = new char[sizeof(ArrayJson) + cap * sizeof(Json)];
     return new((void*) buf) ArrayJson(cap);
 }
 
+// @unsafe - calls destructors manually and delete[] with reinterpret_cast
 void Json::ArrayJson::destroy(ArrayJson* aj) {
     if (aj)
         for (int i = 0; i != aj->size; ++i)
@@ -78,6 +90,7 @@ void Json::ArrayJson::destroy(ArrayJson* aj) {
 
 // Object internals
 
+// @unsafe - delegates to unsafe grow() for raw buffer allocation
 Json::ObjectJson::ObjectJson(const ObjectJson &x)
     : ComplexJson(), os_(x.os_), n_(x.n_), capacity_(x.capacity_),
       hash_(x.hash_)
@@ -86,6 +99,7 @@ Json::ObjectJson::ObjectJson(const ObjectJson &x)
     grow(true);
 }
 
+// @unsafe - uses delete[] on raw ObjectItem* buffer
 Json::ObjectJson::~ObjectJson()
 {
     ObjectItem *ob = os_, *oe = ob + n_;
@@ -95,6 +109,7 @@ Json::ObjectJson::~ObjectJson()
     delete[] reinterpret_cast<char *>(os_);
 }
 
+// @unsafe - uses operator new[]/delete[], placement new, and memcpy on raw buffers
 void Json::ObjectJson::grow(bool copy)
 {
     if (copy && !capacity_)
@@ -122,6 +137,7 @@ void Json::ObjectJson::grow(bool copy)
     capacity_ = new_capacity;
 }
 
+// @unsafe - accesses raw char* data() from String keys for bucket hashing
 void Json::ObjectJson::rehash()
 {
     hash_.assign(hash_.size() * 2, -1);
@@ -135,6 +151,7 @@ void Json::ObjectJson::rehash()
     }
 }
 
+// @unsafe - uses raw char* data() and placement new for ObjectItem construction
 int Json::ObjectJson::find_insert(const String &key, const Json &value)
 {
     if (hash_.empty())
@@ -687,10 +704,12 @@ Json::assign_parse(const char* first, const char* last, const String& str)
         return false;
 }
 
+// @safe - pure arithmetic comparison
 static inline bool in_range(uint8_t x, unsigned low, unsigned high) {
     return (unsigned) x - low < high - low;
 }
 
+// @safe - pure arithmetic comparison
 static inline bool in_range(int x, unsigned low, unsigned high) {
     return (unsigned) x - low < high - low;
 }

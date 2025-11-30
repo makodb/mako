@@ -74,13 +74,15 @@ char (& ArraySizeHelper(const T (& array)[N]))[N];
 
 #define arraysize(array) (sizeof(base::ArraySizeHelper(array)))
 
-// @safe - Standard map insertion with no unsafe operations
+// @unsafe - Calls std::map::insert (external unsafe)
+// SAFETY: Standard container insertion, caller ensures map is valid
 template<class K, class V, class Map>
 inline void insert_into_map(Map& map, const K& key, const V& value) {
   map.insert(typename Map::value_type(key, value));
 }
 
-// @safe - Uses standard container operations
+// @unsafe - Calls std::reverse_iterator::base and container::erase (external unsafe)
+// SAFETY: Standard container and iterator operations, caller ensures validity
 template<class Container>
 typename std::reverse_iterator<typename Container::iterator>
 erase(Container& l,
@@ -116,7 +118,8 @@ class OneTimeJob : public Job {
   bool Done() override {
     return done_;
   }
-  // @safe
+  // @unsafe - Calls std::function::operator() (external unsafe)
+  // SAFETY: Executes user-provided function, caller ensures validity
   void Work() override {
     func_();
     done_ = true;

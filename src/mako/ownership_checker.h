@@ -9,6 +9,7 @@
 template <typename Scope, typename T>
 class ownership_checker {
 public:
+  // @unsafe - clears thread-local list tracking raw node pointers
   static void
   NodeLockRegionBegin()
   {
@@ -16,6 +17,7 @@ public:
   }
 
   // is used to signal the end of a tuple lock region
+  // @unsafe - asserts raw nodes no longer locked
   static void
   AssertAllNodeLocksReleased()
   {
@@ -26,6 +28,7 @@ public:
     nodes->clear();
   }
 
+  // @unsafe - records raw node pointer into thread-local lock set
   static void
   AddNodeToLockRegion(const T *n)
   {
@@ -37,6 +40,7 @@ public:
   }
 
 private:
+  // @unsafe - manages thread-local vector of raw pointers
   static std::vector<const T *> *
   MyLockedNodes(bool create)
   {

@@ -4,12 +4,14 @@
 #include "macros.h"
 #include <stdint.h>
 
+// @unsafe - emits raw pause instruction (no safety guarantees)
 inline ALWAYS_INLINE void
 nop_pause()
 {
   __asm volatile("pause" : :);
 }
 
+// @unsafe - reads CPU timestamp counter directly
 inline ALWAYS_INLINE uint64_t
 rdtsc(void)
 {

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Mutable string builder with operator<< interface
+// Grows internal buffer and transfers ownership to String on take_string()
+// SAFETY: Uses realloc for buffer growth, raw pointer append operations
+
 #ifndef LCDF_STRACCUM_HH
 #define LCDF_STRACCUM_HH
 #include <string.h>

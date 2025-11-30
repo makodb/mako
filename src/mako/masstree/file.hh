@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - File utility functions for reading file contents
+// Provides read_file_contents for loading files into lcdf::String
+// SAFETY: Uses POSIX file descriptors and system calls
+
 #ifndef KVDB_FILE_HH
 #define KVDB_FILE_HH 1
 #include <unistd.h>
@@ -20,6 +24,7 @@
 #include <errno.h>
 #include "string.hh"
 
+// @unsafe - performs raw POSIX reads without borrow tracking
 inline ssize_t
 safe_read(int fd, void *buf, size_t count)
 {
@@ -39,6 +44,7 @@ safe_read(int fd, void *buf, size_t count)
     return pos;
 }
 
+// @unsafe - performs raw POSIX writes without borrow tracking
 inline ssize_t
 safe_write(int fd, const void *buf, size_t count)
 {
@@ -58,6 +64,7 @@ safe_write(int fd, const void *buf, size_t count)
     return pos;
 }
 
+// @unsafe - asserts raw write completion
 inline void
 checked_write(int fd, const void *buf, size_t count)
 {
@@ -72,6 +79,7 @@ checked_write(int fd, const T *x)
 }
 
 
+// @unsafe - read helpers use raw FDs
 lcdf::String read_file_contents(int fd);
 lcdf::String read_file_contents(const char *filename);
 int sync_write_file_contents(const char *filename, const lcdf::String &contents,

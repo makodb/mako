@@ -631,7 +631,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
 }
 
 void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
-                                    const uint64_t& slot, 
+                                    const uint64_t& slot,
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
                                     const function<void()> &cb) {

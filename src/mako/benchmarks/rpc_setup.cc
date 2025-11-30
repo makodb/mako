@@ -14,6 +14,7 @@
 #include "lib/server.h"
 #include "deptran/s_main.h"
 #include "benchmarks/sto/Interface.hh"
+#include "spinbarrier.h"
 
 
 using namespace std;
@@ -43,7 +44,8 @@ void helper_server(
   abstract_db *db,
   mako::HelperQueue *queue,
   mako::HelperQueue *queue_response,
-  std::map<int, abstract_ordered_index *> open_tables)
+  std::map<int, abstract_ordered_index *> open_tables,
+  spin_barrier *barrier_ready)
 {
   scoped_db_thread_ctx ctx(db, true, 1);
   TThread::set_mode(1);
@@ -65,6 +67,12 @@ void helper_server(
     std::lock_guard<std::mutex> lock(g_helper_mu);
     g_helper_servers.push_back(ss);
   }
+
+  // Signal that this helper is ready before starting the event loop
+  if (barrier_ready) {
+    barrier_ready->count_down();
+  }
+
   ss->Run(); // event-driven
 }
 
@@ -91,16 +99,23 @@ void erpc_server(
     running_shardIndex,
     id);
 
+  // Set up helper queues for this server transport
+  std::unordered_map<uint16_t, mako::HelperQueue*> local_queue_holders;
+  std::unordered_map<uint16_t, mako::HelperQueue*> local_queue_holders_response;
+
   for (int i = 0; i < (int)NumWarehousesTotal(); i++) {
     if (i / (int)NumWarehouses() == running_shardIndex)
       continue;
     if (i % (int)BenchmarkConfig::getInstance().getNumErpcServer() == alpha) {
       auto *it = new mako::HelperQueue(i, true);
-      server_transports[alpha]->c->queue_holders[i] = it;
+      local_queue_holders[i] = it;
       auto *it_res = new mako::HelperQueue(i, false);
-      server_transports[alpha]->c->queue_holders_response[i] = it_res;
+      local_queue_holders_response[i] = it_res;
     }
   }
+
+  server_transports[alpha]->SetHelperQueues(local_queue_holders);
+  server_transports[alpha]->SetHelperQueuesResponse(local_queue_holders_response);
   set_server_transport.fetch_add(1);
   server_transports[alpha]->Run();
   Notice("the erpc_server is terminated on shardIdx:%d, alpha:%d!", running_shardIndex, alpha);
@@ -115,6 +130,18 @@ void mako::setup_helper(
   auto &cfg = BenchmarkConfig::getInstance();
   auto &queue_holders = cfg.getQueueHolders();
   auto &queue_holders_response = cfg.getQueueHoldersResponse();
+
+  // Count the number of helper threads that will be created
+  int num_helpers = 0;
+  for (int i = 0; i < (int)NumWarehousesTotal(); i++) {
+    if (i / (int)NumWarehouses() == (int)cfg.getShardIndex())
+      continue;
+    num_helpers++;
+  }
+
+  // Create barrier to wait for all helpers to be ready
+  spin_barrier barrier_ready(num_helpers+1);
+
   for (int i = 0; i < (int)NumWarehousesTotal(); i++) {
     if (i / (int)NumWarehouses() == (int)cfg.getShardIndex())
       continue;
@@ -129,10 +156,15 @@ void mako::setup_helper(
       db,
       queue_holders[i],
       queue_holders_response[i],
-      open_tables);
+      open_tables,
+      &barrier_ready);
     pthread_setname_np(t.native_handle(), ("helper_" + std::to_string(i)).c_str());
     t.detach();
   }
+
+  // Wait for all helper threads to finish initialization before returning
+  barrier_ready.count_down();
+  barrier_ready.wait_for();
 }
 
 void mako::setup_update_table(int table_id, abstract_ordered_index *table)
@@ -159,6 +191,10 @@ void mako::stop_helper()
     std::lock_guard<std::mutex> lock(g_helper_mu);
     g_helper_servers.clear();
   }
+}
+
+void mako::initialize_per_thread(abstract_db *db_) {
+  scoped_db_thread_ctx ctx(db_, false);
 }
 
 void mako::setup_erpc_server()
@@ -194,8 +230,8 @@ void mako::setup_erpc_server()
     if (i / (int)NumWarehouses() == (int)cfg.getShardIndex())
       continue;
     auto idx = i % (int)cfg.getNumErpcServer();
-    queue_holders[i] = server_transports[idx]->c->queue_holders[i];
-    queue_holders_response[i] = server_transports[idx]->c->queue_holders_response[i];
+    queue_holders[i] = server_transports[idx]->GetHelperQueue(i);
+    queue_holders_response[i] = server_transports[idx]->GetHelperQueueResponse(i);
   }
 }
 
@@ -203,7 +239,13 @@ void mako::stop_erpc_server()
 {
   auto &cfg = BenchmarkConfig::getInstance();
   auto &server_transports = cfg.getServerTransports();
+  std::cerr << "[STOP_SERVER] Stopping " << cfg.getNumErpcServer() << " server transports" << std::endl;
   for (int i = 0; i < (int)cfg.getNumErpcServer(); ++i) {
-    if (server_transports[i]) server_transports[i]->Stop();
+    if (server_transports[i]) {
+      std::cerr << "[STOP_SERVER] Stopping server transport " << i << std::endl;
+      server_transports[i]->Stop();
+      std::cerr << "[STOP_SERVER] Server transport " << i << " stopped" << std::endl;
+    }
   }
+  std::cerr << "[STOP_SERVER] All server transports stopped" << std::endl;
 }

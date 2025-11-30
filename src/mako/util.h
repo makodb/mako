@@ -15,9 +15,12 @@
 
 #include <stdint.h>
 #include <pthread.h>
+
 #include <sys/time.h>
 #include <time.h>
 #include <cxxabi.h>
+#include <unistd.h>
+#include <pwd.h>
 
 #include "macros.h"
 #include "silo_small_vector.h"
@@ -637,6 +640,26 @@ to_lower(const std::string &s)
   std::string ret(s);
   std::transform(ret.begin(), ret.end(), ret.begin(), ::tolower);
   return ret;
+}
+
+/**
+ * Get the current username reliably.
+ * Uses getpwuid() which is more reliable than getenv("USER").
+ * Returns "unknown" if the username cannot be determined.
+ */
+static inline std::string
+get_current_username()
+{
+  struct passwd *pw = getpwuid(getuid());
+  if (pw && pw->pw_name && pw->pw_name[0] != '\0') {
+    return std::string(pw->pw_name);
+  }
+  // Fallback to environment variable if getpwuid fails
+  const char* username = getenv("USER");
+  if (username && username[0] != '\0') {
+    return std::string(username);
+  }
+  return "unknown";
 }
 
 } // namespace util

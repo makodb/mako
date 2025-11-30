@@ -60,6 +60,7 @@
 #include <mutex>
 #include <random>
 #include "../src/mako/rocksdb_persistence.h"
+#include "../src/mako/util.h"
 
 using namespace std;
 using namespace mako;
@@ -91,8 +92,10 @@ bool test_complex_stress() {
     cout << "  - Random sleep delays between writes" << endl;
     cout << "  - Ordered callbacks per partition (200 messages total per partition)" << endl;
 
-    // Clean up any previous test database to avoid write stalls
-    system("rm -rf /tmp/test_stress_partitioned* 2>/dev/null");
+    // Add username prefix to avoid conflicts when multiple users run on the same server
+    string username = util::get_current_username();
+    string cleanup_cmd = "rm -rf /tmp/" + username + "_test_stress_partitioned* 2>/dev/null";
+    system(cleanup_cmd.c_str());
 
     auto& persistence = RocksDBPersistence::getInstance();
 
@@ -103,7 +106,8 @@ bool test_complex_stress() {
     const size_t LARGE_MESSAGE_SIZE = 100 * 10000;  // 1MB
     const size_t SMALL_MESSAGE_SIZE = 2000;  // 2KB
 
-    if (!persistence.initialize("/tmp/test_stress_partitioned", NUM_PARTITIONS, NUM_WORKER_THREADS)) {
+    string db_path = "/tmp/" + string(username) + "_test_stress_partitioned";
+    if (!persistence.initialize(db_path, NUM_PARTITIONS, NUM_WORKER_THREADS)) {
         cerr << "Failed to initialize RocksDB!" << endl;
         return false;
     }

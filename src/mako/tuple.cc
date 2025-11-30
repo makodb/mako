@@ -49,6 +49,7 @@ dbtuple::~dbtuple()
 
 // @unsafe: calls release with raw pointer
 void
+// @unsafe - enqueues tuple for RCU reclamation assuming caller holds proper locks
 dbtuple::gc_this()
 {
   INVARIANT(rcu::s_instance.in_rcu_region());

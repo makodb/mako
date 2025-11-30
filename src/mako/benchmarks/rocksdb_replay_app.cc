@@ -20,6 +20,7 @@
 #include "mako.hh"
 #include "mbta_wrapper.hh"
 #include "deptran/s_main.h"
+#include "util.h"
 
 using namespace mako;
 
@@ -53,10 +54,14 @@ std::string findRocksDBPath() {
     DIR* dir = opendir("/tmp");
     if (!dir) return "";
 
+    // Get username for path matching
+    std::string username = util::get_current_username();
+    std::string prefix = username + "_mako_rocksdb_shard0_leader_pid";
+
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         std::string name = entry->d_name;
-        if (name.find("mako_rocksdb_shard0_leader_pid") == 0 &&
+        if (name.find(prefix) == 0 &&
             name.find("_partition0") != std::string::npos) {
             std::string full_path = "/tmp/" + name;
             size_t pos = full_path.rfind("_partition0");
@@ -127,7 +132,8 @@ int main() {
 
     std::string db_path = findRocksDBPath();
     if (db_path.empty()) {
-        fprintf(stderr, "No RocksDB found at /tmp/mako_rocksdb_shard0_leader_*\n");
+        std::string username = util::get_current_username();
+        fprintf(stderr, "No RocksDB found at /tmp/%s_mako_rocksdb_shard0_leader_*\n", username.c_str());
         return 1;
     }
     printf("RocksDB: %s\n", db_path.c_str());

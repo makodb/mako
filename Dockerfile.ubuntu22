@@ -1,5 +1,10 @@
 # Ubuntu 22.04 build environment for Mako
-FROM --platform=linux/amd64 ubuntu:22.04
+#
+# Default: Uses native platform (ARM64 on Mac M4, AMD64 on Windows/Linux x86_64)
+# To force AMD64: docker build --build-arg FORCE_AMD64=true -f Dockerfile.ubuntu22 -t mako-build:ubuntu22 .
+#
+# FROM --platform=linux/amd64 ubuntu:22.04
+FROM ubuntu:22.04
 
 # Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive

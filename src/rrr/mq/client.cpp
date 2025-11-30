@@ -5,6 +5,15 @@
 #include "server.h"
 #include "client.h"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 extern poll_mgr_t *mgr_;
 
 void client_create(client_t **cli, poll_mgr_t *mgr) {

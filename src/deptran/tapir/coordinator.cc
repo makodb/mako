@@ -168,7 +168,7 @@ void CoordinatorTapir::Accept() {
   }
 }
 
-void CoordinatorTapir::AcceptAck(phase_t phase, parid_t pid, Future *fu) {
+void CoordinatorTapir::AcceptAck(phase_t phase, parid_t pid, rusty::Arc<Future> fu) {
   if (phase_ != phase) return;
   int res;
   fu->get_reply() >> res;

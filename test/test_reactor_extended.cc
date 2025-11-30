@@ -171,9 +171,9 @@ TEST_F(ExtendedReactorTest, CoroutineYieldContinue) {
     
     auto coro = reactor->CreateRunCoroutine([&counter]() {
         counter = 1;
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
         counter = 2;
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
         counter = 3;
     });
     
@@ -223,17 +223,17 @@ TEST_F(ExtendedReactorTest, MultipleYields) {
     
     auto coro1 = reactor->CreateRunCoroutine([&execution_order]() {
         execution_order.push_back(1);
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
         execution_order.push_back(3);
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
         execution_order.push_back(5);
     });
     
     auto coro2 = reactor->CreateRunCoroutine([&execution_order]() {
         execution_order.push_back(2);
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
         execution_order.push_back(4);
-        Coroutine::CurrentCoroutine()->Yield();
+        Coroutine::CurrentCoroutine().unwrap()->Yield();
         execution_order.push_back(6);
     });
     

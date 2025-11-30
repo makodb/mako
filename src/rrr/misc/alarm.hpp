@@ -14,6 +14,14 @@
 #include "base/misc.hpp"
 #include "reactor/reactor.h"
 
+// External safety annotations for STL functions
+// @external: {
+//   std::make_pair: [unsafe]
+//   std::map::operator[]: [unsafe]
+//   std::map::erase: [unsafe]
+// }
+
+// @unsafe
 namespace rrr {
 
 class Alarm: public FrequentJob {
@@ -25,7 +33,7 @@ class Alarm: public FrequentJob {
   uint64_t next_id_ = 1;
 
   // either a thread_loop_holder or a epoll holder.
-  rrr::PollThreadWorker *holder = NULL;
+  rrr::PollThread *holder = NULL;
 
 
   // id -> <alarm_time, func>;
@@ -50,7 +58,7 @@ class Alarm: public FrequentJob {
   ~Alarm() {
   }
 
-  void set_holder(rrr::PollThreadWorker *mgr) {
+  void set_holder(rrr::PollThread *mgr) {
   }
 
   bool exe_next() {
@@ -86,10 +94,11 @@ class Alarm: public FrequentJob {
 //	}
 //    }
 
+  // @unsafe - Adds alarm callback (uses std::map::operator[] and std::make_pair)
   uint64_t add(uint64_t time, std::function<void(void)> func) {
     //	std::lock_guard<std::mutex> guard(lock_);
     //Log::debug("add timeout callback");
-    auto id = next_id_++;
+    uint64_t id = next_id_++;
     waiting_[id] = std::make_pair(time, func);
     //	idx_time_[std::make_pair(time, id)] = func;
     return id;
@@ -102,9 +111,12 @@ class Alarm: public FrequentJob {
    * and will never be invoked. If not, it is not sure that
    * whether this callback will be invoked or not.
    */
+  // @unsafe - Removes alarm callback (calls std::map::erase)
   bool remove(uint64_t id) {
     //	std::lock_guard<std::mutex> guard(lock_);
+    // @unsafe {
     int n_erased = waiting_.erase(id);
+    // }
     return (n_erased == 1);
   }
 

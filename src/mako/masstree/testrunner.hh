@@ -1,3 +1,7 @@
+// @unsafe - Test runner framework with global registration
+// Provides intrusive linked list of test cases for discovery
+// SAFETY: Uses global mutable state for test registration
+
 #ifndef MASSTREE_TESTRUNNER_HH
 #define MASSTREE_TESTRUNNER_HH
 #include "string.hh"
@@ -5,6 +9,7 @@
 
 class testrunner_base {
   public:
+    // @unsafe - threads push onto a global intrusive list without synchronization
     testrunner_base(const lcdf::String& name)
         : name_(name), next_(0) {
         thehead ? thetail->next_ = this : thehead = this;

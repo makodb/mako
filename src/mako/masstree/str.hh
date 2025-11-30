@@ -13,11 +13,16 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// Non-owning string slice (pointer + length)
+// Lightweight view into string data without memory management
+// SAFETY: Does not own data - caller must ensure lifetime validity
+
 #ifndef STR_HH
 #define STR_HH
 #include "string_base.hh"
 #include <stdarg.h>
 #include <stdio.h>
+// @unsafe: entire lcdf namespace - contains raw pointer operations
 namespace lcdf {
 
 struct Str : public String_base<Str> {
@@ -64,15 +69,17 @@ struct Str : public String_base<Str> {
         s = 0;
         len = 0;
     }
-    template <typename T>
-    void assign(const String_base<T> &x) {
+    // @unsafe
+    template <typename T> void assign(const String_base<T> &x) {
         s = x.data();
         len = x.length();
     }
+    // @unsafe - stores raw C string pointer without ownership
     void assign(const char *s_) {
         s = s_;
         len = strlen(s_);
     }
+    // @unsafe - stores raw pointer/length without validation
     void assign(const char *s_, int len_) {
         s = s_;
         len = len_;
@@ -112,12 +119,15 @@ struct Str : public String_base<Str> {
         assert(ubegin() <= first && first <= last && last <= uend());
         return Str(first, last);
     }
+    // @unsafe - pointer arithmetic on string data
     Str ltrim() const {
         return String_generic::ltrim(*this);
     }
+    // @unsafe - pointer arithmetic on string data
     Str rtrim() const {
         return String_generic::rtrim(*this);
     }
+    // @unsafe - pointer arithmetic on string data
     Str trim() const {
         return String_generic::trim(*this);
     }

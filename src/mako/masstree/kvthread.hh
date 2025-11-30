@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Thread-local state and memory allocation for Masstree
+// Provides per-thread memory pools, epoch tracking, and RCU-style reclamation
+// SAFETY: Uses malloc/mmap, pthread TLS, and epoch-based memory management
+
 #ifndef KVTHREAD_HH
 #define KVTHREAD_HH 1
 #include "mtcounters.hh"
@@ -181,13 +185,18 @@ class threadinfo {
     }
 
     // memory allocation
+    // @unsafe
+    // @lifetime: owned
     void* allocate(size_t sz, memtag tag) {
+        // @unsafe {
         void* p = malloc(sz + memdebug_size);
         p = memdebug::make(p, sz, tag);
         if (p)
             mark(threadcounter(tc_alloc + (tag > memtag_value)), sz);
         return p;
+        // }
     }
+    // @unsafe - frees raw heap memory using memdebug headers
     void deallocate(void* p, size_t sz, memtag tag) {
         // in C++ allocators, 'p' must be nonnull
         assert(p);
@@ -195,6 +204,7 @@ class threadinfo {
         free(p);
         mark(threadcounter(tc_alloc + (tag > memtag_value)), -sz);
     }
+    // @unsafe - defers free via RCU list; caller promises pointer validity
     void deallocate_rcu(void* p, size_t sz, memtag tag) {
         assert(p);
         memdebug::check_rcu(p, sz, tag);
@@ -202,7 +212,10 @@ class threadinfo {
         mark(threadcounter(tc_alloc + (tag > memtag_value)), -sz);
     }
 
+    // @unsafe
+    // @lifetime: owned
     void* pool_allocate(size_t sz, memtag tag) {
+        // @unsafe {
         int nl = (sz + memdebug_size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         assert(nl <= pool_max_nlines);
         if (unlikely(!pool_[nl - 1]))
@@ -215,7 +228,9 @@ class threadinfo {
                  nl * CACHE_LINE_SIZE);
         }
         return p;
+        // }
     }
+    // @unsafe - returns raw memory to freelist; assumes caller-provided size/tag
     void pool_deallocate(void* p, size_t sz, memtag tag) {
         int nl = (sz + memdebug_size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         assert(p && nl <= pool_max_nlines);
@@ -228,6 +243,7 @@ class threadinfo {
         mark(threadcounter(tc_alloc + (tag > memtag_value)),
              -nl * CACHE_LINE_SIZE);
     }
+    // @unsafe - queues pool frees for later RCU reclamation
     void pool_deallocate_rcu(void* p, size_t sz, memtag tag) {
         int nl = (sz + memdebug_size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         assert(p && nl <= pool_max_nlines);
@@ -299,6 +315,7 @@ class threadinfo {
     void refill_pool(int nl);
     void refill_rcu();
 
+    // @unsafe - reclaims memory with manual header checks and freelist rewrites
     void free_rcu(void *p, memtag tag) {
         if ((tag & memtag_pool_mask) == 0) {
             p = memdebug::check_free_after_rcu(p, tag);
@@ -313,6 +330,7 @@ class threadinfo {
         }
     }
 
+    // @unsafe - enqueues raw pointers for later epoch-based free
     void record_rcu(void* ptr, memtag tag) {
         if (limbo_tail_->tail_ == limbo_tail_->capacity)
             refill_rcu();

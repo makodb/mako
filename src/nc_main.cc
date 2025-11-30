@@ -239,39 +239,39 @@ struct args {
 //     int ret=0;
 //     if (r<=45) {  // communicator.cc
 //         FutureAttr fuattr;  // fuattr
-//         fuattr.callback = [&done] (Future* fu) {
+//         fuattr.callback = [&done] (rusty::Arc<Future> fu) {
 //           done.fetch_add(1);
-//         };
+//         };  // Arc auto-released
 //         vector<int> _req = nc_generate_new_order(par_id);
-//         Future::safe_release(nc_clients[par_id]->async_txn_new_order(_req, fuattr));
+//         nc_clients[par_id]->async_txn_new_order(_req, fuattr);  // Arc auto-released
 //     } else if (r <= 88) {
 //         FutureAttr fuattr;  // fuattr
-//         fuattr.callback = [&done] (Future* fu) {
+//         fuattr.callback = [&done] (rusty::Arc<Future> fu) {
 //           done.fetch_add(1);
-//         };
+//         };  // Arc auto-released
 //         vector<int> _req = nc_generate_payment(par_id);
-//         Future::safe_release(nc_clients[par_id]->async_txn_payment(_req, fuattr));
+//         nc_clients[par_id]->async_txn_payment(_req, fuattr);  // Arc auto-released
 //     } else if (r <= 92) {
 //         FutureAttr fuattr;  // fuattr
-//         fuattr.callback = [&done] (Future* fu) {
+//         fuattr.callback = [&done] (rusty::Arc<Future> fu) {
 //           done.fetch_add(1);
-//         };
+//         };  // Arc auto-released
 //         vector<int> _req = nc_generate_delivery(par_id);
-//         Future::safe_release(nc_clients[par_id]->async_txn_delivery(_req, fuattr));
+//         nc_clients[par_id]->async_txn_delivery(_req, fuattr);  // Arc auto-released
 //     } else if (r <= 96) {
 //         FutureAttr fuattr;  // fuattr
-//         fuattr.callback = [&done] (Future* fu) {
+//         fuattr.callback = [&done] (rusty::Arc<Future> fu) {
 //           done.fetch_add(1);
-//         };
+//         };  // Arc auto-released
 //         vector<int> _req = nc_generate_order_status(par_id);
-//         Future::safe_release(nc_clients[par_id]->async_txn_order_status(_req, fuattr));
+//         nc_clients[par_id]->async_txn_order_status(_req, fuattr);  // Arc auto-released
 //     } else {
 //         FutureAttr fuattr;  // fuattr
-//         fuattr.callback = [&done] (Future* fu) {
+//         fuattr.callback = [&done] (rusty::Arc<Future> fu) {
 //           done.fetch_add(1);
-//         };
+//         };  // Arc auto-released
 //         vector<int> _req = nc_generate_stock_level(par_id);
-//         Future::safe_release(nc_clients[par_id]->async_txn_stock_level(_req, fuattr));
+//         nc_clients[par_id]->async_txn_stock_level(_req, fuattr);  // Arc auto-released
 //     }
 
 //     if (t_counter % 100==0) std::cout << "issue # of transactions[par-id:" << par_id << "]: " << t_counter << std::endl;
@@ -295,9 +295,9 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
     int ret=0;
     if (r<=100) {  // communicator.cc
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [&done] (Future* fu) {
+        fuattr.callback = [&done] (rusty::Arc<Future> fu) {
           done.fetch_add(1);
-        };
+        };  // Arc auto-released
         // t.lap_nano();
         vector<int64_t> _req = nc_generate_read(par_id);
         // Future::safe_release(nc_clients[par_id]->async_txn_read(_req, fuattr));
@@ -307,9 +307,9 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
         usleep(1000*1);
     } else {
         FutureAttr fuattr;  // fuattr
-        fuattr.callback = [&done] (Future* fu) {
+        fuattr.callback = [&done] (rusty::Arc<Future> fu) {
           done.fetch_add(1);
-        };
+        };  // Arc auto-released
         
         vector<int64_t> _req = nc_generate_rmw(par_id);
         
@@ -336,7 +336,7 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
 
 void nc_setup_bench(int nkeys, int nthreads, int run) {  // nkeys for YCSB++
   for (int i=0; i<nthreads; i++) {
-    rrr::PollThreadWorker *pm = new rrr::PollThreadWorker();
+    rrr::PollThread *pm = new rrr::PollThread();
     rrr::Client *client = new rrr::Client(pm);
     auto port_s=std::to_string(10010+i);
     while (client->connect((std::string(server_ip)+":"+port_s).c_str())!=0) {
