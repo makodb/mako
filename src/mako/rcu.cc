@@ -100,7 +100,6 @@ check_pointer_or_die(void *p, size_t alloc_size)
 }
 #endif
 
-// @unsafe: uses malloc and reinterpret_cast
 void *
 rcu::sync::alloc(size_t sz)
 {
@@ -126,7 +125,6 @@ rcu::sync::alloc(size_t sz)
   return p;
 }
 
-// @unsafe: uses malloc
 void *
 rcu::sync::alloc_static(size_t sz)
 {
@@ -139,7 +137,6 @@ rcu::sync::alloc_static(size_t sz)
   return ::allocator::AllocateUnmanaged(pin_cpu_, sz / hugepgsize);
 }
 
-// @unsafe: uses free and reinterpret_cast
 void
 rcu::sync::dealloc(void *p, size_t sz)
 {
@@ -165,7 +162,6 @@ rcu::sync::dealloc(void *p, size_t sz)
   deallocs_[arena]++;
 }
 
-// @unsafe: calls unsafe do_release
 bool
 rcu::sync::try_release()
 {
@@ -183,7 +179,6 @@ rcu::sync::try_release()
   return false;
 }
 
-// @unsafe: uses raw pointer operations and calls unsafe ReleaseArenas
 void
 rcu::sync::do_release()
 {
@@ -202,7 +197,6 @@ rcu::sync::do_release()
   NDB_MEMSET(&deallocs_[0], 0, sizeof(deallocs_));
 }
 
-// @unsafe: calls unsafe try_release and manages memory
 void
 rcu::sync::do_cleanup()
 {
@@ -258,7 +252,7 @@ rcu::sync::do_cleanup()
   }
 }
 
-// @unsafe: manages raw pointers for deferred deletion
+// @unsafe - manipulates raw pointers deferred through custom deleter queues
 void
 rcu::free_with_fn(void *p, deleter_t fn)
 {
@@ -274,7 +268,7 @@ rcu::free_with_fn(void *p, deleter_t fn)
   ++evt_rcu_frees;
 }
 
-// @unsafe: manages raw pointers for deferred deletion
+// @unsafe - schedules raw pointer deallocation after grace period
 void
 rcu::dealloc_rcu(void *p, size_t sz)
 {
@@ -290,7 +284,6 @@ rcu::dealloc_rcu(void *p, size_t sz)
   ++evt_rcu_frees;
 }
 
-// @unsafe: uses numa operations and calls unsafe do_release
 void
 rcu::pin_current_thread(size_t cpu)
 {
@@ -305,7 +298,6 @@ rcu::pin_current_thread(size_t cpu)
   s.do_release();
 }
 
-// @safe
 void
 rcu::fault_region()
 {
@@ -315,7 +307,6 @@ rcu::fault_region()
   //::allocator::FaultRegion(s.get_pin_cpu());
 }
 
-// @safe
 rcu::rcu()
   : syncs_()
 {
@@ -379,10 +370,6 @@ rcu_stress_test_worker(unsigned id)
   }
 }
 
-// @unsafe: uses sleep
-static void rcu_stress_test();
-
-// @unsafe: uses sleep
 static void
 rcu_stress_test()
 {
@@ -391,14 +378,13 @@ rcu_stress_test()
   vector<thread> workers;
   for (size_t i = 0; i < rcu_stress_test_nthreads; i++)
     workers.emplace_back(rcu_stress_test_worker, i);
-  sleep(120); // @safe: sleep is safe
+  sleep(120);
   rcu_stress_test_keep_going.store(false, memory_order_release);
   for (auto &t : workers)
     t.join();
   cerr << "rcu stress test completed" << endl;
 }
 
-// @unsafe: calls unsafe rcu_stress_test
 void
 rcu::Test()
 {
