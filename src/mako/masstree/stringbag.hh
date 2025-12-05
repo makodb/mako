@@ -59,16 +59,19 @@ class stringbag {
     };
 
  public:
+    // @safe - pure compile-time constant
     /** @brief Return the maximum allowed capacity of a stringbag. */
     static constexpr unsigned max_size() {
         return ((unsigned) (offset_type) -1) + 1;
     }
+    // @safe - pure compile-time computation
     /** @brief Return the overhead for a stringbag of width @a width.
 
         This is the number of bytes allocated for overhead. */
     static constexpr size_t overhead(int width) {
         return sizeof(stringbag<T>) + width * sizeof(info_type);
     }
+    // @safe - pure compile-time computation
     /** @brief Return a capacity that can definitely contain a stringbag.
         @param width number of strings in bag
         @param len total number of bytes in bag's strings */
@@ -95,10 +98,12 @@ class stringbag {
         memset(info_, 0, sizeof(info_type) * width);
     }
 
+    // @safe - pure arithmetic on stored value
     /** @brief Return the capacity used to construct this bag. */
     size_t capacity() const {
         return capacity_ + 1;
     }
+    // @safe - returns stored value
     /** @brief Return the number of bytes used so far (including overhead). */
     size_t used_capacity() const {
         return size_;

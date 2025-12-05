@@ -53,9 +53,11 @@ struct limbo_group {
     int tail_;
     limbo_element e_[capacity];
     limbo_group *next_;
+    // @safe - default initialization
     limbo_group()
         : head_(0), tail_(0), next_() {
     }
+    // @unsafe - stores raw pointer without ownership tracking
     void push_back(void* ptr, memtag tag, mrcu_epoch_type epoch) {
         assert(tail_ < capacity);
         e_[tail_].ptr_ = ptr;
@@ -66,11 +68,13 @@ struct limbo_group {
 };
 
 template <int N> struct has_threadcounter {
+    // @safe - pure comparison
     static bool test(threadcounter ci) {
         return unsigned(ci) < unsigned(N);
     }
 };
 template <> struct has_threadcounter<0> {
+    // @safe - always returns false
     static bool test(threadcounter) {
         return false;
     }
@@ -82,6 +86,7 @@ struct mrcu_callback {
     virtual void operator()(threadinfo& ti) = 0;
 };
 
+// @unsafe
 class threadinfo {
   public:
     enum {
@@ -90,6 +95,7 @@ class threadinfo {
 
     // allthreads is now per-context in MasstreeContext
 
+    // @safe - returns stored pointer
     threadinfo* next() const {
         return next_;
     }
@@ -98,18 +104,23 @@ class threadinfo {
     // XXX destructor
 
     // thread information
+    // @safe - returns stored value
     int purpose() const {
         return purpose_;
     }
+    // @safe - returns stored value
     int index() const {
         return index_;
     }
+    // @safe - returns stored pointer
     MasstreeContext* context() const {
         return context_;
     }
+    // @safe - returns stored pointer
     loginfo* logger() const {
         return logger_;
     }
+    // @unsafe - asserts and modifies raw pointer
     void set_logger(loginfo* logger) {
         assert(!logger_ && logger);
         logger_ = logger;
@@ -128,23 +139,28 @@ class threadinfo {
             ts_ = (x | 1) + 1;
         return ts_;
     }
-    template <typename N> void observe_phantoms(N* n) {
-        if (circular_int<kvtimestamp_t>::less(ts_, n->phantom_epoch_[0]))
-            ts_ = n->phantom_epoch_[0];
+    // @safe - pure timestamp comparison and assignment
+    template <typename N> void observe_phantoms(const N& n) {
+        if (circular_int<kvtimestamp_t>::less(ts_, n.phantom_epoch_[0]))
+            ts_ = n.phantom_epoch_[0];
     }
 
     // event counters
+    // @safe - simple array increment
     void mark(threadcounter ci) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             ++counters_[ci];
     }
+    // @safe - simple array update
     void mark(threadcounter ci, int64_t delta) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             counters_[ci] += delta;
     }
+    // @safe - delegates to has_threadcounter::test
     bool has_counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci);
     }
+    // @safe - array access with bounds check
     uint64_t counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci) ? counters_[ci] : 0;
     }

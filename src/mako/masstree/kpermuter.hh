@@ -13,9 +13,9 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe - Key permutation array for sorted key access in Masstree nodes
+// @safe - Key permutation array for sorted key access in Masstree nodes
 // Encodes key ordering in packed bit fields for cache-efficient iteration
-// SAFETY: Uses bit manipulation and packed integer representation
+// All operations are pure bit manipulation on owned integer values
 
 #ifndef KPERMUTER_HH
 #define KPERMUTER_HH
@@ -150,7 +150,7 @@ template <int width> class kpermuter {
         <li>Given j with j == i, q[j] == x</li>
         <li>Given j with i < j < q.size(), q[j] == p[j-1] && q[j] != x</li>
         </ul> */
-    // @unsafe - updates packed permutation bits without additional bounds/lifetime tracking
+    // @safe - pure bit manipulation on owned value
     int insert_from_back(int i) {
         int value = back();
         // increment size, leave lower slots unchanged
@@ -197,7 +197,7 @@ template <int width> class kpermuter {
         <li>Given j with i <= j < q.size(), q[j] == p[j+1]</li>
         <li>q[q.size()] == p[i]</li>
         </ul> */
-    // @unsafe - mutates packed permutation bits directly
+    // @safe - pure bit manipulation on owned value
     void remove(int i) {
         (void) width;
         if (int(x_ & 15) == i + 1)
@@ -341,14 +341,16 @@ template <typename T> struct has_permuter_type {
 template <typename T, bool HP = has_permuter_type<T>::value> struct key_permuter {};
 template <typename T> struct key_permuter<T, true> {
     typedef typename T::permuter_type type;
-    // @unsafe - delegates to T::permutation() without safety guarantees
+    // @unsafe - calls method on template parameter which cannot be verified at analysis time
+    // SAFETY: T::permutation() is expected to be a pure accessor returning permuter state
     static type permutation(const T& n) {
         return n.permutation();
     }
 };
 template <typename T> struct key_permuter<T, false> {
     typedef identity_kpermuter type;
-    // @unsafe - calls n.size() without safety guarantees
+    // @unsafe - calls method on template parameter which cannot be verified at analysis time
+    // SAFETY: T::size() is expected to be a pure accessor returning size
     static type permutation(const T& n) {
         return identity_kpermuter(n.size());
     }

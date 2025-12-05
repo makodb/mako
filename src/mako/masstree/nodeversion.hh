@@ -233,16 +233,16 @@ class singlethreaded_nodeversion {
         return v_ & P::isleaf_bit;
     }
 
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     singlethreaded_nodeversion<P> stable() const {
         return *this;
     }
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     template <typename SF>
     singlethreaded_nodeversion<P> stable(SF) const {
         return *this;
     }
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     template <typename SF>
     singlethreaded_nodeversion<P> stable_annotated(SF) const {
         return *this;
@@ -281,15 +281,15 @@ class singlethreaded_nodeversion {
         return false;
     }
 
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     singlethreaded_nodeversion<P> lock() {
         return *this;
     }
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     singlethreaded_nodeversion<P> lock(singlethreaded_nodeversion<P>) {
         return *this;
     }
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     template <typename SF>
     singlethreaded_nodeversion<P> lock(singlethreaded_nodeversion<P>, SF) {
         return *this;
@@ -305,7 +305,7 @@ class singlethreaded_nodeversion {
     // @safe - no-op in singlethreaded mode
     void mark_insert() {
     }
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     singlethreaded_nodeversion<P> mark_insert(singlethreaded_nodeversion<P>) {
         return *this;
     }
@@ -318,7 +318,7 @@ class singlethreaded_nodeversion {
         if (is_split)
             mark_split();
     }
-    // @unsafe - returns *this without lifetime tracking
+    // @unsafe - returns *this which dereferences this pointer
     singlethreaded_nodeversion<P> mark_deleted() {
         return *this;
     }

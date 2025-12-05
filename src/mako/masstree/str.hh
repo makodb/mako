@@ -13,16 +13,15 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// Non-owning string slice (pointer + length)
+// @safe - Non-owning string slice (pointer + length)
 // Lightweight view into string data without memory management
-// SAFETY: Does not own data - caller must ensure lifetime validity
+// Most operations are pure and do not allocate or modify memory
 
 #ifndef STR_HH
 #define STR_HH
 #include "string_base.hh"
 #include <stdarg.h>
 #include <stdio.h>
-// @unsafe: entire lcdf namespace - contains raw pointer operations
 namespace lcdf {
 
 struct Str : public String_base<Str> {
@@ -32,78 +31,94 @@ struct Str : public String_base<Str> {
     const char *s;
     int len;
 
+    // @safe - default construction
     Str()
         : s(0), len(0) {
     }
+    // @safe - stores pointer and length from string base
     template <typename T>
     Str(const String_base<T>& x)
         : s(x.data()), len(x.length()) {
     }
+    // @safe - stores C string pointer
     Str(const char* s_)
         : s(s_), len(strlen(s_)) {
     }
+    // @safe - stores pointer and length
     Str(const char* s_, int len_)
         : s(s_), len(len_) {
     }
+    // @safe - stores pointer and length with cast
     Str(const unsigned char* s_, int len_)
         : s(reinterpret_cast<const char*>(s_)), len(len_) {
     }
+    // @safe - stores range as pointer and length
     Str(const char *first, const char *last)
         : s(first), len(last - first) {
         precondition(first <= last);
     }
+    // @safe - stores range as pointer and length with cast
     Str(const unsigned char *first, const unsigned char *last)
         : s(reinterpret_cast<const char*>(first)), len(last - first) {
         precondition(first <= last);
     }
+    // @safe - stores std::string data
     Str(const std::string& str)
         : s(str.data()), len(str.length()) {
     }
+    // @safe - uninitialized construction
     Str(const uninitialized_type &unused) {
         (void) unused;
     }
 
     static const Str maxkey;
 
+    // @safe - resets to null
     void assign() {
         s = 0;
         len = 0;
     }
-    // @unsafe
+    // @safe - stores pointer and length from string base
     template <typename T> void assign(const String_base<T> &x) {
         s = x.data();
         len = x.length();
     }
-    // @unsafe - stores raw C string pointer without ownership
+    // @safe - stores C string pointer
     void assign(const char *s_) {
         s = s_;
         len = strlen(s_);
     }
-    // @unsafe - stores raw pointer/length without validation
+    // @safe - stores pointer and length
     void assign(const char *s_, int len_) {
         s = s_;
         len = len_;
     }
 
+    // @safe - returns stored pointer
     const char *data() const {
         return s;
     }
+    // @safe - returns stored length
     int length() const {
         return len;
     }
+    // @unsafe - returns mutable pointer via const_cast
     char* mutable_data() {
         return const_cast<char*>(s);
     }
 
+    // @safe - creates prefix view
     Str prefix(int lenx) const {
         return Str(s, lenx < len ? lenx : len);
     }
+    // @safe - creates bounded substring view
     Str substring(const char *first, const char *last) const {
         if (first <= last && first >= s && last <= s + len)
             return Str(first, last);
         else
             return Str();
     }
+    // @safe - creates bounded substring view
     Str substring(const unsigned char *first, const unsigned char *last) const {
         const unsigned char *u = reinterpret_cast<const unsigned char*>(s);
         if (first <= last && first >= u && last <= u + len)
@@ -111,27 +126,30 @@ struct Str : public String_base<Str> {
         else
             return Str();
     }
+    // @safe - creates substring view (precondition checked with assert)
     Str fast_substring(const char *first, const char *last) const {
         assert(begin() <= first && first <= last && last <= end());
         return Str(first, last);
     }
+    // @safe - creates substring view (precondition checked with assert)
     Str fast_substring(const unsigned char *first, const unsigned char *last) const {
         assert(ubegin() <= first && first <= last && last <= uend());
         return Str(first, last);
     }
-    // @unsafe - pointer arithmetic on string data
+    // @unsafe - String_generic functions return *this
     Str ltrim() const {
         return String_generic::ltrim(*this);
     }
-    // @unsafe - pointer arithmetic on string data
+    // @unsafe - String_generic functions return *this
     Str rtrim() const {
         return String_generic::rtrim(*this);
     }
-    // @unsafe - pointer arithmetic on string data
+    // @unsafe - String_generic functions return *this
     Str trim() const {
         return String_generic::trim(*this);
     }
 
+    // @safe - pure integer computation
     long to_i() const {         // XXX does not handle negative
         long x = 0;
         int p;

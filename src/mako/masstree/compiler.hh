@@ -73,14 +73,16 @@
  * @return 0 if @a x = 0; otherwise the index of first bit set, where the
  * most significant bit is numbered 1.
  */
-// @unsafe - bit-twiddling helpers with raw intrinsics
+// @safe - pure bit-counting compiler intrinsics
 inline int ffs_msb(unsigned x) {
     return (x ? __builtin_clz(x) + 1 : 0);
 }
+// @safe - pure bit-counting compiler intrinsic
 /** @overload */
 inline int ffs_msb(unsigned long x) {
     return (x ? __builtin_clzl(x) + 1 : 0);
 }
+// @safe - pure bit-counting compiler intrinsic
 /** @overload */
 inline int ffs_msb(unsigned long long x) {
     return (x ? __builtin_clzll(x) + 1 : 0);
@@ -631,6 +633,8 @@ inline uint64_t htonq(uint64_t val) {
 
 /** Bit counting. */
 
+// @unsafe - calls compiler intrinsics which are considered external unsafe functions
+// SAFETY: These are pure bit-counting operations with no side effects
 /** @brief Return the number of leading 0 bits in @a x.
  * @pre @a x != 0
  *
@@ -662,6 +666,8 @@ inline int clz(unsigned long long x) {
 }
 #endif
 
+// @unsafe - calls compiler intrinsics which are considered external unsafe functions
+// SAFETY: These are pure bit-counting operations with no side effects
 /** @brief Return the number of trailing 0 bits in @a x.
  * @pre @a x != 0
  *
@@ -693,12 +699,14 @@ inline int ctz(unsigned long long x) {
 }
 #endif
 
+// @safe - pure integer arithmetic
 template <typename T, typename U>
 inline T iceil(T x, U y) {
     U mod = x % y;
     return x + (mod ? y - mod : 0);
 }
 
+// @unsafe - calls clz() which is unsafe
 /** @brief Return the smallest power of 2 greater than or equal to @a x.
     @pre @a x != 0
     @pre the result is representable in type T (that is, @a x can't be
@@ -708,6 +716,7 @@ inline T iceil_log2(T x) {
     return T(1) << (sizeof(T) * 8 - clz(x) - !(x & (x - 1)));
 }
 
+// @unsafe - calls clz() which is unsafe
 /** @brief Return the largest power of 2 less than or equal to @a x.
     @pre @a x != 0 */
 template <typename T>
@@ -715,6 +724,7 @@ inline T ifloor_log2(T x) {
     return T(1) << (sizeof(T) * 8 - 1 - clz(x));
 }
 
+// @unsafe - calls ctz() which is unsafe
 /** @brief Return the index of the lowest 0 nibble in @a x.
  *
  * 0 is the lowest-order nibble. Returns -1 if no nibbles are 0. */
@@ -730,6 +740,8 @@ inline int find_lowest_zero_nibble(T x) {
     return t ? ctz(t) >> 2 : -1;
 }
 
+// @unsafe - calls system byte-order functions (htons, htonl, htonq) which are external unsafe
+// SAFETY: These are pure byte-order conversion functions with no side effects
 /** @brief Translate @a x to network byte order.
  *
  * Compare htons/htonl/htonq.  host_to_net_order is particularly useful in
@@ -980,7 +992,7 @@ inline uint64_t read_tsc(void)
     return ((uint64_t)low) | (((uint64_t)high) << 32);
 }
 
-// @unsafe
+// @safe - pure comparison of values
 template <typename T>
 inline int compare(T a, T b) {
     if (a == b)

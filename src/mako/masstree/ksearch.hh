@@ -13,9 +13,9 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe - Key search algorithms for Masstree nodes
+// @safe - Key search algorithms for Masstree nodes
 // Provides linear and binary search over permuted key arrays
-// SAFETY: Template metaprogramming with comparator-based key lookup
+// All functions perform pure computation without pointer manipulation
 
 #ifndef KSEARCH_HH
 #define KSEARCH_HH 1
@@ -23,7 +23,7 @@
 
 template <typename KA, typename T>
 struct key_comparator {
-    // @safe - delegates to n.compare_key
+    // @safe - delegates to n.compare_key which is safe
     int operator()(const KA& ka, const T& n, int p) {
         return n.compare_key(ka, p);
     }
@@ -42,7 +42,7 @@ struct key_indexed_position {
 };
 
 
-// @unsafe - calls methods on template parameters without safety guarantees
+// @unsafe - calls comparator functor which may be unsafe
 template <typename KA, typename T, typename F>
 int key_upper_bound_by(const KA& ka, const T& n, F comparator)
 {
@@ -62,14 +62,14 @@ int key_upper_bound_by(const KA& ka, const T& n, F comparator)
     return l;
 }
 
-// @unsafe - delegates to unsafe key_upper_bound_by
+// @unsafe - delegates to key_upper_bound_by which calls comparator
 template <typename KA, typename T>
 inline int key_upper_bound(const KA& ka, const T& n)
 {
     return key_upper_bound_by(ka, n, key_comparator<KA, T>());
 }
 
-// @unsafe - calls methods on template parameters without safety guarantees
+// @unsafe - checker flags return statement as having address-of
 template <typename KA, typename T, typename F>
 key_indexed_position key_lower_bound_by(const KA& ka, const T& n, F comparator)
 {
@@ -97,7 +97,7 @@ inline key_indexed_position key_lower_bound(const KA& ka, const T& n)
 }
 
 
-// @unsafe - scans raw permutations without lifetime tracking
+// @unsafe - calls comparator functor which may be unsafe
 template <typename KA, typename T, typename F>
 int key_find_upper_bound_by(const KA& ka, const T& n, F comparator)
 {
@@ -114,7 +114,7 @@ int key_find_upper_bound_by(const KA& ka, const T& n, F comparator)
     return l;
 }
 
-// @unsafe - linear search over raw key slots
+// @unsafe - checker flags return statement as having address-of
 template <typename KA, typename T, typename F>
 key_indexed_position key_find_lower_bound_by(const KA& ka, const T& n, F comparator)
 {
@@ -136,7 +136,7 @@ key_indexed_position key_find_lower_bound_by(const KA& ka, const T& n, F compara
 
 struct key_bound_binary {
     static constexpr bool is_binary = true;
-    // @unsafe - delegates to unsafe binary search
+    // @unsafe - delegates to key_upper_bound_by which calls comparator
     template <typename KA, typename T>
     static inline int upper(const KA& ka, const T& n) {
         return key_upper_bound_by(ka, n, key_comparator<KA, T>());
@@ -155,7 +155,7 @@ struct key_bound_binary {
 
 struct key_bound_linear {
     static constexpr bool is_binary = false;
-    // @unsafe - delegates to unsafe linear search
+    // @unsafe - delegates to key_find_upper_bound_by which calls comparator
     template <typename KA, typename T>
     static inline int upper(const KA& ka, const T& n) {
         return key_find_upper_bound_by(ka, n, key_comparator<KA, T>());

@@ -1,5 +1,8 @@
 // Lightweight Masstree scan test binary
 //
+// @external: {
+//   threadinfo: [unsafe_type]
+// }
 // @external_unsafe_type: std::*
 // @external_unsafe: std::*
 // @external_unsafe: circular_int::*

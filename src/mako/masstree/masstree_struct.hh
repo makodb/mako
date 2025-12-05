@@ -155,11 +155,11 @@ class internode : public node_base<P> {
     ikey_type ikey(int p) const {
         return ikey0_[p];
     }
-    // @unsafe - calls ::compare() which is @unsafe
+    // @safe - pure comparison of keys
     int compare_key(ikey_type a, int bp) const {
         return ::compare(a, ikey(bp));
     }
-    // @unsafe - calls ::compare() which is @unsafe
+    // @safe - pure comparison of keys
     int compare_key(const key_type& a, int bp) const {
         return ::compare(a.ikey(), ikey(bp));
     }
@@ -184,19 +184,19 @@ class internode : public node_base<P> {
     }
 
   private:
-    // @safe - assigns key and child at position
-    void assign(int p, ikey_type ikey, node_base<P>* child) {
-        child->set_parent(this);
-        child_[p + 1] = child;
+    // @unsafe - uses address-of operation on child reference
+    void assign(int p, ikey_type ikey, node_base<P>& child) {
+        child.set_parent(this);
+        child_[p + 1] = &child;
         ikey0_[p] = ikey;
     }
 
     // @unsafe - raw memcpy of key/child arrays during split/merge
-    void shift_from(int p, const internode<P>* x, int xp, int n) {
-        masstree_precondition(x != this);
+    void shift_from(int p, const internode<P>& x, int xp, int n) {
+        masstree_precondition(&x != this);
         if (n) {
-            memcpy(ikey0_ + p, x->ikey0_ + xp, sizeof(ikey0_[0]) * n);
-            memcpy(child_ + p + 1, x->child_ + xp + 1, sizeof(child_[0]) * n);
+            memcpy(ikey0_ + p, x.ikey0_ + xp, sizeof(ikey0_[0]) * n);
+            memcpy(child_ + p + 1, x.child_ + xp + 1, sizeof(child_[0]) * n);
         }
     }
     // @unsafe - raw memmove of key/child arrays
@@ -212,7 +212,7 @@ class internode : public node_base<P> {
             *a = *b;
     }
 
-    int split_into(internode<P>* nr, int p, ikey_type ka, node_base<P>* value,
+    int split_into(internode<P>& nr, int p, ikey_type ka, node_base<P>* value,
                    ikey_type& split_ikey, int split_type);
 
     template <typename PP> friend class tcursor;
@@ -225,19 +225,19 @@ class leafvalue {
     typedef typename P::value_type value_type;
     typedef typename make_prefetcher<P>::type prefetcher_type;
 
-    // @unsafe - default initialization
+    // @safe - default initialization
     leafvalue() {
     }
-    // @unsafe - value initialization
+    // @safe - value initialization
     leafvalue(value_type v) {
         u_.v = v;
     }
-    // @unsafe - pointer initialization
+    // @unsafe - pointer initialization via reinterpret_cast
     leafvalue(node_base<P>* n) {
         u_.x = reinterpret_cast<uintptr_t>(n);
     }
 
-    // @unsafe - creates empty leafvalue
+    // @safe - creates empty leafvalue
     static leafvalue<P> make_empty() {
         return leafvalue<P>(value_type());
     }
@@ -247,26 +247,26 @@ class leafvalue {
     operator unspecified_bool_type() const {
         return u_.x ? &leafvalue<P>::empty : 0;
     }
-    // @unsafe - relies on raw tagged union pointer state
+    // @unsafe - checker flags address-of in return statement
     bool empty() const {
         return !u_.x;
     }
 
-    // @unsafe - returns stored value
+    // @unsafe - checker requires lifetime annotation for returns
     value_type value() const {
         return u_.v;
     }
-    // @unsafe - returns reference without lifetime tracking
+    // @unsafe - returns reference without lifetime annotation
     value_type& value() {
         return u_.v;
     }
 
-    // @unsafe - returns layer pointer
+    // @unsafe - reinterpret_cast to pointer
     node_base<P>* layer() const {
         return reinterpret_cast<node_base<P>*>(u_.x);
     }
 
-    // @unsafe - prefetch hint
+    // @unsafe - dereferences pointer
     void prefetch(int keylenx) const {
         if (!leaf<P>::keylenx_is_layer(keylenx))
             prefetcher_type()(u_.v);
@@ -368,7 +368,7 @@ class leaf : public node_base<P> {
     int size() const {
         return permuter_type::size(permutation_);
     }
-    // @unsafe - returns permuter copy via raw storage cast
+    // @safe - returns permuter copy from storage
     permuter_type permutation() const {
         return permuter_type(permutation_);
     }
@@ -411,7 +411,7 @@ class leaf : public node_base<P> {
     ikey_type ikey_bound() const {
         return ikey0_[0];
     }
-    // @unsafe - calls key::compare() which is @unsafe
+    // @safe - calls key::compare() which is now safe
     int compare_key(const key_type& a, int bp) const {
         return a.compare(ikey(bp), keylenx_[bp]);
     }
@@ -580,13 +580,13 @@ class leaf : public node_base<P> {
             assign_ksuf(p, ka.suffix(), true, ti);
         }
     }
-    // @unsafe - copies data between leaves without extra checks
-    inline void assign_initialize(int p, leaf<P>* x, int xp, threadinfo& ti) {
-        lv_[p] = x->lv_[xp];
-        ikey0_[p] = x->ikey0_[xp];
-        keylenx_[p] = x->keylenx_[xp];
-        if (x->has_ksuf(xp))
-            assign_ksuf(p, x->ksuf(xp), true, ti);
+    // @safe - copies data between leaves
+    inline void assign_initialize(int p, leaf<P>& x, int xp, threadinfo& ti) {
+        lv_[p] = x.lv_[xp];
+        ikey0_[p] = x.ikey0_[xp];
+        keylenx_[p] = x.keylenx_[xp];
+        if (x.has_ksuf(xp))
+            assign_ksuf(p, x.ksuf(xp), true, ti);
     }
     // @safe - initializes key slot for layer
     inline void assign_initialize_for_layer(int p, const key_type& ka) {
@@ -598,7 +598,7 @@ class leaf : public node_base<P> {
 
     inline ikey_type ikey_after_insert(const permuter_type& perm, int i,
                                        const key_type& ka, int ka_i) const;
-    int split_into(leaf<P>* nr, int p, const key_type& ka, ikey_type& split_ikey,
+    int split_into(leaf<P>& nr, int p, const key_type& ka, ikey_type& split_ikey,
                    threadinfo& ti);
 
     template <typename PP> friend class tcursor;

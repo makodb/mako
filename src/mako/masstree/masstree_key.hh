@@ -150,7 +150,7 @@ class key {
         }
     }
 
-    // @unsafe - calls ::compare() which is @unsafe
+    // @safe - pure comparison using ::compare() and arithmetic
     int compare(ikey_type ikey, int keylenx) const {
         int cmp = ::compare(this->ikey(), ikey);
         if (cmp == 0) {
@@ -162,7 +162,7 @@ class key {
         }
         return cmp;
     }
-    // @unsafe - delegates to compare (which calls ::compare)
+    // @safe - delegates to safe compare function
     int compare(const key<I>& x) const {
         return compare(x.ikey(), x.length());
     }
@@ -211,7 +211,7 @@ class key {
     operator Str() const {
         return full_string();
     }
-    // @unsafe - uses unlikely() macro which calls __builtin_expect
+    // @safe - integer arithmetic and compiler hint
     bool increment() {
         // Return true iff wrapped.
         if (has_suffix()) {

@@ -74,9 +74,10 @@ class simple_threadinfo {
     void increment_timestamp() {
 	ts_ += 2;
     }
+    // @safe - pure timestamp comparison and assignment
     template <typename T>
-    void observe_phantoms(T* n) {
-        kvtimestamp_t pe = n->phantom_epoch_[0];
+    void observe_phantoms(const T& n) {
+        kvtimestamp_t pe = n.phantom_epoch_[0];
 	if (circular_int<kvtimestamp_t>::less(ts_, pe))
 	    ts_ = pe;
     }
@@ -612,7 +613,7 @@ inline bool mbtree<P>::insert(const key_type &k, value_type v,
   Masstree::tcursor<P> lp(table_, k.data(), k.length());
   bool found = lp.find_insert(ti);
   if (!found)
-    ti.observe_phantoms(lp.node());
+    ti.observe_phantoms(*lp.node());
   if (found && old_v)
     *old_v = lp.value();
   lp.value() = v;
@@ -634,7 +635,7 @@ inline bool mbtree<P>::insert_if_absent(const key_type &k, value_type v,
   Masstree::tcursor<P> lp(table_, k.data(), k.length());
   bool found = lp.find_insert(ti);
   if (!found) {
-    ti.observe_phantoms(lp.node());
+    ti.observe_phantoms(*lp.node());
     lp.value() = v;
     if (insert_info) {
       insert_info->node = lp.node();

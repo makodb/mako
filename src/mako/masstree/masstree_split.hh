@@ -23,6 +23,7 @@
 #include "btree_leaflink.hh"
 namespace Masstree {
 
+// @safe - pure computation with array access and safe accessors
 /** @brief Return ikey at position @a i, assuming insert of @a ka at @a ka_i. */
 template <typename P>
 inline typename P::ikey_type
@@ -51,8 +52,8 @@ leaf<P>::ikey_after_insert(const permuter_type& perm, int i,
     *@a nr, and 2 for the sequential-order optimization (@a ka went into *@a
     nr and no other keys were moved). */
 template <typename P>
-// @unsafe - splits leaf nodes via raw pointer shuffling
-int leaf<P>::split_into(leaf<P>* nr, int p, const key_type& ka,
+// @unsafe - uses address-of on nr reference for btree_leaflink call
+int leaf<P>::split_into(leaf<P>& nr, int p, const key_type& ka,
                         ikey_type& split_ikey, threadinfo& ti)
 {
     // B+tree leaf insertion.
@@ -64,7 +65,7 @@ int leaf<P>::split_into(leaf<P>* nr, int p, const key_type& ka,
     // If p < mid, then x goes into *this, and the first element of nr
     //   will be former item (mid - 1).
     // If p >= mid, then x goes into nr.
-    masstree_precondition(!this->concurrent || (this->locked() && nr->locked()));
+    masstree_precondition(!this->concurrent || (this->locked() && nr.locked()));
     masstree_precondition(this->size() >= this->width - 1);
 
     int width = this->size();   // == this->width or this->width - 1
@@ -97,26 +98,26 @@ int leaf<P>::split_into(leaf<P>* nr, int p, const key_type& ka,
     typename permuter_type::value_type pv = perml.value_from(mid - (p < mid));
     for (int x = mid; x <= width; ++x)
         if (x == p)
-            nr->assign_initialize(x - mid, ka, ti);
+            nr.assign_initialize(x - mid, ka, ti);
         else {
-            nr->assign_initialize(x - mid, this, pv & 15, ti);
+            nr.assign_initialize(x - mid, *this, pv & 15, ti);
             pv >>= 4;
         }
     permuter_type permr = permuter_type::make_sorted(width + 1 - mid);
     if (p >= mid)
         permr.remove_to_back(p - mid);
-    nr->permutation_ = permr.value();
+    nr.permutation_ = permr.value();
 
-    btree_leaflink<leaf<P>, P::concurrent>::link_split(this, nr);
+    btree_leaflink<leaf<P>, P::concurrent>::link_split(this, &nr);
 
-    split_ikey = nr->ikey0_[0];
+    split_ikey = nr.ikey0_[0];
     return p >= mid ? 1 + (mid == width) : 0;
 }
 
 template <typename P>
-// @unsafe - splits internode using direct memory copies
-int internode<P>::split_into(internode<P> *nr, int p, ikey_type ka,
-                             node_base<P> *value, ikey_type& split_ikey,
+// @unsafe - calls mark_split() which uses memory fences
+int internode<P>::split_into(internode<P>& nr, int p, ikey_type ka,
+                             node_base<P>* value, ikey_type& split_ikey,
                              int split_type)
 {
     // B+tree internal node insertion.
@@ -133,29 +134,29 @@ int internode<P>::split_into(internode<P> *nr, int p, ikey_type ka,
     //   nr is pre-insertion item mid.
     // If p > mid, then x goes into nr, pre-insertion item mid goes into
     //   split_ikey, and the first element of nr is post-insertion item mid+1.
-    masstree_precondition(!this->concurrent || (this->locked() && nr->locked()));
+    masstree_precondition(!this->concurrent || (this->locked() && nr.locked()));
 
     int mid = (split_type == 2 ? this->width : (this->width + 1) / 2);
-    nr->nkeys_ = this->width + 1 - (mid + 1);
+    nr.nkeys_ = this->width + 1 - (mid + 1);
 
     if (p < mid) {
-        nr->child_[0] = this->child_[mid];
-        nr->shift_from(0, this, mid, this->width - mid);
+        nr.child_[0] = this->child_[mid];
+        nr.shift_from(0, *this, mid, this->width - mid);
         split_ikey = this->ikey0_[mid - 1];
     } else if (p == mid) {
-        nr->child_[0] = value;
-        nr->shift_from(0, this, mid, this->width - mid);
+        nr.child_[0] = value;
+        nr.shift_from(0, *this, mid, this->width - mid);
         split_ikey = ka;
     } else {
-        nr->child_[0] = this->child_[mid + 1];
-        nr->shift_from(0, this, mid + 1, p - (mid + 1));
-        nr->assign(p - (mid + 1), ka, value);
-        nr->shift_from(p + 1 - (mid + 1), this, p, this->width - p);
+        nr.child_[0] = this->child_[mid + 1];
+        nr.shift_from(0, *this, mid + 1, p - (mid + 1));
+        nr.assign(p - (mid + 1), ka, *value);
+        nr.shift_from(p + 1 - (mid + 1), *this, p, this->width - p);
         split_ikey = this->ikey0_[mid];
     }
 
-    for (int i = 0; i <= nr->nkeys_; ++i)
-        nr->child_[i]->set_parent(nr);
+    for (int i = 0; i <= nr.nkeys_; ++i)
+        nr.child_[i]->set_parent(&nr);
 
     this->mark_split();
     if (p < mid) {
@@ -191,7 +192,7 @@ bool tcursor<P>::make_split(threadinfo& ti)
     node_type* child = leaf_type::make(n_->ksuf_used_capacity(), n_->phantom_epoch(), ti);
     child->assign_version(*n_);
     ikey_type xikey[2];
-    int split_type = n_->split_into(static_cast<leaf_type *>(child),
+    int split_type = n_->split_into(*static_cast<leaf_type *>(child),
                                     kx_.i, ka_, xikey[0], ti);
     bool sense = false;
 
@@ -204,7 +205,7 @@ bool tcursor<P>::make_split(threadinfo& ti)
         if (!n->parent_exists(p)) {
             internode_type *nn = internode_type::make(ti);
             nn->child_[0] = n;
-            nn->assign(0, xikey[sense], child);
+            nn->assign(0, xikey[sense], *child);
             nn->nkeys_ = 1;
             nn->make_layer_root();
             fence();
@@ -218,13 +219,13 @@ bool tcursor<P>::make_split(threadinfo& ti)
                 next_child = internode_type::make(ti);
                 next_child->assign_version(*p);
                 next_child->mark_nonroot();
-                kp = p->split_into(next_child, kp, xikey[sense],
+                kp = p->split_into(*next_child, kp, xikey[sense],
                                    child, xikey[!sense], split_type);
             }
 
             if (kp >= 0) {
                 p->shift_up(kp + 1, kp, p->size() - kp);
-                p->assign(kp, xikey[sense], child);
+                p->assign(kp, xikey[sense], *child);
                 fence();
                 ++p->nkeys_;
             }

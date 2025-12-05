@@ -67,18 +67,23 @@ class unlocked_tcursor {
     // @unsafe - traverses nodes without locks; relies on raw pointer invariants
     bool find_unlocked(threadinfo& ti);
 
+    // @safe - returns stored value
     inline value_type value() const {
         return lv_.value();
     }
+    // @safe - returns stored pointer
     inline leaf<P>* node() const {
         return n_;
     }
+    // @safe - returns stored permutation
     inline permuter_type permutation() const {
         return perm_;
     }
+    // @safe - delegates to safe compare_key
     inline int compare_key(const key_type& a, int bp) const {
         return n_->compare_key(a, bp);
     }
+    // @safe - pure arithmetic
     inline nodeversion_value_type full_version_value() const {
         static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(leaf<P>::permuter_type::size_bits), "not enough bits to add size to version");
         return (v_.version_value() << leaf<P>::permuter_type::size_bits) + perm_.size();
@@ -126,33 +131,41 @@ class tcursor {
         : ka_(reinterpret_cast<const char*>(s), len), root_(root) {
     }
 
+    // @safe - simple comparison
     inline bool has_value() const {
         return kx_.p >= 0;
     }
+    // @unsafe - returns reference without lifetime annotation
     inline value_type &value() const {
         return n_->lv_[kx_.p].value();
     }
 
+    // @unsafe - checker flags pointer address-of
     inline bool is_first_layer() const {
         return !ka_.is_shifted();
     }
 
+    // @safe - returns stored pointer
     inline leaf<P>* node() const {
         return n_;
     }
 
+    // @safe - returns stored pointer
     inline leaf_type *original_node() const {
         return original_n_;
     }
 
+    // @safe - returns stored value
     inline nodeversion_value_type original_version_value() const {
         return original_v_;
     }
 
+    // @safe - returns stored value
     inline nodeversion_value_type updated_version_value() const {
         return updated_v_;
     }
 
+    // @unsafe - returns reference without lifetime annotation
     inline const new_nodes_type &new_nodes() const {
         return new_nodes_;
     }
@@ -199,7 +212,7 @@ class tcursor {
      *   If removing a leaf in layer 0, @a prefix is empty.
      *   If removing, for example, the node containing key "01234567ABCDEF" in the layer-1 tree
      *   rooted at "01234567", then @a prefix should equal "01234567". */
-    static bool remove_leaf(leaf_type* leaf, node_type* root,
+    static bool remove_leaf(leaf_type& leaf, node_type* root,
                             Str prefix, threadinfo& ti);
 
     bool gc_layer(threadinfo& ti);
