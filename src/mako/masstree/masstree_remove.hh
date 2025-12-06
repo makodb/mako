@@ -193,7 +193,7 @@ bool tcursor<P>::remove_leaf(leaf_type& leaf, node_type* root,
     }
 
     // Unlink leaf from doubly-linked leaf list
-    btree_leaflink<leaf_type>::unlink(&leaf);
+    btree_leaflink<leaf_type>::unlink(leaf);
 
     // Remove leaf from tree. This is simple unless the leaf is the first
     // child of its parent, in which case we need to traverse up until we find

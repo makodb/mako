@@ -15,20 +15,25 @@ class testrunner_base {
         thehead ? thetail->next_ = this : thehead = this;
         thetail = this;
     }
+    // @safe - default destructor
     virtual ~testrunner_base() {
     }
+    // @unsafe - returns reference without lifetime tracking
     const lcdf::String& name() const {
         return name_;
     }
+    // @unsafe - returns static mutable pointer
     static testrunner_base* first() {
         return thehead;
     }
+    // @unsafe - traverses intrusive list
     static testrunner_base* find(const lcdf::String& name) {
         testrunner_base* t = thehead;
         while (t && t->name_ != name)
             t = t->next_;
         return t;
     }
+    // @unsafe - writes to FILE stream
     static void print_names(FILE* stream, int maxcol);
   private:
     static testrunner_base* thehead;

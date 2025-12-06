@@ -25,6 +25,7 @@
 #include "circular_int.hh"
 #include "timestamp.hh"
 #include "memdebug.hh"
+#include <rusty/cell.hpp>
 #include <assert.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -130,19 +131,21 @@ class threadinfo {
     kvtimestamp_t operation_timestamp() const {
         return timestamp();
     }
+    // @safe - returns value via Cell<T>.get()
     kvtimestamp_t update_timestamp() const {
-        return ts_;
+        return ts_.get();
     }
+    // @safe - uses Cell<T> for interior mutability
     kvtimestamp_t update_timestamp(kvtimestamp_t x) const {
-        if (circular_int<kvtimestamp_t>::less_equal(ts_, x))
+        if (circular_int<kvtimestamp_t>::less_equal(ts_.get(), x))
             // x might be a marker timestamp; ensure result is not
-            ts_ = (x | 1) + 1;
-        return ts_;
+            ts_.set((x | 1) + 1);
+        return ts_.get();
     }
-    // @safe - pure timestamp comparison and assignment
+    // @safe - uses Cell<T> for interior mutability
     template <typename N> void observe_phantoms(const N& n) {
-        if (circular_int<kvtimestamp_t>::less(ts_, n.phantom_epoch_[0]))
-            ts_ = n.phantom_epoch_[0];
+        if (circular_int<kvtimestamp_t>::less(ts_.get(), n.phantom_epoch_[0]))
+            ts_.set(n.phantom_epoch_[0]);
     }
 
     // event counters
@@ -331,7 +334,7 @@ class threadinfo {
 
     limbo_group* limbo_head_;
     limbo_group* limbo_tail_;
-    mutable kvtimestamp_t ts_;
+    rusty::Cell<kvtimestamp_t> ts_;  // @safe - interior mutability via Cell<T>
 
     //enum { ncounters = (int) tc_max };
     enum { ncounters = 0 };

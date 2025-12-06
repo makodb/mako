@@ -78,38 +78,47 @@ class value_string {
     inline size_t shallow_size() const;
 };
 
+// @safe - pure arithmetic
 inline value_string::index_type value_string::make_index(unsigned offset, unsigned length) {
     return offset + (length << 16);
 }
 
+// @safe - pure bit extraction
 inline unsigned value_string::index_offset(index_type idx) {
     return idx & 0xFFFF;
 }
 
+// @safe - pure bit extraction
 inline unsigned value_string::index_length(index_type idx) {
     return idx >> 16;
 }
 
+// @safe - default initialization
 inline value_string::value_string()
     : ts_(0), vallen_(0) {
 }
 
+// @safe - returns stored timestamp
 inline kvtimestamp_t value_string::timestamp() const {
     return ts_;
 }
 
+// @safe - pure arithmetic
 inline size_t value_string::size() const {
     return sizeof(value_string) + vallen_;
 }
 
+// @safe - returns constant
 inline int value_string::ncol() const {
     return 1;
 }
 
+// @safe - pure arithmetic
 inline unsigned value_string::index_last_offset(index_type idx) {
     return index_offset(idx) + index_length(idx);
 }
 
+// @unsafe - accesses flexible array member
 inline lcdf::Str value_string::col(index_type idx) const {
     if (idx == 0)
         return Str(s_, vallen_);
@@ -130,10 +139,12 @@ inline void value_string::deallocate_rcu(threadinfo& ti) {
     ti.deallocate_rcu(this, size(), memtag_value);
 }
 
+// @safe - pure arithmetic
 inline size_t value_string::shallow_size(int vallen) {
     return sizeof(value_string) + vallen;
 }
 
+// @safe - pure arithmetic
 inline size_t value_string::shallow_size() const {
     return shallow_size(vallen_);
 }

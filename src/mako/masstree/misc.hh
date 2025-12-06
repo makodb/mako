@@ -56,12 +56,15 @@ inline void napms(int n) /* nap n milliseconds */
 struct quick_istr {
     char buf_[32];
     char *bbuf_;
+    // @safe - initializes to zero representation
     quick_istr() {
       set(0);
     }
+    // @safe - initializes from integer
     quick_istr(unsigned long x, int minlen = 0) {
       set(x, minlen);
     }
+    // @safe - converts integer to string representation in internal buffer
     void set(unsigned long x, int minlen = 0){
 	bbuf_ = buf_ + sizeof(buf_) - 1;
 	do {
@@ -69,17 +72,21 @@ struct quick_istr {
 	    x /= 10;
 	} while (--minlen > 0 || x != 0);
     }
+    // @safe - returns string view of internal buffer
     lcdf::Str string() const {
 	return lcdf::Str(bbuf_, buf_ + sizeof(buf_) - 1);
     }
+    // @safe - returns null-terminated C string
     const char *c_str() {
 	buf_[sizeof(buf_) - 1] = 0;
 	return bbuf_;
     }
+    // @safe - string comparison
     bool operator==(lcdf::Str s) const {
 	return s.len == (buf_ + sizeof(buf_) - 1) - bbuf_
 	    && memcmp(s.s, bbuf_, s.len) == 0;
     }
+    // @safe - negated string comparison
     bool operator!=(lcdf::Str s) const {
 	return !(*this == s);
     }

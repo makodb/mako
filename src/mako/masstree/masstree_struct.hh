@@ -252,11 +252,12 @@ class leafvalue {
         return !u_.x;
     }
 
-    // @unsafe - checker requires lifetime annotation for returns
+    // @safe - returns copy of stored value
     value_type value() const {
         return u_.v;
     }
-    // @unsafe - returns reference without lifetime annotation
+    // @unsafe
+    // @lifetime: (&'a mut) -> &'a mut
     value_type& value() {
         return u_.v;
     }

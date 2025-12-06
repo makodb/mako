@@ -33,20 +33,22 @@ template <typename N, bool CONCURRENT = N::concurrent> struct btree_leaflink {};
 // operations.
 template <typename N> struct btree_leaflink<N, true> {
   private:
+    // @safe - pure pointer arithmetic (marker bit)
     static inline N *mark(N *n) {
         return reinterpret_cast<N *>(reinterpret_cast<uintptr_t>(n) + 1);
     }
+    // @safe - pure pointer value check
     static inline bool is_marked(N *n) {
         return reinterpret_cast<uintptr_t>(n) & 1;
     }
     template <typename SF>
     // @unsafe - manipulates raw next pointers with CAS
-    static inline N *lock_next(N *n, SF spin_function) {
+    static inline N *lock_next(N &n, SF spin_function) {
         while (1) {
-            N *next = n->next_.ptr;
+            N *next = n.next_.ptr;
             if (!next
                 || (!is_marked(next)
-                    && bool_cmpxchg(&n->next_.ptr, next, mark(next))))
+                    && bool_cmpxchg(&n.next_.ptr, next, mark(next))))
                 return next;
             spin_function();
         }
@@ -59,20 +61,20 @@ template <typename N> struct btree_leaflink<N, true> {
         Concurrency correctness: Ensures that all "next" pointers are always
         valid, even if @a n's successor is deleted concurrently. */
     // @unsafe - mutates linked list pointers without borrow tracking
-    // @unsafe - raw pointer rewiring without concurrency support
-    static void link_split(N *n, N *nr) {
+    static void link_split(N &n, N &nr) {
         link_split(n, nr, relax_fence_function());
     }
     /** @overload */
     template <typename SF>
-    static void link_split(N *n, N *nr, SF spin_function) {
-        nr->prev_ = n;
+    // @unsafe - raw pointer rewiring with CAS operations
+    static void link_split(N &n, N &nr, SF spin_function) {
+        nr.prev_ = &n;
         N *next = lock_next(n, spin_function);
-        nr->next_.ptr = next;
+        nr.next_.ptr = next;
         if (next)
-            next->prev_ = nr;
+            next->prev_ = &nr;
         fence();
-        n->next_.ptr = nr;
+        n.next_.ptr = &nr;
     }
 
     /** @brief Unlink @a n from the list.
@@ -81,20 +83,20 @@ template <typename N> struct btree_leaflink<N, true> {
         Concurrency correctness: Works even in the presence of concurrent
         splits and deletes. */
     // @unsafe - rewires prev/next pointers of raw leaves
-    // @unsafe - raw unlink operation
-    static void unlink(N *n) {
+    static void unlink(N &n) {
         unlink(n, relax_fence_function());
     }
     /** @overload */
     template <typename SF>
-    static void unlink(N *n, SF spin_function) {
+    // @unsafe - raw unlink operation with CAS
+    static void unlink(N &n, SF spin_function) {
         // Assume node order A <-> N <-> B. Since n is locked, n cannot split;
         // next node will always be B or one of its successors.
         N *next = lock_next(n, spin_function);
         N *prev;
         while (1) {
-            prev = n->prev_;
-            if (bool_cmpxchg(&prev->next_.ptr, n, mark(n)))
+            prev = n.prev_;
+            if (bool_cmpxchg(&prev->next_.ptr, &n, mark(&n)))
                 break;
             spin_function();
         }
@@ -108,25 +110,29 @@ template <typename N> struct btree_leaflink<N, true> {
 
 // This is the single-threaded-only fast version of btree_leaflink.
 template <typename N> struct btree_leaflink<N, false> {
-    static void link_split(N *n, N *nr) {
+    // @unsafe - address-of operations on references for linked list pointers
+    static void link_split(N &n, N &nr) {
         link_split(n, nr, do_nothing());
     }
     template <typename SF>
-    static void link_split(N *n, N *nr, SF) {
-        nr->prev_ = n;
-        nr->next_.ptr = n->next_.ptr;
-        n->next_.ptr = nr;
-        if (nr->next_.ptr)
-            nr->next_.ptr->prev_ = nr;
+    // @unsafe - address-of operations on references for linked list pointers
+    static void link_split(N &n, N &nr, SF) {
+        nr.prev_ = &n;
+        nr.next_.ptr = n.next_.ptr;
+        n.next_.ptr = &nr;
+        if (nr.next_.ptr)
+            nr.next_.ptr->prev_ = &nr;
     }
-    static void unlink(N *n) {
+    // @unsafe - delegates to unsafe unlink with spin function
+    static void unlink(N &n) {
         unlink(n, do_nothing());
     }
     template <typename SF>
-    static void unlink(N *n, SF) {
-        if (n->next_.ptr)
-            n->next_.ptr->prev_ = n->prev_;
-        n->prev_->next_.ptr = n->next_.ptr;
+    // @unsafe - raw pointer dereferences for linked list traversal
+    static void unlink(N &n, SF) {
+        if (n.next_.ptr)
+            n.next_.ptr->prev_ = n.prev_;
+        n.prev_->next_.ptr = n.next_.ptr;
     }
 };
 

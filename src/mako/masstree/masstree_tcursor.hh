@@ -135,12 +135,13 @@ class tcursor {
     inline bool has_value() const {
         return kx_.p >= 0;
     }
-    // @unsafe - returns reference without lifetime annotation
+    // @unsafe
+    // @lifetime: (&'a) -> &'a
     inline value_type &value() const {
         return n_->lv_[kx_.p].value();
     }
 
-    // @unsafe - checker flags pointer address-of
+    // @unsafe - involves pointer address-of operations
     inline bool is_first_layer() const {
         return !ka_.is_shifted();
     }
@@ -165,7 +166,8 @@ class tcursor {
         return updated_v_;
     }
 
-    // @unsafe - returns reference without lifetime annotation
+    // @unsafe
+    // @lifetime: (&'a) -> &'a
     inline const new_nodes_type &new_nodes() const {
         return new_nodes_;
     }

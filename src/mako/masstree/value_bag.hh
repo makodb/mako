@@ -86,6 +86,7 @@ class value_bag {
 };
 
 
+// @unsafe - accesses flexible array member for initialization
 template <typename O>
 inline value_bag<O>::value_bag()
     : ts_(0) {
@@ -93,26 +94,31 @@ inline value_bag<O>::value_bag()
     d_.pos_[0] = sizeof(bagdata);
 }
 
+// @safe - returns stored timestamp
 template <typename O>
 inline kvtimestamp_t value_bag<O>::timestamp() const {
     return ts_;
 }
 
+// @unsafe - accesses flexible array member
 template <typename O>
 inline size_t value_bag<O>::size() const {
     return sizeof(kvtimestamp_t) + d_.pos_[d_.ncol_];
 }
 
+// @unsafe - accesses flexible array member
 template <typename O>
 inline int value_bag<O>::ncol() const {
     return d_.ncol_;
 }
 
+// @unsafe - accesses flexible array member
 template <typename O>
 inline O value_bag<O>::column_length(int i) const {
     return d_.pos_[i + 1] - d_.pos_[i];
 }
 
+// @unsafe - accesses flexible array member
 template <typename O>
 inline lcdf::Str value_bag<O>::col(int i) const {
     if (unsigned(i) < unsigned(d_.ncol_))

@@ -487,6 +487,8 @@ inline bool operator>(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) > 0;
 }
 
+// @unsafe - writes to stream using raw data pointer
+// @lifetime: (&'a, _) -> &'a
 template <typename T>
 inline std::ostream &operator<<(std::ostream &f, const String_base<T> &str) {
     return f.write(str.data(), str.length());

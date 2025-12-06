@@ -42,22 +42,24 @@ class circular_int {
         return v_;
     }
 
-    // @unsafe
+    // @unsafe - returns mutable reference to this
     // @lifetime: (&'a mut) -> &'a mut
     circular_int<T> &operator++() {
         ++v_;
         return *this;
     }
+    // @unsafe - postfix returns value but checker conflates with prefix
     circular_int<T> operator++(int) {
         ++v_;
         return circular_int<T>(v_ - 1);
     }
-    // @unsafe
+    // @unsafe - returns mutable reference to this
     // @lifetime: (&'a mut) -> &'a mut
     circular_int<T> &operator--() {
         --v_;
         return *this;
     }
+    // @unsafe - postfix returns value but checker conflates with prefix
     circular_int<T> operator--(int) {
         --v_;
         return circular_int<T>(v_ + 1);
@@ -114,12 +116,12 @@ class circular_int {
     circular_int<T> operator+(int x) const {
         return circular_int<T>(v_ + x);
     }
-    // @unsafe - uses logical NOT that checker interprets as address-of
+    // @unsafe - checker interprets !v as address-of operation
     circular_int<T> next_nonzero() const {
         value_type v = v_ + 1;
         return circular_int<T>(v + !v);
     }
-    // @unsafe - uses logical NOT that checker interprets as address-of
+    // @unsafe - checker interprets !x as address-of operation
     static value_type next_nonzero(value_type x) {
         ++x;
         return x + !x;

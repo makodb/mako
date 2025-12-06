@@ -74,18 +74,22 @@ class value_array {
     static value_array* make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti);
 };
 
+// @safe - default initialization
 inline value_array::value_array()
     : ts_(0), ncol_(0) {
 }
 
+// @safe - returns stored timestamp
 inline kvtimestamp_t value_array::timestamp() const {
     return ts_;
 }
 
+// @safe - returns stored column count
 inline int value_array::ncol() const {
     return ncol_;
 }
 
+// @unsafe - accesses flexible array member via raw pointer
 inline Str value_array::col(int i) const {
     if (unsigned(i) < unsigned(ncol_) && cols_[i])
         return Str(cols_[i]->s, cols_[i]->len);
@@ -93,10 +97,12 @@ inline Str value_array::col(int i) const {
         return Str();
 }
 
+// @safe - pure arithmetic
 inline size_t value_array::shallow_size(int ncol) {
     return sizeof(value_array) + sizeof(lcdf::inline_string*) * ncol;
 }
 
+// @safe - pure arithmetic
 inline size_t value_array::shallow_size() const {
     return shallow_size(ncol_);
 }

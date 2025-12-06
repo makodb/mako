@@ -73,7 +73,8 @@ public:
     static void BindCurrentThread(MasstreeContext* ctx);
     static MasstreeContext* Current();
 
-    // Factory
+    // @unsafe - allocates with new, caller must manage lifetime
+    // Factory - creates a new MasstreeContext (caller owns the pointer)
     static MasstreeContext* Create();
 
 private:

@@ -60,7 +60,7 @@ inline double now() {
     return tv.tv_sec + tv.tv_usec / 1000000.0;
 }
 
-// @unsafe - converts double seconds into raw timespec fields
+// @unsafe - calls external floor() function
 inline struct timespec &set_timespec(struct timespec &x, double y) {
     double ipart = floor(y);
     x.tv_sec = (long) ipart;

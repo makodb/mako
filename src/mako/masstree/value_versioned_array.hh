@@ -138,18 +138,22 @@ struct query_helper<value_versioned_array> {
     }
 };
 
+// @safe - default initialization
 inline value_versioned_array::value_versioned_array()
     : ts_(0), ncol_(0), ncol_cap_(0) {
 }
 
+// @safe - returns stored timestamp
 inline kvtimestamp_t value_versioned_array::timestamp() const {
     return ts_;
 }
 
+// @safe - returns stored column count
 inline int value_versioned_array::ncol() const {
     return ncol_;
 }
 
+// @unsafe - accesses flexible array member
 inline Str value_versioned_array::col(int i) const {
     if (unsigned(i) < unsigned(ncol_) && cols_[i])
         return Str(cols_[i]->s, cols_[i]->len);
@@ -157,10 +161,12 @@ inline Str value_versioned_array::col(int i) const {
         return Str();
 }
 
+// @safe - pure arithmetic
 inline size_t value_versioned_array::shallow_size(int ncol) {
     return sizeof(value_versioned_array) + ncol * sizeof(lcdf::inline_string*);
 }
 
+// @safe - pure arithmetic
 inline size_t value_versioned_array::shallow_size() const {
     return shallow_size(ncol_);
 }

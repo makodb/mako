@@ -67,6 +67,7 @@ class basic_table {
     typedef unlocked_tcursor<P> unlocked_cursor_type;
     typedef tcursor<P> cursor_type;
 
+    // @safe - default initialization
     inline basic_table();
 
     // @unsafe - mutates root pointer using raw allocation
@@ -74,7 +75,9 @@ class basic_table {
     // @unsafe - tears down tree via raw pointers
     void destroy(threadinfo& ti);
 
+    // @safe - returns stored pointer
     inline node_type* root() const;
+    // @unsafe - may mutate root pointer
     inline node_type* fix_root();
 
     bool get(Str key, value_type& value, threadinfo& ti) const;

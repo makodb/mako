@@ -13,9 +13,9 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe - Random number generators for testing and benchmarking
+// @safe - Random number generators for testing and benchmarking
 // Provides PSDES, xorshift, and lcg-based generators
-// SAFETY: Pure arithmetic operations (no unsafe memory operations)
+// Pure arithmetic operations with deterministic state
 
 #ifndef KVRANDOM_HH
 #define KVRANDOM_HH 1
@@ -27,15 +27,19 @@ class kvrandom_lcg_nr_simple { public:
     enum { min_value = 0, max_value = 0xFFFFFFFFU };
     typedef uint32_t value_type;
     typedef uint32_t seed_type;
+    // @safe - default initialization
     kvrandom_lcg_nr_simple()
 	: seed_(default_seed) {
     }
+    // @safe - seed initialization
     explicit kvrandom_lcg_nr_simple(seed_type seed)
 	: seed_(seed) {
     }
+    // @safe - pure state update
     void reset(seed_type seed) {
 	seed_ = seed;
     }
+    // @safe - pure arithmetic
     value_type next() {
 	return (seed_ = seed_ * a + c);
     }
@@ -50,6 +54,7 @@ class kvrandom_lcg_nr_simple { public:
 class kvrandom_lcg_nr : public kvrandom_lcg_nr_simple { public:
     enum { min_value = 0, max_value = 0x7FFFFFFF };
     typedef int32_t value_type;
+    // @safe - pure arithmetic combining two LCG outputs
     value_type next() {
 	uint32_t x0 = kvrandom_lcg_nr_simple::next(),
 	    x1 = kvrandom_lcg_nr_simple::next();
@@ -62,23 +67,26 @@ class kvrandom_psdes_nr { public:
     enum { min_value = 0, max_value = 0xFFFFFFFFU };
     typedef uint32_t value_type;
     typedef uint32_t seed_type;
+    // @safe - default initialization
     kvrandom_psdes_nr() {
         reset(1);
     }
+    // @safe - seed initialization
     explicit kvrandom_psdes_nr(seed_type seed) {
         reset(seed);
     }
-    // @unsafe - mutates internal seed with deterministic PRNG math; no locking
+    // @safe - pure state update
     void reset(seed_type seed) {
 	seed_ = seed;
 	next_ = 1;
     }
-    // @unsafe - uses raw internal state without synchronization
+    // @safe - pure arithmetic hash function
     value_type next() {
 	uint32_t value = psdes(seed_, next_);
 	++next_;
 	return value;
     }
+    // @safe - pure hash computation
     value_type operator[](uint32_t index) const {
 	return psdes(seed_, index);
     }
@@ -87,16 +95,20 @@ class kvrandom_psdes_nr { public:
     uint32_t next_;
     enum { niter = 4 };
     static const uint32_t c1[niter], c2[niter];
+    // @safe - pure arithmetic hash
     static uint32_t psdes(uint32_t lword, uint32_t irword);
 };
 
 // a wrapper around random(), for backwards compatibility
 class kvrandom_random { public:
+    // @safe - default constructor
     kvrandom_random() {
     }
+    // @unsafe - calls external srandom()
     void reset(uint32_t seed) {
 	srandom(seed);
     }
+    // @unsafe - calls external random()
     int32_t next() const {
 	return random();
     }

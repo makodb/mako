@@ -13,9 +13,8 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe - Statistics accumulator for performance measurement
+// @safe - Statistics accumulator for performance measurement
 // Computes running statistics with online algorithms
-// SAFETY: Uses realloc for sample storage in some modes
 
 #ifndef KVSTATS_HH
 #define KVSTATS_HH 1
@@ -24,9 +23,11 @@
 struct kvstats {
   double min, max, sum, sumsq;
   long count;
+  // @safe - default initialization
   kvstats()
     : min(-1), max(-1), sum(0), sumsq(0), count(0) {
   }
+  // @safe - pure arithmetic accumulator
   void add(double x) {
     if (!count || x < min)
       min = x;
@@ -37,16 +38,18 @@ struct kvstats {
     count += 1;
   }
   typedef void (kvstats::*unspecified_bool_type)(double);
+  // @safe - returns member function pointer
   operator unspecified_bool_type() const {
     return count ? &kvstats::add : 0;
   }
-  // @unsafe - uses libc sqrt and printf on raw accumulated totals
+  // @unsafe - uses libc printf (external function)
   void print_report(const char *name) const {
     if (count)
       printf("%s: n %ld, total %.0f, average %.0f, min %.0f, max %.0f, stddev %.0f\n",
 	     name, count, sum, sum / count, min, max,
 	     sqrt((sumsq - sum * sum / count) / (count - 1)));
   }
+  // @safe - pure arithmetic
   double avg() {
     if (count)
       return sum / count;

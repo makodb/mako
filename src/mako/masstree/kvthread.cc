@@ -53,7 +53,7 @@ inline threadinfo::threadinfo(int purpose, int index) {
     void *limbo_space = allocate(sizeof(limbo_group), memtag_limbo);
     mark(tc_limbo_slots, limbo_group::capacity);
     limbo_head_ = limbo_tail_ = new(limbo_space) limbo_group;
-    ts_ = 2;
+    ts_.set(2);  // @safe - uses Cell<T> for interior mutability
 }
 
 // @unsafe - uses placement new on raw malloc(8192) buffer without RAII

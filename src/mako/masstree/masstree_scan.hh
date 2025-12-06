@@ -21,6 +21,7 @@
 #define MASSTREE_SCAN_HH
 #include "masstree_tcursor.hh"
 #include "masstree_struct.hh"
+#include <rusty/cell.hpp>
 namespace Masstree {
 
 template <typename P>
@@ -35,18 +36,23 @@ class scanstackelt {
     typedef typename P::threadinfo_type threadinfo;
     typedef typename node_base<P>::nodeversion_type nodeversion_type;
 
+    // @safe - returns stored pointer
     leaf<P>* node() const {
         return n_;
     }
+    // @safe - pure arithmetic
     typename nodeversion_type::value_type full_version_value() const {
         return (v_.version_value() << permuter_type::size_bits) + perm_.size();
     }
+    // @safe - returns stored value
     int size() const {
         return perm_.size();
     }
+    // @safe - returns stored value
     permuter_type permutation() const {
         return perm_;
     }
+    // @unsafe - calls compare_key which may involve pointer operations
     int operator()(const key_type &k, const scanstackelt<P> &n, int p) {
         return n.n_->compare_key(k, p);
     }
@@ -86,34 +92,43 @@ class scanstackelt {
 };
 
 struct forward_scan_helper {
+    // @safe - pure comparison
     bool initial_ksuf_match(int ksuf_compare, bool emit_equal) const {
         return ksuf_compare > 0 || (ksuf_compare == 0 && emit_equal);
     }
+    // @safe - pure comparison
     template <typename K> bool is_duplicate(const K &k,
                                             typename K::ikey_type ikey,
                                             int keylenx) const {
         return k.compare(ikey, keylenx) >= 0;
     }
-    template <typename K, typename N> int lower(const K &k, const N *n) const {
-        return N::bound_type::lower_by(k, *n, *n).i;
+    // @safe - pure computation on references
+    template <typename K, typename N> int lower(const K &k, const N &n) const {
+        return N::bound_type::lower_by(k, n, n).i;
     }
+    // @safe - pure computation on references
     template <typename K, typename N>
-    key_indexed_position lower_with_position(const K &k, const N *n) const {
-        return N::bound_type::lower_by(k, *n, *n);
+    key_indexed_position lower_with_position(const K &k, const N &n) const {
+        return N::bound_type::lower_by(k, n, n);
     }
+    // @safe - no-op
     void found() const {
     }
+    // @safe - pure arithmetic
     int next(int ki) const {
         return ki + 1;
     }
+    // @unsafe - traverses via raw node pointer
     template <typename N, typename K>
     N *advance(const N *n, const K &) const {
         return n->safe_next();
     }
+    // @unsafe - calls stable() on raw node
     template <typename N, typename K>
     typename N::nodeversion_type stable(const N *n, const K &) const {
         return n->stable();
     }
+    // @safe - modifies key state
     template <typename K> void shift_clear(K &ka) const {
         ka.shift_clear();
     }
@@ -128,41 +143,50 @@ struct reverse_scan_helper {
     // The "backwards" ki must be calculated using the size taken by the
     // lower_bound, NOT some later size() (which might be bigger or smaller).
     // The helper type reverse_scan_node allows this.
+    // @safe - default initialization with Cell<bool>
     reverse_scan_helper()
-        : upper_bound_(false) {
+        : upper_bound_(false) {  // Cell<bool> constructor takes bool value
     }
+    // @safe - pure comparison
     bool initial_ksuf_match(int ksuf_compare, bool emit_equal) const {
         return ksuf_compare < 0 || (ksuf_compare == 0 && emit_equal);
     }
+    // @unsafe - k.compare() involves pointer operations; Cell<bool> for interior mutability
     template <typename K> bool is_duplicate(const K &k,
                                             typename K::ikey_type ikey,
                                             int keylenx) const {
-        return k.compare(ikey, keylenx) <= 0 && !upper_bound_;
+        return k.compare(ikey, keylenx) <= 0 && !upper_bound_.get();
     }
-    template <typename K, typename N> int lower(const K &k, const N *n) const {
-        if (upper_bound_)
-            return n->size() - 1;
-        key_indexed_position kx = N::bound_type::lower_by(k, *n, *n);
+    // @safe - pure computation on references, uses Cell<bool>
+    template <typename K, typename N> int lower(const K &k, const N &n) const {
+        if (upper_bound_.get())
+            return n.size() - 1;
+        key_indexed_position kx = N::bound_type::lower_by(k, n, n);
         return kx.i - (kx.p < 0);
     }
+    // @safe - pure computation on references
     template <typename K, typename N>
-    key_indexed_position lower_with_position(const K &k, const N *n) const {
-        key_indexed_position kx = N::bound_type::lower_by(k, *n, *n);
+    key_indexed_position lower_with_position(const K &k, const N &n) const {
+        key_indexed_position kx = N::bound_type::lower_by(k, n, n);
         kx.i -= kx.p < 0;
         return kx;
     }
+    // @safe - pure arithmetic
     int next(int ki) const {
         return ki - 1;
     }
+    // @safe - modifies internal state via Cell<bool>
     void found() const {
-        upper_bound_ = false;
+        upper_bound_.set(false);
     }
+    // @unsafe - accesses raw node members and returns raw pointer
     template <typename N, typename K>
     N *advance(const N *n, K &k) const {
         k.assign_store_ikey(n->ikey_bound());
         k.assign_store_length(0);
         return n->prev_;
     }
+    // @unsafe - traverses via raw node pointers
     template <typename N, typename K>
     typename N::nodeversion_type stable(N *&n, const K &k) const {
         while (1) {
@@ -176,12 +200,13 @@ struct reverse_scan_helper {
             n = next;
         }
     }
+    // @safe - modifies key state via Cell<bool>
     template <typename K> void shift_clear(K &ka) const {
         ka.shift_clear_reverse();
-        upper_bound_ = true;
+        upper_bound_.set(true);
     }
   private:
-    mutable bool upper_bound_;
+    rusty::Cell<bool> upper_bound_;  // @safe - interior mutability via Cell<T>
 };
 
 
@@ -203,7 +228,7 @@ int scanstackelt<P>::find_initial(H& helper, key_type& ka, bool emit_equal,
     n_->prefetch();
     perm_ = n_->permutation();
 
-    kx = helper.lower_with_position(ka, this);
+    kx = helper.lower_with_position(ka, *this);
     if (kx.p >= 0) {
         keylenx = n_->keylenx_[kx.p];
         fence();
@@ -253,7 +278,7 @@ int scanstackelt<P>::find_retry(H& helper, key_type& ka, threadinfo& ti)
 
     n_->prefetch();
     perm_ = n_->permutation();
-    ki_ = helper.lower(ka, this);
+    ki_ = helper.lower(ka, *this);
     return scan_find_next;
 }
 
@@ -308,7 +333,7 @@ int scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
  changed:
     v_ = helper.stable(n_, ka);
     perm_ = n_->permutation();
-    ki_ = helper.lower(ka, this);
+    ki_ = helper.lower(ka, *this);
     return scan_find_next;
 }
 
@@ -374,7 +399,7 @@ int basic_table<P>::scan(H helper,
             } while (unlikely(ka.empty()));
             stack.v_ = helper.stable(stack.n_, ka);
             stack.perm_ = stack.n_->permutation();
-            stack.ki_ = helper.lower(ka, &stack);
+            stack.ki_ = helper.lower(ka, stack);
             goto find_next;
 
         case mystack_type::scan_down:
