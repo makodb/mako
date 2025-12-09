@@ -5,19 +5,23 @@
 
 namespace janus {
 
+//=============================================================================
+// Construction / Destruction
+//=============================================================================
+
 SchedulerLuigi::SchedulerLuigi() : SchedulerClassic() {
-  // lazy init of vectors may happen in Start() when txn registry / schema
-  // information is available.
+  // Nothing special needed here; vectors/maps init lazily
 }
 
 SchedulerLuigi::~SchedulerLuigi() { Stop(); }
 
+//=============================================================================
+// Thread Management
+//=============================================================================
+
 void SchedulerLuigi::Start() {
   bool expected = false;
   if (!running_.compare_exchange_strong(expected, true)) return;
-
-  // initialize per-key vectors using txn registry if available
-  // For now keep empty; will be sized when schema info is known.
 
   hold_thread_ = new std::thread(&SchedulerLuigi::HoldReleaseTd, this);
   exec_thread_ = new std::thread(&SchedulerLuigi::ExecTd, this);
@@ -26,7 +30,7 @@ void SchedulerLuigi::Start() {
 void SchedulerLuigi::Stop() {
   bool expected = true;
   if (!running_.compare_exchange_strong(expected, false)) return;
-  hold_cv_.notify_all();
+
   if (hold_thread_) {
     hold_thread_->join();
     delete hold_thread_;
@@ -39,73 +43,172 @@ void SchedulerLuigi::Stop() {
   }
 }
 
+//=============================================================================
+// Utility
+//=============================================================================
+
+uint64_t SchedulerLuigi::GetMicrosecondTimestamp() {
+  auto tse = std::chrono::system_clock::now().time_since_epoch();
+  return (uint64_t)std::chrono::duration_cast<std::chrono::microseconds>(tse).count();
+}
+
+//=============================================================================
+// LuigiDispatch: Entry Point (called by coordinator)
+//=============================================================================
+
 void SchedulerLuigi::LuigiDispatch(txnid_t tx_id,
                                    std::shared_ptr<Marshallable> cmd,
                                    uint64_t send_time,
                                    uint32_t bound,
+                                   const std::vector<uint32_t>& local_keys,
                                    std::function<void(const TxnOutput&)> reply_cb) {
   auto entry = std::make_shared<LuigiLogEntry>(tx_id);
   entry->cmd_ = cmd;
   entry->send_time_ = send_time;
   entry->local_deadline_ = send_time + bound;
+  entry->local_keys_ = local_keys;
   entry->reply_cb_ = reply_cb;
 
-  // NOTE: for now we don't compute local_keys_. The next step will
-  // populate local_keys_ using the scheduler's txn registry / pre-processing
-  // logic similar to SchedulerClassic::DispatchPiece.
+  // Calculate one-way delay for diagnostics
+  uint64_t now = GetMicrosecondTimestamp();
+  entry->owd_ = (now > send_time) ? (uint32_t)(now - send_time) : 1000;
 
-  InsertIntoHoldBuffer(entry);
+  // Enqueue to incoming queue (lock-free, thread-safe)
+  // HoldReleaseTd will pick this up, check conflicts, and add to priority queue
+  incoming_txn_queue_.enqueue(entry);
 }
 
-void SchedulerLuigi::InsertIntoHoldBuffer(std::shared_ptr<LuigiLogEntry> entry) {
-  std::unique_lock<std::mutex> lk(hold_mtx_);
-  hold_buffer_[{entry->local_deadline_, entry->tid_}] = entry;
-  hold_cv_.notify_one();
-}
+//=============================================================================
+// HoldReleaseTd: The Core of Luigi
+//
+// This thread runs in a loop and does two things:
+// 1. Pulls txns from incoming_txn_queue_, checks conflicts, adds to priority_queue_
+// 2. Releases txns from priority_queue_ when their deadline passes, sends to ready_txn_queue_
+//
+// Why a loop instead of event-driven?
+// - ConcurrentQueue doesn't support blocking wait (like Go channels)
+// - We add a small sleep when idle to avoid wasting CPU
+// - In high-throughput scenarios, the loop stays busy doing useful work
+//=============================================================================
 
 void SchedulerLuigi::HoldReleaseTd() {
-  std::unique_lock<std::mutex> lk(hold_mtx_);
+  std::shared_ptr<LuigiLogEntry> entries[256];  // bulk dequeue buffer
+
   while (running_) {
-    if (hold_buffer_.empty()) {
-      hold_cv_.wait_for(lk, std::chrono::milliseconds(10));
-      continue;
+    uint64_t now = GetMicrosecondTimestamp();
+
+    //-------------------------------------------------------------------------
+    // Phase 1: Pull from incoming_txn_queue_, do conflict check, add to priority_queue_
+    //-------------------------------------------------------------------------
+    size_t cnt = incoming_txn_queue_.try_dequeue_bulk(entries, 256);
+    for (size_t i = 0; i < cnt; i++) {
+      auto entry = entries[i];
+      uint64_t txn_key = entry->tid_;
+
+      // CONFLICT DETECTION (from Algorithm 1, line 1-4 in paper):
+      // Find the maximum lastReleasedDeadline among all keys this txn touches
+      uint64_t max_last_released = 0;
+      for (auto& k : entry->local_keys_) {
+        auto it = last_released_deadlines_.find(k);
+        if (it != last_released_deadlines_.end() && it->second > max_last_released) {
+          max_last_released = it->second;
+        }
+      }
+
+      // If txn's deadline is too small (conflict), update it
+      // This is the LEADER PRIVILEGE: we can bump the timestamp
+      // (In Tiga, followers would reject/abandon here, but we only have leaders)
+      if (entry->local_deadline_ <= max_last_released) {
+        entry->local_deadline_ = max_last_released + 1;
+        // Log for debugging (optional)
+        // std::cout << "Luigi: Updated deadline for txn " << txn_key
+        //           << " to " << entry->local_deadline_ << std::endl;
+      }
+
+      // Insert into priority_queue_ (sorted by deadline, then txn_id)
+      priority_queue_[{entry->local_deadline_, txn_key}] = entry;
     }
-    auto it = hold_buffer_.begin();
-    uint64_t now = (uint64_t) std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    if (it->first.first <= now) {
+
+    //-------------------------------------------------------------------------
+    // Phase 2: Release txns whose deadline has passed -> ready_txn_queue_
+    //-------------------------------------------------------------------------
+    while (!priority_queue_.empty()) {
+      auto it = priority_queue_.begin();
+      uint64_t deadline = it->first.first;
+
+      if (now < deadline) {
+        // Earliest deadline not yet reached, stop releasing
+        break;
+      }
+
+      // Deadline reached! Release this entry
       auto entry = it->second;
-      // move entry to execution - for now we simply call ExecTd via a queue
-      // For simplicity, directly perform a minimal "execute" action here.
+      priority_queue_.erase(it);
 
-      // TODO: real conflict check, spec/commit logic, and timestamp agreement
-      // For now, run DispatchPiece/ExecutePiece (synchronous) as a placeholder
+      // Update lastReleasedDeadlines for all keys this txn touches
+      // (Algorithm 1, line 14-15 in paper)
+      for (auto& k : entry->local_keys_) {
+        if (last_released_deadlines_[k] < entry->local_deadline_) {
+          last_released_deadlines_[k] = entry->local_deadline_;
+        }
+      }
 
-      // perform pre-dispatch: create Tx object and run DispatchPiece
-      // We'll use the existing SchedulerClassic::DispatchPiece/ExecutePiece
-      // helpers in follow-up steps when we populate entry->cmd_
+      // Hand off to execution thread
+      ready_txn_queue_.enqueue(entry);
+    }
 
-      // remove from hold buffer
-      hold_buffer_.erase(it);
-
-      // TODO: hand off to ExecTd properly; for now we just call ExecutePiece
-      // synchronously as a placeholder
-
-    } else {
-      // Wait a little until next deadline
-      uint64_t wait_us = it->first.first - now;
-      if (wait_us > 1000000) wait_us = 1000000; // cap to 1s
-      hold_cv_.wait_for(lk, std::chrono::microseconds(wait_us));
+    //-------------------------------------------------------------------------
+    // Small sleep to avoid busy-waiting when queues are empty
+    // (This is the tradeoff: not truly event-driven, but doesn't hog CPU)
+    //-------------------------------------------------------------------------
+    if (cnt == 0 && priority_queue_.empty()) {
+      std::this_thread::sleep_for(std::chrono::microseconds(100));
     }
   }
 }
 
+//=============================================================================
+// ExecTd: Execution Thread
+//
+// This thread:
+// 1. Pulls txns from ready_txn_queue_ (deadline has passed, ready to execute)
+// 2. Executes the transaction (calls Mako's ExecutePiece machinery)
+// 3. For multi-shard txns: triggers timestamp agreement with other leaders
+// 4. If agreement fails: rollback, update timestamp, reposition in queue
+//
+// TODO: Currently a placeholder. Next step is to wire in actual execution.
+//=============================================================================
+
 void SchedulerLuigi::ExecTd() {
-  // Placeholder execution loop. Real implementation will consume a
-  // hand-off queue from HoldReleaseTd and perform spec/direct execution
-  // similar to Tiga's ExecTd.
+  std::shared_ptr<LuigiLogEntry> entries[64];
+
   while (running_) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    size_t cnt = ready_txn_queue_.try_dequeue_bulk(entries, 64);
+
+    for (size_t i = 0; i < cnt; i++) {
+      auto entry = entries[i];
+
+      // TODO: Actual execution logic
+      // 1. Create Tx object: auto tx = GetOrCreateTx(entry->tid_);
+      // 2. Parse cmd_ into pieces and call ExecutePiece for each
+      // 3. For multi-shard: do timestamp agreement
+      // 4. On agreement success: commit
+      // 5. On agreement failure: rollback, update agreed_deadline_, re-enqueue
+
+      // For now, just log that we would execute
+      // std::cout << "Luigi: Would execute txn " << entry->tid_
+      //           << " with deadline " << entry->local_deadline_ << std::endl;
+
+      // Call reply callback with empty output (placeholder)
+      if (entry->reply_cb_) {
+        TxnOutput output;
+        entry->reply_cb_(output);
+      }
+    }
+
+    if (cnt == 0) {
+      std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
   }
 }
 

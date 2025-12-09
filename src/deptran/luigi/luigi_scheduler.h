@@ -2,15 +2,34 @@
 
 #include "../scheduler.h"
 #include "../tx.h"
+#include "../concurrentqueue.h"  // moodycamel lock-free queue (same as Tiga uses)
 #include "luigi_entry.h"
 
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace janus {
 
+/**
+ * SchedulerLuigi: Tiga-style timestamp-ordered execution for Mako.
+ *
+ * Key differences from vanilla Tiga:
+ * - Only leaders receive txns (no follower fast-path)
+ * - Replication happens AFTER execution (Mako's existing replication)
+ * - We keep Mako's speculative execution style
+ *
+ * Flow:
+ * 1. Coordinator calls LuigiDispatch() with (txn, send_time, bound)
+ * 2. Entry goes into incoming_txn_queue_ (lock-free queue)
+ * 3. HoldReleaseTd() picks it up, does conflict detection:
+ *    - If txn.deadline > max(lastReleasedDeadline[key] for all keys): accept into priority_queue_
+ *    - Else: update txn.deadline = max + 1 (leader can update timestamp)
+ * 4. When current_time >= deadline, release from priority_queue_ to ready_txn_queue_
+ * 5. ExecTd() executes and triggers timestamp agreement for multi-shard txns
+ */
 class SchedulerLuigi : public SchedulerClassic {
  public:
   SchedulerLuigi();
@@ -27,6 +46,7 @@ class SchedulerLuigi : public SchedulerClassic {
                      std::shared_ptr<Marshallable> cmd,
                      uint64_t send_time,
                      uint32_t bound,
+                     const std::vector<uint32_t>& local_keys,  // keys this txn touches on this shard
                      std::function<void(const TxnOutput&)> reply_cb);
 
  protected:
@@ -35,19 +55,40 @@ class SchedulerLuigi : public SchedulerClassic {
   void ExecTd();
 
   // Helpers
-  void InsertIntoHoldBuffer(std::shared_ptr<LuigiLogEntry> entry);
+  uint64_t GetMicrosecondTimestamp();
 
-  // hold buffer: ordered by (deadline, txid)
-  std::map<std::pair<uint64_t, txnid_t>, std::shared_ptr<LuigiLogEntry>>
-      hold_buffer_;
-  std::mutex hold_mtx_;
-  std::condition_variable hold_cv_;
+  //==========================================================================
+  // INCOMING TXN QUEUE (lock-free)
+  // New txns from coordinator land here. HoldReleaseTd() consumes them.
+  // Think of this as: "txns waiting to be checked for conflicts"
+  //==========================================================================
+  moodycamel::ConcurrentQueue<std::shared_ptr<LuigiLogEntry>> incoming_txn_queue_;
 
-  // per-key last released deadline (index by key id). Initialized lazily.
-  std::vector<uint64_t> last_released_deadlines_;
-  std::mutex deadlines_mtx_;
+  //==========================================================================
+  // PRIORITY QUEUE: ordered by (deadline, txid)
+  // After conflict check, txns wait here until their deadline arrives.
+  // ONLY accessed by HoldReleaseTd — no mutex needed.
+  // Think of this as: "txns waiting for their turn to execute"
+  //==========================================================================
+  std::map<std::pair<uint64_t, txnid_t>, std::shared_ptr<LuigiLogEntry>> priority_queue_;
 
-  // threads
+  //==========================================================================
+  // Per-key last released deadline tracking (for conflict detection)
+  // Key = application key (uint32_t), Value = last released timestamp
+  // This combines rMap and wMap from the paper into one (simplified)
+  //==========================================================================
+  std::unordered_map<uint32_t, uint64_t> last_released_deadlines_;
+
+  //==========================================================================
+  // READY TXN QUEUE (lock-free)
+  // Txns whose deadline has passed go here. ExecTd() consumes them.
+  // Think of this as: "txns ready to be executed"
+  //==========================================================================
+  moodycamel::ConcurrentQueue<std::shared_ptr<LuigiLogEntry>> ready_txn_queue_;
+
+  //==========================================================================
+  // Threads
+  //==========================================================================
   std::thread* hold_thread_ = nullptr;
   std::thread* exec_thread_ = nullptr;
   std::atomic<bool> running_{false};
