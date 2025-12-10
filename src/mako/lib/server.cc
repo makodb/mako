@@ -3,6 +3,8 @@
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <mutex>
+#include <condition_variable>
 #include "lib/fasttransport.h"
 #include "lib/timestamp.h"
 #include "lib/server.h"
@@ -18,6 +20,7 @@
 
 // Luigi (Tiga-style) scheduler
 #include "deptran/luigi/luigi_entry.h"
+#include "deptran/luigi/luigi_scheduler.h"
 
 std::function<int()> ss_callback_ = nullptr;
 void register_sync_util_ss(std::function<int()> cb) {
@@ -31,6 +34,7 @@ namespace mako
     ShardReceiver::ShardReceiver(std::string file) : config(file)
     {
         current_term = 0;
+        luigi_scheduler_ = nullptr;
     }
 
     void ShardReceiver::Register(abstract_db *dbX,
@@ -47,6 +51,29 @@ namespace mako
         obj_key0.reserve(128);
         obj_key1.reserve(128);
         obj_v.reserve(256);
+    }
+
+    //=========================================================================
+    // Luigi Scheduler Management
+    //=========================================================================
+    void ShardReceiver::InitLuigiScheduler(uint32_t partition_id) {
+        if (luigi_scheduler_ != nullptr) {
+            return;  // Already initialized
+        }
+        partition_id_ = partition_id;
+        luigi_scheduler_ = new janus::SchedulerLuigi();
+        luigi_scheduler_->SetPartitionId(partition_id);
+        luigi_scheduler_->Start();
+        Log_info("Luigi scheduler initialized for partition %d", partition_id);
+    }
+
+    void ShardReceiver::StopLuigiScheduler() {
+        if (luigi_scheduler_ != nullptr) {
+            luigi_scheduler_->Stop();
+            delete luigi_scheduler_;
+            luigi_scheduler_ = nullptr;
+            Log_info("Luigi scheduler stopped for partition %d", partition_id_);
+        }
     }
 
     void ShardReceiver::UpdateTableEntry(int table_id, abstract_ordered_index *table)
@@ -637,25 +664,66 @@ namespace mako
         resp->txn_id = req->txn_id;
         respLen = sizeof(luigi_dispatch_response_t);
         
-        // For now, we execute synchronously and return immediately
-        // TODO: In async mode, we would dispatch to Luigi scheduler and
-        //       return when the transaction completes
+        // Check if Luigi scheduler is initialized
+        if (luigi_scheduler_ == nullptr) {
+            Warning("Luigi scheduler not initialized, rejecting request");
+            resp->status = ErrorCode::ABORT;
+            resp->commit_timestamp = 0;
+            resp->num_results = 0;
+            return;
+        }
         
-        // Dispatch to Luigi scheduler
-        // Note: The actual Luigi scheduler is not yet integrated here.
-        // This is a placeholder that shows the integration point.
-        // In a real implementation:
-        // 1. Get the Luigi scheduler instance from a global or per-shard registry
-        // 2. Call LuigiDispatchFromRequest()
-        // 3. Wait for completion callback (or use async response)
+        // For synchronous execution: use a condition variable to wait for completion
+        std::mutex completion_mutex;
+        std::condition_variable completion_cv;
+        bool completed = false;
+        int result_status = ErrorCode::SUCCESS;
+        uint64_t result_commit_ts = 0;
+        std::vector<std::string> result_read_values;
         
-        // For now, simulate successful execution
-        resp->status = ErrorCode::SUCCESS;
-        resp->commit_timestamp = req->send_time + req->bound;
-        resp->num_results = 0;
+        // Dispatch to Luigi scheduler with completion callback
+        luigi_scheduler_->LuigiDispatchFromRequest(
+            req->txn_id,
+            req->send_time,
+            req->bound,
+            ops,
+            [&](int status, uint64_t commit_ts, const std::vector<std::string>& read_results) {
+                std::lock_guard<std::mutex> lock(completion_mutex);
+                result_status = status;
+                result_commit_ts = commit_ts;
+                result_read_values = read_results;
+                completed = true;
+                completion_cv.notify_one();
+            }
+        );
         
-        // In a real implementation, read results would be populated here
-        // from the Luigi callback
+        // Wait for completion (with timeout)
+        {
+            std::unique_lock<std::mutex> lock(completion_mutex);
+            // Wait up to 10 seconds for completion
+            if (!completion_cv.wait_for(lock, std::chrono::seconds(10), [&]{ return completed; })) {
+                Warning("Luigi dispatch timeout for txn %lu", req->txn_id);
+                resp->status = ErrorCode::ABORT;
+                resp->commit_timestamp = 0;
+                resp->num_results = 0;
+                return;
+            }
+        }
+        
+        // Populate response
+        resp->status = result_status;
+        resp->commit_timestamp = result_commit_ts;
+        resp->num_results = result_read_values.size();
+        
+        // Copy read results to response buffer
+        char* results_ptr = resp->results_data;
+        for (const auto& val : result_read_values) {
+            uint16_t vlen = val.size();
+            memcpy(results_ptr, &vlen, sizeof(uint16_t));
+            results_ptr += sizeof(uint16_t);
+            memcpy(results_ptr, val.data(), vlen);
+            results_ptr += vlen;
+        }
     }
 
     void ShardServer::Run()

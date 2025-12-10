@@ -14,6 +14,9 @@
 #include "benchmarks/abstract_ordered_index.h"
 #include "lib/helper_queue.h"
 
+// Luigi scheduler
+#include "deptran/luigi/luigi_scheduler.h"
+
 void register_sync_util_ss(std::function<int()>);
 
 namespace mako
@@ -83,6 +86,16 @@ namespace mako
         string obj_v;
 
         int current_term ;
+
+        // Luigi (Tiga-style) scheduler for timestamp-ordered execution
+        janus::SchedulerLuigi* luigi_scheduler_ = nullptr;
+        uint32_t partition_id_ = 0;
+
+    public:
+        // Initialize and start Luigi scheduler
+        void InitLuigiScheduler(uint32_t partition_id);
+        void StopLuigiScheduler();
+        janus::SchedulerLuigi* GetLuigiScheduler() { return luigi_scheduler_; }
     };
 
     class ShardServer
