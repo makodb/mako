@@ -2,6 +2,10 @@
 
 #include <chrono>
 #include <iostream>
+#include <functional>
+
+// Mako includes for execution integration
+#include "deptran/s_main.h"  // For add_log_to_nc
 
 namespace janus {
 
@@ -53,7 +57,46 @@ uint64_t SchedulerLuigi::GetMicrosecondTimestamp() {
 }
 
 //=============================================================================
-// LuigiDispatch: Entry Point (called by coordinator)
+// LuigiDispatchFromRequest: Entry Point from server.cc
+//
+// Creates a LuigiLogEntry from parsed request data and enqueues it.
+//=============================================================================
+
+void SchedulerLuigi::LuigiDispatchFromRequest(
+    uint64_t txn_id,
+    uint64_t send_time,
+    uint32_t bound,
+    const std::vector<LuigiOp>& ops,
+    std::function<void(int status, uint64_t commit_ts, const std::vector<std::string>& read_results)> reply_cb) {
+  
+  auto entry = std::make_shared<LuigiLogEntry>(txn_id);
+  entry->send_time_ = send_time;
+  entry->bound_ = bound;
+  entry->local_deadline_ = send_time + bound;
+  entry->ops_ = ops;
+  entry->reply_cb_ = reply_cb;
+
+  // Extract keys for conflict detection
+  // We use a simple hash of (table_id, key) as the conflict key
+  for (const auto& op : ops) {
+    // Simple key hash: combine table_id and first few bytes of key
+    uint32_t conflict_key = op.table_id;
+    if (op.key.size() >= 4) {
+      conflict_key ^= *reinterpret_cast<const uint32_t*>(op.key.data());
+    }
+    entry->local_keys_.push_back(conflict_key);
+  }
+
+  // Calculate one-way delay for diagnostics
+  uint64_t now = GetMicrosecondTimestamp();
+  entry->owd_ = (now > send_time) ? (uint32_t)(now - send_time) : 1000;
+
+  // Enqueue to incoming queue (lock-free, thread-safe)
+  incoming_txn_queue_.enqueue(entry);
+}
+
+//=============================================================================
+// LuigiDispatch: Original Entry Point (for deptran-style compatibility)
 //=============================================================================
 
 void SchedulerLuigi::LuigiDispatch(txnid_t tx_id,
@@ -65,16 +108,22 @@ void SchedulerLuigi::LuigiDispatch(txnid_t tx_id,
   auto entry = std::make_shared<LuigiLogEntry>(tx_id);
   entry->cmd_ = cmd;
   entry->send_time_ = send_time;
+  entry->bound_ = bound;
   entry->local_deadline_ = send_time + bound;
   entry->local_keys_ = local_keys;
-  entry->reply_cb_ = reply_cb;
+  
+  // Wrap the old-style callback
+  entry->reply_cb_ = [reply_cb](int status, uint64_t commit_ts, const std::vector<std::string>& read_results) {
+    TxnOutput output;
+    // Convert read_results to TxnOutput if needed
+    if (reply_cb) {
+      reply_cb(output);
+    }
+  };
 
-  // Calculate one-way delay for diagnostics
   uint64_t now = GetMicrosecondTimestamp();
   entry->owd_ = (now > send_time) ? (uint32_t)(now - send_time) : 1000;
 
-  // Enqueue to incoming queue (lock-free, thread-safe)
-  // HoldReleaseTd will pick this up, check conflicts, and add to priority queue
   incoming_txn_queue_.enqueue(entry);
 }
 
@@ -84,11 +133,6 @@ void SchedulerLuigi::LuigiDispatch(txnid_t tx_id,
 // This thread runs in a loop and does two things:
 // 1. Pulls txns from incoming_txn_queue_, checks conflicts, adds to priority_queue_
 // 2. Releases txns from priority_queue_ when their deadline passes, sends to ready_txn_queue_
-//
-// Why a loop instead of event-driven?
-// - ConcurrentQueue doesn't support blocking wait (like Go channels)
-// - We add a small sleep when idle to avoid wasting CPU
-// - In high-throughput scenarios, the loop stays busy doing useful work
 //=============================================================================
 
 void SchedulerLuigi::HoldReleaseTd() {
@@ -117,12 +161,8 @@ void SchedulerLuigi::HoldReleaseTd() {
 
       // If txn's deadline is too small (conflict), update it
       // This is the LEADER PRIVILEGE: we can bump the timestamp
-      // (In Tiga, followers would reject/abandon here, but we only have leaders)
       if (entry->local_deadline_ <= max_last_released) {
         entry->local_deadline_ = max_last_released + 1;
-        // Log for debugging (optional)
-        // std::cout << "Luigi: Updated deadline for txn " << txn_key
-        //           << " to " << entry->local_deadline_ << std::endl;
       }
 
       // Insert into priority_queue_ (sorted by deadline, then txn_id)
@@ -146,7 +186,6 @@ void SchedulerLuigi::HoldReleaseTd() {
       priority_queue_.erase(it);
 
       // Update lastReleasedDeadlines for all keys this txn touches
-      // (Algorithm 1, line 14-15 in paper)
       for (auto& k : entry->local_keys_) {
         if (last_released_deadlines_[k] < entry->local_deadline_) {
           last_released_deadlines_[k] = entry->local_deadline_;
@@ -159,7 +198,6 @@ void SchedulerLuigi::HoldReleaseTd() {
 
     //-------------------------------------------------------------------------
     // Small sleep to avoid busy-waiting when queues are empty
-    // (This is the tradeoff: not truly event-driven, but doesn't hog CPU)
     //-------------------------------------------------------------------------
     if (cnt == 0 && priority_queue_.empty()) {
       std::this_thread::sleep_for(std::chrono::microseconds(100));
@@ -168,15 +206,64 @@ void SchedulerLuigi::HoldReleaseTd() {
 }
 
 //=============================================================================
+// ExecuteEntry: Execute a single transaction
+//
+// This is where we integrate with Mako's execution machinery.
+// For now, we implement a simplified version that:
+// 1. Processes all operations
+// 2. Triggers replication via add_log_to_nc (same as Mako)
+// 3. Calls the reply callback
+//=============================================================================
+
+void SchedulerLuigi::ExecuteEntry(std::shared_ptr<LuigiLogEntry> entry) {
+  entry->exec_status_.store(LUIGI_EXEC_DIRECT);
+  
+  // The commit timestamp is the deadline at which we're executing
+  uint64_t commit_ts = entry->local_deadline_;
+  int status = 0;  // SUCCESS
+  
+  // TODO: Actual execution logic would go here
+  // For now, we simulate successful execution
+  // In a real implementation:
+  // 1. For reads: query the database, store results in entry->read_results_
+  // 2. For writes: apply writes to database
+  // 3. Call shard_serialize_util() equivalent for replication
+  
+  // Process operations (placeholder - actual DB interaction needed)
+  entry->read_results_.clear();
+  for (auto& op : entry->ops_) {
+    if (op.op_type == 0) {
+      // Read operation - would query DB here
+      // For now, return empty result
+      entry->read_results_.push_back("");
+    } else {
+      // Write operation - would apply to DB here
+    }
+    op.executed = true;
+  }
+  
+  // Trigger replication (using Mako's background Paxos)
+  // This is where we serialize the log entry and submit to Paxos workers
+  // The actual implementation would serialize entry->ops_ into a log buffer
+  // and call add_log_to_nc(log_buffer, log_len, partition_id_)
+  
+  // For now, we skip actual replication and just mark as done
+  // TODO: Implement log serialization and call add_log_to_nc
+  
+  entry->exec_status_.store(LUIGI_EXEC_DONE);
+  
+  // Call reply callback
+  if (entry->reply_cb_) {
+    entry->reply_cb_(status, commit_ts, entry->read_results_);
+  }
+}
+
+//=============================================================================
 // ExecTd: Execution Thread
 //
 // This thread:
 // 1. Pulls txns from ready_txn_queue_ (deadline has passed, ready to execute)
-// 2. Executes the transaction (calls Mako's ExecutePiece machinery)
-// 3. For multi-shard txns: triggers timestamp agreement with other leaders
-// 4. If agreement fails: rollback, update timestamp, reposition in queue
-//
-// TODO: Currently a placeholder. Next step is to wire in actual execution.
+// 2. Executes each transaction via ExecuteEntry()
 //=============================================================================
 
 void SchedulerLuigi::ExecTd() {
@@ -186,24 +273,7 @@ void SchedulerLuigi::ExecTd() {
     size_t cnt = ready_txn_queue_.try_dequeue_bulk(entries, 64);
 
     for (size_t i = 0; i < cnt; i++) {
-      auto entry = entries[i];
-
-      // TODO: Actual execution logic
-      // 1. Create Tx object: auto tx = GetOrCreateTx(entry->tid_);
-      // 2. Parse cmd_ into pieces and call ExecutePiece for each
-      // 3. For multi-shard: do timestamp agreement
-      // 4. On agreement success: commit
-      // 5. On agreement failure: rollback, update agreed_deadline_, re-enqueue
-
-      // For now, just log that we would execute
-      // std::cout << "Luigi: Would execute txn " << entry->tid_
-      //           << " with deadline " << entry->local_deadline_ << std::endl;
-
-      // Call reply callback with empty output (placeholder)
-      if (entry->reply_cb_) {
-        TxnOutput output;
-        entry->reply_cb_(output);
-      }
+      ExecuteEntry(entries[i]);
     }
 
     if (cnt == 0) {

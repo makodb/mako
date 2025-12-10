@@ -55,6 +55,9 @@ namespace mako
         void HandleGetMicroMegaRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleBatchLockMicroMegaRequest(char *reqBuf, char *respBuf, size_t &respLen);
 
+        // Luigi (Tiga-style) handler
+        void HandleLuigiDispatch(char *reqBuf, char *respBuf, size_t &respLen);
+
     protected:
         inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 

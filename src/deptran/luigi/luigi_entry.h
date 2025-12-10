@@ -39,6 +39,17 @@ enum LuigiAgreeStatus {
 };
 
 //=============================================================================
+// LuigiOp: A single read or write operation within a transaction
+//=============================================================================
+struct LuigiOp {
+  uint16_t table_id = 0;      // Which table
+  uint8_t op_type = 0;        // 0 = read, 1 = write
+  std::string key;            // Key bytes
+  std::string value;          // Value bytes (for writes) or result (for reads)
+  bool executed = false;      // Has this op been executed?
+};
+
+//=============================================================================
 // LuigiLogEntry: Container for one transaction as it flows through Luigi
 //=============================================================================
 struct LuigiLogEntry {
@@ -52,10 +63,13 @@ struct LuigiLogEntry {
 
   //--- Transaction identity ---
   txnid_t tid_ = 0;                              // Unique transaction ID
-  std::shared_ptr<Marshallable> cmd_ = nullptr;  // Command payload
+  std::shared_ptr<Marshallable> cmd_ = nullptr;  // Command payload (optional, for deptran-style)
+
+  //--- Operations (parsed from request) ---
+  std::vector<LuigiOp> ops_;                     // Read and write operations
 
   //--- Callback to return result to coordinator ---
-  std::function<void(const TxnOutput&)> reply_cb_ = nullptr;
+  std::function<void(int status, uint64_t commit_ts, const std::vector<std::string>& read_results)> reply_cb_ = nullptr;
 
   //--- Keys touched by this txn on THIS shard (for conflict detection) ---
   std::vector<uint32_t> local_keys_;
@@ -63,6 +77,7 @@ struct LuigiLogEntry {
   //--- Timing info ---
   uint64_t send_time_ = 0;  // When coordinator sent the txn
   uint32_t owd_ = 0;        // One-way delay (microseconds)
+  uint32_t bound_ = 0;      // Bound parameter from coordinator
 
   //--- For multi-shard txns: which shards are involved ---
   std::set<uint32_t> involved_shards_;
@@ -70,6 +85,7 @@ struct LuigiLogEntry {
 
   //--- Result storage ---
   TxnOutput output_;
+  std::vector<std::string> read_results_;
 
   //--- Constructor ---
   LuigiLogEntry(txnid_t tid = 0) : tid_(tid) {}
@@ -81,6 +97,7 @@ struct LuigiLogEntry {
   std::string DebugString() const {
     return "LuigiEntry[tid=" + std::to_string(tid_) +
            ", deadline=" + std::to_string(local_deadline_) +
+           ", ops=" + std::to_string(ops_.size()) +
            ", keys=" + std::to_string(local_keys_.size()) +
            ", shards=" + std::to_string(num_shards_) + "]";
   }

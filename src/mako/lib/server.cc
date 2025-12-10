@@ -16,6 +16,9 @@
 #include "deptran/s_main.h"
 #include "benchmarks/sto/sync_util.hh"
 
+// Luigi (Tiga-style) scheduler
+#include "deptran/luigi/luigi_entry.h"
+
 std::function<int()> ss_callback_ = nullptr;
 void register_sync_util_ss(std::function<int()> cb) {
     ss_callback_ = cb;
@@ -89,6 +92,9 @@ namespace mako
             break;
         case batchLockReqType:
             HandleBatchLockRequest(reqBuf, respBuf, respLen);
+            break;
+        case luigiDispatchReqType:
+            HandleLuigiDispatch(reqBuf, respBuf, respLen);
             break;
         default:
             Warning("Unrecognized rquest type: %d", reqType);
@@ -574,6 +580,82 @@ namespace mako
             open_tables_table_id[table_id] = table;
         }
         shardReceiver->UpdateTableEntry(table_id, table);
+    }
+
+    //=========================================================================
+    // HandleLuigiDispatch: Luigi (Tiga-style) timestamp-ordered execution
+    //
+    // This handler receives a transaction with a future timestamp deadline,
+    // parses the operations, and dispatches to the Luigi scheduler.
+    // The scheduler will queue the transaction and execute it when its
+    // deadline arrives, in timestamp order.
+    //=========================================================================
+    void ShardReceiver::HandleLuigiDispatch(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<luigi_dispatch_request_t *>(reqBuf);
+        
+        // Parse operations from request
+        // Format: [table_id(2) | op_type(1) | klen(2) | vlen(2) | key | value]
+        std::vector<janus::LuigiOp> ops;
+        char *data_ptr = req->ops_data;
+        
+        for (uint16_t i = 0; i < req->num_ops; i++) {
+            janus::LuigiOp op;
+            
+            // Read table_id (2 bytes)
+            op.table_id = *reinterpret_cast<uint16_t*>(data_ptr);
+            data_ptr += sizeof(uint16_t);
+            
+            // Read op_type (1 byte): 0=read, 1=write
+            op.op_type = *reinterpret_cast<uint8_t*>(data_ptr);
+            data_ptr += sizeof(uint8_t);
+            
+            // Read key length (2 bytes)
+            uint16_t klen = *reinterpret_cast<uint16_t*>(data_ptr);
+            data_ptr += sizeof(uint16_t);
+            
+            // Read value length (2 bytes)
+            uint16_t vlen = *reinterpret_cast<uint16_t*>(data_ptr);
+            data_ptr += sizeof(uint16_t);
+            
+            // Read key
+            op.key.assign(data_ptr, klen);
+            data_ptr += klen;
+            
+            // Read value (for writes)
+            if (vlen > 0) {
+                op.value.assign(data_ptr, vlen);
+                data_ptr += vlen;
+            }
+            
+            ops.push_back(op);
+        }
+        
+        // Prepare response buffer
+        auto *resp = reinterpret_cast<luigi_dispatch_response_t *>(respBuf);
+        resp->req_nr = req->req_nr;
+        resp->txn_id = req->txn_id;
+        respLen = sizeof(luigi_dispatch_response_t);
+        
+        // For now, we execute synchronously and return immediately
+        // TODO: In async mode, we would dispatch to Luigi scheduler and
+        //       return when the transaction completes
+        
+        // Dispatch to Luigi scheduler
+        // Note: The actual Luigi scheduler is not yet integrated here.
+        // This is a placeholder that shows the integration point.
+        // In a real implementation:
+        // 1. Get the Luigi scheduler instance from a global or per-shard registry
+        // 2. Call LuigiDispatchFromRequest()
+        // 3. Wait for completion callback (or use async response)
+        
+        // For now, simulate successful execution
+        resp->status = ErrorCode::SUCCESS;
+        resp->commit_timestamp = req->send_time + req->bound;
+        resp->num_results = 0;
+        
+        // In a real implementation, read results would be populated here
+        // from the Luigi callback
     }
 
     void ShardServer::Run()

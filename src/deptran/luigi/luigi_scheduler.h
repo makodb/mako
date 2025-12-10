@@ -39,20 +39,31 @@ class SchedulerLuigi : public SchedulerClassic {
   void Start();
   void Stop();
 
-  // Entry point for a Luigi-style dispatch. The coordinator (external)
-  // is expected to send a transaction with a future timestamp: send_time and
-  // bound (deadline = send_time + bound).
+  // Entry point for a Luigi-style dispatch from raw request buffer.
+  // This is called by server.cc's HandleLuigiDispatch.
+  // Parses the request, creates a LuigiLogEntry, and enqueues it.
+  void LuigiDispatchFromRequest(
+      uint64_t txn_id,
+      uint64_t send_time,
+      uint32_t bound,
+      const std::vector<LuigiOp>& ops,
+      std::function<void(int status, uint64_t commit_ts, const std::vector<std::string>& read_results)> reply_cb);
+
+  // Original entry point (kept for compatibility with deptran-style calls)
   void LuigiDispatch(txnid_t tx_id,
                      std::shared_ptr<Marshallable> cmd,
                      uint64_t send_time,
                      uint32_t bound,
-                     const std::vector<uint32_t>& local_keys,  // keys this txn touches on this shard
+                     const std::vector<uint32_t>& local_keys,
                      std::function<void(const TxnOutput&)> reply_cb);
 
  protected:
   // Threads
   void HoldReleaseTd();
   void ExecTd();
+
+  // Execute a single transaction entry
+  void ExecuteEntry(std::shared_ptr<LuigiLogEntry> entry);
 
   // Helpers
   uint64_t GetMicrosecondTimestamp();
@@ -92,6 +103,15 @@ class SchedulerLuigi : public SchedulerClassic {
   std::thread* hold_thread_ = nullptr;
   std::thread* exec_thread_ = nullptr;
   std::atomic<bool> running_{false};
+
+  //==========================================================================
+  // Partition ID (for replication)
+  //==========================================================================
+  uint32_t partition_id_ = 0;
+
+ public:
+  void SetPartitionId(uint32_t par_id) { partition_id_ = par_id; }
+  uint32_t GetPartitionId() const { return partition_id_; }
 };
 
 } // namespace janus

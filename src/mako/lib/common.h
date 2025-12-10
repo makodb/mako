@@ -177,7 +177,9 @@ namespace mako
     // reserved for watermark exchange between follower data center
     const uint8_t watermarkReqType = 13;
     
-
+    // Luigi: Tiga-style timestamp-ordered execution
+    const uint8_t luigiDispatchReqType = 14;
+    
     const size_t max_key_length = 64;
 #if defined(MEGA_BENCHMARK)
     const size_t max_value_length = 7000; // mega in new order 
@@ -259,6 +261,34 @@ namespace mako
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
         uint32_t req_val;
+    };
+
+    //=========================================================================
+    // Luigi (Tiga-style) request/response structures
+    //=========================================================================
+    
+    // Maximum number of key-value pairs in a Luigi dispatch
+    const size_t luigi_max_ops = 32;
+    
+    struct luigi_dispatch_request_t {
+        uint16_t target_server_id;     // Target shard
+        uint32_t req_nr;               // Request number (for matching response)
+        uint64_t txn_id;               // Unique transaction ID
+        uint64_t send_time;            // Timestamp when coordinator sent this (microseconds)
+        uint32_t bound;                // Deadline = send_time + bound
+        uint16_t num_ops;              // Number of operations in this dispatch
+        // Each op: [table_id(2) | op_type(1) | klen(2) | vlen(2) | key | value]
+        // op_type: 0=read, 1=write
+        char ops_data[luigi_max_ops * (max_key_length + max_value_length + 8)];
+    };
+
+    struct luigi_dispatch_response_t {
+        uint32_t req_nr;
+        uint64_t txn_id;
+        int status;                    // SUCCESS or ABORT
+        uint64_t commit_timestamp;     // The timestamp at which txn was committed
+        uint16_t num_results;          // Number of read results
+        char results_data[luigi_max_ops * max_value_length];
     };
 
     struct lock_request_t
