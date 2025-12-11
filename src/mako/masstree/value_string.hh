@@ -16,6 +16,7 @@
 // @unsafe - Single-string value type for Masstree rows
 // Stores inline variable-length string data with timestamp
 // SAFETY: Uses threadinfo allocator, inline data buffer
+// @external: { lcdf::String: [unsafe_type], String: [unsafe_type] }
 
 #ifndef VALUE_STRING_HH
 #define VALUE_STRING_HH

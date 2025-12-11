@@ -16,10 +16,7 @@
 // @unsafe - Reference-counted string with shared substrings
 // Provides copy-on-write semantics and efficient substring operations
 // SAFETY: Uses raw pointer rep with memo reference counting
-// @external: {
-//   lcdf::String: [unsafe_type]
-// }
-// @external_unsafe: assign
+// @external: { lcdf::String: [unsafe_type], String: [unsafe_type], assign: [unsafe] }
 
 #ifndef LCDF_STRING_HH
 #define LCDF_STRING_HH
@@ -30,7 +27,7 @@
 // @unsafe
 namespace lcdf {
 
-// @unsafe
+// @unsafe - interior mutability via mutable _r field
 class String : public String_base<String> {
     struct memo_type;
   public:

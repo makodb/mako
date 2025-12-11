@@ -16,6 +16,7 @@
 // @unsafe - File utility functions for reading file contents
 // Provides read_file_contents for loading files into lcdf::String
 // SAFETY: Uses POSIX file descriptors and system calls
+// @external: { lcdf::String: [unsafe_type], String: [unsafe_type], assign: [unsafe] }
 
 #ifndef KVDB_FILE_HH
 #define KVDB_FILE_HH 1

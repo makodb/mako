@@ -52,13 +52,14 @@ struct row_marker {
     int marker_type_;
 };
 
-// @safe - pure read-only operation on reference
+// @unsafe - overloaded functions share annotation storage (collision bug)
+// Both versions marked unsafe to avoid checker misclassification
 template <typename R>
 inline bool row_is_marker(const R& row) {
     return row.timestamp() & 1;
 }
 
-// @unsafe - pointer dereference requires unsafe context
+// @unsafe - pointer dereference delegates to reference version
 template <typename R>
 inline bool row_is_marker(const R* row) {
     return row_is_marker(*row);

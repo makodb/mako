@@ -16,6 +16,7 @@
 // @unsafe - Test harness framework for Masstree benchmarking
 // Provides workload generators, statistics collection, and result reporting
 // SAFETY: Uses global state, random generators, and test client interfaces
+// @external: { lcdf::String: [unsafe_type], String: [unsafe_type] }
 
 #ifndef KVTEST_HH
 #define KVTEST_HH

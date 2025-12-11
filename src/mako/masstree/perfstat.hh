@@ -15,6 +15,7 @@
  */
 // @safe - Performance statistics and NUMA topology interfaces
 // Provides Perf_stat class for collecting per-core statistics
+// @external: { std::__detail::_ReuseOrAllocNode: [unsafe_type], std::__detail::_Prime_rehash_policy: [unsafe_type], std::locale::facet: [unsafe_type], std::locale::id: [unsafe_type], std::istreambuf_iterator: [unsafe_type], std::ctype: [unsafe_type], std::basic_ios: [unsafe_type] }
 
 #ifndef PERF_STAT_HH
 #define PERF_STAT_HH 1
