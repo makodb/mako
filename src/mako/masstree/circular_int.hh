@@ -110,12 +110,12 @@ class circular_int {
     circular_int<T> operator+(int x) const {
         return circular_int<T>(v_ + x);
     }
-    // @unsafe - checker false positive: interprets !v as address-of instead of logical NOT
+    // @safe - pure arithmetic (skip zero: if v==0, !v==1, so result is 1)
     circular_int<T> next_nonzero() const {
         value_type v = v_ + 1;
         return circular_int<T>(v + !v);
     }
-    // @unsafe - checker false positive: interprets !x as address-of instead of logical NOT
+    // @safe - pure arithmetic (skip zero: if x==0, !x==1, so result is 1)
     static value_type next_nonzero(value_type x) {
         ++x;
         return x + !x;
