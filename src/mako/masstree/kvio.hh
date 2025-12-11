@@ -16,6 +16,7 @@
 // @unsafe - Buffered I/O structures for network communication
 // Provides kvout buffer management for serialized key-value protocol
 // SAFETY: Raw buffer allocation, file descriptor management
+// @external_unsafe: assign
 
 #ifndef KVIO_H
 #define KVIO_H
@@ -31,21 +32,27 @@ struct kvout {
     unsigned capacity; // allocated size of buf
     unsigned n;   // # of chars we've written to buf
 
-    // @unsafe - appends into raw buffer
+    // @unsafe - appends into raw buffer, calls grow() which may reallocate
     inline void append(char c);
+    // @unsafe - returns pointer into raw buffer that may be invalidated by reallocation
     inline char* reserve(int n);
+    // @safe - pure arithmetic on length field with precondition check
     inline void adjust_length(int delta);
+    // @safe - pure pointer arithmetic to update length field
     inline void set_end(char* end);
+    // @unsafe - calls realloc() which may invalidate existing pointers
     void grow(unsigned want);
 };
 
 kvout* new_kvout(int fd, int buflen);
 kvout* new_bufkvout();
-void kvout_reset(kvout* kv);
+// @safe - resets buffer position, no allocation or pointer operations
+void kvout_reset(kvout& kv);
 void free_kvout(kvout* kv);
 int kvwrite(kvout* kv, const void* buf, unsigned int n);
 void kvflush(kvout* kv);
 
+// @unsafe - may call grow() which reallocates
 inline void kvout::append(char c) {
     if (n == capacity)
         grow(0);
@@ -53,17 +60,20 @@ inline void kvout::append(char c) {
     ++n;
 }
 
+// @unsafe - returns pointer into buffer that may be invalidated
 inline char* kvout::reserve(int nchars) {
     if (n + nchars > capacity)
         grow(n + nchars);
     return buf + n;
 }
 
+// @safe - pure arithmetic with precondition check, no allocation or pointer operations
 inline void kvout::adjust_length(int delta) {
     masstree_precondition(n + delta <= capacity);
     n += delta;
 }
 
+// @safe - pure pointer arithmetic with bounds check, no allocation
 inline void kvout::set_end(char* x) {
     masstree_precondition(x >= buf && x <= buf + capacity);
     n = x - buf;

@@ -17,10 +17,12 @@
 //
 // @external: {
 //   threadinfo: [unsafe_type]
+//   lcdf::String: [unsafe_type]
+//   circular_int: [unsafe_type]
 // }
 // @external_unsafe_type: std::*
+// @external_unsafe_type: circular_int
 // @external_unsafe: std::*
-// @external_unsafe: circular_int::*
 // @external_unsafe: lcdf::String_base::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::String_generic::*
@@ -36,7 +38,7 @@
 bool ckstate::visit_value(Str key, const row_type* value, threadinfo&) {
     if (endkey && key >= endkey)
         return false;
-    if (!row_is_marker(value)) {
+    if (!row_is_marker(*value)) {
         msgpack::unparser<kvout> up(*vals);
         up.write(key).write_wide(value->timestamp());
         value->checkpoint_write(up);

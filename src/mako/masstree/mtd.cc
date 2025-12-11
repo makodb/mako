@@ -1256,7 +1256,7 @@ void* udp_threadfunc(void* x) {
       perror("udpgo read");
       exit(EXIT_FAILURE);
     }
-    kvout_reset(kvout);
+    kvout_reset(*kvout);
 
     parser.reset();
     unsigned consumed = parser.consume(buf.data(), buf.length(), buf);

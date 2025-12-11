@@ -1,7 +1,18 @@
 // MsgPack binary serialization format parser
 // Functions that parse raw buffers are @unsafe
 //
-// @external_unsafe_type: std::*
+// SAFETY NOTE: Parser functions cannot be made safe because:
+// 1. streaming_parser::consume() uses raw uint8_t* pointer arithmetic
+// 2. Binary format parsing requires unchecked pointer advancement
+// 3. Parser uses reinterpret_cast to convert between uint8_t* and char*
+// 4. read_in_net_order template requires raw memory access for endianness conversion
+// 5. String substring optimization requires pointer range validation
+//
+// Only format checking helpers (is_fixint, etc.) are marked @safe.
+//
+// @external: {
+//   lcdf::String: [unsafe_type]
+// }
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::Json::*

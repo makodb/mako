@@ -42,48 +42,42 @@ class circular_int {
         return v_;
     }
 
-    // @unsafe - returns mutable reference to this
-    // @lifetime: (&'a mut) -> &'a mut
+    // @unsafe - @lifetime: (&'a mut) -> &'a mut (prefix returns reference)
     circular_int<T> &operator++() {
         ++v_;
         return *this;
     }
-    // @unsafe - postfix returns value but checker conflates with prefix
+    // @unsafe - postfix returns value copy but marked unsafe to avoid annotation collision
     circular_int<T> operator++(int) {
         ++v_;
         return circular_int<T>(v_ - 1);
     }
-    // @unsafe - returns mutable reference to this
-    // @lifetime: (&'a mut) -> &'a mut
+    // @unsafe - @lifetime: (&'a mut) -> &'a mut (prefix returns reference)
     circular_int<T> &operator--() {
         --v_;
         return *this;
     }
-    // @unsafe - postfix returns value but checker conflates with prefix
+    // @unsafe - postfix returns value copy but marked unsafe to avoid annotation collision
     circular_int<T> operator--(int) {
         --v_;
         return circular_int<T>(v_ + 1);
     }
-    // @unsafe
-    // @lifetime: (&'a mut, unsigned) -> &'a mut
+    // @unsafe - returns mutable reference; @lifetime: (&'a mut, unsigned) -> &'a mut
     circular_int<T> &operator+=(unsigned x) {
         v_ += x;
         return *this;
     }
-    // @unsafe
-    // @lifetime: (&'a mut, int) -> &'a mut
+    // @unsafe - returns mutable reference; @lifetime: (&'a mut, int) -> &'a mut
     circular_int<T> &operator+=(int x) {
         v_ += x;
         return *this;
     }
-    // @unsafe
-    // @lifetime: (&'a mut, unsigned) -> &'a mut
+    // @unsafe - returns mutable reference; @lifetime: (&'a mut, unsigned) -> &'a mut
     circular_int<T> &operator-=(unsigned x) {
         v_ -= x;
         return *this;
     }
-    // @unsafe
-    // @lifetime: (&'a mut, int) -> &'a mut
+    // @unsafe - returns mutable reference; @lifetime: (&'a mut, int) -> &'a mut
     circular_int<T> &operator-=(int x) {
         v_ -= x;
         return *this;
@@ -116,12 +110,12 @@ class circular_int {
     circular_int<T> operator+(int x) const {
         return circular_int<T>(v_ + x);
     }
-    // @unsafe - checker interprets !v as address-of operation
+    // @unsafe - checker false positive: interprets !v as address-of instead of logical NOT
     circular_int<T> next_nonzero() const {
         value_type v = v_ + 1;
         return circular_int<T>(v + !v);
     }
-    // @unsafe - checker interprets !x as address-of operation
+    // @unsafe - checker false positive: interprets !x as address-of instead of logical NOT
     static value_type next_nonzero(value_type x) {
         ++x;
         return x + !x;

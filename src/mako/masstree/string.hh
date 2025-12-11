@@ -16,15 +16,21 @@
 // @unsafe - Reference-counted string with shared substrings
 // Provides copy-on-write semantics and efficient substring operations
 // SAFETY: Uses raw pointer rep with memo reference counting
+// @external: {
+//   lcdf::String: [unsafe_type]
+// }
+// @external_unsafe: assign
 
 #ifndef LCDF_STRING_HH
 #define LCDF_STRING_HH
 #include "string_base.hh"
 #include <string>
 #include <utility>
+
+// @unsafe
 namespace lcdf {
 
-// @unsafe - has mutable field _r for c_str() support
+// @unsafe
 class String : public String_base<String> {
     struct memo_type;
   public:
@@ -235,6 +241,7 @@ class String : public String_base<String> {
     const rep_type& internal_rep() const {
         return _r;
     }
+    // @unsafe - calls std::swap which is undeclared
     void swap(rep_type& other_rep) {
         using std::swap;
         swap(_r, other_rep);
@@ -271,7 +278,8 @@ class String : public String_base<String> {
     };
     /** @endcond never */
 
-    mutable rep_type _r;        // mutable for c_str()
+    // @unsafe - interior mutability required for c_str() null-termination
+    mutable rep_type _r;
 
 #if HAVE_STRING_PROFILING
     static uint64_t live_memo_count;
@@ -327,6 +335,7 @@ class String : public String_base<String> {
         _r.deref();
     }
 
+    // @unsafe - may allocate memory and manipulate reference counts
     void assign(const char* s, int len, bool need_deref);
     void assign_out_of_memory();
     void append(const char* s, int len, memo_type* memo);
@@ -364,6 +373,7 @@ inline void String::memo_type::initialize(uint32_t capacity, uint32_t dirty) {
 /** @endcond never */
 
 /** @brief Construct an empty String (with length 0). */
+// @safe - initializes with static empty string data
 inline String::String()
     : _r{String_generic::empty_data, 0, 0} {
 }
@@ -384,6 +394,7 @@ inline String::String(String &&x)
 
 /** @brief Construct a copy of the string @a str. */
 template <typename T>
+// @unsafe - calls unsafe assign function
 inline String::String(const String_base<T> &str) {
     assign(str.data(), str.length(), false);
 }
@@ -444,6 +455,7 @@ inline String::String(const std::string& str) {
 
 /** @brief Construct a String equal to "true" or "false" depending on the
     value of @a x. */
+// @safe - initializes with static bool string data
 inline String::String(bool x)
     : _r{String_generic::bool_data + (-x & 6), 5 - x, 0} {
     // bool_data equals "false\0true\0"
@@ -551,6 +563,7 @@ inline const char* String::data() const {
 }
 
 /** @brief Return the string's length. */
+// @safe - returns integer field value
 inline int String::length() const {
     return _r.length;
 }
@@ -714,6 +727,7 @@ inline void String::assign(const char *first, const char *last) {
 }
 
 /** @brief Swap the values of this string and @a x. */
+// @unsafe - calls std::swap which is undeclared
 inline void String::swap(String &x) {
     using std::swap;
     swap(_r, x._r);
@@ -786,12 +800,14 @@ inline String &String::operator+=(const String_base<T> &x) {
 }
 
 /** @brief Test if the String's data is shared or stable. */
+// @unsafe - calls _r.memo() which uses reinterpret_cast
 inline bool String::is_shared() const {
     memo_type* m = _r.memo();
     return !m || m->refcount != 1;
 }
 
 /** @brief Test if the String's data is stable. */
+// @unsafe - calls _r.memo() which uses reinterpret_cast
 inline bool String::is_stable() const {
     return !_r.memo();
 }
@@ -890,6 +906,7 @@ inline String operator"" _S(const char* s, size_t len) {
 }
 #endif
 
+// @safe - delegates to member swap which is safe
 inline void swap(String& a, String& b) {
     a.swap(b);
 }

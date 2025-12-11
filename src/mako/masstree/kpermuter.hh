@@ -16,6 +16,7 @@
 // @safe - Key permutation array for sorted key access in Masstree nodes
 // Encodes key ordering in packed bit fields for cache-efficient iteration
 // All operations are pure bit manipulation on owned integer values
+// @external_unsafe: assign
 
 #ifndef KPERMUTER_HH
 #define KPERMUTER_HH

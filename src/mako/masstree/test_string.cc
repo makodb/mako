@@ -19,6 +19,7 @@
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::StringAccum::*
+// @external_unsafe: assign
 
 #include "string.hh"
 #include <stdio.h>

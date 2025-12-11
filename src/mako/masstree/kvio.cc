@@ -60,10 +60,10 @@ kvout* new_bufkvout() {
     return kv;
 }
 
-// @unsafe - dereferences raw kvout* pointer without ownership verification
-void kvout_reset(kvout* kv) {
-    assert(kv->fd < 0);
-    kv->n = 0;
+// @safe - resets buffer position, no allocation or pointer operations
+void kvout_reset(kvout& kv) {
+    assert(kv.fd < 0);
+    kv.n = 0;
 }
 
 // @unsafe - calls free() on untracked heap memory without ownership verification

@@ -28,23 +28,40 @@ class small_vector {
     small_vector(const small_vector<T, NN, AA>& x);
     inline ~small_vector();
 
+    // @safe - returns stored size
     inline size_type size() const;
+    // @safe - returns stored capacity
     inline size_type capacity() const;
+    // @safe - pure pointer comparison
     inline bool empty() const;
+    // @safe - converts empty state to bool
     inline operator unspecified_bool_type() const;
+    // @safe - delegates to safe empty()
     inline bool operator!() const;
 
+    // @safe - returns pointer to owned buffer
     inline iterator begin();
+    // @safe - returns pointer to owned buffer
     inline iterator end();
+    // @safe - returns pointer to owned buffer
     inline const_iterator begin() const;
+    // @safe - returns pointer to owned buffer
     inline const_iterator end() const;
+    // @safe - returns pointer to owned buffer
     inline const_iterator cbegin() const;
+    // @safe - returns pointer to owned buffer
     inline const_iterator cend() const;
+    // @unsafe - constructs reverse iterator; checker cannot verify end() call in return
     inline reverse_iterator rbegin();
+    // @unsafe - constructs reverse iterator; checker cannot verify begin() call in return
     inline reverse_iterator rend();
+    // @unsafe - constructs const reverse iterator; checker cannot verify end() call in return
     inline const_reverse_iterator rbegin() const;
+    // @unsafe - constructs const reverse iterator; checker cannot verify begin() call in return
     inline const_reverse_iterator rend() const;
+    // @unsafe - constructs const reverse iterator; checker cannot verify end() call in return
     inline const_reverse_iterator crbegin() const;
+    // @unsafe - constructs const reverse iterator; checker cannot verify begin() call in return
     inline const_reverse_iterator crend() const;
 
     inline value_type& operator[](size_type i);
@@ -118,26 +135,31 @@ inline small_vector<T, N, A>::~small_vector() {
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns stored size
 inline unsigned small_vector<T, N, A>::size() const {
     return r_.last_ - r_.first_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns stored capacity
 inline unsigned small_vector<T, N, A>::capacity() const {
     return r_.capacity_ - r_.first_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - pure pointer comparison
 inline bool small_vector<T, N, A>::empty() const {
     return r_.first_ == r_.last_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - converts empty state to bool
 inline small_vector<T, N, A>::operator unspecified_bool_type() const {
     return empty() ? 0 : &small_vector<T, N, A>::empty;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - delegates to safe empty()
 inline bool small_vector<T, N, A>::operator!() const {
     return empty();
 }
@@ -161,61 +183,73 @@ void small_vector<T, N, A>::grow(size_type n) {
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns pointer to owned buffer
 inline auto small_vector<T, N, A>::begin() -> iterator {
     return r_.first_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns pointer to owned buffer
 inline auto small_vector<T, N, A>::end() -> iterator {
     return r_.last_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns pointer to owned buffer
 inline auto small_vector<T, N, A>::begin() const -> const_iterator {
     return r_.first_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns pointer to owned buffer
 inline auto small_vector<T, N, A>::end() const -> const_iterator {
     return r_.last_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns pointer to owned buffer
 inline auto small_vector<T, N, A>::cbegin() const -> const_iterator {
     return r_.first_;
 }
 
 template <typename T, unsigned N, typename A>
+// @safe - returns pointer to owned buffer
 inline auto small_vector<T, N, A>::cend() const -> const_iterator {
     return r_.last_;
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - constructs reverse iterator; checker cannot verify end() call in return
 inline auto small_vector<T, N, A>::rbegin() -> reverse_iterator {
     return reverse_iterator(end());
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - constructs reverse iterator; checker cannot verify begin() call in return
 inline auto small_vector<T, N, A>::rend() -> reverse_iterator {
     return reverse_iterator(begin());
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - constructs const reverse iterator; checker cannot verify end() call in return
 inline auto small_vector<T, N, A>::rbegin() const -> const_reverse_iterator {
     return const_reverse_iterator(end());
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - constructs const reverse iterator; checker cannot verify begin() call in return
 inline auto small_vector<T, N, A>::rend() const -> const_reverse_iterator {
     return const_reverse_iterator(begin());
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - constructs const reverse iterator; checker cannot verify end() call in return
 inline auto small_vector<T, N, A>::crbegin() const -> const_reverse_iterator {
     return const_reverse_iterator(end());
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - constructs const reverse iterator; checker cannot verify begin() call in return
 inline auto small_vector<T, N, A>::crend() const -> const_reverse_iterator {
     return const_reverse_iterator(begin());
 }

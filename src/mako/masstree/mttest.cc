@@ -23,11 +23,17 @@ namespace mttest_unsafe_file {} // Sets file_default to Unsafe for borrow checke
 // External safety annotations for circular_int, string, and Masstree operations
 // @external: {
 //   lcdf::Str::Str: [unsafe]
+//   lcdf::String: [unsafe_type]
+//   Masstree::tcursor: [unsafe_type]
 //   min: [unsafe]
 //   __builtin_expect: [unsafe]
 // }
 // @external_unsafe: circular_int::*
 // @external_unsafe: lcdf::String_base::*
+// @external_unsafe: Masstree::tcursor::*
+//
+// @unsafe
+// next_full_version_value template function - dereferences node pointer
 // @external_unsafe: lcdf::String_base<*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::String_generic::*

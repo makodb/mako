@@ -390,7 +390,7 @@ class leaf : public node_base<P> {
     }
 
     using node_base<P>::has_changed;
-    // @unsafe - calls base has_changed which uses fence()
+    // @safe - calls @safe has_changed and does pure comparison
     bool has_changed(nodeversion_type oldv,
                      typename permuter_type::storage_type oldperm) const {
         return this->has_changed(oldv) || oldperm != permutation_;

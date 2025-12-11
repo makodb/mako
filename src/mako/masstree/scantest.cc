@@ -2,10 +2,10 @@
 //
 // @external: {
 //   threadinfo: [unsafe_type]
+//   lcdf::String: [unsafe_type]
 // }
-// @external_unsafe_type: std::*
-// @external_unsafe: std::*
 // @external_unsafe: circular_int::*
+// @external_unsafe: std::*
 // @external_unsafe: lcdf::String_base::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::String_generic::*

@@ -83,7 +83,7 @@ class nodeversion {
     bool deleted() const {
         return v_ & P::deleted_bit;
     }
-    // @unsafe - calls fence()
+    // @safe - calls @unsafe fence(), pure comparison; @safe can call @unsafe
     bool has_changed(nodeversion<P> x) const {
         fence();
         return (x.v_ ^ v_) > P::lock_bit;
@@ -92,7 +92,7 @@ class nodeversion {
     bool is_root() const {
         return v_ & P::root_bit;
     }
-    // @unsafe - calls fence()
+    // @safe - calls @unsafe fence(), pure comparison; @safe can call @unsafe
     bool has_split(nodeversion<P> x) const {
         fence();
         return (x.v_ ^ v_) >= P::vsplit_lowbit;
@@ -141,13 +141,13 @@ class nodeversion {
         v_ = x.v_;
     }
 
-    // @unsafe - calls acquire_fence()
+    // @safe - calls @unsafe acquire_fence(); @safe can call @unsafe
     void mark_insert() {
         masstree_invariant(locked());
         v_ |= P::inserting_bit;
         acquire_fence();
     }
-    // @unsafe - calls fence() and acquire_fence()
+    // @safe - calls @unsafe fence/acquire_fence, returns by value; @safe can call @unsafe
     nodeversion<P> mark_insert(nodeversion<P> current_version) {
         masstree_invariant((fence(), v_ == current_version.v_));
         masstree_invariant(current_version.v_ & P::lock_bit);
@@ -155,37 +155,38 @@ class nodeversion {
         acquire_fence();
         return current_version;
     }
-    // @unsafe - calls acquire_fence()
+    // @safe - calls @unsafe acquire_fence(); @safe can call @unsafe
     void mark_split() {
         masstree_invariant(locked());
         v_ |= P::splitting_bit;
         acquire_fence();
     }
-    // @unsafe - calls acquire_fence()
+    // @safe - calls @unsafe acquire_fence(); @safe can call @unsafe
     void mark_change(bool is_split) {
         masstree_invariant(locked());
         v_ |= (is_split + 1) << P::inserting_shift;
         acquire_fence();
     }
-    // @unsafe - calls acquire_fence() and returns *this
+    // @unsafe - returns *this which is mutable reference
+    // @lifetime: (&'a mut) -> &'a mut
     nodeversion<P> mark_deleted() {
         masstree_invariant(locked());
         v_ |= P::deleted_bit | P::splitting_bit;
         acquire_fence();
         return *this;
     }
-    // @unsafe - calls acquire_fence()
+    // @safe - calls @unsafe acquire_fence(); @safe can call @unsafe
     void mark_deleted_tree() {
         masstree_invariant(locked() && is_root());
         v_ |= P::deleted_bit;
         acquire_fence();
     }
-    // @unsafe - calls acquire_fence()
+    // @safe - calls @unsafe acquire_fence(); @safe can call @unsafe
     void mark_root() {
         v_ |= P::root_bit;
         acquire_fence();
     }
-    // @unsafe - calls acquire_fence()
+    // @safe - calls @unsafe acquire_fence(); @safe can call @unsafe
     void mark_nonroot() {
         v_ &= ~P::root_bit;
         acquire_fence();

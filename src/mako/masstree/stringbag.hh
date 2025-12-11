@@ -53,6 +53,7 @@ class stringbag {
     struct info_type {
         offset_type pos;
         offset_type len;
+        // @safe - simple value initialization
         info_type(unsigned p, unsigned l)
             : pos(p), len(l) {
         }
@@ -132,7 +133,7 @@ class stringbag {
            (because the stringbag is out of capacity)
         @pre @a p >= 0 && @a p < bag width */
     // @unsafe - copies raw bytes into backing buffer
-    bool assign(int p, const char *s, int len) {
+    bool assign(int p, const char* s, int len) {
         unsigned pos, mylen = info_[p].len;
         if (mylen >= (unsigned) len)
             pos = info_[p].pos;
@@ -147,12 +148,14 @@ class stringbag {
         return true;
     }
     /** @override */
+    // @unsafe - delegates to unsafe assign
     bool assign(int p, lcdf::Str s) {
         return assign(p, s.s, s.len);
     }
 
     /** @brief Print a representation of the stringbag to @a f. */
-    void print(int width, FILE *f, const char *prefix, int indent) {
+    // @unsafe - uses fprintf which requires raw FILE* pointer
+    void print(int width, FILE* f, const char* prefix, int indent) const {
         fprintf(f, "%s%*s%p (%d:)%d:%d...\n", prefix, indent, "",
                 this, (int) overhead(width), size_, capacity());
         for (int i = 0; i < width; ++i)

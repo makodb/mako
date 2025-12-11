@@ -16,6 +16,8 @@
 // @unsafe - Row type management for Masstree values
 // Provides row allocation, change detection, and log replay interfaces
 // SAFETY: Uses threadinfo allocator, log callbacks, row marker sentinels
+// @external_unsafe: lcdf::String::make_stable
+// @external_unsafe: lcdf::String::make_uninitialized
 
 #ifndef KVROW_HH
 #define KVROW_HH 1
@@ -41,7 +43,9 @@ typedef value_bag<uint16_t> row_type;
 
 template <typename R>
 struct query_helper {
-    inline const R* snapshot(const R* row, const std::vector<typename R::index_type>&, threadinfo&) {
+    // @safe - identity function, returns input reference unchanged
+    // @lifetime: (&'a, ...) -> &'a
+    inline const R& snapshot(const R& row, const std::vector<typename R::index_type>&, threadinfo&) {
         return row;
     }
 };
@@ -71,6 +75,8 @@ class query {
     template <typename T>
     void run_rscan(T& table, Json& request, threadinfo& ti);
 
+    // @safe - returns const reference to member field, no side effects
+    // @lifetime: (&'a self) -> &'a
     const loginfo::query_times& query_times() const {
         return qtimes_;
     }
@@ -82,8 +88,10 @@ class query {
     lcdf::String scankey_;
     int scankeypos_;
 
-    void emit_fields(const R* value, Json& req, threadinfo& ti);
-    void emit_fields1(const R* value, Json& req, threadinfo& ti);
+    // @unsafe - calls external String::make_stable; uses safe reference parameters
+    void emit_fields(const R& value, Json& req, threadinfo& ti);
+    // @unsafe - calls external String::make_stable; uses safe reference parameters
+    void emit_fields1(const R& value, Json& req, threadinfo& ti);
     void assign_timestamp(threadinfo& ti);
     void assign_timestamp(threadinfo& ti, kvtimestamp_t t);
     inline bool apply_put(R*& value, bool found, const Json* firstreq,
@@ -96,29 +104,31 @@ class query {
 };
 
 
+// @unsafe - calls external String::make_stable; uses safe reference parameters
 template <typename R>
-void query<R>::emit_fields(const R* value, Json& req, threadinfo& ti) {
-    const R* snapshot = helper_.snapshot(value, f_, ti);
+void query<R>::emit_fields(const R& value, Json& req, threadinfo& ti) {
+    const R& snapshot = helper_.snapshot(value, f_, ti);
     if (f_.empty()) {
-        for (int i = 0; i != snapshot->ncol(); ++i)
-            req.push_back(lcdf::String::make_stable(snapshot->col(i)));
+        for (int i = 0; i != snapshot.ncol(); ++i)
+            req.push_back(lcdf::String::make_stable(snapshot.col(i)));
     } else {
         for (int i = 0; i != (int) f_.size(); ++i)
-            req.push_back(lcdf::String::make_stable(snapshot->col(f_[i])));
+            req.push_back(lcdf::String::make_stable(snapshot.col(f_[i])));
     }
 }
 
+// @unsafe - calls external String::make_stable; uses safe reference parameters
 template <typename R>
-void query<R>::emit_fields1(const R* value, Json& req, threadinfo& ti) {
-    const R* snapshot = helper_.snapshot(value, f_, ti);
-    if ((f_.empty() && snapshot->ncol() == 1) || f_.size() == 1)
-        req = lcdf::String::make_stable(snapshot->col(f_.empty() ? 0 : f_[0]));
+void query<R>::emit_fields1(const R& value, Json& req, threadinfo& ti) {
+    const R& snapshot = helper_.snapshot(value, f_, ti);
+    if ((f_.empty() && snapshot.ncol() == 1) || f_.size() == 1)
+        req = lcdf::String::make_stable(snapshot.col(f_.empty() ? 0 : f_[0]));
     else if (f_.empty()) {
-        for (int i = 0; i != snapshot->ncol(); ++i)
-            req.push_back(lcdf::String::make_stable(snapshot->col(i)));
+        for (int i = 0; i != snapshot.ncol(); ++i)
+            req.push_back(lcdf::String::make_stable(snapshot.col(i)));
     } else {
         for (int i = 0; i != (int) f_.size(); ++i)
-            req.push_back(lcdf::String::make_stable(snapshot->col(f_[i])));
+            req.push_back(lcdf::String::make_stable(snapshot.col(f_[i])));
     }
 }
 
@@ -134,7 +144,7 @@ void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
         for (int i = 3; i != req.size(); ++i)
             f_.push_back(req[i].as_i());
         req.resize(2);
-        emit_fields(lp.value(), req, ti);
+        emit_fields(*lp.value(), req, ti);
     }
 }
 
@@ -150,12 +160,14 @@ bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) 
 }
 
 
+// @safe - pure assignment of timestamp values, no allocation or pointer manipulation
 template <typename R>
 inline void query<R>::assign_timestamp(threadinfo& ti) {
     qtimes_.ts = ti.update_timestamp();
     qtimes_.prev_ts = 0;
 }
 
+// @safe - pure assignment of timestamp values with minimum bound
 template <typename R>
 inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
     qtimes_.ts = ti.update_timestamp(min_ts);
@@ -269,15 +281,19 @@ inline void query<R>::apply_remove(R*& value, kvtimestamp_t& node_ts,
 template <typename R>
 class query_json_scanner {
   public:
+    // @safe - constructor initializes fields, uses std::swap for string exchange
     query_json_scanner(query<R> &q, lcdf::Json& request)
         : q_(q), nleft_(request[3].as_i()), request_(request) {
         std::swap(request[2].value().as_s(), firstkey_);
         request_.resize(2);
         q_.scankeypos_ = 0;
     }
+    // @safe - returns const reference to member field
+    // @lifetime: (&'a self) -> &'a
     const lcdf::String& firstkey() const {
         return firstkey_;
     }
+    // @safe - empty visitor function, no operations
     template <typename SS, typename K>
     void visit_leaf(const SS&, const K&, threadinfo&) {
     }
@@ -294,7 +310,7 @@ class query_json_scanner {
         request_.push_back(q_.scankey_.substr(q_.scankeypos_, key.length()));
         q_.scankeypos_ += key.length();
         request_.push_back(lcdf::Json());
-        q_.emit_fields1(value, request_.back(), ti);
+        q_.emit_fields1(*value, request_.back(), ti);
         --nleft_;
         return nleft_ != 0;
     }

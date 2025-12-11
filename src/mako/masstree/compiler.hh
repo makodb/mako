@@ -93,16 +93,19 @@ inline int ffs_msb(unsigned long long x) {
  *
  * Prevents reordering of loads and stores by the compiler. Not intended to
  * synchronize the processor's caches. */
+// @unsafe - uses inline assembly for memory barrier
 inline void fence() {
     asm volatile("" : : : "memory");
 }
 
 /** @brief Acquire fence. */
+// @unsafe - uses inline assembly for memory barrier
 inline void acquire_fence() {
     asm volatile("" : : : "memory");
 }
 
 /** @brief Release fence. */
+// @unsafe - uses inline assembly for memory barrier
 inline void release_fence() {
     asm volatile("" : : : "memory");
 }
@@ -110,11 +113,13 @@ inline void release_fence() {
 /** @brief Compiler fence that relaxes the processor.
 
     Use this in spinloops, for example. */
+// @unsafe - uses inline assembly for CPU pause and memory barrier
 inline void relax_fence() {
     asm volatile("pause" : : : "memory"); // equivalent to "rep; nop"
 }
 
 /** @brief Full memory fence. */
+// @unsafe - uses inline assembly for full memory fence
 inline void memory_fence() {
     asm volatile("mfence" : : : "memory");
 }
@@ -132,24 +137,31 @@ struct do_nothing {
 };
 
 /** @brief Function object that calls fence(). */
+// @safe - functor that calls @unsafe fence(); @safe can call @unsafe
 struct fence_function {
+    // @safe - calls @unsafe fence()
     void operator()() const {
         fence();
     }
 };
 
 /** @brief Function object that calls relax_fence(). */
+// @safe - functor that calls @unsafe relax_fence(); @safe can call @unsafe
 struct relax_fence_function {
+    // @safe - calls @unsafe relax_fence()
     void operator()() const {
         relax_fence();
     }
 };
 
 /** @brief Function object that calls relax_fence() with backoff. */
+// @safe - functor that calls @unsafe relax_fence(); @safe can call @unsafe
 struct backoff_fence_function {
+    // @safe - default construction
     backoff_fence_function()
         : count_(0) {
     }
+    // @safe - calls @unsafe relax_fence() in loop
     void operator()() {
         for (int i = count_; i >= 0; --i)
             relax_fence();

@@ -51,8 +51,8 @@ leaf<P>::ikey_after_insert(const permuter_type& perm, int i,
     The split type is 0 if @a ka went into *this, 1 if the @a ka went into
     *@a nr, and 2 for the sequential-order optimization (@a ka went into *@a
     nr and no other keys were moved). */
-template <typename P>
 // @unsafe - uses address-of on nr reference for btree_leaflink call
+template <typename P>
 int leaf<P>::split_into(leaf<P>& nr, int p, const key_type& ka,
                         ikey_type& split_ikey, threadinfo& ti)
 {

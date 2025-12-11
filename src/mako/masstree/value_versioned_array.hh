@@ -16,6 +16,9 @@
 // @unsafe - MVCC columnar value type with row versioning
 // Supports snapshot isolation with version chaining for concurrent reads
 // SAFETY: Uses threadinfo allocator, version tracking, copy-on-write
+// @external: {
+//   lcdf::String: [unsafe_type]
+// }
 
 #ifndef VALUE_VERSIONED_ARRAY_HH
 #define VALUE_VERSIONED_ARRAY_HH
@@ -130,11 +133,13 @@ struct query_helper<value_versioned_array> {
     query_helper()
         : snapshot_() {
     }
-    inline const value_versioned_array* snapshot(const value_versioned_array* row,
+    // @unsafe - manages internal snapshot storage via raw pointer
+    // @lifetime: (&'a, ...) -> &'a
+    inline const value_versioned_array& snapshot(const value_versioned_array& row,
                                                  const std::vector<value_versioned_array::index_type>& f,
                                                  threadinfo& ti) {
-        row->snapshot(snapshot_, f, ti);
-        return snapshot_;
+        row.snapshot(snapshot_, f, ti);
+        return *snapshot_;
     }
 };
 

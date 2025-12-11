@@ -17,7 +17,18 @@
 // JSON parsing and serialization implementation
 // Most functions use malloc/pointer operations - @unsafe marked individually
 //
-// @external_unsafe_type: std::*
+// SAFETY NOTE: Most functions cannot be made safe because:
+// 1. ArrayJson/ObjectJson use placement new and manual destructor calls
+// 2. Memory management uses raw new[]/delete[] for flexible array members
+// 3. String parsing requires raw pointer arithmetic over input buffers
+// 4. The internal representation uses union types with manual lifetime management
+// 5. Reference counting is done manually, not via smart pointers
+//
+// Only pure helper functions like in_range() are marked @safe.
+//
+// @external: {
+//   lcdf::String: [unsafe_type]
+// }
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::StringAccum::*

@@ -45,6 +45,7 @@ class value_print<unsigned char*> {
     }
 };
 
+// @unsafe - dispatches to leaf/internode print via raw pointer cast
 template <typename P>
 void node_base<P>::print(FILE *f, const char *prefix, int indent, int kdepth)
 {

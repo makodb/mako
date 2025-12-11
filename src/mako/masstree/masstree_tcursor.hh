@@ -16,6 +16,12 @@
 // @unsafe - Tree cursor for Masstree traversal with lock management
 // Maintains path from root to leaf with version tracking for retry
 // SAFETY: Tracks traversal state, acquires/releases locks on nodes
+// @external: {
+//   lcdf::String: [unsafe_type]
+// }
+// @external_unsafe: Masstree::*
+// @external_unsafe: lcdf::*
+// @external_unsafe: __builtin_expect
 
 #ifndef MASSTREE_TCURSOR_HH
 #define MASSTREE_TCURSOR_HH 1
@@ -180,7 +186,9 @@ class tcursor {
     // @unsafe - updates node state and releases locks
     inline void finish(int answer, threadinfo& ti);
 
+    // @unsafe - dereferences raw node pointer n_
     inline nodeversion_value_type previous_full_version_value() const;
+    // @unsafe - dereferences raw node pointer n_
     inline nodeversion_value_type next_full_version_value(int state) const;
 
   private:
@@ -222,15 +230,14 @@ class tcursor {
 };
 
 template <typename P>
+// @unsafe - dereferences raw node pointer n_
 inline typename tcursor<P>::nodeversion_value_type
 tcursor<P>::previous_full_version_value() const {
     static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(leaf<P>::permuter_type::size_bits), "not enough bits to add size to version");
     return (n_->unlocked_version_value() << leaf<P>::permuter_type::size_bits) + n_->size();
 }
 
-template <typename P>
-inline typename tcursor<P>::nodeversion_value_type
-tcursor<P>::next_full_version_value(int state) const {
+template <typename P> inline typename tcursor<P>::nodeversion_value_type tcursor<P>::next_full_version_value(int state) const {
     static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(leaf<P>::permuter_type::size_bits), "not enough bits to add size to version");
     typename node_base<P>::nodeversion_type v(*n_);
     v.unlock();

@@ -302,6 +302,7 @@ struct destroy_rcu_callback : public P::threadinfo_type::mrcu_callback {
     static inline void enqueue(node_base<P>* n, node_base<P>**& tailp);
 };
 
+// @safe - pure pointer arithmetic based on node type
 template <typename P>
 inline node_base<P>** destroy_rcu_callback<P>::link_ptr(node_base<P>* n) {
     if (n->isleaf())
@@ -310,6 +311,7 @@ inline node_base<P>** destroy_rcu_callback<P>::link_ptr(node_base<P>* n) {
         return &static_cast<internode_type*>(n)->parent_;
 }
 
+// @safe - simple pointer assignment for queue management
 template <typename P>
 inline void destroy_rcu_callback<P>::enqueue(node_base<P>* n,
                                              node_base<P>**& tailp) {

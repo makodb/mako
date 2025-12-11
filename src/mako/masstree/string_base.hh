@@ -77,6 +77,7 @@ class String_generic {
         return hashcode(first, last - first);
     }
     static long to_i(const char* first, const char* last);
+    // @safe - pure computation with no pointer operations
     static char upper_hex_nibble(int n) {
         return n + (n > 9 ? 'A' - 10 : '0');
     }

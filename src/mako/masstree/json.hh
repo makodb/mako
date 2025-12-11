@@ -346,6 +346,7 @@ class Json {
 
     friend bool operator==(const Json& a, const Json& b);
 
+    // @unsafe - swaps internal union representations
     inline void swap(Json& x);
 
   private:
@@ -3206,6 +3207,7 @@ inline bool operator!=(const Json_proxy_base<T>& a,
     return !(a == b);
 }
 
+// @unsafe - delegates to unsafe Json::swap
 inline void swap(Json& a, Json& b) {
     a.swap(b);
 }

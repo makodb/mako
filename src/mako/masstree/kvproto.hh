@@ -58,4 +58,10 @@ inline bool row_is_marker(const R& row) {
     return row.timestamp() & 1;
 }
 
+// @unsafe - pointer dereference requires unsafe context
+template <typename R>
+inline bool row_is_marker(const R* row) {
+    return row_is_marker(*row);
+}
+
 #endif

@@ -16,6 +16,15 @@
 // Performance statistics collection and NUMA topology detection
 // All functions use NUMA library and system calls - @unsafe
 //
+// SAFETY NOTE: These functions cannot be made safe because:
+// 1. Template functions use reinterpret_cast with offsetof() for field access
+// 2. stat** arrays may contain nullptr entries (cannot use references)
+// 3. NUMA library functions (numa_available, numa_node_size64) are external C APIs
+// 4. Performance counter access requires raw memory manipulation
+// 5. fprintf() and printf() are varargs C functions
+//
+// Only the simple initialize() method is marked @safe.
+//
 // @external_unsafe_type: std::*
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String_base::*
@@ -60,6 +69,7 @@ stat::initmain(bool pinthreads) {
 }
 
 // @unsafe - uses reinterpret_cast with offsetof() to access struct fields via raw pointer
+// NOTE: Cannot convert s parameter to reference array because it may contain nullptr entries
 template <typename T>
 kvstats
 sum_all_cores(const stat **s, int n, const int offset) {
@@ -74,6 +84,7 @@ sum_all_cores(const stat **s, int n, const int offset) {
 }
 
 // @unsafe - uses reinterpret_cast with offsetof() to access struct fields via raw pointer
+// NOTE: Cannot convert s parameter to reference array because it may contain nullptr entries
 template <typename T>
 kvstats
 sum_one_chip(const stat **s, int n, const int offset, const int chipidx) {
@@ -88,6 +99,7 @@ sum_one_chip(const stat **s, int n, const int offset, const int chipidx) {
 }
 
 // @unsafe - uses reinterpret_cast with offsetof() to access struct fields via raw pointer
+// NOTE: Cannot convert s parameter to reference array because it may contain nullptr entries
 template <typename T>
 kvstats
 sum_all_per_chip(const stat **s, int n, const int offset) {
@@ -106,6 +118,7 @@ sum_all_per_chip(const stat **s, int n, const int offset) {
 }
 
 // @unsafe - dereferences raw stat** array and may call fprintf() for output
+// NOTE: Cannot convert s parameter to reference array because it may contain nullptr entries
 void
 stat::print(const stat **s, int n) {
     (void)n;

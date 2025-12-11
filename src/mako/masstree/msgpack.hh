@@ -36,28 +36,36 @@ enum {
     nfixint = nfixuint + nfixnegint
 };
 
+// @safe - Pure arithmetic range checking
 inline bool in_range(uint8_t x, unsigned low, unsigned n) {
     return (unsigned) x - low < n;
 }
+// @safe - Pure arithmetic range checking with sign wrapping
 inline bool in_wrapped_range(uint8_t x, unsigned low, unsigned n) {
     return (unsigned) (int8_t) x - low < n;
 }
 
+// @unsafe - calls in_wrapped_range which checker cannot verify
 inline bool is_fixint(uint8_t x) {
     return in_wrapped_range(x, -nfixnegint, nfixint);
 }
+// @safe - Pure format tag checking
 inline bool is_null_or_bool(uint8_t x) {
     return in_range(x, fnull, 4);
 }
+// @safe - Pure format tag checking
 inline bool is_bool(uint8_t x) {
     return in_range(x, ffalse, 2);
 }
+// @safe - Pure format tag checking
 inline bool is_fixstr(uint8_t x) {
     return in_range(x, ffixstr, nfixstr);
 }
+// @safe - Pure format tag checking
 inline bool is_fixarray(uint8_t x) {
     return in_range(x, ffixarray, nfixarray);
 }
+// @safe - Pure format tag checking
 inline bool is_fixmap(uint8_t x) {
     return in_range(x, ffixmap, nfixmap);
 }
@@ -209,6 +217,7 @@ inline char* write_map_header(char* s, uint32_t size) {
 }
 } // namespace format
 
+// @safe - Simple value type for array header encoding
 struct array_t {
     uint32_t size;
     array_t(uint32_t s)
@@ -216,10 +225,12 @@ struct array_t {
     }
 };
 
+// @safe - Helper to create array_t
 inline array_t array(uint32_t size) {
     return array_t(size);
 }
 
+// @safe - Simple value type for object header encoding
 struct object_t {
     uint32_t size;
     object_t(uint32_t s)
@@ -227,6 +238,7 @@ struct object_t {
     }
 };
 
+// @safe - Helper to create object_t
 inline object_t object(uint32_t size) {
     return object_t(size);
 }

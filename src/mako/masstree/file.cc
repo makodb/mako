@@ -16,6 +16,12 @@
 // File I/O utilities using raw file descriptors
 // All functions are @unsafe - use POSIX file operations
 //
+// SAFETY NOTE: These functions cannot be made safe because:
+// 1. They use POSIX syscalls (open, read, write, close, fsync, rename)
+// 2. They manipulate raw file descriptors (int) which have no ownership semantics
+// 3. They use raw char* buffers from StringAccum for I/O
+// 4. Error handling requires checking errno global variable
+//
 // @external_unsafe_type: std::*
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*

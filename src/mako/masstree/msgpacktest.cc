@@ -1,6 +1,8 @@
 // MsgPack test harness
 //
-// @external_unsafe_type: std::*
+// @external: {
+//   lcdf::String: [unsafe_type]
+// }
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: msgpack::streaming_parser::*

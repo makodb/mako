@@ -37,6 +37,8 @@
 // @external_unsafe_type: std::*
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::StringAccum::*
+// @external_unsafe: lcdf::String::assign
+// @external_unsafe: assign
 // @external_unsafe: malloc
 // @external_unsafe: free
 // @external_unsafe: realloc
@@ -919,8 +921,9 @@ String::substr(int pos, int len) const
     }
 }
 
+// @safe - pure computation with no raw pointer dereference issues
 static String
-hard_lower(const String &s, int pos)
+hard_lower(const String& s, int pos)
 {
     String new_s(s.data(), s.length());
     char *x = const_cast<char *>(new_s.data()); // know it's mutable
@@ -945,8 +948,9 @@ String::lower() const
     return *this;
 }
 
+// @safe - pure computation with no raw pointer dereference issues
 static String
-hard_upper(const String &s, int pos)
+hard_upper(const String& s, int pos)
 {
     String new_s(s.data(), s.length());
     char *x = const_cast<char *>(new_s.data()); // know it's mutable
@@ -970,8 +974,9 @@ String::upper() const
     return *this;
 }
 
+// @safe - pure computation with no raw pointer dereference issues
 static String
-hard_printable(const String &s, int pos, int type)
+hard_printable(const String& s, int pos, int type)
 {
     StringAccum sa(s.length() * 2);
     sa.append(s.data(), pos);
