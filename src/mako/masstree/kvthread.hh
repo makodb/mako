@@ -128,6 +128,7 @@ class threadinfo {
     }
 
     // timestamps
+    // @safe - delegates to safe timestamp()
     kvtimestamp_t operation_timestamp() const {
         return timestamp();
     }
@@ -280,30 +281,37 @@ class threadinfo {
     }
 
     // RCU
+    // @safe - reads epoch and updates local field
     void rcu_start() {
         mrcu_epoch_type current = context_->get_epoch();
         if (gc_epoch_ != current)
             gc_epoch_ = current;
     }
+    // @unsafe - may call hard_rcu_quiesce which frees memory
     void rcu_stop() {
         if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 1)
             hard_rcu_quiesce();
         gc_epoch_ = 0;
     }
+    // @unsafe - may call hard_rcu_quiesce which frees memory
     void rcu_quiesce() {
         rcu_start();
         if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 2)
             hard_rcu_quiesce();
     }
     typedef ::mrcu_callback mrcu_callback;
+    // @unsafe - delegates to unsafe record_rcu
     void rcu_register(mrcu_callback* cb) {
         record_rcu(cb, memtag(-1));
     }
 
     // thread management
+    // @safe - returns reference to stored pthread_t
+    // @lifetime: (&'a) -> &'a
     pthread_t& pthread() {
         return pthreadid_;
     }
+    // @safe - returns stored pthread_t value
     pthread_t pthread() const {
         return pthreadid_;
     }
@@ -370,10 +378,12 @@ class threadinfo {
 
 #if ENABLE_ASSERTIONS
     static int no_pool_value;
+    // @safe - returns negation of static value
     static bool use_pool() {
         return !no_pool_value;
     }
 #else
+    // @safe - always returns true
     static bool use_pool() {
         return true;
     }

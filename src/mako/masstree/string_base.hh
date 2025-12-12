@@ -97,9 +97,11 @@ class String_base {
     const char* data() const {
         return static_cast<const T*>(this)->data();
     }
+    // @safe - returns stored length via CRTP
     int length() const {
         return static_cast<const T*>(this)->length();
     }
+    // @safe - returns stored length via CRTP
     int size() const {
         return static_cast<const T*>(this)->length();
     }
@@ -141,18 +143,22 @@ class String_base {
         return reinterpret_cast<const_unsigned_iterator>(data() + length());
     }
     /** @brief Test if the string is nonempty. */
+    // @safe - pure comparison on length
     operator unspecified_bool_type() const {
         return length() ? &String_base<T>::length : 0;
     }
     /** @brief Test if the string is empty. */
+    // @safe - pure comparison on length
     bool operator!() const {
         return length() == 0;
     }
     /** @brief Test if the string is empty. */
+    // @safe - pure comparison on length
     bool empty() const {
         return length() == 0;
     }
     /** @brief Test if the string is an out-of-memory string. */
+    // @unsafe - delegates to String_generic::out_of_memory
     bool out_of_memory() const {
         return String_generic::out_of_memory(data());
     }
@@ -393,6 +399,7 @@ class String_base {
         return String_generic::hashcode(data(), length());
     }
 
+    // @safe - pure conversion to integer
     /** @brief Return the integer value of this string. */
     long to_i() const {
         return String_generic::to_i(begin(), end());
@@ -410,6 +417,7 @@ class String_base {
     void encode_uri_component(E& e) const;
 
     /** @brief Return this string as a std::string. */
+    // @safe - creates new std::string, no raw pointer exposure
     inline operator std::string() const {
         return std::string(begin(), end());
     }
@@ -418,71 +426,85 @@ class String_base {
     String_base() = default;
 };
 
+// @safe - pure comparison delegating to equals
 template <typename T, typename U>
 inline bool operator==(const String_base<T> &a, const String_base<U> &b) {
     return a.equals(b);
 }
 
+// @safe - pure comparison delegating to equals
 template <typename T>
 inline bool operator==(const String_base<T> &a, const std::string &b) {
     return a.equals(b.data(), b.length());
 }
 
+// @safe - pure comparison delegating to equals
 template <typename T>
 inline bool operator==(const std::string &a, const String_base<T> &b) {
     return b.equals(a.data(), a.length());
 }
 
+// @safe - pure comparison delegating to equals
 template <typename T>
 inline bool operator==(const String_base<T> &a, const char *b) {
     return a.equals(b, strlen(b));
 }
 
+// @safe - pure comparison delegating to equals
 template <typename T>
 inline bool operator==(const char *a, const String_base<T> &b) {
     return b.equals(a, strlen(a));
 }
 
+// @safe - pure negation of equality
 template <typename T, typename U>
 inline bool operator!=(const String_base<T> &a, const String_base<U> &b) {
     return !(a == b);
 }
 
+// @safe - pure negation of equality
 template <typename T>
 inline bool operator!=(const String_base<T> &a, const std::string &b) {
     return !(a == b);
 }
 
+// @safe - pure negation of equality
 template <typename T>
 inline bool operator!=(const std::string &a, const String_base<T> &b) {
     return !(a == b);
 }
 
+// @safe - pure negation of equality
 template <typename T>
 inline bool operator!=(const String_base<T> &a, const char *b) {
     return !(a == b);
 }
 
+// @safe - pure negation of equality
 template <typename T>
 inline bool operator!=(const char *a, const String_base<T> &b) {
     return !(a == b);
 }
 
+// @safe - pure comparison
 template <typename T, typename U>
 inline bool operator<(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) < 0;
 }
 
+// @safe - pure comparison
 template <typename T, typename U>
 inline bool operator<=(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) <= 0;
 }
 
+// @safe - pure comparison
 template <typename T, typename U>
 inline bool operator>=(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) >= 0;
 }
 
+// @safe - pure comparison
 template <typename T, typename U>
 inline bool operator>(const String_base<T> &a, const String_base<U> &b) {
     return a.compare(b) > 0;
@@ -495,11 +517,13 @@ inline std::ostream &operator<<(std::ostream &f, const String_base<T> &str) {
     return f.write(str.data(), str.length());
 }
 
+// @safe - pure hash computation
 template <typename T>
 inline hashcode_t hashcode(const String_base<T>& x) {
     return String_generic::hashcode(x.data(), x.length());
 }
 
+// @safe - pure hash computation
 // boost's spelling
 template <typename T>
 inline size_t hash_value(const String_base<T>& x) {

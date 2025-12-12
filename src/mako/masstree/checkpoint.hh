@@ -33,6 +33,7 @@ struct ckstate {
     Str startkey;
     Str endkey;
 
+    // @safe - empty visitor function, no operations
     template <typename SS, typename K>
     void visit_leaf(const SS&, const K&, threadinfo&) {
     }

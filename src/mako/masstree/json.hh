@@ -505,11 +505,13 @@ inline void Json::ComplexJson::deref(json_type j) {
     }
 }
 
+// @unsafe - returns raw pointer to internal array storage
 inline Json::ArrayJson* Json::ajson() const {
     precondition(u_.x.type == j_null || u_.x.type == j_array);
     return u_.a.x;
 }
 
+// @unsafe - returns raw pointer to internal object storage
 inline Json::ObjectJson* Json::ojson() const {
     precondition(u_.x.type == j_null || u_.x.type == j_object);
     return u_.o.x;
@@ -721,44 +723,55 @@ class Json::array_iterator : public const_array_iterator { public:
     friend class Json;
 };
 
+// @safe - pure pointer and index comparison
 inline bool operator==(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     return a.j_ == b.j_ && a.i_ == b.i_;
 }
 
+// @safe - pure pointer and index comparison
 inline bool operator<(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     return a.j_ < b.j_ || (a.j_ == b.j_ && a.i_ < b.i_);
 }
 
+// @safe - delegates to operator==
 inline bool operator!=(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     return !(a == b);
 }
 
+// @safe - delegates to operator<
 inline bool operator<=(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     return !(b < a);
 }
 
+// @safe - delegates to operator<
 inline bool operator>(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     return b < a;
 }
 
+// @safe - delegates to operator<
 inline bool operator>=(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     return !(a < b);
 }
 
+// @safe - pure arithmetic
 inline Json::const_array_iterator operator+(Json::const_array_iterator a, Json::const_array_iterator::difference_type i) {
     return a += i;
 }
+// @safe - pure arithmetic
 inline Json::array_iterator operator+(Json::array_iterator a, Json::array_iterator::difference_type i) {
     return a += i;
 }
 
+// @safe - pure arithmetic
 inline Json::const_array_iterator operator-(Json::const_array_iterator a, Json::const_array_iterator::difference_type i) {
     return a -= i;
 }
+// @safe - pure arithmetic
 inline Json::array_iterator operator-(Json::array_iterator a, Json::array_iterator::difference_type i) {
     return a -= i;
 }
 
+// @safe - pure arithmetic subtraction
 inline Json::const_array_iterator::difference_type operator-(const Json::const_array_iterator& a, const Json::const_array_iterator& b) {
     precondition(a.j_ == b.j_);
     return a.i_ - b.i_;
@@ -770,32 +783,41 @@ class Json::const_iterator { public:
     typedef const value_type& reference;
     typedef std::forward_iterator_tag iterator_category;
 
+    // @unsafe - initializes with invalid reference
     const_iterator()
         : value_(String(), *(Json*) 0) {
     }
     typedef bool (const_iterator::*unspecified_bool_type)() const;
+    // @safe - pure value check
     operator unspecified_bool_type() const {
         return live() ? &const_iterator::live : 0;
     }
+    // @safe - pure index comparison
     bool live() const {
         return i_ >= 0;
     }
+    // @unsafe - returns reference to internal value
     const value_type& operator*() const {
         return value_;
     }
+    // @unsafe - returns pointer to internal value
     const value_type* operator->() const {
         return &(**this);
     }
+    // @unsafe - returns reference via dereference
     const String& key() const {
         return (**this).first;
     }
+    // @unsafe - returns reference via dereference
     const Json& value() const {
         return (**this).second;
     }
+    // @unsafe - modifies state and calls fix()
     void operator++() {
         ++i_;
         fix();
     }
+    // @safe - delegates to prefix increment
     void operator++(int) {
         ++(*this);
     }
@@ -867,210 +889,278 @@ class Json::iterator : public const_iterator { public:
     friend class Json;
 };
 
+// @safe - pure pointer and index comparison
 inline bool operator==(const Json::const_iterator& a, const Json::const_iterator& b) {
     return a.j_ == b.j_ && a.i_ == b.i_;
 }
 
+// @safe - delegates to operator==
 inline bool operator!=(const Json::const_iterator& a, const Json::const_iterator& b) {
     return !(a == b);
 }
 
 
+// @unsafe - CRTP proxy base with reference-returning methods
 template <typename P>
 class Json_proxy_base {
   public:
+    // @unsafe - returns reference via CRTP cast
     const Json& cvalue() const {
         return static_cast<const P *>(this)->cvalue();
     }
+    // @unsafe - returns mutable reference via CRTP cast
     Json& value() {
         return static_cast<P *>(this)->value();
     }
+    // @unsafe - returns reference
     operator const Json&() const {
         return cvalue();
     }
+    // @unsafe - returns mutable reference
     operator Json&() {
         return value();
     }
+    // @safe - delegates to safe truthy()
     bool truthy() const {
         return cvalue().truthy();
     }
+    // @safe - delegates to safe falsy()
     bool falsy() const {
         return cvalue().falsy();
     }
+    // @safe - bool conversion
     operator Json::unspecified_bool_type() const {
         return cvalue();
     }
+    // @safe - negation
     bool operator!() const {
         return !cvalue();
     }
+    // @safe - delegates to safe is_null()
     bool is_null() const {
         return cvalue().is_null();
     }
+    // @safe - delegates to safe is_int()
     bool is_int() const {
         return cvalue().is_int();
     }
+    // @safe - delegates to safe is_i()
     bool is_i() const {
         return cvalue().is_i();
     }
+    // @safe - delegates to safe is_unsigned()
     bool is_unsigned() const {
         return cvalue().is_unsigned();
     }
+    // @safe - delegates to safe is_u()
     bool is_u() const {
         return cvalue().is_u();
     }
+    // @safe - delegates to safe is_signed()
     bool is_signed() const {
         return cvalue().is_signed();
     }
+    // @safe - delegates to safe is_nonnegint()
     bool is_nonnegint() const {
         return cvalue().is_nonnegint();
     }
+    // @safe - delegates to safe is_double()
     bool is_double() const {
         return cvalue().is_double();
     }
+    // @safe - delegates to safe is_d()
     bool is_d() const {
         return cvalue().is_d();
     }
+    // @safe - delegates to safe is_number()
     bool is_number() const {
         return cvalue().is_number();
     }
+    // @safe - delegates to safe is_n()
     bool is_n() const {
         return cvalue().is_n();
     }
+    // @safe - delegates to safe is_bool()
     bool is_bool() const {
         return cvalue().is_bool();
     }
+    // @safe - delegates to safe is_b()
     bool is_b() const {
         return cvalue().is_b();
     }
+    // @safe - delegates to safe is_string()
     bool is_string() const {
         return cvalue().is_string();
     }
+    // @safe - delegates to safe is_s()
     bool is_s() const {
         return cvalue().is_s();
     }
+    // @safe - delegates to safe is_array()
     bool is_array() const {
         return cvalue().is_array();
     }
+    // @safe - delegates to safe is_a()
     bool is_a() const {
         return cvalue().is_a();
     }
+    // @safe - delegates to safe is_object()
     bool is_object() const {
         return cvalue().is_object();
     }
+    // @safe - delegates to safe is_o()
     bool is_o() const {
         return cvalue().is_o();
     }
+    // @safe - delegates to safe is_primitive()
     bool is_primitive() const {
         return cvalue().is_primitive();
     }
+    // @safe - delegates to safe empty()
     bool empty() const {
         return cvalue().empty();
     }
+    // @safe - delegates to safe size()
     Json::size_type size() const {
         return cvalue().size();
     }
+    // @safe - delegates to safe to_i()
     int64_t to_i() const {
         return cvalue().to_i();
     }
+    // @safe - delegates to safe to_u()
     uint64_t to_u() const {
         return cvalue().to_u();
     }
+    // @safe - delegates to safe to_u64()
     uint64_t to_u64() const {
         return cvalue().to_u64();
     }
+    // @safe - delegates to safe to_i(int&)
     bool to_i(int& x) const {
         return cvalue().to_i(x);
     }
+    // @safe - delegates to safe to_i(unsigned&)
     bool to_i(unsigned& x) const {
         return cvalue().to_i(x);
     }
+    // @safe - delegates to safe to_i(long&)
     bool to_i(long& x) const {
         return cvalue().to_i(x);
     }
+    // @safe - delegates to safe to_i(unsigned long&)
     bool to_i(unsigned long& x) const {
         return cvalue().to_i(x);
     }
+    // @safe - delegates to safe to_i(long long&)
     bool to_i(long long& x) const {
         return cvalue().to_i(x);
     }
+    // @safe - delegates to safe to_i(unsigned long long&)
     bool to_i(unsigned long long& x) const {
         return cvalue().to_i(x);
     }
+    // @safe - delegates to safe as_i()
     int64_t as_i() const {
         return cvalue().as_i();
     }
+    // @safe - delegates to safe as_i(default)
     int64_t as_i(int64_t default_value) const {
         return cvalue().as_i(default_value);
     }
+    // @safe - delegates to safe as_u()
     uint64_t as_u() const {
         return cvalue().as_u();
     }
+    // @safe - delegates to safe as_u(default)
     uint64_t as_u(uint64_t default_value) const {
         return cvalue().as_u(default_value);
     }
+    // @safe - delegates to safe to_d()
     double to_d() const {
         return cvalue().to_d();
     }
+    // @safe - delegates to safe to_d(double&)
     bool to_d(double& x) const {
         return cvalue().to_d(x);
     }
+    // @safe - delegates to safe as_d()
     double as_d() const {
         return cvalue().as_d();
     }
+    // @safe - delegates to safe as_d(default)
     double as_d(double default_value) const {
         return cvalue().as_d(default_value);
     }
+    // @safe - delegates to safe to_b()
     bool to_b() const {
         return cvalue().to_b();
     }
+    // @safe - delegates to safe to_b(bool&)
     bool to_b(bool& x) const {
         return cvalue().to_b(x);
     }
+    // @safe - delegates to safe as_b()
     bool as_b() const {
         return cvalue().as_b();
     }
+    // @safe - delegates to safe as_b(default)
     bool as_b(bool default_value) const {
         return cvalue().as_b(default_value);
     }
+    // @safe - returns string by value
     String to_s() const {
         return cvalue().to_s();
     }
+    // @safe - delegates to safe to_s(Str&)
     bool to_s(Str& x) const {
         return cvalue().to_s(x);
     }
+    // @safe - delegates to safe to_s(String&)
     bool to_s(String& x) const {
         return cvalue().to_s(x);
     }
+    // @unsafe - returns reference
     const String& as_s() const {
         return cvalue().as_s();
     }
+    // @unsafe - returns reference
     const String& as_s(const String& default_value) const {
         return cvalue().as_s(default_value);
     }
+    // @safe - pure value accessor
     Json::size_type count(Str key) const {
         return cvalue().count(key);
     }
+    // @unsafe - returns reference
     const Json& get(Str key) const {
         return cvalue().get(key);
     }
+    // @unsafe - returns mutable reference
     Json& get_insert(const String& key) {
         return value().get_insert(key);
     }
+    // @unsafe - returns mutable reference
     Json& get_insert(Str key) {
         return value().get_insert(key);
     }
+    // @unsafe - returns mutable reference
     Json& get_insert(const char* key) {
         return value().get_insert(key);
     }
+    // @safe - pure value accessor
     long get_i(Str key) const {
         return cvalue().get_i(key);
     }
+    // @safe - pure value accessor
     double get_d(Str key) const {
         return cvalue().get_d(key);
     }
+    // @safe - pure value accessor
     bool get_b(Str key) const {
         return cvalue().get_b(key);
     }
+    // @safe - returns by value
     String get_s(Str key) const {
         return cvalue().get_s(key);
     }
@@ -1449,56 +1539,69 @@ class Json_get_proxy : public Json_proxy_base<Json_get_proxy> {
     Json_get_proxy& operator=(const Json_get_proxy& x);
 };
 
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, Json& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, int& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, unsigned& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, long& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, unsigned long& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, long long& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, unsigned long long& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, double& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, bool& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, Str& x) const {
     return cvalue().get(key, x);
 }
+// @unsafe - delegates to cvalue().get() with output reference
 template <typename T>
 inline const Json_get_proxy Json_proxy_base<T>::get(Str key, String& x) const {
     return cvalue().get(key, x);
 }
 
 
+// @safe - initializes union to zero
 /** @brief Construct a null Json. */
 inline Json::Json() {
     memset(&u_, 0, sizeof(u_));
 }
+// @safe - initializes union to zero
 /** @brief Construct a null Json. */
 inline Json::Json(const null_t&) {
     memset(&u_, 0, sizeof(u_));
@@ -1526,53 +1629,65 @@ inline Json::Json(Json&& x)
     memset(&x, 0, sizeof(x));
 }
 #endif
+// @safe - pure value initialization
 /** @brief Construct simple Json values. */
 inline Json::Json(int x) {
     u_.i.x = x;
     u_.i.type = j_int;
 }
+// @safe - pure value initialization
 inline Json::Json(unsigned x) {
     u_.u.x = x;
     u_.u.type = j_unsigned;
 }
+// @safe - pure value initialization
 inline Json::Json(long x) {
     u_.i.x = x;
     u_.i.type = j_int;
 }
+// @safe - pure value initialization
 inline Json::Json(unsigned long x) {
     u_.u.x = x;
     u_.u.type = j_unsigned;
 }
+// @safe - pure value initialization
 inline Json::Json(long long x) {
     u_.i.x = x;
     u_.i.type = j_int;
 }
+// @safe - pure value initialization
 inline Json::Json(unsigned long long x) {
     u_.u.x = x;
     u_.u.type = j_unsigned;
 }
+// @safe - pure value initialization
 inline Json::Json(double x) {
     u_.d.x = x;
     u_.d.type = j_double;
 }
+// @safe - pure value initialization
 inline Json::Json(bool x) {
     u_.i.x = x;
     u_.i.type = j_bool;
 }
+// @unsafe - uses reference counting on String
 inline Json::Json(const String& x) {
     u_.str = x.internal_rep();
     u_.str.ref();
 }
+// @unsafe - uses reference counting on String
 inline Json::Json(const std::string& x) {
     u_.str.reset_ref();
     String str(x);
     str.swap(u_.str);
 }
+// @unsafe - uses reference counting on String
 inline Json::Json(Str x) {
     u_.str.reset_ref();
     String str(x);
     str.swap(u_.str);
 }
+// @unsafe - uses reference counting on String
 inline Json::Json(const char* x) {
     u_.str.reset_ref();
     String str(x);
@@ -1677,101 +1792,128 @@ inline Json Json::make_string(const char *s, int len) {
 }
 
 /** @brief Test if this Json is truthy. */
+// @safe - pure value comparison
 inline bool Json::truthy() const {
     return (u_.x.x ? u_.x.type >= 0 || u_.str.length
             : (unsigned) (u_.x.type - 1) < (unsigned) (j_int - 1));
 }
 /** @brief Test if this Json is falsy. */
+// @safe - delegates to safe truthy()
 inline bool Json::falsy() const {
     return !truthy();
 }
 /** @brief Test if this Json is truthy.
     @sa empty() */
+// @safe - delegates to safe truthy()
 inline Json::operator unspecified_bool_type() const {
     return truthy() ? &Json::is_null : 0;
 }
 /** @brief Return true if this Json is falsy. */
+// @safe - delegates to safe truthy()
 inline bool Json::operator!() const {
     return !truthy();
 }
 
 /** @brief Test this Json's type. */
+// @safe - pure type comparison
 inline bool Json::is_null() const {
     return !u_.x.x && u_.x.type == j_null;
 }
+// @safe - pure type comparison
 inline bool Json::is_int() const {
     return unsigned(u_.x.type - j_int) <= unsigned(j_unsigned - j_int);
 }
+// @safe - delegates to is_int
 inline bool Json::is_i() const {
     return is_int();
 }
+// @safe - pure type comparison
 inline bool Json::is_unsigned() const {
     return u_.x.type == j_unsigned;
 }
+// @safe - delegates to is_unsigned
 inline bool Json::is_u() const {
     return is_unsigned();
 }
+// @safe - pure type comparison
 inline bool Json::is_signed() const {
     return u_.x.type == j_int;
 }
+// @safe - pure value comparison
 inline bool Json::is_nonnegint() const {
     return u_.x.type == j_unsigned
         || (u_.x.type == j_int && u_.i.x >= 0);
 }
+// @safe - pure type comparison
 inline bool Json::is_double() const {
     return u_.x.type == j_double;
 }
+// @safe - delegates to is_double
 inline bool Json::is_d() const {
     return is_double();
 }
+// @safe - pure type comparison
 inline bool Json::is_number() const {
     return unsigned(u_.x.type - j_int) <= unsigned(j_double - j_int);
 }
+// @safe - delegates to is_number
 inline bool Json::is_n() const {
     return is_number();
 }
+// @safe - pure type comparison
 inline bool Json::is_bool() const {
     return u_.x.type == j_bool;
 }
+// @safe - delegates to is_bool
 inline bool Json::is_b() const {
     return is_bool();
 }
+// @safe - pure type and pointer comparison
 inline bool Json::is_string() const {
     return u_.x.x && u_.x.type <= 0;
 }
+// @safe - delegates to is_string
 inline bool Json::is_s() const {
     return is_string();
 }
+// @safe - pure type comparison
 inline bool Json::is_array() const {
     return u_.x.type == j_array;
 }
+// @safe - delegates to is_array
 inline bool Json::is_a() const {
     return is_array();
 }
+// @safe - pure type comparison
 inline bool Json::is_object() const {
     return u_.x.type == j_object;
 }
+// @safe - delegates to is_object
 inline bool Json::is_o() const {
     return is_object();
 }
 /** @brief Test if this Json is a primitive value, not including null. */
+// @safe - pure type and pointer comparison
 inline bool Json::is_primitive() const {
     return u_.x.type >= j_int || (u_.x.x && u_.x.type <= 0);
 }
 
 /** @brief Return true if this Json is null, an empty array, or an empty
     object. */
+// @safe - pure value comparison
 inline bool Json::empty() const {
     return unsigned(u_.x.type) < unsigned(j_int)
         && (!u_.x.x || u_.x.x->size == 0);
 }
 /** @brief Return the number of elements in this complex Json.
     @pre is_array() || is_object() || is_null() */
+// @safe - pure value access
 inline Json::size_type Json::size() const {
     precondition(unsigned(u_.x.type) < unsigned(j_int));
     return u_.x.x ? u_.x.x->size : 0;
 }
 /** @brief Test if this complex Json is shared. */
+// @safe - pure value comparison
 inline bool Json::shared() const {
     return u_.x.x && (u_.x.type == j_array || u_.x.type == j_object)
         && u_.x.x->refcount != 1;
@@ -1786,6 +1928,7 @@ inline bool Json::shared() const {
     boolean Jsons to 1; string Jsons to a number parsed from their initial
     portions; and array and object Jsons to size().
     @sa as_i() */
+// @safe - pure value extraction (or calls hard_to_i for non-int)
 inline int64_t Json::to_i() const {
     if (is_int())
         return u_.i.x;
@@ -1793,6 +1936,7 @@ inline int64_t Json::to_i() const {
         return hard_to_i();
 }
 
+// @safe - pure value extraction (or calls hard_to_u for non-int)
 inline uint64_t Json::to_u() const {
     if (is_int())
         return u_.u.x;
@@ -1806,6 +1950,7 @@ inline uint64_t Json::to_u() const {
 
     If false is returned (!is_number() or the number is not parseable as a
     pure integer), @a x remains unchanged. */
+// @safe - pure value extraction
 inline bool Json::to_i(int& x) const {
     if (is_int()) {
         x = u_.i.x;
@@ -1818,6 +1963,7 @@ inline bool Json::to_i(int& x) const {
 }
 
 /** @overload */
+// @safe - pure value extraction
 inline bool Json::to_i(unsigned& x) const {
     if (is_int()) {
         x = u_.u.x;
@@ -1830,6 +1976,7 @@ inline bool Json::to_i(unsigned& x) const {
 }
 
 /** @overload */
+// @safe - pure value extraction
 inline bool Json::to_i(long& x) const {
     if (is_int()) {
         x = u_.i.x;
@@ -1842,6 +1989,7 @@ inline bool Json::to_i(long& x) const {
 }
 
 /** @overload */
+// @safe - pure value extraction
 inline bool Json::to_i(unsigned long& x) const {
     if (is_int()) {
         x = u_.u.x;
@@ -1854,6 +2002,7 @@ inline bool Json::to_i(unsigned long& x) const {
 }
 
 /** @overload */
+// @safe - pure value extraction
 inline bool Json::to_i(long long& x) const {
     if (is_int()) {
         x = u_.i.x;
@@ -1866,6 +2015,7 @@ inline bool Json::to_i(long long& x) const {
 }
 
 /** @overload */
+// @safe - pure value extraction
 inline bool Json::to_i(unsigned long long& x) const {
     if (is_int()) {
         x = u_.u.x;
@@ -1880,6 +2030,7 @@ inline bool Json::to_i(unsigned long long& x) const {
 /** @brief Return this Json converted to a 64-bit unsigned integer.
 
     See to_i() for the conversion rules. */
+// @safe - delegates to safe to_u
 inline uint64_t Json::to_u64() const {
     return to_u();
 }
@@ -1887,12 +2038,14 @@ inline uint64_t Json::to_u64() const {
 /** @brief Return the integer value of this numeric Json.
     @pre is_number()
     @sa to_i() */
+// @safe - pure value extraction
 inline int64_t Json::as_i() const {
     precondition(is_int() || is_double());
     return is_int() ? u_.i.x : int64_t(u_.d.x);
 }
 
 /** @brief Return the integer value of this numeric Json or @a default_value. */
+// @safe - pure value extraction
 inline int64_t Json::as_i(int64_t default_value) const {
     if (is_int() || is_double())
         return as_i();
@@ -1903,12 +2056,14 @@ inline int64_t Json::as_i(int64_t default_value) const {
 /** @brief Return the unsigned integer value of this numeric Json.
     @pre is_number()
     @sa to_i() */
+// @safe - pure value extraction
 inline uint64_t Json::as_u() const {
     precondition(is_int() || is_double());
     return is_int() ? u_.u.x : uint64_t(u_.d.x);
 }
 
 /** @brief Return the integer value of this numeric Json or @a default_value. */
+// @safe - pure value extraction
 inline uint64_t Json::as_u(uint64_t default_value) const {
     if (is_int() || is_double())
         return as_u();
@@ -1923,6 +2078,7 @@ inline uint64_t Json::as_u(uint64_t default_value) const {
     boolean Jsons to 1; string Jsons to a number parsed from their initial
     portions; and array and object Jsons to size().
     @sa as_d() */
+// @safe - pure value extraction (or calls hard_to_d for non-double)
 inline double Json::to_d() const {
     if (is_double())
         return u_.d.x;
@@ -1935,6 +2091,7 @@ inline double Json::to_d() const {
     @return True iff is_number().
 
     If !is_number(), @a x remains unchanged. */
+// @safe - pure value extraction
 inline bool Json::to_d(double& x) const {
     if (is_double() || is_int()) {
         x = to_d();
@@ -1946,6 +2103,7 @@ inline bool Json::to_d(double& x) const {
 /** @brief Return the double value of this numeric Json.
     @pre is_number()
     @sa to_d() */
+// @safe - pure value extraction
 inline double Json::as_d() const {
     precondition(is_double() || is_int());
     if (is_double())
@@ -1957,6 +2115,7 @@ inline double Json::as_d() const {
 }
 
 /** @brief Return the double value of this numeric Json or @a default_value. */
+// @safe - pure value extraction
 inline double Json::as_d(double default_value) const {
     if (!is_double() && !is_int())
         return default_value;
@@ -1971,6 +2130,7 @@ inline double Json::as_d(double default_value) const {
     and other numeric Jsons to true; empty string Jsons to false, and other
     string Jsons to true; and array and object Jsons to !empty().
     @sa as_b() */
+// @safe - pure value extraction (or calls hard_to_b for non-bool)
 inline bool Json::to_b() const {
     if (is_bool())
         return u_.i.x;
@@ -1983,6 +2143,7 @@ inline bool Json::to_b() const {
     @return True iff is_bool().
 
     If !is_bool(), @a x remains unchanged. */
+// @safe - pure value extraction
 inline bool Json::to_b(bool& x) const {
     if (is_bool()) {
         x = u_.i.x;
@@ -1994,12 +2155,14 @@ inline bool Json::to_b(bool& x) const {
 /** @brief Return the value of this boolean Json.
     @pre is_bool()
     @sa to_b() */
+// @safe - pure value extraction
 inline bool Json::as_b() const {
     precondition(is_bool());
     return u_.i.x;
 }
 
 /** @brief Return the boolean value of this numeric Json or @a default_value. */
+// @safe - pure value extraction
 inline bool Json::as_b(bool default_value) const {
     if (is_bool())
         return as_b();
@@ -2712,44 +2875,55 @@ inline Json::const_iterator Json::end() const {
 
 
 // Unparsing
+// @safe - Pure value type for JSON formatting options
 class Json::unparse_manipulator {
   public:
+    // @safe - default initialization
     unparse_manipulator()
         : indent_depth_(0), tab_width_(0), newline_terminator_(false),
           space_separator_(false) {
     }
+    // @safe - returns stored value
     int indent_depth() const {
         return indent_depth_;
     }
+    // @unsafe - copy via *this dereference
     unparse_manipulator indent_depth(int x) const {
         unparse_manipulator m(*this);
         m.indent_depth_ = x;
         return m;
     }
+    // @safe - returns stored value
     int tab_width() const {
         return tab_width_;
     }
+    // @unsafe - copy via *this dereference
     unparse_manipulator tab_width(int x) const {
         unparse_manipulator m(*this);
         m.tab_width_ = x;
         return m;
     }
+    // @safe - returns stored value
     bool newline_terminator() const {
         return newline_terminator_;
     }
+    // @unsafe - copy via *this dereference
     unparse_manipulator newline_terminator(bool x) const {
         unparse_manipulator m(*this);
         m.newline_terminator_ = x;
         return m;
     }
+    // @safe - returns stored value
     bool space_separator() const {
         return space_separator_;
     }
+    // @unsafe - copy via *this dereference
     unparse_manipulator space_separator(bool x) const {
         unparse_manipulator m(*this);
         m.space_separator_ = x;
         return m;
     }
+    // @safe - pure value comparison
     bool empty() const {
         return !indent_depth_ && !newline_terminator_ && !space_separator_;
     }
@@ -2760,15 +2934,19 @@ class Json::unparse_manipulator {
     bool space_separator_;
 };
 
+// @safe - returns copy of manipulator with indent_depth
 inline Json::unparse_manipulator Json::indent_depth(int x) {
     return unparse_manipulator().indent_depth(x);
 }
+// @safe - returns copy of manipulator with tab_width
 inline Json::unparse_manipulator Json::tab_width(int x) {
     return unparse_manipulator().tab_width(x);
 }
+// @safe - returns copy of manipulator with newline_terminator
 inline Json::unparse_manipulator Json::newline_terminator(bool x) {
     return unparse_manipulator().newline_terminator(x);
 }
+// @safe - returns copy of manipulator with space_separator
 inline Json::unparse_manipulator Json::space_separator(bool x) {
     return unparse_manipulator().space_separator(x);
 }
@@ -2874,10 +3052,12 @@ inline bool Json::streaming_parser::success() const {
     return state_ == st_final;
 }
 
+// @safe - pure state comparison
 inline bool Json::streaming_parser::error() const {
     return state_ == st_error;
 }
 
+// @unsafe - processes raw pointers
 inline size_t Json::streaming_parser::consume(const char* first, size_t length,
                                               const String& str,
                                               bool complete) {
@@ -2885,6 +3065,7 @@ inline size_t Json::streaming_parser::consume(const char* first, size_t length,
     return consume(ufirst, ufirst + length, str, complete) - ufirst;
 }
 
+// @unsafe - processes raw pointers
 inline const char* Json::streaming_parser::consume(const char* first,
                                                    const char* last,
                                                    const String& str,
@@ -2894,10 +3075,12 @@ inline const char* Json::streaming_parser::consume(const char* first,
                  reinterpret_cast<const uint8_t*>(last), str, complete));
 }
 
+// @unsafe - returns mutable reference
 inline Json& Json::streaming_parser::result() {
     return json_;
 }
 
+// @unsafe - returns reference without lifetime tracking
 inline const Json& Json::streaming_parser::result() const {
     return json_;
 }

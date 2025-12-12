@@ -29,21 +29,27 @@
 using lcdf::Str;
 
 struct rowversion {
+    // @safe - zero initialization
     rowversion() {
         v_.u = 0;
     }
+    // @safe - returns stored dirty bit
     bool dirty() {
         return v_.dirty;
     }
+    // @safe - sets dirty bit via pure arithmetic
     void setdirty() {
         v_.u = v_.u | 0x80000000;
     }
+    // @safe - clears dirty bit via pure arithmetic
     void clear() {
         v_.u = v_.u & 0x7fffffff;
     }
+    // @safe - clears and bumps counter via pure arithmetic
     void clearandbump() {
         v_.u = (v_.u + 1) & 0x7fffffff;
     }
+    // @unsafe - uses memory fences for synchronization
     rowversion stable() const {
         value_t x = v_;
         while (x.dirty) {
@@ -53,6 +59,7 @@ struct rowversion {
         acquire_fence();
         return x;
     }
+    // @unsafe - uses memory fence for synchronization
     bool has_changed(rowversion x) const {
         fence();
         return x.v_.ctr != v_.ctr;
@@ -76,6 +83,7 @@ struct rowversion {
 class value_versioned_array {
   public:
     typedef value_array::index_type index_type;
+    // @safe - returns static string literal
     static const char *name() { return "ArrayVersion"; }
 
     typedef lcdf::Json Json;

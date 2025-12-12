@@ -36,19 +36,24 @@ class query_table {
     typedef unlocked_tcursor<P> unlocked_cursor_type;
     typedef tcursor<P> cursor_type;
 
+    // @safe - default construction
     query_table() {
     }
 
+    // @unsafe - returns reference to internal table
     const basic_table<P>& table() const {
         return table_;
     }
+    // @unsafe - returns mutable reference to internal table
     basic_table<P>& table() {
         return table_;
     }
 
+    // @unsafe - delegates to table initialization
     void initialize(threadinfo& ti) {
         table_.initialize(ti);
     }
+    // @unsafe - delegates to table destruction
     void destroy(threadinfo& ti) {
         table_.destroy(ti);
     }
@@ -69,6 +74,7 @@ class query_table {
 
     static void test(threadinfo& ti);
 
+    // @safe - returns static string literal
     static const char* name() {
         return "mb";
     }

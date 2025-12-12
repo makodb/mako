@@ -28,6 +28,7 @@
 class value_string {
   public:
     typedef unsigned index_type;
+    // @safe - returns static string literal
     static const char *name() { return "String"; }
 
     typedef lcdf::Str Str;
@@ -191,6 +192,7 @@ inline value_string* value_string::create1(Str value,
     return row;
 }
 
+// @unsafe - calls unsafe deallocate_rcu
 inline void value_string::deallocate_rcu_after_update(const Json*, const Json*, threadinfo& ti) {
     deallocate_rcu(ti);
 }

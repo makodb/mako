@@ -63,6 +63,7 @@ bool tcursor<P>::find_insert(threadinfo& ti)
     return make_split(ti);
 }
 
+// @unsafe - allocates and links tree nodes under locks
 template <typename P>
 bool tcursor<P>::make_new_layer(threadinfo& ti) {
     key_type oka(n_->ksuf(kx_.p));
@@ -141,6 +142,7 @@ void tcursor<P>::finish_insert()
     n_->permutation_ = perm.value();
 }
 
+// @unsafe - delegates to unsafe finish_remove/finish_insert, unlocks node
 template <typename P>
 inline void tcursor<P>::finish(int state, threadinfo& ti)
 {
@@ -157,6 +159,7 @@ inline void tcursor<P>::finish(int state, threadinfo& ti)
     n_->unlock();
 }
 
+// @unsafe - uses locked tree traversal and applies user functor
 template <typename P> template <typename F>
 inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 {
@@ -171,6 +174,7 @@ inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
     return answer;
 }
 
+// @unsafe - uses locked tree traversal with insert and applies user functor
 template <typename P> template <typename F>
 inline int basic_table<P>::modify_insert(Str key, F& f, threadinfo& ti)
 {

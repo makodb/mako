@@ -125,12 +125,16 @@ inline void memory_fence() {
 }
 
 /** @brief Do-nothing function object. */
+// @safe - all methods are pure no-ops
 struct do_nothing {
+    // @safe - no-op
     void operator()() const {
     }
+    // @safe - no-op
     template <typename T>
     void operator()(const T&) const {
     }
+    // @safe - no-op
     template <typename T, typename U>
     void operator()(const T&, const U&) const {
     }
@@ -752,79 +756,95 @@ inline int find_lowest_zero_nibble(T x) {
     return t ? ctz(t) >> 2 : -1;
 }
 
-// @unsafe - calls system byte-order functions (htons, htonl, htonq) which are external unsafe
 // SAFETY: These are pure byte-order conversion functions with no side effects
+// Note: char versions are @safe (identity), larger types use external htons/htonl/htonq
 /** @brief Translate @a x to network byte order.
  *
  * Compare htons/htonl/htonq.  host_to_net_order is particularly useful in
  * template functions, where the type to be translated to network byte order
  * is unknown. */
+// @safe - identity function
 inline unsigned char host_to_net_order(unsigned char x) {
     return x;
 }
+// @safe - identity function
 /** @overload */
 inline signed char host_to_net_order(signed char x) {
     return x;
 }
+// @safe - identity function
 /** @overload */
 inline char host_to_net_order(char x) {
     return x;
 }
+// @safe - pure byte swapping
 /** @overload */
 inline short host_to_net_order(short x) {
     return htons(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned short host_to_net_order(unsigned short x) {
     return htons(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline int host_to_net_order(int x) {
     return htonl(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned host_to_net_order(unsigned x) {
     return htonl(x);
 }
 #if SIZEOF_LONG == 4
+// @safe - pure byte swapping
 /** @overload */
 inline long host_to_net_order(long x) {
     return htonl(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned long host_to_net_order(unsigned long x) {
     return htonl(x);
 }
 #elif SIZEOF_LONG == 8
+// @safe - pure byte swapping
 /** @overload */
 inline long host_to_net_order(long x) {
     return htonq(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned long host_to_net_order(unsigned long x) {
     return htonq(x);
 }
 #endif
 #if SIZEOF_LONG_LONG == 8
+// @safe - pure byte swapping
 /** @overload */
 inline long long host_to_net_order(long long x) {
     return htonq(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned long long host_to_net_order(unsigned long long x) {
     return htonq(x);
 }
 #endif
 #if !HAVE_INT64_T_IS_LONG && !HAVE_INT64_T_IS_LONG_LONG
+// @safe - pure byte swapping
 /** @overload */
 inline int64_t host_to_net_order(int64_t x) {
     return htonq(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline uint64_t host_to_net_order(uint64_t x) {
     return htonq(x);
 }
 #endif
+// @safe - pure byte swapping via union
 /** @overload */
 inline double host_to_net_order(float x) {
     union { float f; uint32_t i; } v;
@@ -832,6 +852,7 @@ inline double host_to_net_order(float x) {
     v.i = host_to_net_order(v.i);
     return v.f;
 }
+// @safe - pure byte swapping via union
 /** @overload */
 inline double host_to_net_order(double x) {
     union { double d; uint64_t i; } v;
@@ -845,76 +866,93 @@ inline double host_to_net_order(double x) {
  * Compare ntohs/ntohl/ntohq.  net_to_host_order is particularly useful in
  * template functions, where the type to be translated to network byte order
  * is unknown. */
+// @safe - identity function
 inline unsigned char net_to_host_order(unsigned char x) {
     return x;
 }
+// @safe - identity function
 /** @overload */
 inline signed char net_to_host_order(signed char x) {
     return x;
 }
+// @safe - identity function
 /** @overload */
 inline char net_to_host_order(char x) {
     return x;
 }
+// @safe - pure byte swapping
 /** @overload */
 inline short net_to_host_order(short x) {
     return ntohs(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned short net_to_host_order(unsigned short x) {
     return ntohs(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline int net_to_host_order(int x) {
     return ntohl(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned net_to_host_order(unsigned x) {
     return ntohl(x);
 }
 #if SIZEOF_LONG == 4
+// @safe - pure byte swapping
 /** @overload */
 inline long net_to_host_order(long x) {
     return ntohl(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned long net_to_host_order(unsigned long x) {
     return ntohl(x);
 }
 #elif SIZEOF_LONG == 8
+// @safe - pure byte swapping
 /** @overload */
 inline long net_to_host_order(long x) {
     return ntohq(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned long net_to_host_order(unsigned long x) {
     return ntohq(x);
 }
 #endif
 #if SIZEOF_LONG_LONG == 8
+// @safe - pure byte swapping
 /** @overload */
 inline long long net_to_host_order(long long x) {
     return ntohq(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline unsigned long long net_to_host_order(unsigned long long x) {
     return ntohq(x);
 }
 #endif
 #if !HAVE_INT64_T_IS_LONG && !HAVE_INT64_T_IS_LONG_LONG
+// @safe - pure byte swapping
 /** @overload */
 inline int64_t net_to_host_order(int64_t x) {
     return ntohq(x);
 }
+// @safe - pure byte swapping
 /** @overload */
 inline uint64_t net_to_host_order(uint64_t x) {
     return ntohq(x);
 }
 #endif
+// @safe - delegates to safe host_to_net_order
 /** @overload */
 inline double net_to_host_order(float x) {
     return host_to_net_order(x);
 }
+// @safe - delegates to safe host_to_net_order
 /** @overload */
 inline double net_to_host_order(double x) {
     return host_to_net_order(x);

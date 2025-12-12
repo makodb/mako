@@ -922,6 +922,7 @@ String::substr(int pos, int len) const
 }
 
 // @safe - pure computation with no raw pointer dereference issues
+// @safe
 static String
 hard_lower(const String& s, int pos)
 {
@@ -949,6 +950,7 @@ String::lower() const
 }
 
 // @safe - pure computation with no raw pointer dereference issues
+// @safe
 static String
 hard_upper(const String& s, int pos)
 {
@@ -975,6 +977,7 @@ String::upper() const
 }
 
 // @safe - pure computation with no raw pointer dereference issues
+// @safe
 static String
 hard_printable(const String& s, int pos, int type)
 {

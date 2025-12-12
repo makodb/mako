@@ -566,6 +566,7 @@ Json& Json::hard_get_insert(size_type x) {
     }
 }
 
+// @safe - pure value comparison (String copy is safe by value)
 bool operator==(const Json& a, const Json& b) {
     if ((a.u_.x.type > 0 || b.u_.x.type > 0)
         && a.u_.x.type != b.u_.x.type)
@@ -590,6 +591,7 @@ bool operator==(const Json& a, const Json& b) {
 
 Json::unparse_manipulator Json::default_manipulator;
 
+// @unsafe - accesses raw object/array pointers
 bool Json::unparse_is_complex() const {
     if (is_object()) {
         if (ObjectJson *oj = ojson()) {

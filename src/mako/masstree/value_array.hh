@@ -31,6 +31,7 @@ using lcdf::Str;
 class value_array {
   public:
     typedef short index_type;
+    // @safe - returns static string literal
     static const char *name() { return "Array"; }
 
     typedef lcdf::Json Json;

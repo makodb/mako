@@ -172,16 +172,20 @@ struct inline_string : public String_base<inline_string> {
     int len;
     char s[0];
 
+    // @safe - returns pointer to embedded array
     const char *data() const {
         return s;
     }
+    // @safe - returns stored length
     int length() const {
         return len;
     }
 
+    // @safe - pure arithmetic
     size_t size() const {
         return sizeof(inline_string) + len;
     }
+    // @safe - pure arithmetic
     static size_t size(int len) {
         return sizeof(inline_string) + len;
     }

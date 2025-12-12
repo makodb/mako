@@ -95,6 +95,7 @@ inline void* memdebug::make(void* ptr, size_t sz, memtag tag) {
 #endif
 }
 
+// @unsafe - modifies raw header via pointer arithmetic
 inline void memdebug::set_landmark(void* ptr, const char* file, int line) {
 #if HAVE_MEMDEBUG
     if (ptr) {
@@ -121,6 +122,7 @@ inline void* memdebug::check_free(void* ptr, size_t sz, memtag tag) {
 #endif
 }
 
+// @unsafe - validates and marks raw header for RCU
 inline void memdebug::check_rcu(void* ptr, size_t sz, memtag tag) {
 #if HAVE_MEMDEBUG
     memdebug* m = reinterpret_cast<memdebug*>(ptr) - 1;
@@ -145,6 +147,7 @@ inline void* memdebug::check_free_after_rcu(void* ptr, memtag tag) {
 #endif
 }
 
+// @unsafe - reads raw header via pointer arithmetic
 inline bool memdebug::check_use(const void* ptr, memtag allowed) {
 #if HAVE_MEMDEBUG
     const memdebug* m = reinterpret_cast<const memdebug*>(ptr) - 1;
@@ -155,6 +158,7 @@ inline bool memdebug::check_use(const void* ptr, memtag allowed) {
 #endif
 }
 
+// @unsafe - delegates to unsafe check_use and may abort
 inline void memdebug::assert_use(const void* ptr, memtag allowed) {
 #if HAVE_MEMDEBUG
     if (!check_use(ptr, allowed))

@@ -41,6 +41,7 @@ class value_bag {
     };
 
   public:
+    // @safe - returns static string literal
     static const char *name() { return "Bag"; }
 
     inline value_bag();

@@ -188,7 +188,7 @@ class key {
         memcpy(data, s.data(), cplen);
         return cplen;
     }
-    // @safe - creates new String
+    // @unsafe - calls unsafe k.unparse()
     static String unparse_ikey(ikey_type ikey) {
         key<ikey_type> k(ikey);
         return k.unparse();

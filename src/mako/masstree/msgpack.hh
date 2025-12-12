@@ -75,6 +75,7 @@ inline char* write_null(char* s) {
     *s++ = fnull;
     return s;
 }
+// @unsafe - writes to caller-managed buffer
 inline char* write_bool(char* s, bool x) {
     *s++ = ffalse + x;
     return s;
@@ -131,15 +132,19 @@ template <> struct sized_writer<8> {
         }
     }
 };
+// @unsafe - writes to caller-managed buffer
 inline char* write_int(char* s, int x) {
     return sized_writer<sizeof(x)>::write_signed(s, x);
 }
+// @unsafe - writes to caller-managed buffer
 inline char* write_int(char* s, unsigned x) {
     return sized_writer<sizeof(x)>::write_unsigned(s, x);
 }
+// @unsafe - writes to caller-managed buffer
 inline char* write_int(char* s, long x) {
     return sized_writer<sizeof(x)>::write_signed(s, x);
 }
+// @unsafe - writes to caller-managed buffer
 inline char* write_int(char* s, unsigned long x) {
     return sized_writer<sizeof(x)>::write_unsigned(s, x);
 }

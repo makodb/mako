@@ -551,6 +551,7 @@ inline String String::make_stable(const String_base<T>& str) {
     return String(str.data(), str.length(), null_memo());
 }
 
+// @unsafe - returns raw pointer into internal buffer
 /** @brief Return a pointer to the string's data.
 
     Only the first length() characters are valid, and the string
@@ -850,6 +851,7 @@ inline const char* String::skip_utf8_char(const char* first, const char* last) {
                        reinterpret_cast<const unsigned char*>(last)));
 }
 
+// @safe - pure byte value comparison
 inline const unsigned char* String::skip_utf8_bom(const unsigned char* first,
                                                   const unsigned char* last) {
     if (last - first >= 3
@@ -859,6 +861,7 @@ inline const unsigned char* String::skip_utf8_bom(const unsigned char* first,
         return first;
 }
 
+// @safe - delegates to safe unsigned char version
 inline const char* String::skip_utf8_bom(const char* first, const char* last) {
     return reinterpret_cast<const char*>(
         skip_utf8_bom(reinterpret_cast<const unsigned char*>(first),

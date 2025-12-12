@@ -44,67 +44,80 @@ inline hashcode_t hashcode(T const &x) {
     return x.hashcode();
 }
 
+// @safe - returns char value
 template <>
 inline hashcode_t hashcode(char const &x) {
     return x;
 }
 
+// @safe - returns signed char value
 template <>
 inline hashcode_t hashcode(signed char const &x) {
     return x;
 }
 
+// @safe - returns unsigned char value
 template <>
 inline hashcode_t hashcode(unsigned char const &x) {
     return x;
 }
 
+// @safe - returns short value
 template <>
 inline hashcode_t hashcode(short const &x) {
     return x;
 }
 
+// @safe - returns unsigned short value
 template <>
 inline hashcode_t hashcode(unsigned short const &x) {
     return x;
 }
 
+// @safe - returns int value
 template <>
 inline hashcode_t hashcode(int const &x) {
     return x;
 }
 
+// @safe - returns unsigned value
 template <>
 inline hashcode_t hashcode(unsigned const &x) {
     return x;
 }
 
+// @safe - returns long value
 template <>
 inline hashcode_t hashcode(long const &x) {
     return x;
 }
 
+// @safe - returns unsigned long value
 template <>
 inline hashcode_t hashcode(unsigned long const &x) {
     return x;
 }
 
+// @safe - pure arithmetic on long long
 template <>
 inline hashcode_t hashcode(long long const &x) {
     return (x >> 32) ^ x;
 }
 
+// @safe - pure arithmetic on unsigned long long
 template <>
 inline hashcode_t hashcode(unsigned long long const &x) {
     return (x >> 32) ^ x;
 }
 
 #if HAVE_INT64_TYPES && !HAVE_INT64_IS_LONG && !HAVE_INT64_IS_LONG_LONG
+// @safe - pure arithmetic on int64_t
 template <>
 inline hashcode_t hashcode(int64_t const &x) {
     return (x >> 32) ^ x;
 }
 
+// @safe - pure arithmetic on uint64_t
 template <>
 inline hashcode_t hashcode(uint64_t const &x) {
     return (x >> 32) ^ x;
@@ -118,6 +131,7 @@ inline hashcode_t hashcode(T * const &x) {
 }
 
 template <typename T>
+// @safe - delegates to T::hashkey() method
 inline typename T::key_const_reference hashkey(const T &x) {
     return x.hashkey();
 }

@@ -182,6 +182,7 @@ StringAccum& operator<<(StringAccum& sa, long long x);
 StringAccum& operator<<(StringAccum& sa, unsigned long long x);
 StringAccum& operator<<(StringAccum& sa, double x);
 
+// @safe - default construction initializes rep_t
 /** @brief Construct an empty StringAccum (with length 0). */
 inline StringAccum::StringAccum() {
 }
@@ -245,6 +246,7 @@ inline StringAccum StringAccum::make_transfer(String& x) {
     return sa;
 }
 
+// @unsafe - returns raw pointer to internal buffer
 /** @brief Return the contents of the StringAccum.
 
     The returned data() value points to length() bytes of writable memory. */
@@ -252,11 +254,13 @@ inline const char* StringAccum::data() const {
     return reinterpret_cast<const char*>(r_.s);
 }
 
+// @unsafe - returns mutable raw pointer
 /** @overload */
 inline char* StringAccum::data() {
     return reinterpret_cast<char*>(r_.s);
 }
 
+// @unsafe - returns raw pointer to internal buffer
 /** @brief Return the contents of the StringAccum.
 
     The returned data() value points to length() bytes of writable memory. */
@@ -264,16 +268,19 @@ inline const unsigned char* StringAccum::udata() const {
     return r_.s;
 }
 
+// @unsafe - returns mutable raw pointer
 /** @overload */
 inline unsigned char* StringAccum::udata() {
     return r_.s;
 }
 
+// @safe - returns stored length
 /** @brief Return the length of the StringAccum. */
 inline int StringAccum::length() const {
     return r_.len;
 }
 
+// @safe - returns stored capacity
 /** @brief Return the StringAccum's current capacity.
 
     The capacity is the maximum length the StringAccum can hold without
@@ -283,6 +290,7 @@ inline int StringAccum::capacity() const {
     return r_.cap;
 }
 
+// @unsafe - returns raw pointer iterator
 /** @brief Return an iterator for the first character in the StringAccum.
 
     StringAccum iterators are simply pointers into string data, so they are
@@ -291,11 +299,13 @@ inline StringAccum::const_iterator StringAccum::begin() const {
     return reinterpret_cast<char *>(r_.s);
 }
 
+// @unsafe - returns mutable raw pointer iterator
 /** @overload */
 inline StringAccum::iterator StringAccum::begin() {
     return reinterpret_cast<char *>(r_.s);
 }
 
+// @unsafe - returns raw pointer iterator
 /** @brief Return an iterator for the end of the StringAccum.
 
     The return value points one character beyond the last character in the
@@ -304,16 +314,19 @@ inline StringAccum::const_iterator StringAccum::end() const {
     return reinterpret_cast<char *>(r_.s + r_.len);
 }
 
+// @unsafe - returns mutable raw pointer iterator
 /** @overload */
 inline StringAccum::iterator StringAccum::end() {
     return reinterpret_cast<char *>(r_.s + r_.len);
 }
 
+// @safe - pure comparison on stored length
 /** @brief Test if the StringAccum contains characters. */
 inline StringAccum::operator unspecified_bool_type() const {
     return r_.len != 0 ? &StringAccum::capacity : 0;
 }
 
+// @safe - pure comparison on stored length
 /** @brief Test if the StringAccum is empty.
 
     Returns true iff length() == 0. */
@@ -321,16 +334,19 @@ inline bool StringAccum::operator!() const {
     return r_.len == 0;
 }
 
+// @safe - pure comparison on stored length
 /** @brief Test if the StringAccum is empty. */
 inline bool StringAccum::empty() const {
     return r_.len == 0;
 }
 
+// @safe - pure comparison on stored capacity
 /** @brief Test if the StringAccum is out-of-memory. */
 inline bool StringAccum::out_of_memory() const {
     return unlikely(r_.cap < 0);
 }
 
+// @safe - returns value by copy with bounds checking
 /** @brief Return the <a>i</a>th character in the string.
     @param i character index
     @pre 0 <= @a i < length() */
@@ -339,6 +355,7 @@ inline char StringAccum::operator[](int i) const {
     return static_cast<char>(r_.s[i]);
 }
 
+// @unsafe - returns mutable reference into buffer
 /** @brief Return a reference to the <a>i</a>th character in the string.
     @param i character index
     @pre 0 <= @a i < length() */
@@ -347,6 +364,7 @@ inline char &StringAccum::operator[](int i) {
     return reinterpret_cast<char &>(r_.s[i]);
 }
 
+// @safe - returns value by copy
 /** @brief Return the first character in the string.
     @pre length() > 0 */
 inline char StringAccum::front() const {
@@ -354,6 +372,7 @@ inline char StringAccum::front() const {
     return static_cast<char>(r_.s[0]);
 }
 
+// @unsafe - returns mutable reference into buffer
 /** @brief Return a reference to the first character in the string.
     @pre length() > 0 */
 inline char &StringAccum::front() {
@@ -361,6 +380,7 @@ inline char &StringAccum::front() {
     return reinterpret_cast<char &>(r_.s[0]);
 }
 
+// @safe - returns value by copy
 /** @brief Return the last character in the string.
     @pre length() > 0 */
 inline char StringAccum::back() const {
@@ -368,6 +388,7 @@ inline char StringAccum::back() const {
     return static_cast<char>(r_.s[r_.len - 1]);
 }
 
+// @unsafe - returns mutable reference into buffer
 /** @brief Return a reference to the last character in the string.
     @pre length() > 0 */
 inline char &StringAccum::back() {
@@ -375,6 +396,7 @@ inline char &StringAccum::back() {
     return reinterpret_cast<char &>(r_.s[r_.len - 1]);
 }
 
+// @safe - modifies internal state only
 /** @brief Clear the StringAccum's comments.
 
     All characters in the StringAccum are erased. Also resets the
@@ -385,6 +407,7 @@ inline void StringAccum::clear() {
     r_.len = 0;
 }
 
+// @unsafe - returns raw pointer into buffer, may allocate
 /** @brief Reserve space for at least @a n characters.
     @return a pointer to at least @a n characters, or null if allocation
     fails
@@ -405,6 +428,7 @@ inline char *StringAccum::reserve(int n) {
         return grow(r_.len + n);
 }
 
+// @safe - modifies internal length only
 /** @brief Set the StringAccum's length to @a len.
     @param len new length in characters
     @pre 0 <= @a len <= capacity()
@@ -414,15 +438,18 @@ inline void StringAccum::set_length(int len) {
     r_.len = len;
 }
 
+// @unsafe - takes raw pointer and modifies state
 inline void StringAccum::set_end(unsigned char* x) {
     assert(x >= r_.s && x <= r_.s + r_.cap);
     r_.len = x - r_.s;
 }
 
+// @unsafe - delegates to unsafe set_end
 inline void StringAccum::set_end(char* x) {
     set_end((unsigned char*) x);
 }
 
+// @safe - modifies internal length only
 /** @brief Adjust the StringAccum's length.
     @param delta  length adjustment
     @pre If @a delta > 0, then length() + @a delta <= capacity().
@@ -436,6 +463,7 @@ inline void StringAccum::adjust_length(int delta) {
     r_.len += delta;
 }
 
+// @unsafe - returns raw pointer, may reallocate
 /** @brief Reserve space and adjust length in one operation.
     @param nadjust number of characters to reserve and adjust length
     @param nreserve additional characters to reserve
@@ -458,6 +486,7 @@ inline char *StringAccum::extend(int nadjust, int nreserve) {
 #endif
 }
 
+// @safe - modifies internal length only
 /** @brief Remove characters from the end of the StringAccum.
     @param n number of characters to remove
     @pre @a n >= 0 and @a n <= length()
@@ -468,6 +497,7 @@ inline void StringAccum::pop_back(int n) {
     r_.len -= n;
 }
 
+// @unsafe - writes to internal buffer, may reallocate
 /** @brief Append character @a c to the StringAccum.
     @param c character to append */
 inline void StringAccum::append(char c) {
@@ -475,11 +505,13 @@ inline void StringAccum::append(char c) {
         r_.s[r_.len++] = c;
 }
 
+// @unsafe - delegates to unsafe append
 /** @overload */
 inline void StringAccum::append(unsigned char c) {
     append(static_cast<char>(c));
 }
 
+// @unsafe - uses memcpy to internal buffer, may reallocate
 /** @brief Append the first @a len characters of @a s to this StringAccum.
     @param s data to append
     @param len length of data
@@ -497,11 +529,13 @@ inline void StringAccum::append(const char *s, int len) {
 #endif
 }
 
+// @unsafe - delegates to unsafe append
 /** @overload */
 inline void StringAccum::append(const unsigned char *s, int len) {
     append(reinterpret_cast<const char *>(s), len);
 }
 
+// @unsafe - reads from raw pointer, may reallocate
 /** @brief Append the null-terminated C string @a s to this StringAccum.
     @param s data to append */
 inline void StringAccum::append(const char *cstr) {
@@ -511,6 +545,7 @@ inline void StringAccum::append(const char *cstr) {
         hard_append_cstr(cstr);
 }
 
+// @unsafe - reads from raw pointer range
 /** @brief Append the data from @a first to @a last to the end of this
     StringAccum.
 
