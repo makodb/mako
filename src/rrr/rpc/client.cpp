@@ -146,11 +146,11 @@ void Client::handle_free(i64 xid) const {
 
 // Jetpack: pause/resume for flow control
 void Client::pause() const {
-  paused_ = true;
+  paused_.set(true);
 }
 
 void Client::resume() const {
-  paused_ = false;
+  paused_.set(false);
 }
 
 // @unsafe - Establishes TCP/IPC connection to server
@@ -165,7 +165,7 @@ int Client::connect(const char* addr, bool client) const {
   }
   string host = addr_str.substr(0, idx);
   const_cast<Client*>(this)->host_ = host;  // Jetpack: store host
-  const_cast<Client*>(this)->client_ = client;  // Jetpack: store client flag
+  client_.set(client);  // Jetpack: store client flag
   string port = addr_str.substr(idx + 1);
 #ifdef USE_IPC
   struct sockaddr_un saun;
@@ -255,7 +255,7 @@ int Client::handle_write() {
     return Pollable::MODE_NO_CHANGE;
   }
   // Jetpack: respect pause state
-  if (paused_) return Pollable::MODE_NO_CHANGE;
+  if (paused_.get()) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
   out_l_.get()->lock();
@@ -320,7 +320,7 @@ bool Client::handle_read_two() {
   bool done = false;
   int iters = 5;
 
-  if (client_) {
+  if (client_.get()) {
     iters = INT_MAX;
   }
 
@@ -434,7 +434,7 @@ FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */
 
   *this << v64(fu->xid_);
   *this << rpc_id;
-  const_cast<Client*>(this)->rpc_id_ = rpc_id;  // Jetpack: store rpc_id
+  rpc_id_.set(rpc_id);  // Jetpack: store rpc_id
 
   // Arc is in pending_fu_ (refcount=2), return copy to caller
   return FutureResult::Ok(fu);
@@ -506,7 +506,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     bool ok = true;
     for (int i = 0; i < parallel_connections_; i++) {
       auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
-      client->client_ = true;  // Jetpack: mark as client
+      client->client_.set(true);  // Jetpack: mark as client
       if (client->connect(addr.c_str()) != 0) {
         ok = false;
         break;

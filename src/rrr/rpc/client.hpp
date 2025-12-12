@@ -237,10 +237,10 @@ class Client: public Pollable {
     };
     rusty::Cell<int> status_;
 
-    // Jetpack-specific members (mutable for const access through Arc)
-    mutable uint64_t packets{0};
-    mutable bool clean{false};
-    mutable bool paused_{false};
+    // Jetpack-specific members (Cell for interior mutability through Arc)
+    rusty::Cell<uint64_t> packets_{0};
+    rusty::Cell<bool> clean_{false};
+    rusty::Cell<bool> paused_{false};
 
     rusty::RefCell<rusty::Option<rusty::Box<Marshal::bookmark>>> bmark_;
 
@@ -257,13 +257,11 @@ class Client: public Pollable {
     void invalidate_pending_futures() const;
 
 public:
-    // Jetpack-specific public members
-    // Marked mutable for modification through Arc (const access)
-	 mutable bool client_;
-	 mutable long time_;
-    mutable uint64_t timeout_{0};
-	 mutable int count;
-	 mutable i32 rpc_id_;
+    // Jetpack-specific public members (Cell for interior mutability through Arc)
+    rusty::Cell<bool> client_{false};
+    rusty::Cell<long> time_{0};
+    rusty::Cell<uint64_t> timeout_{0};
+    rusty::Cell<i32> rpc_id_{0};
 
     // @unsafe - Cleanup destructor
     // SAFETY: Ensures all futures are invalidated
