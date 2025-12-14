@@ -16,9 +16,7 @@
 // @unsafe - Fixed-schema columnar value type for Masstree rows
 // Stores array of Str columns with inline timestamp for versioning
 // SAFETY: Uses threadinfo allocator, flexible array member
-// @external: {
-//   lcdf::String: [unsafe_type]
-// }
+// @external: { lcdf::String: [unsafe_type], threadinfo::pthread: [unsafe] }
 
 #ifndef VALUE_ARRAY_HH
 #define VALUE_ARRAY_HH

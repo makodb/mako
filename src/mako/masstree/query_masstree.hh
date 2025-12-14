@@ -16,7 +16,7 @@
 // @unsafe - High-level query interface for Masstree operations
 // Provides default_table typedef and query struct for client usage
 // SAFETY: Wraps tree operations with threadinfo-based memory management
-// @external: { lcdf::String: [unsafe_type], String: [unsafe_type] }
+// @external: { lcdf::String: [unsafe_type], String: [unsafe_type], threadinfo::pthread: [unsafe] }
 
 #ifndef QUERY_MASSTREE_HH
 #define QUERY_MASSTREE_HH 1

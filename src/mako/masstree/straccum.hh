@@ -16,6 +16,7 @@
 // @unsafe - Mutable string builder with operator<< interface
 // Grows internal buffer and transfers ownership to String on take_string()
 // SAFETY: Uses realloc for buffer growth, raw pointer append operations
+// @external: { __builtin_expect: [unsafe], append: [unsafe] }
 
 #ifndef LCDF_STRACCUM_HH
 #define LCDF_STRACCUM_HH
@@ -346,7 +347,7 @@ inline bool StringAccum::out_of_memory() const {
     return unlikely(r_.cap < 0);
 }
 
-// @safe - returns value by copy with bounds checking
+// @unsafe - shares name with reference-returning overload (overload annotation conflict)
 /** @brief Return the <a>i</a>th character in the string.
     @param i character index
     @pre 0 <= @a i < length() */
@@ -364,7 +365,7 @@ inline char &StringAccum::operator[](int i) {
     return reinterpret_cast<char &>(r_.s[i]);
 }
 
-// @safe - returns value by copy
+// @unsafe - shares name with reference-returning overload (overload annotation conflict)
 /** @brief Return the first character in the string.
     @pre length() > 0 */
 inline char StringAccum::front() const {
@@ -380,7 +381,7 @@ inline char &StringAccum::front() {
     return reinterpret_cast<char &>(r_.s[0]);
 }
 
-// @safe - returns value by copy
+// @unsafe - shares name with reference-returning overload (overload annotation conflict)
 /** @brief Return the last character in the string.
     @pre length() > 0 */
 inline char StringAccum::back() const {

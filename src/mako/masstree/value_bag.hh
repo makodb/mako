@@ -16,7 +16,7 @@
 // @unsafe - Schemaless value storage with JSON field access
 // Stores arbitrary key-value pairs with dynamic field modification
 // SAFETY: Uses threadinfo allocator, JSON parsing, and dynamic sizing
-// @external: { lcdf::String: [unsafe_type], String: [unsafe_type] }
+// @external: { lcdf::String: [unsafe_type], String: [unsafe_type], threadinfo::pthread: [unsafe] }
 
 #ifndef VALUE_BAG_HH
 #define VALUE_BAG_HH

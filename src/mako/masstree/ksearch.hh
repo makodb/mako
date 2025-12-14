@@ -16,6 +16,7 @@
 // @safe - Key search algorithms for Masstree nodes
 // Provides linear and binary search over permuted key arrays
 // All functions perform pure computation without pointer manipulation
+// @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], hashcode: [unsafe] }
 
 #ifndef KSEARCH_HH
 #define KSEARCH_HH 1

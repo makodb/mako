@@ -34,6 +34,7 @@
 // Core String class implementation with shared substrings
 // Uses malloc/free for reference-counted buffers - all functions @unsafe
 //
+// @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], hashcode: [unsafe] }
 // @external_unsafe_type: std::*
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::StringAccum::*

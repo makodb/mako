@@ -33,6 +33,7 @@
 // String accumulator for efficient string building
 // Uses malloc/realloc for dynamic buffer management - all functions @unsafe
 //
+// @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], hashcode: [unsafe] }
 // @external_unsafe_type: std::*
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*

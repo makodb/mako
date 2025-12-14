@@ -16,8 +16,7 @@
 // @unsafe - Row type management for Masstree values
 // Provides row allocation, change detection, and log replay interfaces
 // SAFETY: Uses threadinfo allocator, log callbacks, row marker sentinels
-// @external_unsafe: lcdf::String::make_stable
-// @external_unsafe: lcdf::String::make_uninitialized
+// @external: { lcdf::String::make_stable: [unsafe], lcdf::String::make_uninitialized: [unsafe], threadinfo::pthread: [unsafe] }
 
 #ifndef KVROW_HH
 #define KVROW_HH 1

@@ -16,6 +16,7 @@
 // Compiler intrinsics, memory fences, and type traits
 // Provides portable wrappers for atomic operations and compiler hints
 // SAFETY: Contains memory barriers, likely/unlikely macros, type manipulation
+// @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], __builtin_expect: [unsafe] }
 
 #ifndef MASSTREE_COMPILER_HH
 #define MASSTREE_COMPILER_HH 1

@@ -19,6 +19,8 @@
 //
 // @external: {
 //   lcdf::String: [unsafe_type]
+//   htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe]
+//   hashcode: [unsafe]
 // }
 // @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*

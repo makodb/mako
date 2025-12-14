@@ -16,6 +16,7 @@
 // @unsafe - Checkpoint state and visitor pattern for tree serialization
 // Defines ckstate for collecting key-value pairs during checkpoint
 // SAFETY: Uses kvout buffers and msgpack serialization
+// @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], threadinfo::pthread: [unsafe] }
 
 #ifndef MASSTREE_CHECKPOINT_HH
 #define MASSTREE_CHECKPOINT_HH

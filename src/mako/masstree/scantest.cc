@@ -3,6 +3,8 @@
 // @external: {
 //   threadinfo: [unsafe_type]
 //   lcdf::String: [unsafe_type]
+//   htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe]
+//   MasstreeContext::get_epoch: [unsafe], __builtin_expect: [unsafe], hashcode: [unsafe]
 // }
 // @external_unsafe: circular_int::*
 // @external_unsafe: std::*

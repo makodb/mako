@@ -1,7 +1,7 @@
 // @unsafe - Test runner framework with global registration
 // Provides intrusive linked list of test cases for discovery
 // SAFETY: Uses global mutable state for test registration
-// @external_unsafe: assign
+// @external: { assign: [unsafe], htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], hashcode: [unsafe] }
 
 #ifndef MASSTREE_TESTRUNNER_HH
 #define MASSTREE_TESTRUNNER_HH

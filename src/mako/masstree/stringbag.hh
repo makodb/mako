@@ -16,6 +16,7 @@
 // @unsafe - Append-only string storage with offset-based access
 // Packs multiple variable-length strings into contiguous allocation
 // SAFETY: Uses memcpy for string storage, offset-based retrieval
+// @external: { lcdf::String_generic::to_i: [unsafe], to_i: [unsafe], begin: [unsafe], lcdf::String_base::begin: [unsafe], end: [unsafe], lcdf::String_base::end: [unsafe] }
 
 #ifndef STRINGBAG_HH
 #define STRINGBAG_HH 1

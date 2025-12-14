@@ -19,6 +19,9 @@
 //   threadinfo: [unsafe_type]
 //   lcdf::String: [unsafe_type]
 //   circular_int: [unsafe_type]
+//   MasstreeContext::get_epoch: [unsafe]
+//   __builtin_expect: [unsafe]
+//   timestamp: [unsafe]
 // }
 // @external_unsafe_type: std::*
 // @external_unsafe_type: circular_int

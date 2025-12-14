@@ -817,7 +817,7 @@ class Json::const_iterator { public:
         ++i_;
         fix();
     }
-    // @safe - delegates to prefix increment
+    // @unsafe - overload must match prefix version's annotation
     void operator++(int) {
         ++(*this);
     }
@@ -1596,16 +1596,17 @@ inline const Json_get_proxy Json_proxy_base<T>::get(Str key, String& x) const {
 }
 
 
-// @safe - initializes union to zero
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @brief Construct a null Json. */
 inline Json::Json() {
     memset(&u_, 0, sizeof(u_));
 }
-// @safe - initializes union to zero
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @brief Construct a null Json. */
 inline Json::Json(const null_t&) {
     memset(&u_, 0, sizeof(u_));
 }
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @brief Construct a Json copy of @a x. */
 inline Json::Json(const Json& x)
     : u_(x.u_) {
@@ -1614,6 +1615,7 @@ inline Json::Json(const Json& x)
     if (u_.x.x && (u_.x.type == j_array || u_.x.type == j_object))
         u_.x.x->ref();
 }
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @overload */
 template <typename P> inline Json::Json(const Json_proxy_base<P>& x)
     : u_(x.cvalue().u_) {
@@ -1622,6 +1624,7 @@ template <typename P> inline Json::Json(const Json_proxy_base<P>& x)
     if (u_.x.x && (u_.x.type == j_array || u_.x.type == j_object))
         u_.x.x->ref();
 }
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 #if HAVE_CXX_RVALUE_REFERENCES
 /** @overload */
 inline Json::Json(Json&& x)
@@ -1629,43 +1632,43 @@ inline Json::Json(Json&& x)
     memset(&x, 0, sizeof(x));
 }
 #endif
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @brief Construct simple Json values. */
 inline Json::Json(int x) {
     u_.i.x = x;
     u_.i.type = j_int;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(unsigned x) {
     u_.u.x = x;
     u_.u.type = j_unsigned;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(long x) {
     u_.i.x = x;
     u_.i.type = j_int;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(unsigned long x) {
     u_.u.x = x;
     u_.u.type = j_unsigned;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(long long x) {
     u_.i.x = x;
     u_.i.type = j_int;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(unsigned long long x) {
     u_.u.x = x;
     u_.u.type = j_unsigned;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(double x) {
     u_.d.x = x;
     u_.d.type = j_double;
 }
-// @safe - pure value initialization
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 inline Json::Json(bool x) {
     u_.i.x = x;
     u_.i.type = j_bool;
@@ -1693,6 +1696,7 @@ inline Json::Json(const char* x) {
     String str(x);
     str.swap(u_.str);
 }
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @brief Construct an array Json containing the elements of @a x. */
 template <typename T>
 inline Json::Json(const std::vector<T> &x) {
@@ -1721,6 +1725,7 @@ struct Json_iterator_initializer<std::pair<T, U> > {
     }
 };
 
+// @unsafe - shares name with unsafe overloads (overload annotation conflict)
 /** @brief Construct an array Json containing the elements in [@a first,
     @a last). */
 template <typename T>

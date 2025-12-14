@@ -16,6 +16,7 @@
 // @unsafe - Optimistic versioned node locking for concurrent tree access
 // Implements sequence locks with split detection for lock-free reads
 // SAFETY: Uses atomic CAS, memory fences, and spinning for write locks
+// @external: { masstree_invariant: [unsafe] }
 
 #ifndef MASSTREE_NODEVERSION_HH
 #define MASSTREE_NODEVERSION_HH

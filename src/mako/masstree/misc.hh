@@ -16,6 +16,7 @@
 // @unsafe - Miscellaneous utility functions and CLP parsing helpers
 // Provides suffix parsing for command line double arguments
 // SAFETY: Uses strtod, string manipulation for argument parsing
+// @external: { lcdf::String_generic::to_i: [unsafe], to_i: [unsafe], begin: [unsafe], lcdf::String_base::begin: [unsafe], end: [unsafe], lcdf::String_base::end: [unsafe], hashcode: [unsafe] }
 
 #ifndef MISC_HH
 #define MISC_HH

@@ -16,6 +16,7 @@
 // @unsafe - Thread-local state and memory allocation for Masstree
 // Provides per-thread memory pools, epoch tracking, and RCU-style reclamation
 // SAFETY: Uses malloc/mmap, pthread TLS, and epoch-based memory management
+// @external: { MasstreeContext::get_epoch: [unsafe], timestamp: [unsafe], __builtin_expect: [unsafe], hashcode: [unsafe] }
 
 #ifndef KVTHREAD_HH
 #define KVTHREAD_HH 1
@@ -306,12 +307,12 @@ class threadinfo {
     }
 
     // thread management
-    // @safe - returns reference to stored pthread_t
+    // @unsafe - returns reference to stored pthread_t (no lifetime annotation)
     // @lifetime: (&'a) -> &'a
     pthread_t& pthread() {
         return pthreadid_;
     }
-    // @safe - returns stored pthread_t value
+    // @unsafe - overload must match non-const version's annotation
     pthread_t pthread() const {
         return pthreadid_;
     }

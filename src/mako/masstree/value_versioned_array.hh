@@ -16,9 +16,7 @@
 // @unsafe - MVCC columnar value type with row versioning
 // Supports snapshot isolation with version chaining for concurrent reads
 // SAFETY: Uses threadinfo allocator, version tracking, copy-on-write
-// @external: {
-//   lcdf::String: [unsafe_type]
-// }
+// @external: { lcdf::String: [unsafe_type], threadinfo::pthread: [unsafe] }
 
 #ifndef VALUE_VERSIONED_ARRAY_HH
 #define VALUE_VERSIONED_ARRAY_HH

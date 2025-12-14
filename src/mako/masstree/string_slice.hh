@@ -16,6 +16,7 @@
 // @unsafe - String-to-integer slice conversion for key comparison
 // Extracts 64-bit chunks from strings with endianness handling
 // SAFETY: Uses memcpy, big-endian byte swap for comparison
+// @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], hashcode: [unsafe], lcdf::String_generic::to_i: [unsafe], to_i: [unsafe], lcdf::String_base::begin: [unsafe], begin: [unsafe], end: [unsafe], lcdf::String_base::end: [unsafe] }
 
 #ifndef STRING_SLICE_HH
 #define STRING_SLICE_HH 1

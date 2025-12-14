@@ -14,6 +14,7 @@
  * is legally binding.
  */
 // @unsafe - Network client for Masstree key-value server
+// @external: { threadinfo::pthread: [unsafe] }
 // Provides KVConn for socket-based communication with mtd server
 // SAFETY: Uses raw sockets, network buffer management
 
