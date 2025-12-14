@@ -166,7 +166,7 @@ result_t query<R>::run_put(T& table, Str key,
     typename T::cursor_type lp(table, key);
     bool found = lp.find_insert(ti);
     if (!found)
-        ti.observe_phantoms(*lp.node());
+        ti.observe_phantoms(lp.node());
     bool inserted = apply_put(lp.value(), found, firstreq, lastreq, ti);
     lp.finish(1, ti);
     return inserted ? Inserted : Updated;
@@ -207,7 +207,7 @@ result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
     bool found = lp.find_insert(ti);
     if (!found)
-        ti.observe_phantoms(*lp.node());
+        ti.observe_phantoms(lp.node());
     bool inserted = apply_replace(lp.value(), found, value, ti);
     lp.finish(1, ti);
     return inserted ? Inserted : Updated;

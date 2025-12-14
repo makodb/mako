@@ -117,10 +117,9 @@ class threadinfo {
             ts_ = (x | 1) + 1;
         return ts_;
     }
-    // @safe - pure timestamp comparison and assignment
-    template <typename N> void observe_phantoms(const N& n) {
-        if (circular_int<kvtimestamp_t>::less(ts_, n.phantom_epoch_[0]))
-            ts_ = n.phantom_epoch_[0];
+    template <typename N> void observe_phantoms(N* n) {
+        if (circular_int<kvtimestamp_t>::less(ts_, n->phantom_epoch_[0]))
+            ts_ = n->phantom_epoch_[0];
     }
 
     // event counters
