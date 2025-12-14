@@ -539,6 +539,7 @@ void PollThreadWorker::do_remove_pollable(int fd) {
   pending_remove_.insert(fd);
 }
 
+// @unsafe - dereferences raw pointer poll_ptr
 void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) {
   if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
     return;

@@ -129,7 +129,7 @@ class threadinfo {
     }
 
     // timestamps
-    // @safe - delegates to safe timestamp()
+    // @unsafe - calls external timestamp() which is unsafe
     kvtimestamp_t operation_timestamp() const {
         return timestamp();
     }
