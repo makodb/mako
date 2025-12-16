@@ -12,6 +12,7 @@
 #include <netinet/tcp.h>
 
 #include "reactor/coroutine.h"
+#include "reactor/reactor.h"
 #include "client.hpp"
 #include "utils.hpp"
 
@@ -445,10 +446,16 @@ void ClientConnection::end_request() {
 
   // always enable write events since the code above guaranteed there
   // will be some data to send
-  // NOTE: end_request() is called from user threads, NOT the poll thread.
-  // Must use channel-based update_mode() - the direct worker() path is only safe
-  // for poll handlers (handle_read/handle_write) running on the poll thread.
-  poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+  // NOTE: end_request() may be called from user threads OR the poll thread.
+  // Use direct call when on poll thread, channel otherwise.
+  auto* worker = PollThreadWorker::current_worker();
+  if (worker != nullptr) {
+    // Direct call - we're on the poll thread (e.g., async RPC from coroutine)
+    worker->update_mode(fd(), Pollable::READ | Pollable::WRITE, this);
+  } else {
+    // Channel - we're on a user thread
+    poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+  }
 
   out_l_.get()->unlock();
 }
