@@ -16,7 +16,7 @@
 // @safe - Non-owning string slice (pointer + length)
 // Lightweight view into string data without memory management
 // Most operations are pure and do not allocate or modify memory
-// @external: { std::__detail::_ReuseOrAllocNode: [unsafe_type], std::__detail::_Prime_rehash_policy: [unsafe_type], std::locale::facet: [unsafe_type], std::locale::id: [unsafe_type], std::istreambuf_iterator: [unsafe_type], std::ctype: [unsafe_type], std::basic_ios: [unsafe_type] }
+// @external: { std::__detail::_ReuseOrAllocNode: [unsafe_type], std::__detail::_Prime_rehash_policy: [unsafe_type], std::locale::facet: [unsafe_type], std::locale::id: [unsafe_type], std::istreambuf_iterator: [unsafe_type], std::ctype: [unsafe_type], std::basic_ios: [unsafe_type], lcdf::String_base::encode_base64: [unsafe] }
 
 #ifndef STR_HH
 #define STR_HH

@@ -222,7 +222,7 @@ class tcursor {
      *   If removing a leaf in layer 0, @a prefix is empty.
      *   If removing, for example, the node containing key "01234567ABCDEF" in the layer-1 tree
      *   rooted at "01234567", then @a prefix should equal "01234567". */
-    static bool remove_leaf(leaf_type& leaf, node_type* root,
+    static bool remove_leaf(leaf_type* leaf, node_type* root,
                             Str prefix, threadinfo& ti);
 
     bool gc_layer(threadinfo& ti);

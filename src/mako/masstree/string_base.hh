@@ -632,6 +632,7 @@ inline void String_base<T>::encode_json(E& enc) const {
     enc.append(last, end());
 }
 
+// @unsafe - pointer arithmetic and raw pointer writes
 template <typename T> template <typename E>
 void String_base<T>::encode_base64(E& enc, bool pad) const {
     char* out = enc.reserve(((length() + 2) * 4) / 3);

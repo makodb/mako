@@ -161,34 +161,34 @@ bool tcursor<P>::finish_remove(threadinfo& ti)
     if (perm.size())
         return false;
     else
-        return remove_leaf(*n_, root_, ka_.prefix_string(), ti);
+        return remove_leaf(n_, root_, ka_.prefix_string(), ti);
 }
 
 template <typename P>
 // @unsafe - uses RCU, atomic CAS, and fences for node removal
-bool tcursor<P>::remove_leaf(leaf_type& leaf, node_type* root,
+bool tcursor<P>::remove_leaf(leaf_type* leaf, node_type* root,
                              Str prefix, threadinfo& ti)
 {
-    if (!leaf.prev_) {
-        if (!leaf.next_.ptr && !prefix.empty())
+    if (!leaf->prev_) {
+        if (!leaf->next_.ptr && !prefix.empty())
             gc_layer_rcu_callback<P>::make(root, prefix, ti);
         return false;
     }
 
     // mark leaf deleted, RCU-free
-    leaf.mark_deleted();
-    leaf.deallocate_rcu(ti);
+    leaf->mark_deleted();
+    leaf->deallocate_rcu(ti);
 
     // Ensure node that becomes responsible for our keys has its phantom epoch
     // kept up to date
     while (P::need_phantom_epoch) {
-        leaf_type *prev = leaf.prev_;
+        leaf_type *prev = leaf->prev_;
         typename P::phantom_epoch_type prev_ts = prev->phantom_epoch();
-        while (circular_int<typename P::phantom_epoch_type>::less(prev_ts, leaf.phantom_epoch())
-               && !bool_cmpxchg(&prev->phantom_epoch_[0], prev_ts, leaf.phantom_epoch()))
+        while (circular_int<typename P::phantom_epoch_type>::less(prev_ts, leaf->phantom_epoch())
+               && !bool_cmpxchg(&prev->phantom_epoch_[0], prev_ts, leaf->phantom_epoch()))
             prev_ts = prev->phantom_epoch();
         fence();
-        if (prev == leaf.prev_)
+        if (prev == leaf->prev_)
             break;
     }
 
@@ -198,8 +198,8 @@ bool tcursor<P>::remove_leaf(leaf_type& leaf, node_type* root,
     // Remove leaf from tree. This is simple unless the leaf is the first
     // child of its parent, in which case we need to traverse up until we find
     // its key.
-    node_type *n = &leaf;
-    ikey_type ikey = leaf.ikey_bound();
+    node_type *n = leaf;
+    ikey_type ikey = leaf->ikey_bound();
 
     while (1) {
         internode_type *p = n->locked_parent(ti);

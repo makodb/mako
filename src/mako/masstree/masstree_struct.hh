@@ -184,19 +184,19 @@ class internode : public node_base<P> {
     }
 
   private:
-    // @unsafe - uses address-of operation on child reference
-    void assign(int p, ikey_type ikey, node_base<P>& child) {
-        child.set_parent(this);
-        child_[p + 1] = &child;
+    // @safe - assigns key and child at position
+    void assign(int p, ikey_type ikey, node_base<P>* child) {
+        child->set_parent(this);
+        child_[p + 1] = child;
         ikey0_[p] = ikey;
     }
 
     // @unsafe - raw memcpy of key/child arrays during split/merge
-    void shift_from(int p, const internode<P>& x, int xp, int n) {
-        masstree_precondition(&x != this);
+    void shift_from(int p, const internode<P>* x, int xp, int n) {
+        masstree_precondition(x != this);
         if (n) {
-            memcpy(ikey0_ + p, x.ikey0_ + xp, sizeof(ikey0_[0]) * n);
-            memcpy(child_ + p + 1, x.child_ + xp + 1, sizeof(child_[0]) * n);
+            memcpy(ikey0_ + p, x->ikey0_ + xp, sizeof(ikey0_[0]) * n);
+            memcpy(child_ + p + 1, x->child_ + xp + 1, sizeof(child_[0]) * n);
         }
     }
     // @unsafe - raw memmove of key/child arrays
@@ -212,7 +212,7 @@ class internode : public node_base<P> {
             *a = *b;
     }
 
-    int split_into(internode<P>& nr, int p, ikey_type ka, node_base<P>* value,
+    int split_into(internode<P>* nr, int p, ikey_type ka, node_base<P>* value,
                    ikey_type& split_ikey, int split_type);
 
     template <typename PP> friend class tcursor;
@@ -599,7 +599,7 @@ class leaf : public node_base<P> {
 
     inline ikey_type ikey_after_insert(const permuter_type& perm, int i,
                                        const key_type& ka, int ka_i) const;
-    int split_into(leaf<P>& nr, int p, const key_type& ka, ikey_type& split_ikey,
+    int split_into(leaf<P>* nr, int p, const key_type& ka, ikey_type& split_ikey,
                    threadinfo& ti);
 
     template <typename PP> friend class tcursor;

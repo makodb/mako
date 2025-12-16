@@ -87,10 +87,10 @@ class query {
     lcdf::String scankey_;
     int scankeypos_;
 
-    // @unsafe - calls external String::make_stable; uses safe reference parameters
-    void emit_fields(const R& value, Json& req, threadinfo& ti);
-    // @unsafe - calls external String::make_stable; uses safe reference parameters
-    void emit_fields1(const R& value, Json& req, threadinfo& ti);
+    // @unsafe - calls external String::make_stable
+    void emit_fields(const R* value, Json& req, threadinfo& ti);
+    // @unsafe - calls external String::make_stable
+    void emit_fields1(const R* value, Json& req, threadinfo& ti);
     void assign_timestamp(threadinfo& ti);
     void assign_timestamp(threadinfo& ti, kvtimestamp_t t);
     inline bool apply_put(R*& value, bool found, const Json* firstreq,
@@ -103,10 +103,10 @@ class query {
 };
 
 
-// @unsafe - calls external String::make_stable; uses safe reference parameters
+// @unsafe - calls external String::make_stable
 template <typename R>
-void query<R>::emit_fields(const R& value, Json& req, threadinfo& ti) {
-    const R& snapshot = helper_.snapshot(value, f_, ti);
+void query<R>::emit_fields(const R* value, Json& req, threadinfo& ti) {
+    const R& snapshot = helper_.snapshot(*value, f_, ti);
     if (f_.empty()) {
         for (int i = 0; i != snapshot.ncol(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot.col(i)));
@@ -116,10 +116,10 @@ void query<R>::emit_fields(const R& value, Json& req, threadinfo& ti) {
     }
 }
 
-// @unsafe - calls external String::make_stable; uses safe reference parameters
+// @unsafe - calls external String::make_stable
 template <typename R>
-void query<R>::emit_fields1(const R& value, Json& req, threadinfo& ti) {
-    const R& snapshot = helper_.snapshot(value, f_, ti);
+void query<R>::emit_fields1(const R* value, Json& req, threadinfo& ti) {
+    const R& snapshot = helper_.snapshot(*value, f_, ti);
     if ((f_.empty() && snapshot.ncol() == 1) || f_.size() == 1)
         req = lcdf::String::make_stable(snapshot.col(f_.empty() ? 0 : f_[0]));
     else if (f_.empty()) {
@@ -132,6 +132,7 @@ void query<R>::emit_fields1(const R& value, Json& req, threadinfo& ti) {
 }
 
 
+// @unsafe - calls find_unlocked and emit_fields which are unsafe
 template <typename R> template <typename T>
 void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
     typename T::unlocked_cursor_type lp(table, req[2].as_s());
@@ -143,10 +144,11 @@ void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
         for (int i = 3; i != req.size(); ++i)
             f_.push_back(req[i].as_i());
         req.resize(2);
-        emit_fields(*lp.value(), req, ti);
+        emit_fields(lp.value(), req, ti);
     }
 }
 
+// @unsafe - calls find_unlocked and accesses raw row pointer
 template <typename R> template <typename T>
 bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) {
     typename T::unlocked_cursor_type lp(table, key);
@@ -174,6 +176,7 @@ inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
 }
 
 
+// @unsafe - calls find_insert and apply_put which manipulate raw pointers
 template <typename R> template <typename T>
 result_t query<R>::run_put(T& table, Str key,
                            const Json* firstreq, const Json* lastreq,
@@ -218,6 +221,7 @@ inline bool query<R>::apply_put(R*& value, bool found, const Json* firstreq,
     return false;
 }
 
+// @unsafe - calls find_insert and apply_replace which manipulate raw pointers
 template <typename R> template <typename T>
 result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
@@ -250,6 +254,7 @@ inline bool query<R>::apply_replace(R*& value, bool found, Str new_value,
     return inserted;
 }
 
+// @unsafe - calls find_locked and apply_remove which manipulate raw pointers
 template <typename R> template <typename T>
 bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
@@ -296,6 +301,7 @@ class query_json_scanner {
     template <typename SS, typename K>
     void visit_leaf(const SS&, const K&, threadinfo&) {
     }
+    // @unsafe - calls external String::make_uninitialized and emit_fields1
     bool visit_value(Str key, R* value, threadinfo& ti) {
         if (row_is_marker(value))
             return true;
@@ -309,7 +315,7 @@ class query_json_scanner {
         request_.push_back(q_.scankey_.substr(q_.scankeypos_, key.length()));
         q_.scankeypos_ += key.length();
         request_.push_back(lcdf::Json());
-        q_.emit_fields1(*value, request_.back(), ti);
+        q_.emit_fields1(value, request_.back(), ti);
         --nleft_;
         return nleft_ != 0;
     }
@@ -320,6 +326,7 @@ class query_json_scanner {
     lcdf::String firstkey_;
 };
 
+// @unsafe - calls table.scan which traverses raw tree nodes
 template <typename R> template <typename T>
 void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
@@ -330,6 +337,7 @@ void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
     table.scan(scanf.firstkey(), true, scanf, ti);
 }
 
+// @unsafe - calls table.rscan which traverses raw tree nodes
 template <typename R> template <typename T>
 void query<R>::run_rscan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
