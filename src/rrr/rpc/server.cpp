@@ -159,10 +159,17 @@ void ServerConnection::end_reply() {
 
     // only update poll mode if connection is still active
     // (connection might have closed while handler was running)
-    // NOTE: end_reply() is called from handler threads, NOT the poll thread.
-    // Must use channel-based update_mode() - always goes through PollThread.
+    // NOTE: end_reply() is called from coroutines on the poll thread.
+    // Use direct call via thread-local worker to bypass the channel.
     if (status_ == CONNECTED) {
-        server_->poll_thread_worker_.as_ref().unwrap()->update_mode(*this, Pollable::READ | Pollable::WRITE);
+        auto* worker = PollThreadWorker::current_worker();
+        if (worker != nullptr) {
+            // Direct call - we're on the poll thread
+            worker->update_mode(fd(), Pollable::READ | Pollable::WRITE, this);
+        } else {
+            // Fallback to channel (shouldn't happen for coroutine-based handlers)
+            server_->poll_thread_worker_.as_ref().unwrap()->update_mode(*this, Pollable::READ | Pollable::WRITE);
+        }
     }
 
     out_l_.unlock();

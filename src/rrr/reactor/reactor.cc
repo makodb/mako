@@ -35,6 +35,10 @@ thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Coroutine>> Reactor::sp_running_coro_th_{};
 thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> Reactor::clients_{};
+
+// Thread-local storage for PollThreadWorker (raw pointer for direct access)
+// Safe because worker outlives all coroutines on its thread
+thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
 thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
 SpinLock Reactor::disk_job_;
 SpinLock Reactor::trying_job_;
@@ -539,6 +543,8 @@ void PollThreadWorker::do_remove_pollable(int fd) {
   pending_remove_.insert(fd);
 }
 
+// @unsafe - Uses raw pointer dereference for poll_ptr
+// SAFETY: poll_ptr is guaranteed to be valid by caller (from fd_to_pollable_ map)
 void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) {
   if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
     return;
@@ -553,8 +559,10 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) 
   mode_[fd] = new_mode;
 
   if (new_mode != old_mode) {
+    // @unsafe {
     void* userdata = poll_ptr;
     poll_.Update(*poll_ptr, userdata, new_mode, old_mode);
+    // }
   }
 }
 
@@ -589,6 +597,18 @@ void PollThreadWorker::process_pending_removals() {
   }
 }
 
+// Static method to get current worker from thread-local storage
+// Returns nullptr if called from a thread that doesn't have a PollThreadWorker
+PollThreadWorker* PollThreadWorker::current_worker() {
+  return current_worker_;
+}
+
+// Update poll mode directly (bypasses channel)
+// Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
+void PollThreadWorker::update_mode(int fd, int new_mode, Pollable* poll_ptr) {
+  do_update_mode(fd, new_mode, poll_ptr);
+}
+
 // =============================================================================
 // PollThread Implementation
 // =============================================================================
@@ -617,7 +637,13 @@ rusty::Arc<PollThread> PollThread::create() {
       thread_id_ptr->store(tid, std::memory_order_release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
-      worker->borrow_mut()->poll_loop();
+      // Store raw pointer in TLS for direct access from same thread
+      // The borrow_mut guard keeps RefCell borrowed during poll_loop()
+      // Using raw pointer avoids RefCell re-borrow issues in coroutines
+      auto guard = worker->borrow_mut();
+      PollThreadWorker::current_worker_ = &*guard;
+      guard->poll_loop();
+      PollThreadWorker::current_worker_ = nullptr;  // Clear on exit
     },
     std::move(receiver)
   );

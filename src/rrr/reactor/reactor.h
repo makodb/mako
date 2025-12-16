@@ -298,6 +298,22 @@ public:
     // Non-const because it modifies state (no more mutable fields)
     void poll_loop();
 
+    // Thread-local access to current worker (for direct calls from same thread)
+    // Returns nullptr if called from a thread that doesn't have a PollThreadWorker
+    static PollThreadWorker* current_worker();
+
+    // Update poll mode directly (bypasses channel)
+    // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
+    void update_mode(int fd, int new_mode, Pollable* poll_ptr);
+
+private:
+    // Thread-local storage for current worker (raw pointer for direct access)
+    // This is safe because:
+    // 1. The worker outlives all coroutines on this thread
+    // 2. All access is single-threaded (no data races)
+    // 3. The pointer is set before poll_loop() and cleared after
+    static thread_local PollThreadWorker* current_worker_;
+
 private:
     // @unsafe - For testing: get number of epoll Remove() calls
     // SAFETY: Atomic load is safe but requires @unsafe annotation
