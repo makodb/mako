@@ -42,7 +42,8 @@ class circular_int {
         return v_;
     }
 
-    // @unsafe - @lifetime: (&'a mut) -> &'a mut (prefix returns reference)
+    // @unsafe - prefix returns reference
+    // @lifetime: (&'a mut) -> &'a mut
     circular_int<T> &operator++() {
         ++v_;
         return *this;
@@ -52,7 +53,8 @@ class circular_int {
         ++v_;
         return circular_int<T>(v_ - 1);
     }
-    // @unsafe - @lifetime: (&'a mut) -> &'a mut (prefix returns reference)
+    // @unsafe - prefix returns reference
+    // @lifetime: (&'a mut) -> &'a mut
     circular_int<T> &operator--() {
         --v_;
         return *this;
@@ -62,22 +64,26 @@ class circular_int {
         --v_;
         return circular_int<T>(v_ + 1);
     }
-    // @unsafe - returns mutable reference; @lifetime: (&'a mut, unsigned) -> &'a mut
+    // @unsafe - returns mutable reference
+    // @lifetime: (&'a mut, unsigned) -> &'a mut
     circular_int<T> &operator+=(unsigned x) {
         v_ += x;
         return *this;
     }
-    // @unsafe - returns mutable reference; @lifetime: (&'a mut, int) -> &'a mut
+    // @unsafe - returns mutable reference
+    // @lifetime: (&'a mut, int) -> &'a mut
     circular_int<T> &operator+=(int x) {
         v_ += x;
         return *this;
     }
-    // @unsafe - returns mutable reference; @lifetime: (&'a mut, unsigned) -> &'a mut
+    // @unsafe - returns mutable reference
+    // @lifetime: (&'a mut, unsigned) -> &'a mut
     circular_int<T> &operator-=(unsigned x) {
         v_ -= x;
         return *this;
     }
-    // @unsafe - returns mutable reference; @lifetime: (&'a mut, int) -> &'a mut
+    // @unsafe - returns mutable reference
+    // @lifetime: (&'a mut, int) -> &'a mut
     circular_int<T> &operator-=(int x) {
         v_ -= x;
         return *this;
