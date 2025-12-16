@@ -179,6 +179,7 @@ struct backoff_fence_function {
 
 template <int SIZE, typename BARRIER> struct sized_compiler_operations;
 
+// @unsafe - atomic operations using inline assembly for 1-byte values
 template <typename B> struct sized_compiler_operations<1, B> {
     typedef char type;
     static inline type xchg(type* object, type new_value) {
@@ -231,6 +232,7 @@ template <typename B> struct sized_compiler_operations<1, B> {
     }
 };
 
+// @unsafe - atomic operations using inline assembly for 2-byte values
 template <typename B> struct sized_compiler_operations<2, B> {
 #if SIZEOF_SHORT == 2
     typedef short type;
@@ -287,6 +289,7 @@ template <typename B> struct sized_compiler_operations<2, B> {
     }
 };
 
+// @unsafe - atomic operations using inline assembly for 4-byte values
 template <typename B> struct sized_compiler_operations<4, B> {
 #if SIZEOF_INT == 4
     typedef int type;
@@ -343,6 +346,7 @@ template <typename B> struct sized_compiler_operations<4, B> {
     }
 };
 
+// @unsafe - atomic operations using inline assembly for 8-byte values
 template <typename B> struct sized_compiler_operations<8, B> {
 #if SIZEOF_LONG_LONG == 8
     typedef long long type;
@@ -425,6 +429,7 @@ template <typename B> struct sized_compiler_operations<8, B> {
 #endif
 };
 
+// @unsafe - atomic exchange using inline assembly
 template<typename T>
 inline T xchg(T* object, T new_value) {
     typedef sized_compiler_operations<sizeof(T), fence_function> sco_t;
@@ -432,18 +437,23 @@ inline T xchg(T* object, T new_value) {
     return (T) sco_t::xchg((type*) object, (type) new_value);
 }
 
+// @unsafe - atomic exchange overloads
 inline int8_t xchg(int8_t* object, int new_value) {
     return xchg(object, (int8_t) new_value);
 }
+// @unsafe - atomic exchange overload
 inline uint8_t xchg(uint8_t* object, int new_value) {
     return xchg(object, (uint8_t) new_value);
 }
+// @unsafe - atomic exchange overload
 inline int16_t xchg(int16_t* object, int new_value) {
     return xchg(object, (int16_t) new_value);
 }
+// @unsafe - atomic exchange overload
 inline uint16_t xchg(uint16_t* object, int new_value) {
     return xchg(object, (uint16_t) new_value);
 }
+// @unsafe - atomic exchange overload
 inline unsigned xchg(unsigned* object, int new_value) {
     return xchg(object, (unsigned) new_value);
 }
@@ -461,6 +471,7 @@ inline unsigned xchg(unsigned* object, int new_value) {
  *    *object = desired;
  * return actual;
  * @endcode */
+// @unsafe - atomic compare-and-exchange using inline assembly
 template <typename T>
 inline T cmpxchg(T* object, T expected, T desired) {
     typedef sized_compiler_operations<sizeof(T), fence_function> sco_t;
@@ -468,6 +479,7 @@ inline T cmpxchg(T* object, T expected, T desired) {
     return (T) sco_t::val_cmpxchg((type*) object, (type) expected, (type) desired);
 }
 
+// @unsafe - atomic compare-and-exchange overload
 inline unsigned cmpxchg(unsigned *object, int expected, int desired) {
     return cmpxchg(object, unsigned(expected), unsigned(desired));
 }
@@ -487,6 +499,7 @@ inline unsigned cmpxchg(unsigned *object, int expected, int desired) {
  * } else
  *    return false;
  * @endcode */
+// @unsafe - atomic boolean compare-and-exchange using inline assembly
 template <typename T>
 inline bool bool_cmpxchg(T* object, T expected, T desired) {
     typedef sized_compiler_operations<sizeof(T), fence_function> sco_t;
@@ -494,9 +507,11 @@ inline bool bool_cmpxchg(T* object, T expected, T desired) {
     return sco_t::bool_cmpxchg((type*) object, (type) expected, (type) desired);
 }
 
+// @unsafe - atomic boolean compare-and-exchange overload
 inline bool bool_cmpxchg(uint8_t* object, int expected, int desired) {
     return bool_cmpxchg(object, uint8_t(expected), uint8_t(desired));
 }
+// @unsafe - atomic boolean compare-and-exchange overload
 inline bool bool_cmpxchg(unsigned *object, int expected, int desired) {
     return bool_cmpxchg(object, unsigned(expected), unsigned(desired));
 }
@@ -505,6 +520,7 @@ inline bool bool_cmpxchg(unsigned *object, int expected, int desired) {
  * @param object pointer to integer
  * @param addend value to add
  * @return old value */
+// @unsafe - atomic fetch-and-add using inline assembly
 template <typename T>
 inline T fetch_and_add(T* object, T addend) {
     typedef sized_compiler_operations<sizeof(T), fence_function> sco_t;
@@ -512,6 +528,7 @@ inline T fetch_and_add(T* object, T addend) {
     return (T) sco_t::fetch_and_add((type*) object, (type) addend);
 }
 
+// @unsafe - atomic fetch-and-add pointer overload
 template <typename T>
 inline T* fetch_and_add(T** object, int addend) {
     typedef sized_compiler_operations<sizeof(T*), fence_function> sco_t;
@@ -519,27 +536,34 @@ inline T* fetch_and_add(T** object, int addend) {
     return (T*) sco_t::fetch_and_add((type*) object, (type) (addend * sizeof(T)));
 }
 
+// @unsafe - atomic fetch-and-add overload
 inline int8_t fetch_and_add(int8_t* object, int addend) {
     return fetch_and_add(object, int8_t(addend));
 }
+// @unsafe - atomic fetch-and-add overload
 inline uint8_t fetch_and_add(uint8_t* object, int addend) {
     return fetch_and_add(object, uint8_t(addend));
 }
+// @unsafe - atomic fetch-and-add overload
 inline int16_t fetch_and_add(int16_t* object, int addend) {
     return fetch_and_add(object, int16_t(addend));
 }
+// @unsafe - atomic fetch-and-add overload
 inline uint16_t fetch_and_add(uint16_t* object, int addend) {
     return fetch_and_add(object, uint16_t(addend));
 }
+// @unsafe - atomic fetch-and-add overload
 inline unsigned fetch_and_add(unsigned* object, int addend) {
     return fetch_and_add(object, unsigned(addend));
 }
+// @unsafe - atomic fetch-and-add overload
 inline unsigned long fetch_and_add(unsigned long* object, int addend) {
     return fetch_and_add(object, (unsigned long)(addend));
 }
 
 
 /** @brief Test-and-set lock acquire. */
+// @unsafe - uses atomic xchg in spin loop
 template <typename T>
 inline void test_and_set_acquire(T* object) {
     typedef sized_compiler_operations<sizeof(T), do_nothing> sco_t;
@@ -550,6 +574,7 @@ inline void test_and_set_acquire(T* object) {
 }
 
 /** @brief Test-and-set lock release. */
+// @unsafe - uses release fence and raw pointer write
 template <typename T>
 inline void test_and_set_release(T* object) {
     release_fence();
@@ -560,6 +585,7 @@ inline void test_and_set_release(T* object) {
 /** @brief Atomic fetch-and-or. Returns nothing.
  * @param object pointer to integer
  * @param addend value to or */
+// @unsafe - atomic fetch-and-or using inline assembly
 template <typename T>
 inline void atomic_or(T* object, T addend) {
     typedef sized_compiler_operations<sizeof(T), fence_function> sco_t;
@@ -567,21 +593,27 @@ inline void atomic_or(T* object, T addend) {
     sco_t::atomic_or((type*) object, (type) addend);
 }
 
+// @unsafe - atomic fetch-and-or overload
 inline void atomic_or(int8_t* object, int addend) {
     atomic_or(object, int8_t(addend));
 }
+// @unsafe - atomic fetch-and-or overload
 inline void atomic_or(uint8_t* object, int addend) {
     atomic_or(object, uint8_t(addend));
 }
+// @unsafe - atomic fetch-and-or overload
 inline void atomic_or(int16_t* object, int addend) {
     atomic_or(object, int16_t(addend));
 }
+// @unsafe - atomic fetch-and-or overload
 inline void atomic_or(uint16_t* object, int addend) {
     atomic_or(object, uint16_t(addend));
 }
+// @unsafe - atomic fetch-and-or overload
 inline void atomic_or(unsigned* object, int addend) {
     atomic_or(object, unsigned(addend));
 }
+// @unsafe - atomic fetch-and-or overload
 inline void atomic_or(unsigned long* object, int addend) {
     atomic_or(object, (unsigned long)(addend));
 }
