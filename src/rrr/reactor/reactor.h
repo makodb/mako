@@ -169,7 +169,7 @@ class Reactor {
   /**
    * @param ev. is usually allocated on coroutine stack. memory managed by user.
    */
-  // Creates and runs a new coroutine with rusty::Rc ownership
+  // @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
   // Jetpack: file/line parameters for debugging coroutine creation location
   rusty::Rc<Coroutine> CreateRunCoroutine(rusty::Function<void()> func,
                                           const char* file = "",
@@ -177,7 +177,7 @@ class Reactor {
   // Main event loop - check_timeout parameter for flexibility (Jetpack)
   void Loop(bool infinite = false, bool check_timeout = true) const;
   void DiskLoop() const;
-  // Continues execution of a paused coroutine with rusty::Rc
+  // @unsafe - Continues execution of a paused coroutine with rusty::Rc
   void ContinueCoro(rusty::Rc<Coroutine> sp_coro) const;
   void Recycle(rusty::Rc<Coroutine>& sp_coro) const;
   void DisplayWaitingEv() const;
@@ -279,7 +279,7 @@ class PollThreadWorker {
     friend class rusty::Rc<rusty::RefCell<PollThreadWorker>>;
 
 public:
-    // Factory method - creates worker wrapped in Rc<RefCell<>>
+    // @unsafe - Factory method - creates worker wrapped in Rc<RefCell<>>
     static rusty::Rc<rusty::RefCell<PollThreadWorker>> create(rusty::sync::mpsc::Receiver<PollCommand> receiver);
 
     // Constructor is public for Rc::make(), but prefer create() factory
@@ -294,7 +294,7 @@ public:
     PollThreadWorker(PollThreadWorker&&) = default;
     PollThreadWorker& operator=(PollThreadWorker&&) = delete;
 
-    // Main polling loop - processes epoll events and channel commands
+    // @unsafe - Main polling loop - processes epoll events and channel commands
     // Non-const because it modifies state (no more mutable fields)
     void poll_loop();
 

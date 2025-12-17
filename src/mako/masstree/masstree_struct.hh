@@ -86,7 +86,7 @@ class node_base : public make_nodeversion<P>::type {
         else
             static_cast<internode_type*>(this)->parent_ = p;
     }
-    // @safe - initializes as root
+    // @unsafe - initializes as root (uses this-> pointer access)
     inline void make_layer_root() {
         set_parent(nullptr);
         this->mark_root();
@@ -184,7 +184,7 @@ class internode : public node_base<P> {
     }
 
   private:
-    // @safe - assigns key and child at position
+    // @unsafe - assigns key and child at position, dereferences raw pointer
     void assign(int p, ikey_type ikey, node_base<P>* child) {
         child->set_parent(this);
         child_[p + 1] = child;

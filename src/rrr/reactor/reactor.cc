@@ -53,7 +53,7 @@ rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
   return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
 }
 
-// @safe - Creates and runs a new coroutine with rusty::Rc ownership
+// @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
 rusty::Rc<Coroutine>
 Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line) {
   auto reactor_rc = Reactor::GetReactor();
@@ -97,7 +97,7 @@ Reactor::GetDiskReactor() {
  * @param func
  * @return
  */
-// @safe - Creates and runs coroutine with rusty::Rc single-threaded reference counting
+// @unsafe - Creates and runs coroutine, dereferences raw pointers internally
 rusty::Rc<Coroutine>
 Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   rusty::Option<rusty::Rc<Coroutine>> sp_coro;
@@ -324,7 +324,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
   } while (looping_);
 }
 
-// @safe - Continues execution of paused coroutine with rusty::Rc
+// @unsafe - Continues execution of paused coroutine, dereferences raw pointers internally
 void Reactor::ContinueCoro(rusty::Rc<Coroutine> sp_coro) const {
 //  verify(!sp_running_coro_th_.is_none()); // disallow nested coros
   // Clone to avoid moving - must preserve the old value
@@ -423,6 +423,7 @@ PollThreadWorker::PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> rece
   // No eventfd needed - we poll the channel with try_recv() after each epoll_wait
 }
 
+// @unsafe - factory function creates worker and wraps in Rc<RefCell> (rustycpp false positive on move)
 rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(rusty::sync::mpsc::Receiver<PollCommand> receiver) {
   // Create worker, then wrap in RefCell
   PollThreadWorker worker(std::move(receiver));

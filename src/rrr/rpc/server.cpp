@@ -291,7 +291,7 @@ int ServerConnection::handle_write() {
     return result;
 }
 
-// @safe - Simple error handler
+// @unsafe - Error handler (uses this-> pointer access)
 void ServerConnection::handle_error() {
     this->close();
 }

@@ -99,7 +99,7 @@ public:
         return rusty::Arc<Future>::make(xid, attr);
     }
 
-    // @safe - Uses rusty::Mutex for thread-safe access
+    // @unsafe - Uses rusty::Mutex guard with pointer-like access
     bool ready() const {
         auto guard = state_.lock();
         return guard->ready;
