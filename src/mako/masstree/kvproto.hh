@@ -52,17 +52,10 @@ struct row_marker {
     int marker_type_;
 };
 
-// @unsafe - overloaded functions share annotation storage (collision bug)
-// Both versions marked unsafe to avoid checker misclassification
-template <typename R>
-inline bool row_is_marker(const R& row) {
-    return row.timestamp() & 1;
-}
-
-// @unsafe - pointer dereference delegates to reference version
+// @unsafe - pointer dereference to check marker bit
 template <typename R>
 inline bool row_is_marker(const R* row) {
-    return row_is_marker(*row);
+    return row->timestamp() & 1;
 }
 
 #endif

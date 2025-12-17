@@ -97,7 +97,7 @@ class threadinfo {
 
     // allthreads is now per-context in MasstreeContext
 
-    // @safe - returns stored pointer
+    // @unsafe - returns raw pointer
     threadinfo* next() const {
         return next_;
     }
@@ -114,11 +114,11 @@ class threadinfo {
     int index() const {
         return index_;
     }
-    // @safe - returns stored pointer
+    // @unsafe - returns raw pointer
     MasstreeContext* context() const {
         return context_;
     }
-    // @safe - returns stored pointer
+    // @unsafe - returns raw pointer
     loginfo* logger() const {
         return logger_;
     }
