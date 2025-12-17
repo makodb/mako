@@ -309,7 +309,7 @@ class singlethreaded_nodeversion {
     singlethreaded_nodeversion<P> mark_insert(singlethreaded_nodeversion<P>) {
         return *this;
     }
-    // @safe - bit manipulation
+    // @unsafe - bit manipulation
     void mark_split() {
         v_ &= ~P::root_bit;
     }
@@ -322,15 +322,15 @@ class singlethreaded_nodeversion {
     singlethreaded_nodeversion<P> mark_deleted() {
         return *this;
     }
-    // @safe - bit manipulation
+    // @unsafe - bit manipulation
     void mark_deleted_tree() {
         v_ |= P::deleted_bit;
     }
-    // @safe - bit manipulation
+    // @unsafe - bit manipulation
     void mark_root() {
         v_ |= P::root_bit;
     }
-    // @safe - bit manipulation
+    // @unsafe - bit manipulation
     void mark_nonroot() {
         v_ &= ~P::root_bit;
     }

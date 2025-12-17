@@ -317,12 +317,14 @@ public:
   // gcs *this* instance, ignoring the chain
   void gc_this();
 
+  // @safe - simple bitwise check
   inline bool
   is_locked() const
   {
     return IsLocked(hdr);
   }
 
+  // @safe - simple bitwise operation on value type
   static inline bool
   IsLocked(version_t v)
   {
@@ -413,12 +415,14 @@ public:
     hdr = v;
   }
 
+  // @safe - simple bitwise check
   inline bool
   is_deleting() const
   {
     return IsDeleting(hdr);
   }
 
+  // @safe - simple bitwise operation on value type
   static inline bool
   IsDeleting(version_t v)
   {
@@ -446,6 +450,7 @@ public:
     hdr &= ~HDR_DELETING_MASK;
   }
 
+  // @safe - simple bitwise check
   inline bool
   is_modifying() const
   {
@@ -466,30 +471,35 @@ public:
     COMPILER_MEMORY_FENCE;
   }
 
+  // @safe - simple bitwise operation on value type
   static inline bool
   IsModifying(version_t v)
   {
     return v & HDR_MODIFYING_MASK;
   }
 
+  // @safe - simple bitwise check
   inline bool
   is_write_intent() const
   {
     return IsWriteIntent(hdr);
   }
 
+  // @safe - simple bitwise operation on value type
   static inline bool
   IsWriteIntent(version_t v)
   {
     return v & HDR_WRITE_INTENT_MASK;
   }
 
+  // @safe - simple bitwise check
   inline bool
   is_latest() const
   {
     return IsLatest(hdr);
   }
 
+  // @safe - simple bitwise operation on value type
   static inline bool
   IsLatest(version_t v)
   {
@@ -506,6 +516,7 @@ public:
     hdr &= ~HDR_LATEST_MASK;
   }
 
+  // @safe - simple bitwise operation on value type
   static inline version_t
   Version(version_t v)
   {
@@ -553,6 +564,7 @@ public:
     return ret;
   }
 
+  // @safe - simple member read
   inline version_t
   unstable_version() const
   {
@@ -577,12 +589,14 @@ public:
     return hdr == version;
   }
 
+  // @safe - simple member read returning pointer
   inline ALWAYS_INLINE struct dbtuple *
   get_next()
   {
     return next;
   }
 
+  // @safe - simple member read returning const pointer
   inline const struct dbtuple *
   get_next() const
   {
@@ -616,6 +630,7 @@ public:
     return &value_start[0];
   }
 
+  // @safe - simple comparison
   // worst name ever...
   inline bool
   is_not_behind(tid_t t) const
@@ -778,6 +793,7 @@ public:
     return record_at(t, start_t, reader, sa, allow_write_intent);
   }
 
+  // @safe - combines safe functions
   inline bool
   is_latest_version(tid_t t) const
   {
@@ -804,6 +820,7 @@ public:
       return false;
   }
 
+  // @safe - combines safe function with simple member check
   inline bool
   latest_value_is_nil() const
   {

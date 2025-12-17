@@ -6,6 +6,7 @@
 #include <mutex>
 #include <condition_variable>
 #include "benchmarks/sto/Interface.hh"
+#include <unordered_map>
 
 using namespace std;
 
@@ -31,7 +32,7 @@ namespace sync_util {
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
-        static int local_replica_id; // local server incremental id
+        static std::atomic<int> local_replica_id; // local server incremental id
 
         // https://en.cppreference.com/w/cpp/thread/condition_variable
         static bool toLeader;
@@ -146,11 +147,13 @@ namespace sync_util {
         }
 
         // In previous submission, we assume the healthy shards are always INF
+        // @unsafe - uses std::unordered_map (undeclared)
         static void update_stable_timestamp(int epoch, uint32_t tt) { 
-           hist_timestamp[epoch]=tt; 
+           hist_timestamp[epoch] = tt; 
         }
 
         // Single timestamp system: ensure vector contains replicated value
+        // @unsafe - uses std::vector which is undeclared, and std::cout
         static void update_stable_timestamp_vec(int epoch, vector<uint32_t> tt_vec) { 
            // In single timestamp system, just use the first element
            if (!tt_vec.empty()) {

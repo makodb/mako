@@ -57,8 +57,11 @@ public:
         }
     }
 
+    // @safe - simple field access
     bool is_enabled() const { return enabled_; }
+    // @safe - simple field access
     double get_cpu_percent() const { return cpu_percent_; }
+    // @safe - simple field access
     uint32_t get_cycle_ms() const { return cycle_ms_; }
 
 private:

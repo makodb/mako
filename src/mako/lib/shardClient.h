@@ -15,24 +15,40 @@ namespace mako
     {
     public:
         ShardClient(std::string file, string cluster, int shardIndex, int par_id);
+        // @safe
         int remoteGet(int remote_table_id, std::string key, std::string &value);
+        // @safe
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
         // Single timestamp interfaces
+        // @safe
         int remoteGetTimestamp(uint32_t &timestamp);
+        // @safe
         int remoteExchangeWatermark(uint32_t &watermark, uint64_t set_bits);
+        // @safe
         int remoteControl(int control, uint32_t value, uint32_t &ret_value, uint64_t set_bits);
+        // @safe
         int remoteAbort();
+        // @safe
         int remoteLock(int remote_table_id, std::string key, std::string &value);
+        // @safe
         int remoteBatchLock(vector<int> &remote_table_id_batch, vector<string> &key_batch, vector<string> &value_batch);
+        // @safe
         int remoteValidate(uint32_t &watermark);
+        // @safe
         int remoteInstall(uint32_t timestamp);
+        // @safe
         int remoteUnLock();
+        // @safe
         int warmupRequest(uint32_t req_val, uint8_t centerId, uint32_t &ret_value, uint64_t set_bits);
         // Check if a remote shard is ready to receive requests
         // Returns SUCCESS if ready, ERROR/TIMEOUT if not ready yet
+        // @safe
         int checkRemoteShardReady(int dstShardIndex);
+        // @safe
         int remoteInvokeSerializeUtil(uint32_t timestamp);
+        // @safe
         void statistics();
+        // @safe
         void stop();
         void setBreakTimeout(bool);
         void setBlocking(bool);

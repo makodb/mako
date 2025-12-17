@@ -28,7 +28,7 @@ inline uint32_t keystore_decode3_v2(const std::string& s){
     return cid;
 }
 
-// @unsafe: calls unsafe keystore_decode3_v2
+// @safe - only performs arithmetic operations
 bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
 {
     uint32_t commit_id_new = keystore_decode3_v2(newValue);

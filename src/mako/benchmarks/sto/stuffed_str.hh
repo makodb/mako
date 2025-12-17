@@ -88,11 +88,13 @@ public:
     flex_buf_ = p;
   }
 
+  // @safe
   char *data() {
     return flex_buf_;
     // return buf_;
   }
   
+  // @safe
   int length() {
     return size_;
   }

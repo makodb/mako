@@ -438,21 +438,21 @@ class leaf : public node_base<P> {
     bool has_ksuf(int p) const {
         return keylenx_has_ksuf(keylenx_[p]);
     }
-    // @safe - returns suffix string view
+    // @unsafe - returns suffix string view
     Str ksuf(int p, int keylenx) const {
         (void) keylenx;
         masstree_precondition(keylenx_has_ksuf(keylenx));
         return ksuf_ ? ksuf_->get(p) : iksuf_[0].get(p);
     }
-    // @safe - returns suffix string view
+    // @unsafe - returns suffix string view
     Str ksuf(int p) const {
         return ksuf(p, keylenx_[p]);
     }
-    // @safe - suffix comparison
+    // @unsafe - suffix comparison
     bool ksuf_equals(int p, const key_type& ka) const {
         return ksuf_equals(p, ka, keylenx_[p]);
     }
-    // @safe - suffix comparison
+    // @unsafe - suffix comparison
     bool ksuf_equals(int p, const key_type& ka, int keylenx) const {
         if (!keylenx_has_ksuf(keylenx))
             return true;
@@ -460,7 +460,7 @@ class leaf : public node_base<P> {
         return s.len == ka.suffix().len
             && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
     }
-    // @safe - suffix matching
+    // @unsafe - suffix matching
     // Returns 1 if match & not layer, 0 if no match, <0 if match and layer
     int ksuf_matches(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
@@ -472,7 +472,7 @@ class leaf : public node_base<P> {
         return s.len == ka.suffix().len
             && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
     }
-    // @safe - suffix comparison
+    // @unsafe - suffix comparison
     int ksuf_compare(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))

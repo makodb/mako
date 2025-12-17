@@ -98,6 +98,7 @@ public:
         }
     }
 
+    // @unsafe - uses reinterpret_cast and raw pointer operations
     static bool mvGET(string& val,
                       char *oldval_str, // oldval_str == val, but it's the reference to the actual value
                       uint8_t current_term,

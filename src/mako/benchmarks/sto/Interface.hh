@@ -88,6 +88,11 @@ public:
 
     static int get_is_micro() { return the_is_micro; }
 
+    // @safe
+    static int getLocalPartitionID() {
+        return pid;
+    }
+
     static int mode() {
         return the_mode;
     }
@@ -751,18 +756,25 @@ class TObject {
 public:
     virtual ~TObject() {}
 
+    // @safe
     virtual bool lock(TransItem& item, Transaction& txn) = 0;
+    // @safe
     virtual bool check_predicate(TransItem& item, Transaction& txn, bool committing) {
         (void) item, (void) txn, (void) committing;
 	//        always_assert(false);
         return false;
     }
+    // @safe
     virtual bool check(TransItem& item, Transaction& txn) = 0;
+    // @safe
     virtual void install(TransItem& item, Transaction& txn) = 0;
+    // @safe
     virtual void unlock(TransItem& item) = 0;
+    // @safe
     virtual void cleanup(TransItem& item, bool committed) {
         (void) item, (void) committed;
     }
+    // @safe
     // @unsafe: uses TransItem template methods
     virtual void print(std::ostream& w, const TransItem& item) const;
     // @safe

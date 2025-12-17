@@ -22,6 +22,7 @@ class SiloRuntime;
 struct counter_data {
   enum Type { TYPE_COUNT, TYPE_AGG };
 
+  // @safe - simple value initialization
   counter_data()
     : type_(TYPE_COUNT), count_(0), sum_(0), max_(0) {}
 
@@ -30,6 +31,8 @@ struct counter_data {
   uint64_t sum_;
   uint64_t max_;
 
+  // @lifetime: (&'a mut, &'b) -> &'a mut
+  // @safe - simple arithmetic operations, returns reference to self
   inline counter_data &
   operator+=(const counter_data &that)
   {
@@ -39,6 +42,7 @@ struct counter_data {
     return *this;
   }
 
+  // @safe - simple arithmetic (division)
   inline double
   avg() const
   {

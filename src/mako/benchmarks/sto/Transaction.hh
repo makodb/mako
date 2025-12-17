@@ -16,6 +16,7 @@
 #include <x86intrin.h>
 #include <vector>
 #include <cstring> // for memcpy
+#include <unordered_map>
 #include "deptran/s_main.h"
 #include "benchmarks/sto/Interface.hh"
 #include "benchmarks/sto/sync_util.hh"
@@ -241,7 +242,7 @@ class StringAllocator{
 
 
 
-inline std::unordered_map<uint32_t, uint32_t> sample_transaction_tracker ;  // local timestamp => updated time (millisecond)
+inline std::unordered_map<uint32_t, uint32_t> sample_transaction_tracker;  // local timestamp => updated time (millisecond)
 
 // TRANSACTION macros that can be used to wrap transactional code
 #define TRANSACTION                               \
@@ -356,7 +357,8 @@ struct __attribute__((aligned(128))) threadinfo_t {
     }
 };
 
-// @unsafe: uses mutable fields for interior mutability, complex template instantiations
+// @unsafe
+// Interior mutability via mutable fields (tid_unique_, commit_tid_, etc.)
 class Transaction {
 public:
     static constexpr unsigned tset_initial_capacity = 512;
@@ -666,11 +668,17 @@ public:
         throw Abort();
     }
 
+    // @unsafe
     bool try_commit(bool no_paxos= false);
+    // @unsafe - lock acquisition is inherently unsafe
     bool shard_try_lock_last_writeset();
+    // @unsafe - accesses Transaction internals with mutable fields
     int shard_validate();
+    // @unsafe
     void shard_install(uint32_t timestamp);
+    // @unsafe - delegates to unsafe serialize_util (memcpy operations)
     void shard_serialize_util(uint32_t timestamp);
+    // @unsafe - lock operations are inherently unsafe
     void shard_unlock(bool committed);
 
     void commit() {
@@ -759,6 +767,7 @@ public:
     }
 
     // committing
+    // @unsafe - uses fetch_and_add atomic operation
     tid_type commit_tid() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
         if (!commit_tid_)
@@ -766,10 +775,11 @@ public:
         return commit_tid_;
     }
 
+    // @unsafe
     void updateSingleTimestamp() const {
         assert(state_ == s_committing_locked || state_ == s_committing);
 	    if(!tid_unique_)
-            tid_unique_ = __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, 1);
+            tid_unique_ = sync_util::sync_logger::local_replica_id.fetch_add(1);
 
         if (TThread::writeset_shard_bits>0/*||TThread::readset_shard_bits>0*/) {
             // Get single timestamp from remote shards
@@ -997,18 +1007,22 @@ public:
         return TThread::txn->shard_validate();
     }
 
+    // @unsafe - calls Transaction::shard_install which is @unsafe
     static void shard_install(uint32_t timestamp) {
         TThread::txn->shard_install(timestamp);
     }
 
+    // @unsafe - calls Transaction method via pointer dereference
     static void shard_serialize_util(uint32_t timestamp)  {
         TThread::txn->shard_serialize_util(timestamp);
     }
 
+    // @unsafe - calls Transaction method via pointer dereference
     static void shard_unlock(bool committed) {
         TThread::txn->shard_unlock(committed);
     }
 
+    // @unsafe - calls Transaction::commit_tid which uses atomic operations
     static TransactionTid::type commit_tid() {
         return TThread::txn->commit_tid();
     }

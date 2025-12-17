@@ -36,6 +36,8 @@ public:
 
   virtual ~ndb_thread();
 
+  // @lifetime: (&'a) -> &'a
+  // @safe - returns const reference to member
   inline const std::string &
   get_name() const
   {

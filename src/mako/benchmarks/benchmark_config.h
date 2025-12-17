@@ -145,9 +145,12 @@ class BenchmarkConfig {
       // -1 means not set (use global shardIndex_)
       static inline thread_local int tl_shard_index_ = -1;
 
-      // Getters
+      // Getters - simple field accessors are @safe
+      // @safe
       size_t getNthreads() const { return nthreads_; }
+      // @safe
       size_t getNshards() const { return nshards_; }
+      // @safe
       size_t getNumErpcServer() const { return num_erpc_server_; }
       // In multi-shard mode, returns thread-local shard index if set
       size_t getShardIndex() const {
@@ -157,22 +160,39 @@ class BenchmarkConfig {
         return shardIndex_;
       }
       const std::string& getCluster() const { return cluster_; }
+      // @safe
       int getClusterRole() const { return clusterRole_; }
+      // @safe - returns raw pointer (allowed in @safe)
       transport::Configuration* getConfig() const { return config_; }
+      // @safe
       bool isRunning() const { return running_; }
+      // @safe
       int getControlMode() const { return control_mode_; }
+      // @safe
       int getVerbose() const { return verbose_; }
+      // @safe
       uint64_t getTxnFlags() const { return txn_flags_; }
+      // @safe
       double getScaleFactor() const { return scale_factor_; }
+      // @safe
       uint64_t getRuntime() const { return runtime_; }
+      // @safe
       int getRuntimePlus() const { return runtime_plus_; }
+      // @safe
       uint64_t getOpsPerWorker() const { return ops_per_worker_; }
+      // @safe
       int getRunMode() const { return run_mode_; }
+      // @safe
       int getEnableParallelLoading() const { return enable_parallel_loading_; }
+      // @safe
       int getPinCpus() const { return pin_cpus_; }
+      // @safe
       int getSlowExit() const { return slow_exit_; }
+      // @safe
       int getRetryAbortedTransaction() const { return retry_aborted_transaction_; }
+      // @safe
       int getNoResetCounters() const { return no_reset_counters_; }
+      // @safe
       int getBackoffAbortedTransaction() const { return backoff_aborted_transaction_; }
       // @safe
       int getUseHashtable() const { return use_hashtable_; }
@@ -242,11 +262,16 @@ class BenchmarkConfig {
       void setReplayBatch(int value) { replay_batch_.store(value); }
       void incrementReplayBatch() { replay_batch_.fetch_add(1); }
 
-      // CPU throttling getters and setters
+      // CPU throttling getters and setters - all simple field access (@safe)
+      // @safe
       double getCpuLimitPercent() const { return cpu_limit_percent_; }
+      // @safe
       void setCpuLimitPercent(double pct) { cpu_limit_percent_ = pct; }
+      // @safe
       uint32_t getThrottleCycleMs() const { return throttle_cycle_ms_; }
+      // @safe
       void setThrottleCycleMs(uint32_t ms) { throttle_cycle_ms_ = ms; }
+      // @safe
       bool isCpuThrottlingEnabled() const {
           return cpu_limit_percent_ > 0.0 && cpu_limit_percent_ < 100.0;
       }
@@ -273,14 +298,20 @@ class BenchmarkConfig {
           shard_contexts_[shard_index] = context;
       }
 
+      // @safe
       bool hasMultipleShards() const {
           return shard_contexts_.size() > 1;
       }
 
-      // NFS sync getters and setters
+      // NFS sync getters and setters - simple field access (@safe)
+      // @lifetime: (&'a) -> &'a
+      // @safe
       const std::string& getNfsSyncDir() const { return nfs_sync_dir_; }
+      // @safe
       void setNfsSyncDir(const std::string& dir) { nfs_sync_dir_ = dir; }
+      // @safe
       int getNfsSyncTimeoutSec() const { return nfs_sync_timeout_sec_; }
+      // @safe
       void setNfsSyncTimeoutSec(int sec) { nfs_sync_timeout_sec_ = sec; }
 
       // NFS-based multi-shard barrier methods

@@ -16,20 +16,25 @@
 #include <fstream>
 #include <thread>
 #include "benchmarks/benchmark_config.h"
+#include <rusty/hashmap.hpp>
 //#include "lib/memcached_client.h"
 
+// @safe - uses rusty::HashMap which is safe
 class HashWrapper {
     public:
     
-    std::map<std::string, int> data;
+    rusty::HashMap<std::string, int> data;
     
+    // @safe - uses rusty::HashMap::insert
     void set_tprops(std::string k, int v) {
-        data[k] = v;
+        data.insert(std::move(k), v);
     }
 
-    int get_tprops(std::string k) {
-        if (data.find(k) != data.end()) {
-            return data[k];
+    // @safe - uses rusty::HashMap::get which returns Option
+    int get_tprops(const std::string& k) {
+        auto result = data.get(k);
+        if (result.is_some()) {
+            return *result.unwrap();
         } else {
             return -1;
         }

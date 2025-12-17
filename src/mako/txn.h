@@ -145,6 +145,7 @@ public:
     INVARIANT(state == TXN_ACTIVE);
   }
 
+  // @safe - simple getter
   inline uint64_t
   get_flags() const
   {
@@ -160,11 +161,13 @@ protected:
     constexpr read_record_t() : tuple(), t() {}
     constexpr read_record_t(const dbtuple *tuple, tid_t t)
       : tuple(tuple), t(t) {}
+    // @safe - simple getter
     inline const dbtuple *
     get_tuple() const
     {
       return tuple;
     }
+    // @safe - simple getter
     inline tid_t
     get_tid() const
     {
@@ -205,47 +208,56 @@ protected:
     {
       this->btr.set_flags(insert ? FLAGS_INSERT : 0);
     }
+    // @safe - simple getter
     inline dbtuple *
     get_tuple()
     {
       return tuple;
     }
+    // @safe - simple getter
     inline const dbtuple *
     get_tuple() const
     {
       return tuple;
     }
+    // @unsafe - calls marked_ptr::get_flags (undeclared)
     inline bool
     is_insert() const
     {
       return btr.get_flags() & FLAGS_INSERT;
     }
+    // @unsafe - calls marked_ptr::get_flags (undeclared)
     inline bool
     do_write() const
     {
       return btr.get_flags() & FLAGS_DOWRITE;
     }
+    // @unsafe - calls or_flags, mutates state
     inline void
     set_do_write()
     {
       INVARIANT(!do_write());
       btr.or_flags(FLAGS_DOWRITE);
     }
+    // @unsafe - calls marked_ptr::get (undeclared)
     inline concurrent_btree *
     get_btree() const
     {
       return btr.get();
     }
+    // @unsafe - pointer dereference
     inline const string_type &
     get_key() const
     {
       return *k;
     }
+    // @safe - simple getter
     inline const void *
     get_value() const
     {
       return r;
     }
+    // @safe - simple getter
     inline dbtuple::tuple_writer_t
     get_writer() const
     {
@@ -284,18 +296,22 @@ protected:
         this->tuple.set_flags(FLAGS_LOCKED | FLAGS_INSERT);
     }
     // XXX: for searching only
+    // @unsafe - uses const_cast
     explicit dbtuple_write_info(const dbtuple *tuple)
       : tuple(const_cast<dbtuple *>(tuple)), entry(), pos() {}
+    // @unsafe - calls marked_ptr::get (undeclared)
     inline dbtuple *
     get_tuple()
     {
       return tuple.get();
     }
+    // @unsafe - calls marked_ptr::get (undeclared)
     inline const dbtuple *
     get_tuple() const
     {
       return tuple.get();
     }
+    // @unsafe - mutates state via or_flags
     inline ALWAYS_INLINE void
     mark_locked()
     {
@@ -303,11 +319,13 @@ protected:
       tuple.or_flags(FLAGS_LOCKED);
       INVARIANT(is_locked());
     }
+    // @unsafe - calls marked_ptr::get_flags (undeclared)
     inline ALWAYS_INLINE bool
     is_locked() const
     {
       return tuple.get_flags() & FLAGS_LOCKED;
     }
+    // @unsafe - calls marked_ptr::get_flags (undeclared)
     inline ALWAYS_INLINE bool
     is_insert() const
     {
@@ -647,6 +665,7 @@ public:
 
   std::map<std::string, uint64_t> get_txn_counters() const;
 
+  // @safe - bitwise flag check
   inline ALWAYS_INLINE bool
   is_snapshot() const
   {
@@ -826,6 +845,7 @@ class transaction_abort_exception : public std::exception {
 public:
   transaction_abort_exception(transaction_base::abort_reason r)
     : r(r) {}
+  // @safe - simple getter
   inline transaction_base::abort_reason
   get_reason() const
   {

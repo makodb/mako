@@ -39,12 +39,14 @@ public:
   static const size_t g_max_lag_epochs = 128; // cannot lag more than 128 epochs
   static const bool   g_pin_loggers_to_numa_nodes = false;
 
+  // @safe - returns static bool
   static inline bool
   IsPersistenceEnabled()
   {
     return g_persist;
   }
 
+  // @safe - returns static bool
   static inline bool
   IsCompressionEnabled()
   {
@@ -383,6 +385,7 @@ public:
   static const uint64_t ReadOnlyEpochUsec =
     ticker::tick_us * ReadOnlyEpochMultiplier;
 
+  // @safe - pure arithmetic
   static inline uint64_t constexpr
   to_read_only_tick(uint64_t epoch_tick)
   {
@@ -396,18 +399,21 @@ public:
   // [ core  | number |  epoch | reserved ]
   // [ 0..9  | 9..33  | 33..63 |  63..64  ]
 
+  // @safe - pure bitwise operation
   static inline ALWAYS_INLINE
   uint64_t CoreId(uint64_t v)
   {
     return v & CoreMask;
   }
 
+  // @safe - pure bitwise operation
   static inline ALWAYS_INLINE
   uint64_t NumId(uint64_t v)
   {
     return (v & NumIdMask) >> NumIdShift;
   }
 
+  // @safe - pure bitwise operation
   static inline ALWAYS_INLINE
   uint64_t EpochId(uint64_t v)
   {
@@ -461,6 +467,7 @@ public:
   // since the reserve bit is always zero, we don't need a special mask
   static const uint64_t EpochMask = ((uint64_t)-1) << EpochShift;
 
+  // @safe - pure bitwise operation
   static inline ALWAYS_INLINE
   uint64_t MakeTid(uint64_t core_id, uint64_t num_id, uint64_t epoch_id)
   {
@@ -777,6 +784,7 @@ public:
            !prev;
   }
 
+  // @safe - just returns true
   // can only read elements in this epoch or previous epochs
   inline bool
   can_read_tid(tid_t t) const
@@ -954,6 +962,7 @@ private:
 
 public:
 
+  // @safe - bitwise flag check
   inline ALWAYS_INLINE bool is_snapshot() const {
     return this->get_flags() & transaction_base::TXN_FLAG_READ_ONLY;
   }
@@ -1203,6 +1212,7 @@ struct base_txn_btree_handler<transaction_proto2> {
 
 template <>
 struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
+  // @unsafe - calls wait_an_epoch and wait_until_current_point_persisted
   static void
   sync()
   {
@@ -1210,12 +1220,14 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
     if (txn_logger::IsPersistenceEnabled())
       txn_logger::wait_until_current_point_persisted();
   }
+  // @unsafe - calls wait_until_current_point_persisted
   static void
   finish()
   {
     if (txn_logger::IsPersistenceEnabled())
       txn_logger::wait_until_current_point_persisted();
   }
+  // @unsafe - calls coreid::core_id and persist_ctx_for
   static void
   thread_init(bool loader)
   {
@@ -1227,6 +1239,7 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
         my_core_id,
         loader ? txn_logger::INITMODE_REG : txn_logger::INITMODE_RCU);
   }
+  // @unsafe - calls coreid::core_id, circbuf methods, and pointer operations
   static void
   thread_end()
   {
@@ -1262,6 +1275,7 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
     INVARIANT(px0 == px);
     push_buf.enq(px0);
   }
+  // @unsafe - calls compute_ntxns_persisted_statistics
   static std::tuple<uint64_t, uint64_t, double>
   compute_ntxn_persisted()
   {
@@ -1269,6 +1283,7 @@ struct txn_epoch_sync<transaction_proto2> : public transaction_proto2_static {
       return std::make_tuple(0, 0, 0.0);
     return txn_logger::compute_ntxns_persisted_statistics();
   }
+  // @unsafe - calls clear_ntxns_persisted_statistics
   static void
   reset_ntxn_persisted()
   {

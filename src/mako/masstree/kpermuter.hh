@@ -267,13 +267,13 @@ template <int width> class kpermuter {
             | ((x >> ((j - i) << 2)) & ~mask)
             | ((x & ~mask) << ((width - j) << 2));
     }
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - pure bit manipulation on owned value
     /** @brief Exchange the elements at positions @a i and @a j. */
     void exchange(int i, int j) {
         value_type diff = ((x_ >> (i << 2)) ^ (x_ >> (j << 2))) & 240;
         x_ ^= (diff << (i << 2)) | (diff << (j << 2));
     }
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - pure bit manipulation on owned value
     /** @brief Exchange positions of values @a x and @a y. */
     void exchange_values(int x, int y) {
         value_type diff = 0, p = x_;

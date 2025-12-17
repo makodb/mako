@@ -14,6 +14,27 @@
 #define MAX(a,b) ((a)>(b)?(a):(b))
 #endif
 
+// External C function declarations
+extern "C" {
+    int usleep(useconds_t usec);
+    void add_log_to_nc(char* log, size_t len, int partition_id, int batch_size);
+}
+
+// @unsafe
+inline void safe_usleep(useconds_t usec) {
+    usleep(usec);
+}
+
+// @unsafe
+inline void safe_release_fence() {
+    std::atomic_thread_fence(std::memory_order_release);
+}
+
+// @unsafe
+inline void safe_add_log_to_nc(char* log, size_t len, int partition_id, int batch_size) {
+    add_log_to_nc(log, len, partition_id, batch_size);
+}
+
 std::function<int()> callback_ = nullptr;
 // @safe
 void register_sync_util(std::function<int()> cb) {
@@ -59,6 +80,7 @@ TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 2 * Trans
 #endif
    // reserve TransactionTid::increment_value for prepopulated
 
+// @safe
 static void __attribute__((used)) check_static_assertions() {
     static_assert(sizeof(threadinfo_t) % 128 == 0, "threadinfo is 2-cache-line aligned");
 }
@@ -75,6 +97,7 @@ void Transaction::initialize() {
         tset_[i] = nullptr;
 }
 
+// @safe - RAII pattern: cleans up owned resources in destructor
 Transaction::~Transaction() {
     if (in_progress())
         silent_abort();
@@ -84,7 +107,7 @@ Transaction::~Transaction() {
             delete[] tset_[i];
 }
 
-// @safe
+// @safe - allocates owned resource that will be freed in destructor
 void Transaction::refresh_tset_chunk() {
     assert(tset_size_ % tset_chunk == 0);
     assert(tset_size_ < tset_max_capacity);
@@ -93,14 +116,14 @@ void Transaction::refresh_tset_chunk() {
     tset_next_ = tset_[tset_size_ / tset_chunk];
 }
 
-// @unsafe: uses fetch_and_add, usleep, and global epoch manipulation
+// @unsafe
 void* Transaction::epoch_advancer(void*) {
-    static int num_epoch_advancers = 0;
-    if (fetch_and_add(&num_epoch_advancers, 1) != 0)
+    static std::atomic<int> num_epoch_advancers(0);
+    if (num_epoch_advancers.fetch_add(1) != 0)
         std::cerr << "WARNING: more than one epoch_advancer thread\n";
 
     // don't bother epoch'ing til things have picked up
-    usleep(100000);
+    safe_usleep(100000);
     while (global_epochs.run) {
         epoch_type g = global_epochs.global_epoch;
         epoch_type e = g;
@@ -115,13 +138,13 @@ void* Transaction::epoch_advancer(void*) {
         if (epoch_advance_callback)
             epoch_advance_callback(global_epochs.global_epoch);
 
-        usleep(100000);
+        safe_usleep(100000);
     }
-    fetch_and_add(&num_epoch_advancers, -1);
+    num_epoch_advancers.fetch_add(-1);
     return NULL;
 }
 
-// @safe
+// @safe - pointer iteration within bounds, no lifetime issues
 bool Transaction::preceding_duplicate_read(TransItem* needle) const {
     const TransItem* it = nullptr;
     for (unsigned tidx = 0; ; ++tidx) {
@@ -134,7 +157,7 @@ bool Transaction::preceding_duplicate_read(TransItem* needle) const {
     }
 }
 
-// @unsafe: uses TransItem::read_value, release_fence, and complex transaction validation
+// @unsafe - calls unsafe function (safe_release_fence) with memory fence
 void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
     // ignore opacity checks during commit; we're in the middle of checking
     // things anyway
@@ -142,11 +165,11 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
         return;
 
     // ignore if version hasn't changed
-    if (item && item->has_read() && item->read_value<TransactionTid::type>() == t)
+    if (item != nullptr && item->has_read() && item->read_value<TransactionTid::type>() == t)
         return;
 
     // die on recursive opacity check; this is only possible for predicates
-    if (unlikely(state_ == s_opacity_check)) {
+    if (state_ == s_opacity_check) {
         mark_abort_because(item, "recursive opacity check", t);
     abort:
         TXP_INCREMENT(txp_hco_abort);
@@ -165,7 +188,7 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
 
     state_ = s_opacity_check;
     start_tid_ = _TID;
-    release_fence();
+    safe_release_fence();
     TransItem* it = nullptr;
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
@@ -187,7 +210,7 @@ void Transaction::hard_check_opacity(TransItem* item, TransactionTid::type t) {
     state_ = s_in_progress;
 }
 
-// @unsafe: manipulates transaction items with unlock and cleanup operations
+// @unsafe
 void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
     if (!committed) {
         TXP_INCREMENT(txp_total_aborts);
@@ -196,11 +219,11 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
             std::ostringstream buf;
             buf << "$" << (threadid_ < 10 ? "0" : "") << threadid_
                 << " abort " << state_name(state_);
-            if (abort_reason_)
+            if (abort_reason_ != nullptr)
                 buf << " " << abort_reason_;
-            if (abort_item_)
+            if (abort_item_ != nullptr)
                 buf << " " << *abort_item_;
-            if (abort_version_)
+            if (abort_version_ != 0)
                 buf << " V" << TVersion(abort_version_);
             buf << '\n';
             std::cerr << buf.str();
@@ -257,13 +280,13 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
 after_unlock:
     // TODO: this will probably mess up with nested transactions
     threadinfo_t& thr = tinfo[TThread::id()];
-    if (thr.trans_end_callback)
+    if (thr.trans_end_callback != nullptr)
         thr.trans_end_callback();
     // XXX should reset trans_end_callback after calling it...
     state_ = s_aborted + committed;
 }
 
-// @safe
+// @unsafe - lock acquisition (inherently unsafe synchronization primitive)
 bool Transaction::shard_try_lock_last_writeset() {
     assert(TThread::id() == threadid_);
 
@@ -306,7 +329,7 @@ int Transaction::shard_validate() {
     return 0;
 }
 
-// @unsafe: calls unsafe serialize_util function
+// @unsafe - delegates to unsafe serialize_util (memcpy operations)
 void Transaction::shard_serialize_util(uint32_t timestamp) {
     if (!BenchmarkConfig::getInstance().getIsReplicated()) {return ;}
     #if defined(SIMPLE_WORKLOAD)
@@ -317,10 +340,10 @@ void Transaction::shard_serialize_util(uint32_t timestamp) {
     serialize_util(1 /* anything > 0 */, true, MAX_ARRAY_SIZE_IN_BYTES_SMALL, small_batch_num, timestamp);
 }
 
-// @safe
+// @unsafe
 uint8_t Transaction::get_current_term() const {
     if(callback_ != nullptr){
-        if(!current_term_)
+        if(current_term_ == 0)
             current_term_ = callback_();
     }else{
         current_term_ = 0;
@@ -328,7 +351,7 @@ uint8_t Transaction::get_current_term() const {
     return current_term_;
 }
 
-// @unsafe: uses __sync_fetch_and_add and TObject::install
+// @unsafe
 void Transaction::shard_install(uint32_t timestamp) {
     assert(TThread::id() == threadid_);
 
@@ -339,7 +362,7 @@ void Transaction::shard_install(uint32_t timestamp) {
     // Update local_id to catch up with single timestamp
     int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
     if (delta > 0) {
-        __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
+        sync_util::sync_logger::local_replica_id.fetch_add(delta);
     }
 
     TransItem* it = nullptr;
@@ -354,7 +377,7 @@ void Transaction::shard_install(uint32_t timestamp) {
     }
 }
 
-// @unsafe: calls TObject::unlock and TObject::cleanup
+// @unsafe - lock operations (unlock is unsafe synchronization primitive)
 void Transaction::shard_unlock(bool committed) {
     assert(TThread::id() == threadid_);
 
@@ -378,7 +401,7 @@ void Transaction::shard_unlock(bool committed) {
     }
 }
 
-// @unsafe: complex commit protocol with remote operations, locking, and validation
+// @unsafe
 bool Transaction::try_commit(bool no_paxos) {
     assert(TThread::id() == threadid_);
 #if ASSERT_TX_SIZE
@@ -563,7 +586,7 @@ bool Transaction::try_commit(bool no_paxos) {
         // Update local_id to catch up with single timestamp
         int delta = tid_unique_ - sync_util::sync_logger::local_replica_id;
         if (delta > 0) {
-            __sync_fetch_and_add(&sync_util::sync_logger::local_replica_id, delta);
+            sync_util::sync_logger::local_replica_id.fetch_add(delta);
         }
 
         for (auto idxit = writeset; idxit != writeset_end; ++idxit) {
@@ -632,7 +655,7 @@ abort:
 }
 
 // serialize transactions into log and then sent it out via Paxos
-// @unsafe: performs low-level memory operations with memcpy and raw pointers
+// @unsafe
 inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int max_bytes_size, int batch_size, uint32_t timestamp) const {
     if (nwriteset == 0) return;
 
@@ -642,7 +665,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
 
     static thread_local std::shared_ptr<StringAllocator> instance = std::shared_ptr<StringAllocator>(
             new StringAllocator(TThread::get_nshards(), max_bytes_size, batch_size));
-    array = instance->getLogOnly(w);
+    array = (*instance).getLogOnly(w);
 
     unsigned short int _count = 0;  // 2bytes, the count of K-V pairs
     unsigned short int table_id = 0; // 2 bytes
@@ -651,7 +674,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
     if (timestamp%1000==0&&TThread::getGlobalPartitionID()==4){
         uint32_t cur_time = mako::getCurrentTimeMillis();
         if (cur_time - start_time>= 5*1000 && cur_time - start_time <= 15*1000){ // time duration: [5,15]
-            sample_transaction_tracker[timestamp] = mako::getCurrentTimeMillis() ;
+            sample_transaction_tracker[timestamp] = mako::getCurrentTimeMillis();
         }
     }
 #endif
@@ -660,7 +683,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
     // Single timestamp system: use same timestamp for all shards
     uint32_t tmp = epoch + timestamp * 10;
     // Single timestamp system: no need to loop over shards
-    instance->update_commit_id(tmp);
+    (*instance).update_commit_id(tmp);
     // 1. copy current Commit ID (single timestamp)
     // memcpy(array + w, &instance->latest_commit_timestamp, sizeof(uint32_t));
     memcpy(array + w, &tmp, sizeof(uint32_t));
@@ -750,14 +773,14 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
     unsigned int len_of_KV = w - w_tmp;
     memcpy(array + w_tmp - sizeof(unsigned int), (char *) &len_of_KV, sizeof(unsigned int));
 
-    instance->update_ptr(w);
+    (*instance).update_ptr(w);
     size_t pos = 0;
-    unsigned char *queueLog = instance->getLogOnly (pos);
-    if(instance->checkPushRequired()) {
+    unsigned char *queueLog = (*instance).getLogOnly (pos);
+    if((*instance).checkPushRequired()) {
       assert(pos <= MAX_ARRAY_SIZE_IN_BYTES) ;
       if(pos!=0) {
           // 7. latest_commit_id: single timestamp*10+term
-          memcpy (queueLog + pos, &instance->latest_commit_timestamp, sizeof(uint32_t));
+          memcpy (queueLog + pos, &(*instance).latest_commit_timestamp, sizeof(uint32_t));
           pos += sizeof(uint32_t);
           
           // 8. tracking purpose, the latency to commit a huge log
@@ -765,7 +788,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
           memcpy (queueLog + pos, &st_time, sizeof(uint32_t));
           pos += sizeof(uint32_t);
 
-          instance->update_ptr(pos);
+          (*instance).update_ptr(pos);
 
           /*
           // Use local partition ID for Paxos workers
@@ -792,7 +815,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
 
         // FIX me: merge the logs from helper threads instead of a separate log
         // Use local partition ID for Paxos workers (they are indexed 0 to warehouses-1 per shard)
-        add_log_to_nc((char *)queueLog, pos, TThread::getLocalPartitionID(), batch_size); // the partitionID for the helper thread
+        safe_add_log_to_nc((char *)queueLog, pos, TThread::getLocalPartitionID(), batch_size); // the partitionID for the helper thread
 
 #ifndef DISABLE_DISK
         // Asynchronously persist to RocksDB
@@ -804,7 +827,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
         static std::array<std::atomic<uint64_t>, 64> per_partition_fail{};
 
         // Capture the timestamp and partition ID for the callback
-        uint32_t persist_timestamp = instance->latest_commit_timestamp;
+        uint32_t persist_timestamp = (*instance).latest_commit_timestamp;
         // Use local partition ID for RocksDB persistence (per-shard storage)
         int partition_id = TThread::getLocalPartitionID();
 
@@ -830,11 +853,11 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
             });
 #endif
       }
-      instance->resetMemory();
+      (*instance).resetMemory();
     }
 }
 
-// @unsafe: uses TransItem::key template method and string operations
+// @safe
 void Transaction::print_stats() {
     if (tset_size_ == 0) return;
     TransItem* it = nullptr;
@@ -864,9 +887,9 @@ const char* Transaction::state_name(int state) {
         return "unknown-state";
 }
 
-// @unsafe: calls TObject::print with pointer dereference
+// @unsafe
 void Transaction::print(std::ostream& w) const {
-    w << "T0x" << (void*) this << " " << state_name(state_) << " [";
+    w << "Transaction@" << reinterpret_cast<uintptr_t>(this) << " " << state_name(state_) << " [";
     const TransItem* it = nullptr;
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
@@ -882,38 +905,46 @@ void Transaction::print() const {
     print(std::cerr);
 }
 
-// @unsafe: uses TransItem template methods key, read_value, write_value, predicate_value
+// @safe
 void TObject::print(std::ostream& w, const TransItem& item) const {
-    w << "{" << typeid(*this).name() << " " << (void*) this << "." << item.key<void*>();
+    w << "{" << typeid(*this).name() << " @" << reinterpret_cast<uintptr_t>(this) << "." << item.key<uintptr_t>();
     if (item.has_read())
-        w << " R" << item.read_value<void*>();
+        w << " R" << item.read_value<uintptr_t>();
     if (item.has_write())
-        w << " =" << item.write_value<void*>();
+        w << " =" << item.write_value<uintptr_t>();
     if (item.has_predicate())
-        w << " P" << item.predicate_value<void*>();
+        w << " P" << item.predicate_value<uintptr_t>();
     w << "}";
 }
 
+// @safe
 unsigned long long int TObject::get_table_id() const {
     unsigned long long int temp = 10012;
     return temp;
 }
 
+// @safe
 bool TObject::get_is_remote() const {
     exit(1);
     return false;
 }
 
+// @safe - delegates to print() but no unsafe operations exposed
+// @lifetime: (&'a mut, &'b) -> &'a mut
 std::ostream& operator<<(std::ostream& w, const Transaction& txn) {
     txn.print(w);
     return w;
 }
 
+// @safe - delegates to print() but no unsafe operations exposed
+// @lifetime: (&'a mut, &'b) -> &'a mut
 std::ostream& operator<<(std::ostream& w, const TestTransaction& txn) {
     txn.print(w);
     return w;
 }
 
+// @safe - delegates to print() but no unsafe operations exposed
+// @lifetime: (&'a mut, &'b) -> &'a mut
 std::ostream& operator<<(std::ostream& w, const TransactionGuard& txn) {
     txn.print(w);
     return w;

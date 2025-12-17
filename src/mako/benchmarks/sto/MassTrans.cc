@@ -1,3 +1,4 @@
+// @external: { Transaction: [unsafe_type] }
 #ifdef CONFIG_H
 #include CONFIG_H
 #endif

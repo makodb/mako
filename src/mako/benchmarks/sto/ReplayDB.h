@@ -5,6 +5,7 @@
 #include <vector>
 #include "../abstract_db.h"
 
+// @safe - POD struct with no mutable fields
 // Single timestamp system commit info
 struct CommitInfo {
     uint32_t timestamp; // timestamp*10+term
@@ -15,12 +16,14 @@ struct CommitInfo {
  * @brief: decode buffer and then replay records
  *
  */
+// @unsafe - uses memcpy and pointer arithmetic for binary parsing
 size_t treplay_in_same_thread_opt_mbta_v2(size_t par_id, char *buffer, size_t len, abstract_db* db, int nshards);
 
 /**
  * @brief Get the latest commit info from buffer (single timestamp system)
  *
  */
+// @unsafe - uses memcpy for binary data extraction
 CommitInfo get_latest_commit_info(char *buffer, size_t len);
 
 #endif
