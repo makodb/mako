@@ -144,9 +144,9 @@ void CoordinatorFpgaRaft::AppendEntries() {
 		avg_ob = total_ob/100;
 
 		for (auto it = commo()->rpc_clients_.begin(); it != commo()->rpc_clients_.end(); it++) {
-			if (avg_ob > 0 && it->second->time_.get() > 0) Log_info("time for %d is: %d", it->first, it->second->time_.get()/avg_ob);
+			if (avg_ob > 0 && it->second->time() > 0) Log_info("time for %d is: %d", it->first, it->second->time()/avg_ob);
 			if (it->first != loc_id_) {
-				follower_times.push_back(it->second->time_.get());
+				follower_times.push_back(it->second->time());
 			}
 		}
 		if (avg_ob > 0 && !slow_) {

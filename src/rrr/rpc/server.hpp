@@ -254,7 +254,7 @@ public:
     bool handle_read_one() override { return handle_read(); }
     bool handle_read_two() override { verify(0); return true; }
 
-    // @safe - Error handler
+    // @unsafe - Error handler (uses this-> pointer access)
     void handle_error() override;
 
     // Jetpack: handle_free stub

@@ -35,6 +35,10 @@ thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Coroutine>> Reactor::sp_running_coro_th_{};
 thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> Reactor::clients_{};
+
+// Thread-local storage for PollThreadWorker (raw pointer for direct access)
+// Safe because worker outlives all coroutines on its thread
+thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
 thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
 SpinLock Reactor::disk_job_;
 SpinLock Reactor::trying_job_;
@@ -49,7 +53,7 @@ rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
   return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
 }
 
-// @safe - Creates and runs a new coroutine with rusty::Rc ownership
+// @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
 rusty::Rc<Coroutine>
 Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line) {
   auto reactor_rc = Reactor::GetReactor();
@@ -93,7 +97,7 @@ Reactor::GetDiskReactor() {
  * @param func
  * @return
  */
-// @safe - Creates and runs coroutine with rusty::Rc single-threaded reference counting
+// @unsafe - Creates and runs coroutine, dereferences raw pointers internally
 rusty::Rc<Coroutine>
 Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   rusty::Option<rusty::Rc<Coroutine>> sp_coro;
@@ -320,7 +324,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
   } while (looping_);
 }
 
-// @safe - Continues execution of paused coroutine with rusty::Rc
+// @unsafe - Continues execution of paused coroutine, dereferences raw pointers internally
 void Reactor::ContinueCoro(rusty::Rc<Coroutine> sp_coro) const {
 //  verify(!sp_running_coro_th_.is_none()); // disallow nested coros
   // Clone to avoid moving - must preserve the old value
@@ -419,6 +423,7 @@ PollThreadWorker::PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> rece
   // No eventfd needed - we poll the channel with try_recv() after each epoll_wait
 }
 
+// @unsafe - factory function creates worker and wraps in Rc<RefCell> (rustycpp false positive on move)
 rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(rusty::sync::mpsc::Receiver<PollCommand> receiver) {
   // Create worker, then wrap in RefCell
   PollThreadWorker worker(std::move(receiver));
@@ -539,7 +544,8 @@ void PollThreadWorker::do_remove_pollable(int fd) {
   pending_remove_.insert(fd);
 }
 
-// @unsafe - dereferences raw pointer poll_ptr
+// @unsafe - Uses raw pointer dereference for poll_ptr
+// SAFETY: poll_ptr is guaranteed to be valid by caller (from fd_to_pollable_ map)
 void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) {
   if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
     return;
@@ -554,8 +560,10 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) 
   mode_[fd] = new_mode;
 
   if (new_mode != old_mode) {
+    // @unsafe {
     void* userdata = poll_ptr;
     poll_.Update(*poll_ptr, userdata, new_mode, old_mode);
+    // }
   }
 }
 
@@ -590,6 +598,18 @@ void PollThreadWorker::process_pending_removals() {
   }
 }
 
+// Static method to get current worker from thread-local storage
+// Returns nullptr if called from a thread that doesn't have a PollThreadWorker
+PollThreadWorker* PollThreadWorker::current_worker() {
+  return current_worker_;
+}
+
+// Update poll mode directly (bypasses channel)
+// Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
+void PollThreadWorker::update_mode(int fd, int new_mode, Pollable* poll_ptr) {
+  do_update_mode(fd, new_mode, poll_ptr);
+}
+
 // =============================================================================
 // PollThread Implementation
 // =============================================================================
@@ -618,7 +638,13 @@ rusty::Arc<PollThread> PollThread::create() {
       thread_id_ptr->store(tid, std::memory_order_release);
       // Create worker wrapped in Rc<RefCell<>>
       auto worker = PollThreadWorker::create(std::move(rx));
-      worker->borrow_mut()->poll_loop();
+      // Store raw pointer in TLS for direct access from same thread
+      // The borrow_mut guard keeps RefCell borrowed during poll_loop()
+      // Using raw pointer avoids RefCell re-borrow issues in coroutines
+      auto guard = worker->borrow_mut();
+      PollThreadWorker::current_worker_ = &*guard;
+      guard->poll_loop();
+      PollThreadWorker::current_worker_ = nullptr;  // Clear on exit
     },
     std::move(receiver)
   );
