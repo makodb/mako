@@ -54,7 +54,7 @@ MasstreeContext* MasstreeContext::Current() {
     return g_default_context;
 }
 
-// @unsafe - allocates with new, caller must manage lifetime
-MasstreeContext* MasstreeContext::Create() {
-    return new MasstreeContext();
+// @safe - returns Box with clear ownership
+rusty::Box<MasstreeContext> MasstreeContext::Create() {
+    return rusty::Box<MasstreeContext>(new MasstreeContext());
 }

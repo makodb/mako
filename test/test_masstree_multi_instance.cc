@@ -31,17 +31,20 @@ using TestTree = single_threaded_btree;
 class MasstreeMultiInstanceTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Create two separate contexts
-        ctx1_ = MasstreeContext::Create();
-        ctx2_ = MasstreeContext::Create();
+        // Create two separate contexts - Create() returns Box for safe ownership
+        // We move into unique_ptr for test fixture compatibility
+        auto box1 = MasstreeContext::Create();
+        auto box2 = MasstreeContext::Create();
+        ctx1_.reset(box1.release());
+        ctx2_.reset(box2.release());
 
-        ASSERT_NE(ctx1_, nullptr);
-        ASSERT_NE(ctx2_, nullptr);
+        ASSERT_NE(ctx1_.get(), nullptr);
+        ASSERT_NE(ctx2_.get(), nullptr);
         ASSERT_NE(ctx1_->id(), ctx2_->id());
     }
 
     void TearDown() override {
-        // Note: contexts are not deleted as threadinfos persist
+        // unique_ptr automatically cleans up when test ends
     }
 
     TestTree::value_type MakeValue(uint64_t v) {
@@ -49,8 +52,9 @@ protected:
         return reinterpret_cast<TestTree::value_type>(storage_.back().get());
     }
 
-    MasstreeContext* ctx1_;
-    MasstreeContext* ctx2_;
+    // Using unique_ptr for test fixture (Box doesn't have default ctor)
+    std::unique_ptr<MasstreeContext> ctx1_;
+    std::unique_ptr<MasstreeContext> ctx2_;
     std::vector<std::unique_ptr<uint64_t>> storage_;
 };
 
@@ -81,10 +85,10 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     std::vector<std::thread> threads1;
     for (int i = 0; i < 3; ++i) {
         threads1.emplace_back([this, i, &ctx1_threads, &mtx]() {
-            MasstreeContext::BindCurrentThread(ctx1_);
+            MasstreeContext::BindCurrentThread(ctx1_.get());
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 1000 + i);
             ASSERT_NE(ti, nullptr);
-            EXPECT_EQ(ti->context(), ctx1_);
+            EXPECT_EQ(ti->context(), ctx1_.get());
             std::lock_guard<std::mutex> lock(mtx);
             ctx1_threads.push_back(ti);
         });
@@ -94,10 +98,10 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     std::vector<std::thread> threads2;
     for (int i = 0; i < 3; ++i) {
         threads2.emplace_back([this, i, &ctx2_threads, &mtx]() {
-            MasstreeContext::BindCurrentThread(ctx2_);
+            MasstreeContext::BindCurrentThread(ctx2_.get());
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 2000 + i);
             ASSERT_NE(ti, nullptr);
-            EXPECT_EQ(ti->context(), ctx2_);
+            EXPECT_EQ(ti->context(), ctx2_.get());
             std::lock_guard<std::mutex> lock(mtx);
             ctx2_threads.push_back(ti);
         });
@@ -110,14 +114,14 @@ TEST_F(MasstreeMultiInstanceTest, ThreadRegistryIsolation) {
     std::set<threadinfo*> ctx1_set;
     for (threadinfo* ti = ctx1_->get_allthreads(); ti; ti = ti->next()) {
         ctx1_set.insert(ti);
-        EXPECT_EQ(ti->context(), ctx1_);
+        EXPECT_EQ(ti->context(), ctx1_.get());
     }
 
     // Verify ctx2's thread list only contains ctx2 threads
     std::set<threadinfo*> ctx2_set;
     for (threadinfo* ti = ctx2_->get_allthreads(); ti; ti = ti->next()) {
         ctx2_set.insert(ti);
-        EXPECT_EQ(ti->context(), ctx2_);
+        EXPECT_EQ(ti->context(), ctx2_.get());
     }
 
     // Verify no overlap
@@ -166,14 +170,14 @@ TEST_F(MasstreeMultiInstanceTest, ConcurrentRcuOperations) {
     // Spawn threads for ctx1
     std::vector<std::thread> threads1;
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
-        threads1.emplace_back(rcu_worker, ctx1_, 3000 + i,
+        threads1.emplace_back(rcu_worker, ctx1_.get(), 3000 + i,
                               std::ref(ctx1_completed), OPS_PER_THREAD);
     }
 
     // Spawn threads for ctx2
     std::vector<std::thread> threads2;
     for (int i = 0; i < NUM_THREADS_PER_CTX; ++i) {
-        threads2.emplace_back(rcu_worker, ctx2_, 4000 + i,
+        threads2.emplace_back(rcu_worker, ctx2_.get(), 4000 + i,
                               std::ref(ctx2_completed), OPS_PER_THREAD);
     }
 
@@ -248,7 +252,7 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
 
     // Worker for tree1 (single-threaded tree access)
     std::thread worker1([&]() {
-        MasstreeContext::BindCurrentThread(ctx1_);
+        MasstreeContext::BindCurrentThread(ctx1_.get());
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 5000);
 
         ti->rcu_start();
@@ -273,7 +277,7 @@ TEST_F(MasstreeMultiInstanceTest, TwoMasstreeInstancesParallel) {
 
     // Worker for tree2 (single-threaded tree access)
     std::thread worker2([&]() {
-        MasstreeContext::BindCurrentThread(ctx2_);
+        MasstreeContext::BindCurrentThread(ctx2_.get());
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, 6000);
 
         ti->rcu_start();
@@ -370,12 +374,12 @@ TEST_F(MasstreeMultiInstanceTest, RcuStressTest) {
 
     // Run stress test on ctx1
     std::thread stress1([&]() {
-        rcu_stress_worker(ctx1_, NUM_OPS);
+        rcu_stress_worker(ctx1_.get(), NUM_OPS);
     });
 
     // Run stress test on ctx2
     std::thread stress2([&]() {
-        rcu_stress_worker(ctx2_, NUM_OPS);
+        rcu_stress_worker(ctx2_.get(), NUM_OPS);
     });
 
     // Epoch advancement threads
