@@ -22,7 +22,7 @@ void ServerWorker::SetupHeartbeat() {
 //  hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_thread_pool_g = svr_thread_pool_;
   hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
-  hb_rpc_server_->reg(scsi_);
+  hb_rpc_server_->reg_service(*scsi_);
 
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
@@ -215,7 +215,7 @@ void ServerWorker::SetupService() {
 
   // reg services
   for (auto service : services_) {
-    rpc_server_->reg(service);
+    rpc_server_->reg_service(*service);
   }
 
   // start rpc server

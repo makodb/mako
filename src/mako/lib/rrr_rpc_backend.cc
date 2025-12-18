@@ -73,7 +73,7 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
     // Register request handlers for all request types
     // Note: We capture both req_type and 'this' in the lambda
     for (uint8_t req_type = st_nr_req_types; req_type <= end_nr_req_types; req_type++) {
-        server_->reg(req_type, [this, req_type](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+        server_->reg_handler(req_type, [this, req_type](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
             RequestHandler(req_type, std::move(req), weak_sconn, this);
         });
     }

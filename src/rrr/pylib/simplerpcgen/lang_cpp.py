@@ -37,9 +37,9 @@ def emit_service_and_proxy(service, f, rpc_table):
             f.writeln("int ret = 0;")
             for func in service.functions:
                 if func.attr == "raw":
-                    f.writeln("if ((ret = svr->reg(%s, this, &%sService::%s)) != 0) {" % (func.name.upper(), service.name, func.name))
+                    f.writeln("if ((ret = svr->reg_method(%s, this, &%sService::%s)) != 0) {" % (func.name.upper(), service.name, func.name))
                 else:
-                    f.writeln("if ((ret = svr->reg(%s, this, &%sService::__%s__wrapper__)) != 0) {" % (func.name.upper(), service.name, func.name))
+                    f.writeln("if ((ret = svr->reg_method(%s, this, &%sService::__%s__wrapper__)) != 0) {" % (func.name.upper(), service.name, func.name))
                 with f.indent():
                     f.writeln("goto err;")
                 f.writeln("}")

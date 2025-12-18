@@ -1111,7 +1111,7 @@ void *nc_start_server(void *input) {
     base::ThreadPool *tp = new base::ThreadPool();  // never use it
     rrr::Server *server = new rrr::Server(poll_arc, tp);
 
-    server->reg(impl);
+    server->reg_service(*impl);
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
     int c=0;

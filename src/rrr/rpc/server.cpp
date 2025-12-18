@@ -23,15 +23,27 @@
 //   std::__atomic_base::fetch_sub: [unsafe]
 // }
 
+// External safety annotations for Log functions
+// @external: {
+//   Log::debug: [unsafe]
+//   Log::info: [unsafe]
+//   Log::error: [unsafe]
+//   Log_debug: [unsafe]
+//   Log_info: [unsafe]
+//   Log_warn: [unsafe]
+//   Log_error: [unsafe]
+// }
+
 
 using namespace std;
 
 // External safety annotations for std functions used in this module
 // @external: {
-//   std::unordered_map::find: [unsafe, (auto) -> auto]
-//   std::unordered_map::erase: [unsafe, (auto) -> void]
-//   std::function::operator=: [unsafe, (auto) -> std::function&]
-//   rrr::ServerConnection: [unsafe_type]
+//   std::unordered_map::find: [unsafe]
+//   std::unordered_map::end: [unsafe]
+//   std::unordered_map::erase: [unsafe]
+//   std::unordered_map::operator[]: [unsafe]
+//   std::function::operator=: [unsafe]
 // }
 
 namespace rrr {
@@ -291,7 +303,7 @@ int ServerConnection::handle_write() {
     return result;
 }
 
-// @unsafe - Error handler (uses this-> pointer access)
+// @safe - Error handler (explicit this-> is now safe in rusty-cpp)
 void ServerConnection::handle_error() {
     this->close();
 }
@@ -324,14 +336,14 @@ void ServerConnection::close() {
     }
 }
 
-// @safe - Returns poll mode based on output buffer
+// @unsafe - Returns poll mode based on output buffer (requires const_cast for interior mutability)
 int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    out_l_.lock();
+    const_cast<SpinLock&>(out_l_).lock();
     if (!out_.empty()) {
         mode |= Pollable::WRITE;
     }
-    out_l_.unlock();
+    const_cast<SpinLock&>(out_l_).unlock();
     return mode;
 }
 
@@ -656,9 +668,8 @@ int Server::start(const char* bind_addr) {
   return 0;
 }
 
-// @unsafe - Calls std::unordered_map::find and operator= (external unsafe)
-// SAFETY: Thread-safe map operations for handler registration
-int Server::reg(i32 rpc_id, const RequestHandler& func) {
+// @safe - Registers RPC handler in map
+int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
     // disallow duplicate rpc_id
     if (handlers_.find(rpc_id) != handlers_.end()) {
         return EEXIST;
@@ -669,8 +680,7 @@ int Server::reg(i32 rpc_id, const RequestHandler& func) {
     return 0;
 }
 
-// @unsafe - Calls std::unordered_map::erase (external unsafe)
-// SAFETY: Thread-safe map operation for handler removal
+// @safe - Unregisters RPC handler from map
 void Server::unreg(i32 rpc_id) {
     handlers_.erase(rpc_id);
 }

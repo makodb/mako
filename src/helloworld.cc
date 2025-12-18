@@ -94,7 +94,7 @@ void *nc_start_server2(void *input) {
     base::ThreadPool *tp = new base::ThreadPool();  // never use it
     rrr::Server *server = new rrr::Server(pm, tp);
 
-    server->reg(impl);
+    server->reg_service(*impl);
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     nc_services2.push_back(std::shared_ptr<HelloworldClientServiceImpl>(impl));
     return nullptr;

@@ -89,7 +89,7 @@ protected:
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
         service = new ExtendedTestService();
-        server->reg(service);
+        server->reg_service(*service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(current_port)).c_str()), 0);
     }
 

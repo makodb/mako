@@ -88,7 +88,7 @@ void RaftWorker::SetupService() {
 
   // Register all services
   for (auto service : services_) {
-    rpc_server_->reg(service);
+    rpc_server_->reg_service(*service);
   }
 
   // Start RPC server
@@ -124,7 +124,7 @@ void RaftWorker::SetupHeartbeat() {
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
   hb_thread_pool_g = new base::ThreadPool(1);
   hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
-  hb_rpc_server_->reg(scsi_);
+  hb_rpc_server_->reg_service(*scsi_);
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);

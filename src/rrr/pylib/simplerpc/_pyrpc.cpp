@@ -103,7 +103,7 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
     // This reference count will be decreased when shutting down server
     Py_XINCREF(func);
 
-    int ret = svr->reg(rpc_id, [func](rusty::Box<Request> req, WeakServerConnection weak_sconn) {
+    int ret = svr->reg_handler(rpc_id, [func](rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         Marshal* output_m = NULL;
         int error_code = 0;
         {

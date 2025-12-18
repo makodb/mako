@@ -36,6 +36,17 @@
 //   std::*::erase: [safe, (auto) -> auto]
 // }
 
+// External safety annotations for Log functions
+// @external: {
+//   Log::debug: [unsafe]
+//   Log::info: [unsafe]
+//   Log::error: [unsafe]
+//   Log_debug: [unsafe]
+//   Log_info: [unsafe]
+//   Log_warn: [unsafe]
+//   Log_error: [unsafe]
+// }
+
 // for getaddrinfo() used in Server::start()
 //struct addrinfo;
 
@@ -142,7 +153,8 @@ class ServerConnection: public Pollable {
     friend class ServerListener;
 
     Marshal in_, out_;
-    mutable SpinLock out_l_;
+    // Interior mutability handled via const_cast in poll_mode()
+    SpinLock out_l_;
 
     Server* server_;
     int socket_;
@@ -232,7 +244,7 @@ public:
         return socket_;
     }
 
-    // @safe - Returns poll mode based on output buffer
+    // @unsafe - Returns poll mode based on output buffer (uses const_cast)
     int poll_mode() const override;
 
     // Jetpack: content_size not used for connection
@@ -254,7 +266,7 @@ public:
     bool handle_read_one() override { return handle_read(); }
     bool handle_read_two() override { verify(0); return true; }
 
-    // @unsafe - Error handler (uses this-> pointer access)
+    // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
     void handle_error() override;
 
     // Jetpack: handle_free stub
@@ -376,8 +388,8 @@ public:
     int start(const char* bind_addr);
 
     // @safe - Registers service
-    int reg(Service* svc) {
-        return svc->__reg_to__(this);
+    int reg_service(Service& svc) {
+        return svc.__reg_to__(this);
     }
 
     /**
@@ -397,11 +409,11 @@ public:
      *  }
      */
     // @safe - Registers RPC handler function
-    int reg(i32 rpc_id, const RequestHandler& func);
+    int reg_handler(i32 rpc_id, const RequestHandler& func);
 
-    // @unsafe
+    // @unsafe - uses raw pointer svc and member function pointer
     template<class S>
-    int reg(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, WeakServerConnection)) {
+    int reg_method(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, WeakServerConnection)) {
 
         // disallow duplicate rpc_id
         if (handlers_.find(rpc_id) != handlers_.end()) {

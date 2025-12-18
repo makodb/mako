@@ -45,34 +45,34 @@ public:
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
-        if ((ret = svr->reg(FAST_PRIME, this, &BenchmarkService::__fast_prime__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_PRIME, this, &BenchmarkService::__fast_prime__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_DOT_PROD, this, &BenchmarkService::__fast_dot_prod__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_DOT_PROD, this, &BenchmarkService::__fast_dot_prod__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_ADD, this, &BenchmarkService::__fast_add__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_ADD, this, &BenchmarkService::__fast_add__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_NOP, this, &BenchmarkService::__fast_nop__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_NOP, this, &BenchmarkService::__fast_nop__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_VEC, this, &BenchmarkService::__fast_vec__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_VEC, this, &BenchmarkService::__fast_vec__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(PRIME, this, &BenchmarkService::__prime__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(PRIME, this, &BenchmarkService::__prime__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(DOT_PROD, this, &BenchmarkService::__dot_prod__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(DOT_PROD, this, &BenchmarkService::__dot_prod__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(ADD, this, &BenchmarkService::__add__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(ADD, this, &BenchmarkService::__add__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(NOP, this, &BenchmarkService::__nop__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(NOP, this, &BenchmarkService::__nop__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(SLEEP, this, &BenchmarkService::__sleep__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(SLEEP, this, &BenchmarkService::__sleep__wrapper__)) != 0) {
             goto err;
         }
         return 0;

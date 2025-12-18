@@ -14,7 +14,7 @@ public:
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
-        if ((ret = svr->reg(TXN_READ, this, &HelloworldClientService::__txn_read__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_READ, this, &HelloworldClientService::__txn_read__wrapper__)) != 0) {
             goto err;
         }
         return 0;
