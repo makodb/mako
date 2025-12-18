@@ -220,13 +220,13 @@ protected:
     {
       return tuple;
     }
-    // @unsafe - calls marked_ptr::get_flags (undeclared)
+    // @unsafe - calls marked_ptr::get_flags
     inline bool
     is_insert() const
     {
       return btr.get_flags() & FLAGS_INSERT;
     }
-    // @unsafe - calls marked_ptr::get_flags (undeclared)
+    // @unsafe - calls marked_ptr::get_flags
     inline bool
     do_write() const
     {
@@ -239,7 +239,7 @@ protected:
       INVARIANT(!do_write());
       btr.or_flags(FLAGS_DOWRITE);
     }
-    // @unsafe - calls marked_ptr::get (undeclared)
+    // @unsafe - calls marked_ptr::get
     inline concurrent_btree *
     get_btree() const
     {
@@ -299,13 +299,13 @@ protected:
     // @unsafe - uses const_cast
     explicit dbtuple_write_info(const dbtuple *tuple)
       : tuple(const_cast<dbtuple *>(tuple)), entry(), pos() {}
-    // @unsafe - calls marked_ptr::get (undeclared)
+    // @unsafe
     inline dbtuple *
     get_tuple()
     {
       return tuple.get();
     }
-    // @unsafe - calls marked_ptr::get (undeclared)
+    // @unsafe
     inline const dbtuple *
     get_tuple() const
     {
@@ -325,7 +325,7 @@ protected:
     {
       return tuple.get_flags() & FLAGS_LOCKED;
     }
-    // @unsafe - calls marked_ptr::get_flags (undeclared)
+    // @unsafe
     inline ALWAYS_INLINE bool
     is_insert() const
     {

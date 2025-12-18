@@ -70,7 +70,10 @@ template <int width> class kpermuter {
     typedef sized_kpermuter_info<(width > 3) + (width > 7) + (width > 15)> info;
     typedef typename info::storage_type storage_type;
     typedef typename info::value_type value_type;
-    enum { max_width = (int) (sizeof(storage_type) * 2 - 1) };
+    // @safe
+    static constexpr int max_width() {
+        return (int) (sizeof(storage_type) * 2 - 1);
+    }
     enum { size_bits = 4 };
 
     // @safe - default construction
@@ -88,7 +91,7 @@ template <int width> class kpermuter {
 
         Elements will be allocated in order 0, 1, ..., @a width - 1. */
     static inline value_type make_empty() {
-        value_type p = (value_type) info::initial_value >> ((max_width - width) << 2);
+        value_type p = (value_type) info::initial_value >> ((max_width() - width) << 2);
         return p & ~(value_type) 15;
     }
     // @safe - pure bit arithmetic
@@ -307,7 +310,7 @@ template <int width> class kpermuter {
 template <int width>
 lcdf::String kpermuter<width>::unparse() const
 {
-    char buf[max_width + 3], *s = buf;
+    char buf[max_width() + 3], *s = buf;
     value_type p(x_);
     value_type seen(0);
     int n = p & 15;

@@ -162,7 +162,8 @@ class BenchmarkConfig {
       const std::string& getCluster() const { return cluster_; }
       // @safe
       int getClusterRole() const { return clusterRole_; }
-      // @safe - returns raw pointer (allowed in @safe)
+      // @lifetime: (&'a) -> *'a
+      // @safe - returns raw pointer to member
       transport::Configuration* getConfig() const { return config_; }
       // @safe
       bool isRunning() const { return running_; }

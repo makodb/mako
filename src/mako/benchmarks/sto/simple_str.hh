@@ -33,7 +33,8 @@ public:
     return len > (int)capacity_;
   }
 
-  // @safe - returns raw pointer (allowed in @safe)
+  // @lifetime: (&'a) -> *'a
+  // @safe - returns raw pointer to member
   const char *data() {
     return buf_;
   }

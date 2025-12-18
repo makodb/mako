@@ -189,6 +189,7 @@ namespace mako
 #endif
     const size_t max_vector_int_length = 80; // uint64 * nshards
 
+    // @safe - POD struct
     struct TargetServerIDReader {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
     };
@@ -204,6 +205,7 @@ namespace mako
     const size_t max_batch_size = 100; 
   #endif
 
+    // @safe - POD struct
     struct vector_int_request_t
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
@@ -212,6 +214,7 @@ namespace mako
         char value[max_vector_int_length];
     };
 
+    // @safe - POD struct
     struct get_request_t
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
@@ -221,6 +224,7 @@ namespace mako
         char key[max_key_length];
     };
 
+    // @safe - POD struct
     struct scan_request_t
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
@@ -231,6 +235,7 @@ namespace mako
         char start_end_key[128]; // start_key => 64, end_key => 64
     };
 
+    // @safe - POD struct
     struct get_response_t
     {
         uint32_t req_nr;
@@ -239,6 +244,7 @@ namespace mako
         char value[max_value_length];
     };
 
+    // @safe - POD struct
     struct scan_response_t
     {
         uint32_t req_nr;
@@ -247,6 +253,7 @@ namespace mako
         char value[max_value_length];
     };
 
+    // @safe - POD struct
     struct control_request_t 
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
@@ -255,6 +262,7 @@ namespace mako
         uint64_t value;
     };
 
+    // @safe - POD struct
     struct warmup_request_t 
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
@@ -262,6 +270,7 @@ namespace mako
         uint32_t req_val;
     };
 
+    // @safe - POD struct
     struct lock_request_t
     {
         uint16_t targert_server_id; // (0-65,535) <= warehouses * shards
@@ -367,12 +376,14 @@ namespace mako
         char *data_ptr;
     };
 
+    // @safe - POD struct
     struct basic_response_t
     {
         uint32_t req_nr;
         int status;
     };
 
+    // @safe - POD struct
     struct get_int_response_t
     {
         uint32_t req_nr;
@@ -381,12 +392,14 @@ namespace mako
         int status;
     };
 
+    // @safe - POD struct
     struct basic_request_t
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
     };
 
+    // @safe - simple constants
     class ErrorCode
     {
     public:
@@ -421,20 +434,27 @@ namespace mako
 
 
     /// Simple time that uses std::chrono
+    // @safe - uses std::chrono library
     class ChronoTimer {
         public:
+            // @safe - simple initialization
             ChronoTimer() { reset(); }
+            // @safe - std::chrono time point assignment
             void reset() { start_time_ = std::chrono::high_resolution_clock::now(); }
 
+            // @safe - simple arithmetic
             /// Return seconds elapsed since this timer was created or last reset
             double get_sec() const { return get_ns() / 1e9; }
 
+            // @safe - simple arithmetic
             /// Return milliseconds elapsed since this timer was created or last reset
             double get_ms() const { return get_ns() / 1e6; }
 
+            // @safe - simple arithmetic
             /// Return microseconds elapsed since this timer was created or last reset
             double get_us() const { return get_ns() / 1e3; }
 
+            // @safe - std::chrono duration cast
             /// Return nanoseconds elapsed since this timer was created or last reset
             size_t get_ns() const {
                 return static_cast<size_t>(
@@ -474,6 +494,7 @@ namespace mako
         return freq_ghz;
     }
 
+    // @safe - simple arithmetic
     static size_t ms_to_cycles(double ms, double freq_ghz) {
         return static_cast<size_t>(ms * 1000 * 1000 * freq_ghz);
     }

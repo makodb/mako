@@ -89,6 +89,7 @@ static __attribute__((unused)) signed char _Message_FileDebugFlag = 0;
 #define Assert(pred)
 #endif
 
+// @safe - simple flag check with cached value
 static inline bool
 Message_DebugEnabled(const char *fname)
 {

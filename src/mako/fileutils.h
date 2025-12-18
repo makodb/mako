@@ -6,6 +6,7 @@
 class fileutils {
 public:
 
+  // @unsafe - system call write() and pointer arithmetic
   static int
   writeall(int fd, const char *buf, int n)
   {
@@ -19,6 +20,7 @@ public:
     return 0;
   }
 
+  // @unsafe - system call read() and pointer arithmetic
   static int
   readall(int fd, char *buf, int n)
   {

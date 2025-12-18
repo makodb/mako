@@ -27,6 +27,7 @@ class base_imstring {
   // limits on keys
   typedef uint16_t internal_size_type;
 
+  // @safe - simple bounds check and cast
   static inline ALWAYS_INLINE internal_size_type
   CheckBounds(size_t l)
   {
@@ -39,8 +40,10 @@ class base_imstring {
   static event_avg_counter g_evt_avg_imstring_len;
 
 public:
+  // @safe - simple initialization
   base_imstring() : p(NULL), l(0) {}
 
+  // @unsafe - uses new[] and NDB_MEMCPY
   base_imstring(const uint8_t *src, size_t l)
     : p(new uint8_t[l]), l(CheckBounds(l))
   {
@@ -49,6 +52,7 @@ public:
     NDB_MEMCPY(p, src, l);
   }
 
+  // @unsafe - uses new[] and NDB_MEMCPY
   base_imstring(const std::string &s)
     : p(new uint8_t[s.size()]), l(CheckBounds(s.size()))
   {
@@ -61,6 +65,7 @@ public:
   base_imstring(base_imstring &&) = delete;
   base_imstring &operator=(const base_imstring &) = delete;
 
+  // @safe - simple pointer/value swaps
   template <bool R>
   inline void
   swap(base_imstring<R> &that)
@@ -74,6 +79,7 @@ public:
     that.l = temp_l;
   }
 
+  // @unsafe - calls @unsafe release()
   inline
   ~base_imstring()
   {
@@ -81,12 +87,14 @@ public:
     g_evt_imstring_bytes_freed += l;
   }
 
+  // @safe - simple getter
   inline const uint8_t *
   data() const
   {
     return p;
   }
 
+  // @safe - simple getter
   inline size_t
   size() const
   {
@@ -95,6 +103,7 @@ public:
 
 private:
 
+  // @unsafe - calls RCU free_array or delete[]
   inline void
   release()
   {

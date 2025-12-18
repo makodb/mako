@@ -4,6 +4,7 @@
 
 #include <cstddef>
 
+// @safe - simple arithmetic and builtin intrinsic
 // Return ceil(log2(x)).
 static inline std::size_t
 ceil_log2(std::size_t x)
@@ -14,6 +15,7 @@ ceil_log2(std::size_t x)
   return bits;
 }
 
+// @safe - pure compile-time recursion
 // Return ceil(log2(x)).  This is slow, but can be evaluated in a
 // constexpr context.  'exact' is used internally and should not be
 // provided by the caller.
@@ -25,6 +27,7 @@ ceil_log2_const(std::size_t x, bool exact = true)
     : 1 + ceil_log2_const(x >> 1, ((x & 1) == 1) ? false : exact);
 }
 
+// @safe - simple arithmetic and builtin intrinsic
 // Round up to the nearest power of 2
 static inline std::size_t
 round_up_to_pow2(std::size_t x)
@@ -35,6 +38,7 @@ round_up_to_pow2(std::size_t x)
   return (std::size_t)1 << bits;
 }
 
+// @safe - simple constexpr arithmetic
 static inline constexpr std::size_t
 round_up_to_pow2_const(std::size_t x)
 {

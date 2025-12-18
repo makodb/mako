@@ -16,21 +16,37 @@ class Timestamp
 {
 
 public:
+    // @safe - simple initialization
     Timestamp() : timestamp(0), id(0) { };
+    // @safe - simple initialization
     Timestamp(uint64_t t) : timestamp(t), id(0) { };
+    // @safe - simple initialization
     Timestamp(uint64_t t, uint64_t i) : timestamp(t), id(i) { };
+    // @safe - default destructor
     ~Timestamp() { };
+    // @safe - simple assignment
     void operator= (const Timestamp &t);
+    // @safe - simple comparison
     bool operator== (const Timestamp &t) const;
+    // @safe - simple comparison
     bool operator!= (const Timestamp &t) const;
+    // @safe - simple comparison
     bool operator> (const Timestamp &t) const;
+    // @safe - simple comparison
     bool operator< (const Timestamp &t) const;
+    // @safe - simple comparison
     bool operator>= (const Timestamp &t) const;
+    // @safe - simple comparison
     bool operator<= (const Timestamp &t) const;
+    // @safe - simple increment
     Timestamp operator++ ();
+    // @safe - simple check
     bool isValid() const;
+    // @safe - simple getter
     uint64_t getID() const { return id; };
+    // @safe - simple getter
     uint64_t getTimestamp() const { return timestamp; };
+    // @safe - simple setter
     void setTimestamp(uint64_t t) { timestamp = t; };  
 
 private:

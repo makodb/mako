@@ -77,37 +77,45 @@ struct basic_px_queue {
   template <typename PtrType, typename ObjType>
   class iterator_ : public std::iterator<std::forward_iterator_tag, ObjType> {
   public:
+    // @safe - simple initialization
     inline iterator_() : px_(nullptr), i_() {}
+    // @safe - simple initialization
     inline iterator_(PtrType *px) : px_(px), i_() {}
 
+    // @safe - simple copy
     // allow iterator to assign to const_iterator
     template <typename P, typename O>
     inline iterator_(const iterator_<P, O> &o) : px_(o.px_), i_(o.i_) {}
 
+    // @unsafe
     inline ObjType &
     operator*() const
     {
       return px_->pxs_[i_];
     }
 
+    // @unsafe
     inline ObjType *
     operator->() const
     {
       return &px_->pxs_[i_];
     }
 
+    // @unsafe
     inline uint64_t
     tick() const
     {
       return px_->rcu_tick_;
     }
 
+    // @safe - simple comparison
     inline bool
     operator==(const iterator_ &o) const
     {
       return px_ == o.px_ && i_ == o.i_;
     }
 
+    // @safe - simple comparison
     inline bool
     operator!=(const iterator_ &o) const
     {
@@ -141,10 +149,14 @@ struct basic_px_queue {
   typedef iterator_<px_group, T> iterator;
   typedef iterator_<const px_group, const T> const_iterator;
 
+  // @safe - simple iterator construction
   inline iterator begin() { return iterator(head_); }
+  // @safe - simple iterator construction
   inline const_iterator begin() const { return iterator(head_); }
 
+  // @safe - simple iterator construction
   inline iterator end() { return iterator(nullptr); }
+  // @safe - simple iterator construction
   inline const_iterator end() const { return iterator(nullptr); }
 
   // enqueue t in epoch rcu_tick
@@ -199,6 +211,7 @@ struct basic_px_queue {
     alloc_freelist(nalloc);
   }
 
+  // @unsafe
   inline bool
   empty() const
   {
@@ -324,8 +337,10 @@ struct basic_px_queue {
     }
   }
 
+  // @safe - simple getter
   inline size_t get_ngroups() const { return ngroups_; }
 
+  // @unsafe
   inline bool
   get_latest_epoch(uint64_t &e) const
   {

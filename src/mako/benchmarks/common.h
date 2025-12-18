@@ -30,7 +30,7 @@ class HashWrapper {
         data.insert(std::move(k), v);
     }
 
-    // @safe - uses rusty::HashMap::get which returns Option
+    // @unsafe - pointer dereference via unwrap
     int get_tprops(const std::string& k) {
         auto result = data.get(k);
         if (result.is_some()) {

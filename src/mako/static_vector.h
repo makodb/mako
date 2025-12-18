@@ -22,15 +22,19 @@ public:
   typedef const T & const_reference;
   typedef size_t size_type;
 
+  // @safe
   inline static_vector() : n(0) {}
+  // @unsafe
   inline ~static_vector() { clear(); }
 
+  // @unsafe
   inline static_vector(const static_vector &that)
     : n(0)
   {
     assignFrom(that);
   }
 
+  // @unsafe
   // not efficient, don't use in performance critical parts
   static_vector(std::initializer_list<T> l)
     : n(0)
@@ -39,6 +43,7 @@ public:
       push_back(p);
   }
 
+  // @unsafe - calls assignFrom
   static_vector &
   operator=(const static_vector &that)
   {
@@ -46,18 +51,21 @@ public:
     return *this;
   }
 
+  // @safe - simple getter
   inline size_t
   size() const
   {
     return n;
   }
 
+  // @safe - simple check
   inline bool
   empty() const
   {
     return !n;
   }
 
+  // @unsafe - calls ptr() which uses reinterpret_cast
   inline reference
   front()
   {
@@ -66,12 +74,14 @@ public:
     return *ptr();
   }
 
+  // @unsafe - calls front() which is unsafe
   inline const_reference
   front() const
   {
     return const_cast<static_vector *>(this)->front();
   }
 
+  // @unsafe - calls ptr() which uses reinterpret_cast
   inline reference
   back()
   {
@@ -80,12 +90,14 @@ public:
     return ptr()[n - 1];
   }
 
+  // @unsafe - calls back() which is unsafe
   inline const_reference
   back() const
   {
     return const_cast<static_vector *>(this)->back();
   }
 
+  // @unsafe - calls ptr() and may call destructor
   inline void
   pop_back()
   {
@@ -95,18 +107,21 @@ public:
     n--;
   }
 
+  // @unsafe - calls emplace_back which uses placement new
   inline void
   push_back(const T &obj)
   {
     emplace_back(obj);
   }
 
+  // @unsafe - calls emplace_back which uses placement new
   inline void
   push_back(T &&obj)
   {
     emplace_back(std::move(obj));
   }
 
+  // @unsafe - uses placement new
   // C++11 goodness- a strange syntax this is
 
   template <class... Args>
@@ -117,12 +132,14 @@ public:
     new (&(ptr()[n++])) T(std::forward<Args>(args)...);
   }
 
+  // @unsafe - calls ptr() which uses reinterpret_cast
   inline reference
   operator[](int i)
   {
     return ptr()[i];
   }
 
+  // @unsafe - calls operator[] which is unsafe
   inline const_reference
   operator[](int i) const
   {

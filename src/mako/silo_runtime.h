@@ -162,7 +162,11 @@ public:
     void InitializeAllocator(size_t ncpus, size_t maxpercore);
 
     // Get allocator state
+    // @lifetime: (&'a mut) -> &'a mut
+    // @safe
     AllocatorState& allocator_state() { return alloc_; }
+    // @lifetime: (&'a) -> &'a
+    // @safe
     const AllocatorState& allocator_state() const { return alloc_; }
 
     // Allocate from this runtime's memory pool

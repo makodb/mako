@@ -36,6 +36,7 @@ template <typename T, bool Pedantic = true>
 class aligned_padded_elem {
 public:
 
+  // @unsafe - uses uintptr_t cast
   template <class... Args>
   aligned_padded_elem(Args &&... args)
     : elem(std::forward<Args>(args)...)
@@ -48,9 +49,15 @@ public:
   CACHE_PADOUT;
 
   // syntactic sugar- can treat like a pointer
+  // @lifetime: (&'a mut) -> &'a mut
+  // @safe - returns reference to member
   inline T & operator*() { return elem; }
+  // @lifetime: (&'a) -> &'a
+  // @safe - returns const reference to member
   inline const T & operator*() const { return elem; }
+  // @safe - returns pointer to member
   inline T * operator->() { return &elem; }
+  // @safe - returns const pointer to member
   inline const T * operator->() const { return &elem; }
 
 private:
@@ -69,74 +76,89 @@ typedef aligned_padded_elem<uint64_t> aligned_padded_u64;
 
 template <typename T>
 struct host_endian_trfm {
+  // @safe - identity function
   inline ALWAYS_INLINE T operator()(const T &t) const { return t; }
 };
 
 template <>
 struct host_endian_trfm<uint16_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE uint16_t operator()(uint16_t t) const { return be16toh(t); }
 };
 
 template <>
 struct host_endian_trfm<int16_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE int16_t operator()(int16_t t) const { return be16toh(t); }
 };
 
 template <>
 struct host_endian_trfm<int32_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE int32_t operator()(int32_t t) const { return be32toh(t); }
 };
 
 template <>
 struct host_endian_trfm<uint32_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE uint32_t operator()(uint32_t t) const { return be32toh(t); }
 };
 
 template <>
 struct host_endian_trfm<int64_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE int64_t operator()(int64_t t) const { return be64toh(t); }
 };
 
 template <>
 struct host_endian_trfm<uint64_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE uint64_t operator()(uint64_t t) const { return be64toh(t); }
 };
 
 template <typename T>
 struct big_endian_trfm {
+  // @safe - identity function
   inline ALWAYS_INLINE T operator()(const T &t) const { return t; }
 };
 
 template <>
 struct big_endian_trfm<uint16_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE uint16_t operator()(uint16_t t) const { return htobe16(t); }
 };
 
 template <>
 struct big_endian_trfm<int16_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE int16_t operator()(int16_t t) const { return htobe16(t); }
 };
 
 template <>
 struct big_endian_trfm<int32_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE int32_t operator()(int32_t t) const { return htobe32(t); }
 };
 
 template <>
 struct big_endian_trfm<uint32_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE uint32_t operator()(uint32_t t) const { return htobe32(t); }
 };
 
 template <>
 struct big_endian_trfm<int64_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE int64_t operator()(int64_t t) const { return htobe64(t); }
 };
 
 template <>
 struct big_endian_trfm<uint64_t> {
+  // @safe - byteswap intrinsic
   inline ALWAYS_INLINE uint64_t operator()(uint64_t t) const { return htobe64(t); }
 };
 
+// @unsafe - C-style cast, array access
 inline std::string
 hexify_buf(const char *buf, size_t len)
 {
@@ -152,6 +174,7 @@ hexify_buf(const char *buf, size_t len)
 }
 
 
+// @unsafe - uses streams (undeclared)
 template <typename T>
 inline std::string
 hexify(const T &t)
@@ -161,6 +184,7 @@ hexify(const T &t)
   return buf.str();
 }
 
+// @unsafe - calls @unsafe hexify_buf
 template <>
 inline std::string
 hexify(const std::string &input)
@@ -173,6 +197,7 @@ struct mask_ {
   static const T value = ((T(1) << lgbase) - 1);
 };
 
+// @safe - pure bitwise arithmetic
 // rounding
 template <typename T, unsigned int lgbase>
 static constexpr inline ALWAYS_INLINE T
@@ -181,6 +206,7 @@ round_up(T t)
   return (t + mask_<T, lgbase>::value) & ~mask_<T, lgbase>::value;
 }
 
+// @safe - pure bitwise arithmetic
 template <typename T, unsigned int lgbase>
 static constexpr inline ALWAYS_INLINE T
 round_down(T t)
@@ -188,6 +214,7 @@ round_down(T t)
   return (t & ~mask_<T, lgbase>::value);
 }
 
+// @safe - simple arithmetic
 template <typename T, typename U>
 static inline ALWAYS_INLINE T
 iceil(T x, U y)
@@ -196,6 +223,7 @@ iceil(T x, U y)
   return x + (mod ? y - mod : 0);
 }
 
+// @safe - simple arithmetic
 template <typename T>
 static inline T
 slow_round_up(T x, T q)
@@ -206,6 +234,7 @@ slow_round_up(T x, T q)
   return x + (q - r);
 }
 
+// @safe - simple arithmetic
 template <typename T>
 static inline T
 slow_round_down(T x, T q)
@@ -222,30 +251,35 @@ slow_round_down(T x, T q)
 //   http://developer.classpath.org/doc/java/util/Random-source.html
 class fast_random {
 public:
+  // @safe - simple initialization and arithmetic
   fast_random(unsigned long seed)
     : seed(0)
   {
     set_seed0(seed);
   }
 
+  // @safe - simple arithmetic
   inline unsigned long
   next()
   {
     return ((unsigned long) next(32) << 32) + next(32);
   }
 
+  // @safe - simple arithmetic
   inline uint32_t
   next_u32()
   {
     return next(32);
   }
 
+  // @safe - simple arithmetic
   inline uint16_t
   next_u16()
   {
     return next(16);
   }
 
+  // @safe - simple arithmetic
   /** [0.0, 1.0) */
   inline double
   next_uniform()
@@ -253,12 +287,14 @@ public:
     return (((unsigned long) next(26) << 27) + next(27)) / (double) (1L << 53);
   }
 
+  // @safe - simple arithmetic
   inline char
   next_char()
   {
     return next(8) % 256;
   }
 
+  // @safe - array access with bounded index
   inline char
   next_readable_char()
   {
@@ -266,6 +302,7 @@ public:
     return readables[next(6)];
   }
 
+  // @unsafe - uses undeclared std::string methods
   inline std::string
   next_string(size_t len)
   {
@@ -275,6 +312,7 @@ public:
     return s;
   }
 
+  // @unsafe - uses undeclared std::string methods
   inline std::string
   next_readable_string(size_t len)
   {
@@ -284,12 +322,14 @@ public:
     return s;
   }
 
+  // @safe - simple getter
   inline unsigned long
   get_seed()
   {
     return seed;
   }
 
+  // @safe - simple setter
   inline void
   set_seed(unsigned long seed)
   {
@@ -297,12 +337,14 @@ public:
   }
 
 private:
+  // @safe - simple arithmetic
   inline void
   set_seed0(unsigned long seed)
   {
     this->seed = (seed ^ 0x5DEECE66DL) & ((1L << 48) - 1);
   }
 
+  // @safe - simple arithmetic
   inline unsigned long
   next(unsigned int bits)
   {
@@ -313,12 +355,14 @@ private:
   unsigned long seed;
 };
 
+// @unsafe - uses streams
 // Add operator<< for std::pair to support format_list
 template <typename T1, typename T2>
 inline std::ostream& operator<<(std::ostream& os, const std::pair<T1, T2>& p) {
   return os << "(" << p.first << ", " << p.second << ")";
 }
 
+// @unsafe - uses streams
 template <typename ForwardIterator>
 std::string
 format_list(ForwardIterator begin, ForwardIterator end)
@@ -336,6 +380,7 @@ format_list(ForwardIterator begin, ForwardIterator end)
   return ss.str();
 }
 
+// @unsafe - system calls and printf
 static void
 pclock(char *msg, clockid_t cid)
 {
@@ -346,6 +391,7 @@ pclock(char *msg, clockid_t cid)
     printf("%s %4jd.%03ld\n", msg, (intmax_t) ts.tv_sec, ts.tv_nsec / 1000000);
 }
 
+// @unsafe - pointer arithmetic
 /**
  * Returns the lowest position p such that p0+p != p1+p.
  */

@@ -24,6 +24,7 @@ using std::string;
 
 namespace transport
 {
+    // @safe - simple struct with string members
     struct ShardAddress
     {
         string host;
@@ -31,16 +32,24 @@ namespace transport
         string cluster;
         int clusterRole;
         
+        // @safe - simple initialization
         ShardAddress() : clusterRole(0) {}
         ShardAddress(const string &host, const string &port, const int &clusterRole);
+        // @safe - simple comparison
         bool operator==(const ShardAddress &other) const;
+        // @safe - simple comparison
         inline bool operator!=(const ShardAddress &other) const { return !(*this == other); }
+        // @safe - simple comparison
         bool operator<(const ShardAddress &other) const;
+        // @safe - simple comparison
         bool operator<=(const ShardAddress &other) const { return *this < other || *this == other; }
+        // @safe - simple comparison
         bool operator>(const ShardAddress &other) const { return !(*this <= other); }
+        // @safe - simple comparison
         bool operator>=(const ShardAddress &other) const { return !(*this < other); }
     };
 
+    // @safe - simple struct
     // Site information for new format
     struct SiteInfo
     {
@@ -52,6 +61,7 @@ namespace transport
         int shard_id;
         int replica_idx;
         
+        // @safe - simple initialization
         SiteInfo() : id(-1), port(0), is_leader(false), shard_id(-1), replica_idx(-1) {}
     };
 
@@ -72,11 +82,17 @@ namespace transport
         int GetNumReplicas(int shard_id) const;
         
         // Common interface
+        // @safe - comparison operator
         bool operator==(const Configuration &other) const;
+        // @safe - simple comparison
         inline bool operator!=(const Configuration &other) const { return !(*this == other); }
+        // @safe - comparison operator
         bool operator<(const Configuration &other) const;
+        // @safe - simple comparison
         bool operator<=(const Configuration &other) const { return *this < other || *this == other; }
+        // @safe - simple comparison
         bool operator>(const Configuration &other) const { return !(*this <= other); }
+        // @safe - simple comparison
         bool operator>=(const Configuration &other) const { return !(*this < other); }
 
     public:

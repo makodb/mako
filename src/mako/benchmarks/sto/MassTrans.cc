@@ -1,4 +1,5 @@
 // @external: { Transaction: [unsafe_type] }
+// @external_unsafe: Masstree::*
 #ifdef CONFIG_H
 #include CONFIG_H
 #endif

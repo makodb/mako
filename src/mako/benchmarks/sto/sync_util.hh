@@ -32,7 +32,7 @@ namespace sync_util {
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
-        static std::atomic<int> local_replica_id; // local server incremental id
+        static int local_replica_id; // local server incremental id
 
         // https://en.cppreference.com/w/cpp/thread/condition_variable
         static bool toLeader;
@@ -147,13 +147,13 @@ namespace sync_util {
         }
 
         // In previous submission, we assume the healthy shards are always INF
-        // @unsafe - uses std::unordered_map (undeclared)
+        // @unsafe
         static void update_stable_timestamp(int epoch, uint32_t tt) { 
            hist_timestamp[epoch] = tt; 
         }
 
         // Single timestamp system: ensure vector contains replicated value
-        // @unsafe - uses std::vector which is undeclared, and std::cout
+        // @unsafe
         static void update_stable_timestamp_vec(int epoch, vector<uint32_t> tt_vec) { 
            // In single timestamp system, just use the first element
            if (!tt_vec.empty()) {

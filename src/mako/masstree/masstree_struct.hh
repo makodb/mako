@@ -79,7 +79,8 @@ class node_base : public make_nodeversion<P>::type {
     }
     // @unsafe - manipulates parent pointers under locks
     inline internode_type* locked_parent(threadinfo& ti) const;
-    // @safe - sets parent pointer
+    // @unsafe
+    // sets parent pointer via raw-pointer casts
     inline void set_parent(base_type* p) {
         if (this->isleaf())
             static_cast<leaf_type*>(this)->parent_ = p;
@@ -184,7 +185,8 @@ class internode : public node_base<P> {
     }
 
   private:
-    // @safe - assigns key and child at position
+    // @unsafe
+    // dereferences raw pointer (`child->...`) and mutates pointer graph
     void assign(int p, ikey_type ikey, node_base<P>* child) {
         child->set_parent(this);
         child_[p + 1] = child;
