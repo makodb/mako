@@ -150,7 +150,7 @@ class key {
         }
     }
 
-    // @safe - pure comparison using ::compare() and arithmetic
+    // @unsafe - calls ::compare() which involves pointer operations
     int compare(ikey_type ikey, int keylenx) const {
         int cmp = ::compare(this->ikey(), ikey);
         if (cmp == 0) {
@@ -162,7 +162,7 @@ class key {
         }
         return cmp;
     }
-    // @safe - delegates to safe compare function
+    // @unsafe - delegates to unsafe compare function
     int compare(const key<I>& x) const {
         return compare(x.ikey(), x.length());
     }

@@ -390,7 +390,7 @@ class leaf : public node_base<P> {
     }
 
     using node_base<P>::has_changed;
-    // @safe - calls @safe has_changed and does pure comparison
+    // @unsafe - calls base class has_changed which uses pointer operations
     bool has_changed(nodeversion_type oldv,
                      typename permuter_type::storage_type oldperm) const {
         return this->has_changed(oldv) || oldperm != permutation_;

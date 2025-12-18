@@ -84,7 +84,7 @@ class nodeversion {
     bool deleted() const {
         return v_ & P::deleted_bit;
     }
-    // @safe - calls @unsafe fence(), pure comparison; @safe can call @unsafe
+    // @unsafe - calls fence() which performs memory barrier operations
     bool has_changed(nodeversion<P> x) const {
         fence();
         return (x.v_ ^ v_) > P::lock_bit;
