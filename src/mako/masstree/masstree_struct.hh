@@ -61,7 +61,7 @@ class node_base : public make_nodeversion<P>::type {
         : nodeversion_type(isleaf) {
     }
 
-    // @safe - returns parent pointer
+    // @unsafe - returns raw pointer, dereferences this
     inline base_type* parent() const {
         // almost always an internode
         if (this->isleaf())
@@ -73,13 +73,13 @@ class node_base : public make_nodeversion<P>::type {
     inline bool parent_exists(base_type* p) const {
         return p != 0;
     }
-    // @safe - delegates to parent() and parent_exists()
+    // @unsafe - calls unsafe parent()
     inline bool has_parent() const {
         return parent_exists(parent());
     }
     // @unsafe - manipulates parent pointers under locks
     inline internode_type* locked_parent(threadinfo& ti) const;
-    // @safe - sets parent pointer
+    // @unsafe - takes raw pointer, writes through this
     inline void set_parent(base_type* p) {
         if (this->isleaf())
             static_cast<leaf_type*>(this)->parent_ = p;
@@ -91,7 +91,7 @@ class node_base : public make_nodeversion<P>::type {
         set_parent(nullptr);
         this->mark_root();
     }
-    // @safe - returns parent or self
+    // @unsafe - returns raw pointer, calls unsafe parent()
     inline base_type* maybe_parent() const {
         base_type* x = parent();
         return parent_exists(x) ? x : const_cast<base_type*>(this);

@@ -77,7 +77,7 @@ class unlocked_tcursor {
     inline value_type value() const {
         return lv_.value();
     }
-    // @safe - returns stored pointer
+    // @unsafe - returns raw pointer
     inline leaf<P>* node() const {
         return n_;
     }
@@ -85,7 +85,7 @@ class unlocked_tcursor {
     inline permuter_type permutation() const {
         return perm_;
     }
-    // @safe - delegates to safe compare_key
+    // @unsafe - dereferences n_ pointer
     inline int compare_key(const key_type& a, int bp) const {
         return n_->compare_key(a, bp);
     }
@@ -152,12 +152,12 @@ class tcursor {
         return !ka_.is_shifted();
     }
 
-    // @safe - returns stored pointer
+    // @unsafe - returns raw pointer
     inline leaf<P>* node() const {
         return n_;
     }
 
-    // @safe - returns stored pointer
+    // @unsafe - returns raw pointer
     inline leaf_type *original_node() const {
         return original_n_;
     }

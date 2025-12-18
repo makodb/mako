@@ -131,7 +131,7 @@ bool tcursor<P>::make_new_layer(threadinfo& ti) {
     return false;
 }
 
-// @safe - pure computation with permutation manipulation and memory fence
+// @unsafe - dereferences n_ pointer
 template <typename P>
 void tcursor<P>::finish_insert()
 {

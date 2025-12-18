@@ -282,7 +282,7 @@ class threadinfo {
     }
 
     // RCU
-    // @safe - reads epoch and updates local field
+    // @unsafe - dereferences context_ pointer
     void rcu_start() {
         mrcu_epoch_type current = context_->get_epoch();
         if (gc_epoch_ != current)
