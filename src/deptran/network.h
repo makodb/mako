@@ -20,25 +20,25 @@ public:
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
-        if ((ret = svr->reg(TXN_RMW, this, &NetworkClientService::__txn_rmw__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_RMW, this, &NetworkClientService::__txn_rmw__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(TXN_READ, this, &NetworkClientService::__txn_read__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_READ, this, &NetworkClientService::__txn_read__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(TXN_NEW_ORDER, this, &NetworkClientService::__txn_new_order__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_NEW_ORDER, this, &NetworkClientService::__txn_new_order__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(TXN_PAYMENT, this, &NetworkClientService::__txn_payment__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_PAYMENT, this, &NetworkClientService::__txn_payment__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(TXN_DELIVERY, this, &NetworkClientService::__txn_delivery__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_DELIVERY, this, &NetworkClientService::__txn_delivery__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(TXN_ORDER_STATUS, this, &NetworkClientService::__txn_order_status__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_ORDER_STATUS, this, &NetworkClientService::__txn_order_status__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(TXN_STOCK_LEVEL, this, &NetworkClientService::__txn_stock_level__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(TXN_STOCK_LEVEL, this, &NetworkClientService::__txn_stock_level__wrapper__)) != 0) {
             goto err;
         }
         return 0;

@@ -551,12 +551,21 @@ class Marshal: public NoCopy {
   }
 
   bookmark *set_bookmark(size_t n);
+
+  // @unsafe - Original pointer-based interface
   void write_bookmark(bookmark *bm, const void *p) {
     const char *pc = (const char *) p;
     assert(bm != nullptr && bm->ptr != nullptr && p != nullptr);
     for (size_t i = 0; i < bm->size; i++) {
       *(bm->ptr[i]) = pc[i];
     }
+  }
+
+  // @unsafe - Reference-taking overload for safer call sites
+  // Delegates to pointer version internally
+  template<typename T>
+  void write_bookmark(bookmark& bm, const T& value) {
+    write_bookmark(&bm, &value);
   }
 
   i32 get_and_reset_write_cnt() {

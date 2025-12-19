@@ -80,7 +80,8 @@ compile() {
     echo "========================================="
     echo "Running: ./ci/ci.sh compile"
     echo "========================================="
-    make -j32
+    set -o pipefail
+    make -j32 2>&1 | tee build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }

@@ -79,7 +79,7 @@ class node_base : public make_nodeversion<P>::type {
     }
     // @unsafe - manipulates parent pointers under locks
     inline internode_type* locked_parent(threadinfo& ti) const;
-    // @unsafe - takes raw pointer, writes through this
+    // @unsafe - uses static_cast and pointer dereference
     inline void set_parent(base_type* p) {
         if (this->isleaf())
             static_cast<leaf_type*>(this)->parent_ = p;
@@ -532,7 +532,7 @@ class leaf : public node_base<P> {
 
     void print(FILE* f, const char* prefix, int indent, int kdepth);
 
-    // @safe - pointer masking
+    // @unsafe - uses reinterpret_cast and C-style cast (uintptr_t)
     leaf<P>* safe_next() const {
         return reinterpret_cast<leaf<P>*>(next_.x & ~(uintptr_t) 1);
     }

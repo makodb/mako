@@ -60,6 +60,12 @@ public:
     virtual int handle_write() = 0;
     // @unsafe - Handles error events (implementation-specific)
     virtual void handle_error() = 0;
+
+    // @safe - Check if pollable needs write mode update (set by deferred operations)
+    // Returns true if update_mode(READ|WRITE) should be called, clears internal flag
+    // Default implementation returns false - override in subclasses that need it
+    // Note: const because called through Arc, uses mutable flag internally
+    virtual bool check_pending_write_update() const { return false; }
 };
 
 

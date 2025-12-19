@@ -25,6 +25,12 @@
 //   std::vector::push_back: [unsafe]
 //   rrr::Log::error: [unsafe]
 //   Log_error: [unsafe]
+//   Log_debug: [unsafe]
+//   std::unordered_map<auto,auto>::clear: [safe]
+//   std::unordered_map<auto,auto,auto,auto,auto>::clear: [safe]
+//   rrr::Marshal::write_to_fd: [unsafe]
+//   rrr::Marshal::empty: [safe]
+//   const_cast: [unsafe]
 // }
 
 
@@ -121,16 +127,19 @@ ClientConnection::~ClientConnection() {
   invalidate_pending_futures();
 }
 
-// @unsafe - Cancels all pending futures with error
+// @safe - Cancels all pending futures with error (has internal @unsafe blocks)
 // SAFETY: Protected by spinlock, proper refcount management
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
-  pending_fu_l_.get()->lock();
-  for (auto& it: pending_fu_) {
-    futures.push_back(it.second);  // Copy Arc
+  // @unsafe - SpinLock pointer dereference and map operations
+  {
+    pending_fu_l_.get()->lock();
+    for (auto& it: pending_fu_) {
+      futures.push_back(it.second);  // Copy Arc
+    }
+    pending_fu_.clear();  // Clear map (releases its Arc references)
+    pending_fu_l_.get()->unlock();
   }
-  pending_fu_.clear();  // Clear map (releases its Arc references)
-  pending_fu_l_.get()->unlock();
 
   for (auto& fu: futures) {
     fu->error_code_.set(ENOTCONN);
@@ -139,12 +148,15 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @unsafe - Closes socket and invalidates futures
+// @safe - Closes socket and invalidates futures (has internal @unsafe blocks)
 // SAFETY: Idempotent, proper cleanup sequence
 void ClientConnection::close() {
   if (status_ == CONNECTED) {
-    poll_thread_worker_->remove(*this);
-    ::close(socket_);
+    // @unsafe - pointer dereference and system call
+    {
+      poll_thread_worker_->remove(*this);
+      ::close(socket_);
+    }
   }
   status_ = CLOSED;
   invalidate_pending_futures();
@@ -254,7 +266,7 @@ void ClientConnection::handle_error() {
   close();
 }
 
-// @unsafe - Writes buffered data to socket
+// @safe - Writes buffered data to socket (has internal @unsafe blocks)
 // SAFETY: Protected by spinlock, handles partial writes
 // Returns new poll mode, or MODE_NO_CHANGE if no update needed
 int ClientConnection::handle_write() {
@@ -265,13 +277,16 @@ int ClientConnection::handle_write() {
   if (paused_) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
-  out_l_.get()->lock();
-  out_.write_to_fd(socket_);
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->lock(); }
+  // @unsafe - I/O operation
+  { out_.write_to_fd(socket_); }
   if (out_.empty()) {
     // Return READ-only mode - PollThreadWorker will update epoll
     result = Pollable::READ;
   }
-  out_l_.get()->unlock();
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->unlock(); }
   return result;
 }
 
@@ -378,15 +393,17 @@ bool ClientConnection::handle_read_two() {
   return done;
 }
 
-// @unsafe - Determines polling mode based on output buffer
+// @safe - Determines polling mode based on output buffer (has internal @unsafe blocks)
 // SAFETY: Uses spinlock for thread-safety
 int ClientConnection::poll_mode() const {
   int mode = Pollable::READ;
-  out_l_.get()->lock();
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->lock(); }
   if (!out_.empty()) {
     mode |= Pollable::WRITE;
   }
-  out_l_.get()->unlock();
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->unlock(); }
   return mode;
 }
 
@@ -447,13 +464,11 @@ void ClientConnection::end_request() {
   // always enable write events since the code above guaranteed there
   // will be some data to send
   // NOTE: end_request() may be called from user threads OR the poll thread.
-  // Use direct call when on poll thread, channel otherwise.
-  auto* worker = PollThreadWorker::current_worker();
-  if (worker != nullptr) {
-    // Direct call - we're on the poll thread (e.g., async RPC from coroutine)
-    worker->update_mode(fd(), Pollable::READ | Pollable::WRITE, this);
+  if (PollThreadWorker::is_on_poll_thread()) {
+    // On poll thread - set flag, poll loop will handle update_mode
+    pending_write_update_.set(true);
   } else {
-    // Channel - we're on a user thread
+    // On user thread - use channel to notify poll thread
     poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
   }
 
@@ -464,46 +479,48 @@ void ClientConnection::end_request() {
 // Client implementation (facade that delegates to ClientConnection)
 // ============================================================================
 
-// @unsafe - Cleanup destructor
+// @safe - Cleanup destructor (has internal @unsafe blocks)
 // SAFETY: Connection cleanup handled by ClientConnection
 Client::~Client() {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).close();
+  if (connection_.get()->is_some()) {
+    // @unsafe - const_cast for interior mutability
+    { const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).close(); }
   }
 }
 
 // Jetpack: set validity flag on output marshal
 void Client::set_valid(bool valid) const {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).out_.valid_id = valid;
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).out_.valid_id = valid;
   }
 }
 
-// @unsafe - Closes socket and cleans up
+// @safe - Closes socket and cleans up (has internal @unsafe blocks)
 // SAFETY: Idempotent, delegates to ClientConnection
 void Client::close() const {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).close();
+  if (connection_.get()->is_some()) {
+    // @unsafe - const_cast for interior mutability
+    { const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).close(); }
   }
 }
 
 // Jetpack: handle_free for explicit future cleanup
 void Client::handle_free(i64 xid) const {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).handle_free(xid);
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).handle_free(xid);
   }
 }
 
 // Jetpack: pause/resume for flow control
 void Client::pause() const {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).pause();
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).pause();
   }
 }
 
 void Client::resume() const {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).resume();
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).resume();
   }
 }
 
@@ -511,7 +528,6 @@ void Client::resume() const {
 // SAFETY: Creates ClientConnection and connects
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
-  // const_cast is safe here because connection_ is mutable
   auto conn = rusty::Arc<ClientConnection>::make(const_cast<Client*>(this), poll_thread_worker_);
 
   // Initialize weak self-reference for poll thread registration
@@ -520,14 +536,14 @@ int Client::connect(const char* addr, bool client) const {
 
   // Set client mode
   const_cast<bool&>(conn->is_client_mode_) = client;
-  is_client_mode_ = client;
+  is_client_mode_.set(client);
 
   // Attempt to connect
   int result = const_cast<ClientConnection&>(*conn).connect(addr);
 
   if (result == 0) {
     // Connection successful, store it
-    connection_ = rusty::Some(std::move(conn));
+    *connection_.get() = rusty::Some(std::move(conn));
   }
 
   return result;
@@ -536,19 +552,19 @@ int Client::connect(const char* addr, bool client) const {
 // @unsafe - Begins RPC request with marshaling
 // SAFETY: Delegates to ClientConnection
 FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
-  if (connection_.is_none()) {
+  if (connection_.get()->is_none()) {
     return FutureResult::Err(ENOTCONN);
   }
 
-  rpc_id_ = rpc_id;
-  return const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).begin_request(rpc_id, attr);
+  rpc_id_.set(rpc_id);
+  return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).begin_request(rpc_id, attr);
 }
 
 // @unsafe - Completes request packet
 // SAFETY: Delegates to ClientConnection
 void Client::end_request() const {
-  if (connection_.is_some()) {
-    const_cast<ClientConnection&>(*connection_.as_ref().unwrap()).end_request();
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
   }
 }
 

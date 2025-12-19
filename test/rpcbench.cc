@@ -205,7 +205,7 @@ int main(int argc, char **argv) {
     if (is_server) {
         BenchmarkService svc;
         Server svr(poll_thread_worker_, thrpool);  // Server takes Option<Arc<...>>
-        svr.reg(&svc);
+        svr.reg_service(svc);
         verify(svr.start(svr_addr) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);

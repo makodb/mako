@@ -243,6 +243,11 @@ class ClientConnection: public Pollable {
         NEW, CONNECTED, CLOSED
     } status_;
 
+    // Flag set by end_request() to indicate write mode update needed
+    // Checked by poll loop after processing events (only used when on poll thread)
+    // Cell provides interior mutability for safe access through const methods
+    rusty::Cell<bool> pending_write_update_{false};
+
     // Weak pointer to self, initialized after creation
     // Used to pass weak reference for poll thread registration
     WeakClientConnection weak_self_;
@@ -253,7 +258,7 @@ class ClientConnection: public Pollable {
     bool paused_{false};
     bool is_client_mode_{false};  // Jetpack: distinguishes client vs server mode
 
-    // @unsafe - Cancels all pending futures
+    // @safe - Cancels all pending futures (has internal @unsafe blocks)
     // SAFETY: Protected by spinlock
     void invalidate_pending_futures();
 
@@ -262,7 +267,7 @@ class ClientConnection: public Pollable {
      * 1: ~Client(), which is called when destroying Client
      * 2: handle_error(), which is called by PollThread
      */
-    // @unsafe - Closes connection and cleans up
+    // @safe - Closes connection and cleans up (has internal @unsafe blocks)
     // SAFETY: Thread-safe cleanup sequence
     void close();
 
@@ -345,7 +350,7 @@ public:
         return in_.content_size();
     }
 
-    // @unsafe - Writes buffered data to socket
+    // @safe - Writes buffered data to socket (has internal @unsafe blocks)
     // SAFETY: Protected by output spinlock
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
     int handle_write() override;
@@ -360,6 +365,16 @@ public:
 
     // @safe - Error handler
     void handle_error() override;
+
+    // @safe - Check and clear pending write update flag
+    // Called by poll loop after processing events
+    bool check_pending_write_update() const override {
+        if (pending_write_update_.get()) {
+            pending_write_update_.set(false);
+            return true;
+        }
+        return false;
+    }
 
     // Jetpack: handle_free for explicit future cleanup
     void handle_free(i64 xid);
@@ -393,33 +408,31 @@ namespace rrr {
 // Similar to Server/ServerConnection pattern
 class Client: public NoCopy {
     // The underlying connection that handles socket I/O
-    // Mutable because const methods need to delegate to connection
-    mutable rusty::Option<rusty::Arc<ClientConnection>> connection_;
+    // UnsafeCell for interior mutability (const methods need to delegate to connection)
+    rusty::UnsafeCell<rusty::Option<rusty::Arc<ClientConnection>>> connection_;
 
     // Shared Arc to PollThread - used to create ClientConnection
     rusty::Arc<PollThread> poll_thread_worker_;
 
-    // Jetpack-specific public members (kept for backward compatibility)
-    // These are mutable because they may be modified from const methods
-    mutable bool is_client_mode_{false};
-    mutable long time_{0};
-    mutable uint64_t timeout_{0};
-    mutable i32 rpc_id_{0};
+    // Jetpack-specific members using Cell for interior mutability of Copy types
+    rusty::Cell<bool> is_client_mode_{false};
+    rusty::Cell<long> time_{0};
+    rusty::Cell<uint64_t> timeout_{0};
+    rusty::Cell<i32> rpc_id_{0};
 
 public:
     // Jetpack-specific public members (Cell for interior mutability through Arc)
     // These are accessed through getters/setters for thread-safety
-    // All setters are const because the fields are mutable
-    void set_client_mode(bool v) const { is_client_mode_ = v; }
-    bool client_mode() const { return is_client_mode_; }
-    void set_time(long v) const { time_ = v; }
-    long time() const { return time_; }
-    void set_timeout(uint64_t v) const { timeout_ = v; }
-    uint64_t timeout() const { return timeout_; }
-    void set_rpc_id(i32 v) const { rpc_id_ = v; }
-    i32 rpc_id() const { return rpc_id_; }
+    void set_client_mode(bool v) const { is_client_mode_.set(v); }
+    bool client_mode() const { return is_client_mode_.get(); }
+    void set_time(long v) const { time_.set(v); }
+    long time() const { return time_.get(); }
+    void set_timeout(uint64_t v) const { timeout_.set(v); }
+    uint64_t timeout() const { return timeout_.get(); }
+    void set_rpc_id(i32 v) const { rpc_id_.set(v); }
+    i32 rpc_id() const { return rpc_id_.get(); }
 
-    // @unsafe - Cleanup destructor
+    // @safe - Cleanup destructor (has internal @unsafe blocks)
     // SAFETY: Connection cleanup handled by ClientConnection
     virtual ~Client();
 
@@ -456,8 +469,8 @@ public:
     // @lifetime: (&'a, const T&) -> &'a
     template<class T>
     const Client& operator <<(const T& v) const {
-        if (connection_.is_some() && connection_.as_ref().unwrap()->connected()) {
-            const_cast<ClientConnection&>(*connection_.as_ref().unwrap()) << v;
+        if (connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected()) {
+            const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << v;
         }
         return *this;
     }
@@ -467,8 +480,8 @@ public:
     // SAFETY: Delegates to ClientConnection
     // @lifetime: (&'a, Marshal&) -> &'a
     const Client& operator <<(Marshal& m) const {
-        if (connection_.is_some() && connection_.as_ref().unwrap()->connected()) {
-            const_cast<ClientConnection&>(*connection_.as_ref().unwrap()) << m;
+        if (connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected()) {
+            const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << m;
         }
         return *this;
     }
@@ -482,7 +495,7 @@ public:
     void resume() const;
 
     // reentrant, could be called multiple times
-    // @unsafe - Closes socket and cleans up
+    // @safe - Closes socket and cleans up (has internal @unsafe blocks)
     // SAFETY: Idempotent, delegates to ClientConnection
     void close() const;
 
@@ -492,27 +505,27 @@ public:
     }
 
     int fd() const {
-        if (connection_.is_some()) {
-            return connection_.as_ref().unwrap()->fd();
+        if (connection_.get()->is_some()) {
+            return connection_.get()->as_ref().unwrap()->fd();
         }
         return -1;
     }
 
     std::string host() const {
-        if (connection_.is_some()) {
-            return connection_.as_ref().unwrap()->host();
+        if (connection_.get()->is_some()) {
+            return connection_.get()->as_ref().unwrap()->host();
         }
         return "";
     }
 
     bool connected() const {
-        return connection_.is_some() && connection_.as_ref().unwrap()->connected();
+        return connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected();
     }
 
     // Get the underlying connection (for advanced use)
     // Returns a reference to the connection if it exists
     const rusty::Option<rusty::Arc<ClientConnection>>& connection() const {
-        return connection_;
+        return *connection_.get();
     }
 
     // Jetpack: handle_free for explicit future cleanup

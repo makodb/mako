@@ -43,7 +43,7 @@ inline kvtimestamp_t timestamp() {
     return ((kvtimestamp_t) tv.tv_sec << 32) | (unsigned int)tv.tv_usec;
 }
 
-// @safe - pure arithmetic on value types
+// @unsafe - uses C-style casts in KVTS_LOWPART macro
 inline kvtimestamp_t timestamp_sub(kvtimestamp_t a, kvtimestamp_t b) {
     a -= b;
     if (KVTS_LOWPART(a) > 999999)
