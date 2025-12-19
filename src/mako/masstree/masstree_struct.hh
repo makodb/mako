@@ -79,15 +79,14 @@ class node_base : public make_nodeversion<P>::type {
     }
     // @unsafe - manipulates parent pointers under locks
     inline internode_type* locked_parent(threadinfo& ti) const;
-    // @unsafe
-    // sets parent pointer via raw-pointer casts
+    // @unsafe - uses static_cast and pointer dereference
     inline void set_parent(base_type* p) {
         if (this->isleaf())
             static_cast<leaf_type*>(this)->parent_ = p;
         else
             static_cast<internode_type*>(this)->parent_ = p;
     }
-    // @safe - initializes as root
+    // @unsafe - initializes as root (uses this-> pointer access)
     inline void make_layer_root() {
         set_parent(nullptr);
         this->mark_root();
@@ -185,8 +184,7 @@ class internode : public node_base<P> {
     }
 
   private:
-    // @unsafe
-    // dereferences raw pointer (`child->...`) and mutates pointer graph
+    // @unsafe - assigns key and child at position, dereferences raw pointer
     void assign(int p, ikey_type ikey, node_base<P>* child) {
         child->set_parent(this);
         child_[p + 1] = child;
@@ -533,7 +531,7 @@ class leaf : public node_base<P> {
 
     void print(FILE* f, const char* prefix, int indent, int kdepth);
 
-    // @safe - pointer masking
+    // @unsafe - uses reinterpret_cast and C-style cast (uintptr_t)
     leaf<P>* safe_next() const {
         return reinterpret_cast<leaf<P>*>(next_.x & ~(uintptr_t) 1);
     }

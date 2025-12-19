@@ -704,12 +704,12 @@ Json::assign_parse(const char* first, const char* last, const String& str)
         return false;
 }
 
-// @safe - pure arithmetic comparison
+// @unsafe - uses C-style cast (unsigned)
 static inline bool in_range(uint8_t x, unsigned low, unsigned high) {
     return (unsigned) x - low < high - low;
 }
 
-// @safe - pure arithmetic comparison
+// @unsafe - uses C-style cast (unsigned)
 static inline bool in_range(int x, unsigned low, unsigned high) {
     return (unsigned) x - low < high - low;
 }

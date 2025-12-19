@@ -12,6 +12,7 @@
 #include <netinet/tcp.h>
 
 #include "reactor/coroutine.h"
+#include "reactor/reactor.h"
 #include "client.hpp"
 #include "utils.hpp"
 
@@ -24,12 +25,22 @@
 //   std::vector::push_back: [unsafe]
 //   rrr::Log::error: [unsafe]
 //   Log_error: [unsafe]
+//   Log_debug: [unsafe]
+//   std::unordered_map<auto,auto>::clear: [safe]
+//   std::unordered_map<auto,auto,auto,auto,auto>::clear: [safe]
+//   rrr::Marshal::write_to_fd: [unsafe]
+//   rrr::Marshal::empty: [safe]
+//   const_cast: [unsafe]
 // }
 
 
 using namespace std;
 
 namespace rrr {
+
+// ============================================================================
+// Future implementation
+// ============================================================================
 
 // @unsafe - Uses rusty::Condvar (low-level sync primitive)
 void Future::wait() const {
@@ -98,21 +109,37 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
   }
 }
 
-// Jetpack: set validity flag on output marshal
-void Client::set_valid(bool valid) {
-  out_.borrow_mut()->valid_id = valid;
+// ============================================================================
+// ClientConnection implementation
+// ============================================================================
+
+// @unsafe - Initializes connection
+// SAFETY: Stores references safely
+ClientConnection::ClientConnection(Client* client, rusty::Arc<PollThread> poll_thread_worker)
+    : client_(client),
+      poll_thread_worker_(poll_thread_worker),
+      socket_(-1),
+      status_(NEW) {
 }
 
-// @unsafe - Cancels all pending futures with error
+// @safe - Simple destructor
+ClientConnection::~ClientConnection() {
+  invalidate_pending_futures();
+}
+
+// @safe - Cancels all pending futures with error (has internal @unsafe blocks)
 // SAFETY: Protected by spinlock, proper refcount management
-void Client::invalidate_pending_futures() const {
+void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
-  pending_fu_l_.get()->lock();
-  for (auto& it: *pending_fu_.borrow()) {
-    futures.push_back(it.second);  // Copy Arc
+  // @unsafe - SpinLock pointer dereference and map operations
+  {
+    pending_fu_l_.get()->lock();
+    for (auto& it: pending_fu_) {
+      futures.push_back(it.second);  // Copy Arc
+    }
+    pending_fu_.clear();  // Clear map (releases its Arc references)
+    pending_fu_l_.get()->unlock();
   }
-  pending_fu_.borrow_mut()->clear();  // Clear map (releases its Arc references)
-  pending_fu_l_.get()->unlock();
 
   for (auto& fu: futures) {
     fu->error_code_.set(ENOTCONN);
@@ -121,52 +148,45 @@ void Client::invalidate_pending_futures() const {
   }
 }
 
-// @unsafe - Closes socket and invalidates futures
+// @safe - Closes socket and invalidates futures (has internal @unsafe blocks)
 // SAFETY: Idempotent, proper cleanup sequence
-void Client::close() const {
-  if (status_.get() == CONNECTED) {
-    // const_cast needed: Arc gives const access but remove() needs non-const reference
-    poll_thread_worker_->remove(const_cast<Client&>(*this));
-    ::close(sock_.get());
+void ClientConnection::close() {
+  if (status_ == CONNECTED) {
+    // @unsafe - pointer dereference and system call
+    {
+      poll_thread_worker_->remove(*this);
+      ::close(socket_);
+    }
   }
-  status_.set(CLOSED);
+  status_ = CLOSED;
   invalidate_pending_futures();
 }
 
 // Jetpack: handle_free for explicit future cleanup
-void Client::handle_free(i64 xid) const {
+void ClientConnection::handle_free(i64 xid) {
   pending_fu_l_.get()->lock();
-  auto it = pending_fu_.borrow_mut()->find(xid);
-  if (it != pending_fu_.borrow_mut()->end()) {
-    pending_fu_.borrow_mut()->erase(it);
+  auto it = pending_fu_.find(xid);
+  if (it != pending_fu_.end()) {
+    pending_fu_.erase(it);
     // Arc auto-released when removed from map
   }
   pending_fu_l_.get()->unlock();
 }
 
-// Jetpack: pause/resume for flow control
-void Client::pause() const {
-  paused_.set(true);
-}
-
-void Client::resume() const {
-  paused_.set(false);
-}
-
 // @unsafe - Establishes TCP/IPC connection to server
 // SAFETY: Proper socket creation, configuration, and error handling
-int Client::connect(const char* addr, bool client) const {
-  verify(status_.get() != CONNECTED);
+int ClientConnection::connect(const char* addr) {
+  verify(status_ != CONNECTED);
   string addr_str(addr);
   size_t idx = addr_str.find(":");
   if (idx == string::npos) {
-    Log_error("rrr::Client: bad connect address: %s", addr);
+    Log_error("rrr::ClientConnection: bad connect address: %s", addr);
     return EINVAL;
   }
   string host = addr_str.substr(0, idx);
-  const_cast<Client*>(this)->host_ = host;  // Jetpack: store host
-  client_.set(client);  // Jetpack: store client flag
+  host_ = host;
   string port = addr_str.substr(idx + 1);
+
 #ifdef USE_IPC
   struct sockaddr_un saun;
   saun.sun_family = AF_UNIX;
@@ -177,9 +197,9 @@ int Client::connect(const char* addr, bool client) const {
     perror("client: socket");
     exit(1);
   }
-  sock_.set(sock);
+  socket_ = sock;
   auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-  if (::connect(sock_.get(), (struct sockaddr*)&saun, len) < 0) {
+  if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
     perror("client: connect");
     exit(1);
   }
@@ -193,7 +213,7 @@ int Client::connect(const char* addr, bool client) const {
 
   int r = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
   if (r != 0) {
-    Log_error("rrr::Client: getaddrinfo(): %s", gai_strerror(r));
+    Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(r));
     return EINVAL;
   }
 
@@ -202,40 +222,39 @@ int Client::connect(const char* addr, bool client) const {
     if (sock == -1) {
       continue;
     }
-    sock_.set(sock);
+    socket_ = sock;
 
     const int yes = 1;
-    verify(setsockopt(sock_.get(), SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
-    verify(setsockopt(sock_.get(), IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
+    verify(setsockopt(socket_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
+    verify(setsockopt(socket_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
     int buf_len = 1024 * 1024;
-    setsockopt(sock_.get(), SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
-    setsockopt(sock_.get(), SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
+    setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
+    setsockopt(socket_, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
 
-    if (::connect(sock_.get(), rp->ai_addr, rp->ai_addrlen) == 0) {
+    if (::connect(socket_, rp->ai_addr, rp->ai_addrlen) == 0) {
       break;
     }
-    ::close(sock_.get());
-    sock_.set(-1);
+    ::close(socket_);
+    socket_ = -1;
   }
   freeaddrinfo(result);
 
   if (rp == nullptr) {
     // failed to connect
-    // Log_error("rrr::Client: connect(%s): %s", addr, strerror(errno));
     return ENOTCONN;
   }
 #endif
-  verify(set_nonblocking(sock_.get(), true) == 0);
-  Log_debug("rrr::Client: connected to %s", addr);
+  verify(set_nonblocking(socket_, true) == 0);
+  Log_debug("rrr::ClientConnection: connected to %s", addr);
 
-  status_.set(CONNECTED);
+  status_ = CONNECTED;
 
-  // Use weak_self_ instead of shared_from_this()
-  auto self = weak_self_.borrow()->upgrade();
+  // Register with poll thread using weak_self_
+  auto self = weak_self_.upgrade();
   if (self.is_some()) {
     poll_thread_worker_->add(self.unwrap());
   } else {
-    Log_error("rrr::Client: weak_self_ upgrade failed - client may not have been created with factory method");
+    Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
     return EINVAL;
   }
 
@@ -243,40 +262,38 @@ int Client::connect(const char* addr, bool client) const {
 }
 
 // @safe - Simple error handler
-void Client::handle_error() {
+void ClientConnection::handle_error() {
   close();
 }
 
-// @unsafe - Writes buffered data to socket
+// @safe - Writes buffered data to socket (has internal @unsafe blocks)
 // SAFETY: Protected by spinlock, handles partial writes
 // Returns new poll mode, or MODE_NO_CHANGE if no update needed
-int Client::handle_write() {
-  if (status_.get() != CONNECTED) {
+int ClientConnection::handle_write() {
+  if (status_ != CONNECTED) {
     return Pollable::MODE_NO_CHANGE;
   }
   // Jetpack: respect pause state
-  if (paused_.get()) return Pollable::MODE_NO_CHANGE;
+  if (paused_) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
-  out_l_.get()->lock();
-  out_.borrow_mut()->write_to_fd(sock_.get());
-  if (out_.borrow()->empty()) {
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->lock(); }
+  // @unsafe - I/O operation
+  { out_.write_to_fd(socket_); }
+  if (out_.empty()) {
     // Return READ-only mode - PollThreadWorker will update epoll
     result = Pollable::READ;
   }
-  out_l_.get()->unlock();
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->unlock(); }
   return result;
-}
-
-// Jetpack: content_size helper
-size_t Client::content_size() {
-  return in_.borrow()->content_size();
 }
 
 // @unsafe - Reads and processes RPC responses
 // SAFETY: Protected by spinlock, validates packet structure
 // Jetpack: Split into handle_read_one and handle_read_two for batching
-bool Client::handle_read() {
+bool ClientConnection::handle_read() {
   if (!handle_read_one()) {
     return false;
   }
@@ -286,7 +303,7 @@ bool Client::handle_read() {
     if (done) {
       break;
     }
-    if (status_.get() != CONNECTED) {
+    if (status_ != CONNECTED) {
       return false;
     }
   }
@@ -298,12 +315,12 @@ bool Client::handle_read() {
 }
 
 // Jetpack: First phase - read data from socket
-bool Client::handle_read_one() {
-  if (status_.get() != CONNECTED) {
+bool ClientConnection::handle_read_one() {
+  if (status_ != CONNECTED) {
     return false;
   }
 
-  int bytes_read = in_.borrow_mut()->read_from_fd(sock_.get());
+  int bytes_read = in_.read_from_fd(socket_);
   if (bytes_read == 0) {
     return false;
   }
@@ -312,50 +329,44 @@ bool Client::handle_read_one() {
 }
 
 // Jetpack: Second phase - process packets from buffer
-bool Client::handle_read_two() {
-  if (status_.get() != CONNECTED) {
+bool ClientConnection::handle_read_two() {
+  if (status_ != CONNECTED) {
     return false;
   }
 
   bool done = false;
   int iters = 5;
 
-  if (client_.get()) {
+  if (is_client_mode_) {
     iters = INT_MAX;
   }
 
   for (int i = 0; i < iters; i++) {
     i32 packet_size;
 
-    int n_peek = in_.borrow_mut()->peek(&packet_size, sizeof(i32));
+    int n_peek = in_.peek(&packet_size, sizeof(i32));
 
     if (n_peek == sizeof(i32)
-        && in_.borrow()->content_size() >= packet_size + sizeof(i32)) {
+        && in_.content_size() >= packet_size + sizeof(i32)) {
 
-      verify(in_.borrow_mut()->read(&packet_size, sizeof(i32)) == sizeof(i32));
+      verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
 
       v64 v_reply_xid;
       v32 v_error_code;
 
-      *in_.borrow_mut() >> v_reply_xid >> v_error_code;
+      in_ >> v_reply_xid >> v_error_code;
 
       pending_fu_l_.get()->lock();
-      auto it = pending_fu_.borrow_mut()->find(v_reply_xid.get());
-      if (it != pending_fu_.borrow_mut()->end()) {
+      auto it = pending_fu_.find(v_reply_xid.get());
+      if (it != pending_fu_.end()) {
         rusty::Arc<Future> fu = it->second;  // Copy Arc (refcount still 2)
         verify(fu->xid_ == v_reply_xid.get());
 
-        // Jetpack: timing support (commented out but preserved)
-        // struct timespec end;
-        // clock_gettime(CLOCK_MONOTONIC, &end);
-        // long curr = (end.tv_sec - rpc_starts[fu->xid_].tv_sec)*1000000000 + end.tv_nsec - rpc_starts[fu->xid_].tv_nsec;
-        // ... timing calculation ...
-
-        pending_fu_.borrow_mut()->erase(it);  // Remove from map (refcount 2→1)
+        pending_fu_.erase(it);  // Remove from map (refcount 2→1)
         pending_fu_l_.get()->unlock();
 
         fu->error_code_.set(v_error_code.get());
-        fu->reply_.get()->read_from_marshal(*in_.borrow_mut(),
+        fu->reply_.get()->read_from_marshal(in_,
                                             packet_size - v_reply_xid.val_size()
                                                 - v_error_code.val_size());
 
@@ -368,7 +379,7 @@ bool Client::handle_read_two() {
 
         // Jetpack: consume data for timed-out futures
         Marshal reply;
-        reply.read_from_marshal(*in_.borrow_mut(),
+        reply.read_from_marshal(in_,
                                 packet_size - v_reply_xid.val_size()
                                 - v_error_code.val_size());
       }
@@ -382,59 +393,55 @@ bool Client::handle_read_two() {
   return done;
 }
 
-// @unsafe - Determines polling mode based on output buffer
-// SAFETY: Uses RefCell borrow operations
-int Client::poll_mode() const {
+// @safe - Determines polling mode based on output buffer (has internal @unsafe blocks)
+// SAFETY: Uses spinlock for thread-safety
+int ClientConnection::poll_mode() const {
   int mode = Pollable::READ;
-  out_l_.get()->lock();
-  if (!out_.borrow()->empty()) {
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->lock(); }
+  if (!out_.empty()) {
     mode |= Pollable::WRITE;
   }
-  out_l_.get()->unlock();
+  // @unsafe - SpinLock pointer dereference
+  { out_l_.get()->unlock(); }
   return mode;
 }
 
 // @unsafe - Starts new RPC request with marshaling
 // SAFETY: Protected by spinlocks, proper refcounting
-FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) const {
+FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   out_l_.get()->lock();
 
-  if (status_.get() != CONNECTED) {
+  if (status_ != CONNECTED) {
+    out_l_.get()->unlock();
     return FutureResult::Err(ENOTCONN);
   }
 
-  auto fu = Future::create(xid_counter_.borrow_mut()->next(), attr);
-  // Jetpack: set timeout from client's timeout setting
-  // fu->timeout_ = timeout_;  // TODO: restore if needed
+  auto fu = Future::create(xid_counter_.next(), attr);
 
   pending_fu_l_.get()->lock();
-  pending_fu_.borrow_mut()->insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
+  pending_fu_.insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
   pending_fu_l_.get()->unlock();
 
-  // Jetpack: timing support
-  // struct timespec begin;
-  // clock_gettime(CLOCK_MONOTONIC, &begin);
-  // rpc_starts[fu->xid_] = begin;
-
-  // check if the client gets closed in the meantime
-  if (status_.get() != CONNECTED) {
+  // check if the connection gets closed in the meantime
+  if (status_ != CONNECTED) {
     pending_fu_l_.get()->lock();
-    auto it = pending_fu_.borrow_mut()->find(fu->xid_);
-    if (it != pending_fu_.borrow_mut()->end()) {
-      pending_fu_.borrow_mut()->erase(it);  // Arc auto-released when removed from map
+    auto it = pending_fu_.find(fu->xid_);
+    if (it != pending_fu_.end()) {
+      pending_fu_.erase(it);  // Arc auto-released when removed from map
     }
     pending_fu_l_.get()->unlock();
+    out_l_.get()->unlock();
 
     return FutureResult::Err(ENOTCONN);
   }
 
-  // Separate the borrows to avoid overlapping mutable borrows
-  Marshal::bookmark* bm = out_.borrow_mut()->set_bookmark(sizeof(i32)); // will fill packet size later
-  *bmark_.borrow_mut() = rusty::Some(rusty::Box<Marshal::bookmark>(bm));
+  // Set bookmark for packet size (will fill later)
+  Marshal::bookmark* bm = out_.set_bookmark(sizeof(i32));
+  bmark_ = rusty::Some(rusty::Box<Marshal::bookmark>(bm));
 
   *this << v64(fu->xid_);
   *this << rpc_id;
-  rpc_id_.set(rpc_id);  // Jetpack: store rpc_id
 
   // Arc is in pending_fu_ (refcount=2), return copy to caller
   return FutureResult::Ok(fu);
@@ -442,27 +449,128 @@ FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */
 
 // @unsafe - Finalizes request packet with size header
 // SAFETY: Updates bookmark, enables write polling
-void Client::end_request() const {
+void ClientConnection::end_request() {
   // set reply size in packet
-  if (bmark_.borrow()->is_some()) {
-    i32 request_size = out_.borrow_mut()->get_and_reset_write_cnt();
-    out_.borrow_mut()->write_bookmark(&*bmark_.borrow_mut()->as_mut().unwrap(), &request_size);
-    *bmark_.borrow_mut() = rusty::None;  // Reset to None (automatically deletes old value)
+  if (bmark_.is_some()) {
+    i32 request_size = out_.get_and_reset_write_cnt();
+    out_.write_bookmark(&*bmark_.as_mut().unwrap(), &request_size);
+    bmark_ = rusty::None;  // Reset to None (automatically deletes old value)
   }
 
   // Jetpack: reset flags
-  out_.borrow_mut()->found_dep = false;
-  out_.borrow_mut()->valid_id = false;
+  out_.found_dep = false;
+  out_.valid_id = false;
 
-  // always enable write events since the code above gauranteed there
+  // always enable write events since the code above guaranteed there
   // will be some data to send
-  // NOTE: end_request() is called from user threads, NOT the poll thread.
-  // Must use channel-based update_mode() - the direct worker() path is only safe
-  // for poll handlers (handle_read/handle_write) running on the poll thread.
-  poll_thread_worker_->update_mode(const_cast<Client&>(*this), Pollable::READ | Pollable::WRITE);
+  // NOTE: end_request() may be called from user threads OR the poll thread.
+  if (PollThreadWorker::is_on_poll_thread()) {
+    // On poll thread - set flag, poll loop will handle update_mode
+    pending_write_update_.set(true);
+  } else {
+    // On user thread - use channel to notify poll thread
+    poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+  }
 
   out_l_.get()->unlock();
 }
+
+// ============================================================================
+// Client implementation (facade that delegates to ClientConnection)
+// ============================================================================
+
+// @safe - Cleanup destructor (has internal @unsafe blocks)
+// SAFETY: Connection cleanup handled by ClientConnection
+Client::~Client() {
+  if (connection_.get()->is_some()) {
+    // @unsafe - const_cast for interior mutability
+    { const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).close(); }
+  }
+}
+
+// Jetpack: set validity flag on output marshal
+void Client::set_valid(bool valid) const {
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).out_.valid_id = valid;
+  }
+}
+
+// @safe - Closes socket and cleans up (has internal @unsafe blocks)
+// SAFETY: Idempotent, delegates to ClientConnection
+void Client::close() const {
+  if (connection_.get()->is_some()) {
+    // @unsafe - const_cast for interior mutability
+    { const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).close(); }
+  }
+}
+
+// Jetpack: handle_free for explicit future cleanup
+void Client::handle_free(i64 xid) const {
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).handle_free(xid);
+  }
+}
+
+// Jetpack: pause/resume for flow control
+void Client::pause() const {
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).pause();
+  }
+}
+
+void Client::resume() const {
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).resume();
+  }
+}
+
+// @unsafe - Establishes TCP/IPC connection to server
+// SAFETY: Creates ClientConnection and connects
+int Client::connect(const char* addr, bool client) const {
+  // Create the ClientConnection
+  auto conn = rusty::Arc<ClientConnection>::make(const_cast<Client*>(this), poll_thread_worker_);
+
+  // Initialize weak self-reference for poll thread registration
+  // const_cast is safe - we need to mutate the newly created connection
+  const_cast<WeakClientConnection&>(conn->weak_self_) = conn;
+
+  // Set client mode
+  const_cast<bool&>(conn->is_client_mode_) = client;
+  is_client_mode_.set(client);
+
+  // Attempt to connect
+  int result = const_cast<ClientConnection&>(*conn).connect(addr);
+
+  if (result == 0) {
+    // Connection successful, store it
+    *connection_.get() = rusty::Some(std::move(conn));
+  }
+
+  return result;
+}
+
+// @unsafe - Begins RPC request with marshaling
+// SAFETY: Delegates to ClientConnection
+FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
+  if (connection_.get()->is_none()) {
+    return FutureResult::Err(ENOTCONN);
+  }
+
+  rpc_id_.set(rpc_id);
+  return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).begin_request(rpc_id, attr);
+}
+
+// @unsafe - Completes request packet
+// SAFETY: Delegates to ClientConnection
+void Client::end_request() const {
+  if (connection_.get()->is_some()) {
+    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
+  }
+}
+
+// ============================================================================
+// ClientPool implementation
+// ============================================================================
 
 // @unsafe - Constructs pool with PollThread ownership
 // SAFETY: Shared ownership of PollThread
@@ -506,7 +614,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     bool ok = true;
     for (int i = 0; i < parallel_connections_; i++) {
       auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
-      client->client_.set(true);  // Jetpack: mark as client
+      client->set_client_mode(true);  // Jetpack: mark as client
       if (client->connect(addr.c_str()) != 0) {
         ok = false;
         break;

@@ -25,7 +25,7 @@ public:
     std::atomic<int> call_count{0};
 
     int __reg_to__(Server* svr) {
-        return svr->reg(ECHO, this, &BenchService::echo_wrapper);
+        return svr->reg_method(ECHO, this, &BenchService::echo_wrapper);
     }
 
 private:
@@ -58,7 +58,7 @@ protected:
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
         service = new BenchService();
 
-        server->reg(service);
+        server->reg_service(*service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
 
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));

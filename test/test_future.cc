@@ -40,10 +40,10 @@ public:
     // @unsafe - Takes address-of member function pointers
     int __reg_to__(Server* svr) {
         int ret = 0;
-        ret = svr->reg(FAST_ECHO, this, &TestFutureService::fast_echo_wrapper);
-        ret = svr->reg(SLOW_ECHO, this, &TestFutureService::slow_echo_wrapper);
-        ret = svr->reg(GET_VALUE, this, &TestFutureService::get_value_wrapper);
-        ret = svr->reg(ERROR_METHOD, this, &TestFutureService::error_method_wrapper);
+        ret = svr->reg_method(FAST_ECHO, this, &TestFutureService::fast_echo_wrapper);
+        ret = svr->reg_method(SLOW_ECHO, this, &TestFutureService::slow_echo_wrapper);
+        ret = svr->reg_method(GET_VALUE, this, &TestFutureService::get_value_wrapper);
+        ret = svr->reg_method(ERROR_METHOD, this, &TestFutureService::error_method_wrapper);
         return ret;
     }
     
@@ -128,7 +128,7 @@ protected:
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
         service = new TestFutureService();
 
-        server->reg(service);
+        server->reg_service(*service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_

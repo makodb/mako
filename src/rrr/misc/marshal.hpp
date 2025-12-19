@@ -141,7 +141,8 @@ class MarshallDeputy {
       //written_to_socket = 0;
     }
 
-    // Template constructor for derived types
+    // @unsafe - Template constructor for derived types
+    // Uses raw pointer dereference through shared_ptr->member
     template<typename T>
     explicit MarshallDeputy(std::shared_ptr<T> sp_m)
       requires std::is_base_of_v<rrr::Marshallable, T>
@@ -348,7 +349,7 @@ class Marshal: public NoCopy {
       return n_write;
     }
 
-    // @safe - Reads data from chunk buffer
+    // @unsafe - Reads data from chunk buffer (uses raw pointer arithmetic)
     size_t read(void *p, size_t n) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
@@ -368,7 +369,7 @@ class Marshal: public NoCopy {
       return data->shared_data;
     }
 
-    // @safe - Peeks at data in chunk buffer without consuming
+    // @unsafe - Peeks at data in chunk buffer (uses raw pointer arithmetic)
     size_t peek(void *p, size_t n) const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
@@ -520,15 +521,16 @@ class Marshal: public NoCopy {
   }
 
   size_t write(const void *p, size_t n);
-  // @safe - Reads data from marshal buffer
+  // @unsafe - Reads data from marshal buffer (uses raw pointer members)
   size_t read(void *p, size_t n);
-  // @safe - Peeks at data without consuming
+  // @unsafe - Peeks at data without consuming (uses raw pointer members)
   size_t peek(void *p, size_t n) const;
 
   size_t read_from_fd(int fd);
 
   size_t chnk_read_from_fd(int fd, size_t bytes);
 
+  // @unsafe - Reuses chunks from another marshal (uses raw pointer members)
   size_t read_reuse_chnk(Marshal& m, size_t nbytes);
 
   size_t read_chnk(void* p, size_t n);
@@ -537,7 +539,7 @@ class Marshal: public NoCopy {
   // Use case 1: In C++ server io thread, when a compelete packet is received, read it off
   //             into a Marshal object and hand over to worker threads.
   // Use case 2: In Python extension, buffer message in Marshal object, and send to network.
-  // @safe - Transfers data between Marshal objects
+  // @unsafe - Transfers data between Marshal objects (uses raw pointer members)
   size_t read_from_marshal(Marshal &m, size_t n);
 
   size_t write_to_fd(int fd);
@@ -549,12 +551,21 @@ class Marshal: public NoCopy {
   }
 
   bookmark *set_bookmark(size_t n);
+
+  // @unsafe - Original pointer-based interface
   void write_bookmark(bookmark *bm, const void *p) {
     const char *pc = (const char *) p;
     assert(bm != nullptr && bm->ptr != nullptr && p != nullptr);
     for (size_t i = 0; i < bm->size; i++) {
       *(bm->ptr[i]) = pc[i];
     }
+  }
+
+  // @unsafe - Reference-taking overload for safer call sites
+  // Delegates to pointer version internally
+  template<typename T>
+  void write_bookmark(bookmark& bm, const T& value) {
+    write_bookmark(&bm, &value);
   }
 
   i32 get_and_reset_write_cnt() {

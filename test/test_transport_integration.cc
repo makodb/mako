@@ -121,7 +121,7 @@ protected:
 
         // Register request handlers for test request types
         for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
-            server_->reg(req_type, [this, req_type](rusty::Box<rrr::Request> req,
+            server_->reg_handler(req_type, [this, req_type](rusty::Box<rrr::Request> req,
                                                      rrr::WeakServerConnection weak_sconn) {
                 HandleRequest(req_type, std::move(req), weak_sconn);
             });
@@ -483,7 +483,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
 
     // Start server
     auto server = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-    server->reg(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    server->reg_handler(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         request_count++;
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {

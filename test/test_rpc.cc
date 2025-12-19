@@ -101,7 +101,7 @@ protected:
         server = new Server(std::move(server_poll));
         service = new TestService();
 
-        server->reg(service);
+        server->reg_service(*service);
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_

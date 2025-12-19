@@ -98,6 +98,7 @@ class Coroutine {
   }
 
  private:
+  // @unsafe - Creates and runs a new coroutine (uses raw pointer operations)
   static rusty::Rc<Coroutine> CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line);
 };
 
