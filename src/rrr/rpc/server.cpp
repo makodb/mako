@@ -34,6 +34,29 @@
 //   Log_error: [unsafe]
 // }
 
+// External safety annotations for SpinLock (interior mutability pattern)
+// @external: {
+//   SpinLock::lock: [unsafe]
+//   SpinLock::unlock: [unsafe]
+//   const_cast: [unsafe]
+//   PollThreadWorker::update_mode: [unsafe]
+//   Marshal::write_bookmark: [unsafe]
+// }
+
+// External safety annotations for rusty-cpp Arc (safe smart pointer)
+// @external: {
+//   rusty::Arc::operator->: [safe]
+//   rusty::sync::Arc::operator->: [safe]
+//   rusty::Option::unwrap: [safe]
+//   rusty::sync::Weak::upgrade: [safe]
+// }
+
+// External safety annotations for thread-local worker access
+// @external: {
+//   PollThreadWorker::is_on_poll_thread: [safe]
+//   rrr::PollThreadWorker::is_on_poll_thread: [safe]
+// }
+
 
 using namespace std;
 
@@ -146,8 +169,8 @@ int ServerConnection::run_async(const std::function<void()>& f) {
   return 0;
 }
 
-// @unsafe - Begins reply marshaling with locking
-// SAFETY: Protected by output spinlock
+// @safe - Begins reply marshaling with locking
+// SAFETY: Protected by output spinlock (SpinLock marked as external)
 void ServerConnection::begin_reply(const Request& req, i32 error_code /* =... */) {
     out_l_.lock();
     v32 v_error_code = error_code;
@@ -159,29 +182,20 @@ void ServerConnection::begin_reply(const Request& req, i32 error_code /* =... */
     *this << v_error_code;
 }
 
-// @unsafe - Completes reply packet
-// SAFETY: Protected by output spinlock, enables write polling
+// @safe - Completes reply packet
+// SAFETY: Protected by output spinlock, uses weak ref to poll thread
 void ServerConnection::end_reply() {
     // set reply size in packet
     if (bmark_.is_some()) {
         i32 reply_size = out_.get_and_reset_write_cnt();
-        out_.write_bookmark(&*bmark_.as_mut().unwrap(), &reply_size);
+        out_.write_bookmark(*bmark_.as_mut().unwrap(), reply_size);
         bmark_ = rusty::None;  // Reset to None (automatically deletes old value)
     }
 
-    // only update poll mode if connection is still active
-    // (connection might have closed while handler was running)
-    // NOTE: end_reply() is called from coroutines on the poll thread.
-    // Use direct call via thread-local worker to bypass the channel.
+    // Mark that we need write mode update - poll loop will handle it
+    // This avoids the need for direct PollThreadWorker access from here
     if (status_ == CONNECTED) {
-        auto* worker = PollThreadWorker::current_worker();
-        if (worker != nullptr) {
-            // Direct call - we're on the poll thread
-            worker->update_mode(fd(), Pollable::READ | Pollable::WRITE, this);
-        } else {
-            // Fallback to channel (shouldn't happen for coroutine-based handlers)
-            server_->poll_thread_worker_.as_ref().unwrap()->update_mode(*this, Pollable::READ | Pollable::WRITE);
-        }
+        pending_write_update_.set(true);
     }
 
     out_l_.unlock();
@@ -284,8 +298,8 @@ bool ServerConnection::handle_read() {
     return false;
 }
 
-// @unsafe - Writes buffered data to socket
-// SAFETY: Protected by output spinlock
+// @safe - Writes buffered data to socket
+// SAFETY: Protected by output spinlock (SpinLock marked as external)
 // Returns new poll mode, or MODE_NO_CHANGE if no update needed
 int ServerConnection::handle_write() {
     if (status_ == CLOSED) {
@@ -308,42 +322,52 @@ void ServerConnection::handle_error() {
     this->close();
 }
 
-// @unsafe - Closes connection with proper cleanup
+// @safe - Closes connection with proper cleanup
 // SAFETY: Thread-safe with server connection lock, idempotent
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
-        server_->sconns_l_.lock();
-
-        // Find our Arc in server's connection set
         rusty::Option<rusty::Arc<ServerConnection>> self;
-        for (auto it = server_->sconns_.begin(); it != server_->sconns_.end(); ++it) {
-            if (it->get() == this) {
-                self = rusty::Some(it->clone());
-                server_->sconns_.erase(it);
-                break;
+        // @unsafe - SpinLock operations and iterator access
+        {
+            server_->sconns_l_.lock();
+
+            // Find our Arc in server's connection set
+            for (auto it = server_->sconns_.begin(); it != server_->sconns_.end(); ++it) {
+                if (it->get() == this) {
+                    self = rusty::Some(it->clone());
+                    server_->sconns_.erase(it);
+                    break;
+                }
             }
+            server_->sconns_l_.unlock();
         }
-        server_->sconns_l_.unlock();
 
         if (self.is_some()) {
-            // Arc gives const access, need to cast to call remove()
-            auto& conn = const_cast<ServerConnection&>(*self.unwrap());
-            server_->poll_thread_worker_.as_ref().unwrap()->remove(conn);
+            // @unsafe - const_cast and pointer dereference
+            {
+                auto& conn = const_cast<ServerConnection&>(*self.unwrap());
+                server_->poll_thread_worker_.as_ref().unwrap()->remove(conn);
+            }
             status_ = CLOSED;
-            ::close(socket_);
-            Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_);
+            // @unsafe - system call
+            { ::close(socket_); }
+            // @unsafe - logging
+            { Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_); }
         }
     }
 }
 
-// @unsafe - Returns poll mode based on output buffer (requires const_cast for interior mutability)
+// @safe - Returns poll mode based on output buffer
+// Uses const_cast for interior mutability (SpinLock marked as external)
 int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    const_cast<SpinLock&>(out_l_).lock();
+    // @unsafe - SAFETY: const_cast for interior mutability (SpinLock is thread-safe)
+    { const_cast<SpinLock&>(out_l_).lock(); }
     if (!out_.empty()) {
         mode |= Pollable::WRITE;
     }
-    const_cast<SpinLock&>(out_l_).unlock();
+    // @unsafe
+    { const_cast<SpinLock&>(out_l_).unlock(); }
     return mode;
 }
 
@@ -668,7 +692,8 @@ int Server::start(const char* bind_addr) {
   return 0;
 }
 
-// @safe - Registers RPC handler in map
+// @unsafe - Registers RPC handler in map
+// SAFETY: Uses std::unordered_map operations (external annotations not matched)
 int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
     // disallow duplicate rpc_id
     if (handlers_.find(rpc_id) != handlers_.end()) {
@@ -680,7 +705,8 @@ int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
     return 0;
 }
 
-// @safe - Unregisters RPC handler from map
+// @unsafe - Unregisters RPC handler from map
+// SAFETY: Uses std::unordered_map::erase (external annotations not matched)
 void Server::unreg(i32 rpc_id) {
     handlers_.erase(rpc_id);
 }

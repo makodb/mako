@@ -83,7 +83,7 @@ template <int width> class kpermuter {
         : x_(x) {
     }
 
-    // @safe - pure bit arithmetic
+    // @unsafe - uses C-style casts (value_type)
     /** @brief Return an empty permuter with size 0.
 
         Elements will be allocated in order 0, 1, ..., @a width - 1. */
@@ -128,7 +128,7 @@ template <int width> class kpermuter {
         return x_ >> ((i + 1) << 2);
     }
 
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - uses C-style cast (value_type)
     void set_size(int n) {
         x_ = (x_ & ~(value_type) 15) | n;
     }
@@ -161,7 +161,7 @@ template <int width> class kpermuter {
             | ((x_ << 4) & ~(((value_type) 256 << (i << 2)) - 1));
         return value;
     }
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - uses C-style casts (value_type)
     /** @brief Insert an unallocated element from position @a si at position @a di.
         @pre 0 <= @a di < @a width
         @pre size() < @a width
@@ -214,7 +214,7 @@ template <int width> class kpermuter {
                 | (((x_ & rot_mask) << rot_amount) & rot_mask);
         }
     }
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - uses C-style casts (value_type)
     /** @brief Remove the element at position @a i to the back.
         @pre 0 <= @a i < @a size()
         @pre size() < @a width
@@ -243,7 +243,7 @@ template <int width> class kpermuter {
             // shift removed element up
             | ((x & mask) << ((width - i - 1) << 2));
     }
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - uses C-style casts (value_type)
     /** @brief Rotate the permuter's elements between @a i and size().
         @pre 0 <= @a i <= @a j <= size()
 

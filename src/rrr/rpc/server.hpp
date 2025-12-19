@@ -1,6 +1,7 @@
 // @unsafe - RPC server module uses raw sockets and mutable spinlocks
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
 #include <rusty/option.hpp>
 
 #include <unordered_map>
@@ -45,6 +46,13 @@
 //   Log_info: [unsafe]
 //   Log_warn: [unsafe]
 //   Log_error: [unsafe]
+// }
+
+// External safety annotations for SpinLock (interior mutability pattern)
+// @external: {
+//   SpinLock::lock: [unsafe]
+//   SpinLock::unlock: [unsafe]
+//   const_cast: [unsafe]
 // }
 
 // for getaddrinfo() used in Server::start()
@@ -165,6 +173,11 @@ class ServerConnection: public Pollable {
         CONNECTED, CLOSED
     } status_;
 
+    // Flag set by end_reply() to indicate write mode update needed
+    // Checked by poll loop after processing events
+    // Cell provides interior mutability for safe access through const methods
+    rusty::Cell<bool> pending_write_update_{false};
+
     // Weak pointer to self, initialized after creation
     // Used to pass weak reference to async handlers
     WeakServerConnection weak_self_;
@@ -176,7 +189,7 @@ class ServerConnection: public Pollable {
      * 1: ~Server(), which is called when destroying Server
      * 2: handle_error(), which is called by PollThread
      */
-    // @unsafe - Closes connection and cleans up
+    // @safe - Closes connection and cleans up (has internal @unsafe blocks)
     // SAFETY: Thread-safe with server connection lock
     void close();
 
@@ -214,12 +227,12 @@ public:
      * ENOENT: method not found
      * EINVAL: invalid packet (field missing)
      */
-    // @unsafe - Starts reply marshaling
-    // SAFETY: Protected by output spinlock
+    // @safe - Starts reply marshaling
+    // SAFETY: Protected by output spinlock (SpinLock marked as external)
     void begin_reply(const Request& req, i32 error_code = 0);
 
-    // @unsafe - Completes reply packet
-    // SAFETY: Protected by output spinlock
+    // @safe - Completes reply packet
+    // SAFETY: Protected by output spinlock, uses weak ref to poll thread
     void end_reply();
 
     // helper function, do some work in background
@@ -244,7 +257,8 @@ public:
         return socket_;
     }
 
-    // @unsafe - Returns poll mode based on output buffer (uses const_cast)
+    // @safe - Returns poll mode based on output buffer
+    // Uses const_cast for interior mutability (SpinLock marked as external)
     int poll_mode() const override;
 
     // Jetpack: content_size not used for connection
@@ -253,8 +267,8 @@ public:
         return 0;
     }
 
-    // @unsafe - Writes buffered data to socket
-    // SAFETY: Protected by output spinlock
+    // @safe - Writes buffered data to socket
+    // SAFETY: Protected by output spinlock (SpinLock marked as external)
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
     int handle_write() override;
 
@@ -268,6 +282,16 @@ public:
 
     // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
     void handle_error() override;
+
+    // @safe - Check and clear pending write update flag
+    // Called by poll loop after processing events
+    bool check_pending_write_update() const override {
+        if (pending_write_update_.get()) {
+            pending_write_update_.set(false);
+            return true;
+        }
+        return false;
+    }
 
     // Jetpack: handle_free stub
     void handle_free() {verify(0);}
@@ -329,16 +353,18 @@ public:
       return 0;
     }
 
-    // @unsafe - Sends reply and self-deletes
+    // @safe - Sends reply and self-deletes
     // SAFETY: Locks weak_ptr before use, gracefully handles closed connections
-    // Uses const_cast because Arc::get() returns const pointer but we need to mutate
     void reply() {
         auto sconn_opt = weak_sconn_.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).begin_reply(*req_);
-            marshal_reply_();
-            const_cast<ServerConnection&>(*sconn).end_reply();
+            // @unsafe - SAFETY: const_cast safe because Arc contents are mutable
+            {
+                const_cast<ServerConnection&>(*sconn).begin_reply(*req_);
+                marshal_reply_();
+                const_cast<ServerConnection&>(*sconn).end_reply();
+            }
         } else {
             // Connection closed, silently drop reply
             Log_debug("Connection closed before reply sent, dropping reply");
@@ -408,7 +434,7 @@ public:
      *     // No need to release, shared_ptr handles connection
      *  }
      */
-    // @safe - Registers RPC handler function
+    // @unsafe - Registers RPC handler function (uses unordered_map)
     int reg_handler(i32 rpc_id, const RequestHandler& func);
 
     // @unsafe - uses raw pointer svc and member function pointer
@@ -427,7 +453,7 @@ public:
         return 0;
     }
 
-    // @safe - Unregisters RPC handler
+    // @unsafe - Unregisters RPC handler (uses unordered_map)
     void unreg(i32 rpc_id);
 };
 

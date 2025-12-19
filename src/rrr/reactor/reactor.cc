@@ -77,8 +77,8 @@ Reactor::GetReactor() {
     if (!REUSING_CORO)
       Log_warn("reusing coroutine not enabled!");
     sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());  // In-place construction
-    // Use as_ref() to borrow, then initialize thread_id_ - safe because we just created it
-    const_cast<Reactor&>(*sp_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id();
+    // @unsafe - SAFETY: const_cast to initialize thread_id_ immediately after creation
+    { const_cast<Reactor&>(*sp_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id(); }
   }
   return sp_reactor_th_.as_ref().unwrap().clone();
 }
@@ -451,6 +451,15 @@ void PollThreadWorker::poll_loop() {
 
     TriggerJob();
     Reactor::GetReactor()->Loop();
+
+    // Check for pending write updates (set by end_reply() during coroutine execution)
+    // @unsafe - const_cast needed because Arc provides const access, but we know the
+    // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
+    for (auto& [fd, sp_poll] : fd_to_pollable_) {
+      if (sp_poll->check_pending_write_update()) {
+        do_update_mode(fd, Pollable::READ | Pollable::WRITE, const_cast<Pollable*>(sp_poll.get()));
+      }
+    }
   }
 
   Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
@@ -598,11 +607,6 @@ void PollThreadWorker::process_pending_removals() {
   }
 }
 
-// Static method to get current worker from thread-local storage
-// Returns nullptr if called from a thread that doesn't have a PollThreadWorker
-PollThreadWorker* PollThreadWorker::current_worker() {
-  return current_worker_;
-}
 
 // Update poll mode directly (bypasses channel)
 // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
