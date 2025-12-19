@@ -1,0 +1,4 @@
+bench_update_weight:
+  weight:
+    read: 0.95
+    write: 0.05

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Hash code computation for various types
+// Provides hashcode<T> templates compatible with std::hash
+// SAFETY: Pure computation, no memory operations
+
 #ifndef CLICK_HASHCODE_HH
 #define CLICK_HASHCODE_HH
 #include <stddef.h>
@@ -35,6 +39,7 @@
 typedef size_t hashcode_t;	///< Typical type for a hashcode() value.
 
 template <typename T>
+// @unsafe - raw hash helpers without lifetime tracking
 inline hashcode_t hashcode(T const &x) {
     return x.hashcode();
 }
@@ -107,6 +112,7 @@ inline hashcode_t hashcode(uint64_t const &x) {
 #endif
 
 template <typename T>
+// @unsafe - hashes raw pointer bits
 inline hashcode_t hashcode(T * const &x) {
     return reinterpret_cast<uintptr_t>(x) >> 3;
 }

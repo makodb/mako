@@ -66,6 +66,33 @@ bench_runner * start_workers_tpcc(int leader_config, /*leader or learner (new le
     return R;
 }
 
+// Overload with shard_index for multi-shard mode
+bench_runner * start_workers_tpcc_shard(int leader_config,
+                        abstract_db *db,
+                        int threads_nums,
+                        int shard_index,
+                        bool skip_load = false,
+                        int run = 0,
+                        bench_runner *rc = NULL)
+{
+    std::string bench_type = "tpcc";
+    std::string bench_opts = "--f_mode=0";
+    if (skip_load) {
+        bench_opts = "--f_mode=1";
+    }
+
+    vector<string> bench_toks = split_ws(bench_opts);
+    int argc_bench = 1 + bench_toks.size();
+    char *argv_bench[argc_bench];
+    argv_bench[0] = (char *)bench_type.c_str();
+    for (size_t i = 1; i <= bench_toks.size(); i++)
+    {
+        argv_bench[i] = (char *)bench_toks[i - 1].c_str();
+    }
+    bench_runner *R = tpcc_do_test(db, argc_bench, argv_bench, run, rc, shard_index);
+    return R;
+}
+
 void modeMonitorRun(abstract_db *db, int thread_nums, bench_runner * R) {
     // Wait until mainPaxos sends data
     std::unique_lock<std::mutex> lk((sync_util::sync_logger::m));
@@ -96,6 +123,6 @@ void modeMonitor(abstract_db *db, int thread_nums, bench_runner *R) {
     mimic_thread.detach();  // thread detach
 }
 
-abstract_db *ThreadDBWrapperMbta::replay_thread_wrapper_db = new mbta_wrapper;
+abstract_db *ThreadDBWrapperMbta::replay_thread_wrapper_db = new mbta_wrapper; // include just once!
 
 #endif // SILO_STO_COMMON_2_H

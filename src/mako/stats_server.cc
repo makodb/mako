@@ -12,9 +12,11 @@
 using namespace std;
 using namespace util;
 
+// @safe
 stats_server::stats_server(const string &sockfile)
   : sockfile_(sockfile) {}
 
+// @unsafe: uses socket operations and raw pointers
 void
 stats_server::serve_forever()
 {
@@ -48,6 +50,7 @@ stats_server::serve_forever()
 }
 
 
+// @unsafe: uses raw pointer casts
 bool
 stats_server::handle_cmd_get_counter_value(const string &name, packet &pkt)
 {
@@ -59,6 +62,7 @@ stats_server::handle_cmd_get_counter_value(const string &name, packet &pkt)
   return true;
 }
 
+// @unsafe: uses raw pointer operations
 void
 stats_server::serve_client(int fd)
 {

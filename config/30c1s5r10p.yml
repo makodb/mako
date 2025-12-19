@@ -1,0 +1,117 @@
+
+
+site:
+  server: # each line is a partition, the first is the master site_name:port
+    - ["s101:38000", "s201:38001", "s301:38002", "s401:38003", "s501:38004"]
+  client: # each line is a partition
+    - ["c01", "c02", "c03", "c04", "c05",
+       "c06", "c07", "c08", "c09", "c10",
+       "c11", "c12", "c13", "c14", "c15",
+       "c16", "c17", "c18", "c19", "c20",
+       "c21", "c22", "c23", "c24", "c25",
+       "c26", "c27", "c28", "c29", "c30",]
+
+# process:
+#   s101: aws0
+#   s201: aws1
+#   s301: aws2
+#   s401: aws3
+#   s501: aws4
+#   c01: aws5
+#   c02: aws5
+#   c03: aws5
+#   c04: aws6
+#   c05: aws6
+#   c06: aws6
+#   c07: aws7
+#   c08: aws7
+#   c09: aws7
+#   c10: aws8
+#   c11: aws8
+#   c12: aws8
+#   c13: aws9
+#   c14: aws9
+#   c15: aws9
+#   c16: aws10
+#   c17: aws10
+#   c18: aws10
+#   c19: aws11
+#   c20: aws11
+#   c21: aws11
+#   c22: aws12
+#   c23: aws12
+#   c24: aws12
+#   c25: aws13
+#   c26: aws13
+#   c27: aws13
+#   c28: aws14
+#   c29: aws14
+#   c30: aws14
+  
+# host:
+#   aws0: 54.183.241.226
+#   aws1: 16.162.22.8
+#   aws2: 54.252.240.19
+#   aws3: 3.69.156.26
+#   aws4: 15.228.230.177
+#   aws5: 3.101.14.183
+#   aws6: 18.166.177.231
+#   aws7: 54.153.191.137
+#   aws8: 54.93.232.209
+#   aws9: 15.228.207.103
+#   aws10: 107.21.70.98
+#   aws11: 3.109.221.178
+#   aws12: 18.179.29.124
+#   aws13: 3.99.52.70
+#   aws14: 18.169.19.245
+
+
+
+process:
+  s101: aws0
+  s201: aws1
+  s301: aws2
+  s401: aws3
+  s501: aws4
+  c01: aws0
+  c02: aws1
+  c03: aws2
+  c04: aws3
+  c05: aws4
+  c06: aws5
+  c07: aws6
+  c08: aws7
+  c09: aws8
+  c10: aws9
+  c11: aws0
+  c12: aws1
+  c13: aws2
+  c14: aws3
+  c15: aws4
+  c16: aws5
+  c17: aws6
+  c18: aws7
+  c19: aws8
+  c20: aws9
+  c21: aws0
+  c22: aws1
+  c23: aws2
+  c24: aws3
+  c25: aws4
+  c26: aws5
+  c27: aws6
+  c28: aws7
+  c29: aws8
+  c30: aws9
+  
+host:
+  aws0: 184.72.49.232
+  aws1: 44.205.230.205
+  aws2: 3.133.214.75
+  aws3: 44.225.32.130
+  aws4: 35.179.49.225
+  aws5: 16.163.96.221
+  aws6: 54.253.53.26
+  aws7: 3.6.253.80
+  aws8: 18.229.52.109
+  aws9: 52.60.216.121

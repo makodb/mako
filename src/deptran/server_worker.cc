@@ -5,6 +5,9 @@
 #include "scheduler.h"
 #include "frame.h"
 #include "communicator.h"
+#include "raft/server.h"
+
+#include <gperftools/profiler.h>
 
 namespace janus {
 
@@ -14,12 +17,12 @@ void ServerWorker::SetupHeartbeat() {
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   scsi_ = new ServerControlServiceImpl(timeout);
   int n_io_threads = 1;
-//  svr_hb_poll_mgr_g = new rrr::PollMgr(n_io_threads);
-  svr_hb_poll_mgr_g = svr_poll_mgr_;
+//  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
+  svr_hb_poll_thread_worker_g = svr_poll_thread_worker_;
 //  hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_thread_pool_g = svr_thread_pool_;
-  hb_rpc_server_ = new rrr::Server(svr_hb_poll_mgr_g, hb_thread_pool_g);
-  hb_rpc_server_->reg(scsi_);
+  hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
+  hb_rpc_server_->reg_service(*scsi_);
 
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
@@ -35,13 +38,30 @@ void ServerWorker::SetupHeartbeat() {
 
 void ServerWorker::SetupBase() {
   auto config = Config::GetConfig();
+  Log_info("tx_proto_=%d replica_proto_=%d", config->tx_proto_, config->replica_proto_);
+
+#ifdef RAFT_TEST_CORO
+  // In test mode, only initialize replication frame services
+  if (config->IsReplicated()) {
+    rep_frame_ = Frame::GetFrame(config->replica_proto_);
+    rep_frame_->site_info_ = site_info_;
+    rep_sched_ = rep_frame_->CreateScheduler();
+    rep_sched_->loc_id_ = site_info_->locale_id;
+    rep_sched_->site_id_ = site_info_->id;
+    rep_sched_->rep_frame_ = rep_frame_;
+    
+    // Start election timer after site_id_ is properly initialized
+    // if (RaftServer* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
+    //   raft_server->StartElectionTimerForTest();
+    // }
+  }
+#else
+  // Normal mode - initialize both transaction and replication services
   tx_frame_ = Frame::GetFrame(config->tx_proto_);
   tx_frame_->site_info_ = site_info_;
-
   // this needs to be done before poping table
   sharding_ = tx_frame_->CreateSharding(Config::GetConfig()->sharding_);
   sharding_->BuildTableInfoPtr();
-
   verify(tx_reg_ == nullptr);
   tx_reg_ = std::make_shared<TxnRegistry>();
   tx_sched_ = tx_frame_->CreateScheduler();
@@ -58,19 +78,35 @@ void ServerWorker::SetupBase() {
     rep_sched_ = rep_frame_->CreateScheduler();
     rep_sched_->txn_reg_ = tx_reg_;
     rep_sched_->loc_id_ = site_info_->locale_id;
+    rep_sched_->site_id_ = site_info_->id;
+#ifdef CPU_PROFILE_SEVER
+    if (rep_sched_->site_id_ == 0) {
+      ProfilerStart("server.prof");
+    }
+#endif
+    rep_sched_->tx_sched_ = tx_sched_;
+    rep_sched_->rep_frame_ = rep_frame_;
+
     tx_sched_->rep_frame_ = rep_frame_;
     tx_sched_->rep_sched_ = rep_sched_;
   }
   // add callbacks to execute commands to rep_sched_
   if (rep_sched_ && tx_sched_) {
-    rep_sched_->RegLearnerAction(std::bind(&TxLogServer::Next,
-                                           tx_sched_,
-                                           std::placeholders::_1,
-                                           std::placeholders::_2));
+    rep_sched_->RegLearnerAction(std::bind(
+        static_cast<int(TxLogServer::*)(int, shared_ptr<Marshallable>)>(&TxLogServer::Next),
+        tx_sched_,
+        std::placeholders::_1,
+        std::placeholders::_2));
   }
+#endif
 }
 
 void ServerWorker::PopTable() {
+#ifdef RAFT_TEST_CORO
+  // In test mode, we don't need to populate tables since we're only testing Raft
+  Log_info("Skipping table population in test mode");
+  return;
+#else
   // populate table
   int ret = 0;
   // get all tables
@@ -106,15 +142,22 @@ void ServerWorker::PopTable() {
   Log_info("data populated for site: %x, partition: %x",
            site_info_->id, site_info_->partition_id_);
   verify(ret > 0);
+#endif
 }
 
 void ServerWorker::RegisterWorkload() {
+#ifdef RAFT_TEST_CORO
+  // In test mode, we don't need to register workload since we're only testing Raft
+  Log_info("Skipping workload registration in test mode");
+  return;
+#else
   Workload* workload = Workload::CreateWorkload(Config::GetConfig());
   verify(tx_reg_ != nullptr);
   verify(sharding_ != nullptr);
   workload->sss_ = sharding_;
   workload->txn_reg_ = tx_reg_;
   workload->RegisterPrecedures();
+#endif
 }
 
 void ServerWorker::SetupService() {
@@ -123,44 +166,56 @@ void ServerWorker::SetupService() {
            site_info_->GetBindAddress().c_str());
 
   int ret;
+  auto config = Config::GetConfig();
   // set running mode and initialize transaction manager.
   std::string bind_addr = site_info_->GetBindAddress();
 
-  // init rrr::PollMgr 1 threads
-  int n_io_threads = 1;
-  svr_poll_mgr_ = new rrr::PollMgr(n_io_threads);
+  // init rrr::PollThread
+  svr_poll_thread_worker_ = rusty::Some(PollThread::create());
 //  svr_thread_pool_ = new rrr::ThreadPool(1);
 
-  // init service implementation
+  // Use as_ref().unwrap() to borrow without consuming the Option
+  auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
+  // init service implementation
+#ifdef RAFT_TEST_CORO
+  // In test mode, only initialize replication services
+  if (rep_frame_ != nullptr) {
+    auto s2 = rep_frame_->CreateRpcServices(site_info_->id,
+                                            rep_sched_,
+                                            poll_worker,
+                                            scsi_);
+    services_.insert(services_.end(), s2.begin(), s2.end());
+  }
+#else
   if (tx_frame_ != nullptr) {
     services_ = tx_frame_->CreateRpcServices(site_info_->id,
                                              tx_sched_,
-                                             svr_poll_mgr_,
+                                             poll_worker,
                                              scsi_);
   }
 
   if (rep_frame_ != nullptr) {
     auto s2 = rep_frame_->CreateRpcServices(site_info_->id,
                                             rep_sched_,
-                                            svr_poll_mgr_,
+                                            poll_worker,
                                             scsi_);
-
     services_.insert(services_.end(), s2.begin(), s2.end());
   }
+#endif
 
 //  auto& alarm = TimeoutALock::get_alarm_s();
-//  ServerWorker::svr_poll_mgr_->add(&alarm);
+//  ServerWorker::svr_poll_thread_worker_->add(&alarm);
 
   uint32_t num_threads = 1;
 //  thread_pool_g = new base::ThreadPool(num_threads);
 
   // init rrr::Server
-  rpc_server_ = new rrr::Server(svr_poll_mgr_, svr_thread_pool_);
+  rpc_server_ = new rrr::Server(poll_worker, svr_thread_pool_);
 
   // reg services
   for (auto service : services_) {
-    rpc_server_->reg(service);
+    rpc_server_->reg_service(*service);
   }
 
   // start rpc server
@@ -182,15 +237,11 @@ void ServerWorker::WaitForShutdown() {
     scsi_->wait_for_shutdown();
     delete hb_rpc_server_;
     delete scsi_;
-    if (svr_hb_poll_mgr_g != svr_poll_mgr_)
-      svr_hb_poll_mgr_g->release();
+    // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     if (hb_thread_pool_g != svr_thread_pool_)
       hb_thread_pool_g->release();
 
     for (auto service : services_) {
-#ifdef CHECK_ISO
-      this->tx_sched_->CheckDeltas();
-#endif
       if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(service)) {
         auto& recorder = s->recorder_;
         if (recorder) {
@@ -203,41 +254,97 @@ void ServerWorker::WaitForShutdown() {
       }
     }
   }
-#ifdef CHECK_ISO
-    for (auto service : services_) {
-      this->tx_sched_->CheckDeltas();
-    }
-#endif
-
   Log_debug("exit %s", __FUNCTION__);
 }
 
 void ServerWorker::SetupCommo() {
-  verify(svr_poll_mgr_ != nullptr);
+  verify(svr_poll_thread_worker_.is_some());
   if (tx_frame_) {
-    tx_commo_ = tx_frame_->CreateCommo(svr_poll_mgr_);
+    tx_commo_ = tx_frame_->CreateCommo(svr_poll_thread_worker_);
     if (tx_commo_) {
       tx_commo_->loc_id_ = site_info_->locale_id;
     }
     tx_sched_->commo_ = tx_commo_;
   }
   if (rep_frame_) {
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_mgr_);
+    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_);
     if (rep_commo_) {
       rep_commo_->loc_id_ = site_info_->locale_id;
     }
+    verify(rep_commo_ != nullptr);
     rep_sched_->commo_ = rep_commo_;
-
+    verify(rep_sched_->commo_ != nullptr);
+    rep_commo_->rep_sched_ = rep_sched_;
   }
+
+  Reactor::GetReactor()->server_id_ = site_info_->id;
+//  svr_thread_pool_ = new rrr::ThreadPool(1);
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
+    [this]() {
+      if (rep_sched_) {
+        rep_sched_->Setup();
+      }
+    }
+  ));
+  // Cast OneTimeJob to Job base class for PollThread
+  auto arc_job_base = rusty::Arc<Job>(arc_job);
+  svr_poll_thread_worker_.as_ref().unwrap()->add(arc_job_base);
+
+#ifdef RAFT_TEST_CORO
+// dead loop this thread for coroutine scheduling 
+// TODO, figure out a better approach
+  if (rep_sched_->site_id_ == 0) {
+    Reactor::GetReactor()->Loop(true, true);
+  }
+#endif
+}
+
+void ServerWorker::Pause() {
+  Log_info("!!!!!!!! ServerWorker::Pause()");
+  rep_sched_->Pause();
+  // pause() not implemented in PollThreadWorker;
+}
+
+void ServerWorker::Resume() {
+  // resume() not implemented in PollThreadWorker;
+  rep_sched_->Resume();
 }
 
 void ServerWorker::ShutDown() {
   Log_debug("deleting services, num: %d", services_.size());
+
+  // Merged: mako-dev's cleanup + Jetpack's rep_sched_ deletion
   delete rpc_server_;
   for (auto service : services_) {
     delete service;
   }
-//  thread_pool_g->release();
-  svr_poll_mgr_->release();
+
+  // Modern C++ - smart pointer auto-cleanup
+  // svr_poll_thread_worker_ automatically released by shared_ptr
+
+  // Jetpack: Clean up replication scheduler (raw pointer needs manual deletion)
+  Log_info("Deleting replication scheduler...");
+  if (rep_sched_) delete rep_sched_;
+  Log_info("ServerWorker shutdown complete.");
 }
+
+int ServerWorker::DbChecksum() {
+  // auto cs = this->tx_sched_->mdb_txn_mgr_->Checksum();
+  uint32_t cs = this->tx_sched_->ChecksumXor();
+  Log_info("site_id: %d shard_id: %d checksum: %x", (int)this->site_info_->id,
+           (int)this->site_info_->partition_id_, (int) cs);
+  return cs;
+}
+
+ServerWorker::~ServerWorker() {
+  // Shutdown PollThreads if we own them
+  if (svr_poll_thread_worker_.is_some()) {
+    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
+  }
+  if (svr_hb_poll_thread_worker_g.is_some()) {
+    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
+  }
+}
+
 } // namespace janus
+

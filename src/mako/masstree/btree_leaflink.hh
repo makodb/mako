@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Doubly-linked list management for B+tree leaf nodes
+// Provides lock-free prev/next traversal with version checking
+// SAFETY: Uses atomic pointer stores and acquire/release fences
+
 #ifndef BTREE_LEAFLINK_HH
 #define BTREE_LEAFLINK_HH 1
 #include "compiler.hh"
@@ -36,6 +40,7 @@ template <typename N> struct btree_leaflink<N, true> {
         return reinterpret_cast<uintptr_t>(n) & 1;
     }
     template <typename SF>
+    // @unsafe - manipulates raw next pointers with CAS
     static inline N *lock_next(N *n, SF spin_function) {
         while (1) {
             N *next = n->next_.ptr;
@@ -53,6 +58,8 @@ template <typename N> struct btree_leaflink<N, true> {
 
         Concurrency correctness: Ensures that all "next" pointers are always
         valid, even if @a n's successor is deleted concurrently. */
+    // @unsafe - mutates linked list pointers without borrow tracking
+    // @unsafe - raw pointer rewiring without concurrency support
     static void link_split(N *n, N *nr) {
         link_split(n, nr, relax_fence_function());
     }
@@ -73,6 +80,8 @@ template <typename N> struct btree_leaflink<N, true> {
 
         Concurrency correctness: Works even in the presence of concurrent
         splits and deletes. */
+    // @unsafe - rewires prev/next pointers of raw leaves
+    // @unsafe - raw unlink operation
     static void unlink(N *n) {
         unlink(n, relax_fence_function());
     }

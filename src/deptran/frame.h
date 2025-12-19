@@ -1,4 +1,5 @@
 #pragma once
+#include <rusty/arc.hpp>
 #include "__dep__.h"
 #include "constants.h"
 #include "txn_reg.h"
@@ -23,19 +24,26 @@ class Workload;
 class Frame {
  public:
   Communicator *commo_ = nullptr;
+  TxLogServer *svr_ = nullptr;
 
   // static variables to hold frames
   static map<string, int> &FrameNameToMode();
   static map<int, function<Frame *()>> &ModeToFrame();
   static int Name2Mode(string name);
   static Frame *GetFrame(int mode);
+  static Frame *GetFrame(int mode, int replica_mode);
   static Frame *GetFrame(string name);
   static Frame *RegFrame(int mode, function<Frame *()>); // deprecated.
   static Frame *RegFrame(int mode, vector<string> names, function<Frame *()>);
 
   int mode_;
+  int replica_mode_;
   Config::SiteInfo *site_info_ = nullptr;
-  Frame(int mode) : mode_(mode) {};
+  Frame(int mode) : mode_(mode) {
+  };
+  Frame(int mode, int replica_mode) : mode_(mode), replica_mode_(replica_mode) {
+  };
+  virtual ~Frame() {};
   // for both dtxn and rep
   virtual Coordinator *CreateCoordinator(cooid_t coo_id,
                                          Config *config,
@@ -48,7 +56,7 @@ class Frame {
 
   virtual Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sch);
   virtual TxLogServer *CreateScheduler();
-  virtual Communicator *CreateCommo(PollMgr *pollmgr = nullptr);
+  virtual Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
   // for only dtxn
   Sharding *CreateSharding();
   Sharding *CreateSharding(Sharding *sd);
@@ -65,12 +73,15 @@ class Frame {
   Workload *CreateTxGenerator();
   virtual vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
                                                    TxLogServer *dtxn_sched,
-                                                   rrr::PollMgr *poll_mgr,
+                                                   rusty::Arc<rrr::PollThread> poll_thread_worker,
                                                    ServerControlServiceImpl *scsi);
 };
 
+#define RANDOM_VAR_NAME(var, file, line) \
+var##file##line
+
 #define REG_FRAME(mode, names, classframe) \
-static Frame* var__FILE____LINE__ __attribute__((used)) = \
+static Frame* RANDOM_VAR_NAME(var, __FILE__, __LINE__) = \
 Frame::RegFrame(mode, names, []()->Frame*{ return new classframe(mode);})
 
 } // namespace janus

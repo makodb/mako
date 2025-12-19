@@ -5,7 +5,7 @@ namespace janus {
 
 #define ballot_t int64_t
 #define cooid_t uint32_t
-#define rank_t uint8_t
+#define rank_t int32_t
 #define txid_t uint64_t
 #define txnid_t uint64_t
 #define cmdid_t uint64_t // txnid and cmdid are the same thing
@@ -23,6 +23,10 @@ namespace janus {
 #define txntype_t uint32_t
 #define cmdtype_t uint32_t
 #define groupid_t uint32_t
+#define bool_t int8_t
+#define key_t int32_t
+#define value_t int32_t
+#define ver_t int32_t
 
 /** read and write type */
 #define OP_WRITE   (0x01)
@@ -42,7 +46,8 @@ namespace janus {
 #define TXN_PAC (0x02)  // pre-accepted
 #define TXN_ACC (0x04)  // accepted
 #define TXN_CMT (0x08)  // committing
-#define TXN_DCD (0x10)  // decided
+#define TXN_ALL_PREDECESORS_COMMITING (0x10)
+#define TXN_DCD (0x20)  // decided
 #define TXN_FNS (0x20)  // finished
 #define TXN_ABT (0x40)  // aborted
 
@@ -51,6 +56,7 @@ namespace janus {
 #define TXN_INSTANT    (0x02)
 #define TXN_IMMEDIATE  (0x02)
 #define TXN_DEFERRED   (0x04)
+#define TXOP_MULTIHOP        (0x08) // for multi-hop data/flow dependency
 
 #define DF_REAL (0x04)
 #define DF_NO   (0x02)
@@ -67,7 +73,9 @@ namespace janus {
 #define REJECT      (-10)
 #define ABSTAIN     (-10)
 #define RETRY       (-10)
+#define REPEAT      (-15)  // Jetpack: null_cmd retry indicator
 #define DELAYED     (1)
+#define WRONG_LEADER (-20)
 
 #define MODE_NONE   (0x00)
 #define MODE_2PL    (0x01)
@@ -76,19 +84,28 @@ namespace janus {
 #define MODE_RO6    (0x08)
 #define MODE_BRQ    (0x10)
 #define MODE_JANUS    (0x10)
+#define MODE_RULE    (0x15)
 #define MODE_FEBRUUS    (0x20)
 #define MODE_MDCC   (0x12)
 #define MODE_TROAD    (0x03)
 #define MODE_EXTERNC   (0x14)
-#define MODE_RPC_NULL   (64)
+#define MODE_RPC_NULL   (0x800)
+#define MODE_NOTX   (0x1000)
+#define MODE_NONE_COPILOT (0x18)
 
     // deprecated.
 #define MODE_DEPTRAN (4)
 
 #define MODE_MULTI_PAXOS   (0x40)
+#define MODE_MULTI_PAXOS_PLUS   (0x41)
 #define MODE_EPAXOS        (0x80)
 #define MODE_TAPIR         (0x100)
 #define MODE_MENCIUS       (0x200)
+#define MODE_CAROUSEL (0x2000)
+#define MODE_RAFT (0x400)
+#define MODE_FPGA_RAFT (0x401)
+#define MODE_COPILOT        (0x4000)
+#define MODE_MONGODB (0x9000)
 #define MODE_NOT_READY     (0x00)
 
 #define OP_IR   (0x1)
@@ -117,6 +134,41 @@ namespace janus {
 #define TPCC_REAL_DIST_PART (4)
 #define MICRO_BENCH (5)
 
-#define SIMULATE_WAN
+// #define SIMULATE_WAN
+#define YES (1)
+#define NO  (0)
+
+// #define COPILOT_DEBUG
+// #define COPILOT_TIME_DEBUG
+// #define FINISH_COUNTDOWN_MAX (1)
+// #define TC
+
+#define AWS
+// #define SIMULATE_WAN
+// #define FULL_LOG_DEBUG
+// #define LATENCY_DEBUG
+// #define LATENCY_LOG_DEBUG
+// #define MONGODB_DEBUG
+#define CHECK_KEY_DISTRIBUTION
+#define READ_NOT_CONFLICT_OPTIMIZATION
+#define JETPACK_DEDUPLICATE_OPTIMIZATION
+// #define CHECK_LONG_POLL_WAIT
+// #define ZERO_OVERHEAD
+// #define DB_CHECKSUM
+
+// #define CPU_PROFILE_MAIN
+// #define CPU_PROFILE_SEVER
+// #define WITNESS_LOG_DEBUG
+#define FAILOVER_DEBUG
+// #define RAFT_LEADER_ELECTION_LOGIC
+// #define RAFT_LEADER_ELECTION_DEBUG
+
+// #ifndef RAFT_TEST_CORO   
+// #define RAFT_BATCH_OPTIMIZATION
+// #endif
+
+#define RAFT_BATCH_OPTIMIZATION
+
+// #define JETPACK_RECOVERY_DEBUG
 
 } // namespace janus

@@ -9,6 +9,7 @@
 
 class TransProxy;
 
+// @unsafe: manages transaction item state with raw pointers and flags
 class TransItem {
   public:
 #if SIZEOF_VOID_P == 8
@@ -39,32 +40,41 @@ class TransItem {
         : s_(reinterpret_cast<ownerstore_type>(owner)), key_(k) {
     }
 
+    // @unsafe: uses reinterpret_cast
     TObject* owner() const {
         return reinterpret_cast<TObject*>(s_ & pointer_mask);
     }
 
+    // @unsafe: calls flags()
     bool has_write() const {
         return flags() & write_bit;
     }
+    // @unsafe: calls flags()
     bool has_read() const {
         return flags() & read_bit;
     }
+    // @unsafe: calls flags()
     bool has_predicate() const {
         return flags() & predicate_bit;
     }
+    // @unsafe: calls flags()
     bool has_stash() const {
         return flags() & stash_bit;
     }
+    // @unsafe: calls flags()
     bool needs_unlock() const {
         return flags() & lock_bit;
     }
+    // @unsafe: uses bitwise operations on raw fields
     bool same_item(const TransItem& x) const {
         return !((s_ ^ x.s_) & owner_mask) && key_ == x.key_;
     }
+    // @unsafe: calls flags()
     bool has_flag(flags_type f) const {
         return flags() & f;
     }
 
+    // @unsafe: returns reference to unpacked data
     template <typename T>
     const T& key() const {
         return Packer<T>::unpack(key_);
@@ -196,9 +206,11 @@ private:
     void* wdata_;
     std::string extra;
 
+    // @unsafe: uses pointer address-of and bitwise operations
     void __rm_flags(flags_type flags) {
         s_ = s_ & ~flags;
     }
+    // @safe
     void __or_flags(flags_type flags) {
         s_ = s_ | flags;
     }
@@ -206,7 +218,7 @@ private:
     friend class TransProxy;
 };
 
-
+// @unsafe: proxy for transaction items with raw references
 class TransProxy {
   public:
     TransProxy(Transaction& t, TransItem& item)
@@ -220,7 +232,7 @@ class TransProxy {
     operator TransItem&() {
         return item();
     }
-
+    // @unsafe: calls unsafe has_read
     bool has_read() const {
         return item().has_read();
     }

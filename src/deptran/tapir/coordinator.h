@@ -23,7 +23,7 @@ class CoordinatorTapir : public CoordinatorClassic {
   TapirCommo* commo();
 
   void DispatchAsync() override;
-  void DispatchAck(phase_t, int32_t res, TxnOutput& output) override;
+  void DispatchAck(phase_t, double dispatch_time, int32_t res, TxnOutput& output) override;
 
   void FastAccept();
   void FastAcceptAck(phase_t phase, parid_t par_id, int32_t res);
@@ -35,7 +35,7 @@ class CoordinatorTapir : public CoordinatorClassic {
   void Decide();
 
   void Accept();
-  void AcceptAck(phase_t phase, parid_t par_id, Future *fu);
+  void AcceptAck(phase_t phase, parid_t par_id, rusty::Arc<Future> fu);
 
   void Restart() override;
   void GotoNextPhase() override;

@@ -14,11 +14,21 @@
 #include "base/all.hpp"
 #include "utils.hpp"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 using namespace std;
 
 namespace rrr {
 
-// @safe - Uses safe fcntl operations
+// @unsafe - Calls fcntl (external unsafe)
+// SAFETY: fcntl is POSIX-compliant, fd must be valid
 int set_nonblocking(int fd, bool nonblocking) {
     int ret = fcntl(fd, F_GETFL, 0);
     if (ret != -1) {

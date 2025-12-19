@@ -13,6 +13,12 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// Pure random number generation using PSDES algorithm
+// All functions are safe - pure arithmetic with no memory operations
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+
 #include "kvrandom.hh"
 #include "compiler.hh"
 #include <stdio.h>
@@ -24,6 +30,7 @@ const uint32_t kvrandom_psdes_nr::c2[] = {
     0x4B0F3B58U, 0xE874F0C3U, 0x6955C5A6U, 0x55A7CA46U
 };
 
+// @safe - only uses bitwise ops and arithmetic on stack variables, no pointers or allocations
 uint32_t kvrandom_psdes_nr::psdes(uint32_t lword, uint32_t irword) {
     for (int i = 0; i < niter; ++i) {
 	uint32_t iswap = irword;

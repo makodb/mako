@@ -24,6 +24,7 @@ struct BulkPrepare{
 
 class PaxosServer : public TxLogServer {
  public:
+  // ----min_active <= max_executed <= max_committed---
   slotid_t min_active_slot_ = 0; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;
   slotid_t max_committed_slot_ = 0;
@@ -42,9 +43,25 @@ class PaxosServer : public TxLogServer {
   int n_prepare_ = 0;
   int n_accept_ = 0;
   int n_commit_ = 0;
+  bool in_applying_logs_{false};
+
+#ifdef CHECK_KEY_DISTRIBUTION
+  KeyDistribution key_distribution_;
+#endif
+
+#ifdef LATENCY_DEBUG
+  Distribution client2follower_;
+#endif
 
   ~PaxosServer() {
     Log_info("site par %d, loc %d: prepare %d, accept %d, commit %d", partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
+#ifdef CHECK_KEY_DISTRIBUTION
+    if (loc_id_ == 0)
+      key_distribution_.Print();
+#endif
+#ifdef LATENCY_DEBUG
+    Log_info("site par %d, loc %d: client2follower 50pct: %.2f 90pct: %.2f 99pct: %.2f", partition_id_, loc_id_, client2follower_.pct50(), client2follower_.pct90(), client2follower_.pct99());
+#endif
   }
 
   shared_ptr<PaxosData> GetInstance(slotid_t id) {
@@ -56,15 +73,23 @@ class PaxosServer : public TxLogServer {
     return sp_instance;
   }
 
+  void OnForward(shared_ptr<Marshallable> &cmd,
+                 uint64_t dep_id,
+                 uint64_t* coro_id,
+                 const function<void()> &cb);
+
   void OnPrepare(slotid_t slot_id,
                  ballot_t ballot,
                  ballot_t *max_ballot,
+                 uint64_t* coro_id,
                  const function<void()> &cb);
 
   void OnAccept(const slotid_t slot_id,
+		const uint64_t time,
                 const ballot_t ballot,
                 shared_ptr<Marshallable> &cmd,
                 ballot_t *max_ballot,
+                uint64_t* coro_id,
                 const function<void()> &cb);
 
   void OnCommit(const slotid_t slot_id,

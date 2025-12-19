@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - High-level query interface for Masstree operations
+// Provides default_table typedef and query struct for client usage
+// SAFETY: Wraps tree operations with threadinfo-based memory management
+
 #ifndef QUERY_MASSTREE_HH
 #define QUERY_MASSTREE_HH 1
 #include "masstree.hh"
@@ -50,6 +54,7 @@ class query_table {
 
     void findpivots(Str* pv, int npv) const;
 
+    // @unsafe - writes stats to raw FILE* without borrow tracking
     void stats(FILE* f);
     void json_stats(lcdf::Json& j, threadinfo& ti);
     inline lcdf::Json json_stats(threadinfo& ti) {
@@ -58,6 +63,7 @@ class query_table {
         return j;
     }
 
+    // @unsafe - prints directly to FILE* using C stdio
     void print(FILE* f, int indent) const;
 
     static void test(threadinfo& ti);

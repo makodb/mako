@@ -30,6 +30,7 @@ CoordinatorClassic::CoordinatorClassic(uint32_t coo_id,
 
 Communicator* CoordinatorClassic::commo() {
   if (commo_ == nullptr) {
+    verify(0);
     commo_ = new Communicator;
   }
   verify(commo_ != nullptr);
@@ -57,11 +58,15 @@ void CoordinatorClassic::ForwardTxRequestAck(const TxReply& txn_reply) {
 
 void CoordinatorClassic::DoTxAsync(TxRequest& req) {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
+  // cmd already RWChopper type if RW workload
+  // also copy data by (1) ws_init_ = req.input_; (2) ws_ = req.input_;
   TxData* cmd = frame_->CreateTxnCommand(req, txn_reg_);
   verify(txn_reg_ != nullptr);
   cmd->root_id_ = this->next_txn_id();
   cmd->id_ = cmd->root_id_;
   ongoing_tx_id_ = cmd->id_;
+  cmd->client_id_ = req.client_id_;
+  cmd->cmd_id_in_client_ = req.cmd_id_in_client_;
   Log_debug("assigning tx id: %" PRIx64, ongoing_tx_id_);
   cmd->timestamp_ = GenerateTimestamp();
   cmd_ = cmd;
@@ -79,40 +84,83 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
     Log_info("forward to leader: %d; cooid: %d",
              forward_status_,
              this->coo_id_);
+    verify(0); // not supported yet for the new open closed loop.
     ForwardTxnRequest(req);
   } else {
     Log_debug("start txn!!! : %d", forward_status_);
-    Coroutine::CreateRun([this]() { GotoNextPhase(); });
+    // this GotoNextPhase is in none/coordinator.cc, coz this is CoordinatorNone instance
+    // class CoordinatorNone : public CoordinatorClassic { }
+    Coroutine::CreateRun([this]() {
+        // Log_info("Start CoroutineID %d %d", Coroutine::CurrentCoroutine()->id, Coroutine::CurrentCoroutine()->global_id);
+        GotoNextPhase();
+      }, __FILE__, __LINE__
+    );
   }
 }
 
+
 void CoordinatorClassic::GotoNextPhase() {
+  //Log_info("We're moving along: %d", phase_ % 4);
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
-  switch (phase_++ % n_phase) {
+  phase_++;
+	bool first = true;
+  //Log_info("Current phase is %d", current_phase);
+  //Log_info("aborted and committed: %d, %d", aborted_, committed_);
+  switch (current_phase) {
     case Phase::INIT_END:
-      DispatchAsync();
+			if (n_retry_ > 0) Log_info("dispatching after restart");
+      //Log_info("Dispatching for some reason: %x, %d", this, phase_);
       verify(phase_ % n_phase == Phase::DISPATCH);
+
+			/*while(commo()->paused){
+				if(first){
+					commo()->count_lock_.lock();
+					commo()->total_++;
+					commo()->qe->n_voted_yes_++;
+					commo()->count_lock_.unlock();
+					Log_info("is it ready: %d", commo()->qe->IsReady());
+					commo()->qe->Test();
+					first = false;
+				}
+				Log_info("total: %d", commo()->total_);
+				auto t = Reactor::CreateSpEvent<TimeoutEvent>(0.1*1000*1000);
+				t->Wait(0.1*1000*1000);
+			}*/
+			DispatchAsync(true);
       break;
+      //break;
     case Phase::DISPATCH:
+      //Log_info("Preparing for some reason: %x, %d", this, phase_);
       verify(phase_ % n_phase == Phase::PREPARE);
       verify(!committed_);
-      if (aborted_) {
-        phase_++;
-        Commit();
-      } else {
+      if (!aborted_) {
+				phase_++;
         Prepare();
+      } else {
+        phase_++;
+        Log_info("Aborting for some reason: %d", n_retry_);
+        EarlyAbort();
+				break;
       }
-      break;
+      //break;
     case Phase::PREPARE:
+      //Log_info("Committing for some reason: %x, %d", this, phase_);
       verify(phase_ % n_phase == Phase::COMMIT);
+      phase_++;
       Commit();
-      break;
+      //break;
     case Phase::COMMIT:
       verify(phase_ % n_phase == Phase::INIT_END);
-      if (committed_)
+      verify(committed_ != aborted_);
+      if (committed_){
+        //Log_info("Finishing for some reason");
+        //phase_++;
         End();
+      }
       else if (aborted_) {
+        Log_info("Restarting for some reason: %d", n_retry_);
+        //phase_++;
         Restart();
       } else
         verify(0);
@@ -136,12 +184,14 @@ void CoordinatorClassic::Reset() {
   dispatch_acks_.clear();
   committed_ = false;
   aborted_ = false;
+	repeat_ = false;
 }
 
 void CoordinatorClassic::Restart() {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
   verify(aborted_);
   n_retry_++;
+	verify(n_retry_ < 5);
   cmd_->root_id_ = this->next_txn_id();
   cmd_->id_ = cmd_->root_id_;
   ongoing_tx_id_ = cmd_->root_id_;
@@ -156,21 +206,24 @@ void CoordinatorClassic::Restart() {
       ccsi_->txn_give_up_one(this->thread_id_, txn->type_);
     End();
   } else {
-    // Log_info("retry count %d, max_retry: %d, this coord: %llx", n_retry_, max_retry, this);
+    Log_info("retry count %d, max_retry: %d, this coord: %llx", n_retry_, max_retry, this);
     Reset();
     txn->Reset();
+    //could be a problem or maybe not???
     GotoNextPhase();
   }
 }
 
 void CoordinatorClassic::DispatchAsync() {
+  Log_debug("commo Broadcast to the server on client worker");
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto txn = (TxData*) cmd_;
 
   int cnt = 0;
   auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
-  n_pd = 1;
-  auto cmds_by_par = txn->GetReadyPiecesData(n_pd);
+  n_pd = 100;
+  ReadyPiecesData cmds_by_par;
+  cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
   Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
   for (auto& pair: cmds_by_par) {
     const parid_t& par_id = pair.first;
@@ -183,15 +236,89 @@ void CoordinatorClassic::DispatchAsync() {
       dispatch_acks_[c->inn_id_] = false;
       sp_vec_piece->push_back(c);
     }
+
     commo()->BroadcastDispatch(sp_vec_piece,
                                this,
                                std::bind(&CoordinatorClassic::DispatchAck,
                                          this,
                                          phase_,
+                                         -1, 
                                          std::placeholders::_1,
                                          std::placeholders::_2));
   }
+
   Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
+}
+
+void CoordinatorClassic::DispatchSync() {
+  Log_debug("commo Broadcast to the server on client worker");
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  auto txn = (TxData*) cmd_;
+
+  int cnt = 0;
+  auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
+  n_pd = 100;
+  ReadyPiecesData cmds_by_par;
+  cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
+  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
+  for (auto& pair: cmds_by_par) {
+    const parid_t& par_id = pair.first;
+    auto& cmds = pair.second;
+    n_dispatch_ += cmds.size();
+    cnt += cmds.size();
+    auto sp_vec_piece = std::make_shared<vector<shared_ptr<TxPieceData>>>();
+    for (auto c: cmds) {
+      c->id_ = next_pie_id();
+      dispatch_acks_[c->inn_id_] = false;
+      sp_vec_piece->push_back(c);
+    }
+
+    commo()->SyncBroadcastDispatch(sp_vec_piece,
+                                    this,
+                                    std::bind(&CoordinatorClassic::DispatchAck,
+                                              this,
+                                              phase_,
+                                              -1, 
+                                              std::placeholders::_1,
+                                              std::placeholders::_2));
+
+  }
+
+  Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
+}
+
+// not used
+void CoordinatorClassic::DispatchAsync(bool last) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+  auto txn = (TxData*) cmd_;
+
+  int cnt = 0;
+  auto n_pd = Config::GetConfig()->n_parallel_dispatch_;
+  n_pd = 100;
+  auto cmds_by_par = txn->GetReadyPiecesData(n_pd); // TODO setting n_pd larger than 1 will cause 2pl to wait forever
+  Log_debug("Dispatch for tx_id: %" PRIx64, txn->root_id_);
+  
+  for (auto& pair: cmds_by_par){
+    auto& cmds = pair.second;
+    n_dispatch_ += cmds.size();
+  }
+  
+  sp_int_event = commo()->BroadcastDispatch(cmds_by_par, this, txn);
+  phase_t phase = phase_;
+	
+  sp_int_event->Wait();
+  
+	debug_cnt--;
+
+  if(phase != phase) verify(0);
+  /*if(txn->HasMoreUnsentPiece()){
+    DispatchAsync(true);
+  }*/if(last && AllDispatchAcked()){
+    GotoNextPhase();
+  } else if (last && aborted_) {
+		GotoNextPhase();
+	}
+  //Log_debug("Dispatch cnt: %d for tx_id: %" PRIx64, cnt, txn->root_id_);
 }
 
 bool CoordinatorClassic::AllDispatchAcked() {
@@ -200,38 +327,58 @@ bool CoordinatorClassic::AllDispatchAcked() {
                           [](std::pair<innid_t, bool> pair) {
                             return pair.second;
                           });
-  if (ret1)
+  if (ret1){
     verify(n_dispatch_ack_ == n_dispatch_);
+  }
   return ret1;
 }
 
 void CoordinatorClassic::DispatchAck(phase_t phase,
+                                     double dispatch_time,
                                      int res,
                                      TxnOutput& outputs) {
+#ifdef LATENCY_LOG_DEBUG
+  Log_info("!!!!!!!!!!!! enter CoordinatorClassic::DispatchAck");
+#endif
+  //Log_info("Is this being called");
+  WAN_WAIT
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
+  if (dispatch_time > 0 && dispatch_duration_3_times_ > Config::GetConfig()->duration_ * 1000 && dispatch_duration_3_times_ < Config::GetConfig()->duration_ * 2 * 1000) {
+    client_worker_->cli2cli_[3].append(SimpleRWCommand::GetCurrentMsTime() - dispatch_time);
+  }
   if (phase != phase_) return;
-  TxData* txn = (TxData*) cmd_;
+  auto* txn = (TxData*) cmd_;
   if (res == REJECT) {
-    Log_debug("got REJECT reply for cmd_id: %llx NOT COMMITING",
-              txn->root_id_);
     aborted_ = true;
     txn->commit_.store(false);
+    // Log_info("DispatchAck Reject CoroutineID %d %d", Coroutine::CurrentCoroutine()->id, Coroutine::CurrentCoroutine()->global_id);
+    GotoNextPhase();
+    return;
+  } else if (res == WRONG_LEADER) {
+    Log_info("[WRONG_LEADER] DispatchAck received WRONG_LEADER for tx_id: %lu", txn->id_);
+    aborted_ = true;
+    txn->commit_.store(false);
+    txn->reply_.res_ = WRONG_LEADER;
+    // For None mode, we need to check if we can get view data from the transaction
+    // The view data should have been set by the scheduler
+    if (txn->reply_.sp_view_data_) {
+      Log_info("[WRONG_LEADER] DispatchAck has view data: %s", 
+               txn->reply_.sp_view_data_->ToString().c_str());
+    }
+    GotoNextPhase();
+    return;
   }
   n_dispatch_ack_ += outputs.size();
-  if (aborted_) {
+  /*if (aborted_) {
     if (n_dispatch_ack_ == n_dispatch_) {
-      // wait until all ongoing dispatch to finish before aborting.
-      Log_debug("received all start acks (at least one is REJECT);"
-                    "tx_id: %"
-                    PRIx64, txn->root_id_);
       GotoNextPhase();
       return;
     }
-  }
+  }*/
 
   for (auto& pair : outputs) {
     const innid_t& inn_id = pair.first;
-    verify(dispatch_acks_.at(inn_id) == false);
+    verify(!dispatch_acks_.at(inn_id));
     dispatch_acks_[inn_id] = true;
     Log_debug("get start ack %ld/%ld for cmd_id: %lx, inn_id: %d",
               n_dispatch_ack_, n_dispatch_, cmd_->id_, inn_id);
@@ -245,6 +392,13 @@ void CoordinatorClassic::DispatchAck(phase_t phase,
   } else if (AllDispatchAcked()) {
     Log_debug("receive all start acks, txn_id: %llx; START PREPARE",
               txn->id_);
+    dispatch_ack_ = true;
+    // Log_info("CoordinatorRule coo_id=%d thread_id=%d cmd_ver_=%d cmd_ver=%d current_phase=%d [End of DispatchAck]", coo_id_, thread_id_, cmd_ver_, cmd_ver, phase % 3);
+    if (phase != phase_) {
+      // Log_info("AllDispatchAcked Failed CoroutineID %d %d", Coroutine::CurrentCoroutine()->id, Coroutine::CurrentCoroutine()->global_id);
+      return;
+    }
+    // Log_info("AllDispatchAcked Successed CoroutineID %d %d", Coroutine::CurrentCoroutine()->id, Coroutine::CurrentCoroutine()->global_id);
     GotoNextPhase();
   }
 }
@@ -254,27 +408,74 @@ void CoordinatorClassic::Prepare() {
   TxData* cmd = (TxData*) cmd_;
   auto mode = Config::GetConfig()->tx_proto_;
   verify(mode == MODE_OCC || mode == MODE_2PL);
-
+   
   std::vector<i32> sids;
   for (auto& site : cmd->partition_ids_) {
     sids.push_back(site);
   }
 
-  for (auto& partition_id : cmd->partition_ids_) {
-    Log_debug("send prepare tid: %ld; partition_id %d",
-              cmd_->id_,
-              partition_id);
-    commo()->SendPrepare(partition_id,
+  Log_info("send prepare tid: %ld",
+            cmd_->id_);
+  auto phase = phase_;
+  
+  /*commo()->SendPrepare(partition_id,
                          cmd_->id_,
                          sids,
                          std::bind(&CoordinatorClassic::PrepareAck,
                                    this,
                                    phase_,
-                                   std::placeholders::_1));
-    verify(site_prepare_[partition_id] == 0);
-    site_prepare_[partition_id]++;
-    verify(site_prepare_[partition_id] == 1);
+                                   std::placeholders::_1));*/
+
+  auto quorum_event = commo()->SendPrepare(this,
+                                          cmd_->id_,
+                                          sids);
+
+	quorum_event->Wait();
+	//Log_info("slow inside Prepare is: %d", commo()->slow);
+  Log_info("DONE send prepare tid: %ld",
+            cmd_->id_);
+  quorum_event->log();
+	
+  if(!aborted_){
+    cmd->commit_.store(true);
+    committed_ = true;
   }
+	if(repeat_) {
+		
+	}
+	if (commo()->slow) {
+		Log_info("prep_slow");
+		prep_slow = true;
+	}
+	//if(commo()->slow  && commo()->total > 100 && !commo()->paused){
+		//double cpu_thres = 0.90/(1 + exp(-0.00107340141*(commo()->window_avg - 721.918226)));
+		//double cpu_thres = 0.29712171*log(commo()->window_avg) - 2.8758182;
+		/*double cpu_thres = 0.0000137325*commo()->window_avg - 0.23825;
+		if(cpu_thres >= 0.85) cpu_thres = 0.85;
+		//Log_info("cpu vs lat_util_: %f vs %f", commo()->cpu, cpu_thres);
+		if(commo()->cpu <= (cpu_thres*0.0) && !commo()->paused && commo()->cpu != commo()->last_cpu){
+			commo()->last_cpu = commo()->cpu;
+			commo()->low_util++;
+		} else if(commo()->cpu > (cpu_thres*0.0)) commo()->low_util = 0;*/
+		/*if(commo()->slow){
+			commo()->low_util = 0;
+			Log_info("Reelection started");
+			commo()->paused = true;
+
+			commo()->qe = Reactor::CreateSpEvent<QuorumEvent>(concurrent-1, concurrent-1);
+			commo()->qe->n_voted_yes_ = commo()->total_;
+			commo()->qe->Wait();
+			commo()->qe = NULL;
+
+			sp_quorum_event = commo()->SendReelect();
+			sp_quorum_event->Wait();
+			commo()->paused = false;
+			commo()->slow = false;
+			Log_info("Reelection finished");
+			commo()->ResetProfiles();
+			commo()->total_ = 0;
+		}
+	}*/
 }
 
 void CoordinatorClassic::PrepareAck(phase_t phase, int res) {
@@ -297,14 +498,30 @@ void CoordinatorClassic::PrepareAck(phase_t phase, int res) {
       cmd->commit_.store(true);
       committed_ = true;
     }
-    GotoNextPhase();
+    //GotoNextPhase();
   } else {
     // Do nothing.
   }
 }
 
+void CoordinatorClassic::EarlyAbort() {
+  std::lock_guard<std::recursive_mutex> lock(this->mtx_);
+  tx_data().reply_.res_ = REJECT;
+  for (auto& rp : tx_data().partition_ids_) {
+    n_finish_req_++;
+    Log_debug("send abort for txn_id %"
+                  PRIx64
+                  " to %d", tx_data().id_, rp);
+    commo()->SendEarlyAbort(rp, cmd_->id_);
+    site_abort_[rp]++;
+  }
+  GotoNextPhase();
+}
+
 void CoordinatorClassic::Commit() {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
+  auto it = dispatch_acks_.begin();
+  it->second = true;
 //  ___TestPhaseThree(cmd_->id_);
   auto mode = Config::GetConfig()->tx_proto_;
   verify(mode == MODE_OCC || mode == MODE_2PL);
@@ -314,10 +531,39 @@ void CoordinatorClassic::Commit() {
             tx_data().id_, n_finish_req_);
 
   verify(tx_data().commit_.load() == committed_);
+  verify(committed_ != aborted_);
 
+  TxData* cmd = (TxData*) cmd_;
   if (committed_) {
     tx_data().reply_.res_ = SUCCESS;
-    for (auto& rp : tx_data().partition_ids_) {
+    auto quorum_event = commo()->SendCommit(this,
+                                            tx_data().id_);
+		
+		Log_info("send commit tid: %ld",
+            cmd_->id_);
+		quorum_event->Wait();
+		Log_info("DONE send commit tid: %ld",
+            cmd_->id_);
+    quorum_event->log();
+		
+    if(cmd->reply_.res_ == REJECT) {
+      aborted_ = true;
+    } else if(cmd->reply_.res_ == WRONG_LEADER) {
+      // Handle WRONG_LEADER response
+      Log_info("[WRONG_LEADER] Coordinator received WRONG_LEADER in Commit phase for tx_id: %lu", tx_data().id_);
+      aborted_ = true;  // Mark as aborted to clean up
+      // The view data should be attached to the TpcCommitCommand by the Raft coordinator
+      // It will be propagated to the client through the TxReply
+      if (cmd->reply_.sp_view_data_) {
+        Log_info("[WRONG_LEADER] View data attached to reply: %s", 
+                 cmd->reply_.sp_view_data_->ToString().c_str());
+      } else {
+        Log_info("[WRONG_LEADER] No view data attached to reply for tx_id: %lu", tx_data().id_);
+      }
+    } else {
+      committed_ = true;
+    }
+    /*for (auto& rp : tx_data().partition_ids_) {
       n_finish_req_++;
       Log_debug("send commit for txn_id %"
                     PRIx64
@@ -328,10 +574,21 @@ void CoordinatorClassic::Commit() {
                                     this,
                                     phase_));
       site_commit_[rp]++;
-    }
+    }*/
   } else if (aborted_) {
     tx_data().reply_.res_ = REJECT;
-    for (auto& rp : tx_data().partition_ids_) {
+    auto quorum_event = commo()->SendAbort(this,
+                                           tx_data().id_);
+		Log_info("send abort tid: %ld",
+            cmd_->id_);
+    quorum_event->Wait();
+		Log_info("DONE send abort tid: %ld",
+            cmd_->id_);
+    quorum_event->log();
+
+    if(cmd->reply_.res_ == REJECT) aborted_ = true;
+    else committed_ = true;
+    /*for (auto& rp : tx_data().partition_ids_) {
       n_finish_req_++;
       Log_debug("send abort for txn_id %"
                     PRIx64
@@ -341,11 +598,47 @@ void CoordinatorClassic::Commit() {
                          std::bind(&CoordinatorClassic::CommitAck,
                                    this,
                                    phase_));
-      site_abort_[rp]++;
-    }
+      //site_abort_[rp]++;
+    }*/
   } else {
     verify(0);
   }
+	//Log_info("slow inside Commit is: %d", commo()->slow);
+	//Log_info("commo window avg: %d", commo()->window_avg);
+	if(false && (prep_slow || commo()->slow)  && commo()->total > 10000 && !commo()->paused){
+		//double cpu_thres = 0.90/(1 + exp(-0.00107340141*(commo()->window_avg - 721.918226)));
+		//double cpu_thres = 0.29712171*log(commo()->window_avg) - 2.8758182;
+		/*double cpu_thres = 0.0000137325*commo()->window_avg - 0.23825;
+		if(cpu_thres >= 0.85) cpu_thres = 0.85;
+		//Log_info("cpu vs lat_util_: %f vs %f", commo()->cpu, cpu_thres);
+		if(commo()->cpu <= (cpu_thres*0.0) && !commo()->paused && commo()->cpu != commo()->last_cpu){
+			commo()->last_cpu = commo()->cpu;
+			commo()->low_util++;
+		} else if(commo()->cpu > (cpu_thres*0.0)) commo()->low_util = 0;*/
+		if(commo()->slow || prep_slow){
+			commo()->low_util = 0;
+			Log_info("Reelection started: %d/%d", commo()->total_, concurrent-1);
+			commo()->qe = Reactor::CreateSpEvent<QuorumEvent>(concurrent-1, concurrent-1);
+
+			commo()->count_lock_.lock();
+			commo()->paused = true;
+			commo()->qe->n_voted_yes_ = commo()->total_;
+			commo()->count_lock_.unlock();
+			
+			commo()->qe->Wait();
+			commo()->qe = NULL;
+
+			for (int i = 0; i < 100; i++) Log_info("Reelection: done waiting for commits");
+			sp_quorum_event = commo()->SendReelect();
+			sp_quorum_event->Wait();
+			commo()->paused = false;
+			commo()->slow = false;
+			Log_info("Reelection finished");
+			commo()->ResetProfiles();
+			commo()->total_ = 0;
+		}
+	}
+	prep_slow = false;
 }
 
 void CoordinatorClassic::CommitAck(phase_t phase) {
@@ -354,41 +647,70 @@ void CoordinatorClassic::CommitAck(phase_t phase) {
   if (phase != phase_) return;
   TxData* cmd = (TxData*) cmd_;
   n_finish_ack_++;
-  Log_debug("finish cmd_id_: %ld; n_finish_ack_: %ld; n_finish_req_: %ld",
+  Log_info("finish cmd_id_: %ld; n_finish_ack_: %ld; n_finish_req_: %ld",
             cmd_->id_, n_finish_ack_, n_finish_req_);
   verify(cmd->GetPartitionIds().size() == n_finish_req_);
+  // Perhaps a bug here?
   if (n_finish_ack_ == cmd->GetPartitionIds().size()) {
     if (cmd->reply_.res_ == REJECT) {
       aborted_ = true;
     } else {
       committed_ = true;
     }
-    GotoNextPhase();
+    // GotoNextPhase();
   }
   Log_debug("callback: %s, retry: %s",
             committed_ ? "True" : "False",
             aborted_ ? "True" : "False");
 }
 
+void CoordinatorClassic::ReportCommit() {
+  auto* tx_data = (TxData*) cmd_;
+  TxReply& tx_reply_buf = tx_data->get_reply();
+  double last_latency = tx_data->last_attempt_latency();
+  tx_data->reply_.res_ = SUCCESS;
+  this->Report(tx_reply_buf, last_latency);
+  commit_reported_ = true;
+}
+
 void CoordinatorClassic::End() {
+#ifdef LATENCY_LOG_DEBUG
+  Log_info("!!!!!!!!! enter CoordinatorClassic::End()");
+#endif
   TxData* tx_data = (TxData*) cmd_;
   TxReply& tx_reply_buf = tx_data->get_reply();
   double last_latency = tx_data->last_attempt_latency();
+  
   if (committed_) {
-    tx_data->reply_.res_ = SUCCESS;
-    this->Report(tx_reply_buf, last_latency
+    if (!commit_reported_) {
+      tx_data->reply_.res_ = SUCCESS;
+      this->Report(tx_reply_buf, last_latency
 #ifdef TXN_STAT
-        , txn
+          , txn
 #endif // ifdef TXN_STAT
-    );
+      );
+    }
   } else if (aborted_) {
-    tx_data->reply_.res_ = REJECT;
+    // Check if this was actually a WRONG_LEADER case
+    if (tx_data->reply_.res_ == WRONG_LEADER) {
+      // Keep WRONG_LEADER status (already set in Commit phase)
+      Log_info("[WRONG_LEADER] Maintaining WRONG_LEADER status in End() for tx_id: %lu", tx_data->id_);
+      if (tx_data->reply_.sp_view_data_) {
+        Log_info("[WRONG_LEADER] View data will be sent to client: %s", 
+                 tx_data->reply_.sp_view_data_->ToString().c_str());
+      }
+    } else {
+      tx_data->reply_.res_ = REJECT;
+    }
   } else {
     verify(0);
   }
   tx_reply_buf.tx_id_ = ongoing_tx_id_;
   Log_debug("call reply for tx_id: %"
                 PRIx64, ongoing_tx_id_);
+#ifdef FULL_LOG_DEBUG
+  Log_info("callback for cmd<%d, %d>", tx_data->client_id_, tx_data->cmd_id_in_client_);
+#endif
   tx_data->callback_(tx_reply_buf);
   ongoing_tx_id_ = 0;
   delete tx_data;
@@ -434,5 +756,45 @@ void CoordinatorClassic::___TestPhaseOne(txnid_t txn_id) {
   verify(it == ___phase_one_tids_.end());
   ___phase_one_tids_.insert(txn_id);
 }
+
+void CoordinatorClassic::SetNewLeader(parid_t par_id, volatile locid_t* cur_pause) {
+  locid_t prev_pause_srv = *cur_pause;
+retry:
+  Log_debug("start setting a new leader from %d", prev_pause_srv);
+  auto e = commo()->BroadcastGetLeader(par_id, prev_pause_srv);
+  e->Wait();
+  if (e->Yes()) {
+    // assign new leader
+    Log_debug("set a new leader %d", e->leader_id_);
+    commo()->SetNewLeaderProxy(par_id, e->leader_id_);
+    if (prev_pause_srv != e->leader_id_) {
+      *cur_pause = e->leader_id_;
+    }
+  } else if (e->No()) {
+    auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
+    sp_e->Wait();
+    // usleep(300 * 1000) ;  // 300 ms
+    goto retry;
+  } else {
+    verify(0);
+  }
+}
+
+void CoordinatorClassic::FailoverPauseSocketOut(parid_t par_id, locid_t loc_id) {
+  Log_info("!!!!!!!!!!! CoordinatorClassic::FailoverPauseSocketOut");
+  auto e = commo()->FailoverPauseSocketOut(par_id, loc_id);
+  e->Wait();
+  if (e->No()) {
+    verify(0);
+  }
+};
+
+void CoordinatorClassic::FailoverResumeSocketOut(parid_t par_id, locid_t loc_id) {
+  auto e = commo()->FailoverResumeSocketOut(par_id, loc_id);
+  e->Wait();
+  if (e->No()) {
+    verify(0);
+  }
+};
 
 } // namespace janus

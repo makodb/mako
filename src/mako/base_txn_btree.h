@@ -212,6 +212,7 @@ namespace private_ {
 
 template <template <typename> class Transaction, typename P>
 template <typename Traits, typename ValueReader>
+// @unsafe - interprets raw btree payloads as dbtuple pointers and records node versions without lifetime tracking
 bool
 base_txn_btree<Transaction, P>::do_search(
     Transaction<Traits> &t,
@@ -239,6 +240,7 @@ base_txn_btree<Transaction, P>::do_search(
 }
 
 template <template <typename> class Transaction, typename P>
+// @unsafe - assumes quiescent tree and walks raw tuple pointers outside txn protocols
 std::map<std::string, uint64_t>
 base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 {
@@ -259,6 +261,7 @@ base_txn_btree<Transaction, P>::unsafe_purge(bool dump_stats)
 
 template <template <typename> class Transaction, typename P>
 void
+// @unsafe - extracts raw tuple/value pointers from a node without ownership metadata
 base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const typename concurrent_btree::node_opaque_t *n)
 {
   INVARIANT(spec_values.empty());
@@ -267,6 +270,7 @@ base_txn_btree<Transaction, P>::purge_tree_walker::on_node_begin(const typename 
 
 template <template <typename> class Transaction, typename P>
 void
+// @unsafe - retires tuples and frees memory while assuming global quiescence
 base_txn_btree<Transaction, P>::purge_tree_walker::on_node_success()
 {
   for (size_t i = 0; i < spec_values.size(); i++) {
@@ -316,6 +320,7 @@ base_txn_btree<Transaction, P>::purge_tree_walker::on_node_failure()
 
 template <template <typename> class Transaction, typename P>
 template <typename Traits>
+// @unsafe - mutates transaction write set using raw dbtuple pointers from the concurrent btree
 void base_txn_btree<Transaction, P>::do_tree_put(
     Transaction<Traits> &t,
     const std::string *k,
@@ -381,6 +386,7 @@ template <typename Traits, typename Callback,
 void
 base_txn_btree<Transaction, P>
   ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader>
+  // @unsafe - records versioned node pointers from concurrent tree without borrow tokens
   ::on_resp_node(
     const typename concurrent_btree::node_opaque_t *n, uint64_t version)
 {
@@ -396,6 +402,7 @@ template <typename Traits, typename Callback,
 bool
 base_txn_btree<Transaction, P>
   ::txn_search_range_callback<Traits, Callback, KeyReader, ValueReader>
+  // @unsafe - casts opaque btree values to dbtuple pointers during range scans
   ::invoke(
     const typename concurrent_btree::string_type &k, typename concurrent_btree::value_type v,
     const typename concurrent_btree::node_opaque_t *n, uint64_t version)

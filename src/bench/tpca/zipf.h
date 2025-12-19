@@ -14,41 +14,48 @@ class ZipfDist {
   };
   vector<probvals> zdist = {};
 
-  void get_zipf(double alpha, int N) {
-    double theta;
+  void get_zipf(double theta, int N) {
     double sum = 0.0;
     double c = 0.0;
     double sumc = 0.0;
     int i;
 
     /*
-     * pmf: f(x) = 1 / (x^alpha) * sum_1_to_n( (1/i)^alpha )
+     * pmf: f(x) = 1 / (x^theta) * sum_1_to_n( (1/i)^theta )
      */
 
     for (i = 1; i <= N; i++) {
-      sum += 1.0 / (double) pow((double) i, (double) (alpha));
+      sum += 1.0 / (double) pow((double) i, (double) (theta));
 
     }
     c = 1.0 / sum;
 
     for (i = 0; i < N; i++) {
       zdist[i].prob = c /
-          (double) pow((double) (i + 1), (double) (alpha));
+          (double) pow((double) (i + 1), (double) (theta));
       sumc += zdist[i].prob;
       zdist[i].cum_prob = sumc;
     }
     zdist[N-1].cum_prob = 1.0;
+#ifdef CHECK_KEY_DISTRIBUTION
+    for (int i = 0; i < min(10, N); i++) {
+      Log_info("k = %d pct = %.5f accu_pct = %.5f", i, zdist[i].prob * 100, zdist[i].cum_prob * 100);
+    }
+    for (int i = 100; i <= min(1000000, N); i *= 10) {
+      Log_info("k = %d pct = %.5f accu_pct = %.5f", i - 1, zdist[i - 1].prob * 100, zdist[i - 1].cum_prob * 100);
+    }
+#endif
   }
 
-  ZipfDist(double alpha, int N) {
+  ZipfDist(double theta, int N) {
     int i;
 
-    if (N <= 0 || alpha < 0.0 || alpha > 1.0) {
+    if (N <= 0 || theta < 0.0 || theta > 1.0) {
       Log_fatal("wrong arguments for zipf");
     }
 
     zdist.resize(N);
-    get_zipf(alpha, N);          /* generate the distribution */
+    get_zipf(theta, N);          /* generate the distribution */
   }
 
   int operator() (std::mt19937& rand_gen) {

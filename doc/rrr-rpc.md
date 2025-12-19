@@ -108,13 +108,16 @@ int main() {
     rrr::i32 result;
     proxy.increment(5, &result);
     printf("New value: %d\n", result.get());
-    
-    // Async call
-    rrr::Future* fut = proxy.async_get_value(&result);
-    fut->wait();
-    printf("Current value: %d\n", result.get());
-    fut->release();
-    
+
+    // Async call with Arc<Future>
+    auto fut_result = proxy.async_get_value(&result);
+    if (fut_result.is_ok()) {
+        auto fut = fut_result.unwrap();
+        fut->wait();
+        printf("Current value: %d\n", result.get());
+        // Arc automatically manages lifetime
+    }
+
     // Cleanup
     client->close_and_release();
     delete poll;

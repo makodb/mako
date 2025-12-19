@@ -9,10 +9,21 @@ namespace janus {
 
 shared_ptr<ElectionState> es = ElectionState::instance();
 
+void PaxosServer::OnForward(shared_ptr<Marshallable> &cmd,
+                            uint64_t dep_id,
+                            uint64_t* coro_id,
+                            const function<void()> &cb){
+  // NOTE: Mako doesn't use this - it uses OnForwardToLearner instead.
+  // Empty stub for RPC interface compatibility.
+  verify(0); // Should never be called in Mako
+}
+
 void PaxosServer::OnPrepare(slotid_t slot_id,
                             ballot_t ballot,
                             ballot_t *max_ballot,
+                            uint64_t* coro_id,
                             const function<void()> &cb) {
+
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("multi-paxos scheduler receives prepare for slot_id: %llx",
             slot_id);
@@ -24,20 +35,31 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
     // TODO if accepted anything, return;
     verify(0);
   }
+  auto coro_opt = Coroutine::CurrentCoroutine();
+  if (coro_opt.is_some()) {
+    *coro_id = coro_opt.unwrap()->id;
+  }
   *max_ballot = instance->max_ballot_seen_;
   n_prepare_++;
+  WAN_WAIT
   cb();
 }
 
+
 void PaxosServer::OnAccept(const slotid_t slot_id,
+		           const uint64_t time,
                            const ballot_t ballot,
                            shared_ptr<Marshallable> &cmd,
                            ballot_t *max_ballot,
+                           uint64_t* coro_id,
                            const function<void()> &cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_info("multi-paxos scheduler accept for slot_id: %llx", slot_id);
   auto instance = GetInstance(slot_id);
-  verify(instance->max_ballot_accepted_ < ballot);
+  
+  //TODO: might need to optimize this. we can vote yes on duplicates at least for now
+  //verify(instance->max_ballot_accepted_ < ballot);
+  
   if (instance->max_ballot_seen_ <= ballot) {
     instance->max_ballot_seen_ = ballot;
     instance->max_ballot_accepted_ = ballot;
@@ -45,8 +67,14 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
     // TODO
     verify(0);
   }
+
+  auto coro_opt = Coroutine::CurrentCoroutine();
+  if (coro_opt.is_some()) {
+    *coro_id = coro_opt.unwrap()->id;
+  }
   *max_ballot = instance->max_ballot_seen_;
   n_accept_++;
+  WAN_WAIT
   cb();
 }
 
@@ -61,6 +89,11 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
     max_committed_slot_ = slot_id;
   }
   verify(slot_id > max_executed_slot_);
+  // This prevents the log entry from being applied twice
+  if (in_applying_logs_) {
+    return;
+  }
+  in_applying_logs_ = true;
   for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
     auto next_instance = GetInstance(id);
     if (next_instance->committed_cmd_) {
@@ -72,6 +105,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
       break;
     }
   }
+  in_applying_logs_ = false;
   FreeSlots();
 }
 // marker:ansh change the args to accomodate objects
@@ -631,7 +665,7 @@ void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
 }
 
 void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
-                                    const uint64_t& slot, 
+                                    const uint64_t& slot,
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
                                     const function<void()> &cb) {

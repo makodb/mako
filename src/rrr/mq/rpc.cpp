@@ -17,6 +17,15 @@
 
 #include "rpc.h"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 poll_mgr_t *mgr_ = NULL;
 
 #define MAX_ON_READ_THREADS 1

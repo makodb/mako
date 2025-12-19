@@ -2,6 +2,8 @@
 #define _COUNTER_H_
 
 // system event counters, for
+// Per-runtime counters: Counter names are prefixed with runtime ID
+// to allow multiple runtimes to have isolated counter namespaces.
 
 #include <algorithm> // for std::max
 #include <vector>
@@ -13,6 +15,9 @@
 #include "core.h"
 #include "util.h"
 #include "spinlock.h"
+
+// Forward declaration
+class SiloRuntime;
 
 struct counter_data {
   enum Type { TYPE_COUNT, TYPE_AGG };
@@ -44,11 +49,23 @@ struct counter_data {
 
 namespace private_ {
 
+  // Helper to get runtime-prefixed counter name
+  // Format: "rt<id>.<name>" for multi-runtime, or "<name>" for global runtime
+  std::string get_runtime_prefixed_name(const std::string &name);
+
+  // Helper to strip runtime prefix from counter name
+  std::string strip_runtime_prefix(const std::string &name);
+
+  // Get runtime ID from prefixed name (-1 if no prefix)
+  int get_runtime_id_from_name(const std::string &prefixed_name);
+
   // these objects are *never* supposed to be destructed
   // (this is a purposeful memory leak)
   struct event_ctx {
 
+    // @unsafe: singleton static lifetime
     static std::map<std::string, event_ctx *> &event_counters();
+    // @unsafe: singleton static lifetime
     static spinlock &event_counters_lock();
 
     // tag to avoid making event_ctx virtual
@@ -98,6 +115,7 @@ public:
 #endif
   }
 
+  // @unsafe: returns *this ref
   inline ALWAYS_INLINE event_counter &
   operator++()
   {
@@ -105,6 +123,7 @@ public:
     return *this;
   }
 
+  // @unsafe: returns *this ref
   inline ALWAYS_INLINE event_counter &
   operator+=(uint64_t i)
   {
@@ -114,8 +133,17 @@ public:
 
   // WARNING: an expensive operation!
   static std::map<std::string, counter_data> get_all_counters();
+
+  // Get counters for a specific runtime (by runtime ID)
+  // Returns counters with the runtime prefix stripped from names
+  static std::map<std::string, counter_data> get_counters_for_runtime(int runtime_id);
+
   // WARNING: an expensive operation!
   static void reset_all_counters();
+
+  // Reset counters for a specific runtime only
+  static void reset_counters_for_runtime(int runtime_id);
+
   // WARNING: an expensive operation!
   static bool
   stat(const std::string &name, counter_data &d);

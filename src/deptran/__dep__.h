@@ -17,6 +17,8 @@
 #include <set>
 #include <iostream>
 #include <fstream>
+#include <iomanip>
+#include <sstream>
 
 using namespace std;
 // using the following will trigger errors in CLion (<= 2017.3)
@@ -39,6 +41,8 @@ using namespace std;
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/resource.h>
+#include <errno.h>
 
 
 // boost library
@@ -85,7 +89,7 @@ using rrr::AvgStat;
 using rrr::ALock;
 using rrr::TimeoutALock;
 using rrr::ScopedLock;
-using rrr::PollMgr;
+using rrr::PollThread;
 using rrr::Marshal;
 using rrr::Marshallable;
 using rrr::MarshallDeputy;

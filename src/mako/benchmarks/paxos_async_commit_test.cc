@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
     argv_paxos[15] = (char *) paxos_proc_name.c_str();
     argv_paxos[16] = (char *)"-A";
     argv_paxos[17] = (char *)"10000";  // bulkBatchCount
-    std::vector<string> ret = setup(16, argv_paxos);
+    std::vector<string> ret = setup(18, argv_paxos);
     if (ret.empty()) {
         return -1;
     }
@@ -314,7 +314,7 @@ int main(int argc, char **argv) {
         }));
     }
     for (auto &th : wait_threads) {
-        //th.join();
+        th.join();
     }
 
     // int tries = 0;

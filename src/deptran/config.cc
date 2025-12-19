@@ -53,6 +53,7 @@ int Config::CreateConfig(int argc, char **argv) {
 //  std::string filename = "./config/sample.yml";
   vector<string> config_paths;
   std::string proc_name = "localhost"; // default as "localhost"
+  std::string exp_setting_name = "not_set"; // used to dump Distribution to file
   std::string logging_path = "./disk_log/";
   char *end_ptr    = NULL;
 
@@ -70,10 +71,15 @@ int Config::CreateConfig(int argc, char **argv) {
   int16_t n_concurrent          = 1;
   bulkBatchCount = 10000;
 
+  int jetpack_fastpath_attempt_rate = 101; // [0, 100]   101: adaptive
+
+  string timeouts;
+  size_t pos;
+
   int c;
   optind = 1;
   string filename;
-  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:r:s:S:t:H:T:n:A:")) != -1) {
+  while ((c = getopt(argc, argv, "bc:d:f:h:i:k:p:P:r:s:S:t:H:T:n:A:F:O:m:a:N:")) != -1) {
     switch (c) {
       case 'b': // heartbeat to controller
         heart_beat = true;
@@ -89,6 +95,9 @@ int Config::CreateConfig(int argc, char **argv) {
         break;
       case 'P':
         proc_name = std::string(optarg);
+        break;
+      case 'N':
+        exp_setting_name = std::string(optarg);
         break;
       case 'f': // properties.xml
         filename = std::string(optarg);
@@ -141,6 +150,9 @@ int Config::CreateConfig(int argc, char **argv) {
 
         if (server_or_client != -1) return -4;
         server_or_client = 0;
+        break;
+      case 'm': // fastpath possibility mode
+        jetpack_fastpath_attempt_rate = strtoul(optarg, &end_ptr, 10);
         break;
       case 'S': // client touch only single server
       {
@@ -209,8 +221,10 @@ int Config::CreateConfig(int argc, char **argv) {
     duration,
     heart_beat,
     single_server,
-    logging_path);
+    logging_path,
+    jetpack_fastpath_attempt_rate);
   config_s->proc_name_ = proc_name;
+  config_s->exp_setting_name_ = exp_setting_name;
   config_s->config_paths_ = config_paths;
   config_s->Load();
   return SUCCESS;
@@ -235,7 +249,8 @@ Config::Config(char           *ctrl_hostname,
                uint32_t        duration,
                bool            heart_beat,
                single_server_t single_server,
-               string           logging_path) :
+               string           logging_path,
+               int              jetpack_fastpath_attempt_rate) :
   heart_beat_(heart_beat),
   ctrl_hostname_(ctrl_hostname),
   ctrl_port_(ctrl_port),
@@ -253,6 +268,7 @@ Config::Config(char           *ctrl_hostname,
   txn_weight_(vector<double>()),
   txn_weights_(map<string, double>()),
   proc_name_(string()),
+  exp_setting_name_(string()),
   batch_start_(false),
   early_return_(false),
   retry_wait_(false),
@@ -269,7 +285,9 @@ Config::Config(char           *ctrl_hostname,
   cid_(1),
   next_site_id_(0),
   proc_host_map_(map<string, string>()),
-  sharding_(nullptr)
+  sharding_(nullptr),
+  jetpack_fastpath_attempt_rate_(jetpack_fastpath_attempt_rate)
+
 {
 }
 
@@ -288,57 +306,58 @@ void Config::Load() {
 
 void Config::LoadYML(std::string &filename) {
   Log_info("%s: %s", __FUNCTION__, filename.c_str());
-  YAML::Node config = YAML::LoadFile(filename);
+  yaml_config_ = YAML::LoadFile(filename);
 
-  if (config["process"]) {
-    BuildSiteProcMap(config["process"]);
+  if (yaml_config_["process"]) {
+    BuildSiteProcMap(yaml_config_["process"]);
   }
-  if (config["site"]) {
-    LoadSiteYML(config["site"]);
+  if (yaml_config_["site"]) {
+    LoadSiteYML(yaml_config_["site"]);
   }
-  if (config["process"]) {
-    LoadProcYML(config["process"]);
+  if (yaml_config_["process"]) {
+    LoadProcYML(yaml_config_["process"]);
   }
-  if (config["host"]) {
-    LoadHostYML(config["host"]);
+  if (yaml_config_["host"]) {
+    LoadHostYML(yaml_config_["host"]);
   }
-  if (config["mode"]) {
-    LoadModeYML(config["mode"]);
+  if (yaml_config_["mode"]) {
+    LoadModeYML(yaml_config_["mode"]);
   }
-  if (config["bench"]) {
-    LoadBenchYML(config["bench"]);
+  if (yaml_config_["bench"]) {
+    LoadBenchYML(yaml_config_["bench"]);
   }
-  if (config["schema"]) {
-    LoadSchemaYML(config["schema"]);
+  if (yaml_config_["bench_update_weight"]){
+    UpdateWeights(yaml_config_["bench_update_weight"]);
   }
-  if (config["sharding"]) {
-    LoadShardingYML(config["sharding"]);
+  if (yaml_config_["schema"]) {
+    LoadSchemaYML(yaml_config_["schema"]);
   }
-  if (config["client"]) {
-    LoadClientYML(config["client"]);
+  if (yaml_config_["sharding"]) {
+    LoadShardingYML(yaml_config_["sharding"]);
   }
-  if (config["n_concurrent"]) {
-    n_concurrent_ = config["n_concurrent"].as<uint16_t>();
+  if (yaml_config_["client"]) {
+    LoadClientYML(yaml_config_["client"]);
+  }
+  if (yaml_config_["failover"]) {
+    LoadFailoverYML(yaml_config_["failover"]);
+  }
+  if (yaml_config_["n_concurrent"]) {
+    n_concurrent_ = yaml_config_["n_concurrent"].as<uint16_t>();
     Log_info("# of concurrent requests: %d", n_concurrent_);
   }
-  if (config["n_parallel_dispatch"]) {
-    n_parallel_dispatch_ = config["n_parallel_dispatch"].as<int32_t>();
+  if (yaml_config_["n_parallel_dispatch"]) {
+    n_parallel_dispatch_ = yaml_config_["n_parallel_dispatch"].as<int32_t>();
   }
 }
 
 void Config::LoadSiteYML(YAML::Node config) {
   auto servers = config["server"];
-  int partition_id = 0;
-  int site_id = 0; // start from
+  // Start from current sizes to support loading multiple config files
+  int partition_id = replica_groups_.size();
+  int site_id = sites_.size();
   int locale_id = 0;
 
-  // count the sites so that we can reserve storage up front
-  // to avoid invalidating the pointers
-  int num_sites=0;
-  for (auto partition = servers.begin(); partition != servers.end(); partition++) {
-    num_sites += partition->size();
-  }
-  sites_.reserve(num_sites);
+  // Note: Using deque for sites_ so no reserve needed - push_back doesn't invalidate pointers
 
   for (auto server_it = servers.begin(); server_it != servers.end(); server_it++) {
     auto group = *server_it;
@@ -541,6 +560,25 @@ void Config::LoadModeYML(YAML::Node config) {
       verify(0);
     }
   }
+  if (config["carousel_basic_mode"]) {
+    carousel_basic_mode_ = config["carousel_basic_mode"].as<bool>();
+  }
+  if (config["jetpack_recovery_batch_size"]) {
+    jetpack_recovery_batch_size_ = config["jetpack_recovery_batch_size"].as<int>();
+  }
+}
+
+void Config::UpdateWeights(YAML::Node config) {
+  auto weights = config["weight"];
+  for (auto it = weights.begin(); it != weights.end(); ++it) {
+      auto txn_name = it->first.as<std::string>();
+      auto weight = it->second.as<double>();
+      // Update the txn_weights_ map with the new weight
+      txn_weights_[txn_name] = weight;
+  }  
+  for (std::map<std::string, double>::iterator it = txn_weights_.begin(); it != txn_weights_.end(); ++it) {
+    Log_info("key: %s value: %.2f", it->first.c_str(), it->second);
+  }
 }
 
 void Config::LoadBenchYML(YAML::Node config) {
@@ -577,6 +615,8 @@ void Config::LoadBenchYML(YAML::Node config) {
   }
   if (config["dist"])
     dist_ = config["dist"].as<string>();
+  if (config["range"])
+    range_ = config["range"].as<int32_t>();
   if (config["coefficient"])
     coeffcient_ = config["coefficient"].as<float>();
   if (config["rotate"])
@@ -683,12 +723,38 @@ void Config::LoadClientYML(YAML::Node client) {
   if (type == "open") {
     client_type_ = Open;
     client_rate_ = client["rate"].as<int>();
+    client_max_undone_ = client["max_undone"].as<int>();
   } else {
     client_type_ = Closed;
     client_rate_ = -1;
+    client_max_undone_ = -1;
   }
   forwarding_enabled_ = client["forwarding"].as<bool>(false);
   Log_info("client forwarding: %d", forwarding_enabled_);
+}
+
+void Config::LoadFailoverYML(YAML::Node config) {
+  auto mode_str = config["method"].as<string>();
+  boost::algorithm::to_lower(mode_str);
+  auto fail_srv_str = config["failserver"].as<string>();
+  boost::algorithm::to_lower(mode_str);
+  failover_srv_idx_ = -1;
+  if (mode_str == "none") {
+    failover_ = false;
+  } else {
+    failover_ = true;
+    failover_soft_ = mode_str == "soft";
+    failover_random_ = fail_srv_str == "random";
+    if (!failover_random_) {
+      failover_leader_ = fail_srv_str == "leader";
+      if (!failover_leader_ && fail_srv_str != "follower") {
+        // should be the server index
+        std::istringstream(fail_srv_str) >> failover_srv_idx_;
+      }
+    }
+  }
+  failover_run_int_ = config["run_interval"].as<int32_t>();
+  failover_stop_int_ = config["stop_interval"].as<int32_t>();
 }
 
 void Config::InitTPCCD() {
@@ -792,13 +858,11 @@ int Config::get_site_addr(unsigned int sid, std::string& server) {
 }
 
 int Config::NumSites(SiteInfoType type) {
-  std::vector<SiteInfo>* searching;
   if (type == SERVER) {
-    searching = &sites_;
+    return sites_.size();
   } else {
-    searching = &par_clients_;
+    return par_clients_.size();
   }
-  return searching->size();
 }
 
 const Config::SiteInfo& Config::SiteById(uint32_t id) {
@@ -863,6 +927,24 @@ std::vector<Config::SiteInfo> Config::SitesByPartitionId(
   verify(0);
 }
 
+
+std::vector<int> Config::SiteIdsByPartitionId(parid_t partition_id){
+  std::vector<int> result;
+  auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
+                    [partition_id](const ReplicaGroup& g) {
+                      return g.partition_id == partition_id;
+                    });
+  if (it != replica_groups_.end()) {
+    for (auto si : it->replicas) {
+      result.push_back(si->id);
+    }
+    return result;
+  }
+  verify(0);
+}
+
+//add another method here that gets a vector of id's
+
 int Config::GetPartitionSize(parid_t partition_id) {
   auto it = find_if(replica_groups_.begin(), replica_groups_.end(),
                     [partition_id](const ReplicaGroup& g) {
@@ -874,43 +956,69 @@ int Config::GetPartitionSize(parid_t partition_id) {
   verify(0);
 }
 
+int32_t Config::get_num_leaders(parid_t partition_id) {
+  switch (replica_proto_) {
+    case MODE_RAFT:
+    case MODE_FPGA_RAFT:
+      return 1;
+      break;
+    case MODE_COPILOT:
+      return 2;
+      break;
+    case MODE_MENCIUS:
+      return GetPartitionSize(partition_id);
+      break;
+    case MODE_MONGODB:
+      return 1;
+      break;
+    default:
+      Log_fatal("Rule mode do not support for this replica protocol now");
+      return 0;
+      break;
+  }
+}
+
 std::vector<Config::SiteInfo>
 Config::SitesByLocaleId(uint32_t locale_id, SiteInfoType type) {
   std::vector<SiteInfo> result;
-  std::vector<SiteInfo>* searching;
-  if (type==SERVER) {
-    searching = &sites_;
+  if (type == SERVER) {
+    for (SiteInfo& site : sites_) {
+      if (site.locale_id == locale_id) {
+        result.push_back(site);
+      }
+    }
   } else {
-    searching = &par_clients_;
+    for (SiteInfo& site : par_clients_) {
+      if (site.locale_id == locale_id) {
+        result.push_back(site);
+      }
+    }
   }
-  std::for_each(searching->begin(), searching->end(),
-                [locale_id, type, &result](SiteInfo& site) mutable {
-                  if (site.locale_id==locale_id) {
-                    result.push_back(site);
-                  }
-                });
   return result;
 }
 
 vector<Config::SiteInfo>
 Config::SitesByProcessName(string proc_name, Config::SiteInfoType type) {
+  //Log_info("SitesByProcessName proc_name=%s type=%d", proc_name.c_str(), type==SERVER);
   std::vector<SiteInfo> result;
-  std::vector<SiteInfo>* searching;
-  if (type==SERVER) {
-    searching = &sites_;
-  } else {
-    searching = &par_clients_;
-  }
+  auto processFunc = [&proc_name, &result](SiteInfo& site) {
+    if (site.proc_name == "") {
+      Log_fatal("cannot find proc name for site %s", site.name.c_str());
+    }
+    if (site.proc_name == proc_name) {
+      result.push_back(site);
+    }
+  };
 
-  std::for_each(searching->begin(), searching->end(),
-                [proc_name, &result](SiteInfo& site) mutable {
-                  if (site.proc_name == "") {
-                    Log_fatal("cannot find proc name for site %s", site.name.c_str());
-                  }
-                  if (site.proc_name==proc_name) {
-                    result.push_back(site);
-                  }
-                });
+  if (type == SERVER) {
+    for (SiteInfo& site : sites_) {
+      processFunc(site);
+    }
+  } else {
+    for (SiteInfo& site : par_clients_) {
+      processFunc(site);
+    }
+  }
   return result;
 }
 

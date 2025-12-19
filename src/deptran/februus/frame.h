@@ -17,7 +17,7 @@ class FrameFebruus : public Frame {
                                  shared_ptr<TxnRegistry> txn_reg) override;
 //  vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
 //                                           Scheduler *dtxn_sched,
-//                                           rrr::PollMgr *poll_mgr,
+//                                           rrr::PollThread *poll_thread_worker,
 //                                           ServerControlServiceImpl *scsi)
 //      override;
   mdb::Row *CreateRow(const mdb::Schema *schema,
@@ -28,7 +28,7 @@ class FrameFebruus : public Frame {
                           bool ro,
                           TxLogServer *mgr) override;
 
-//  Communicator* CreateCommo(PollMgr* poll = nullptr) override;
+//  Communicator* CreateCommo(PollThread* poll = nullptr) override;
 };
 
 } // namespace janus

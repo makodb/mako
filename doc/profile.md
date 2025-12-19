@@ -1,4 +1,8 @@
-(Comment out the server kills in run.py if profiling distributed runs)
+
+# Important
+Comment out the server kills in run.py if profiling distributed runs
+
+# CPU profiling
 
 Compile with google perf tools.
 ```
@@ -18,3 +22,27 @@ Generate pdf
 ```
 
 Note: make sure you install the `graphviz` package.
+
+# Memory leak
+
+compile with tcmalloc
+```
+./waf configure build --enable-tcmalloc
+```
+Then add the enabling variable ahead of executing the binary
+
+```
+env HEAPCHECK=normal ./build/deptran_server -f config/3c3s3r1p.yml -f config/tpcc.yml -f config/troad.yml -f config/concurrent_100.yml
+```
+
+Use the following command to dump heap profiling info every 100M of allocated memory
+```shell
+env HEAPCHECK=normal HEAP_PROFILE_ALLOCATION_INTERVAL=104857600	./build/deptran_server -f config/3c3s3r1p.yml -f config/tpcc.yml -f config/troad.yml -f config/concurrent_100.yml
+```
+
+Differentiate heap allocation
+```shell
+./scripts/pprof --base [base.heap] ./build/deptran_server [curr.heap] --text
+```
+
+Note: memory leak profiling could be very slow.

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Insertion and update operations for Masstree
+// Performs locked node modification with potential split handling
+// SAFETY: Acquires write locks, allocates nodes, may trigger splits
+
 #ifndef MASSTREE_INSERT_HH
 #define MASSTREE_INSERT_HH
 #include "masstree_get.hh"
@@ -20,6 +24,7 @@
 namespace Masstree {
 
 template <typename P>
+// @unsafe - performs raw-node inserts under locks
 bool tcursor<P>::find_insert(threadinfo& ti)
 {
     find_locked(ti);

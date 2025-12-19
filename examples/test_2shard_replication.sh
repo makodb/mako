@@ -13,39 +13,122 @@ echo "========================================="
 # Clean up old log files
 #rm -f shard0*.log shard1*.log
 rm -f nfs_sync_*
+rm -f simple-shard0*.log simple-shard1*.log
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+
+trd=6
+script_name="$(basename "$0")"
+
+# Determine transport type and create unique log prefix
+transport="${MAKO_TRANSPORT:-rrr}"
+log_prefix="${script_name}_${transport}"
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
-trd=6
-nohup bash bash/shard.sh 2 0 $trd localhost 0 1 > shard0-localhost.log 2>&1 &
-nohup bash bash/shard.sh 2 0 $trd learner 0 1 > shard0-learner.log 2>&1 &
-nohup bash bash/shard.sh 2 0 $trd p2 0 1 > shard0-p2.log 2>&1 &
+nohup bash bash/shard.sh 2 0 $trd localhost 0 1 > ${log_prefix}_shard0-localhost.log 2>&1 &
+SHARD0_LOCALHOST_PID=$!
+nohup bash bash/shard.sh 2 0 $trd learner 0 1 > ${log_prefix}_shard0-learner.log 2>&1 &
+SHARD0_LEARNER_PID=$!
+nohup bash bash/shard.sh 2 0 $trd p2 0 1 > ${log_prefix}_shard0-p2.log 2>&1 &
+SHARD0_P2_PID=$!
 sleep 1
-nohup bash bash/shard.sh 2 0 $trd p1 0 1 > shard0-p1.log 2>&1 &
-SHARD0_PID=$!
+nohup bash bash/shard.sh 2 0 $trd p1 0 1 > ${log_prefix}_shard0-p1.log 2>&1 &
+SHARD0_P1_PID=$!
 
+sleep 5
+
+# Start shard 1 in background (delayed start ensures shard1 stays running while shard0 shuts down)
+echo "Starting shard 1..."
+nohup bash bash/shard.sh 2 1 $trd localhost 0 1 > ${log_prefix}_shard1-localhost.log 2>&1 &
+SHARD1_LOCALHOST_PID=$!
+nohup bash bash/shard.sh 2 1 $trd learner 0 1 > ${log_prefix}_shard1-learner.log 2>&1 &
+SHARD1_LEARNER_PID=$!
+nohup bash bash/shard.sh 2 1 $trd p2 0 1 > ${log_prefix}_shard1-p2.log 2>&1 &
+SHARD1_P2_PID=$!
+sleep 1
+nohup bash bash/shard.sh 2 1 $trd p1 0 1 > ${log_prefix}_shard1-p1.log 2>&1 &
+SHARD1_P1_PID=$!
+
+# Wait for benchmarks to complete (poll for completion markers)
+echo "Waiting for benchmarks to complete..."
+log_file0="${log_prefix}_shard0-localhost.log"
+log_file1="${log_prefix}_shard1-localhost.log"
+max_wait=120  # Maximum wait time in seconds
+wait_count=0
+
+while [ $wait_count -lt $max_wait ]; do
+    shard0_done=0
+    shard1_done=0
+
+    # Check if throughput output appeared for each shard
+    if [ -f "$log_file0" ] && grep -q "agg_persist_throughput" "$log_file0" 2>/dev/null; then
+        shard0_done=1
+    fi
+    if [ -f "$log_file1" ] && grep -q "agg_persist_throughput" "$log_file1" 2>/dev/null; then
+        shard1_done=1
+    fi
+
+    if [ $shard0_done -eq 1 ] && [ $shard1_done -eq 1 ]; then
+        echo "Both benchmarks completed after ${wait_count}s"
+        sleep 2  # Give a moment for final output
+        break
+    fi
+
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed, shard0=$shard0_done, shard1=$shard1_done)"
+    fi
+done
+
+if [ $wait_count -ge $max_wait ]; then
+    echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
+fi
+
+# Graceful shutdown: SIGTERM first
+echo "Stopping shards (graceful)..."
+
+# First, kill the parent bash scripts to prevent them from respawning dbtest
+pkill -TERM -f "bash/shard.sh" 2>/dev/null || true
+
+# Send SIGTERM to all dbtest processes
+pkill -TERM dbtest 2>/dev/null || true
+sleep 3
+
+# Force kill any remaining processes
+echo "Force killing remaining processes..."
+pkill -9 -f "bash/shard.sh" 2>/dev/null || true
+pkill -9 dbtest 2>/dev/null || true
+killall -9 dbtest 2>/dev/null || true
+
+# Wait for OS to clean up
 sleep 2
 
-# Start shard 1 in background
-echo "Starting shard 1..."
-nohup bash bash/shard.sh 2 1 $trd localhost 0 1 > shard1-localhost.log 2>&1 &
-nohup bash bash/shard.sh 2 1 $trd learner 0 1 > shard1-learner.log 2>&1 &
-nohup bash bash/shard.sh 2 1 $trd p2 0 1 > shard1-p2.log 2>&1 &
-sleep 1
-nohup bash bash/shard.sh 2 1 $trd p1 0 1 > shard1-p1.log 2>&1 &
-SHARD1_PID=$!
+# Check for and kill any remaining processes including zombies
+remaining=$(ps aux | grep "dbtest" | grep -v grep | wc -l)
+if [ "$remaining" -gt 0 ]; then
+    echo "WARNING: $remaining dbtest processes still present after kill attempt"
+    ps aux | grep "dbtest" | grep -v grep
 
-# Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 60
+    # Get PIDs and kill individually
+    pids=$(ps aux | grep "dbtest" | grep -v grep | awk '{print $2}')
+    for pid in $pids; do
+        echo "Force killing PID $pid"
+        kill -9 $pid 2>/dev/null || true
+    done
 
-# Kill the processes
-echo "Stopping shards..."
-kill $SHARD0_PID $SHARD1_PID 2>/dev/null
-wait $SHARD0_PID $SHARD1_PID 2>/dev/null
+    sleep 1
+fi
+
+# Final verification - reap zombie processes by explicitly waiting on child PIDs
+# This ensures zombie processes are reaped by their parent (this script)
+for pid in $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID \
+           $SHARD1_LOCALHOST_PID $SHARD1_LEARNER_PID $SHARD1_P2_PID $SHARD1_P1_PID; do
+    wait $pid 2>/dev/null || true
+done
 
 echo ""
 echo "========================================="
@@ -56,11 +139,11 @@ failed=0
 
 # Check each shard's output
 for i in 0 1; do
-    log="shard${i}-localhost.log"
+    log="${log_prefix}_shard${i}-localhost.log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
-    
+
     if [ ! -f "$log" ]; then
         echo "  ✗ Log file not found"
         failed=1
@@ -114,8 +197,10 @@ else
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check shard0-localhost.log and shard1-localhost.log for details"
-    tail -10 shard0-localhost.log 
-    tail -10 shard1-localhost.log
+    echo "Check ${log_prefix}_shard*-localhost.log for details"
+    tail -10 ${log_prefix}_shard0-localhost.log
+    tail -10 ${log_prefix}_shard1-localhost.log
     exit 1
 fi
+
+ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null

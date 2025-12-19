@@ -1,3 +1,4 @@
+// @unsafe: entire file uses complex template instantiations with unknown compare functions
 #include <unistd.h>
 
 #include <iostream>
@@ -52,6 +53,7 @@ protected:
   testing_concurrent_btree *const btr;
 };
 
+// @unsafe: uses template compare functions
 static void
 test1()
 {

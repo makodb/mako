@@ -16,6 +16,9 @@
 // Define all sync_util::sync_logger static variables once
 int sync_util::sync_logger::shardIdx = 0;
 std::vector<std::atomic<uint32_t>> sync_util::sync_logger::local_timestamp_(80);
+#ifndef DISABLE_DISK
+std::vector<std::atomic<uint32_t>> sync_util::sync_logger::disk_timestamp_(80);
+#endif
 std::atomic<uint32_t> sync_util::sync_logger::single_watermark_(0);
 int sync_util::sync_logger::nshards = 0;
 int sync_util::sync_logger::local_replica_id = 0;

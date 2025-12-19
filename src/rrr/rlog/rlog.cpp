@@ -4,6 +4,15 @@
 
 #include "rlog.h"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 using namespace std;
 using namespace rpc;
 using namespace rlog;
@@ -15,7 +24,7 @@ RLogProxy* RLog::rp_s = nullptr;
 Client* RLog::cl_s = nullptr;
 char* RLog::buf_s = nullptr;
 int RLog::buf_len_s = -1;
-PollMgr* RLog::poll_s = nullptr;
+PollThread* RLog::poll_s = nullptr;
 rrr::Counter RLog::msg_counter_s;
 
 // no static Mutex class, use pthread_mutex_t and PTHREAD_MUTEX_INITIALIZER instead
@@ -40,7 +49,7 @@ void RLog::init(const char* my_ident /* =? */, const char* rlog_addr /* =? */) {
             rlog_addr = getenv("RLOGSERVER");
         }
         if (poll_s == nullptr) {
-            poll_s = new PollMgr;
+            poll_s = new PollThread;
         }
         cl_s = new Client(poll_s);
         if (rlog_addr == nullptr || cl_s->connect(rlog_addr) != 0) {

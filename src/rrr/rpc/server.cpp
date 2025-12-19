@@ -11,10 +11,63 @@
 #include <netinet/tcp.h>
 
 #include "reactor/coroutine.h"
+#include "reactor/reactor.h"
 #include "server.hpp"
 #include "utils.hpp"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+// External safety annotations for Log functions
+// @external: {
+//   Log::debug: [unsafe]
+//   Log::info: [unsafe]
+//   Log::error: [unsafe]
+//   Log_debug: [unsafe]
+//   Log_info: [unsafe]
+//   Log_warn: [unsafe]
+//   Log_error: [unsafe]
+// }
+
+// External safety annotations for SpinLock (interior mutability pattern)
+// @external: {
+//   SpinLock::lock: [unsafe]
+//   SpinLock::unlock: [unsafe]
+//   const_cast: [unsafe]
+//   PollThreadWorker::update_mode: [unsafe]
+//   Marshal::write_bookmark: [unsafe]
+// }
+
+// External safety annotations for rusty-cpp Arc (safe smart pointer)
+// @external: {
+//   rusty::Arc::operator->: [safe]
+//   rusty::sync::Arc::operator->: [safe]
+//   rusty::Option::unwrap: [safe]
+//   rusty::sync::Weak::upgrade: [safe]
+// }
+
+// External safety annotations for thread-local worker access
+// @external: {
+//   PollThreadWorker::is_on_poll_thread: [safe]
+//   rrr::PollThreadWorker::is_on_poll_thread: [safe]
+// }
+
+
 using namespace std;
+
+// External safety annotations for std functions used in this module
+// @external: {
+//   std::unordered_map::find: [unsafe]
+//   std::unordered_map::end: [unsafe]
+//   std::unordered_map::erase: [unsafe]
+//   std::unordered_map::operator[]: [unsafe]
+//   std::function::operator=: [unsafe]
+// }
 
 namespace rrr {
 
@@ -27,6 +80,8 @@ static int g_stat_server_batching_idx;
 static uint64_t g_stat_server_batching_report_time = 0;
 static const uint64_t g_stat_server_batching_report_interval = 1000 * 1000 * 1000;
 
+// @unsafe - Uses global mutable state and calls Log::info
+// SAFETY: Only called from single-threaded server context
 static void stat_server_batching(size_t batch) {
     g_stat_server_batching_idx = (g_stat_server_batching_idx + 1) % g_stat_server_batching_size;
     g_stat_server_batching[g_stat_server_batching_idx] = batch;
@@ -62,6 +117,8 @@ static unordered_map<i32, pair<Counter, Counter>> g_stat_rpc_counter;
 static uint64_t g_stat_server_rpc_counting_report_time = 0;
 static const uint64_t g_stat_server_rpc_counting_report_interval = 1000 * 1000 * 1000;
 
+// @unsafe - Uses global mutable state and calls Log::info
+// SAFETY: Only called from single-threaded server context
 static void stat_server_rpc_counting(i32 rpc_id) {
     g_stat_rpc_counter[rpc_id].first.next();
 
@@ -83,6 +140,7 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 #endif // RPC_STATISTICS
 
 
+// Static member definitions for missing RPC ID tracking
 std::unordered_set<i32> ServerConnection::rpc_id_missing_s;
 SpinLock ServerConnection::rpc_id_missing_l_s;
 
@@ -90,10 +148,9 @@ SpinLock ServerConnection::rpc_id_missing_l_s;
 // @unsafe - Initializes connection and updates counter
 // SAFETY: Counter operations are thread-safe
 ServerConnection::ServerConnection(Server* server, int socket)
-        : server_(server), socket_(socket), bmark_(nullptr), status_(CONNECTED) {
+        : server_(server), socket_(socket), status_(CONNECTED) {
     // increase number of open connections
     server_->sconns_ctr_.next(1);
-    block_read_in.init_block_read(100000000);
 }
 
 // @safe - Updates connection counter
@@ -101,6 +158,8 @@ ServerConnection::~ServerConnection() {
     // decrease number of open connections
     server_->sconns_ctr_.next(-1);
 }
+
+// get_shared() is now inherited from Pollable base class
 
 // @safe - Delegates to thread pool
 int ServerConnection::run_async(const std::function<void()>& f) {
@@ -110,106 +169,92 @@ int ServerConnection::run_async(const std::function<void()>& f) {
   return 0;
 }
 
-// @unsafe - Begins reply marshaling with locking
-// SAFETY: Protected by output spinlock
-void ServerConnection::begin_reply(Request* req, i32 error_code /* =... */) {
+// @safe - Begins reply marshaling with locking
+// SAFETY: Protected by output spinlock (SpinLock marked as external)
+void ServerConnection::begin_reply(const Request& req, i32 error_code /* =... */) {
     out_l_.lock();
     v32 v_error_code = error_code;
-    v64 v_reply_xid = req->xid;
+    v64 v_reply_xid = req.xid;
 
-    bmark_ = this->out_.set_bookmark(sizeof(i32)); // will write reply size later
+    bmark_ = rusty::Some(rusty::Box<Marshal::bookmark>(this->out_.set_bookmark(sizeof(i32)))); // will write reply size later
 
     *this << v_reply_xid;
     *this << v_error_code;
 }
 
-// @unsafe - Completes reply packet
-// SAFETY: Protected by output spinlock, enables write polling
+// @safe - Completes reply packet
+// SAFETY: Protected by output spinlock, uses weak ref to poll thread
 void ServerConnection::end_reply() {
     // set reply size in packet
-    if (bmark_ != nullptr) {
+    if (bmark_.is_some()) {
         i32 reply_size = out_.get_and_reset_write_cnt();
-        out_.write_bookmark(bmark_, &reply_size);
-        delete bmark_;
-        bmark_ = nullptr;
+        out_.write_bookmark(*bmark_.as_mut().unwrap(), reply_size);
+        bmark_ = rusty::None;  // Reset to None (automatically deletes old value)
     }
 
-    // always enable write events since the code above gauranteed there
-    // will be some data to send
-    server_->pollmgr_->update_mode(this, Pollable::READ | Pollable::WRITE);
+    // Mark that we need write mode update - poll loop will handle it
+    // This avoids the need for direct PollThreadWorker access from here
+    if (status_ == CONNECTED) {
+        pending_write_update_.set(true);
+    }
 
     out_l_.unlock();
 }
 
 // @unsafe - Reads requests and dispatches to handlers
 // SAFETY: Creates coroutines for concurrent handling
-void ServerConnection::handle_read() {
+bool ServerConnection::handle_read() {
     if (status_ == CLOSED) {
-        return;
+        return false;
     }
 
-    //read packet size first
-    i32 packet_size;
-    int n_peek = block_read_in.peek(&packet_size, sizeof(i32));
-    if(n_peek < sizeof(i32)){
-      int bytes_read = block_read_in.chnk_read_from_fd(socket_, sizeof(i32)-n_peek);
-    
-      //Log_info("bytes read from socket %d", bytes_read);
-       if (block_read_in.content_size() < sizeof(i32)) {
-          return;
-       }
+    // CRITICAL FIX: With edge-triggered epoll (EPOLLET), we must:
+    // 1. Drain all data from the socket
+    // 2. Process ALL complete packets in the buffer
+    // The old code only processed ONE packet per handle_read() call,
+    // causing hangs when multiple requests arrive together.
+
+    // First, read all available data from the socket into the buffer
+    size_t bytes_read = in_.read_from_fd(socket_);
+    if (bytes_read == 0 && in_.content_size() < sizeof(i32)) {
+        // Connection made no forward progress and there isn't enough buffered
+        // data to decode a packet header yet. Mirror legacy behavior by
+        // deferring until we either read more bytes or the peer closes.
+        return false;
     }
 
-    list<Request*> complete_requests; 
-    n_peek = block_read_in.peek(&packet_size, sizeof(i32));
-    if(n_peek == sizeof(i32)){
-      int pckt_bytes = block_read_in.chnk_read_from_fd(socket_, packet_size + sizeof(i32) - block_read_in.content_size());
-      if(block_read_in.content_size() < packet_size + sizeof(i32)){
-        return;
-      }
-      verify(block_read_in.read(&packet_size, sizeof(i32)) == sizeof(i32));
-      Request* req = new Request;
-      verify(req->m.read_reuse_chnk(block_read_in, packet_size) == (size_t) packet_size);
-      //Log_info("server handle read: packet size %d and packet bytes %d and content size %d", packet_size, pckt_bytes, block_read_in.content_size());
-      v64 v_xid;
-      req->m >> v_xid;
-      req->xid = v_xid.get();
-      complete_requests.push_back(req);
+    std::list<rusty::Box<Request>> complete_requests;
 
+    // Process ALL complete packets in the buffer
+    for (;;) {
+        i32 packet_size;
+        int n_peek = in_.peek(&packet_size, sizeof(i32));
+        if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
+            // consume the packet size
+            verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
+
+            auto req = rusty::Box<Request>(new Request());
+            verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
+
+            v64 v_xid;
+            req->m >> v_xid;
+            req->xid = v_xid.get();
+            complete_requests.push_back(std::move(req));
+
+        } else {
+            // packet not complete or there's no more packet to process
+            break;
+        }
     }
-
-    // for (;;) {
-    //     i32 packet_size;
-    //     int n_peek = in_.peek(&packet_size, sizeof(i32));
-    //     if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
-    //         // consume the packet size
-    //         verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
-    //         //Log_info("packet size is %d", packet_size);
-    //         Request* req = new Request;
-    //         verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
-             
-    //         v64 v_xid;
-    //         req->m >> v_xid;
-    //         req->xid = v_xid.get();
-    //         complete_requests.push_back(req);
-
-    //     } else {
-    //         // packet not complete or there's no more packet to process
-    //         break;
-    //     }
-    // }
 
 #ifdef RPC_STATISTICS
     stat_server_batching(complete_requests.size());
 #endif // RPC_STATISTICS
 
-    for (auto& req: complete_requests) {
-
+    for (auto& req : complete_requests) {
         if (req->m.content_size() < sizeof(i32)) {
-            // rpc id not provided
-            begin_reply(req, EINVAL);
+            begin_reply(*req, EINVAL);
             end_reply();
-            delete req;
             continue;
         }
 
@@ -222,12 +267,15 @@ void ServerConnection::handle_read() {
 
         auto it = server_->handlers_.find(rpc_id);
         if (it != server_->handlers_.end()) {
-            // the handler should delete req, and release server_connection refcopy.
-            Coroutine::CreateRun([&it, &req, this] () {
-            it->second(req, (ServerConnection *) this->ref_copy());
-            block_read_in.reset();
-            });
+            // rusty::Function allows direct capture of move-only types like rusty::Box
+            // Lambda captures rusty::Box<Request> by move, maintaining single ownership semantics
+            auto weak_this = weak_self_;
+            // Jetpack: pass file/line for debugging; mako-dev block_read_in not used in this branch
+            Coroutine::CreateRun([handler = it->second, req = std::move(req), weak_this]() mutable {
+                handler(std::move(req), weak_this);
+            }, __FILE__, __LINE__);
         } else {
+            // Track missing RPC IDs and suppress duplicate warnings
             rpc_id_missing_l_s.lock();
             bool surpress_warning = false;
             if (rpc_id_missing_s.find(rpc_id) == rpc_id_missing_s.end()) {
@@ -237,90 +285,104 @@ void ServerConnection::handle_read() {
             }
             rpc_id_missing_l_s.unlock();
             if (!surpress_warning) {
-                Log_error("rrr::ServerConnection: no handler for rpc_id=0x%08x", rpc_id);
+                Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
             }
-            begin_reply(req, ENOENT);
+            begin_reply(*req, ENOENT);
             end_reply();
-            delete req;
         }
     }
+
+    // Pump reactor after processing batch
+    Reactor::GetReactor()->Loop();
+
+    return false;
 }
 
-// @unsafe - Writes buffered data to socket
-// SAFETY: Protected by output spinlock
-void ServerConnection::handle_write() {
+// @safe - Writes buffered data to socket
+// SAFETY: Protected by output spinlock (SpinLock marked as external)
+// Returns new poll mode, or MODE_NO_CHANGE if no update needed
+int ServerConnection::handle_write() {
     if (status_ == CLOSED) {
-        return;
+        return Pollable::MODE_NO_CHANGE;
     }
 
+    int result = Pollable::MODE_NO_CHANGE;
     out_l_.lock();
     out_.write_to_fd(socket_);
     if (out_.empty()) {
-        server_->pollmgr_->update_mode(this, Pollable::READ);
+        // Return READ-only mode - PollThreadWorker will update epoll
+        result = Pollable::READ;
     }
     out_l_.unlock();
+    return result;
 }
 
-// @safe - Simple error handler
+// @safe - Error handler (explicit this-> is now safe in rusty-cpp)
 void ServerConnection::handle_error() {
     this->close();
 }
 
-// @unsafe - Closes connection with proper cleanup
+// @safe - Closes connection with proper cleanup
 // SAFETY: Thread-safe with server connection lock, idempotent
 void ServerConnection::close() {
-    bool should_release = false;
-
     if (status_ == CONNECTED) {
-        server_->sconns_l_.lock();
-        unordered_set<ServerConnection*>::iterator it = server_->sconns_.find(this);
-        if (it == server_->sconns_.end()) {
-            // another thread has already calling close()
+        rusty::Option<rusty::Arc<ServerConnection>> self;
+        // @unsafe - SpinLock operations and iterator access
+        {
+            server_->sconns_l_.lock();
+
+            // Find our Arc in server's connection set
+            for (auto it = server_->sconns_.begin(); it != server_->sconns_.end(); ++it) {
+                if (it->get() == this) {
+                    self = rusty::Some(it->clone());
+                    server_->sconns_.erase(it);
+                    break;
+                }
+            }
             server_->sconns_l_.unlock();
-            return;
         }
-        server_->sconns_.erase(it);
 
-        // because we released this connection from server_->sconns_
-        should_release = true;
-
-        server_->pollmgr_->remove(this);
-        server_->sconns_l_.unlock();
-
-        status_ = CLOSED;
-        ::close(socket_);
-    }
-
-    // this call might actually DELETE this object, so we put it at the end of function
-    if (should_release) {
-        int ret = this->release();
-        Log_debug("server@%s close ServerConnection at fd=%d, ref=%d", server_->addr_.c_str(), socket_, ret);
+        if (self.is_some()) {
+            // @unsafe - const_cast and pointer dereference
+            {
+                auto& conn = const_cast<ServerConnection&>(*self.unwrap());
+                server_->poll_thread_worker_.as_ref().unwrap()->remove(conn);
+            }
+            status_ = CLOSED;
+            // @unsafe - system call
+            { ::close(socket_); }
+            // @unsafe - logging
+            { Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_); }
+        }
     }
 }
 
 // @safe - Returns poll mode based on output buffer
-int ServerConnection::poll_mode() {
+// Uses const_cast for interior mutability (SpinLock marked as external)
+int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    out_l_.lock();
+    // @unsafe - SAFETY: const_cast for interior mutability (SpinLock is thread-safe)
+    { const_cast<SpinLock&>(out_l_).lock(); }
     if (!out_.empty()) {
         mode |= Pollable::WRITE;
     }
-    out_l_.unlock();
+    // @unsafe
+    { const_cast<SpinLock&>(out_l_).unlock(); }
     return mode;
 }
 
-// @unsafe - Constructs server with PollMgr
-// SAFETY: Proper refcounting of PollMgr
-Server::Server(PollMgr* pollmgr /* =... */, ThreadPool* thrpool /* =? */)
+// @unsafe - Constructs server with PollThread
+// SAFETY: Shared ownership via Arc<Mutex<>>, creates one if not provided
+Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */, ThreadPool* thrpool /* =? */)
         : server_sock_(-1), status_(NEW) {
 
     // get rid of eclipse warning
     memset(&loop_th_, 0, sizeof(loop_th_));
 
-    if (pollmgr == nullptr) {
-        pollmgr_ = new PollMgr;
+    if (poll_thread_worker.is_none()) {  // Check if Option is None
+        poll_thread_worker_ = rusty::Some(PollThread::create());
     } else {
-        pollmgr_ = (PollMgr *) pollmgr->ref_copy();
+        poll_thread_worker_ = std::move(poll_thread_worker);
     }
 
 //    if (thrpool == nullptr) {
@@ -342,17 +404,34 @@ Server::~Server() {
     }
 
     sconns_l_.lock();
-    vector<ServerConnection*> sconns(sconns_.begin(), sconns_.end());
+    vector<rusty::Arc<ServerConnection>> sconns;
+    sconns.reserve(sconns_.size());
+    for (auto& sconn : sconns_) {
+        sconns.push_back(sconn.clone());  // Clone Arc from set
+    }
     // NOTE: do NOT clear sconns_ here, because when running the following
-    // it->close(), the ServerConnection object will check the sconns_ to
+    // arc_conn->close(), the ServerConnection object will check the sconns_ to
     // ensure it still resides in sconns_
     sconns_l_.unlock();
 
     for (auto& it: sconns) {
-        it->close();
+        auto& conn = const_cast<ServerConnection&>(*it);
+        conn.close();
+        poll_thread_worker_.as_ref().unwrap()->remove(conn);
     }
-    up_server_listener_->close();
 
+    if (sp_server_listener_.is_some()) {
+        auto& listener = const_cast<ServerListener&>(*sp_server_listener_.as_ref().unwrap());
+        listener.close();
+        poll_thread_worker_.as_ref().unwrap()->remove(listener);
+        sp_server_listener_ = rusty::None;  // Reset to None
+    }
+
+    // Now clear sconns_ and the local copy to release Arcs
+    sconns_l_.lock();
+    sconns_.clear();
+    sconns_l_.unlock();
+    sconns.clear();  // Release local Arcs
 
     // make sure all open connections are closed
     int alive_connection_count = -1;
@@ -365,13 +444,13 @@ Server::~Server() {
             Log_debug("waiting for %d alive connections to shutdown", new_alive_connection_count);
         }
         alive_connection_count = new_alive_connection_count;
-        // sleep 0.05 sec because this is the timeout for PollMgr's epoll()
+        // sleep 0.05 sec because this is the timeout for PollThread's epoll()
         usleep(50 * 1000);
     }
     verify(sconns_ctr_.peek_next() == 0);
 
 //    threadpool_->release();
-    pollmgr_->release();
+    // owned_poll_thread_worker_ automatically released by shared_ptr
 
     //Log_debug("rrr::Server: destroyed");
 }
@@ -431,10 +510,11 @@ void Server::server_loop(struct addrinfo* svr_addr) {
             setsockopt(clnt_socket, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
             setsockopt(clnt_socket, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
             sconns_l_.lock();
-            ServerConnection* sconn = new ServerConnection(this, clnt_socket);
-            sconns_.insert(sconn);
-            pollmgr_->add(sconn);
+            auto sconn = rusty::Arc<ServerConnection>::make(this, clnt_socket);
+            const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
+            sconns_.insert(sconn.clone());  // Insert Arc into set
             sconns_l_.unlock();
+            poll_thread_worker_.as_ref().unwrap()->add(sconn);
         }
     }
 
@@ -446,7 +526,7 @@ void Server::server_loop(struct addrinfo* svr_addr) {
 // @unsafe - Accepts new client connections
 // @unsafe - Calls unsafe Log::debug for connection logging
 // SAFETY: Thread-safe with server connection lock
-void ServerListener::handle_read() {
+bool ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
 //  FD_SET(server_sock_, &fds);
@@ -463,15 +543,17 @@ void ServerListener::handle_read() {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       verify(set_nonblocking(clnt_socket, true) == 0);
 
-      ServerConnection* sconn = new ServerConnection(server_, clnt_socket);
+      auto sconn = rusty::Arc<ServerConnection>::make(server_, clnt_socket);
+      const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
       server_->sconns_l_.lock();
-      server_->sconns_.insert(sconn);
-      server_->pollmgr_->add(sconn);
+      server_->sconns_.insert(sconn.clone());  // Insert Arc into set
       server_->sconns_l_.unlock();
+      server_->poll_thread_worker_.as_ref().unwrap()->add(sconn);
     } else {
       break;
     }
   }
+  return false;
 }
 
 // @safe - Closes server socket using safe external annotation
@@ -526,30 +608,54 @@ ServerListener::ServerListener(Server* server, string addr) {
     }
 
     const int yes = 1;
+    // Set SO_REUSEADDR to allow binding to ports in TIME_WAIT state
     if (setsockopt(server_sock_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) != 0) {
-      Log_info("errno: %d, msg: %s, addr: %s", errno, strerror(errno), addr.c_str());
-      verify(0);
+      Log_error("SO_REUSEADDR failed for %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+      ::close(server_sock_);
+      server_sock_ = -1;
+      continue;  // Try next address
     }
 
+#ifdef SO_REUSEPORT
+    // Set SO_REUSEPORT to allow multiple binds (helps with rapid restart)
+    if (setsockopt(server_sock_, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes)) != 0) {
+      Log_debug("SO_REUSEPORT failed for %s: errno=%d (%s) - continuing anyway", addr.c_str(), errno, strerror(errno));
+      // Not fatal - continue without SO_REUSEPORT
+    }
+#endif
+
     if (setsockopt(server_sock_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) != 0) {
-      Log_info("errno: %d, msg: %s, addr: %s", errno, strerror(errno), addr.c_str());
-      verify(0);
+      Log_error("TCP_NODELAY failed for %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+      ::close(server_sock_);
+      server_sock_ = -1;
+      continue;  // Try next address
     }
 
     if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
-      break;
+      break;  // Successfully bound
     } else {
-      Log_error("port bind error: %s:%s", host.c_str(), port.c_str());
-      verify(0);
+      Log_error("port bind error for %s:%s, errno: %d (%s)", host.c_str(), port.c_str(), errno, strerror(errno));
+      ::close(server_sock_);
+      server_sock_ = -1;
+      // Continue to next address in the list
     }
-    ::close(server_sock_);
-    server_sock_ = -1;
   }
 
   if (rp == nullptr) {
-    // failed to bind
-    Log_error("rrr::Server: bind(): %s", strerror(errno));
+    // Failed to bind to any address
+    Log_error("rrr::Server: FATAL - failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
+    Log_error("rrr::Server: This is likely because the port is already in use by another process");
+    Log_error("rrr::Server: Please check: sudo lsof -i :%s or sudo ss -tulpn | grep %s", port.c_str(), port.c_str());
     freeaddrinfo(result);
+
+    // Print more helpful message and abort
+    fprintf(stderr, "\n====== FATAL ERROR ======\n");
+    fprintf(stderr, "Failed to bind to port %s - port may be in use\n", port.c_str());
+    fprintf(stderr, "Check with: sudo lsof -i :%s\n", port.c_str());
+    fprintf(stderr, "=========================\n\n");
+    fflush(stderr);
+
+    verify(0);  // Fatal error - cannot start server
   } else {
     p_gai_result_ = result;
     p_svr_addr_ = rp;
@@ -558,104 +664,37 @@ ServerListener::ServerListener(Server* server, string addr) {
 
   // about backlog: http://www.linuxjournal.com/files/linuxjournal.com/linuxjournal/articles/023/2333/2333s2.html
   const int backlog = SOMAXCONN;
-  verify(listen(server_sock_, backlog) == 0);
-  verify(set_nonblocking(server_sock_, true) == 0);
-  set_nonblocking(server_sock_, true);
-  Log_info("rrr::Server: started on %s", addr.c_str());
+  int listen_ret = listen(server_sock_, backlog);
+  if (listen_ret != 0) {
+    Log_error("rrr::Server: listen() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+  }
+  verify(listen_ret == 0);
+
+  int nonblock_ret = set_nonblocking(server_sock_, true);
+  if (nonblock_ret != 0) {
+    Log_error("rrr::Server: set_nonblocking() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+  }
+  verify(nonblock_ret == 0);
+
+  Log_debug("rrr::Server: started on %s", addr.c_str());
 }
 
 // @unsafe - Starts server listening on specified address
 // SAFETY: Creates listener with proper socket setup
 int Server::start(const char* bind_addr) {
-  string addr(bind_addr,strlen(bind_addr));
-  up_server_listener_ = std::make_unique<ServerListener>(this, addr);
-  pollmgr_->add(up_server_listener_.get());
+  if (!bind_addr) {
+    Log_error("rrr::Server::start: bind_addr is NULL!");
+    return -1;
+  }
+  string addr(bind_addr, strlen(bind_addr));
+  sp_server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(this, addr));
+  poll_thread_worker_.as_ref().unwrap()->add(sp_server_listener_.as_ref().unwrap().clone());
   return 0;
-
-  addr_ = addr;
-  size_t idx = addr.find(":");
-  if (idx == string::npos) {
-        Log_error("rrr::Server: bad bind address: %s", bind_addr);
-        return EINVAL;
-    }
-    string host = addr.substr(0, idx);
-    string port = addr.substr(idx + 1);
-
-  start_server_loop_args_type* start_server_loop_args = new start_server_loop_args_type();
-#ifdef USE_IPC
-  struct sockaddr_un saun;
-  if ((server_sock_ = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-    perror("server: socket");
-    exit(1);
-  }
-  saun.sun_family = AF_UNIX;
-  string ipc_addr = "rsock" + port;
-  strcpy(saun.sun_path, ipc_addr.data());
-  auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-  ::unlink(ipc_addr.data());
-  if (::bind(server_sock_, (struct sockaddr*)&saun, len) != 0) {
-    perror("server: socket bind");
-    exit(1);
-  }
-
-#else
-  struct addrinfo hints, *result, *rp;
-    memset(&hints, 0, sizeof(struct addrinfo));
-    hints.ai_family = AF_INET; // ipv4
-    hints.ai_socktype = SOCK_STREAM; // tcp
-    hints.ai_flags = AI_PASSIVE; // server side
-
-    int r = getaddrinfo((host == "0.0.0.0") ? nullptr : host.c_str(), port.c_str(), &hints, &result);
-    if (r != 0) {
-        Log_error("rrr::Server: getaddrinfo(): %s", gai_strerror(r));
-        return EINVAL;
-    }
-
-    for (rp = result; rp != nullptr; rp = rp->ai_next) {
-      server_sock_ = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (server_sock_ == -1) {
-            continue;
-        }
-
-        const int yes = 1;
-        verify(setsockopt(server_sock_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
-        verify(setsockopt(server_sock_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
-
-        if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
-            break;
-        } else {
-          verify(0);
-        }
-        close(server_sock_);
-        server_sock_ = -1;
-    }
-
-    if (rp == nullptr) {
-        // failed to bind
-        Log_error("rrr::Server: bind(): %s", strerror(errno));
-        freeaddrinfo(result);
-        return EINVAL;
-    }
-  start_server_loop_args->gai_result = result;
-  start_server_loop_args->svr_addr = rp;
-#endif
-  start_server_loop_args->server = this;
-
-    // about backlog: http://www.linuxjournal.com/files/linuxjournal.com/linuxjournal/articles/023/2333/2333s2.html
-    const int backlog = SOMAXCONN;
-    verify(listen(server_sock_, backlog) == 0);
-    verify(set_nonblocking(server_sock_, true) == 0);
-
-    status_ = RUNNING;
-    Log_info("rrr::Server: started on %s", bind_addr);
-
-    Pthread_create(&loop_th_, nullptr, Server::start_server_loop, start_server_loop_args);
-
-    return 0;
 }
 
-// @safe - Registers RPC handler
-int Server::reg(i32 rpc_id, const std::function<void(Request*, ServerConnection*)>& func) {
+// @unsafe - Registers RPC handler in map
+// SAFETY: Uses std::unordered_map operations (external annotations not matched)
+int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
     // disallow duplicate rpc_id
     if (handlers_.find(rpc_id) != handlers_.end()) {
         return EEXIST;
@@ -666,7 +705,8 @@ int Server::reg(i32 rpc_id, const std::function<void(Request*, ServerConnection*
     return 0;
 }
 
-// @safe - Unregisters RPC handler
+// @unsafe - Unregisters RPC handler from map
+// SAFETY: Uses std::unordered_map::erase (external annotations not matched)
 void Server::unreg(i32 rpc_id) {
     handlers_.erase(rpc_id);
 }

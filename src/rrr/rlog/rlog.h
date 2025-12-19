@@ -76,7 +76,7 @@ private:
     static rrr::Client* cl_s;
     static char* buf_s;
     static int buf_len_s;
-    static rrr::PollMgr* poll_s;
+    static rrr::PollThread* poll_s;
     static rrr::Counter msg_counter_s;
 
     // no static Mutex class, use pthread_mutex_t and PTHREAD_MUTEX_INITIALIZER instead

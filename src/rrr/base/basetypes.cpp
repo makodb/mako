@@ -3,6 +3,21 @@
 #include <cstring>  // for std::memcpy
 #include "basetypes.hpp"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
+// External safety annotations for system functions used in this module
+// @external: {
+//   gettimeofday: [unsafe, (struct timeval*, struct timezone*) -> int]
+//   pthread_self: [unsafe, () -> pthread_t]
+// }
+
 namespace rrr {
 
 // @safe - Pure computation, no memory operations
@@ -36,7 +51,8 @@ size_t SparseInt::buf_size(char byte0) {
     }
 }
 
-// @safe - Pure computation, no memory operations
+// @unsafe - Uses reinterpret_cast and address-of (marked unsafe for borrow checking)
+// SAFETY: Pure computation, no actual memory operations
 size_t SparseInt::val_size(i64 val) {
     if (-64 <= val && val <= 63) {
         return 1;
@@ -242,13 +258,15 @@ Timer::Timer() : begin_(), end_() {
     reset();
 }
 
-// @safe - Uses gettimeofday which is marked safe in external annotations
+// @unsafe - Uses address-of operator and calls gettimeofday (external unsafe)
+// SAFETY: Properly passes address of timeval struct to gettimeofday
 void Timer::start() {
     reset();
     gettimeofday(&begin_, nullptr);
 }
 
-// @safe - Uses gettimeofday which is marked safe in external annotations
+// @unsafe - Uses address-of operator and calls gettimeofday (external unsafe)
+// SAFETY: Properly passes address of timeval struct to gettimeofday
 void Timer::stop() {
     gettimeofday(&end_, nullptr);
 }
@@ -261,7 +279,8 @@ void Timer::reset() {
     end_.tv_usec = 0;
 }
 
-// @safe - Pure computation with safe gettimeofday call
+// @unsafe - Uses address-of operator and calls gettimeofday (external unsafe)
+// SAFETY: Properly passes address of local timeval struct to gettimeofday
 double Timer::elapsed() const {
     verify(begin_.tv_sec != 0 || begin_.tv_usec != 0);
     if (end_.tv_sec == 0 && end_.tv_usec == 0) {
@@ -273,14 +292,15 @@ double Timer::elapsed() const {
     return end_.tv_sec - begin_.tv_sec + (end_.tv_usec - begin_.tv_usec) / 1000000.0;
 }
 
-// @safe - Seeds RNG using time and thread ID (safe operations)
+// @unsafe - Uses gettimeofday, pthread_self, and reinterpret_cast (external unsafe)
+// SAFETY: Properly passes address of local timeval, uses reinterpret_cast for 'this' pointer
 Rand::Rand() : rand_() {
     struct timeval now;
     gettimeofday(&now, nullptr);
     // Use static_cast for pthread_t (which is typically an integer type)
     // and reinterpret_cast for pointer-to-integer conversion
-    rand_.seed(now.tv_sec + now.tv_usec + 
-               static_cast<long long>(pthread_self()) + 
+    rand_.seed(now.tv_sec + now.tv_usec +
+               static_cast<long long>(pthread_self()) +
                reinterpret_cast<long long>(this));
 }
 

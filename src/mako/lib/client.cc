@@ -526,7 +526,7 @@ namespace mako
         uint32_t reqId = ++lastReqId;
         reqId *= 10;
 
-        //Warning("invoke InvokeGet,txn_nr:%d,par_id:%d,id:%d",txn_nr,TThread::getPartitionID(),TThread::id());
+        //Warning("invoke InvokeGet,txn_nr:%d,par_id:%d,id:%d",txn_nr,TThread::getGlobalPartitionID(),TThread::id());
         Debug("invoke InvokeGet\n");
         crtReqK =
             PendingRequestK(key,
@@ -607,7 +607,7 @@ namespace mako
         Debug("[%lu]Received get HandleGetReply, to eRPC client receives a message, req_nr: %d, crt: %d, status: %d\n", clientid, resp->req_nr, crtReqK.req_nr, resp->status);
         if (resp->req_nr != crtReqK.req_nr)
         {
-            Debug("Received get reply when no request was pending; req_nr = %lu, crtReqK:%lu,par_id:%d,id:%d", resp->req_nr, crtReqK.req_nr,TThread::getPartitionID(),TThread::id());
+            Debug("Received get reply when no request was pending; req_nr = %lu, crtReqK:%lu,par_id:%d,id:%d", resp->req_nr, crtReqK.req_nr,TThread::getGlobalPartitionID(),TThread::id());
             return;
         }
 

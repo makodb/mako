@@ -9,6 +9,7 @@
 #include <execinfo.h>
 #include <unistd.h>
 
+// @unsafe: uses malloc, backtrace, and raw pointers
 static void *
 do_allocation(size_t sz, bool do_throw)
 {
@@ -25,54 +26,63 @@ do_allocation(size_t sz, bool do_throw)
   return ret;
 }
 
+// @unsafe: uses free
 static inline void
 do_deletion(void *p)
 {
   free(p);
 }
 
+// @unsafe: calls unsafe do_allocation
 void*
 operator new(size_t sz) throw (std::bad_alloc)
 {
   return do_allocation(sz, true);
 }
 
+// @unsafe: calls unsafe do_allocation
 void*
 operator new(size_t sz, const std::nothrow_t&) throw ()
 {
   return do_allocation(sz, false);
 }
 
+// @unsafe: calls unsafe do_allocation
 void*
 operator new[](size_t sz) throw (std::bad_alloc)
 {
   return do_allocation(sz, true);
 }
 
+// @unsafe: calls unsafe do_allocation
 void*
 operator new[](size_t sz, std::nothrow_t &) throw ()
 {
   return do_allocation(sz, false);
 }
 
+// @unsafe: calls unsafe do_deletion
 void
 operator delete(void *p) throw ()
 {
   return do_deletion(p);
 }
 
+// @unsafe: calls unsafe do_deletion
 void
 operator delete(void *p, const std::nothrow_t &) throw ()
 {
   return do_deletion(p);
 }
 
+// @unsafe: calls unsafe do_deletion
 void
 operator delete[](void *p) throw ()
 {
   return do_deletion(p);
 }
 
+// @unsafe: calls unsafe do_deletion
 void
 operator delete[](void *p, const std::nothrow_t &) throw ()
 {

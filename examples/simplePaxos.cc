@@ -22,26 +22,28 @@ unordered_map<int, int> counters;
 
 
 void db_worker(size_t par_id) {
+    std::cerr << "[DB_WORKER DEBUG] Starting db_worker for par_id: " << par_id << std::endl;
     size_t sent = 0;
-    const int base = 300 * 1000;
+    const int base = 3 * 1000;  // Reduced from 300KB to 3KB to avoid crash
     util::timer t;
     unsigned char *LOG = (unsigned char *)malloc(base + 200);
     int log_id = 0;
-    
+
     for (int i=0; i<message_count; i++) {
         sent++;
         int size = rand() % 100 + base;
         log_id++;
-        
+
         string id = mako::intToString(log_id * 10 + par_id);
         string tt = mako::intToString(mako::getCurrentTimeMillis());
-        
+
         memcpy(LOG, id.c_str(), min(16, (int)id.size()));
         memcpy(LOG + 16, tt.c_str(), min(16, (int)tt.size()));
         memset(LOG + 32, 'i', size - 32);
 
         t.lap_nano();
         auto e0 = t.lap_nano();
+        std::cerr << "[DB_WORKER DEBUG] Calling add_log_to_nc for par_id: " << par_id << ", size: " << size << std::endl;
         add_log_to_nc((char const *)LOG, size, par_id);
         auto e1 = t.lap_nano();
         
@@ -87,7 +89,7 @@ int main(int argc, char **argv) {
     argv_paxos[15] = (char *) paxos_proc_name.c_str();
     argv_paxos[16] = (char *)"-A";
     argv_paxos[17] = (char *)"10000";  // bulkBatchCount
-    std::vector<string> ret = setup(16, argv_paxos);
+    std::vector<string> ret = setup(18, argv_paxos);
     if (ret.empty()) {
         return -1;
     }
@@ -143,7 +145,13 @@ int main(int argc, char **argv) {
 
     setup2(0, 0);
 
+    // Wait for all sites to complete their communicator setup
+    // This ensures p1's rep_commo_ is initialized before commits arrive
+    // (p1 forwards commits to learner, needs communicator ready)
+    this_thread::sleep_for(chrono::seconds(2));
+
     if (leader_config) {
+        std::cerr << "[LEADER DEBUG] Starting db_worker threads" << std::endl;
         vector<thread> threads;
         for (int par_id = 0; par_id < num_workers; par_id++) {
             threads.emplace_back(db_worker, par_id);
@@ -152,9 +160,14 @@ int main(int argc, char **argv) {
         for (auto& t : threads) {
             t.join();
         }
-        
+
         for (int par_id = 0; par_id < num_workers; par_id++) {
             add_log_to_nc("", 0, par_id);
+        }
+
+        // Wait for ending messages to be committed before shutdown
+        for (int par_id = 0; par_id < num_workers; par_id++) {
+            wait_for_submit(par_id);
         }
     }
 

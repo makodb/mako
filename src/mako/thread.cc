@@ -5,10 +5,12 @@
 
 using namespace std;
 
+// @safe
 ndb_thread::~ndb_thread()
 {
 }
 
+// @safe
 void
 ndb_thread::start()
 {
@@ -17,6 +19,7 @@ ndb_thread::start()
     thd_.detach();
 }
 
+// @unsafe: uses pthread_setname_np
 void
 ndb_thread::startBind(int core_id)
 {
@@ -30,6 +33,7 @@ ndb_thread::startBind(int core_id)
     thd_.detach();
 }
 
+// @unsafe: uses std::thread::join
 void
 ndb_thread::join()
 {
@@ -37,6 +41,7 @@ ndb_thread::join()
   thd_.join();
 }
 
+// @unsafe
 // can be overloaded by subclasses
 void
 ndb_thread::run()

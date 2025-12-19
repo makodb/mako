@@ -2,6 +2,15 @@
 #include "rpc_comm.h"
 #include "server.h"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 extern poll_mgr_t *mgr_;
 
 void server_create(server_t **svr, poll_mgr_t *mgr) {

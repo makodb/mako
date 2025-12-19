@@ -1,4 +1,5 @@
 #pragma once
+#include <rusty/arc.hpp>
 
 #include "../frame.h"
 #include "../constants.h"
@@ -19,7 +20,7 @@ class FrameRococo : public Frame {
   TxLogServer *CreateScheduler() override;
   vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rrr::PollMgr *poll_mgr,
+                                           rusty::Arc<rrr::PollThread> poll_thread_worker,
                                            ServerControlServiceImpl *scsi)
   override;
   mdb::Row *CreateRow(const mdb::Schema *schema,
@@ -28,7 +29,7 @@ class FrameRococo : public Frame {
   shared_ptr<Tx> CreateTx(epoch_t epoch, txnid_t tid,
                           bool ro, TxLogServer *mgr) override;
 
-  Communicator *CreateCommo(PollMgr *poll = nullptr) override;
+  Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None) override;
 
 };
 } // namespace janus

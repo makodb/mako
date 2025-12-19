@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
   <component name="CMakeRunConfigurationManager" shouldGenerate="true" shouldDeleteObsolete="true">
     <generated>
       <config projectName="janus" targetName="RRR" />
@@ -15,16 +18,21 @@
   </component>
   <component name="CMakeSettings" AUTO_RELOAD="true">
     <configurations>
-      <configuration PROFILE_NAME="Debug" CONFIG_NAME="Debug" />
+      <configuration PROFILE_NAME="Debug" ENABLED="true" CONFIG_NAME="Debug" />
     </configurations>
   </component>
   <component name="ChangeListManager">
     <list default="true" id="90fe84fa-ca18-4530-9a88-ce9ad2f7923a" name="Default" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/rrr/reactor/reactor.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/rrr/reactor/reactor.cc" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/rrr/reactor/reactor.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/rrr/reactor/reactor.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/deptran/client_worker.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/deptran/client_worker.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/deptran/fpga_raft/commo.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/deptran/fpga_raft/commo.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/deptran/fpga_raft/commo.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/deptran/fpga_raft/commo.h" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/deptran/fpga_raft/coordinator.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/deptran/fpga_raft/coordinator.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/deptran/fpga_raft/server.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/deptran/fpga_raft/server.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/deptran/server_worker.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/deptran/server_worker.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rrr/reactor/quorum_event.cc" beforeDir="false" afterPath="$PROJECT_DIR$/src/rrr/reactor/quorum_event.cc" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/rrr/reactor/quorum_event.h" beforeDir="false" afterPath="$PROJECT_DIR$/src/rrr/reactor/quorum_event.h" afterDir="false" />
     </list>
-    <option name="EXCLUDED_CONVERTED_TO_IGNORED" value="true" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -36,64 +44,63 @@
   <component name="CreatePatchCommitExecutor">
     <option name="PATCH_PATH" value="" />
   </component>
-  <component name="DatabaseView">
-    <option name="SHOW_INTERMEDIATE" value="true" />
-    <option name="GROUP_DATA_SOURCES" value="true" />
-    <option name="GROUP_SCHEMA" value="true" />
-    <option name="GROUP_CONTENTS" value="false" />
-    <option name="SORT_POSITIONED" value="false" />
-    <option name="SHOW_EMPTY_GROUPS" value="false" />
-    <option name="AUTO_SCROLL_FROM_SOURCE" value="false" />
-    <option name="HIDDEN_KINDS">
-      <set />
-    </option>
-    <expand />
-    <select />
-  </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="CMakeBuildProfile:Debug" />
-  <component name="FavoritesManager">
-    <favorites_list name="janus" />
-  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="OCFindUsagesOptions" text="false" ivars="false" properties="true" derivedClasses="false" />
-  <component name="OCResolveContextSettings">
-    <option name="configuration" value="0-RRR" />
+  <component name="GitSEFilterConfiguration">
+    <file-type-list>
+      <filtered-out-file-type name="LOCAL_BRANCH" />
+      <filtered-out-file-type name="REMOTE_BRANCH" />
+      <filtered-out-file-type name="TAG" />
+      <filtered-out-file-type name="COMMIT_BY_MESSAGE" />
+    </file-type-list>
   </component>
+  <component name="JsFlowSettings">
+    <service-enabled>true</service-enabled>
+    <exe-path />
+    <other-services-enabled>true</other-services-enabled>
+    <auto-save>true</auto-save>
+  </component>
+  <component name="MarkdownSettingsMigration">
+    <option name="stateVersion" value="1" />
+  </component>
+  <component name="OCFindUsagesOptions" text="false" ivars="false" properties="true" derivedClasses="false" />
   <component name="ProjectId" id="1RZ1VRjN8apBEsyJhApjUSr3svC" />
   <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
   <component name="PropertiesComponent">
     <property name="ASKED_ADD_EXTERNAL_FILES" value="true" />
+    <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
+    <property name="RunOnceActivity.cidr.known.project.marker" value="true" />
     <property name="SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
     <property name="SearchEverywhereHistoryKey" value="refcou&#9;null&#9;null&#10;clock_gettime&#9;null&#9;null" />
     <property name="WebServerToolWindowFactoryState" value="false" />
     <property name="cf.advertisement.text.has.clang-format" value="true" />
+    <property name="cf.first.check.clang-format" value="false" />
+    <property name="cidr.known.project.marker" value="true" />
+    <property name="cmake.loaded.for.project" value="true" />
     <property name="js-jscs-nodeInterpreter" value="/usr/local/bin/node" />
     <property name="js.eslint.eslintPackage" value="" />
     <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="node.js.detected.package.eslint" value="true" />
+    <property name="node.js.detected.package.tslint" value="true" />
+    <property name="node.js.selected.package.eslint" value="(autodetect)" />
+    <property name="node.js.selected.package.tslint" value="(autodetect)" />
     <property name="nodejs_interpreter_path" value="node" />
+    <property name="nodejs_package_manager_path" value="npm" />
     <property name="run.code.analysis.last.selected.profile" value="pProject Default" />
-    <property name="settings.editor.selected.configurable" value="preferences.sourceCode.C/C++" />
+    <property name="settings.editor.selected.configurable" value="CPPToolchains" />
   </component>
   <component name="RecentsManager">
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/deptran" />
     </key>
   </component>
-  <component name="RunDashboard">
-    <option name="ruleStates">
-      <list>
-        <RuleState>
-          <option name="name" value="ConfigurationTypeDashboardGroupingRule" />
-        </RuleState>
-        <RuleState>
-          <option name="name" value="StatusDashboardGroupingRule" />
-        </RuleState>
-      </list>
-    </option>
-  </component>
-  <component name="RunManager" selected="CMake Application.none-3c3s-rw-con_100">
+  <component name="RunManager" selected="CMake Application.none-raft-1c3s3r-tpca-con_100">
     <configuration default="true" type="tests" factoryName="Attests">
       <option name="INTERPRETER_OPTIONS" value="" />
       <option name="PARENT_ENVS" value="true" />
@@ -113,248 +120,353 @@
       <option name="USE_PATTERN" value="false" />
       <method />
     </configuration>
-    <configuration default="true" type="CMakeGoogleTestRunConfigurationType" factoryName="Google Test" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="gen-rpc" CONFIG_NAME="Debug" TEST_MODE="SUITE_TEST">
+    <configuration default="true" type="CMakeGoogleTestRunConfigurationType" factoryName="Google Test" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="gen-rpc" CONFIG_NAME="Debug" TEST_MODE="SUITE_TEST">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
         <option name="BeforeTestRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="Build All" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" CONFIG_NAME="Debug" EXPLICIT_BUILD_TARGET_NAME="all">
+    <configuration name="Build All" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" CONFIG_NAME="Debug" EXPLICIT_BUILD_TARGET_NAME="all">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="EXTERN_C" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="EXTERN_C" CONFIG_NAME="Debug">
+    <configuration name="EXTERN_C" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="EXTERN_C" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="MEMDB" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="MEMDB" CONFIG_NAME="Debug">
+    <configuration name="MEMDB" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="MEMDB" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="RRR" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="RRR" CONFIG_NAME="Debug">
+    <configuration name="RRR" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="RRR" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="TEST" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="TEST" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="TEST">
+    <configuration name="TEST" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="TEST" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="TEST">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="YAMLCPP" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="YAMLCPP" CONFIG_NAME="Debug">
+    <configuration name="YAMLCPP" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="YAMLCPP" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration default="true" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="gen-rpc" CONFIG_NAME="Debug">
+    <configuration default="true" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="gen-rpc" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="gen-rpc" type="CMakeRunConfiguration" factoryName="Application" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="gen-rpc" CONFIG_NAME="Debug">
+    <configuration name="gen-rpc" type="CMakeRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="gen-rpc" CONFIG_NAME="Debug">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-1c1s-tpcc_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-3c3s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-1c1s-tpcc_no-con_1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc_no.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-3c3s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-1c1s-tpcc_no-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc_no.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-3c3s3r-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpcc.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-3c3s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-64c8s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-3c3s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="janus-64c8s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpcc.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-3c3s3r-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpcc.yml -f config/janus.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-1c1s-rw-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-64c8s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpca_zipf_1.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-1c1s-rw" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="janus-64c8s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpcc.yml -f config/janus.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-1c1s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-1c1s-rw-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-3c3s-rw-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-1c1s-rw" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-3c3s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca_zipf_1.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-1c1s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-3c3s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpcc.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-1c1s3r-tpca_zipf_1.0_con1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/none.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-3c3s-tpcc_no-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpcc_no.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c1s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r1p.yml -f config/tpca.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-3c3s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c1s3r-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r1p.yml -f config/tpcc.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="none-64c8s-rw-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c3s-rw-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="occ_paxos-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c3s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca_zipf_1.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="occ_paxos-3c1s3r-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c3s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpcc.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="occ_paxos-3c3s-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c3s-tpcc_no-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpcc_no.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="occ_paxos-3c3s3r-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-3c3s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="occ_paxos-3c3s3r-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-64c8s-rw-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/rw.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="paxosbench-test" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-b -d 60 -f config/1c1s3r1p.yml -f config/occ_paxos.yml -P localhost -t 30 -T 100000 -n 32" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="paxosbench" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="paxosbench">
+    <configuration name="none-64c8s-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpca.yml -f config/none.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="rcc-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/rcc.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-raft-1c1s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s3r1p.yml -f config/tpca.yml -f config/none_fpga_raft.yml -f config/concurrent_100.yml -f config/client_closed.yml -d 10 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="rcc-1c1s-tpca_zipf_1.0_con_1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/rcc.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="none-raft-1c3s3r-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c3s3r1p.yml -f config/tpca.yml -f config/none_fpga_raft.yml -f config/concurrent_100.yml -f config/client_closed.yml -d 10 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="rcc-64c8s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpcc.yml -f config/rcc.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tapir-1c1s-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca.yml -f config/tapir.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-1c1s3r-tpca_zipf_1.0_con1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tapir-2c2s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/2c2s1p.yml -f config/tpcc.yml -f config/tapir.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-3c1s3r-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-3c1s3r-tpcc_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r1p.yml -f config/tpcc.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-3c3s3r-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-3c3s-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-3c3s3r-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="occ_paxos-3c3s3r-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/occ_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-1c1s-tpcc" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc.yml -f config/tpl_ww.yml  -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="paxosbench-test" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-b -d 60 -f config/1c1s3r1p.yml -f config/occ_paxos.yml -P localhost -t 30 -T 100000 -n 32" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="paxosbench" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="paxosbench">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-1c1s3r-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="rcc-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/rcc.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-2c2s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/2c2s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="rcc-1c1s-tpca_zipf_1.0_con_1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/rcc.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-3c3s3r-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="rcc-64c8s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpcc.yml -f config/rcc.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-paxos-3c3s3r-tpcc-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpcc.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="tapir-1c1s-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca.yml -f config/tapir.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="tpl_ww-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r.yml -f config/tpca_zipf_1.yml -f config/tpl_ww.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="tapir-2c2s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/2c2s1p.yml -f config/tpcc.yml -f config/tapir.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="troad-1c1s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="tapir-3c1s3r-tpca_zipf_1.0_con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/tapir.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="troad-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_1.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="tpl_ww-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
     </configuration>
-    <configuration name="troad-3c3s3r-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+    <configuration name="tpl_ww-3c3s-tpca-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s1p.yml -f config/tpca.yml -f config/tpl_ww.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-3c3s3r-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-1c1s-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-1c1s-tpcc" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc.yml -f config/tpl_ww.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-1c1s3r-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-2c2s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/2c2s1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-3c3s3r-tpca_zipf_0.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_uniform.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-3c3s3r-tpca_zipf_1.0-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-paxos-3c3s3r-tpcc-con100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpcc.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c1s3r.yml -f config/tpca_zipf_1.yml -f config/tpl_ww.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="tpl_ww_paxos-1c1s3r-tpca_zipf_1.0_con1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s3r1p.yml -f config/tpca_zipf_1.yml -f config/tpl_ww_paxos.yml  -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-1c1s-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-1c1s-tpca_zipf_1.0" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-1c1s-tpcc_no-con_1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c1s1p.yml -f config/tpcc_no.yml -f config/troad.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-1c3s3r-tpca_zipf_1.0-con_1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/1c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-3c3s3r-tpca_zipf_1.0-con_1" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_1.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-3c3s3r-tpca_zipf_1.0-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-3c3s3r-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/3c3s3r1p.yml -f config/tpcc.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-64c8s-tpca-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpca.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-64c8s-tpcc-con_100" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/64c8s1p.yml -f config/tpcc.yml -f config/troad.yml -f config/concurrent_100.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
+      <method v="2">
+        <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
+      </method>
+    </configuration>
+    <configuration name="troad-9c3s3r-tpca_zipf_1.0-con_400" type="CMakeRunConfiguration" factoryName="Application" PROGRAM_PARAMS="-f config/9c3s3r1p.yml -f config/tpca_zipf_1.yml -f config/troad.yml -f config/concurrent_400.yml -d 30 -P localhost" REDIRECT_INPUT="false" ELEVATE="false" USE_EXTERNAL_CONSOLE="false" WORKING_DIR="file://$PROJECT_DIR$" PASS_PARENT_ENVS_2="true" PROJECT_NAME="janus" TARGET_NAME="janusdb" CONFIG_NAME="Debug" RUN_TARGET_PROJECT_NAME="janus" RUN_TARGET_NAME="janusdb">
       <method v="2">
         <option name="com.jetbrains.cidr.execution.CidrBuildBeforeRunTaskProvider$BuildBeforeRunTask" enabled="true" />
       </method>
@@ -412,6 +524,7 @@
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
       <option name="_new_keywords" value="&quot;&quot;" />
+      <option name="_new_parameters" value="&quot;&quot;" />
       <option name="_new_additionalArguments" value="&quot;&quot;" />
       <option name="_new_target" value="&quot;.&quot;" />
       <option name="_new_targetType" value="&quot;PATH&quot;" />
@@ -419,54 +532,76 @@
     </configuration>
     <list>
       <item itemvalue="CMake Application.Build All" />
+      <item itemvalue="CMake Application.EXTERN_C" />
+      <item itemvalue="CMake Application.MEMDB" />
+      <item itemvalue="CMake Application.RRR" />
+      <item itemvalue="CMake Application.TEST" />
+      <item itemvalue="CMake Application.YAMLCPP" />
+      <item itemvalue="CMake Application.gen-rpc" />
       <item itemvalue="CMake Application.janus-1c1s-tpca_zipf_1.0" />
-      <item itemvalue="CMake Application.troad-1c1s-tpca_zipf_1.0" />
-      <item itemvalue="CMake Application.troad-1c1s-tpca_zipf_1.0-con_100" />
-      <item itemvalue="CMake Application.troad-3c3s3r-tpca_zipf_1.0-con_100" />
-      <item itemvalue="CMake Application.janus-1c1s-tpcc_zipf_1.0" />
+      <item itemvalue="CMake Application.janus-1c1s-tpca_zipf_1.0-con100" />
+      <item itemvalue="CMake Application.janus-1c1s-tpcc_no-con_100" />
+      <item itemvalue="CMake Application.janus-1c1s-tpcc_no-con_1" />
       <item itemvalue="CMake Application.janus-3c3s-tpca_zipf_1.0-con_100" />
-      <item itemvalue="CMake Application.janus-64c8s-tpca_zipf_1.0-con_100" />
-      <item itemvalue="CMake Application.janus-3c3s3r-tpcc-con_100" />
       <item itemvalue="CMake Application.janus-3c3s3r-tpca-con_100" />
+      <item itemvalue="CMake Application.janus-3c3s3r-tpcc-con_100" />
+      <item itemvalue="CMake Application.janus-64c8s-tpca_zipf_1.0-con_100" />
       <item itemvalue="CMake Application.janus-64c8s-tpcc-con_100" />
-      <item itemvalue="CMake Application.rcc-1c1s-tpca_zipf_1.0" />
-      <item itemvalue="CMake Application.rcc-1c1s-tpca_zipf_1.0_con_1" />
-      <item itemvalue="CMake Application.rcc-64c8s-tpcc-con_100" />
       <item itemvalue="CMake Application.none-1c1s-rw-con_100" />
       <item itemvalue="CMake Application.none-1c1s-rw" />
       <item itemvalue="CMake Application.none-1c1s-tpcc-con_100" />
+      <item itemvalue="CMake Application.none-1c1s3r-tpca_zipf_1.0_con1" />
+      <item itemvalue="CMake Application.none-3c1s3r-tpca-con_100" />
+      <item itemvalue="CMake Application.none-3c1s3r-tpcc-con_100" />
       <item itemvalue="CMake Application.none-3c3s-rw-con_100" />
       <item itemvalue="CMake Application.none-3c3s-tpca_zipf_1.0-con_100" />
       <item itemvalue="CMake Application.none-3c3s-tpcc-con_100" />
       <item itemvalue="CMake Application.none-3c3s-tpcc_no-con_100" />
       <item itemvalue="CMake Application.none-3c3s3r-tpca-con_100" />
       <item itemvalue="CMake Application.none-64c8s-rw-con_100" />
-      <item itemvalue="CMake Application.tapir-2c2s-tpcc-con_100" />
+      <item itemvalue="CMake Application.none-64c8s-tpca-con_100" />
+      <item itemvalue="CMake Application.none-raft-1c1s3r-tpca-con_100" />
+      <item itemvalue="CMake Application.none-raft-1c3s3r-tpca-con_100" />
+      <item itemvalue="CMake Application.occ_paxos-1c1s-tpca_zipf_1.0-con100" />
+      <item itemvalue="CMake Application.occ_paxos-1c1s3r-tpca_zipf_1.0_con1" />
+      <item itemvalue="CMake Application.occ_paxos-3c1s3r-tpca_zipf_1.0_con100" />
+      <item itemvalue="CMake Application.occ_paxos-3c1s3r-tpcc_con100" />
+      <item itemvalue="CMake Application.occ_paxos-3c3s-tpca_zipf_1.0_con100" />
+      <item itemvalue="CMake Application.occ_paxos-3c3s3r-tpca_zipf_1.0" />
+      <item itemvalue="CMake Application.occ_paxos-3c3s3r-tpca_zipf_1.0_con100" />
+      <item itemvalue="CMake Application.paxosbench-test" />
+      <item itemvalue="CMake Application.rcc-1c1s-tpca_zipf_1.0" />
+      <item itemvalue="CMake Application.rcc-1c1s-tpca_zipf_1.0_con_1" />
+      <item itemvalue="CMake Application.rcc-64c8s-tpcc-con_100" />
       <item itemvalue="CMake Application.tapir-1c1s-tpca-con_100" />
+      <item itemvalue="CMake Application.tapir-2c2s-tpcc-con_100" />
+      <item itemvalue="CMake Application.tapir-3c1s3r-tpca_zipf_1.0_con100" />
       <item itemvalue="CMake Application.tpl_ww-1c1s-tpca_zipf_1.0-con100" />
+      <item itemvalue="CMake Application.tpl_ww-3c3s-tpca-con100" />
       <item itemvalue="CMake Application.tpl_ww-3c3s3r-tpca_zipf_1.0-con_100" />
       <item itemvalue="CMake Application.tpl_ww-paxos-1c1s-tpca_zipf_1.0-con100" />
-      <item itemvalue="CMake Application.tpl_ww-paxos-1c1s3r-tpca_zipf_1.0" />
       <item itemvalue="CMake Application.tpl_ww-paxos-1c1s-tpca_zipf_1.0" />
       <item itemvalue="CMake Application.tpl_ww-paxos-1c1s-tpcc" />
+      <item itemvalue="CMake Application.tpl_ww-paxos-1c1s3r-tpca_zipf_1.0" />
       <item itemvalue="CMake Application.tpl_ww-paxos-2c2s-tpca_zipf_1.0" />
-      <item itemvalue="CMake Application.tpl_ww-paxos-3c3s3r-tpca_zipf_1.0" />
+      <item itemvalue="CMake Application.tpl_ww-paxos-3c3s3r-tpca_zipf_0.0-con100" />
+      <item itemvalue="CMake Application.tpl_ww-paxos-3c3s3r-tpca_zipf_1.0-con100" />
       <item itemvalue="CMake Application.tpl_ww-paxos-3c3s3r-tpcc-con100" />
       <item itemvalue="CMake Application.tpl_ww-tpca_zipf_1.0-con_100" />
-      <item itemvalue="CMake Application.occ_paxos-1c1s-tpca_zipf_1.0-con100" />
-      <item itemvalue="CMake Application.occ_paxos-3c3s3r-tpca_zipf_1.0_con100" />
-      <item itemvalue="CMake Application.occ_paxos-3c3s-tpca_zipf_1.0_con100" />
-      <item itemvalue="CMake Application.occ_paxos-3c1s3r-tpca_zipf_1.0_con100" />
-      <item itemvalue="CMake Application.occ_paxos-3c3s3r-tpca_zipf_1.0" />
-      <item itemvalue="CMake Application.paxosbench-test" />
-      <item itemvalue="CMake Application.EXTERN_C" />
-      <item itemvalue="CMake Application.gen-rpc" />
-      <item itemvalue="CMake Application.MEMDB" />
-      <item itemvalue="CMake Application.RRR" />
-      <item itemvalue="CMake Application.TEST" />
-      <item itemvalue="CMake Application.YAMLCPP" />
+      <item itemvalue="CMake Application.tpl_ww_paxos-1c1s3r-tpca_zipf_1.0_con1" />
+      <item itemvalue="CMake Application.troad-1c1s-tpca_zipf_1.0-con_100" />
+      <item itemvalue="CMake Application.troad-1c1s-tpca_zipf_1.0" />
+      <item itemvalue="CMake Application.troad-1c1s-tpcc_no-con_1" />
+      <item itemvalue="CMake Application.troad-3c3s3r-tpca_zipf_1.0-con_1" />
+      <item itemvalue="CMake Application.troad-3c3s3r-tpca_zipf_1.0-con_100" />
+      <item itemvalue="CMake Application.troad-9c3s3r-tpca_zipf_1.0-con_400" />
+      <item itemvalue="CMake Application.troad-3c3s3r-tpcc-con_100" />
+      <item itemvalue="CMake Application.troad-1c3s3r-tpca_zipf_1.0-con_1" />
+      <item itemvalue="CMake Application.troad-64c8s-tpca-con_100" />
+      <item itemvalue="CMake Application.troad-64c8s-tpcc-con_100" />
     </list>
   </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
   <component name="SvnConfiguration">
     <configuration />
   </component>
@@ -562,29 +697,71 @@
       <workItem from="1574220777939" duration="2378000" />
       <workItem from="1574363788285" duration="53000" />
       <workItem from="1574776555544" duration="7412000" />
+      <workItem from="1576155611687" duration="11374000" />
+      <workItem from="1576437278949" duration="531000" />
+      <workItem from="1576470209302" duration="248000" />
+      <workItem from="1577798369446" duration="8002000" />
+      <workItem from="1578364387913" duration="6343000" />
+      <workItem from="1578514940940" duration="25751000" />
+      <workItem from="1578716292326" duration="11898000" />
+      <workItem from="1579997370982" duration="960000" />
+      <workItem from="1579999793179" duration="23945000" />
+      <workItem from="1580679386927" duration="34000" />
+      <workItem from="1580679525448" duration="9651000" />
+      <workItem from="1581477007444" duration="24404000" />
+      <workItem from="1581619840422" duration="53000" />
+      <workItem from="1581619906388" duration="204000" />
+      <workItem from="1581620121321" duration="328000" />
+      <workItem from="1581620466207" duration="632000" />
+      <workItem from="1581628002283" duration="199000" />
+      <workItem from="1581628243246" duration="311000" />
+      <workItem from="1581628576540" duration="189000" />
+      <workItem from="1581628775072" duration="341000" />
+      <workItem from="1581629126355" duration="39051000" />
+      <workItem from="1582209547121" duration="27628000" />
+      <workItem from="1582376687258" duration="8154000" />
+      <workItem from="1582578401289" duration="4251000" />
+      <workItem from="1582764928699" duration="2008000" />
+      <workItem from="1582836583527" duration="22715000" />
+      <workItem from="1582942619259" duration="9398000" />
+      <workItem from="1583024315863" duration="2816000" />
+      <workItem from="1583029304043" duration="22949000" />
+      <workItem from="1593398391479" duration="459000" />
+      <workItem from="1593477751647" duration="1791000" />
+      <workItem from="1593573662675" duration="586000" />
+      <workItem from="1593633077737" duration="535000" />
+      <workItem from="1593697007613" duration="492000" />
+      <workItem from="1593734793873" duration="155000" />
+      <workItem from="1593790422600" duration="544000" />
+      <workItem from="1593971348042" duration="6319000" />
+      <workItem from="1594130931998" duration="7201000" />
+      <workItem from="1594425905489" duration="34000" />
+      <workItem from="1594426001729" duration="2818000" />
+      <workItem from="1594477645441" duration="1135000" />
+      <workItem from="1594507602784" duration="41364000" />
+      <workItem from="1594698784607" duration="46123000" />
+      <workItem from="1595011117800" duration="6552000" />
+      <workItem from="1595169598860" duration="23028000" />
+      <workItem from="1595601388186" duration="1537000" />
+      <workItem from="1595686922458" duration="2670000" />
+      <workItem from="1595696414811" duration="4944000" />
+      <workItem from="1595721917830" duration="7455000" />
+      <workItem from="1595731379274" duration="5579000" />
+      <workItem from="1595881375218" duration="626000" />
+      <workItem from="1642028964985" duration="55000" />
+      <workItem from="1642029030906" duration="15957000" />
     </task>
     <servers />
   </component>
-  <component name="TodoView">
-    <todo-panel id="selected-file">
-      <is-autoscroll-to-source value="true" />
-    </todo-panel>
-    <todo-panel id="all">
-      <are-packages-shown value="true" />
-      <is-autoscroll-to-source value="true" />
-    </todo-panel>
-  </component>
   <component name="TypeScriptGeneratedFilesManager">
-    <option name="version" value="1" />
+    <option name="version" value="3" />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
     <option name="TAB_STATES">
       <map>
         <entry key="MAIN">
           <value>
-            <State>
-              <option name="COLUMN_ORDER" />
-            </State>
+            <State />
           </value>
         </entry>
       </map>
@@ -601,37 +778,161 @@
   <component name="XDebuggerManager">
     <breakpoint-manager>
       <breakpoints>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/src/deptran/rococo/rcc_coord.cc</url>
           <line>245</line>
           <option name="timeStamp" value="22" />
         </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/src/deptran/rococo/rcc_coord.cc</url>
           <line>257</line>
           <option name="timeStamp" value="23" />
         </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/src/deptran/rococo/rcc_server.cc</url>
           <line>251</line>
           <option name="timeStamp" value="24" />
         </line-breakpoint>
-        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/src/deptran/multi_paxos/coordinator.cc</url>
           <line>39</line>
           <option name="timeStamp" value="25" />
         </line-breakpoint>
         <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
           <url>file://$PROJECT_DIR$/src/deptran/troad/coordinator.cc</url>
-          <line>164</line>
+          <line>109</line>
           <option name="timeStamp" value="32" />
         </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/commo.cc</url>
+          <line>89</line>
+          <option name="timeStamp" value="49" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/commo.cc</url>
+          <line>270</line>
+          <option name="timeStamp" value="56" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/commo.cc</url>
+          <line>275</line>
+          <option name="timeStamp" value="58" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/rcc/tx.cc</url>
+          <line>189</line>
+          <option name="timeStamp" value="91" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/bench/tpcc/new_order.cc</url>
+          <line>80</line>
+          <option name="timeStamp" value="117" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/janus/scheduler.cc</url>
+          <line>200</line>
+          <option name="timeStamp" value="128" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/janus/coordinator.cc</url>
+          <line>376</line>
+          <option name="timeStamp" value="148" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <condition expression="res_graph-&gt;size() &gt; 1" language="ObjectiveC" />
+          <url>file://$PROJECT_DIR$/src/deptran/troad/scheduler.cc</url>
+          <line>145</line>
+          <option name="timeStamp" value="163" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/scheduler.cc</url>
+          <line>132</line>
+          <option name="timeStamp" value="165" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/tx.cc</url>
+          <line>5</line>
+          <option name="timeStamp" value="166" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <condition expression="sp-&gt;size() &gt; 1" language="ObjectiveC" />
+          <url>file://$PROJECT_DIR$/src/deptran/troad/commo.cc</url>
+          <line>130</line>
+          <option name="timeStamp" value="187" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/rrr/misc/alock.cpp</url>
+          <line>16</line>
+          <option name="timeStamp" value="188" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/rcc/server.cc</url>
+          <line>422</line>
+          <option name="timeStamp" value="211" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/rcc/server.cc</url>
+          <line>490</line>
+          <option name="timeStamp" value="214" />
+        </line-breakpoint>
+        <line-breakpoint type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/scheduler.cc</url>
+          <line>206</line>
+          <option name="timeStamp" value="221" />
+        </line-breakpoint>
         <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
-          <url>file://$PROJECT_DIR$/src/deptran/client_worker.cc</url>
-          <line>166</line>
-          <option name="timeStamp" value="45" />
+          <url>file://$PROJECT_DIR$/src/deptran/scheduler.cc</url>
+          <line>182</line>
+          <option name="timeStamp" value="245" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/server_worker.cc</url>
+          <line>97</line>
+          <option name="timeStamp" value="246" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/server_worker.cc</url>
+          <line>100</line>
+          <option name="timeStamp" value="247" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/rrr/misc/alock.hpp</url>
+          <line>67</line>
+          <option name="timeStamp" value="271" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/s_main.cc</url>
+          <line>221</line>
+          <option name="timeStamp" value="284" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/coordinator.cc</url>
+          <line>52</line>
+          <option name="timeStamp" value="286" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/troad/coordinator.cc</url>
+          <line>205</line>
+          <option name="timeStamp" value="287" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/classic/coordinator.cc</url>
+          <line>645</line>
+          <option name="timeStamp" value="289" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" type="com.jetbrains.cidr.execution.debugger.OCBreakpointType">
+          <url>file://$PROJECT_DIR$/src/deptran/fpga_raft/coordinator.cc</url>
+          <line>169</line>
+          <option name="timeStamp" value="297" />
         </line-breakpoint>
       </breakpoints>
     </breakpoint-manager>
+    <watches-manager>
+      <configuration name="CMakeRunConfiguration">
+        <watch expression="v.janus::TxJanus" />
+        <watch expression="this-&gt;janus::Coordinator" />
+        <watch expression="ev.__ptr_" />
+      </configuration>
+    </watches-manager>
   </component>
 </project>

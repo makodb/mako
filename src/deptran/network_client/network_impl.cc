@@ -1,7 +1,7 @@
 #include "network_impl.h"
 #include <chrono>
 
-long long getCurrentTimeMillis2() {
+static inline long long getCurrentTimeMillis2() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();
 }

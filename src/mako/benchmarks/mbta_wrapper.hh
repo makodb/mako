@@ -1,6 +1,7 @@
 #ifndef _BENCHMARK_MBTA_WRAPPER_H_
 #define _BENCHMARK_MBTA_WRAPPER_H_
 #pragma once
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include "abstract_db.h"
@@ -13,9 +14,12 @@
 #include <unordered_map>
 #include <map>
 #include <tuple>
+#include <vector>
 #include "benchmarks/tpcc.h"
 #include "benchmarks/benchmark_config.h"
 #include "lib/common.h"
+#include "benchmarks/rpc_setup.h"
+#include "mbta_sharded_ordered_index.hh"
 
 // We have to do it on the coordinator instead of transaction.cc, because it only has a local copy of the readSet;
 #define GET_NODE_POINTER(val,len) reinterpret_cast<mako::Node *>((char*)(val+len-mako::BITS_OF_NODE));
@@ -88,10 +92,26 @@ public:
   std::string *arena(void);
 
   bool get(void *txn, lcdf::Str key, std::string &value, size_t max_bytes_read) {
+    // DEBUG: Log first few remote accesses
+    static thread_local int debug_count = 0;
+    if (mbta.get_is_remote() && debug_count < 3) {
+      debug_count++;
+      Warning("DEBUG get(): table_id=%d, table_name=%s, is_remote=%d",
+              mbta.get_table_id(), mbta.get_table_name().c_str(), mbta.get_is_remote());
+    }
     if (!mbta.get_is_remote()) {
       STD_OP({
         bool ret = mbta.transGet(key, value);
-        UPDATE_VS(value.data(),value.length())
+        // Check for silent abort (transGet uses abort_without_throw for certain failures)
+        // Throw to match RPC path behavior and allow caller to handle properly
+        if (TThread::transget_without_throw) {
+          TThread::transget_without_throw = false;
+          throw Transaction::Abort();
+        }
+        if (ret) {
+          UPDATE_VS(value.data(),value.length())
+          if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        }
         return ret;
       });
     } else {
@@ -99,7 +119,10 @@ public:
       if (ret>0) {
         throw abstract_db::abstract_abort_exception();
       }
-      UPDATE_VS(value.data(),value.length())
+      if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+        UPDATE_VS(value.data(),value.length())
+        value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+      }
       return true;
     }
   }
@@ -156,7 +179,7 @@ public:
     mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 
     STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
-      return callback.invoke(key.data(), key.length(), value);
+    return callback.invoke(key.data(), key.length(), value);
     }, arena));
     return true;
   }
@@ -218,6 +241,8 @@ mt_scan++;
 #endif    
 mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 STD_OP(mbta.transQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);;
   return callback.invoke(key.data(), key.length(), value);
 }, arena));
 }
@@ -226,11 +251,38 @@ void scanRemoteOne(void *txn,
     const std::string &start_key,
     const std::string &end_key,
     std::string &value) {
-  int ret=TThread::sclient->remoteScan(mbta.get_table_id(), start_key, end_key, value);
-  if (ret>0) {
-    throw abstract_db::abstract_abort_exception();
+  if (!mbta.get_is_remote()) {
+    // Local scan - use transQuery and return first result
+    bool found = false;
+    STD_OP(mbta.transQuery(start_key, mbta_type::Str(end_key), [&] (mbta_type::Str key, std::string& v) {
+      if (!found) {
+        value = v;
+        if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+          UPDATE_VS(value.data(), value.length())
+          value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+        }
+        found = true;
+      }
+      return false;  // Stop after first result
+    }, static_cast<str_arena*>(nullptr)));
+    // Check for silent abort after transQuery (may have used abort_without_throw)
+    // Throw to match RPC path behavior
+    if (TThread::transget_without_throw) {
+      TThread::transget_without_throw = false;
+      throw abstract_db::abstract_abort_exception();
+    }
+    // Note: If no result found, value remains empty (same as remote scan behavior)
+  } else {
+    // Remote scan via RPC
+    int ret=TThread::sclient->remoteScan(mbta.get_table_id(), start_key, end_key, value);
+    if (ret>0) {
+      throw abstract_db::abstract_abort_exception();
+    }
+    if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) {
+      UPDATE_VS(value.data(),value.length())
+      value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);
+    }
   }
-  UPDATE_VS(value.data(),value.length())
 }
 
 void rscan(void *txn,
@@ -244,6 +296,8 @@ mt_rscan++;
 #endif
 mbta_type::Str end = end_key ? mbta_type::Str(*end_key) : mbta_type::Str();
 STD_OP(mbta.transRQuery(start_key, end, [&] (mbta_type::Str key, std::string& value) {
+
+  if (value.length() >= mako::EXTRA_BITS_FOR_VALUE) value.resize(value.length() - mako::EXTRA_BITS_FOR_VALUE);;
   return callback.invoke(key.data(), key.length(), value);
 }, arena));
 #endif
@@ -1002,17 +1056,23 @@ public:
 #if defined(DISABLE_MULTI_VERSION)
     TThread::disable_multiversion();
 #else
-    TThread::enable_multiverison();
+    if (BenchmarkConfig::getInstance().getIsReplicated()) {
+      TThread::enable_multiverison();
+    }else{
+      TThread::disable_multiversion();
+    }
 #endif
     TThread::set_shard_index(BenchmarkConfig::getInstance().getShardIndex());
     TThread::set_nshards(BenchmarkConfig::getInstance().getNshards());
     TThread::set_warehouses(BenchmarkConfig::getInstance().getConfig()->warehouses);
+    Notice("thread_init: thread_id=%d, shard_index=%d, getShardIndex=%zu, loader=%d",
+           TThread::id(), TThread::get_shard_index(), BenchmarkConfig::getInstance().getShardIndex(), loader);
     TThread::readset_shard_bits = 0;
     TThread::writeset_shard_bits = 0;
     TThread::transget_without_throw = false;
     TThread::transget_without_stable = false;
     TThread::the_debug_bit = 0;
-    if (BenchmarkConfig::getInstance().getCluster().compare("localhost")==0){
+    if (BenchmarkConfig::getInstance().getLeaderConfig()){
       TThread::is_worker_leader = true;
     }
 
@@ -1023,16 +1083,41 @@ public:
     TThread::skipBeforeRemotePayment = 0;
     if(!loader) {
       size_t old = __sync_fetch_and_add(&partition_id, 1);
-      TThread::set_pid (old);
+      // Use local partition ID (0 to warehouses-1) within each shard
+      // getPartitionID() will compute absolute partition ID using shard_index
+      size_t local_pid = old % BenchmarkConfig::getInstance().getConfig()->warehouses;
+      TThread::set_pid(local_pid);
 
       TThread::sclient = new mako::ShardClient(BenchmarkConfig::getInstance().getConfig()->configFile,
                                                  BenchmarkConfig::getInstance().getCluster(),
                                                  BenchmarkConfig::getInstance().getShardIndex(),
-                                                 old);
-      //Notice("ParID[worker-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
+                                                 local_pid);
+
+      // Verify remote shards are ready before proceeding (Option 4A)
+      // This ensures distributed deployment safety: all shards must be listening
+      // before any worker starts executing transactions
+      int myShardIndex = BenchmarkConfig::getInstance().getShardIndex();
+      int nshards = BenchmarkConfig::getInstance().getNshards();
+      for (int i = 0; i < nshards; i++) {
+        if (i == myShardIndex) continue;  // Skip self
+        int retries = 0;
+        const int maxRetries = 30;  // 30 seconds max wait
+        while (TThread::sclient->checkRemoteShardReady(i) != mako::ErrorCode::SUCCESS) {
+          retries++;
+          if (retries >= maxRetries) {
+            Warning("Shard %d not ready after %d retries, proceeding anyway", i, maxRetries);
+            break;
+          }
+          usleep(1000000);  // 1 second retry interval
+        }
+        if (retries < maxRetries && retries > 0) {
+          Notice("Shard %d ready after %d retries", i, retries);
+        }
+      }
+      //Notice("ParID[worker-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getGlobalPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     } else {
       TThread::set_pid(TThread::id()%BenchmarkConfig::getInstance().getConfig()->warehouses);
-      //Notice("ParID[load-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
+      //Notice("ParID[load-id] pid:%d,id:%d,config:%s,loader:%d, ismultiversion:%d,helper_thread?:%d",TThread::getGlobalPartitionID(),TThread::id(),BenchmarkConfig::getInstance().getConfig()->configFile.c_str(),loader,TThread::is_multiversion(),source==1);
     }
     
     if (TThread::id() == 0) {
@@ -1184,7 +1269,20 @@ public:
     std::cout << "new table is createded with name: " << name 
               << ", table-id: " << tbl->get_table_id()
               << ", on shard-server id:" << shard_index << std::endl;
+    mako::setup_update_table(available_table_id, tbl);
     return tbl;
+  }
+
+  mbta_sharded_ordered_index *
+  open_sharded_index(const std::string &name) override {
+    auto &benchConfig = BenchmarkConfig::getInstance();
+    const size_t shard_count = static_cast<size_t>(benchConfig.getNshards());
+    return mbta_sharded_ordered_index::build(
+        name,
+        shard_count,
+        [this, &name](size_t shard) {
+          return open_index(name, static_cast<int>(shard));
+        });
   }
 
   // replay will use this function, otherwise NO; get table back;
@@ -1196,6 +1294,9 @@ public:
   // Table-id starts from 1
   void preallocate_open_index() {
     auto& benchConfig = BenchmarkConfig::getInstance();
+    auto* config = benchConfig.getConfig();
+    bool multi_shard_mode = config && config->multi_shard_mode;
+
     for (int i=0; i<=mako::NUM_TABLES_PER_SHARD * benchConfig.getNshards(); i++) {
       int table_id = i;
       auto tbl = new mbta_ordered_index(std::to_string(table_id), table_id, this);
@@ -1203,11 +1304,19 @@ public:
       if (table_id==0) {
         shard_index = 0;  // table id 0 is not used!
       }
-      if (shard_index == benchConfig.getShardIndex()) {
-        tbl->set_is_remote(false) ;
+
+      // Determine if this table is local
+      bool is_local = false;
+      if (multi_shard_mode) {
+        // In multi-shard mode, all shards in local_shard_indices are local
+        const auto& local_shards = config->local_shard_indices;
+        is_local = (std::find(local_shards.begin(), local_shards.end(), shard_index) != local_shards.end());
       } else {
-        tbl->set_is_remote(true) ;
+        // Single-shard mode: only current shard is local
+        is_local = (shard_index == static_cast<int>(benchConfig.getShardIndex()));
       }
+
+      tbl->set_is_remote(!is_local);
       global_table_instances.push_back(tbl);
     }
   }

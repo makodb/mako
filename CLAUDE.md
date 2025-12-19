@@ -28,98 +28,48 @@ The codebase is primarily C++17 with multiple build systems (CMake, Makefile, WA
 ### Primary Build (CMake - Recommended for Mako)
 ```bash
 # Configure and build
-mkdir -p build && cd build
-cmake .. -DPAXOS_LIB_ENABLED=1 -DMICRO_BENCHMARK=0 -DSHARDS=3
-make -j32 dbtest  # This can take 10-30 minutes on first build!
-
-# Alternative: use convenience script
-bash compile-cmake.sh
-```
-
-### Legacy Build (Makefile - for Janus)
-```bash
-# Performance build
-MODE=perf make -j32 dbtest PAXOS_LIB_ENABLED=1 SHARDS=4
-
-# Debug build
-MODE=debug make -j32 dbtest
-```
-
-### Install Dependencies
-```bash
-bash apt_packages.sh
-```
-
-### Configure Hosts (for distributed testing)
-```bash
-bash ./src/mako/update_config.sh
+make clean
+make -j32 
 ```
 
 ## Testing Commands
 
-### Basic Tests
 ```bash
-# Run basic tests
-python3 test_run.py -m janus
+# run all experiments
+./ci/ci.sh all
 
-# Run Mako experiments
-./run_experiment.py --shards 1 --threads 6 --runtime 30 --ssh-user $USER --dry-run
+# simple transactions
+./ci/ci.sh simpleTransaction
 
-# Run specific benchmark
-./run.py -f config/sample.yml
+# simple replication
+./ci/ci.sh simplePaxos
 
-# Run all experiments
-python3 run_all.py
-```
+# two shards without replication
+./ci/ci.sh shardNoReplication
 
-### Single Shard with Paxos Replication (1 Leader + 2 Followers + 1 Learner)
-To test Paxos replication with multiple replicas on a single machine, run these commands in separate terminals:
+# 1 shard with replication on dbtest
+./ci/ci.sh shard1Replication
 
-```bash
-# Follower 1 (p1)
-nohup ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-                     --db-type mbta --num-threads 6 --scale-factor 6 --num-erpc-server 2 \
-                     --shard-index 0 --shard-config $(pwd)/src/mako/config/local-shards1-warehouses6.yml \
-                     -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
-                     --txn-flags 1 --runtime 30 -P p1 --bench-opts \
-                     --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G > p1.log 2>&1 &
+# 2 shards with replication on dbtest
+./ci/ci.sh shard2Replication
 
-# Follower 2 (p2)
-nohup ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-                     --db-type mbta --num-threads 6 --scale-factor 6 --num-erpc-server 2 \
-                     --shard-index 0 --shard-config $(pwd)/src/mako/config/local-shards1-warehouses6.yml \
-                     -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
-                     --txn-flags 1 --runtime 30 -P p2 --bench-opts \
-                     --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G > p2.log 2>&1 &
+# 1 shard with replication on simple transaction
+./ci/ci.sh shard1ReplicationSimple
 
-# Leader (localhost)
-nohup ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-                     --db-type mbta --num-threads 6 --scale-factor 6 --num-erpc-server 2 \
-                     --shard-index 0 --shard-config $(pwd)/src/mako/config/local-shards1-warehouses6.yml \
-                     -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
-                     --txn-flags 1 --runtime 30 -P localhost --bench-opts \
-                     --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G > leader.log 2>&1 &
+# 2 shards with replication on simple transaction
+./ci/ci.sh shard2ReplicationSimple
 
-# Learner (learner)
-nohup ./build/dbtest --verbose --bench tpcc --basedir ./tmp \
-                     --db-type mbta --num-threads 6 --scale-factor 6 --num-erpc-server 2 \
-                     --shard-index 0 --shard-config $(pwd)/src/mako/config/local-shards1-warehouses6.yml \
-                     -F config/1leader_2followers/paxos6_shardidx0.yml -F config/occ_paxos.yml \
-                     --txn-flags 1 --runtime 30 -P learner --bench-opts \
-                     --new-order-fast-id-gen --retry-aborted-transactions --numa-memory 1G > learner.log 2>&1 &
-```
+# RocksDB persistence and partitioned queues tests
+./ci/ci.sh rocksdbTests
 
-Monitor logs with: `tail -f leader.log p1.log p2.log learner.log`  
-Stop all processes: `pkill -f dbtest`
+# Shard fault tolerance test (reboots shards to test independent operation)
+./ci/ci.sh shardFaultTolerance
 
-### Multi-site testing (single process with all sites)
-```bash
-export MAKO_MULTI_SITE=1 && ./dbtest -t 6 -s 1 -S 1 -K 3 -N leader_s0,follower1_s0,follower2_s0 -C ./multi_site_config.yml -F ./paxos_multi_site.yml -F ../config/occ_paxos.yml
+# Multi-shard single-process mode (runs multiple shards in one process)
+./ci/ci.sh multiShardSingleProcess
 
-# Note: When debugging long-running processes, use MUCH longer timeouts as initialization can take significant time
-# Better to use 10+ minutes (600s) or no timeout at all:
-# timeout 600 ./dbtest ...  # 10 minutes minimum
-# Or just run without timeout and use Ctrl+C if needed
+# CPU throttling scaling test (verifies throughput doubles when CPU cap doubles)
+./ci/ci.sh cpuThrottlingScaling
 ```
 
 ## Code Architecture
@@ -140,11 +90,28 @@ The system implements multiple distributed transaction protocols:
 - **Paxos** (`src/deptran/paxos/`): Consensus for replication
 
 ### Transport Layer Architecture
-The system supports multiple transport mechanisms:
+
+**Mako supports two RPC backends** (switchable at runtime):
+- **rrr/rpc** (default): Portable TCP/IP-based RPC (~10-50 μs latency)
+- **eRPC**: High-performance RDMA-based RPC (~1-2 μs latency)
+
+**Switching backends:**
+```bash
+# Use rrr/rpc (default)
+./build/dbtest config/mako_tpcc.yml
+
+# Use eRPC
+MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
+```
+
+Both backends implement the same `TransportBackend` interface for transport-agnostic request/response handling.
+
+**See [doc/transport_backends.md](doc/transport_backends.md) for complete documentation.**
+
+**Legacy Deptran transports:**
 - Standard Ethernet via `src/rrr/` RPC framework
 - DPDK for kernel bypass (`DPDK_ENABLED` flag)
 - InfiniBand/RDMA support (`src/deptran/rcc_rpc.cpp`)
-- eRPC integration for high-performance networking
 
 ### Configuration System
 - **Host configuration**: `config/hosts*.yml` defines cluster topology and network settings
@@ -162,8 +129,33 @@ The system supports multiple transport mechanisms:
 - Uses jemalloc for optimized memory allocation
 - Lock-free data structures in performance-critical paths
 - Custom memory pools for reduced allocation overhead
+- **RustyCpp Migration**: Incrementally migrating to Rust-style smart pointers for memory safety
 
 ## Development Notes
+
+### RustyCpp Smart Pointer Migration (In Progress)
+The RRR framework is being migrated to use RustyCpp smart pointers for enhanced memory safety.
+
+**IMPORTANT**: Always keep the `third-party/rusty-cpp` submodule on the `main` branch with the latest commit. Do not switch to other branches.
+
+#### Successfully Migrated Components
+- ✅ Event system: Cell<EventStatus> for interior mutability
+- ✅ IntEvent: Cell<int> for value field
+- ✅ Custom Weak<Coroutine> wrapper replacing std::weak_ptr
+- ✅ Collections: std::list → Vec (aliased to std::vector)
+- ✅ PollMgr: Raw array → Vec<std::unique_ptr<PollThread>>
+
+#### Migration Guidelines
+1. **Make small incremental changes**: Change one field/function at a time
+2. **Test after each change**: Run `ctest` immediately after each modification
+3. **Use RustyCpp types exclusively for new code**:
+   - `rusty::Box<T>` for single ownership (instead of unique_ptr)
+   - `rusty::Arc<T>` for thread-safe sharing (instead of shared_ptr)
+   - `rusty::Rc<T>` for single-thread sharing
+   - `rusty::Cell<T>` for interior mutability of Copy types
+   - `rusty::RefCell<T>` for interior mutability of complex types
+4. **Never use C++ standard library smart pointers** in new code
+5. **Document safety annotations**: Add `// @safe` or `// @unsafe` comments
 
 ### Writing Safe C++ Code (Following RustyCpp Guidelines)
 When writing new C++ code or modifying existing code, follow these safety guidelines to ensure compatibility with RustyCpp borrow checking:
@@ -175,7 +167,10 @@ When writing new C++ code or modifying existing code, follow these safety guidel
 4. **Move Semantics**: Prefer `std::move` for transferring ownership, avoid use-after-move
 
 #### Best Practices for RustyCpp Compliance
-- **Smart Pointers**: Use `std::unique_ptr` for single ownership, `std::shared_ptr` for shared ownership
+- **Smart Pointers**: Use RustyCpp types exclusively:
+  - `rusty::Box<T>` for single ownership (NOT std::unique_ptr)
+  - `rusty::Arc<T>`/`rusty::Rc<T>` for shared ownership (NOT std::shared_ptr)
+  - Custom `Weak<T>` wrapper for weak references (NOT std::weak_ptr)
 - **RAII**: Always use RAII (Resource Acquisition Is Initialization) patterns
 - **Const Correctness**: Mark methods and parameters `const` when they don't modify state
 - **Avoid Global State**: Minimize global variables and static mutable state
@@ -194,6 +189,16 @@ The project uses RustyCpp for static analysis. To ensure your code passes borrow
 - Build with `ENABLE_BORROW_CHECKING=ON` during development
 - Run `make borrow_check_all_dbtest` to verify all files
 - Address any violations before committing
+
+#### Interior Mutability Patterns
+When you need to mutate data through shared references:
+- Use `Cell<T>` for Copy types (int, bool, etc.) - zero overhead
+- Use `RefCell<T>` for complex types - runtime borrow checking
+- Example:
+```cpp
+mutable CopyMut<int> counter_{0};  // Cell<int>
+counter_.set(counter_.get() + 1);  // Mutation through const method
+```
 
 ### Adding New Transaction Protocols
 New protocols should be added under `src/deptran/` following the existing pattern:

@@ -67,10 +67,10 @@
 ////    // init service implement
 ////    rrr::Service *deptran_service = new DepTranService();
 ////
-////    // init rrr::PollMgr 8 threads
+////    // init rrr::PollThread 8 threads
 ////    struct rrr::poll_options poll_opt;
 ////    poll_opt.n_threads = 1;
-////    rrr::PollMgr *poll_mgr = new rrr::PollMgr(poll_opt);
+////    rrr::PollThread *poll_mgr = new rrr::PollThread(poll_opt);
 ////
 ////    // init base::ThreadPool
 ////    unsigned int num_threads = 1;

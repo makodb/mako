@@ -2,6 +2,7 @@
 
 #include "config.h"
 #include "compiler.hh"
+#include "rocksdb_persistence_fwd.h"
 // #include "small_vector.hh"
 #include "TRcu.hh"
 #include <algorithm>
@@ -11,8 +12,8 @@
 #include <unistd.h>
 #include <iostream>
 #include <sstream>
-#include <x86intrin.h>
 #include <atomic>
+#include <x86intrin.h>
 #include <vector>
 #include <cstring> // for memcpy
 #include "deptran/s_main.h"
@@ -87,6 +88,7 @@
 
 void register_sync_util(std::function<int()>);
 
+// @unsafe: manages raw memory buffers
 class StringAllocator{
  private:
   unsigned char *LOG;
@@ -134,7 +136,30 @@ class StringAllocator{
         memcpy (queueLog + pos, &st_time, sizeof(uint32_t));
         pos += sizeof(uint32_t);
         //Warning("Paxos log cleanup!max_bytes_size:%d",max_bytes_size);
-        add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size);
+        // Use local partition ID for Paxos workers (they are indexed 0 to warehouses-1 per shard)
+        add_log_to_nc((char *)queueLog, pos, TThread::getLocalPartitionID(), batch_size);
+
+#ifndef DISABLE_DISK
+        // Asynchronously persist to RocksDB
+        auto& persistence = mako::RocksDBPersistence::getInstance();
+        uint32_t shard_id = BenchmarkConfig::getInstance().getShardIndex();
+        static std::atomic<uint64_t> persist_success_count{0};
+        static std::atomic<uint64_t> persist_fail_count{0};
+        persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getLocalPartitionID(),
+            [](bool success) {
+                if (success) {
+                    persist_success_count.fetch_add(1, std::memory_order_relaxed);
+                    if (persist_success_count % 1000 == 0) {
+                        std::cout << "[RocksDB] Persisted " << persist_success_count.load()
+                                  << " transaction logs to disk" << std::endl;
+                    }
+                } else {
+                    persist_fail_count.fetch_add(1, std::memory_order_relaxed);
+                    std::cerr << "[RocksDB] Failed to persist log (total failures: "
+                              << persist_fail_count.load() << ")" << std::endl;
+                }
+            });
+#endif
     }
     freeMemory();
   };
@@ -143,6 +168,7 @@ class StringAllocator{
 //   static void setSTOBatchSize(size_t k){
 //     kSizeLimit = k;
 //   }
+  // @safe
   bool checkPushRequired(){
     if (curr_pos + 1 > max_bytes_size)
         Warning("checkPushRequired: buffer[%d/%d] is not enough!!!!, entries: %d, batch_size: %d", curr_pos, max_bytes_size, entries, batch_size);
@@ -156,16 +182,19 @@ class StringAllocator{
 	  return LOG+curr_pos-size;
     }
   }
+  // @safe
   unsigned char * getLogOnly(size_t& pos){
     pos = curr_pos;
 	return LOG;
   }
 
+  // @safe
   void resetMemory(){
     curr_pos = 0;
     entries = 0;
     latest_commit_timestamp = 0;
   }
+  // @safe
   bool checkLimits(size_t newLogLen){
   	return (curr_pos + newLogLen) < max_bytes_size;
   }
@@ -180,15 +209,18 @@ class StringAllocator{
 	entries++;
   }*/
 
+  // @safe
   inline void update_ptr(const size_t& w){
     entries++;
     curr_pos=w;
   }
 
+  // @safe
   size_t get_max_bytes_size() {
     return max_bytes_size;
   }
 
+  // @unsafe: uses std::max
   inline void update_commit_id(const uint32_t cid) {
     // Single timestamp system: just track the maximum timestamp
     latest_commit_timestamp = std::max(latest_commit_timestamp, cid);
@@ -206,6 +238,8 @@ class StringAllocator{
 	return true;
   }
 };
+
+
 
 inline std::unordered_map<uint32_t, uint32_t> sample_transaction_tracker ;  // local timestamp => updated time (millisecond)
 
@@ -322,7 +356,7 @@ struct __attribute__((aligned(128))) threadinfo_t {
     }
 };
 
-
+// @unsafe: uses mutable fields for interior mutability, complex template instantiations
 class Transaction {
 public:
     static constexpr unsigned tset_initial_capacity = 512;
@@ -359,6 +393,7 @@ public:
     }
 
     void print_stats();
+    // @unsafe: uses pointer address-of
     uint8_t get_current_term() const;
 
     static void clear_stats() {
@@ -1016,6 +1051,7 @@ private:
     Transaction* base_;
 };
 
+// @unsafe: manages Transaction lifecycle
 class TransactionGuard {
   public:
     TransactionGuard() {
@@ -1033,6 +1069,7 @@ class TransactionGuard {
     }
 };
 
+// @unsafe: manages Transaction loop lifecycle
 class TransactionLoopGuard {
   public:
     TransactionLoopGuard() {

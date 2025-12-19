@@ -6,6 +6,7 @@
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <map>
 #include "lib/fasttransport.h"
 #include "lib/timestamp.h"
 #include "lib/common.h"
@@ -24,10 +25,10 @@ namespace mako
     public:
         ShardReceiver(std::string file);
         void Register(abstract_db *db,
-                 const map<string, abstract_ordered_index *> &open_tables,
                  const map<int, abstract_ordered_index *> &open_tables_table_id /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
+        void UpdateTableEntry(int table_id, abstract_ordered_index *table);
 
         // Message handlers.
         size_t ReceiveRequest(uint8_t reqType, char *reqBuf, char *respBuf);
@@ -66,7 +67,6 @@ namespace mako
 
         // store layer
         abstract_db *db;
-        map<string, abstract_ordered_index *> open_tables;
         map<int, abstract_ordered_index *> open_tables_table_id;
         // map<string, vector<abstract_ordered_index *>> partitions;
         // map<string, vector<abstract_ordered_index *>> remote_partitions;
@@ -89,9 +89,10 @@ namespace mako
         void Register(abstract_db *db,
                  mako::HelperQueue *queue,
                  mako::HelperQueue *queue_res,
-                 const map<string, abstract_ordered_index *> &open_tables /*,
+                 const map<int, abstract_ordered_index *> &open_tables /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
+        void UpdateTable(int table_id, abstract_ordered_index *table);
         void Run();
 
     protected:
@@ -107,7 +108,6 @@ namespace mako
         abstract_db *db;
         mako::HelperQueue *queue;
         mako::HelperQueue *queue_response;
-        map<string, abstract_ordered_index *> open_tables;
         map<int, abstract_ordered_index *> open_tables_table_id;
         // map<string, vector<abstract_ordered_index *>> partitions;
         // map<string, vector<abstract_ordered_index *>> remote_partitions;

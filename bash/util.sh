@@ -1,3 +1,19 @@
+# Read config value from ~/.makorc
+# Usage: read_makorc_value "key" "default"
+# Lines starting with # are ignored as comments
+read_makorc_value() {
+    local key="$1"
+    local default="$2"
+    if [ -f ~/.makorc ]; then
+        local found=$(grep -v "^\s*#" ~/.makorc | grep -E "^${key}\s*:" | sed 's/.*:\s*//' | tr -d ' ')
+        if [ -n "$found" ]; then
+            echo "$found"
+            return
+        fi
+    fi
+    echo "$default"
+}
+
 # wait for nohup jobs DONE
 wait_for_jobs() {
   echo "Wait for jobs..."

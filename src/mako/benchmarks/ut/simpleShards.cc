@@ -100,7 +100,7 @@ public:
                           abstract_db *db,
                           mako::HelperQueue *queue,
                           mako::HelperQueue *queue_response,
-                          const map<string, abstract_ordered_index *> &open_tables) {
+                          map<int, abstract_ordered_index *> open_tables) {
         scoped_db_thread_ctx ctx(db, true);  // invoke thread_init
         TThread::set_id(2);
         TThread::set_mode(1);
@@ -113,16 +113,22 @@ public:
         mako::ShardServer *ss=new mako::ShardServer(config->configFile,
                                                         client_shardIndex, 
                                                         server_shardIndex, par_id);
-        ss->Register(db, queue, queue_response, open_tables, partitions, remote_partitions);
+        ss->Register(db, queue, queue_response, open_tables);
         ss->Run();  // it is event driven!
     }
 
     void setup_helper() {
+        map<int, abstract_ordered_index *> open_tables_by_id;
+        for (const auto &entry : open_tables) {
+            if (entry.second) {
+                open_tables_by_id[entry.second->get_table_id()] = entry.second;
+            }
+        }
         auto t=std::thread(helper_server,
                            config, db,
                            queue_holders[0],
                            queue_holders_response[0],
-                           open_tables);
+                           open_tables_by_id);
         t.detach();
     }
 

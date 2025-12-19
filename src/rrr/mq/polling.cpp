@@ -1,5 +1,14 @@
 #include "polling.h"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 
 int poll_job_create(poll_job_t **job) {
     poll_job_t *j = (poll_job_t*) malloc(sizeof(poll_job_t));

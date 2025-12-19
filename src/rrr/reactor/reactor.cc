@@ -2,91 +2,166 @@
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/syscall.h>  // For SYS_gettid
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
+#include <mutex>
+#include <utility>
+#include <cstdlib>
+#include <atomic>
 #include "../base/all.hpp"
 #include "reactor.h"
 #include "coroutine.h"
 #include "event.h"
+#include "quorum_event.h"
 #include "epoll_wrapper.h"
+#include "sys/times.h"
+#include <std_annotation.hpp>
+
+// @external: {
+//   rrr::Log::debug: [unsafe],
+//   rrr::Log::error: [unsafe],
+//   rrr::Event::Test: [unsafe]
+// }
+
+// #define DEBUG_WAIT
 
 namespace rrr {
 
-thread_local std::shared_ptr<Reactor> Reactor::sp_reactor_th_{};
-thread_local std::shared_ptr<Coroutine> Reactor::sp_running_coro_th_{};
+const int64_t n_max_coroutine = 2000;
 
-// @safe - Returns current thread-local coroutine
-std::shared_ptr<Coroutine> Coroutine::CurrentCoroutine() {
-  // TODO re-enable this verify
-//  verify(sp_running_coro_th_);
-  return Reactor::sp_running_coro_th_;
+thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
+thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
+thread_local rusty::Option<rusty::Rc<Coroutine>> Reactor::sp_running_coro_th_{};
+thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> Reactor::clients_{};
+
+// Thread-local storage for PollThreadWorker (raw pointer for direct access)
+// Safe because worker outlives all coroutines on its thread
+thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
+thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
+SpinLock Reactor::disk_job_;
+SpinLock Reactor::trying_job_;
+
+// @safe - Returns current coroutine with single-threaded reference counting
+// SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
+// Returns None if called outside of a coroutine context
+rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
+  if (Reactor::sp_running_coro_th_.is_none()) {
+    return rusty::None;
+  }
+  return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
 }
 
-// @unsafe - Creates and runs a new coroutine with function wrapping
-// SAFETY: Reactor manages coroutine lifecycle properly
-std::shared_ptr<Coroutine>
-Coroutine::CreateRun(std::function<void()> func) {
-  auto& reactor = *Reactor::GetReactor();
-  auto coro = reactor.CreateRunCoroutine(func);
+// @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
+rusty::Rc<Coroutine>
+Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line) {
+  auto reactor_rc = Reactor::GetReactor();
+  // Rc gives const access, CreateRunCoroutine is const (safe: thread-local, single owner)
+  auto coro = reactor_rc->CreateRunCoroutine(std::move(func), file, line);
   // some events might be triggered in the last coroutine.
   return coro;
 }
 
-// @unsafe - Returns thread-local reactor instance, creates if needed
-// SAFETY: Thread-local storage ensures thread safety
-std::shared_ptr<Reactor>
+void Coroutine::Sleep(uint64_t microseconds) {
+  auto x = Reactor::CreateSpEvent<TimeoutEvent>(microseconds);
+  x->Wait();
+}
+
+// @safe - Returns thread-local reactor instance, creates if needed
+// SAFETY: Thread-local storage with Rc ensures single-threaded access
+rusty::Rc<Reactor>
 Reactor::GetReactor() {
-  if (!sp_reactor_th_) {
+  if (sp_reactor_th_.is_none()) {
     Log_debug("create a coroutine scheduler");
-    sp_reactor_th_ = std::make_shared<Reactor>();
-    sp_reactor_th_->thread_id_ = std::this_thread::get_id();
+    if (!REUSING_CORO)
+      Log_warn("reusing coroutine not enabled!");
+    sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());  // In-place construction
+    // @unsafe - SAFETY: const_cast to initialize thread_id_ immediately after creation
+    { const_cast<Reactor&>(*sp_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id(); }
   }
-  return sp_reactor_th_;
+  return sp_reactor_th_.as_ref().unwrap().clone();
+}
+
+rusty::Rc<Reactor>
+Reactor::GetDiskReactor() {
+  if (sp_disk_reactor_th_.is_none()) {
+    Log_debug("create a disk coroutine scheduler");
+    sp_disk_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
+    const_cast<Reactor&>(*sp_disk_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id();
+  }
+  return sp_disk_reactor_th_.as_ref().unwrap().clone();
 }
 
 /**
  * @param func
  * @return
  */
-// @unsafe - Creates and runs coroutine with complex state management
-// SAFETY: Proper lifecycle management with shared_ptr
-std::shared_ptr<Coroutine>
-Reactor::CreateRunCoroutine(const std::function<void()> func) {
-  std::shared_ptr<Coroutine> sp_coro;
+// @unsafe - Creates and runs coroutine, dereferences raw pointers internally
+rusty::Rc<Coroutine>
+Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
+  rusty::Option<rusty::Rc<Coroutine>> sp_coro;
   if (REUSING_CORO && available_coros_.size() > 0) {
-    //Log_info("Reusing stuff");
-    sp_coro = available_coros_.back();
+    n_idle_coroutines_--;
+    sp_coro = rusty::Some(available_coros_.back().clone());
     available_coros_.pop_back();
-    sp_coro->func_ = func;
+    // Rc provides const access, use const_cast to modify (safe: single-threaded)
+    auto& coro = const_cast<Coroutine&>(*sp_coro.as_ref().unwrap());
+    coro.id = Coroutine::global_id++;
+    coro.func_ = std::move(func);
+    // Reset boost_coro_task_ when reusing a recycled coroutine for a new function
+    coro.boost_coro_task_ = rusty::None;
+    coro.status_ = Coroutine::INIT;
   } else {
-    sp_coro = std::make_shared<Coroutine>(func);
+    sp_coro = rusty::Some(rusty::Rc<Coroutine>::make(std::move(func)));
+    n_created_coroutines_++;
+    if (n_created_coroutines_ % 1024 == 0) {
+      // Jetpack: Include server_id_ for debugging in distributed environment
+      Log_info("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
+               (int)n_created_coroutines_,
+               (int)n_busy_coroutines_,
+               (int)n_idle_coroutines_,
+               server_id_,
+               file,
+               (long long)line);
+    }
   }
-  coros_.insert(sp_coro);
-  ContinueCoro(sp_coro);
-  Loop();
-  return sp_coro;
-//  __debug_set_all_coro_.insert(sp_coro.get());
-//  verify(!curr_coro_); // Create a coroutine from another?
-//  verify(!sp_running_coro_th_); // disallows nested coroutines
-  auto sp_old_coro = sp_running_coro_th_;
-  sp_running_coro_th_ = sp_coro;
-  verify(sp_coro);
-  auto pair = coros_.insert(sp_coro);
+
+  n_busy_coroutines_++;
+
+  // Save old coroutine context - clone to avoid moving
+  auto sp_old_coro = sp_running_coro_th_.is_some()
+    ? rusty::Some(sp_running_coro_th_.as_ref().unwrap().clone())
+    : rusty::Option<rusty::Rc<Coroutine>>{};
+  sp_running_coro_th_ = rusty::Some(sp_coro.as_ref().unwrap().clone());
+
+  if (sp_coro.is_none()) {
+    Log_error("[DEBUG] CreateRunCoroutine: sp_coro is null!");
+  }
+  verify(sp_coro.is_some());
+  auto pair = coros_.insert(sp_coro.as_ref().unwrap().clone());
+  if (!pair.second) {
+    Log_error("[DEBUG] CreateRunCoroutine: Failed to insert coroutine into coros_ set!");
+    Log_error("[DEBUG] coros_ size before insert: %zu", coros_.size());
+    Log_error("[DEBUG] REUSING_CORO: %d", REUSING_CORO);
+  }
   verify(pair.second);
   verify(coros_.size() > 0);
-  sp_coro->Run();
-  if (sp_coro->Finished()) {
-    coros_.erase(sp_coro);
+
+  sp_coro.as_ref().unwrap()->Run();
+  if (sp_coro.as_ref().unwrap()->Finished()) {
+    coros_.erase(sp_coro.as_ref().unwrap().clone());
   }
-  Loop();
+
+  Loop(false, true);  // Process events AND check timeouts
+
   // yielded or finished, reset to old coro.
   sp_running_coro_th_ = sp_old_coro;
-  return sp_coro;
+  return sp_coro.as_ref().unwrap().clone();
 }
 
-// @safe - Checks timeout events and moves ready ones to ready list
-void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) {
+// @safe - Checks timeout events and moves ready ones to ready list with std::shared_ptr
+void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) const {
   auto time_now = Time::now(true);
   for (auto it = timeout_events_.begin(); it != timeout_events_.end();) {
     Event& event = **it;
@@ -105,6 +180,7 @@ void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) {
           } else {
             event.status_ = Event::TIMEOUT;
           }
+          // Event will be removed from waiting_events_ when reactor loop scans it
           ready_events.push_back(*it);
           it = timeout_events_.erase(it);
         } else {
@@ -125,344 +201,533 @@ void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) {
 
 //  be careful this could be called from different coroutines.
 // @unsafe - Main event loop with complex event processing
+// NOTE: Cannot mark @safe because const method modifies mutable fields (looping_, waiting_events_).
+// In RustyCpp, const = &self which doesn't allow mutation. Use @unsafe for interior mutability.
 // SAFETY: Thread-safe via thread_id verification
-void Reactor::Loop(bool infinite) {
+// Merged implementation supporting both Paxos (mako) and Raft (jetpack) paths
+void Reactor::Loop(bool infinite, bool check_timeout) const {
   verify(std::this_thread::get_id() == thread_id_);
   looping_ = infinite;
-  do {
-    std::vector<shared_ptr<Event>> ready_events;
-//    auto& events = all_events_;
-    auto& events = waiting_events_;
-//    Log_debug("event list size: %d", events.size());
-    for (auto it = events.begin(); it != events.end();) {
-      Event& event = **it;
-      event.Test();
-      if (event.status_ == Event::READY) {
-        ready_events.push_back(std::move(*it));
-        it = events.erase(it);
-      } else if (event.status_ == Event::DONE) {
-        it = events.erase(it);
-      } else {
-        it ++;
-      }
-    }
-    CheckTimeout(ready_events);
 
-    for (auto& up_ev: ready_events) {
-      auto& event = *up_ev;
-      auto sp_coro = event.wp_coro_.lock();
-      verify(sp_coro);
-      verify(coros_.find(sp_coro) != coros_.end());
-      if (event.status_ == Event::READY) {
-        event.status_ = Event::DONE;
-      } else {
-        verify(event.status_ == Event::TIMEOUT);
+  do {
+    // Process disk events (jetpack path)
+    disk_job_.lock();
+    bool has_disk_events = !ready_disk_events_.empty();
+    if (has_disk_events) {
+      auto disk_event = ready_disk_events_.front();
+      ready_disk_events_.pop_front();
+      disk_job_.unlock();
+
+      auto option_coro = disk_event->wp_coro_.upgrade();
+      if (option_coro.is_some()) {
+        auto sp_coro = option_coro.unwrap();
+        disk_event->status_ = Event::READY;
+        if (disk_event->status_ == Event::READY) {
+          disk_event->status_ = Event::DONE;
+        }
+        ContinueCoro(sp_coro);
       }
-      ContinueCoro(sp_coro);
+    } else {
+      disk_job_.unlock();
     }
+
+    // Keep processing events until no new ready events are found
+    bool found_ready_events = true;
+    while (found_ready_events) {
+      found_ready_events = false;
+      std::vector<std::shared_ptr<Event>> ready_events;
+
+      // Get thread-safe ready events (jetpack/raft path)
+      {
+        std::lock_guard<std::mutex> lock(ready_events_mutex_);
+        if (!ready_events_.empty()) {
+          ready_events = std::move(ready_events_);
+          ready_events_.clear();
+          found_ready_events = true;
+        }
+      }
+
+      // Check waiting events (mako-dev path)
+      auto& events = waiting_events_;
+      for (auto it = events.begin(); it != events.end();) {
+        Event& event = **it;
+        event.Test();
+        if (event.status_ == Event::READY) {
+          ready_events.push_back(*it);
+          it = events.erase(it);
+          found_ready_events = true;
+        } else if (event.status_ == Event::DONE) {
+          it = events.erase(it);
+        } else {
+          ++it;
+        }
+      }
+
+      // Scan ONLY composite events (AndEvent, OrEvent, QuorumEvent)
+      // Raft has zero composite events → this loop does nothing → zero overhead!
+      // Paxos has a few QuorumEvents → small list → minimal overhead
+      auto& composite_events = composite_events_;
+      for (auto it = composite_events.begin(); it != composite_events.end();) {
+        Event& event = **it;
+        event.Test();
+        if (event.status_ == Event::READY) {
+          ready_events.push_back(std::move(*it));
+          it = composite_events.erase(it);
+          found_ready_events = true;
+        } else if (event.status_ == Event::DONE) {
+          it = composite_events.erase(it);
+        } else {
+          ++it;
+        }
+      }
+
+      // Check timeouts if requested
+      if (check_timeout) {
+        size_t before = ready_events.size();
+        CheckTimeout(ready_events);
+        if (ready_events.size() > before) {
+          found_ready_events = true;
+        }
+      }
+
+      // Process all ready events
+      for (auto& sp_event : ready_events) {
+        // Event might already be DONE (processed by another thread in multi-threaded Raft)
+        if (sp_event->status_ == Event::DONE) {
+          continue;
+        }
+        Event& event = *sp_event;
+        auto option_coro = event.wp_coro_.upgrade();
+        if (option_coro.is_none()) {
+          continue;
+        }
+        auto sp_coro = option_coro.unwrap();
+        // Check if coroutine still exists (might have finished already)
+        if (coros_.find(sp_coro) == coros_.end()) {
+          continue;
+        }
+        verify(sp_coro->status_ == Coroutine::PAUSED);
+        if (sp_event->status_ == Event::READY) {
+          sp_event->status_ = Event::DONE;
+        } else {
+          verify(sp_event->status_ == Event::TIMEOUT);
+        }
+        ContinueCoro(sp_coro);
+      }
+
+      // If not in infinite mode and no events found, stop inner loop
+      if (!infinite && !found_ready_events) {
+        break;
+      }
+    }
+
   } while (looping_);
 }
 
-// @unsafe - Continues execution of paused coroutine
-// SAFETY: Manages coroutine state transitions properly
-void Reactor::ContinueCoro(std::shared_ptr<Coroutine> sp_coro) {
-//  verify(!sp_running_coro_th_); // disallow nested coros
-  auto sp_old_coro = sp_running_coro_th_;
-  sp_running_coro_th_ = sp_coro;
-  verify(!sp_running_coro_th_->Finished());
+// @unsafe - Continues execution of paused coroutine, dereferences raw pointers internally
+void Reactor::ContinueCoro(rusty::Rc<Coroutine> sp_coro) const {
+//  verify(!sp_running_coro_th_.is_none()); // disallow nested coros
+  // Clone to avoid moving - must preserve the old value
+  auto sp_old_coro = sp_running_coro_th_.is_some()
+    ? rusty::Some(sp_running_coro_th_.as_ref().unwrap().clone())
+    : rusty::Option<rusty::Rc<Coroutine>>{};
+  sp_running_coro_th_ = rusty::Some(sp_coro.clone());
+  verify(!sp_running_coro_th_.as_ref().unwrap()->Finished());
+  n_active_coroutines_++;
+
   if (sp_coro->status_ == Coroutine::INIT) {
     sp_coro->Run();
   } else {
     // PAUSED or RECYCLED
-    sp_running_coro_th_->Continue();
+    sp_running_coro_th_.as_ref().unwrap()->Continue();
   }
-  if (sp_running_coro_th_->Finished()) {
-    if (REUSING_CORO) {
-      sp_coro->status_ = Coroutine::RECYCLED;
-      available_coros_.push_back(sp_running_coro_th_);
-    }
-    coros_.erase(sp_running_coro_th_);
+  if (sp_running_coro_th_.as_ref().unwrap()->Finished()) {
+    auto sp_coro_ref = sp_running_coro_th_.as_ref().unwrap().clone();
+    Recycle(sp_coro_ref);
   }
   sp_running_coro_th_ = sp_old_coro;
 }
 
-// TODO PollThread -> Reactor
-// TODO PollMgr -> ReactorFactory
-class PollMgr::PollThread {
-
-  friend class PollMgr;
-
-  Epoll poll_{};
-
-  // guard mode_ and poll_set_
-  SpinLock l_;
-  std::unordered_map<int, int> mode_; // fd->mode
-  std::unordered_set<Pollable*> poll_set_;
-
-  std::set<std::shared_ptr<Job>> set_sp_jobs_;
-
-  std::unordered_set<Pollable*> pending_remove_;
-  SpinLock pending_remove_l_;
-  SpinLock lock_job_;
-
-  pthread_t th_;
-  bool stop_flag_;
-
-  // @unsafe - C-style thread entry point with raw pointer cast
-  // SAFETY: arg is always valid PollThread* from start()
-  static void* start_poll_loop(void* arg) {
-    PollThread* thiz = (PollThread*) arg;
-    thiz->poll_loop();
-    pthread_exit(nullptr);
-    return nullptr;
+void Reactor::Recycle(rusty::Rc<Coroutine>& sp_coro) const {
+  // This fixes the bug that coroutines are not recycling if they don't finish immediately.
+  if (REUSING_CORO) {
+    // Rc provides const access, use const_cast to modify (safe: single-threaded)
+    const_cast<Coroutine&>(*sp_coro).status_ = Coroutine::RECYCLED;
+    const_cast<Coroutine&>(*sp_coro).func_ = {};
+    n_idle_coroutines_++;
+    available_coros_.push_back(sp_coro.clone());
   }
+  n_busy_coroutines_--;
+  coros_.erase(sp_coro);
+}
 
-  void poll_loop();
+void Reactor::DisplayWaitingEv() const {
+  Log_info("waiting_events_: %zu, composite_events_: %zu, ready_events_: %zu",
+           waiting_events_.size(), composite_events_.size(), ready_events_.size());
+}
 
-  // @unsafe - Creates pthread with raw pointer passing
-  // SAFETY: 'this' remains valid throughout thread lifetime
-  void start(PollMgr* poll_mgr) {
-    pthread_setname_np(th_, "Follower server thread"); 
-    Pthread_create(&th_, nullptr, PollMgr::PollThread::start_poll_loop, this);
+void Reactor::ReadyEventsThreadSafePushBack(std::shared_ptr<Event> ev) const {
+  std::lock_guard<std::mutex> lock(ready_events_mutex_);
+  ready_events_.push_back(ev);
+}
+
+void Reactor::DiskLoop() const {
+  Reactor::GetReactor()->disk_job_.lock();
+  auto disk_events = Reactor::GetReactor()->disk_events_;
+  auto it = Reactor::GetReactor()->disk_events_.begin();
+  std::vector<std::shared_ptr<DiskEvent>> pending_disk_events_{};
+  while(it != Reactor::GetReactor()->disk_events_.end()){
+    auto disk_event = std::static_pointer_cast<DiskEvent>(*it);
+    it = Reactor::GetReactor()->disk_events_.erase(it);
+    pending_disk_events_.push_back(disk_event);
   }
+  Reactor::GetReactor()->disk_job_.unlock();
 
-  // @unsafe - Triggers ready jobs in coroutines
-  // SAFETY: Uses spinlock for thread safety
-  void TriggerJob() {
-    lock_job_.lock();
-    auto jobs_exec = set_sp_jobs_;
-    set_sp_jobs_.clear();
-    lock_job_.unlock();
-    auto it = jobs_exec.begin();
-    while (it != jobs_exec.end()) {
-      auto sp_job = *it;
-      if (sp_job->Ready()) {
-        Coroutine::CreateRun([sp_job]() {sp_job->Work();});
-        it = jobs_exec.erase(it);
-      }
-      else {
-        it++;
+  int total_written = 0;
+  std::unordered_set<std::string> sync_set{};
+  for (size_t i = 0; i < pending_disk_events_.size(); i++) {
+    total_written += pending_disk_events_[i]->Handle();
+    if (pending_disk_events_[i]->sync) {
+      auto it = sync_set.find(pending_disk_events_[i]->file);
+      if (it == sync_set.end()) {
+        sync_set.insert(pending_disk_events_[i]->file);
       }
     }
   }
 
- public:
-
-  PollThread() : stop_flag_(false) {
+  for (auto it = sync_set.begin(); it != sync_set.end(); it++) {
+    int fd = ::open(it->c_str(), O_WRONLY | O_APPEND | O_CREAT, 0777);
+    ::fsync(fd);
+    ::close(fd);
   }
 
-  ~PollThread() {
-    stop_flag_ = true;
-    Pthread_join(th_, nullptr);
-
-    // when stopping, release anything registered in pollmgr
-    for (auto& it: poll_set_) {
-      this->remove(it);
-    }
-    for (auto& it: pending_remove_) {
-      it->release();
-    }
-  }
-
-  void add(Pollable*);
-  void remove(Pollable*);
-  void update_mode(Pollable*, int new_mode);
-
-  void add(std::shared_ptr<Job>);
-  void remove(std::shared_ptr<Job>);
-};
-
-// @unsafe - Allocates raw array and creates threads
-// SAFETY: Array properly deleted in destructor; threads joined before deletion
-PollMgr::PollMgr(int n_threads /* =... */)
-    : n_threads_(n_threads), poll_threads_() {
-  verify(n_threads_ > 0);
-  poll_threads_ = new PollThread[n_threads_];
-  for (int i = 0; i < n_threads_; i++) {
-    poll_threads_[i].start(this);
+  for(size_t i = 0; i < pending_disk_events_.size(); i++){
+    Reactor::GetReactor()->disk_job_.lock();
+    Reactor::GetReactor()->ready_disk_events_.push_back(pending_disk_events_[i]);
+    Reactor::GetReactor()->disk_job_.unlock();
   }
 }
 
-// @unsafe - Returns raw pointer to pthread handle
-// SAFETY: Valid as long as PollMgr exists and i < n_threads_
-pthread_t* PollMgr::GetPthreads(int i) {
-  return &poll_threads_[i].th_;
+// =============================================================================
+// PollThreadWorker Implementation
+// =============================================================================
+
+PollThreadWorker::PollThreadWorker(rusty::sync::mpsc::Receiver<PollCommand> receiver)
+    : receiver_(std::move(receiver)),
+      poll_(),
+      fd_to_pollable_(),
+      mode_(),
+      pending_remove_(),
+      jobs_(),
+      stop_(false) {
+  // No eventfd needed - we poll the channel with try_recv() after each epoll_wait
 }
 
-// @unsafe - Deletes raw array
-// SAFETY: Matches allocation in constructor; threads already joined
-PollMgr::~PollMgr() {
-  delete[] poll_threads_;
-  //Log_debug("rrr::PollMgr: destroyed");
+// @unsafe - factory function creates worker and wraps in Rc<RefCell> (rustycpp false positive on move)
+rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(rusty::sync::mpsc::Receiver<PollCommand> receiver) {
+  // Create worker, then wrap in RefCell
+  PollThreadWorker worker(std::move(receiver));
+  return rusty::Rc<rusty::RefCell<PollThreadWorker>>::make(std::move(worker));
 }
 
-// @unsafe - Main polling loop with complex synchronization
-// SAFETY: Uses spinlocks and proper synchronization primitives
-void PollMgr::PollThread::poll_loop() {
-  while (!stop_flag_) {
+void PollThreadWorker::poll_loop() {
+  Log_debug("[poll_loop] Starting poll loop");
+  while (!stop_) {
     TriggerJob();
-    poll_.Wait();
+
+    // Wait for events (epoll_wait with short timeout)
+    // Pass callback to handle mode updates from handle_write() return values
+    poll_.Wait([this](Pollable* poll, int new_mode) {
+      do_update_mode(poll->fd(), new_mode, poll);
+    });
+
+    // Process commands from channel (non-blocking try_recv)
+    process_commands();
+
     TriggerJob();
-    //poll_.Wait();
-    // after each poll loop, remove uninterested pollables
-    pending_remove_l_.lock();
-    std::list<Pollable*> remove_poll(pending_remove_.begin(), pending_remove_.end());
-    pending_remove_.clear();
-    pending_remove_l_.unlock();
 
-    for (auto& poll: remove_poll) {
-      int fd = poll->fd();
+    // Process deferred removals
+    process_pending_removals();
 
-      l_.lock();
-      if (mode_.find(fd) == mode_.end()) {
-        // NOTE: only remove the fd when it is not immediately added again
-        // if the same fd is used again, mode_ will contains its info
-        poll_.Remove(poll);
-      }
-      l_.unlock();
-
-      poll->release();
-    }
     TriggerJob();
-    //poll_.Wait();
     Reactor::GetReactor()->Loop();
+
+    // Check for pending write updates (set by end_reply() during coroutine execution)
+    // @unsafe - const_cast needed because Arc provides const access, but we know the
+    // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
+    for (auto& [fd, sp_poll] : fd_to_pollable_) {
+      if (sp_poll->check_pending_write_update()) {
+        do_update_mode(fd, Pollable::READ | Pollable::WRITE, const_cast<Pollable*>(sp_poll.get()));
+      }
+    }
+  }
+
+  Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
+  // Shutdown cleanup - remove all registered pollables
+  for (auto& [fd, sp_poll] : fd_to_pollable_) {
+    if (mode_.find(fd) != mode_.end()) {
+      poll_.Remove(sp_poll);
+    }
+  }
+  fd_to_pollable_.clear();
+  mode_.clear();
+  pending_remove_.clear();
+  Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
+}
+
+void PollThreadWorker::process_commands() {
+  // Non-blocking receive: process all pending commands
+  int cmd_count = 0;
+  while (true) {
+    auto result = receiver_.try_recv();
+    if (result.is_err()) {
+      // Empty or disconnected - either way, stop processing
+      break;
+    }
+    cmd_count++;
+    auto cmd = result.unwrap();
+    std::visit([this](auto&& arg) {
+      using T = std::decay_t<decltype(arg)>;
+      if constexpr (std::is_same_v<T, CmdAddPollable>) {
+        do_add_pollable(std::move(arg.pollable));
+      } else if constexpr (std::is_same_v<T, CmdRemovePollable>) {
+        do_remove_pollable(arg.fd);
+      } else if constexpr (std::is_same_v<T, CmdUpdateMode>) {
+        do_update_mode(arg.fd, arg.new_mode, arg.poll_ptr);
+      } else if constexpr (std::is_same_v<T, CmdAddJob>) {
+        do_add_job(std::move(arg.job));
+      } else if constexpr (std::is_same_v<T, CmdRemoveJob>) {
+        do_remove_job(std::move(arg.job));
+      } else if constexpr (std::is_same_v<T, CmdShutdown>) {
+        stop_ = true;
+      }
+    }, cmd);
   }
 }
 
-// @safe - Thread-safe job addition with spinlock
-void PollMgr::PollThread::add(std::shared_ptr<Job> sp_job) {
-  lock_job_.lock();
-  set_sp_jobs_.insert(sp_job);
-  lock_job_.unlock();
-}
+void PollThreadWorker::TriggerJob() {
+  // Copy jobs to process (in case jobs modify the set)
+  std::set<rusty::Arc<Job>> jobs_exec = jobs_;
+  jobs_.clear();
 
-// @safe - Thread-safe job removal with spinlock
-void PollMgr::PollThread::remove(std::shared_ptr<Job> sp_job) {
-  lock_job_.lock();
-  set_sp_jobs_.erase(sp_job);
-  lock_job_.unlock();
-}
-
-// @unsafe - Adds pollable with raw pointer and ref counting
-// SAFETY: Proper reference counting ensures object lifetime
-void PollMgr::PollThread::add(Pollable* poll) {
-  poll->ref_copy();   // increase ref count
-
-  int poll_mode = poll->poll_mode();
-  int fd = poll->fd();
-
-  l_.lock();
-
-  // verify not exists
-  verify(poll_set_.find(poll) == poll_set_.end());
-  verify(mode_.find(fd) == mode_.end());
-
-  // register pollable
-  poll_set_.insert(poll);
-  mode_[fd] = poll_mode;
-  poll_.Add(poll);
-
-  l_.unlock();
-}
-
-// @unsafe - Removes pollable with deferred cleanup
-// SAFETY: Deferred removal ensures safe cleanup
-void PollMgr::PollThread::remove(Pollable* poll) {
-  bool found = false;
-  l_.lock();
-  std::unordered_set<Pollable*>::iterator it = poll_set_.find(poll);
-  if (it != poll_set_.end()) {
-    found = true;
-    assert(mode_.find(poll->fd()) != mode_.end());
-    poll_set_.erase(poll);
-    mode_.erase(poll->fd());
-  } else {
-    assert(mode_.find(poll->fd()) == mode_.end());
-  }
-  l_.unlock();
-
-  if (found) {
-    pending_remove_l_.lock();
-    pending_remove_.insert(poll);
-    pending_remove_l_.unlock();
+  for (const auto& sp_job : jobs_exec) {
+    Job* job_ptr = const_cast<Job*>(sp_job.get());
+    if (job_ptr->Ready()) {
+      // Capture sp_job by value to keep the Arc alive
+      Coroutine::CreateRun([sp_job]() {
+        Job* job_ptr = const_cast<Job*>(sp_job.get());
+        job_ptr->Work();
+      });
+      // Don't re-add ready jobs that were executed
+    } else {
+      // Re-add jobs that aren't ready yet - they should be checked again later
+      jobs_.insert(sp_job);
+    }
   }
 }
 
-// @unsafe - Updates poll mode with raw pointer access
-// SAFETY: Protected by spinlock, validates poll existence
-void PollMgr::PollThread::update_mode(Pollable* poll, int new_mode) {
-  int fd = poll->fd();
+// @unsafe - Uses raw pointer cast for epoll userdata
+void PollThreadWorker::do_add_pollable(rusty::Arc<Pollable> sp_poll) {
+  int fd = sp_poll->fd();
+  int poll_mode = sp_poll->poll_mode();
 
-  l_.lock();
-
-  if (poll_set_.find(poll) == poll_set_.end()) {
-    l_.unlock();
+  // Check if already exists
+  if (fd_to_pollable_.find(fd) != fd_to_pollable_.end()) {
     return;
   }
 
-  auto it = mode_.find(fd);
-  verify(it != mode_.end());
-  int old_mode = it->second;
-  it->second = new_mode;
+  // Store in maps
+  fd_to_pollable_.insert_or_assign(fd, sp_poll.clone());
+  mode_[fd] = poll_mode;
+
+  // userdata = raw Pollable* for lookup
+  void* userdata = const_cast<void*>(static_cast<const void*>(sp_poll.get()));
+  poll_.Add(sp_poll, userdata);
+}
+
+void PollThreadWorker::do_remove_pollable(int fd) {
+  if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
+    return;
+  }
+  // Add to pending_remove (actual removal happens after epoll_wait)
+  pending_remove_.insert(fd);
+}
+
+// @unsafe - Uses raw pointer dereference for poll_ptr
+// SAFETY: poll_ptr is guaranteed to be valid by caller (from fd_to_pollable_ map)
+void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) {
+  if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
+    return;
+  }
+
+  auto mode_it = mode_.find(fd);
+  if (mode_it == mode_.end()) {
+    return;
+  }
+
+  int old_mode = mode_it->second;
+  mode_[fd] = new_mode;
 
   if (new_mode != old_mode) {
-    poll_.Update(poll, new_mode, old_mode);
-  }
-
-  l_.unlock();
-}
-
-// @safe - Pure hash function with no side effects
-static inline uint32_t hash_fd(uint32_t key) {
-  uint32_t c2 = 0x27d4eb2d; // a prime or an odd constant
-  key = (key ^ 61) ^ (key >> 16);
-  key = key + (key << 3);
-  key = key ^ (key >> 4);
-  key = key * c2;
-  key = key ^ (key >> 15);
-  return key;
-}
-
-// @unsafe - Routes pollable to thread based on fd hash
-// SAFETY: Hash ensures consistent thread assignment
-void PollMgr::add(Pollable* poll) {
-  int fd = poll->fd();
-  if (fd >= 0) {
-    int tid = hash_fd(fd) % n_threads_;
-    poll_threads_[tid].add(poll);
+    // @unsafe {
+    void* userdata = poll_ptr;
+    poll_.Update(*poll_ptr, userdata, new_mode, old_mode);
+    // }
   }
 }
 
-// @unsafe - Routes removal to correct thread
-// SAFETY: Uses same hash as add() for consistency
-void PollMgr::remove(Pollable* poll) {
-  int fd = poll->fd();
-  if (fd >= 0) {
-    int tid = hash_fd(fd) % n_threads_;
-    poll_threads_[tid].remove(poll);
+void PollThreadWorker::do_add_job(rusty::Arc<Job> sp_job) {
+  jobs_.insert(sp_job);
+}
+
+void PollThreadWorker::do_remove_job(rusty::Arc<Job> sp_job) {
+  jobs_.erase(sp_job);
+}
+
+void PollThreadWorker::process_pending_removals() {
+  std::unordered_set<int> remove_fds;
+  remove_fds.swap(pending_remove_);
+  // pending_remove_ is now empty after swap
+
+  for (int fd : remove_fds) {
+    auto it = fd_to_pollable_.find(fd);
+    if (it == fd_to_pollable_.end()) {
+      continue;
+    }
+
+    auto sp_poll = it->second;
+
+    // Check if fd was NOT reused (still in mode map)
+    if (mode_.find(fd) != mode_.end()) {
+      poll_.Remove(sp_poll);
+    }
+
+    fd_to_pollable_.erase(it);
+    mode_.erase(fd);
   }
 }
 
-// @unsafe - Routes mode update to correct thread
-// SAFETY: Uses same hash as add() for consistency
-void PollMgr::update_mode(Pollable* poll, int new_mode) {
-  int fd = poll->fd();
-  if (fd >= 0) {
-    int tid = hash_fd(fd) % n_threads_;
-    poll_threads_[tid].update_mode(poll, new_mode);
+
+// Update poll mode directly (bypasses channel)
+// Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
+void PollThreadWorker::update_mode(int fd, int new_mode, Pollable* poll_ptr) {
+  do_update_mode(fd, new_mode, poll_ptr);
+}
+
+// =============================================================================
+// PollThread Implementation
+// =============================================================================
+
+PollThread::PollThread(rusty::sync::mpsc::Sender<PollCommand> sender)
+    : sender_(std::move(sender)),
+      join_handle_(rusty::None),
+      poll_thread_id_(),
+      shutdown_called_(false) {
+}
+
+rusty::Arc<PollThread> PollThread::create() {
+  // Create MPSC channel
+  auto [sender, receiver] = rusty::sync::mpsc::channel<PollCommand>();
+
+  // Create PollThread with sender
+  auto arc = rusty::Arc<PollThread>::make(std::move(sender));
+
+  // Pointer to atomic thread ID for safe cross-thread access
+  std::atomic<std::thread::id>* thread_id_ptr = &arc->poll_thread_id_;
+
+  // Spawn thread - worker owns the receiver
+  auto handle = rusty::thread::spawn(
+    [thread_id_ptr](rusty::sync::mpsc::Receiver<PollCommand> rx) {
+      auto tid = std::this_thread::get_id();
+      thread_id_ptr->store(tid, std::memory_order_release);
+      // Create worker wrapped in Rc<RefCell<>>
+      auto worker = PollThreadWorker::create(std::move(rx));
+      // Store raw pointer in TLS for direct access from same thread
+      // The borrow_mut guard keeps RefCell borrowed during poll_loop()
+      // Using raw pointer avoids RefCell re-borrow issues in coroutines
+      auto guard = worker->borrow_mut();
+      PollThreadWorker::current_worker_ = &*guard;
+      guard->poll_loop();
+      PollThreadWorker::current_worker_ = nullptr;  // Clear on exit
+    },
+    std::move(receiver)
+  );
+
+  // Store handle
+  {
+    auto guard = arc->join_handle_.lock();
+    *guard = rusty::Some(std::move(handle));
+  }
+
+  return arc;
+}
+
+PollThread::~PollThread() {
+  pid_t tid = syscall(SYS_gettid);
+  Log_debug("[PollThread::~PollThread] Destructor called from TID=%d", (int)tid);
+  shutdown();
+  Log_debug("[PollThread::~PollThread] Destructor complete");
+}
+
+void PollThread::shutdown() const {
+  pid_t main_tid = syscall(SYS_gettid);
+  Log_debug("[PollThread::shutdown] Called from TID=%d", (int)main_tid);
+  if (shutdown_called_.exchange(true)) {
+    Log_debug("[PollThread::shutdown] Already called, returning");
+    return;  // Already called
+  }
+
+  // Send shutdown command via channel
+  Log_debug("[PollThread::shutdown] Sending CmdShutdown");
+  sender_.send(CmdShutdown{});
+  Log_debug("[PollThread::shutdown] CmdShutdown sent");
+
+  // Check if we're on the poll thread (atomic load for thread-safe read)
+  auto current_tid = std::this_thread::get_id();
+  auto poll_tid = poll_thread_id_.load(std::memory_order_acquire);
+  if (current_tid == poll_tid) {
+    Log_debug("[PollThread::shutdown] Called from poll thread, skipping join");
+    return;
+  }
+
+  // Join thread
+  Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
+  {
+    auto guard = join_handle_.lock();
+    Log_debug("[PollThread::shutdown] join_handle lock acquired");
+    if (guard->is_some()) {
+      Log_debug("[PollThread::shutdown] Calling thread.join()...");
+      guard->take().unwrap().join();
+      Log_debug("[PollThread::shutdown] thread.join() completed!");
+    } else {
+      Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
+    }
+  }
+  Log_debug("[PollThread::shutdown] Released join_handle lock");
+  Log_debug("[PollThread::shutdown] Complete");
+}
+
+void PollThread::add(rusty::Arc<Pollable> poll) const {
+  sender_.send(CmdAddPollable{std::move(poll)});
+}
+
+void PollThread::remove(Pollable& poll) const {
+  sender_.send(CmdRemovePollable{poll.fd()});
+}
+
+void PollThread::update_mode(Pollable& poll, int new_mode) const {
+  auto result = sender_.send(CmdUpdateMode{poll.fd(), new_mode, &poll});
+  if (result.is_err()) {
+    Log_error("PollThread::update_mode: send failed! Channel disconnected?");
   }
 }
 
-// @safe - Adds job to first poll thread
-void PollMgr::add(std::shared_ptr<Job> fjob) {
-  int tid = 0;
-  poll_threads_[tid].add(fjob);
+void PollThread::add(rusty::Arc<Job> sp_job) const {
+  sender_.send(CmdAddJob{std::move(sp_job)});
 }
 
-// @safe - Removes job from first poll thread
-void PollMgr::remove(std::shared_ptr<Job> fjob) {
-  int tid = 0;
-  poll_threads_[tid].remove(fjob);
+void PollThread::remove(rusty::Arc<Job> sp_job) const {
+  sender_.send(CmdRemoveJob{std::move(sp_job)});
 }
 
 } // namespace rrr

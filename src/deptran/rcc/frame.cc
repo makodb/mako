@@ -44,14 +44,14 @@ TxLogServer *FrameRococo::CreateScheduler() {
 vector<rrr::Service *>
 FrameRococo::CreateRpcServices(uint32_t site_id,
                                TxLogServer *sched,
-                               rrr::PollMgr *poll_mgr,
+                               rusty::Arc<rrr::PollThread> poll_thread_worker,
                                ServerControlServiceImpl *scsi) {
 //  auto config = Config::GetConfig();
 //  auto result = std::vector<Service *>();
-//  auto s = new RococoServiceImpl(sched, poll_mgr, scsi);
+//  auto s = new RococoServiceImpl(sched, poll_thread_worker, scsi);
 //  result.push_back(s);
 //  return result;
-  return Frame::CreateRpcServices(site_id, sched, poll_mgr, scsi);
+  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
 }
 
 mdb::Row *FrameRococo::CreateRow(const mdb::Schema *schema,
@@ -66,7 +66,7 @@ shared_ptr<Tx> FrameRococo::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-Communicator *FrameRococo::CreateCommo(PollMgr *poll) {
+Communicator *FrameRococo::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
   return new RccCommo(poll);
 }
 

@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <assert.h>
+#include <iostream>
 
 // External safety annotations for system functions used in this module
 // @external: {

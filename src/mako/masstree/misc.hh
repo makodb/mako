@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Miscellaneous utility functions and CLP parsing helpers
+// Provides suffix parsing for command line double arguments
+// SAFETY: Uses strtod, string manipulation for argument parsing
+
 #ifndef MISC_HH
 #define MISC_HH
 #include <stdio.h>
@@ -24,6 +28,7 @@
 #include "timestamp.hh"
 #include "clp.h"
 
+// @unsafe - manipulates process timers directly
 inline void xalarm(double d) {
     double ip, fp = modf(d, &ip);
     struct itimerval x;
@@ -33,6 +38,7 @@ inline void xalarm(double d) {
     setitimer(ITIMER_REAL, &x, 0);
 }
 
+// @unsafe - sleeps via raw nanosleep and ignores borrow tracking
 inline void napms(int n) /* nap n milliseconds */
 {
   int ret;

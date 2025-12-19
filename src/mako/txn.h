@@ -175,6 +175,7 @@ protected:
     tid_t t;
   };
 
+  // @trusted
   friend std::ostream &
   operator<<(std::ostream &o, const read_record_t &r);
 
@@ -258,12 +259,14 @@ protected:
     marked_ptr<concurrent_btree> btr; // first bit for inserted, 2nd for dowrite
   };
 
+  // @trusted
   friend std::ostream &
   operator<<(std::ostream &o, const write_record_t &r);
 
   // the absent set is a mapping from (btree_node -> version_number).
   struct absent_record_t { uint64_t version; };
 
+  // @trusted
   friend std::ostream &
   operator<<(std::ostream &o, const absent_record_t &r);
 
@@ -310,6 +313,8 @@ protected:
     {
       return tuple.get_flags() & FLAGS_INSERT;
     }
+
+    // @trusted: unsafe internals, safe interface for std::sort/binary_search
     inline ALWAYS_INLINE
     bool operator<(const dbtuple_write_info &o) const
     {
@@ -346,7 +351,7 @@ protected:
   const uint64_t flags;
 };
 
-
+// @trusted: uses function pointer call g_proto_version_str
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::read_record_t &r)
 {
@@ -362,6 +367,7 @@ operator<<(std::ostream &o, const transaction_base::read_record_t &r)
   return o;
 }
 
+// @trusted: uses util::hexify
 inline ALWAYS_INLINE std::ostream &
 operator<<(
     std::ostream &o,
@@ -377,6 +383,7 @@ operator<<(
   return o;
 }
 
+// @trusted
 inline ALWAYS_INLINE std::ostream &
 operator<<(std::ostream &o, const transaction_base::absent_record_t &r)
 {
@@ -411,7 +418,7 @@ class transaction : public transaction_base {
 
 public:
 
-  // KeyWriter is expected to implement:
+// KeyWriter is expected to implement:
   // [1-arg constructor]
   //   KeyWriter(const Key *)
   // [fully materialize]
@@ -588,6 +595,7 @@ protected:
       dbtuple_write_info_vec_static, dbtuple_write_info_vec_small>::type
     dbtuple_write_info_vec;
 
+  // @trusted
   static inline bool
   sorted_dbtuples_contains(
       const dbtuple_write_info_vec &dbtuples,
@@ -598,7 +606,7 @@ protected:
         dbtuples.begin(), dbtuples.end(),
         dbtuple_write_info(tuple),
         [](const dbtuple_write_info &lhs, const dbtuple_write_info &rhs)
-          { return lhs.get_tuple() < rhs.get_tuple(); });
+        { return lhs.get_tuple() < rhs.get_tuple(); });
   }
 
 public:
@@ -692,7 +700,9 @@ protected:
   //
   // NOTE: !ret.first => !ret.second
   // NOTE: assumes key/value are stable
+  // @unsafe
   std::pair< dbtuple *, bool >
+  // @unsafe - allocates and inserts raw dbtuple nodes into the concurrent btree
   try_insert_new_tuple(
       concurrent_btree &btr,
       const std::string *key,
@@ -702,9 +712,11 @@ protected:
   // reads the contents of tuple into v
   // within this transaction context
   template <typename ValueReader>
+  // @unsafe - reads from raw dbtuple pointers without lifetime tracking
   bool
   do_tuple_read(const dbtuple *tuple, ValueReader &value_reader);
 
+  // @unsafe - records versioned node pointers from the underlying tree
   void
   do_node_read(const typename concurrent_btree::node_opaque_t *n, uint64_t version);
 
@@ -738,11 +750,13 @@ protected:
   // with the lock on ln held, to simplify GC code
   //
   // Is also called within an RCU read region
+  // @unsafe
   void on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple);
 
   // Called when the latest value written to ln is an empty
   // (delete) marker. The protocol can then decide how to schedule
   // the logical node for actual deletion
+  // @unsafe
   void on_logical_delete(dbtuple *tuple, const std::string &key, concurrent_btree *btr);
 
   // if gen_commit_tid() is called, then on_tid_finish() will be called

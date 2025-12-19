@@ -9,6 +9,17 @@
 #include "debugging.hpp"
 #include "misc.hpp"
 
+// External safety annotations for system and std library functions
+// @external: {
+//   std::__atomic_base::load: [unsafe, () -> int]
+//   std::__atomic_base::fetch_add: [unsafe, (int) -> int]
+//   std::__atomic_base::store: [unsafe, (int) -> void]
+//   std::mersenne_twister_engine::operator(): [unsafe, () -> unsigned int]
+//   std::function::operator(): [unsafe, () -> void]
+//   clock_gettime: [unsafe, (int, struct timespec*) -> int]
+//   select: [unsafe, (int, fd_set*, fd_set*, fd_set*, struct timeval*) -> int]
+// }
+
 using namespace std;
 
 namespace rrr {

@@ -121,26 +121,32 @@ class simple_threadinfo {
     }
 
     // memory allocation
+    // @unsafe - raw allocation from RCU arena; caller must manage lifetime
     void* allocate(size_t sz, memtag) {
         return rcu::s_instance.alloc(sz);
     }
+    // @unsafe - frees raw pointer from RCU arena
     void deallocate(void* p, size_t sz, memtag) {
 	// in C++ allocators, 'p' must be nonnull
         rcu::s_instance.dealloc(p, sz);
     }
+    // @unsafe - schedules deferred free on raw pointer
     void deallocate_rcu(void *p, size_t sz, memtag) {
 	assert(p);
         rcu::s_instance.dealloc_rcu(p, sz);
     }
 
+    // @unsafe - cacheline-rounded allocation from RCU arena
     void* pool_allocate(size_t sz, memtag) {
 	int nl = (sz + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         return rcu::s_instance.alloc(nl * CACHE_LINE_SIZE);
     }
+    // @unsafe - releases cacheline-rounded allocation
     void pool_deallocate(void* p, size_t sz, memtag) {
 	int nl = (sz + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         rcu::s_instance.dealloc(p, nl * CACHE_LINE_SIZE);
     }
+    // @unsafe - deferred free of cacheline-rounded allocation
     void pool_deallocate_rcu(void* p, size_t sz, memtag) {
 	assert(p);
 	int nl = (sz + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
@@ -148,6 +154,7 @@ class simple_threadinfo {
     }
 
     // RCU
+    // @unsafe - registers callback for deferred execution
     void rcu_register(mrcu_callback *cb) {
       scoped_rcu_base<false> guard;
       rcu::s_instance.free_with_fn(cb, mrcu_callback_function);

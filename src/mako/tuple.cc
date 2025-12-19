@@ -1,3 +1,9 @@
+// @unsafe: uses template instantiations with unknown assign functions
+#ifdef CONFIG_H
+#include CONFIG_H
+#endif
+#include "masstree/config.h"
+
 #include "tuple.h"
 #include "txn.h"
 
@@ -23,6 +29,7 @@ event_counter dbtuple::g_evt_dbtuple_inplace_buf_insufficient_on_spill("dbtuple_
 event_avg_counter dbtuple::g_evt_avg_record_spill_len("avg_record_spill_len");
 static event_avg_counter evt_avg_dbtuple_chain_length("avg_dbtuple_chain_len");
 
+// @unsafe: uses hexify/pointer arithmetic
 dbtuple::~dbtuple()
 {
   CheckMagic();
@@ -41,7 +48,9 @@ dbtuple::~dbtuple()
 
 }
 
+// @unsafe: calls release with raw pointer
 void
+// @unsafe - enqueues tuple for RCU reclamation assuming caller holds proper locks
 dbtuple::gc_this()
 {
   INVARIANT(rcu::s_instance.in_rcu_region());
@@ -49,6 +58,7 @@ dbtuple::gc_this()
   release(this);
 }
 
+// @unsafe: uses ostringstream
 string
 dbtuple::VersionInfoStr(version_t v)
 {
@@ -64,6 +74,7 @@ dbtuple::VersionInfoStr(version_t v)
   return buf.str();
 }
 
+// @unsafe: uses raw pointer cast to char*
 static ostream &
 format_tuple(ostream &o, const dbtuple &t)
 {
@@ -76,6 +87,7 @@ format_tuple(ostream &o, const dbtuple &t)
   return o;
 }
 
+// @unsafe: calls unsafe format_tuple
 void
 dbtuple::print(ostream &o, unsigned len) const
 {
@@ -97,6 +109,7 @@ dbtuple::print(ostream &o, unsigned len) const
   }
 }
 
+// @unsafe: calls unsafe print
 ostream &
 operator<<(ostream &o, const dbtuple &t)
 {

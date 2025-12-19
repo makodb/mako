@@ -32,47 +32,47 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
 class BenchmarkService: public rrr::Service {
 public:
     enum {
-        FAST_PRIME = 0x1aed00ec,
-        FAST_DOT_PROD = 0x1734e70c,
-        FAST_ADD = 0x2f8af552,
-        FAST_NOP = 0x2c2581ba,
-        FAST_VEC = 0x2fd964b6,
-        PRIME = 0x6cbeb76f,
-        DOT_PROD = 0x5d1fa03f,
-        ADD = 0x6fe7f871,
-        NOP = 0x5aa56913,
-        SLEEP = 0x28aab39f,
+        FAST_PRIME = 0x348e1922,
+        FAST_DOT_PROD = 0x5d887cc1,
+        FAST_ADD = 0x2a40f946,
+        FAST_NOP = 0x17078ae6,
+        FAST_VEC = 0x6ce0090a,
+        PRIME = 0x5a72807d,
+        DOT_PROD = 0x2429b0bf,
+        ADD = 0x142e5d49,
+        NOP = 0x1e36f5a9,
+        SLEEP = 0x468ff641,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
-        if ((ret = svr->reg(FAST_PRIME, this, &BenchmarkService::__fast_prime__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_PRIME, this, &BenchmarkService::__fast_prime__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_DOT_PROD, this, &BenchmarkService::__fast_dot_prod__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_DOT_PROD, this, &BenchmarkService::__fast_dot_prod__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_ADD, this, &BenchmarkService::__fast_add__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_ADD, this, &BenchmarkService::__fast_add__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_NOP, this, &BenchmarkService::__fast_nop__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_NOP, this, &BenchmarkService::__fast_nop__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(FAST_VEC, this, &BenchmarkService::__fast_vec__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(FAST_VEC, this, &BenchmarkService::__fast_vec__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(PRIME, this, &BenchmarkService::__prime__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(PRIME, this, &BenchmarkService::__prime__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(DOT_PROD, this, &BenchmarkService::__dot_prod__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(DOT_PROD, this, &BenchmarkService::__dot_prod__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(ADD, this, &BenchmarkService::__add__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(ADD, this, &BenchmarkService::__add__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(NOP, this, &BenchmarkService::__nop__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(NOP, this, &BenchmarkService::__nop__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(SLEEP, this, &BenchmarkService::__sleep__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(SLEEP, this, &BenchmarkService::__sleep__wrapper__)) != 0) {
             goto err;
         }
         return 0;
@@ -90,7 +90,7 @@ public:
         return ret;
     }
     // these RPC handler functions need to be implemented by user
-    // for 'raw' handlers, remember to reply req, delete req, and sconn->release(); use sconn->run_async for heavy job
+    // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
     virtual void fast_prime(const rrr::i32& n, rrr::i8* flag);
     virtual void fast_dot_prod(const point3& p1, const point3& p2, double* v);
     virtual void fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b);
@@ -102,117 +102,147 @@ public:
     virtual void nop(const std::string&);
     virtual void sleep(const double& sec);
 private:
-    void __fast_prime__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __fast_prime__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         rrr::i8 out_0;
         this->fast_prime(in_0, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __fast_dot_prod__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __fast_dot_prod__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         point3 in_0;
         req->m >> in_0;
         point3 in_1;
         req->m >> in_1;
         double out_0;
         this->fast_dot_prod(in_0, in_1, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __fast_add__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __fast_add__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         rrr::v32 in_0;
         req->m >> in_0;
         rrr::v32 in_1;
         req->m >> in_1;
         rrr::v32 out_0;
         this->fast_add(in_0, in_1, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __fast_nop__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __fast_nop__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::string in_0;
         req->m >> in_0;
         this->fast_nop(in_0);
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __fast_vec__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __fast_vec__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         std::vector<rrr::i64> out_0;
         this->fast_vec(in_0, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __prime__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __prime__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         rrr::i32 in_0;
         req->m >> in_0;
         rrr::i8 out_0;
         this->prime(in_0, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __dot_prod__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __dot_prod__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         point3 in_0;
         req->m >> in_0;
         point3 in_1;
         req->m >> in_1;
         double out_0;
         this->dot_prod(in_0, in_1, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __add__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __add__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         rrr::v32 in_0;
         req->m >> in_0;
         rrr::v32 in_1;
         req->m >> in_1;
         rrr::v32 out_0;
         this->add(in_0, in_1, &out_0);
-        sconn->begin_reply(req);
-        *sconn << out_0;
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __nop__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __nop__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::string in_0;
         req->m >> in_0;
         this->nop(in_0);
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
-    void __sleep__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {
+    void __sleep__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         double in_0;
         req->m >> in_0;
         this->sleep(in_0);
-        sconn->begin_reply(req);
-        sconn->end_reply();
-        delete req;
-        sconn->release();
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
+            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        }
+        // req automatically cleaned up by rusty::Box
     }
 };
 
@@ -221,199 +251,229 @@ protected:
     rrr::Client* __cl__;
 public:
     BenchmarkProxy(rrr::Client* cl): __cl__(cl) { }
-    rrr::Future* async_fast_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::FAST_PRIME, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << n;
+    rrr::FutureResult async_fast_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_PRIME, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << n;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 fast_prime(const rrr::i32& n, rrr::i8* flag) {
-        rrr::Future* __fu__ = this->async_fast_prime(n);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_fast_prime(n);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *flag;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_fast_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::FAST_DOT_PROD, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << p1;
-            *__cl__ << p2;
+    rrr::FutureResult async_fast_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_DOT_PROD, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << p1;
+        *__cl__ << p2;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 fast_dot_prod(const point3& p1, const point3& p2, double* v) {
-        rrr::Future* __fu__ = this->async_fast_dot_prod(p1, p2);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_fast_dot_prod(p1, p2);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *v;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_fast_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::FAST_ADD, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << a;
-            *__cl__ << b;
+    rrr::FutureResult async_fast_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_ADD, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << a;
+        *__cl__ << b;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-        rrr::Future* __fu__ = this->async_fast_add(a, b);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_fast_add(a, b);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *a_add_b;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_fast_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::FAST_NOP, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << in_0;
+    rrr::FutureResult async_fast_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_NOP, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << in_0;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 fast_nop(const std::string& in_0) {
-        rrr::Future* __fu__ = this->async_fast_nop(in_0);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_fast_nop(in_0);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_fast_vec(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::FAST_VEC, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << n;
+    rrr::FutureResult async_fast_vec(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_VEC, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << n;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 fast_vec(const rrr::i32& n, std::vector<rrr::i64>* v) {
-        rrr::Future* __fu__ = this->async_fast_vec(n);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_fast_vec(n);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *v;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::PRIME, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << n;
+    rrr::FutureResult async_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::PRIME, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << n;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 prime(const rrr::i32& n, rrr::i8* flag) {
-        rrr::Future* __fu__ = this->async_prime(n);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_prime(n);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *flag;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::DOT_PROD, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << p1;
-            *__cl__ << p2;
+    rrr::FutureResult async_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::DOT_PROD, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << p1;
+        *__cl__ << p2;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 dot_prod(const point3& p1, const point3& p2, double* v) {
-        rrr::Future* __fu__ = this->async_dot_prod(p1, p2);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_dot_prod(p1, p2);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *v;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::ADD, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << a;
-            *__cl__ << b;
+    rrr::FutureResult async_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::ADD, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << a;
+        *__cl__ << b;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
-        rrr::Future* __fu__ = this->async_add(a, b);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_add(a, b);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
         if (__ret__ == 0) {
             __fu__->get_reply() >> *a_add_b;
         }
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::NOP, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << in_0;
+    rrr::FutureResult async_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::NOP, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << in_0;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 nop(const std::string& in_0) {
-        rrr::Future* __fu__ = this->async_nop(in_0);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_nop(in_0);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
-    rrr::Future* async_sleep(const double& sec, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        rrr::Future* __fu__ = __cl__->begin_request(BenchmarkService::SLEEP, __fu_attr__);
-        if (__fu__ != nullptr) {
-            *__cl__ << sec;
+    rrr::FutureResult async_sleep(const double& sec, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
+        auto __fu_result__ = __cl__->begin_request(BenchmarkService::SLEEP, __fu_attr__);
+        if (__fu_result__.is_err()) {
+            return __fu_result__;  // Propagate error
         }
+        auto __fu__ = __fu_result__.unwrap();
+        *__cl__ << sec;
         __cl__->end_request();
-        return __fu__;
+        return rrr::FutureResult::Ok(__fu__);
     }
     rrr::i32 sleep(const double& sec) {
-        rrr::Future* __fu__ = this->async_sleep(sec);
-        if (__fu__ == nullptr) {
-            return ENOTCONN;
+        auto __fu_result__ = this->async_sleep(sec);
+        if (__fu_result__.is_err()) {
+            return __fu_result__.unwrap_err();  // Return error code
         }
+        auto __fu__ = __fu_result__.unwrap();
         rrr::i32 __ret__ = __fu__->get_error_code();
-        __fu__->release();
+        // Arc auto-released
         return __ret__;
     }
 };

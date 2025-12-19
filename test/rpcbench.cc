@@ -8,6 +8,9 @@
 #include <signal.h>
 
 #include "rrr.hpp"
+#include <rusty/arc.hpp>
+#include <rusty/mutex.hpp>
+#include "reactor/reactor.h"
 
 #include "benchmark_service.h"
 
@@ -26,7 +29,7 @@ int worker_threads = 16;
 int rpc_bench_vector_size = 0;
 
 static string request_str;
-PollMgr* poll;
+rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
 ThreadPool* thrpool;
 
 Counter req_counter;
@@ -69,7 +72,7 @@ static void* stat_proc(void*) {
 }
 
 static void* client_proc(void*) {
-    Client* cl = new Client(poll);
+    auto cl = Client::create(poll_thread_worker_.as_ref().unwrap());
     verify(cl->connect(svr_addr) == 0);
     FutureAttr fu_attr;
     i32 rpc_id;
@@ -83,18 +86,22 @@ static void* client_proc(void*) {
     }
     auto do_work = [cl, &fu_attr, rpc_id] {
         if (!should_stop) {
-            Future* fu = cl->begin_request(rpc_id, fu_attr);
-            if (rpc_id == BenchmarkService::FAST_NOP) {
+            auto fu_result = cl->begin_request(rpc_id, fu_attr);
+            if (fu_result.is_err()) {
+                return;
+            }
+            auto fu = fu_result.unwrap();
+            if (rpc_id == BenchmarkService::FAST_NOP || rpc_id == BenchmarkService::NOP) {
                 *cl << request_str;
             } else if (rpc_id == BenchmarkService::FAST_VEC) {
-                *cl << rpc_bench_vector_size;   
-            };
+                *cl << rpc_bench_vector_size;
+            }
             cl->end_request();
-            Future::safe_release(fu);
+            // Arc auto-released
             req_counter.next();
         }
     };
-    fu_attr.callback = [&do_work] (Future* fu) {
+    fu_attr.callback = [&do_work] (rusty::Arc<Future> fu) {
         if (fu->get_error_code() != 0) {
             return;
         }
@@ -109,7 +116,7 @@ static void* client_proc(void*) {
         sleep(1);
     }
 
-    cl->close_and_release();
+    cl->close();  // shared_ptr handles cleanup
     pthread_exit(nullptr);
     return nullptr;
 }
@@ -190,12 +197,15 @@ int main(int argc, char **argv) {
     Log_info("vector size:             %d", rpc_bench_vector_size);
 
     request_str = string(byte_size, 'x');
-    poll = new PollMgr(epoll_instances);
+
+    // Create PollThread Arc<Mutex<>>
+    poll_thread_worker_ = rusty::Some(PollThread::create());
+
     thrpool = new ThreadPool(worker_threads);
     if (is_server) {
         BenchmarkService svc;
-        Server svr(poll, thrpool);
-        svr.reg(&svc);
+        Server svr(poll_thread_worker_, thrpool);  // Server takes Option<Arc<...>>
+        svr.reg_service(svc);
         verify(svr.start(svr_addr) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);
@@ -230,7 +240,10 @@ int main(int argc, char **argv) {
         delete[] client_th;
     }
 
-    poll->release();
+    // Shutdown PollThread with proper locking
+    {
+        poll_thread_worker_.as_ref().unwrap()->shutdown();
+    }
     thrpool->release();
     return 0;
 }

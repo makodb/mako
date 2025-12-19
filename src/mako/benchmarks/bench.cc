@@ -22,6 +22,8 @@
 #include "lib/fasttransport.h"
 #include "deptran/s_main.h"
 #include "benchmarks/sto/sync_util.hh"
+#include "rpc_setup.h"
+#include "cpu_throttler.h"
 #include <chrono>
 #include <thread>
 
@@ -144,7 +146,12 @@ bench_worker::run()
 
         // Unpaused previous blocked threads if any
         for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-           shardClientAll[par_id]->setBlocking(false);
+           auto it = shardClientAll.find(par_id);
+           if (it != shardClientAll.end() && it->second != nullptr) {
+             it->second->setBlocking(false);
+           } else {
+             Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
+           }
         }
         break;
       }
@@ -217,16 +224,42 @@ bench_worker::run()
   #ifndef JEMALLOC_NO_RENAME
   std::cout << "No JEMALLOC_NO_RENAME" << std::endl;
   #endif
+
+  // Bind this worker thread to the appropriate SiloRuntime FIRST
+  // This MUST happen before set_core_id since it needs the correct runtime
+  if (benchConfig.getConfig() && benchConfig.getConfig()->multi_shard_mode) {
+    // Use this worker's shard index, or fall back to first local shard
+    int shard_idx = shard_index_;
+    if (shard_idx < 0 && !benchConfig.getConfig()->local_shard_indices.empty()) {
+      shard_idx = benchConfig.getConfig()->local_shard_indices[0];
+    }
+    // IMPORTANT: Set thread-local shard index BEFORE thread_init() is called
+    // This ensures TThread::set_shard_index() in thread_init() gets the correct value
+    BenchmarkConfig::setThreadLocalShardIndex(shard_idx);
+
+    ShardContext* shard_ctx = benchConfig.getShardContext(shard_idx);
+    if (shard_ctx && shard_ctx->runtime.get()) {
+      // Use get() and const_cast because get_mut() returns null with shared ownership
+      const_cast<SiloRuntime*>(shard_ctx->runtime.get())->BindToCurrentThread();
+    }
+  } else {
+    // Single-shard mode: use global default runtime
+    SiloRuntime::Current()->BindToCurrentThread();
+  }
+
   // XXX(stephentu): so many nasty hacks here. should actually
   // fix some of this stuff one day
+  // In multi-shard mode, use local worker ID for core assignment
+  unsigned local_worker_id = worker_id % benchConfig.getNthreads();
   if (set_core_id)
-    coreid::set_core_id(worker_id); // cringe
+    coreid::set_core_id(local_worker_id);
+
   {
     scoped_rcu_region r; // register this thread in rcu region
   }
   scoped_db_thread_ctx ctx(db, false);
   on_run_setup();
-  shardClientAll[TThread::getPartitionID()]=TThread::sclient;
+  shardClientAll[TThread::getGlobalPartitionID()]=TThread::sclient;
 
   const workload_desc_vec workload = get_workload();
   //    i (0-5): local commits: A
@@ -240,7 +273,20 @@ bench_worker::run()
   txn_counts.resize(40);
   barrier_a->count_down();
   barrier_b->wait_for();
+
+  // Create CPU throttler for this worker thread
+  CpuThrottler throttler(
+      benchConfig.getCpuLimitPercent(),
+      benchConfig.getThrottleCycleMs()
+  );
+  if (throttler.is_enabled()) {
+    std::cout << "Worker " << worker_id << " CPU throttling enabled: "
+              << throttler.get_cpu_percent() << "% with "
+              << throttler.get_cycle_ms() << "ms cycle" << std::endl;
+  }
+
   while (benchConfig.isRunning() && (benchConfig.getRunMode() != RUNMODE_OPS || ntxn_commits < benchConfig.getOpsPerWorker())) {
+    throttler.begin_work();  // Start work timing
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {
       if ((i + 1) == workload.size() || d < workload[i].frequency) {
@@ -303,9 +349,10 @@ bench_worker::run()
       }
       d -= workload[i].frequency;
     }
+    throttler.end_work();  // End work timing, may sleep if budget exhausted
   }
 #if defined(COCO)
-  shardTxnAll[TThread::getPartitionID()]=TThread::txn;
+  shardTxnAll[TThread::getGlobalPartitionID()]=TThread::txn;
 #endif
   std::cout<<"jump out the while loop"<<std::endl;
   // clockid_t cid;
@@ -326,7 +373,12 @@ bench_runner::stop() { // invoke inside run function; stop all ShardClient insta
   Warning("stop all erpc clients. set stop=false");
   auto& benchConfig = BenchmarkConfig::getInstance();
   for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   shardClientAll[par_id]->stop();
+   auto it = shardClientAll.find(par_id);
+   if (it != shardClientAll.end() && it->second != nullptr) {
+     it->second->stop();
+   } else {
+     Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
+   }
   }
 }
 
@@ -425,8 +477,12 @@ bench_runner::run()
 
     if (cfg.getIsReplicated()) {
       std::string log(mako::ADVANCER_MARKER_NUM, 'a');
-      for(int i=0;i<BenchmarkConfig::getInstance().getNthreads();i++)
+      std::cout << "[ADVANCER-SEND] Leader sending ADVANCER_MARKER to "
+                << BenchmarkConfig::getInstance().getNthreads() << " partitions" << std::endl;
+      for(int i=0;i<BenchmarkConfig::getInstance().getNthreads();i++) {
         add_log_to_nc(log.c_str(), log.size(), i); // notify others start a advancer
+        std::cout << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i << std::endl;
+      }
     }
   }
   const vector<bench_worker *> workers = make_workers();
@@ -442,6 +498,11 @@ bench_runner::run()
   //TThread::in_loading_phase = false;
 
   barrier_a.wait_for(); // wait for all threads to start up
+
+  // In multi-shard single-process mode, wait for all shard threads to be ready
+  // This ensures all shards have completed thread_init() before any start transactions
+  BenchmarkConfig::getInstance().waitMultiShardBarrier();
+
   util::timer t, t_nosync;  // timing starts
   barrier_b.count_down(); // bombs away!
   std::vector<std::pair<uint64_t, uint32_t>> samplingTPUT;
@@ -489,14 +550,34 @@ bench_runner::run()
    sync_util::sync_logger::client_control2(3, benchConfig.getShardIndex());
   }
   if (benchConfig.getRunMode() == RUNMODE_TIME) {
+    cerr << "[SHUTDOWN] Setting running=false to stop database worker threads" << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
-  stop(); // stop erpc clients
+  cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
+  stop(); // stop erpc clients (unblocks outstanding RPCs)
+  cerr << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
-  for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
+
+  cerr << "[SHUTDOWN] Joining " << BenchmarkConfig::getInstance().getNthreads() << " worker threads" << endl;
+  for (size_t i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++) {
+     cerr << "[SHUTDOWN] Joining worker " << i << endl;
      workers[i]->join();
+     cerr << "[SHUTDOWN] Worker " << i << " joined" << endl;
+  }
+  cerr << "[SHUTDOWN] All workers joined" << endl;
+
+  // Stop server transports AFTER workers exit to ensure they can finish processing
+  cerr << "[SHUTDOWN] Calling stop_erpc_server()" << endl;
+  mako::stop_erpc_server();
+  cerr << "[SHUTDOWN] stop_erpc_server() completed" << endl;
+
+  cerr << "[SHUTDOWN] Calling second stop()" << endl;
+  stop(); // ensure transports are torn down after workers exit
+  cerr << "[SHUTDOWN] Second stop() completed" << endl;
   const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
+  cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
+  cerr << "[SHUTDOWN] do_txn_finish() completed" << endl;
   //  usleep(100000);
   size_t n_commits = 0;
   size_t n_aborts = 0;

@@ -10,19 +10,30 @@ echo "Testing 2-shard setup without replication"
 echo "========================================="
 
 # Clean up old log files
-rm -f shard0*.log shard1*.log nfs_sync_*
+rm -f nfs_sync_*
+
+# Clean up RocksDB data from previous runs
+USERNAME=${USER:-$(whoami)}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+
+trd=${1:-6}
+script_name="$(basename "$0")"
+
+# Determine transport type and create unique log prefix
+transport="${MAKO_TRANSPORT:-rrr}"
+log_prefix="${script_name}_${transport}"
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
-nohup bash bash/shard.sh 2 0 6 localhost > shard0.log 2>&1 &
+nohup bash bash/shard.sh 2 0 $trd localhost > ${log_prefix}_shard0-$trd.log 2>&1 &
 SHARD0_PID=$!
-sleep 2
+sleep 5
 
-# Start shard 1 in background
+# Start shard 1 in background (delayed start ensures shard1 stays running while shard0 shuts down)
 echo "Starting shard 1..."
-nohup bash bash/shard.sh 2 1 6 localhost > shard1.log 2>&1 &
+nohup bash bash/shard.sh 2 1 $trd localhost > ${log_prefix}_shard1-$trd.log 2>&1 &
 SHARD1_PID=$!
 
 # Wait for experiments to run
@@ -43,7 +54,7 @@ failed=0
 
 # Check each shard's output
 for i in 0 1; do
-    log="shard${i}.log"
+    log="${log_prefix}_shard${i}-$trd.log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
@@ -58,7 +69,7 @@ for i in 0 1; do
     if grep -q "agg_persist_throughput" "$log"; then
         echo "  ✓ Found 'agg_persist_throughput' keyword"
         # Show the line for reference
-        grep "agg_persist_throughput" "$log" | tail -1 | sed 's/^/    /'
+        grep "agg_persist_throughput" "$log" | tail -n 1 | sed 's/^/    /'
     else
         echo "  ✗ 'agg_persist_throughput' keyword not found"
         failed=1
@@ -67,7 +78,7 @@ for i in 0 1; do
     # Check NewOrder_remote_abort_ratio
     if grep -q "NewOrder_remote_abort_ratio:" "$log"; then
         # Extract the abort ratio value
-        abort_ratio=$(grep "NewOrder_remote_abort_ratio:" "$log" | tail -1 | awk '{print $2}')
+        abort_ratio=$(grep "NewOrder_remote_abort_ratio:" "$log" | tail -n 1 | awk '{print $2}')
         
         if [ -z "$abort_ratio" ]; then
             echo "  ✗ Could not extract NewOrder_remote_abort_ratio value"
@@ -101,8 +112,7 @@ else
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check shard0.log and shard1.log for details"
-    tail -10 shard0.log 
-    tail -10 shard1.log
+    echo "Check ${log_prefix}_shard*-$trd for details"
+    tail -n 10 ${log_prefix}_shard0-$trd.log ${log_prefix}_shard1-$trd.log
     exit 1
 fi

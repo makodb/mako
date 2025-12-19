@@ -9,25 +9,30 @@ echo "========================================="
 ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
 rm -f simple-shard0*.log nfs_sync_*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-# Start shard 0 in background
+# Start shard 0 in background - capture ALL PIDs
 echo "Starting shard 0..."
 nohup ./build/simpleTransactionRep 1 0 6 localhost 1 > simple-shard0-localhost.log 2>&1 &
+PID_LOCALHOST=$!
 nohup ./build/simpleTransactionRep 1 0 6 learner 1 > simple-shard0-learner.log 2>&1 &
+PID_LEARNER=$!
 nohup ./build/simpleTransactionRep 1 0 6 p2 1 > simple-shard0-p2.log 2>&1 &
+PID_P2=$!
 sleep 1
 nohup ./build/simpleTransactionRep 1 0 6 p1 1  > simple-shard0-p1.log 2>&1 &
-SHARD0_PID=$!
+PID_P1=$!
 sleep 2
 
 # Wait for experiments to run
 echo "Running experiments"
-sleep 20
+sleep 40
 
-# Kill the processes
+# Kill ALL processes
 echo "Stopping shards..."
-kill $SHARD0_PID 2>/dev/null
-wait $SHARD0_PID 2>/dev/null
+kill $PID_LOCALHOST $PID_LEARNER $PID_P2 $PID_P1 2>/dev/null
+wait $PID_LOCALHOST $PID_LEARNER $PID_P2 $PID_P1 2>/dev/null
 
 echo ""
 echo "========================================="
@@ -71,6 +76,30 @@ else
     fi
 fi
 
+# Check follower logs for data integrity verification
+# Note: Leaders (localhost) are the source of data and may have cleanup issues,
+# so we only verify followers (learner, p1, p2) which receive replicated data
+echo ""
+echo "Checking data integrity verification in follower logs:"
+echo "-----------------"
+for log_suffix in learner p2 p1; do
+    log="simple-shard0-${log_suffix}.log"
+
+    if [ ! -f "$log" ]; then
+        echo "  ✗ $log: Log file not found"
+        failed=1
+        continue
+    fi
+
+    # Check for "ALL VERIFICATIONS PASSED" message
+    if grep -q "ALL VERIFICATIONS PASSED" "$log"; then
+        echo "  ✓ $log: Data integrity verified"
+    else
+        echo "  ✗ $log: Data integrity verification FAILED or not found"
+        failed=1
+    fi
+done
+
 echo ""
 echo "========================================="
 if [ $failed -eq 0 ]; then
@@ -85,7 +114,7 @@ else
     echo "Check simple-shard0-localhost.log and simple-shard0-p1.log for details"
     echo ""
     echo "Last 10 lines of simple-shard0-localhost.log:"
-    tail -10 simple-shard0-localhost.log 
+    tail -10 simple-shard0-localhost.log
     echo ""
     echo "Last 5 lines with 'replay_batch' from simple-shard0-p1.log:"
     grep "replay_batch" simple-shard0-p1.log | tail -5 2>/dev/null || echo "No replay_batch entries found"

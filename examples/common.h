@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <mako.hh>
+#include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
 
 using namespace std;
 
@@ -91,6 +92,20 @@ public:
 
 // Scan a table and return all key-value pairs
 std::vector<kv_pair> scan_tables(abstract_db *db, abstract_ordered_index* table) {
+    str_arena arena;
+    void *buf = NULL;
+    char WS = static_cast<char>(0);
+    std::string startKey(1, WS);
+    char WE = static_cast<char>(255);
+    std::string endKey(1, WE);
+    new_scan_callback_bench calloc;
+    void *txn0 = db->new_txn(0, arena, buf, abstract_db::HINT_DEFAULT);
+    table->scan(txn0, startKey, &endKey, calloc);
+    db->commit_txn(txn0);
+    return calloc.values;
+}
+
+inline std::vector<kv_pair> scan_tables(abstract_db *db, mbta_sharded_ordered_index* table) {
     str_arena arena;
     void *buf = NULL;
     char WS = static_cast<char>(0);

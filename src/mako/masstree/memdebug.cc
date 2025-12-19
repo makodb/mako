@@ -13,11 +13,21 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// Memory debugging and validation utilities
+// All functions operate on raw allocator metadata - @unsafe
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: snprintf
+// @external_unsafe: fprintf
+// @external_unsafe: assert
+
 #include "memdebug.hh"
 #include <stdio.h>
 #include <assert.h>
 
 #if HAVE_MEMDEBUG
+// @unsafe - writes to raw char* buffer via snprintf() without bounds tracking
 void memdebug::landmark(char* buf, size_t bufsz) const {
     if (this->magic != magic_value && this->magic != magic_free_value)
         snprintf(buf, bufsz, "???");
@@ -29,6 +39,7 @@ void memdebug::landmark(char* buf, size_t bufsz) const {
         snprintf(buf, bufsz, "0");
 }
 
+// @unsafe - dereferences raw memdebug* pointer and calls assert() which may abort
 void
 memdebug::hard_free_checks(const memdebug *m, size_t sz, memtag tag,
                            int after_rcu, const char *op) {
@@ -58,6 +69,7 @@ memdebug::hard_free_checks(const memdebug *m, size_t sz, memtag tag,
     assert(m->after_rcu == after_rcu);
 }
 
+// @unsafe - uses reinterpret_cast to recover memdebug header from raw void*
 void
 memdebug::hard_assert_use(const void* ptr, memtag allowed) {
     const memdebug* m = reinterpret_cast<const memdebug*>(ptr) - 1;

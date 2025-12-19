@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string.h>
+#include <iostream>
 #include "threading.hpp"
 
 // External safety annotations for system functions used in this module
@@ -29,6 +30,7 @@ namespace rrr {
 class Log {
     static int level_s;
     static FILE* fp_s;
+    static std::ostream* stm_s;
 
     // have to use pthread mutex because Mutex class cannot be init'ed correctly as static var
     static pthread_mutex_t m_s;
@@ -55,18 +57,31 @@ public:
 
     // @unsafe - Variadic logging functions
     // SAFETY: Proper va_start/va_end usage; thread-safe via mutex
+    // @unsafe
     static void fatal(int line, const char* file, const char* fmt, ...);
+    // @unsafe
     static void error(int line, const char* file, const char* fmt, ...);
+    // @unsafe
     static void warn(int line, const char* file, const char* fmt, ...);
+    // @unsafe
     static void info(int line, const char* file, const char* fmt, ...);
+    // @unsafe Variadic logging helper invoked by macros
+    // SAFETY: Uses mutex-protected formatting and ensures va_end
+    // @unsafe
     static void debug(int line, const char* file, const char* fmt, ...);
 
     // @unsafe - Variadic logging functions without file/line
     // SAFETY: Proper va_start/va_end usage; thread-safe via mutex
+    // @unsafe
     static void fatal(const char* fmt, ...);
+    // @unsafe
     static void error(const char* fmt, ...);
+    // @unsafe
     static void warn(const char* fmt, ...);
+    // @unsafe
     static void info(const char* fmt, ...);
+    // @unsafe Variadic logging helper without file/line metadata
+    // SAFETY: Uses mutex-protected formatting and ensures va_end
     static void debug(const char* fmt, ...);
 };
 

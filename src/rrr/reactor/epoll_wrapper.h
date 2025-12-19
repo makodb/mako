@@ -4,8 +4,16 @@
 #pragma once
 
 #include "base/all.hpp"
+#include <rusty/arc.hpp>
+#include <rusty/rc.hpp>
+#include <rusty/rc/weak.hpp>
+#include <rusty/refcell.hpp>
 #include <unistd.h>
 #include <array>
+#include <algorithm>
+#include <memory>
+#include <vector>
+#include <cerrno>
 
 #ifdef __APPLE__
 #define USE_KQUEUE
@@ -19,37 +27,66 @@
 
 
 namespace rrr {
+using std::shared_ptr;
+
+// Forward declaration
+class PollThreadWorker;
 
 // @safe - Abstract interface for pollable file descriptors
-class Pollable: public rrr::RefCounted {
-protected:
-
-    // RefCounted class requires protected destructor
+class Pollable {
+public:
     virtual ~Pollable() {}
 
-public:
+    // Special return value for handle_write() indicating no mode change needed
+    static constexpr int MODE_NO_CHANGE = -1;
 
     enum {
         READ = 0x1, WRITE = 0x2
     };
 
-    // @safe - Returns file descriptor
-    virtual int fd() = 0;
-    // @safe - Returns current poll mode (READ/WRITE flags)
-    virtual int poll_mode() = 0;
+    // Returns file descriptor
+    virtual int fd() const = 0;
+    // Returns current poll mode (READ/WRITE flags)
+    virtual int poll_mode() const = 0;
     // @unsafe - Handles read events (implementation-specific)
-    virtual void handle_read() = 0;
+    virtual size_t content_size() = 0;
+    virtual bool handle_read() = 0;
+    // Break handle_read into two halves to solve reverse backlog problem
+    virtual bool handle_read_one() = 0;
+    virtual bool handle_read_two() = 0;
     // @unsafe - Handles write events (implementation-specific)
-    virtual void handle_write() = 0;
+    // Returns new poll mode, or MODE_NO_CHANGE (-1) if no update needed
+    // PollThreadWorker will call update_mode() based on return value
+    virtual int handle_write() = 0;
     // @unsafe - Handles error events (implementation-specific)
     virtual void handle_error() = 0;
+
+    // @safe - Check if pollable needs write mode update (set by deferred operations)
+    // Returns true if update_mode(READ|WRITE) should be called, clears internal flag
+    // Default implementation returns false - override in subclasses that need it
+    // Note: const because called through Arc, uses mutable flag internally
+    virtual bool check_pending_write_update() const { return false; }
 };
 
 
 // @unsafe - Wrapper for epoll/kqueue system calls
 // SAFETY: Proper file descriptor management and error checking
 class Epoll {
+ private:
+  std::vector<Pollable*> pending{};
+	int zero_count = 0;
+	long have_count = 0;
+  long no_count = 0;
+	int first = 0;
+  long total_have_time = 0;
+  long total_no_time = 0;
  public:
+  // For testing: track number of Remove() calls (static for persistence)
+  static inline std::atomic<int> remove_count_{0};
+
+  // Control flags for pause/stop functionality (jetpack)
+  volatile bool* pause;
+  volatile bool* stop;
 
   // @unsafe - Creates epoll/kqueue file descriptor
   // SAFETY: Verifies creation succeeded
@@ -62,9 +99,35 @@ class Epoll {
     verify(poll_fd_ != -1);
   }
 
+  // Move constructor - transfers ownership of poll_fd
+  Epoll(Epoll&& other) noexcept : poll_fd_(other.poll_fd_) {
+    other.poll_fd_ = -1;  // Prevent double-close
+  }
+
+  // Move assignment - transfers ownership of poll_fd
+  Epoll& operator=(Epoll&& other) noexcept {
+    if (this != &other) {
+      if (poll_fd_ != -1) {
+        close(poll_fd_);
+      }
+      poll_fd_ = other.poll_fd_;
+      other.poll_fd_ = -1;  // Prevent double-close
+    }
+    return *this;
+  }
+
+  // Delete copy constructor and copy assignment
+  Epoll(const Epoll&) = delete;
+  Epoll& operator=(const Epoll&) = delete;
+
+  // Jetpack split-phase event processing methods
+  std::vector<struct timespec> Wait_One(int& num_ev, bool& slow);
+  void Wait_Two();
+
   // @unsafe - Adds file descriptor to epoll/kqueue
-  // SAFETY: Uses system calls with proper error checking
-  int Add(Pollable* poll) {
+  // SAFETY: Uses system calls with proper error checking, Arc for polymorphism
+  // userdata is raw Pollable* for lookup
+  int Add(const rusty::Arc<Pollable>& poll, void* userdata) {
     auto poll_mode = poll->poll_mode();
     auto fd = poll->fd();
 #ifdef USE_KQUEUE
@@ -74,7 +137,7 @@ class Epoll {
       ev.ident = fd;
       ev.flags = EV_ADD;
       ev.filter = EVFILT_READ;
-      ev.udata = poll;
+      ev.udata = userdata;  // Store slot index instead of raw pointer
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
     if (poll_mode & Pollable::WRITE) {
@@ -82,7 +145,7 @@ class Epoll {
       ev.ident = fd;
       ev.flags = EV_ADD;
       ev.filter = EVFILT_WRITE;
-      ev.udata = poll;
+      ev.udata = userdata;  // Store slot index instead of raw pointer
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
 
@@ -90,7 +153,7 @@ class Epoll {
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
 
-    ev.data.ptr = poll;
+    ev.data.ptr = userdata;  // Store slot index instead of raw pointer
     ev.events = EPOLLET | EPOLLIN | EPOLLRDHUP; // EPOLLERR and EPOLLHUP are included by default
 
     if (poll_mode & Pollable::WRITE) {
@@ -101,9 +164,11 @@ class Epoll {
     return 0;
   }
 
+
   // @unsafe - Removes file descriptor from epoll/kqueue
-  // SAFETY: Uses system calls, ignores errors for already removed fds
-  int Remove(Pollable* poll) {
+  // SAFETY: Uses system calls, ignores errors for already removed fds, Arc for polymorphism
+  int Remove(const rusty::Arc<Pollable>& poll) {
+    remove_count_++;  // Track Remove() calls for testing
     auto fd = poll->fd();
 #ifdef USE_KQUEUE
     struct kevent ev;
@@ -127,17 +192,19 @@ class Epoll {
     return 0;
   }
 
+
   // @unsafe - Updates poll mode for file descriptor
   // SAFETY: Uses system calls with proper event flag handling
-  int Update(Pollable* poll, int new_mode, int old_mode) {
-    auto fd = poll->fd();
+  // userdata is raw Pollable* for lookup
+  int Update(Pollable& poll, void* userdata, int new_mode, int old_mode) {
+    auto fd = poll.fd();
 #ifdef USE_KQUEUE
     struct kevent ev;
     if ((new_mode & Pollable::READ) && !(old_mode & Pollable::READ)) {
       // add READ
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
-      ev.udata = poll;
+      ev.udata = userdata;  // Store slot index instead of raw pointer
       ev.flags = EV_ADD;
       ev.filter = EVFILT_READ;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
@@ -146,7 +213,7 @@ class Epoll {
       // del READ
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
-      ev.udata = poll;
+      ev.udata = userdata;  // Store slot index instead of raw pointer
       ev.flags = EV_DELETE;
       ev.filter = EVFILT_READ;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
@@ -155,7 +222,7 @@ class Epoll {
       // add WRITE
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
-      ev.udata = poll;
+      ev.udata = userdata;  // Store slot index instead of raw pointer
       ev.flags = EV_ADD;
       ev.filter = EVFILT_WRITE;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
@@ -164,7 +231,7 @@ class Epoll {
       // del WRITE
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
-      ev.udata = poll;
+      ev.udata = userdata;  // Store slot index instead of raw pointer
       ev.flags = EV_DELETE;
       ev.filter = EVFILT_WRITE;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
@@ -173,7 +240,7 @@ class Epoll {
     struct epoll_event ev;
     memset(&ev, 0, sizeof(ev));
 
-    ev.data.ptr = poll;
+    ev.data.ptr = userdata;  // Store slot index instead of raw pointer
     ev.events = EPOLLET | EPOLLRDHUP;
     if (new_mode & Pollable::READ) {
         ev.events |= EPOLLIN;
@@ -181,14 +248,30 @@ class Epoll {
     if (new_mode & Pollable::WRITE) {
         ev.events |= EPOLLOUT;
     }
-    verify(epoll_ctl(poll_fd_, EPOLL_CTL_MOD, fd, &ev) == 0);
+    int rc = epoll_ctl(poll_fd_, EPOLL_CTL_MOD, fd, &ev);
+    if (rc != 0) {
+      int err = errno;
+      // When a transport closes a socket in a different thread (e.g. during shutdown),
+      // the poller may still try to update its mode. Treat a missing or already-closed
+      // descriptor as a benign race so shutdown can proceed without aborting.
+      if (err == ENOENT || err == EBADF) {
+        return 0;
+      }
+      verify(rc == 0);
+    }
 #endif
     return 0;
   }
 
-  // @unsafe - Waits for events and dispatches to handlers
-  // SAFETY: Uses system calls with timeout, calls virtual handlers
-  void Wait() {
+  // Jetpack split-phase Wait (declaration - implementation in epoll_wrapper.cc)
+  void Wait();
+
+  // @unsafe - Waits for events and dispatches to handlers directly (mako-dev template version)
+  // SAFETY: Uses system calls with timeout, raw pointer safe due to deferred removal
+  // userdata is Pollable* - safe to use directly because object remains in fd_to_pollable_ map
+  // ModeUpdater: callable with signature void(Pollable*, int new_mode)
+  template<typename ModeUpdater>
+  void Wait(ModeUpdater&& update_mode) {
     const int max_nev = 100;
 #ifdef USE_KQUEUE
     struct kevent evlist[max_nev];
@@ -199,14 +282,17 @@ class Epoll {
     int nev = kevent(poll_fd_, nullptr, 0, evlist, max_nev, &timeout);
 
     for (int i = 0; i < nev; i++) {
-      Pollable* poll = (Pollable*) evlist[i].udata;
-      verify(poll != nullptr);
+      void* userdata = evlist[i].udata;
+      Pollable* poll = reinterpret_cast<Pollable*>(userdata);  // Direct cast - safe!
 
       if (evlist[i].filter == EVFILT_READ) {
         poll->handle_read();
       }
       if (evlist[i].filter == EVFILT_WRITE) {
-        poll->handle_write();
+        int new_mode = poll->handle_write();
+        if (new_mode != Pollable::MODE_NO_CHANGE) {
+          update_mode(poll, new_mode);
+        }
       }
 
       // handle error after handle IO, so that we can at least process something
@@ -225,14 +311,24 @@ class Epoll {
     //Log_info("number of events are %d", nev);
     for (int i = 0; i < nev; i++) {
       //Log_info("number of events are %d", nev);
-      Pollable* poll = (Pollable *) evlist[i].data.ptr;
-      verify(poll != nullptr);
+      void* userdata = evlist[i].data.ptr;
+
+      // Skip if userdata is nullptr (used for internal wakeup events like channel eventfd)
+      if (userdata == nullptr) {
+        continue;
+      }
+
+      Pollable* poll = reinterpret_cast<Pollable*>(userdata);  // Direct cast - safe!
+
       if (evlist[i].events & EPOLLIN) {
           poll->handle_read();
       }
       if (evlist[i].events & EPOLLOUT) {
-          poll->handle_write();
-      }     
+          int new_mode = poll->handle_write();
+          if (new_mode != Pollable::MODE_NO_CHANGE) {
+            update_mode(poll, new_mode);
+          }
+      }
       // handle error after handle IO, so that we can at least process something
       if (evlist[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
           poll->handle_error();
@@ -242,8 +338,13 @@ class Epoll {
   }
 
   ~Epoll() {
-    close(poll_fd_);
+    if (poll_fd_ != -1) {
+      close(poll_fd_);
+    }
   }
+
+  // Public accessor for the epoll/kqueue file descriptor
+  int fd() const { return poll_fd_; }
 
  private:
   int poll_fd_;

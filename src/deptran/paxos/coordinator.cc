@@ -28,8 +28,12 @@ BulkCoordinatorMultiPaxos::BulkCoordinatorMultiPaxos(uint32_t coo_id,
 void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
                                    const function<void()>& func,
                                    const function<void()>& exe_callback) {
+#ifdef LATENCY_DEBUG
+  client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
+#endif
   if (!IsLeader()) {
-    Log_fatal("i am not the leader; site %d; locale %d",
+    //change back to fatal
+    Log_info("i am not the leader; site %d; locale %d",
               frame_->site_info_->id, loc_id_);
   }
 
@@ -65,6 +69,8 @@ void CoordinatorMultiPaxos::Prepare() {
   in_prepare_ = true;
   curr_ballot_ = PickBallot();
   verify(slot_id_ > 0);
+  //rpc_event->add_dep(commo()->LeaderProxyForPartition(par_id_).first);
+  //rpc_event->log();
   Log_debug("multi-paxos coordinator broadcasts prepare, "
                 "par_id_: %lx, slot_id: %llx",
             par_id_,
@@ -72,7 +78,14 @@ void CoordinatorMultiPaxos::Prepare() {
   verify(n_prepare_ack_ == 0);
   int n_replica = Config::GetConfig()->GetPartitionSize(par_id_);
   auto sp_quorum = commo()->BroadcastPrepare(par_id_, slot_id_, curr_ballot_);
+  auto start = chrono::steady_clock::now();
+  Log_info("Time before Wait() is: %d", chrono::duration_cast<chrono::milliseconds>(start.time_since_epoch()).count());
   sp_quorum->Wait();
+  auto end = chrono::steady_clock::now();
+
+  auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
+  Log_info("Duration of Wait() in Prepare() is: %d", duration.count());
+  sp_quorum->log();
   if (sp_quorum->Yes()) {
     verify(!sp_quorum->HasAcceptedValue());
     // TODO use the previously accepted value.
@@ -124,6 +137,10 @@ void CoordinatorMultiPaxos::Accept() {
   Log_debug("multi-paxos coordinator broadcasts accept, "
                 "par_id_: %lx, slot_id: %llx",
             par_id_, slot_id_);
+  auto start = chrono::system_clock::now();
+#ifdef LATENCY_DEBUG
+  client2leader_send_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd_));
+#endif
   auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
   WAN_WAIT;
   if (sp_quorum->Yes()) {
@@ -182,6 +199,7 @@ void CoordinatorMultiPaxos::Commit() {
 void CoordinatorMultiPaxos::GotoNextPhase() {
   int n_phase = 4;
   int current_phase = phase_ % n_phase;
+  //Log_info("Current phase is %d", current_phase);
   phase_++;
   switch (current_phase) {
     case Phase::INIT_END:
@@ -194,12 +212,19 @@ void CoordinatorMultiPaxos::GotoNextPhase() {
       } else {
         // TODO
         verify(0);
+        Log_info("The local id is %d", this->loc_id_);
+        //Forward();
+        //Log_info("Follower logic");
+        //For now, do nothing
+        //
+        //Next steps: Find the leader, call submit, wait for the reply
       }
     case Phase::ACCEPT:
       verify(phase_ % n_phase == Phase::COMMIT);
       if (committed_) {
         Commit();
-      } else {
+      }
+      else{
         verify(0);
       }
       break;
@@ -360,7 +385,9 @@ void BulkCoordinatorMultiPaxos::Accept() {
 }
 
 void BulkCoordinatorMultiPaxos::Commit() {
+    // Log_info("BulkCoordinatorMultiPaxos::Commit() called, in_submission_=%d", (int)in_submission_);
     if(!in_submission_){
+      // Log_info("BulkCoordinatorMultiPaxos::Commit() returning early because in_submission_=false");
       return;
     }
     in_commit = true;
@@ -374,6 +401,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     auto commit_cmd_marshallable = dynamic_pointer_cast<Marshallable>(commit_cmd);
 
     auto ess_cc = es_cc;
+    // Log_info("About to call BroadcastBulkDecide from Commit()");
     auto sp_quorum = commo()->BroadcastBulkDecide(par_id_, commit_cmd_marshallable, [this, ess_cc](ballot_t ballot, int valid){
       if(!this->in_commit){
         return;
@@ -383,6 +411,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
         this->in_submission_ = false;
       }
     });
+    // Log_info("Called BroadcastBulkDecide from Commit()");
     // it's not necessary to wait for a majority of commits
   //   sp_quorum->Wait();
   //   if (sp_quorum->Yes()) {
@@ -396,6 +425,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     in_commit = false;
     //verify(phase_ == Phase::COMMIT);
     commit_callback_();
+    // Log_info("BulkCoordinatorMultiPaxos::Commit() finished");
     //GotoNextPhase();
 }
 

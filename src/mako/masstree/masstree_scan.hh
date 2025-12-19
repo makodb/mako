@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Range scan implementation for Masstree
+// Provides forward/reverse iteration with visitor callback pattern
+// SAFETY: Optimistic traversal with version checking and stack-based state
+
 #ifndef MASSTREE_SCAN_HH
 #define MASSTREE_SCAN_HH
 #include "masstree_tcursor.hh"
@@ -61,11 +65,14 @@ class scanstackelt {
     }
 
     template <typename H>
+    // @unsafe - walks the tree without additional synchronization
     int find_initial(H& helper, key_type& ka, bool emit_equal,
                      leafvalue_type& entry, threadinfo& ti);
     template <typename H>
+    // @unsafe - retries traversal on raw nodes
     int find_retry(H& helper, key_type& ka, threadinfo& ti);
     template <typename H>
+    // @unsafe - advances cursor via raw node pointers
     int find_next(H& helper, key_type& ka, leafvalue_type& entry);
 
     int kp() const {

@@ -28,6 +28,9 @@ namespace mako
         int remoteInstall(uint32_t timestamp);
         int remoteUnLock();
         int warmupRequest(uint32_t req_val, uint8_t centerId, uint32_t &ret_value, uint64_t set_bits);
+        // Check if a remote shard is ready to receive requests
+        // Returns SUCCESS if ready, ERROR/TIMEOUT if not ready yet
+        int checkRemoteShardReady(int dstShardIndex);
         int remoteInvokeSerializeUtil(uint32_t timestamp);
         void statistics();
         void stop();

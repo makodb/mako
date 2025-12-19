@@ -13,6 +13,7 @@ bool CoordinatorFebruus::PreAccept() {
 
   for (auto par_id : tx_data().GetPartitionIds()) {
     auto cmds = tx_data().GetCmdsByPartition(par_id);
+    //add a hash map here or add a function in get config
     auto n_replica = Config::GetConfig()->GetPartitionSize(par_id);
     auto n_quorum = n_replica;
     map_up_quorum_event[par_id].reset(new QuorumEvent(n_replica, n_quorum));
@@ -63,7 +64,7 @@ bool CoordinatorFebruus::Accept() {
   fast_path_ = true;
   for (auto& pair: map_up_quorum_event) {
     auto& quorum_event = *pair.second;
-    if (quorum_event.n_voted_yes_ >= quorum_event.quorum_) {
+    if (quorum_event.Yes()) {
       continue;
     } else {
       verify(0); // TODO conflict from recovery.
@@ -107,6 +108,7 @@ void CoordinatorFebruus::DispatchAsync() {
                                std::bind(&CoordinatorFebruus::DispatchAck,
                                          this,
                                          phase_,
+                                         -1,
                                          std::placeholders::_1,
                                          std::placeholders::_2));
   }
@@ -127,6 +129,7 @@ void CoordinatorFebruus::DispatchAsync() {
 //}
 
 void CoordinatorFebruus::DispatchAck(phase_t phase,
+                                     double dispatch_time,
                                      int ret,
                                      TxnOutput& outputs) {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Base class for string types (CRTP pattern)
+// Provides common string operations using raw data()/length() accessors
+// SAFETY: Unchecked array indexing, raw pointer element access
+
 #ifndef STRING_BASE_HH
 #define STRING_BASE_HH
 #include "compiler.hh"
@@ -34,19 +38,23 @@ class String_generic {
     static const char base64_encoding_table[65];
     static const unsigned char base64_decoding_map[256];
     enum { out_of_memory_length = 14 };
+    // @unsafe - compares raw buffers; caller must provide valid pointers/lengths
     static bool out_of_memory(const char* s) {
         return unlikely(s >= out_of_memory_data
                         && s <= out_of_memory_data + out_of_memory_length);
     }
+    // @unsafe - trusts callers to supply correct lengths for memcmp
     static bool equals(const char* a, int a_len, const char* b, int b_len) {
         return a_len == b_len && memcmp(a, b, a_len) == 0;
     }
+    // @unsafe - raw memcmp on unmanaged buffers
     static int compare(const char* a, int a_len, const char* b, int b_len);
     static inline int compare(const unsigned char* a, int a_len,
                               const unsigned char* b, int b_len) {
         return compare(reinterpret_cast<const char*>(a), a_len,
                        reinterpret_cast<const char*>(b), b_len);
     }
+    // @unsafe - walks digit sequences directly in caller-provided buffers
     static int natural_compare(const char* a, int a_len, const char* b, int b_len);
     static int natural_compare(const unsigned char* a, int a_len,
                                const unsigned char* b, int b_len) {
@@ -84,6 +92,7 @@ class String_base {
     typedef const_unsigned_iterator unsigned_iterator;
     typedef int (String_base<T>::*unspecified_bool_type)() const;
 
+    // @unsafe - exposes raw pointer to underlying character buffer
     const char* data() const {
         return static_cast<const T*>(this)->data();
     }
@@ -98,6 +107,7 @@ class String_base {
 
         Only the first length() characters are valid, and the string data
         might not be null-terminated. @sa data() */
+    // @unsafe - exposes raw pointer without additional lifetime tracking
     const unsigned char* udata() const {
         return reinterpret_cast<const unsigned char*>(data());
     }
@@ -148,6 +158,8 @@ class String_base {
     /** @brief Return the @a i th character in the string.
 
         Does not check bounds. @sa at() */
+    // @unsafe - unchecked access into underlying buffer
+    // @lifetime: (&'a, int) -> &'a
     const char& operator[](int i) const {
         return data()[i];
     }
@@ -155,6 +167,8 @@ class String_base {
 
         Checks bounds: an assertion will fail if @a i is less than 0 or not
         less than length(). @sa operator[] */
+    // @unsafe - returns reference into internal buffer
+    // @lifetime: (&'a, int) -> &'a
     const char& at(int i) const {
         assert(unsigned(i) < unsigned(length()));
         return data()[i];
@@ -162,12 +176,16 @@ class String_base {
     /** @brief Return the first character in the string.
 
         Does not check bounds. Same as (*this)[0]. */
+    // @unsafe - caller must ensure string is nonempty
+    // @lifetime: (&'a) -> &'a
     const char& front() const {
         return data()[0];
     }
     /** @brief Return the last character in the string.
 
         Does not check bounds. Same as (*this)[length() - 1]. */
+    // @unsafe - caller must ensure string is nonempty
+    // @lifetime: (&'a) -> &'a
     const char& back() const {
         return data()[length() - 1];
     }
@@ -191,35 +209,42 @@ class String_base {
         less than @a cstr in lexicographic order, and positive if this
         string is greater than @a cstr. Lexicographic order treats
         characters as unsigned. */
+    // @unsafe - compares raw buffers using unmanaged pointers
     int compare(const char* cstr) const {
         return String_generic::compare(data(), length(), cstr, strlen(cstr));
     }
     /** @brief Compare this string with the first @a len characters of @a
         s. */
+    // @unsafe - compares raw buffers using unmanaged pointers
     int compare(const char* s, int len) const {
         return String_generic::compare(data(), length(), s, len);
     }
     /** @brief Compare this string with @a x. */
     template <typename TT>
+    // @unsafe - compares raw buffers using unmanaged pointers
     int compare(const String_base<TT>& x) const {
         return String_generic::compare(data(), length(), x.data(), x.length());
     }
     /** @brief Compare strings @a a and @a b. */
     template <typename TT, typename UU>
+    // @unsafe - compares raw buffers using unmanaged pointers
     static int compare(const String_base<TT>& a, const String_base<UU>& b) {
         return String_generic::compare(a.data(), a.length(), b.data(), b.length());
     }
     /** @brief Compare strings @a a and @a b. */
     template <typename UU>
+    // @unsafe - compares raw buffers using unmanaged pointers
     static int compare(const char* a, const String_base<UU> &b) {
         return String_generic::compare(a, strlen(a), b.data(), b.length());
     }
     /** @brief Compare strings @a a and @a b. */
     template <typename TT>
+    // @unsafe - compares raw buffers using unmanaged pointers
     static int compare(const String_base<TT>& a, const char* b) {
         return String_generic::compare(a.data(), a.length(), b, strlen(b));
     }
     /** @brief Compare strings @a a and @a b. */
+    // @unsafe - compares raw buffers using unmanaged pointers
     static int compare(const char* a, const char* b) {
         return String_generic::compare(a, strlen(a), b, strlen(b));
     }
@@ -478,6 +503,7 @@ inline size_t hash_value(const String_base<T>& x) {
     return String_generic::hashcode(x.data(), x.length());
 }
 
+// @unsafe - pointer arithmetic on string data
 template <typename T>
 inline typename T::substring_type String_generic::ltrim(const T &str) {
     const char *b = str.begin(), *e = str.end();
@@ -486,6 +512,7 @@ inline typename T::substring_type String_generic::ltrim(const T &str) {
     return str.fast_substring(b, e);
 }
 
+// @unsafe - pointer arithmetic on string data
 template <typename T>
 inline typename T::substring_type String_generic::rtrim(const T &str) {
     const char *b = str.begin(), *e = str.end();
@@ -494,6 +521,7 @@ inline typename T::substring_type String_generic::rtrim(const T &str) {
     return str.fast_substring(b, e);
 }
 
+// @unsafe - pointer arithmetic on string data
 template <typename T>
 inline typename T::substring_type String_generic::trim(const T &str) {
     const char *b = str.begin(), *e = str.end();

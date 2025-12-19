@@ -2,6 +2,15 @@
 #include "utils/safe_assert.h"
 #include "utils/logger.h"
 
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
 
 void buf_create(buf_t **buf) {
     *buf = (buf_t*) malloc(sizeof(buf_t));

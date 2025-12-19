@@ -37,7 +37,7 @@ class TxLogServer;
  * It now contains a workspace for procedure data as a
  * temporary solution.
  */
-class Tx {
+class Tx: public enable_shared_from_this<Tx> {
  public:
   shared_ptr<IntEvent> fully_dispatched_{Reactor::CreateSpEvent<IntEvent>()};
 //  bool fully_dispatched_{false};
@@ -55,6 +55,7 @@ class Tx {
   // TODO at most one active coroutine runnable for a tx at a time
 //  IntEvent running_{};
   shared_ptr<Marshallable> cmd_{};
+  shared_ptr<ViewData> sp_view_data_ = nullptr;
 
 
 #ifdef CHECK_ISO
@@ -128,8 +129,11 @@ class Tx {
   virtual ~Tx();
 };
 
-struct entry_t {
+class entry_t {
+ public:
   shared_ptr<Tx> last_{nullptr}; // last transaction(write) that touches this
+  unordered_set<shared_ptr<Tx>> active_{}; // last transaction(write) that touches this
+  rank_t rank_ {RANK_UNDEFINED};
   // item. (arriving order)
 
   const entry_t &operator=(const entry_t &rhs) {

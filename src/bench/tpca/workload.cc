@@ -4,6 +4,8 @@
 #include "workload.h"
 #include "zipf.h"
 
+#define BATCH 50
+
 namespace janus {
 
 char TPCA_BRANCH[] = "branch";
@@ -76,10 +78,10 @@ TpcaWorkload::TpcaWorkload(Config* config) : Workload(config) {
 ////    int k3 = RandomGenerator::rand(0, tpca_para_.n_branch_ - 1);
 ////    Log_info("gen req, coo_id: %x \t k1: %x k2: %x, k3: %x", cid, k1, k2, k3);
 //  } else if (dist == "zipf") {
-//    static auto alpha = Config::GetConfig()->coeffcient_;
-//    static ZipfDist d1(alpha, tpca_para_.n_customer_);
-//    static ZipfDist d2(alpha, tpca_para_.n_teller_);
-//    static ZipfDist d3(alpha, tpca_para_.n_branch_);
+//    static auto theta = Config::GetConfig()->coeffcient_;
+//    static ZipfDist d1(theta, tpca_para_.n_customer_);
+//    static ZipfDist d2(theta, tpca_para_.n_teller_);
+//    static ZipfDist d3(theta, tpca_para_.n_branch_);
 //    k1 = d1(rand_gen_);
 //    k2 = d2(rand_gen_);
 //    k3 = d3(rand_gen_);
@@ -135,10 +137,10 @@ void TpcaWorkload::GetTxRequest(TxRequest* req, uint32_t cid) {
         {2, Value(k3)},
         {3, amount}};
   } else if (dist == "zipf") {
-    static auto alpha = Config::GetConfig()->coeffcient_;
-    static ZipfDist d1(alpha, tpca_para_.n_customer_);
-    static ZipfDist d2(alpha, tpca_para_.n_teller_);
-    static ZipfDist d3(alpha, tpca_para_.n_branch_);
+    static auto theta = Config::GetConfig()->coeffcient_;
+    static ZipfDist d1(theta, tpca_para_.n_customer_);
+    static ZipfDist d2(theta, tpca_para_.n_teller_);
+    static ZipfDist d3(theta, tpca_para_.n_branch_);
     int k1 = d1(rand_gen_);
     int k2 = d2(rand_gen_);
     int k3 = d3(rand_gen_);
@@ -168,6 +170,7 @@ void TpcaWorkload::RegisterPrecedures() {
        {TPCA_CUSTOMER, {TPCA_VAR_X}}, // s
        DF_NO,
        PROC {
+         for (int i = 0; i < BATCH; ++i) {
 //        Log::debug("output: %p, output_size: %p", output, output_size);
          Value buf;
          verify(cmd.input.size() >= 1);
@@ -177,50 +180,53 @@ void TpcaWorkload::RegisterPrecedures() {
          mb[0] = cmd.input.at(TPCA_VAR_X).get_blob();
 
          r = tx.Query(tx.GetTable(TPCA_CUSTOMER), mb, TPCA_ROW_1);
-         tx.ReadColumn(r, 1, &buf, TXN_BYPASS);
+//         tx.ReadColumn(r, 1, &buf, TXN_IMMEDIATE); // TODO test for janus and troad
+         tx.ReadColumn(r, 1, &buf, RANK_I); // TODO test for janus and troad
          output[TPCA_VAR_OX] = buf;
-         buf.set_i32(buf.get_i32() + 1/*input[1].get_i32()*/);
-         tx.WriteColumn(r, 1, buf, TXN_DEFERRED);
 
-#ifdef CHECK_ISO
-         tx.deltas_[r][1] = 1;
-#endif
+         int n = tx.tid_; // making this non-commutative in order to test isolation
+//         buf.set_i32(buf.get_i32() + 1/*input[1].get_i32()*/);
+         buf.set_i32(n/*input[1].get_i32()*/);
+         // TODO: yidawu commentted
+         //         tx.WriteColumn(r, 1, buf, RANK_I);
          *res = SUCCESS;
+       }
        }
   );
 
   RegP(TPCA_PAYMENT, TPCA_PAYMENT_2,
        {TPCA_VAR_Y}, // i
        {}, // o
-       {conf_id_t(TPCA_CUSTOMER, {TPCA_VAR_Y}, {1}, TPCA_ROW_2)}, // c
+       {conf_id_t(TPCA_TELLER, {TPCA_VAR_Y}, {1}, TPCA_ROW_2)}, // c
        {TPCA_TELLER, {TPCA_VAR_Y} }, // s
        DF_REAL,
        PROC {
-         Value buf;
+         for (int i = 0; i < BATCH; i++) {
+         auto buf = std::make_unique<Value>();
          verify(cmd.input.size() >= 1);
          mdb::Row *r = NULL;
          mdb::MultiBlob mb(1);
          mb[0] = cmd.input.at(TPCA_VAR_Y).get_blob();
 
          r = tx.Query(tx.GetTable(TPCA_TELLER), mb, TPCA_ROW_2);
-         tx.ReadColumn(r, 1, &buf, TXN_BYPASS);
-         output[TPCA_VAR_OY] = buf;
-         buf.set_i32(buf.get_i32() + 1/*input[1].get_i32()*/);
-         tx.WriteColumn(r, 1, buf, TXN_DEFERRED);
+         tx.ReadColumn(r, 1, buf.get(), TXN_BYPASS);
+         output[TPCA_VAR_OY] = *buf;
+         buf->set_i32(buf->get_i32() + 1/*input[1].get_i32()*/);
+         // TODO: yidawu commentted
+         tx.WriteColumn(r, 1, *buf, TXN_DEFERRED);
          *res = SUCCESS;
-#ifdef CHECK_ISO
-         tx.deltas_[r][1] = 1;
-#endif
+         }
        }
   );
 
   RegP(TPCA_PAYMENT, TPCA_PAYMENT_3,
        {TPCA_VAR_Z}, // i
        {}, // o
-       {conf_id_t(TPCA_CUSTOMER, {TPCA_VAR_Z}, {1}, TPCA_ROW_3)}, // c
+       {conf_id_t(TPCA_BRANCH, {TPCA_VAR_Z}, {1}, TPCA_ROW_3)}, // c
        {TPCA_BRANCH, {TPCA_VAR_Z}},
        DF_REAL,
        PROC {
+         for (int i = 0; i < BATCH; i++) {
          Value buf;
          verify(cmd.input.size() >= 1);
          i32 output_index = 0;
@@ -233,11 +239,10 @@ void TpcaWorkload::RegisterPrecedures() {
          tx.ReadColumn(r, 1, &buf, TXN_BYPASS);
          output[TPCA_VAR_OZ] = buf;
          buf.set_i32(buf.get_i32() + 1/*input[1].get_i32()*/);
-         tx.WriteColumn(r, 1, buf, TXN_DEFERRED);
+         // TODO: yidawu commentted
+         //         tx.WriteColumn(r, 1, buf, TXN_DEFERRED);
          *res = SUCCESS;
-#ifdef CHECK_ISO
-         tx.deltas_[r][1] = 1;
-#endif
+         }
        }
   );
 }

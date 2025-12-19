@@ -37,9 +37,9 @@ def emit_service_and_proxy(service, f, rpc_table):
             f.writeln("int ret = 0;")
             for func in service.functions:
                 if func.attr == "raw":
-                    f.writeln("if ((ret = svr->reg(%s, this, &%sService::%s)) != 0) {" % (func.name.upper(), service.name, func.name))
+                    f.writeln("if ((ret = svr->reg_method(%s, this, &%sService::%s)) != 0) {" % (func.name.upper(), service.name, func.name))
                 else:
-                    f.writeln("if ((ret = svr->reg(%s, this, &%sService::__%s__wrapper__)) != 0) {" % (func.name.upper(), service.name, func.name))
+                    f.writeln("if ((ret = svr->reg_method(%s, this, &%sService::__%s__wrapper__)) != 0) {" % (func.name.upper(), service.name, func.name))
                 with f.indent():
                     f.writeln("goto err;")
                 f.writeln("}")
@@ -51,14 +51,14 @@ def emit_service_and_proxy(service, f, rpc_table):
             f.writeln("return ret;")
         f.writeln("}")
         f.writeln("// these RPC handler functions need to be implemented by user")
-        f.writeln("// for 'raw' handlers, remember to reply req, delete req, and sconn->release(); use sconn->run_async for heavy job")
+        f.writeln("// for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use")
         for func in service.functions:
             if service.abstract or func.abstract:
                 postfix = " = 0"
             else:
                 postfix = ""
             if func.attr == "raw":
-                f.writeln("virtual void %s(rrr::Request* req, rrr::ServerConnection* sconn)%s;" % (func.name, postfix))
+                f.writeln("virtual void %s(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn)%s;" % (func.name, postfix))
             else:
                 func_args = []
                 for in_arg in func.input:
@@ -79,7 +79,7 @@ def emit_service_and_proxy(service, f, rpc_table):
         for func in service.functions:
             if func.attr == "raw":
                 continue
-            f.writeln("void __%s__wrapper__(rrr::Request* req, rrr::ServerConnection* sconn) {" % func.name)
+            f.writeln("void __%s__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {" % func.name)
             with f.indent():
                 if func.attr == "defer":
                     invoke_with = []
@@ -96,10 +96,15 @@ def emit_service_and_proxy(service, f, rpc_table):
                         out_counter += 1
                     f.writeln("auto __marshal_reply__ = [=] {");
                     with f.indent():
-                        out_counter = 0
-                        for out_arg in func.output:
-                            f.writeln("*sconn << *out_%d;" % out_counter)
-                            out_counter += 1
+                        f.writeln("auto sconn_opt = weak_sconn.upgrade();")
+                        f.writeln("if (sconn_opt.is_some()) {")
+                        with f.indent():
+                            f.writeln("auto sconn = sconn_opt.unwrap();")
+                            out_counter = 0
+                            for out_arg in func.output:
+                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn) << *out_%d;" % out_counter)
+                                out_counter += 1
+                        f.writeln("}")
                     f.writeln("};");
                     f.writeln("auto __cleanup__ = [=] {");
                     with f.indent():
@@ -112,7 +117,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                             f.writeln("delete out_%d;" % out_counter)
                             out_counter += 1
                     f.writeln("};");
-                    f.writeln("rrr::DeferredReply* __defer__ = new rrr::DeferredReply(req, sconn, __marshal_reply__, __cleanup__);")
+                    f.writeln("rrr::DeferredReply* __defer__ = new rrr::DeferredReply(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
                     invoke_with += "__defer__",
                     f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
                 else: # normal and fast rpc
@@ -130,12 +135,16 @@ def emit_service_and_proxy(service, f, rpc_table):
                         invoke_with += "&out_%d" % out_counter,
                         out_counter += 1
                     f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
-                    f.writeln("sconn->begin_reply(req);")
-                    for i in range(out_counter):
-                        f.writeln("*sconn << out_%d;" % i)
-                    f.writeln("sconn->end_reply();")
-                    f.writeln("delete req;")
-                    f.writeln("sconn->release();")
+                    f.writeln("auto sconn_opt = weak_sconn.upgrade();")
+                    f.writeln("if (sconn_opt.is_some()) {")
+                    with f.indent():
+                        f.writeln("auto sconn = sconn_opt.unwrap();")
+                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);")
+                        for i in range(out_counter):
+                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn) << out_%d;" % i)
+                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).end_reply();")
+                    f.writeln("}")
+                    f.writeln("// req automatically cleaned up by rusty::Box")
             f.writeln("}")
     f.writeln("};")
     f.writeln()
@@ -171,25 +180,31 @@ def emit_service_and_proxy(service, f, rpc_table):
                     sync_func_params += "%s* out_%d" % (out_arg.type, out_counter),
                     sync_out_params += "out_%d" % out_counter,
                 out_counter += 1
-            f.writeln("rrr::Future* async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
+            f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
             with f.indent():
-                f.writeln("rrr::Future* __fu__ = __cl__->begin_request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
+                f.writeln("auto __fu_result__ = __cl__->begin_request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
                 if len(async_call_params) > 0:
-                    f.writeln("if (__fu__ != nullptr) {")
+                    f.writeln("if (__fu_result__.is_err()) {")
                     with f.indent():
-                        for param in async_call_params:
-                            f.writeln("*__cl__ << %s;" % param)
+                        f.writeln("return __fu_result__;  // Propagate error")
                     f.writeln("}")
+                    f.writeln("auto __fu__ = __fu_result__.unwrap();")
+                    for param in async_call_params:
+                        f.writeln("*__cl__ << %s;" % param)
                 f.writeln("__cl__->end_request();")
-                f.writeln("return __fu__;")
+                if len(async_call_params) > 0:
+                    f.writeln("return rrr::FutureResult::Ok(__fu__);")
+                else:
+                    f.writeln("return __fu_result__;")
             f.writeln("}")
             f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
             with f.indent():
-                f.writeln("rrr::Future* __fu__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
-                f.writeln("if (__fu__ == nullptr) {")
+                f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
+                f.writeln("if (__fu_result__.is_err()) {")
                 with f.indent():
-                    f.writeln("return ENOTCONN;")
+                    f.writeln("return __fu_result__.unwrap_err();  // Return error code")
                 f.writeln("}")
+                f.writeln("auto __fu__ = __fu_result__.unwrap();")
                 f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
                 if len(sync_out_params) > 0:
                     f.writeln("if (__ret__ == 0) {")
@@ -197,7 +212,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                         for param in sync_out_params:
                             f.writeln("__fu__->get_reply() >> *%s;" % param)
                     f.writeln("}")
-                f.writeln("__fu__->release();")
+                f.writeln("// Arc auto-released")
                 f.writeln("return __ret__;")
             f.writeln("}")
     f.writeln("};")

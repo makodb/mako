@@ -9,13 +9,44 @@
 
 namespace janus {
 
-MultiPaxosCommo::MultiPaxosCommo(PollMgr* poll) : Communicator(poll) {
+MultiPaxosCommo::MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll)
+  : Communicator(poll) {
+}
+
+// Jetpack: SendForward for forwarding commands to leader
+shared_ptr<PaxosPrepareQuorumEvent>
+MultiPaxosCommo::SendForward(parid_t par_id,
+                             uint64_t follower_id,
+                             uint64_t dep_id,
+                             shared_ptr<Marshallable> cmd) {
+  auto e = Reactor::CreateSpEvent<PaxosPrepareQuorumEvent>(1, 1);
+  auto src_coroid = e->GetCoroId();
+  auto leader_id = LeaderProxyForPartition(par_id).first;
+  auto leader_proxy = (MultiPaxosProxy*) LeaderProxyForPartition(par_id).second;
+
+  FutureAttr fuattr;
+  fuattr.callback = [e, leader_id, src_coroid, follower_id](rusty::Arc<Future> fu) {
+    if (fu->get_error_code() != 0) {
+      Log_info("Get a error message in reply");
+      return;
+    }
+    uint64_t coro_id = 0;
+    fu->get_reply() >> coro_id;
+    e->FeedResponse(1);
+    Log_info("adding dependency");
+    // e->add_dep(follower_id, src_coroid, leader_id, coro_id);
+  };
+
+  MarshallDeputy md(cmd);
+  Future::safe_release(leader_proxy->async_Forward(md, dep_id));
+
+  return e;
 }
 
 void MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
                                        slotid_t slot_id,
                                        ballot_t ballot,
-                                       const function<void(Future*)>& cb) {
+                                       const function<void(rusty::Arc<Future>)>& cb) {
   verify(0);
   // auto proxies = rpc_par_proxies_[par_id];
   // for (auto& p : proxies) {
@@ -87,7 +118,7 @@ void MultiPaxosCommo::BroadcastAccept(parid_t par_id,
                                       slotid_t slot_id,
                                       ballot_t ballot,
                                       shared_ptr<Marshallable> cmd,
-                                      const function<void(Future*)>& cb) {
+                                      const function<void(rusty::Arc<Future>)>& cb) {
   verify(0);
   // int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   // auto proxies = rpc_par_proxies_[par_id];
@@ -117,18 +148,23 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
                                        const std::function<void(uint64_t, ballot_t)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   auto proxies = rpc_par_proxies_[par_id];
-  vector<Future*> fus;
+  vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
 
-  //auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1,1);
+  // Log_info("ForwardToLearner: par_id=%d, slot=%lu, n=%d, proxies.size=%zu, batch_idx=%d",
+  //          par_id, slot, n, proxies.size(), cur_batch_idx);
 
+  //auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1,1);
+  int sent_count = 0;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-    if (Config::GetConfig()->SiteById(p.first).role!=2) continue; 
+    int site_role = Config::GetConfig()->SiteById(p.first).role;
+    Log_debug("ForwardToLearner: site_id=%d, role=%d", p.first, site_role);
+    if (site_role!=2) continue;
      auto proxy = (MultiPaxosProxy*) p.second;
      FutureAttr fuattr;
-     fuattr.callback = [/*e, */cb] (Future* fu) {
+     fuattr.callback = [/*e, */cb] (rusty::Arc<Future> fu) {
         if (fu->get_error_code()!=0) {
           Log_info("received an error message6");
           return;
@@ -142,11 +178,13 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         //e->FeedResponse(1);
       };
      MarshallDeputy md(cmd);
-     auto f = proxy->async_ForwardToLearnerServer(par_id, slot, ballot, md, fuattr);
-     Future::safe_release(f);
+     //Log_info("ForwardToLearner: SENDING to learner site_id=%d, slot=%lu", p.first, slot);
+     auto fu_result = proxy->async_ForwardToLearnerServer(par_id, slot, ballot, md, fuattr);
+     sent_count++;
+     // Arc auto-released
 
     // auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-    // if (Config::GetConfig()->SiteById(p.first).role!=2) continue; 
+    // if (Config::GetConfig()->SiteById(p.first).role!=2) continue;
     //  auto proxy = (MultiPaxosProxy*) p.second;
     //  MarshallDeputy md(cmd);
     //  uint64_t *slotr;
@@ -259,15 +297,15 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k);
   auto proxies = rpc_par_proxies_[par_id];
-  vector<Future*> fus;
+  vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
+    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (Future* fu) {
+    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message5");
         return;
@@ -280,8 +318,8 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_Heartbeat(md, fuattr);
-    Future::safe_release(f);
+    auto fu_result = proxy->async_Heartbeat(md, fuattr);
+    // Arc auto-released
   }
   return e;
 }
@@ -297,16 +335,16 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k);
   auto proxies = rpc_par_proxies_[par_id];
-  vector<Future*> fus;
+  vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
-    if (Config::GetConfig()->SiteById(p.first).role==2) continue; 
+    if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     if (Config::GetConfig()->SiteById(p.first).role==0) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (Future* fu) {
+    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message3");
         return;
@@ -321,8 +359,8 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_SyncLog(md, fuattr);
-    Future::safe_release(f);
+    auto fu_result = proxy->async_SyncLog(md, fuattr);
+    // Arc auto-released
   }
   return e;
 }
@@ -336,7 +374,7 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
   // not old leader, not new leader(old learner)
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n-1, n-1);
   auto proxies = rpc_par_proxies_[par_id];
-  vector<Future*> fus;
+  vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
   for (int i=0;i<n+1;i++) {
@@ -345,7 +383,7 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==0) continue; // ??? why skip itself
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (Future* fu) {
+    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message4");
         return;
@@ -358,8 +396,8 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_SyncNoOps(md, fuattr);
-    Future::safe_release(f);
+    auto fu_result = proxy->async_SyncNoOps(md, fuattr);
+    // Arc auto-released
   }
   return e;
 }
@@ -406,7 +444,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
   auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
-  vector<Future*> fus;
+  vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
   //Log_info("cur_batch_idx:%d",cur_batch_idx);
@@ -416,7 +454,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     auto proxy = (MultiPaxosProxy*) p.second;  // a Proxy pool for the concurrent request
     FutureAttr fuattr;
     int st = p.first;
-    fuattr.callback = [e, cb, st] (Future* fu) {
+    fuattr.callback = [e, cb, st] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message2");
         return;
@@ -432,22 +470,22 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto f = proxy->async_BulkAccept(md, fuattr);
-    Future::safe_release(f);
+    auto fu_result = proxy->async_BulkAccept(md, fuattr);
+    // Arc auto-released
   }
   return e;
 }
 
 // Distant data center
 shared_ptr<PaxosAcceptQuorumEvent>
-MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id, 
+MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
                                      shared_ptr<Marshallable> cmd,
                                      const function<void(ballot_t, int)>& cb){
   auto proxies = rpc_par_proxies_[par_id];
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug 
-  vector<Future*> fus;
+  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
+  vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
   for (int i=0;i<n+1;i++) {
@@ -455,7 +493,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
     if (Config::GetConfig()->SiteById(p.first).role==2) continue;
     auto proxy = (MultiPaxosProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e, cb] (Future* fu) {
+    fuattr.callback = [e, cb] (rusty::Arc<Future> fu) {
       if (fu->get_error_code()!=0) {
         Log_info("received an error message");
         return;
@@ -467,8 +505,8 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       e->FeedResponse(valid);
     };
     MarshallDeputy md(cmd);
-    auto f = proxy->async_BulkDecide(md, fuattr);
-    Future::safe_release(f);
+    auto fu_result = proxy->async_BulkDecide(md, fuattr);
+    // Arc auto-released
   }
   return e;
 }

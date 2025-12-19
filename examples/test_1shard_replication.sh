@@ -10,29 +10,60 @@ echo "========================================="
 echo "Testing 1-shard setup with replication"
 echo "========================================="
 
+trd=${1:-6}
+script_name="$(basename "$0")"
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
-rm -f shard0*.log nfs_sync_*
+rm -f nfs_sync_*
+USERNAME=${USER:-unknown}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 # Start shard 0 in background
 echo "Starting shard 0..."
-nohup bash bash/shard.sh 1 0 6 localhost 0 1 > shard0-localhost.log 2>&1 &
-nohup bash bash/shard.sh 1 0 6 learner 0 1 > shard0-learner.log 2>&1 &
-nohup bash bash/shard.sh 1 0 6 p2 0 1 > shard0-p2.log 2>&1 &
+nohup bash bash/shard.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
+nohup bash bash/shard.sh 1 0 $trd learner 0 1 > $script_name\_shard0-learner-$trd.log 2>&1 &
+nohup bash bash/shard.sh 1 0 $trd p2 0 1 > $script_name\_shard0-p2-$trd.log 2>&1 &
 sleep 1
-nohup bash bash/shard.sh 1 0 6 p1 0 1 > shard0-p1.log 2>&1 &
+nohup bash bash/shard.sh 1 0 $trd p1 0 1 > $script_name\_shard0-p1-$trd.log 2>&1 &
 SHARD0_PID=$!
 sleep 2
 
-# Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 60
+# Wait for benchmark to complete (poll for completion marker)
+echo "Waiting for benchmark to complete..."
+log_file="${script_name}_shard0-localhost-$trd.log"
+max_wait=120  # Maximum wait time in seconds
+wait_count=0
 
-# Kill the processes
-echo "Stopping shards..."
-kill $SHARD0_PID 2>/dev/null
-wait $SHARD0_PID 2>/dev/null
+while [ $wait_count -lt $max_wait ]; do
+    # Check if throughput output appeared (indicates completion)
+    if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+        echo "Benchmark completed after ${wait_count}s"
+        sleep 2  # Give a moment for final output
+        break
+    fi
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed)"
+    fi
+done
+
+if [ $wait_count -ge $max_wait ]; then
+    echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+fi
+
+# Graceful shutdown: SIGTERM first
+echo "Stopping shards (graceful)..."
+pkill -TERM -f "dbtest.*shard-index 0" 2>/dev/null || true
+sleep 3
+
+# Force kill any remaining processes
+pkill -9 -f "dbtest.*shard-index 0" 2>/dev/null || true
+sleep 1
+
+# Original cleanup for good measure
+kill $SHARD0_PID 2>/dev/null || true
+wait $SHARD0_PID 2>/dev/null || true
 
 echo ""
 echo "========================================="
@@ -44,7 +75,7 @@ failed=0
 # Check each shard's output
 {
     i=0
-    log="shard${i}-localhost.log"
+    log="${script_name}_shard${i}-localhost-$trd.log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
@@ -93,18 +124,19 @@ failed=0
 
 # Check replay_batch counter in shard0-p1.log
 echo ""
-echo "Checking shard0-p1.log:"
+log_p1="${script_name}_shard0-p1-$trd.log"
+echo "Checking $log_p1:"
 echo "-----------------"
 
-if [ ! -f "shard0-p1.log" ]; then
-    echo "  ✗ shard0-p1.log file not found"
+if [ ! -f "$log_p1" ]; then
+    echo "  ✗ $log_p1 file not found"
     failed=1
 else
     # Get the last occurrence of replay_batch
-    last_replay_batch=$(grep "replay_batch:" "shard0-p1.log" | tail -1)
+    last_replay_batch=$(grep "replay_batch:" "$log_p1" | tail -1)
     
     if [ -z "$last_replay_batch" ]; then
-        echo "  ✗ No 'replay_batch' keyword found in shard0-p1.log"
+        echo "  ✗ No 'replay_batch' keyword found in $log_p1"
         failed=1
     else
         # Extract the replay_batch number (assuming format: "replay_batch:XXX")
@@ -137,12 +169,12 @@ else
     echo "========================================="
     echo ""
     echo "Debug information:"
-    echo "Check shard0-localhost.log and shard0-p1.log for details"
+    echo "Check $script_name\_shard0-localhost-$trd.log and $log_p1 for details"
     echo ""
-    echo "Last 10 lines of shard0-localhost.log:"
-    tail -10 shard0-localhost.log 
+    echo "Last 10 lines of $script_name\_shard0-localhost-$trd.log:"
+    tail -10 $script_name\_shard0-localhost-$trd.log 
     echo ""
-    echo "Last 5 lines with 'replay_batch' from shard0-p1.log:"
-    grep "replay_batch" shard0-p1.log | tail -5 2>/dev/null || echo "No replay_batch entries found"
+    echo "Last 5 lines with 'replay_batch' from $log_p1:"
+    grep "replay_batch" $log_p1 | tail -5 2>/dev/null || echo "No replay_batch entries found"
     exit 1
 fi

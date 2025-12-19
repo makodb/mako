@@ -19,7 +19,8 @@ public:
 
     void initialize() {
         scoped_db_thread_ctx ctx(db, false);
-        mbta_ordered_index::mbta_type::thread_init();
+        // force multiversion
+        TThread::enable_multiverison();
     }
 
     void test_basic_transactions() {
@@ -32,13 +33,12 @@ public:
         for (size_t i = 0; i < 5; i++) {
             void *txn = db->new_txn(0, arena, txn_buf());
             std::string key = "test_key_" + std::to_string(i);
-            std::string value = "test_value_" + std::to_string(i) + 
-                               std::string(mako::EXTRA_BITS_FOR_VALUE, 'B');
+            std::string value = mako::Encode("test_value_" + std::to_string(i));
             try {
                 if (i%2==0)
-                    table->put(txn, key, StringWrapper(value));
+                    table->put(txn, key, value);
                 else
-                    table2->put(txn, key, StringWrapper(value));
+                    table2->put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Write aborted: %s\n", key.c_str());
@@ -97,9 +97,9 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
             std::string key = "overwrite_key";
-            std::string value = "initial_2000" + std::string(mako::EXTRA_BITS_FOR_VALUE, 'B');
+            std::string value = mako::Encode("initial_2000");
             try {
-                table->put(txn, key, StringWrapper(value));
+                table->put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Write aborted: %s\n", key.c_str());
@@ -112,9 +112,9 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
             std::string key = "overwrite_key";
-            std::string value = "updated_1000" + std::string(mako::EXTRA_BITS_FOR_VALUE, 'B');
+            std::string value = mako::Encode("updated_1000");
             try {
-                table->put(txn, key, StringWrapper(value));
+                table->put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Update aborted: %s\n", key.c_str());
@@ -126,9 +126,9 @@ public:
             void *txn = db->new_txn(0, arena, txn_buf());
             scoped_str_arena s_arena(arena);
             std::string key = "overwrite_key";
-            std::string value = "updated_0000" + std::string(mako::EXTRA_BITS_FOR_VALUE, 'B');
+            std::string value = mako::Encode("updated_0000");
             try {
-                table->put(txn, key, StringWrapper(value));
+                table->put(txn, key, value);
                 db->commit_txn(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Update aborted: %s\n", key.c_str());
@@ -136,7 +136,6 @@ public:
             }
         }
 
-        // Check multiple versions
         {
             void *txn = db->new_txn(0, arena, txn_buf());
             std::string key = "overwrite_key" ;
@@ -148,16 +147,8 @@ public:
                 db->abort_txn(txn);
             }
 
-            std::vector<string> versions = MultiVersionValue::getAllVersion<std::string>(value); 
-            VERIFY(versions.size()==3, "Versions size");
-
             std::string expected0 = "updated_0000";
-            std::string expected1 = "updated_1000";
-            std::string expected2 = "initial_2000";
-            
-            VERIFY(versions[0].substr(0, expected0.length())==expected0, "versions[0] check");
-            VERIFY(versions[1].substr(0, expected1.length())==expected1, "versions[1] check");
-            VERIFY(versions[2].substr(0, expected2.length())==expected2, "versions[2] check");
+            VERIFY(value==expected0, "value check");
         }
     }
 

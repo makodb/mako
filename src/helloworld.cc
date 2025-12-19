@@ -42,7 +42,7 @@ void output_val(i32 val) {
 void *nc_start_client(void *input) {
   int par_id = ((struct args*)input)->par_id;
   FutureAttr fuattr;  // fuattr
-  fuattr.callback = [&] (Future* fu) {
+  fuattr.callback = [&] (rusty::Arc<Future> fu) {
     i32 val;
     fu->get_reply() >> val;
     output_val(val);
@@ -64,7 +64,7 @@ void *nc_start_client(void *input) {
 
 void nc_setup_client(int nkeys, int nthreads, int run) {
   for (int i=0; i<nthreads; i++) {
-    rrr::PollMgr *pm = new rrr::PollMgr();
+    rrr::PollThread *pm = new rrr::PollThread();
     rrr::Client *client = new rrr::Client(pm);
     auto port_s=std::to_string(10010+i);
     while (client->connect((std::string(server_ip)+":"+port_s).c_str())!=0) {
@@ -90,16 +90,11 @@ void nc_setup_client(int nkeys, int nthreads, int run) {
 
 void *nc_start_server2(void *input) {
     HelloworldClientServiceImpl *impl = new HelloworldClientServiceImpl();
-    rrr::PollMgr *pm = new rrr::PollMgr(); // starting a coroutine
+    rrr::PollThread *pm = new rrr::PollThread(); // starting a coroutine
     base::ThreadPool *tp = new base::ThreadPool();  // never use it
     rrr::Server *server = new rrr::Server(pm, tp);
-    
-    // We should count the child threads into consideration
-    bool track_cputime=true;
-    pthread_t *ps;
-    if (track_cputime) ps = pm->GetPthreads(0);
 
-    server->reg(impl);
+    server->reg_service(*impl);
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     nc_services2.push_back(std::shared_ptr<HelloworldClientServiceImpl>(impl));
     return nullptr;

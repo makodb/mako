@@ -1,6 +1,14 @@
+// MsgPack test harness
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: msgpack::streaming_parser::*
+
 #include "msgpack.hh"
 using namespace lcdf;
 
+// @unsafe - test harness feeds raw msgpack buffers directly into parser without extra guards
 enum { status_ok, status_error, status_incomplete };
 
 __attribute__((noreturn))

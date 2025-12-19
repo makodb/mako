@@ -2,17 +2,27 @@
 
 #include <functional>
 #include <iostream>
+#include <memory>
+#include <boost/coroutine2/protected_fixedsize_stack.hpp>
 #include "../base/all.hpp"
 #include "coroutine.h"
 #include "reactor.h"
 
-namespace rrr {
+// #define USE_PROTECTED_STACK
 
-Coroutine::Coroutine(std::function<void()> func) : func_(std::move(func)), status_(INIT) {
+namespace rrr {
+uint64_t Coroutine::global_id = 0;
+
+Coroutine::Coroutine(rusty::Function<void()> func)
+    : status_(INIT),
+      func_(std::move(func)),
+      boost_coro_task_(rusty::None),
+      boost_coro_yield_(boost::none),
+      id(Coroutine::global_id++) {
 }
 
 Coroutine::~Coroutine() {
-  verify(up_boost_coro_task_ != nullptr);
+  // rusty::Box automatically handles cleanup
 //  verify(0);
 }
 
@@ -24,46 +34,58 @@ void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
   while (true) {
     auto sz = reactor->coros_.size();
     verify(sz > 0);
+    verify(func_);
     func_();
     func_ = {};
     status_ = FINISHED;
+    if (needs_finalize_) {
+      Log_info("Warning: We did not deal with backlog issues");
+      needs_finalize_ = false;
+    }
+    Reactor::GetReactor()->n_active_coroutines_--;
     yield();
   }
 }
 
-void Coroutine::Run() {
-  verify(!up_boost_coro_task_);
+void Coroutine::Run() const {
+  verify(boost_coro_task_.is_none());
   verify(status_ == INIT);
   status_ = STARTED;
   auto reactor = Reactor::GetReactor();
 //  reactor->coros_;
   auto sz = reactor->coros_.size();
   verify(sz > 0);
-  up_boost_coro_task_ = make_unique<boost_coro_task_t>(
-      std::bind(&Coroutine::BoostRunWrapper, this, std::placeholders::_1));
+  auto task = std::bind(&Coroutine::BoostRunWrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
+  boost_coro_task_ = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));
 #ifdef USE_BOOST_COROUTINE1
-  (*up_boost_coro_task_)();
+  (*boost_coro_task_.as_ref().unwrap())();
 #endif
 }
 
-void Coroutine::Yield() {
+void Coroutine::Yield() const {
   verify(boost_coro_yield_);
-  verify(status_ == STARTED || status_ == RESUMED);
+  verify(status_ == STARTED || status_ == RESUMED || status_ == FINALIZING);
   status_ = PAUSED;
+  Reactor::GetReactor()->n_active_coroutines_--;
   boost_coro_yield_.value()();
 }
 
-void Coroutine::Continue() {
+void Coroutine::Continue() const {
   verify(status_ == PAUSED || status_ == RECYCLED);
-  verify(up_boost_coro_task_);
+  verify(boost_coro_task_.is_some());
   status_ = RESUMED;
-  (*up_boost_coro_task_)();
+  (*boost_coro_task_.as_mut().unwrap())();
   // some events might have been triggered from last coroutine,
   // but you have to manually call the scheduler to loop.
 }
 
-bool Coroutine::Finished() {
-  return status_ == FINISHED;
+bool Coroutine::Finished() const {
+  return status_ == FINISHED || status_ == RECYCLED;
+}
+
+void Coroutine::DoFinalize() {
+  // Handle finalization logic if needed
+  needs_finalize_ = false;
 }
 
 } // namespace rrr

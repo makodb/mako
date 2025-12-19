@@ -4,12 +4,31 @@
 #include "procedure.h"
 #include "benchmark_control_rpc.h"
 
+
 namespace janus {
 
 static int volatile x1 =
     MarshallDeputy::RegInitializer(MarshallDeputy::CMD_VEC_PIECE,
                                    [] () -> Marshallable* {
-                                     return new VecPieceData;
+                                     return new VecPieceData();
+                                   });
+
+static int volatile x2 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_REC_VEC,
+                                   [] () -> Marshallable* {
+                                     return new VecRecData;
+                                   });
+
+static int volatile x3 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_VIEW_DATA,
+                                   [] () -> Marshallable* {
+                                     return new ViewData;
+                                   });
+
+static int volatile x4 =
+    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_KEY_CMD_BATCH,
+                                   [] () -> Marshallable* {
+                                     return new KeyCmdBatchData;
                                    });
 
 TxWorkspace::TxWorkspace() {
@@ -99,6 +118,16 @@ Marshal& operator << (Marshal& m, const TxReply& reply) {
   // m << reply.start_time_;
   m << reply.time_;
   m << reply.txn_type_;
+  
+  // Marshal view data if present
+  bool_t has_view_data = (reply.sp_view_data_ != nullptr) ? 1 : 0;
+  m << has_view_data;
+  if (has_view_data) {
+    MarshallDeputy view_md;
+    view_md.SetMarshallable(reply.sp_view_data_);
+    m << view_md;
+  }
+  
   return m;
 }
 
@@ -109,15 +138,38 @@ Marshal& operator >> (Marshal& m, TxReply& reply) {
   memset(&reply.start_time_, 0, sizeof(reply.start_time_));
   m >> reply.time_;
   m >> reply.txn_type_;
+  
+  // Unmarshal view data if present
+  bool_t has_view_data;
+  m >> has_view_data;
+  if (has_view_data) {
+    MarshallDeputy view_md;
+    m >> view_md;
+    reply.sp_view_data_ = dynamic_pointer_cast<ViewData>(view_md.sp_data_);
+  } else {
+    reply.sp_view_data_ = nullptr;
+  }
+  
   return m;
 }
 
-set<parid_t> TxData::GetPartitionIds() {
+set<parid_t>& TxData::GetPartitionIds() {
   return partition_ids_;
 }
 
 bool TxData::IsOneRound() {
   return false;
+}
+
+vector<TxPieceData> TxData::GetCmdsByPartitionAndRank(parid_t par_id, rank_t rank) {
+  vector<TxPieceData> cmds;
+  for (auto& pair: map_piece_data_) {
+    auto d = pair.second;
+    if (d->partition_id_ == par_id && d->rank_ == rank) {
+      cmds.push_back(*d);
+    }
+  }
+  return cmds;
 }
 
 vector<TxPieceData> TxData::GetCmdsByPartition(parid_t par_id) {
@@ -132,9 +184,14 @@ vector<TxPieceData> TxData::GetCmdsByPartition(parid_t par_id) {
 }
 
 ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
-  verify(n_pieces_dispatched_ < n_pieces_dispatchable_);
-  verify(n_pieces_dispatched_ < n_pieces_all_);
+  // Log_info("n_pieces_dispatched_ %d n_pieces_dispatchable_ %d n_pieces_all_ %d", n_pieces_dispatched_, n_pieces_dispatchable_, n_pieces_all_);
+  // n_pieces_dispatched_ = 0; // [JetPack TODO] remove this
+  verify(n_pieces_dispatched_ <= n_pieces_dispatchable_); // [JetPack TODO] recover this to <
+  verify(n_pieces_dispatched_ <= n_pieces_all_); // [JetPack TODO] recover this to <
   ReadyPiecesData ready_pieces_data;
+
+  if (n_pieces_dispatched_ == n_pieces_dispatchable_ || n_pieces_dispatched_ == n_pieces_all_)
+    return ready_pieces_data;
 
 //  int n_debug = 0;
   for (auto &kv : status_) {
@@ -148,11 +205,13 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
       piece_data->type_ = pi;
       piece_data->root_id_ = id_;
       piece_data->root_type_ = type_;
+      piece_data->client_id_ = client_id_;
+      piece_data->cmd_id_in_client_ = cmd_id_in_client_;
       piece_data->input = inputs_[pi];
       piece_data->output_size = output_size_[pi];
       piece_data->root_ = this;
       piece_data->timestamp_ = timestamp_;
-      piece_data->rank_ = ranks_[pi];
+      piece_data->rank_ = ranks_[pi]; // TODO fix bug here
       map_piece_data_[pi] = piece_data;
       ready_pieces_data[piece_data->partition_id_].push_back(piece_data);
       partition_ids_.insert(piece_data->partition_id_);
@@ -162,6 +221,7 @@ ReadyPiecesData TxData::GetReadyPiecesData(int32_t max) {
       verify(type_ == type());
       verify(piece_data->root_type_ == type());
       verify(piece_data->root_type_ > 0);
+
       n_pieces_dispatched_++;
       max--;
       if (max == 0) break;
@@ -227,6 +287,7 @@ void TxData::Merge(TxnOutput& output) {
 void TxData::Merge(innid_t inn_id, map<int32_t, Value>& output) {
   verify(outputs_.find(inn_id) == outputs_.end());
   n_pieces_dispatch_acked_++;
+  // Log_info("n_pieces_all_=%d n_pieces_dispatchable_=%d", n_pieces_all_, n_pieces_dispatchable_);
   verify(n_pieces_all_ >= n_pieces_dispatchable_);
   verify(n_pieces_dispatchable_ >= n_pieces_dispatched_);
   verify(n_pieces_dispatched_ >= n_pieces_dispatch_acked_);
@@ -246,12 +307,14 @@ bool TxData::HasMoreUnsentPiece() {
   verify(n_pieces_all_ >= n_pieces_dispatchable_);
   verify(n_pieces_dispatchable_ >= n_pieces_dispatched_);
   verify(n_pieces_dispatched_ >= n_pieces_dispatch_acked_);
+  //Log_info("dispatch record: %d, %d", n_pieces_dispatchable_, n_pieces_dispatched_);
   if (n_pieces_dispatchable_ == n_pieces_dispatched_) {
     verify(n_pieces_all_ == n_pieces_dispatched_ ||
            n_pieces_dispatch_acked_ < n_pieces_dispatched_);
     return false;
   } else {
     verify(n_pieces_dispatchable_ > n_pieces_dispatched_);
+    //Log_info("dispatch record 2: %d, %d", n_pieces_dispatchable_, n_pieces_dispatched_);
     return true;
   }
 }

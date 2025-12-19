@@ -1,8 +1,14 @@
+// @unsafe - RPC server module uses raw sockets and mutable spinlocks
 #pragma once
+#include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
+#include <rusty/option.hpp>
 
 #include <unordered_map>
 #include <unordered_set>
 #include <pthread.h>
+#include <memory>
+#include <chrono>
 
 #include <sys/socket.h>
 #include <netdb.h>
@@ -31,9 +37,28 @@
 //   std::*::erase: [safe, (auto) -> auto]
 // }
 
+// External safety annotations for Log functions
+// @external: {
+//   Log::debug: [unsafe]
+//   Log::info: [unsafe]
+//   Log::error: [unsafe]
+//   Log_debug: [unsafe]
+//   Log_info: [unsafe]
+//   Log_warn: [unsafe]
+//   Log_error: [unsafe]
+// }
+
+// External safety annotations for SpinLock (interior mutability pattern)
+// @external: {
+//   SpinLock::lock: [unsafe]
+//   SpinLock::unlock: [unsafe]
+//   const_cast: [unsafe]
+// }
+
 // for getaddrinfo() used in Server::start()
 //struct addrinfo;
 
+// @unsafe - RPC module uses raw sockets, mutable spinlocks, and pthread primitives
 namespace rrr {
 
 class Server;
@@ -56,35 +81,16 @@ struct Request {
 class Service {
 public:
     virtual ~Service() {}
+    // @safe - Virtual method for service registration
     virtual int __reg_to__(Server*) = 0;
 };
 
 // @unsafe - Server listener handling incoming connections
 // SAFETY: Manages socket lifecycle and address info properly
-// External annotations for socket operations
-// @external: {
-//   accept: [safe, (int, sockaddr*, socklen_t*) -> int]
-//   socket: [safe, (int, int, int) -> int]
-//   bind: [safe, (int, const sockaddr*, socklen_t) -> int]
-//   listen: [safe, (int, int) -> int]
-//   close: [safe, (int) -> int]
-//   getaddrinfo: [safe, (const char*, const char*, const addrinfo*, addrinfo**) -> int]
-//   freeaddrinfo: [safe, (addrinfo*) -> void]
-//   setsockopt: [safe, (int, int, int, const void*, socklen_t) -> int]
-//   set_nonblocking: [safe, (int, bool) -> int]
-//   unlink: [safe, (const char*) -> int]
-//   strcpy: [safe, (char*, const char*) -> char*]
-//   strlen: [safe, (const char*) -> size_t]
-//   gai_strerror: [safe, (int) -> const char*]
-//   memset: [safe, (void*, int, size_t) -> void*]
-// }
-
-// @unsafe - Contains unsafe handle_read() method that calls Log functions
-// SAFETY: Thread-safe server listener with proper socket lifecycle management
 class ServerListener: public Pollable {
   friend class Server;
  public:
-  std:: string addr_;
+  std::string addr_;
   Server* server_;  // Non-owning pointer to parent server
   // cannot use smart pointers for memory management because this pointer
   // needs to be freed by freeaddrinfo.
@@ -92,29 +98,39 @@ class ServerListener: public Pollable {
   struct addrinfo* p_svr_addr_{nullptr};
 
   int server_sock_{0};
-  
+
   // @safe - Returns constant poll mode
-  int poll_mode() {
+  int poll_mode() const override {
     return Pollable::READ;
   }
-  
+
+  // Jetpack: content_size not used for listener
+  size_t content_size() override {
+    verify(0);
+    return 0;
+  }
+
   // @safe - Not implemented, will abort if called
-  void handle_write() {verify(0);}
-  
+  // Returns MODE_NO_CHANGE since ServerListener never handles write
+  int handle_write() override {verify(0); return Pollable::MODE_NO_CHANGE;}
+
   // @unsafe - Calls unsafe Log::debug for connection logging
   // SAFETY: Thread-safe with server connection lock
-  void handle_read();
-  
+  // Jetpack: split-phase read support
+  bool handle_read_one() override { return handle_read(); }
+  bool handle_read_two() override { verify(0); return true; }
+  bool handle_read() override;
+
   // @safe - Not implemented, will abort if called
-  void handle_error() {verify(0);}
-  
+  void handle_error() override {verify(0);}
+
   // @safe - Closes server socket
   // Close is marked safe via external annotation
   void close();
-  
+
   // @safe - Returns file descriptor
-  int fd() {return server_sock_;}
-  
+  int fd() const override {return server_sock_;}
+
   // @safe - Constructor with proper error handling
   ServerListener(Server* s, std::string addr);
 
@@ -130,32 +146,50 @@ class ServerListener: public Pollable {
   };
 };
 
-// @unsafe - Handles individual client connections
-// SAFETY: Thread-safe with spinlocks, proper refcounting
+// Forward declaration
+class ServerConnection;
+
+// Type alias for Arc weak reference
+using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
+
+// @unsafe - Uses mutable SpinLock for interior mutability
 class ServerConnection: public Pollable {
+    // Handles individual client connections
+    // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
 
     friend class Server;
+    friend class ServerListener;
 
     Marshal in_, out_;
+    // Interior mutability handled via const_cast in poll_mode()
     SpinLock out_l_;
-
-    Marshal block_read_in;
 
     Server* server_;
     int socket_;
 
-    Marshal::bookmark* bmark_;
+    rusty::Option<rusty::Box<Marshal::bookmark>> bmark_;
 
     enum {
         CONNECTED, CLOSED
     } status_;
 
+    // Flag set by end_reply() to indicate write mode update needed
+    // Checked by poll loop after processing events
+    // Cell provides interior mutability for safe access through const methods
+    rusty::Cell<bool> pending_write_update_{false};
+
+    // Weak pointer to self, initialized after creation
+    // Used to pass weak reference to async handlers
+    WeakServerConnection weak_self_;
+
+    // get_shared() is now inherited from Pollable base class
+
     /**
      * Only to be called by:
      * 1: ~Server(), which is called when destroying Server
-     * 2: handle_error(), which is called by PollMgr
+     * 2: handle_error(), which is called by PollThread
      */
-    // @unsafe - Closes connection and cleans up
+    // @safe - Closes connection and cleans up (has internal @unsafe blocks)
     // SAFETY: Thread-safe with server connection lock
     void close();
 
@@ -163,17 +197,21 @@ class ServerConnection: public Pollable {
     static std::unordered_set<i32> rpc_id_missing_s;
     static SpinLock rpc_id_missing_l_s;
 
-protected:
+public:
+    // Jetpack-specific member
+    int count = 0;
 
-    // Protected destructor as required by RefCounted.
+    // Public destructor for shared_ptr compatibility
     // @safe - Simple destructor updating counter
     ~ServerConnection();
-
-public:
 
     // @unsafe - Initializes connection with socket
     // SAFETY: Increments server connection counter
     ServerConnection(Server* server, int socket);
+
+    bool connected() {
+      return status_ == CONNECTED;
+    }
 
     /**
      * Start a reply message. Must be paired with end_reply().
@@ -189,79 +227,148 @@ public:
      * ENOENT: method not found
      * EINVAL: invalid packet (field missing)
      */
-    // @unsafe - Starts reply marshaling
-    // SAFETY: Protected by output spinlock
-    void begin_reply(Request* req, i32 error_code = 0);
+    // @safe - Starts reply marshaling
+    // SAFETY: Protected by output spinlock (SpinLock marked as external)
+    void begin_reply(const Request& req, i32 error_code = 0);
 
-    // @unsafe - Completes reply packet
-    // SAFETY: Protected by output spinlock
+    // @safe - Completes reply packet
+    // SAFETY: Protected by output spinlock, uses weak ref to poll thread
     void end_reply();
 
     // helper function, do some work in background
     int run_async(const std::function<void()>& f);
 
+    // @safe - Marshals data into output buffer
+    // @lifetime: (&'a, const T&) -> &'a
     template<class T>
     ServerConnection& operator <<(const T& v) {
         this->out_ << v;
         return *this;
     }
 
+    // @safe - Marshals data from another Marshal
+    // @lifetime: (&'a, Marshal&) -> &'a
     ServerConnection& operator <<(Marshal& m) {
         this->out_.read_from_marshal(m, m.content_size());
         return *this;
     }
 
-    int fd() {
+    int fd() const override {
         return socket_;
     }
 
     // @safe - Returns poll mode based on output buffer
-    int poll_mode();
-    // @unsafe - Writes buffered data to socket
-    // SAFETY: Protected by output spinlock
-    void handle_write();
+    // Uses const_cast for interior mutability (SpinLock marked as external)
+    int poll_mode() const override;
+
+    // Jetpack: content_size not used for connection
+    size_t content_size() override {
+        verify(0);
+        return 0;
+    }
+
+    // @safe - Writes buffered data to socket
+    // SAFETY: Protected by output spinlock (SpinLock marked as external)
+    // Returns new poll mode, or MODE_NO_CHANGE if no update needed
+    int handle_write() override;
+
     // @unsafe - Reads and processes RPC requests
     // SAFETY: Creates coroutines for handlers
-    void handle_read();
-    // @safe - Error handler
-    void handle_error();
+    bool handle_read() override;  // Batching mode: reads ALL available requests
+
+    // Jetpack: split-phase read support
+    bool handle_read_one() override { return handle_read(); }
+    bool handle_read_two() override { verify(0); return true; }
+
+    // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
+    void handle_error() override;
+
+    // @safe - Check and clear pending write update flag
+    // Called by poll loop after processing events
+    bool check_pending_write_update() const override {
+        if (pending_write_update_.get()) {
+            pending_write_update_.set(false);
+            return true;
+        }
+        return false;
+    }
+
+    // Jetpack: handle_free stub
+    void handle_free() {verify(0);}
+
+    // Comparison operator for std::unordered_set<rusty::Arc<ServerConnection>>
+    friend bool operator==(const rusty::Arc<ServerConnection>& lhs, const rusty::Arc<ServerConnection>& rhs) {
+        return lhs.get() == rhs.get();
+    }
+
+    // Hash function for std::unordered_set
+    friend struct std::hash<rusty::Arc<ServerConnection>>;
 };
+
+} // namespace rrr
+
+// Hash specializations for rusty::Arc types
+namespace std {
+template<>
+struct hash<rusty::Arc<rrr::ServerConnection>> {
+    size_t operator()(const rusty::Arc<rrr::ServerConnection>& arc) const {
+        return hash<const rrr::ServerConnection*>()(arc.get());
+    }
+};
+
+template<>
+struct hash<rusty::Arc<rrr::ServerListener>> {
+    size_t operator()(const rusty::Arc<rrr::ServerListener>& arc) const {
+        return hash<const rrr::ServerListener*>()(arc.get());
+    }
+};
+}
+
+namespace rrr {
 
 // @safe - RAII wrapper for deferred RPC replies
 class DeferredReply: public NoCopy {
-    rrr::Request* req_;
-    rrr::ServerConnection* sconn_;
+    rusty::Box<rrr::Request> req_;
+    WeakServerConnection weak_sconn_;
     std::function<void()> marshal_reply_;
     std::function<void()> cleanup_;
 
 public:
 
-    DeferredReply(rrr::Request* req, rrr::ServerConnection* sconn,
+    DeferredReply(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn,
                   const std::function<void()>& marshal_reply, const std::function<void()>& cleanup)
-        : req_(req), sconn_(sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
+        : req_(std::move(req)), weak_sconn_(weak_sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
 
-    // @unsafe - Cleanup destructor
-    // SAFETY: Proper cleanup order and null checks
+    // @safe - Cleanup destructor with automatic cleanup
+    // SAFETY: Proper cleanup order, rusty::Box automatically deletes req_
     ~DeferredReply() {
         cleanup_();
-        delete req_;
-        sconn_->release();
-        req_ = nullptr;
-        sconn_ = nullptr;
+        // req_ automatically cleaned up by rusty::Box destructor
     }
 
     int run_async(const std::function<void()>& f) {
       // TODO disable threadpool run in RPCs.
-//        return sconn_->run_async(f);
+//        auto sconn = weak_sconn_.lock();
+//        if (sconn) return sconn->run_async(f);
       return 0;
     }
 
-    // @unsafe - Sends reply and self-deletes
-    // SAFETY: Ensures single use with delete this
+    // @safe - Sends reply and self-deletes
+    // SAFETY: Locks weak_ptr before use, gracefully handles closed connections
     void reply() {
-        sconn_->begin_reply(req_);
-        marshal_reply_();
-        sconn_->end_reply();
+        auto sconn_opt = weak_sconn_.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            // @unsafe - SAFETY: const_cast safe because Arc contents are mutable
+            {
+                const_cast<ServerConnection&>(*sconn).begin_reply(*req_);
+                marshal_reply_();
+                const_cast<ServerConnection&>(*sconn).end_reply();
+            }
+        } else {
+            // Connection closed, silently drop reply
+            Log_debug("Connection closed before reply sent, dropping reply");
+        }
         delete this;
     }
 };
@@ -271,16 +378,17 @@ public:
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
-    std::unordered_map<i32, std::function<void(Request*, ServerConnection*)>> handlers_;
-    PollMgr* pollmgr_;
+    using RequestHandler = std::function<void(rusty::Box<Request>, WeakServerConnection)>;
+    std::unordered_map<i32, RequestHandler> handlers_;
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
     ThreadPool* threadpool_;
     int server_sock_;
 
     Counter sconns_ctr_;
 
     SpinLock sconns_l_;
-    std::unordered_set<ServerConnection*> sconns_{};
-    std::unique_ptr<ServerListener> up_server_listener_{};
+    std::unordered_set<rusty::Arc<ServerConnection>> sconns_{};
+    rusty::Option<rusty::Arc<ServerListener>> sp_server_listener_;
 
     enum {
         NEW, RUNNING, STOPPING, STOPPED
@@ -294,9 +402,9 @@ class Server: public NoCopy {
 public:
     std::string addr_;
 
-    // @unsafe - Creates server with optional PollMgr
-    // SAFETY: Proper refcounting of PollMgr
-    Server(PollMgr* pollmgr = nullptr, ThreadPool* thrpool = nullptr);
+    // @unsafe - Creates server with optional PollThread
+    // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
+    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None, ThreadPool* thrpool = nullptr);
     // @unsafe - Destroys server and all connections
     // SAFETY: Waits for all connections to close
     virtual ~Server();
@@ -306,8 +414,8 @@ public:
     int start(const char* bind_addr);
 
     // @safe - Registers service
-    int reg(Service* svc) {
-        return svc->__reg_to__(this);
+    int reg_service(Service& svc) {
+        return svc.__reg_to__(this);
     }
 
     /**
@@ -318,36 +426,35 @@ public:
      *     ..
      *
      *     // send reply
-     *     server_connection->begin_reply();
+     *     server_connection->begin_reply(*req);
      *     *server_connection << {reply_content};
      *     server_connection->end_reply();
      *
-     *     // cleanup resource
-     *     delete request;
-     *     server_connection->release();
+     *     // cleanup resource - automatic via unique_ptr
+     *     // No need to release, shared_ptr handles connection
      *  }
      */
-    // @safe - Registers RPC handler function
-    int reg(i32 rpc_id, const std::function<void(Request*, ServerConnection*)>& func);
+    // @unsafe - Registers RPC handler function (uses unordered_map)
+    int reg_handler(i32 rpc_id, const RequestHandler& func);
 
+    // @unsafe - uses raw pointer svc and member function pointer
     template<class S>
-    int reg(i32 rpc_id, S* svc, void (S::*svc_func)(Request*, ServerConnection*)) {
+    int reg_method(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, WeakServerConnection)) {
 
         // disallow duplicate rpc_id
         if (handlers_.find(rpc_id) != handlers_.end()) {
             return EEXIST;
         }
 
-        handlers_[rpc_id] = [svc, svc_func] (Request* req, ServerConnection* sconn) {
-            (svc->*svc_func)(req, sconn);
+        handlers_[rpc_id] = [svc, svc_func] (rusty::Box<Request> req, WeakServerConnection sconn) {
+            (svc->*svc_func)(std::move(req), sconn);
         };
 
         return 0;
     }
 
-    // @safe - Unregisters RPC handler
+    // @unsafe - Unregisters RPC handler (uses unordered_map)
     void unreg(i32 rpc_id);
 };
 
 } // namespace rrr
-

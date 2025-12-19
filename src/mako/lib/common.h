@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <sys/file.h>
 #include "rpc.h"
 #include <mutex>
@@ -16,6 +17,7 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <random>
 
 // promise.timeout is abandoned
 #define GET_TIMEOUT 250
@@ -125,6 +127,38 @@ namespace mako
     const int EXTRA_BITS_FOR_VALUE = sizeof(uint32_t) + sizeof(struct Node);
     const int BITS_OF_NODE = sizeof(struct Node);
     const int BITS_OF_TT = sizeof(uint32_t);
+
+    // Helper function to encode values with required metadata padding
+    inline std::string Encode(const std::string& value) {
+        // Create string with exact size needed - single allocation
+        std::string encoded_value;
+        encoded_value.resize(value.size() + EXTRA_BITS_FOR_VALUE, '\0');
+
+        // Copy the value to the beginning - single memory copy
+        std::memcpy(encoded_value.data(), value.data(), value.size());
+
+        // Initialize timestamp/term to 0 (already zeroed by resize)
+        uint32_t* time_term = reinterpret_cast<uint32_t*>(
+            encoded_value.data() + encoded_value.size() - EXTRA_BITS_FOR_VALUE);
+        *time_term = 0;  // Redundant but explicit
+
+        // Initialize Node structure
+        Node* node = reinterpret_cast<Node*>(
+            encoded_value.data() + encoded_value.size() - BITS_OF_NODE);
+        node->timestamp = 0;
+        node->data_size = 0;
+        node->data = nullptr;
+
+        return encoded_value;
+    }
+
+    // Generate a random integer
+    inline int generateRandomInt() {
+        static std::random_device rd;
+        static std::mt19937 gen(rd());
+        static std::uniform_int_distribution<int> dist(0, INT_MAX);
+        return dist(gen);
+    }
 
     // --------------------------- for erpc APIs
     const uint8_t getReqType = 1;
@@ -297,7 +331,7 @@ namespace mako
         }
 
         size_t get_msg_len() {
-            return msg_len + sizeof(request->batch_size) + sizeof(request->req_nr);
+            return msg_len + offsetof(batch_lock_request_t, data);
         }
 
         batch_lock_request_t *get_request_ptr() {
@@ -444,6 +478,7 @@ namespace mako
         return static_cast<size_t>(ms * 1000 * 1000 * freq_ghz);
     }
 
+    // @unsafe: uses std::chrono::duration::count
     static uint64_t getCurrentTimeMillis() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();

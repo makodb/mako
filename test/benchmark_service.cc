@@ -3,6 +3,11 @@
 #include "rrr.hpp"
 #include "benchmark_service.h"
 
+// External safety annotations for inline methods from headers
+// @external: {
+//   std::map::erase: [unsafe]
+// }
+
 using namespace benchmark;
 using namespace rrr;
 

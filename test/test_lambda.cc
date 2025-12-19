@@ -25,7 +25,7 @@ struct para_t rand_para() {
 
 TEST(lambda, simple) {
     uint64_t i = 0;
-    uint64_t t0 = rrr::Time::now();
+    uint64_t t0 = rrr::Time::now(true);
     uint64_t ret;
     while (i++ < CALL_TIMES) {
         struct para_t para = rand_para();
@@ -34,7 +34,7 @@ TEST(lambda, simple) {
                 });
         ret = k;
     }
-    uint64_t t1 = rrr::Time::now();
+    uint64_t t1 = rrr::Time::now(true);
 
     Log_info("ret: %lu, time interval: %lf", ret, CALL_TIMES / ((double)(t1 - t0) / 1000 / 1000));
 
@@ -42,7 +42,7 @@ TEST(lambda, simple) {
 
 TEST(lambda, no_copy) {
     uint64_t i = 0;
-    uint64_t t0 = rrr::Time::now();
+    uint64_t t0 = rrr::Time::now(true);
     uint64_t ret;
     while (i++ < CALL_TIMES) {
         struct para_t para = rand_para();
@@ -51,7 +51,7 @@ TEST(lambda, no_copy) {
         }();
         ret = k;
     }
-    uint64_t t1 = rrr::Time::now();
+    uint64_t t1 = rrr::Time::now(true);
 
     Log_info("ret: %lu, time interval: %lf", ret, 
 	     CALL_TIMES / ((double)(t1 - t0) / 1000 / 1000));

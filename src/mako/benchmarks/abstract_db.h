@@ -5,11 +5,14 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#include <functional>
 #include <map>
 #include <string>
 
 #include "abstract_ordered_index.h"
 #include "../str_arena.h"
+
+class mbta_sharded_ordered_index;
 
 /**
  * Abstract interface for a DB. This is to facilitate writing
@@ -18,6 +21,7 @@
  */
 class abstract_db {
 public:
+  using shard_hash_fn = std::function<size_t(const lcdf::Str &)>;
 
   /**
    * both get() and put() can throw abstract_abort_exception. If thrown,
@@ -157,6 +161,11 @@ public:
 
   virtual abstract_ordered_index *
   open_index(const std::string &name, int shard_index = -1) = 0;
+
+  virtual mbta_sharded_ordered_index *
+  open_sharded_index(const std::string &name) {
+    NDB_UNIMPLEMENTED("open_sharded_index");
+  }
 
   virtual void shard_abort_txn(void *txn) = 0;
   virtual int shard_validate() = 0;

@@ -2,6 +2,7 @@
 
 constexpr size_t TransactionBuffer::default_capacity;
 
+// @unsafe: uses raw pointer manipulation and C-style cast
 void TransactionBuffer::hard_get_space(size_t needed) {
     size_t s = std::max(needed, e_ ? e_->capacity * 2 : default_capacity);
     elt* ne = (elt*) new char[sizeof(elthdr) + s];
@@ -13,6 +14,7 @@ void TransactionBuffer::hard_get_space(size_t needed) {
     e_ = ne;
 }
 
+// @unsafe: uses raw pointer manipulation and C-style cast with delete
 void TransactionBuffer::hard_clear(bool delete_all) {
     while (e_ && e_->next) {
         elt* e = e_->next;

@@ -11,7 +11,7 @@ namespace janus {
 void RWChopper::W_txn_init(TxRequest &req) {
 //  inputs_.clear();
 //  inputs_[RW_BENCHMARK_W_TXN_0] = map<int32_t, Value>({{0, req.input_[0]}});
-  GetWorkspace(RW_BENCHMARK_W_TXN_0).keys_ = {0};
+  GetWorkspace(RW_BENCHMARK_W_TXN_0).keys_ = {0, 1};
   n_pieces_dispatchable_ = 1;
 
   output_size_ = {{0,0}};

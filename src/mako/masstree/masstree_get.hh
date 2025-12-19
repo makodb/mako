@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Lock-free point lookup implementation for Masstree
+// Performs optimistic traversal with version validation and retry
+// SAFETY: Raw pointer traversal, optimistic read with memory fences
+
 #ifndef MASSTREE_GET_HH
 #define MASSTREE_GET_HH 1
 #include "masstree_tcursor.hh"
@@ -20,6 +24,7 @@
 namespace Masstree {
 
 template <typename P>
+// @unsafe - traverses the B-tree without locks via raw pointers
 bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 {
     int match;
@@ -57,6 +62,7 @@ bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 }
 
 template <typename P>
+// @unsafe - wraps unlocked traversal; safe wrappers must audit callers
 inline bool basic_table<P>::get(Str key, value_type &value,
                                 threadinfo& ti) const
 {
@@ -68,6 +74,7 @@ inline bool basic_table<P>::get(Str key, value_type &value,
 }
 
 template <typename P>
+// @unsafe - locks & manipulates raw nodes directly
 bool tcursor<P>::find_locked(threadinfo& ti)
 {
     node_base<P>* root = const_cast<node_base<P>*>(root_);

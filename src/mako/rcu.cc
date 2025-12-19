@@ -8,6 +8,7 @@
 #include <atomic>
 
 #include "rcu.h"
+#include "silo_runtime.h"
 #include "macros.h"
 #include "util.h"
 #include "thread.h"
@@ -18,6 +19,23 @@ using namespace std;
 using namespace util;
 
 rcu rcu::s_instance;
+
+// Get the ticker for this RCU instance
+ticker& rcu::get_ticker() const {
+  if (runtime_) {
+    return runtime_->get_ticker();
+  }
+  // For global s_instance, use the global ticker
+  return ticker::s_instance;
+}
+
+// Default constructor for per-runtime RCU
+rcu::rcu(SiloRuntime* runtime)
+  : runtime_(runtime), syncs_()
+{
+  // Event counters are initialized once for all rcu instances
+  // This is okay since they're just statistics
+}
 
 static event_counter evt_rcu_deletes("rcu_deletes");
 static event_counter evt_rcu_frees("rcu_frees");
@@ -252,12 +270,13 @@ rcu::sync::do_cleanup()
   }
 }
 
+// @unsafe - manipulates raw pointers deferred through custom deleter queues
 void
 rcu::free_with_fn(void *p, deleter_t fn)
 {
   sync &s = mysync();
   uint64_t cur_tick = 0; // ticker units
-  const bool is_guarded = ticker::s_instance.is_locally_guarded(cur_tick);
+  const bool is_guarded = get_ticker().is_locally_guarded(cur_tick);
   if (!is_guarded)
     INVARIANT(false);
   INVARIANT(s.depth());
@@ -267,12 +286,13 @@ rcu::free_with_fn(void *p, deleter_t fn)
   ++evt_rcu_frees;
 }
 
+// @unsafe - schedules raw pointer deallocation after grace period
 void
 rcu::dealloc_rcu(void *p, size_t sz)
 {
   sync &s = mysync();
   uint64_t cur_tick = 0; // ticker units
-  const bool is_guarded = ticker::s_instance.is_locally_guarded(cur_tick);
+  const bool is_guarded = get_ticker().is_locally_guarded(cur_tick);
   if (!is_guarded)
     INVARIANT(false);
   INVARIANT(s.depth());
@@ -306,7 +326,7 @@ rcu::fault_region()
 }
 
 rcu::rcu()
-  : syncs_()
+  : runtime_(nullptr), syncs_()
 {
   // XXX: these should really be instance members of RCU
   // we are assuming only one rcu object is ever created
@@ -316,6 +336,12 @@ rcu::rcu()
     evt_allocator_arena_deallocations[i] =
       new event_counter("allocator_arena" + to_string(i) + "_deallocation");
   }
+}
+
+// Helper to create scoped_rcu_region using current runtime's rcu
+// Defined here to avoid circular includes with silo_runtime.h
+inline scoped_rcu_region make_scoped_rcu_region() {
+  return scoped_rcu_region(SiloRuntime::Current()->get_rcu());
 }
 
 struct rcu_stress_test_rec {

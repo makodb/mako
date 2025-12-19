@@ -11,6 +11,8 @@ from waflib import Options
 pargs = ['--cflags', '--libs']
 #BOOST_LIBS = 'BOOST_SYSTEM BOOST_FILESYSTEM BOOST_THREAD BOOST_COROUTINE'
 
+#g++ -Wall -Wextra -std=c++17 -ggdb -Iinclude -Ilib -I/usr/local/include/mongocxx/v_noabi -I/usr/local/include/bsoncxx/v_noabi -Llib main.cpp -o bin/main -lboost_system -lpthread -lcrypto -lssl -lmongocxx -lbsoncxx
+
 def options(opt):
     opt.load("compiler_c")
     opt.load("compiler_cxx")
@@ -24,9 +26,13 @@ def options(opt):
                    default=False, action='store_true')
     opt.add_option('-p', '--enable-profiling', dest='prof',
                    default=False, action='store_true')
+    opt.add_option('', '--enable-event-timeout', dest='event_timeout',
+                   default=False, action='store_true')
     opt.add_option('-d', '--debug', dest='debug',
                    default=False, action='store_true')
     opt.add_option('-M', '--enable-tcmalloc', dest='tcmalloc',
+                   default=False, action='store_true')
+    opt.add_option('-J', '--enable-jemalloc', dest='jemalloc',
                    default=False, action='store_true')
     opt.add_option('-s', '--enable-rpc-statistics', dest='rpc_s',
                    default=False, action='store_true')
@@ -44,7 +50,17 @@ def options(opt):
                    default=False, action='store_true')
     opt.add_option('-m', '--enable-mutrace-debug', dest='mutrace',
                    default=False, action='store_true')
-    opt.parse_args()
+    opt.add_option('-W', '--simulate-wan', dest='simulate_wan',
+                   default=False, action='store_true')
+    opt.add_option('-S', '--db-checksum', dest='db_checksum',
+                   default=False, action='store_true')
+    opt.add_option('-L', '--enable-leaksan', dest='leaksan',
+                   default=False, action='store_true')
+    opt.add_option('', '--skip-txn-server', dest='skip_txn_server',
+                   default=False, action='store_true')
+    opt.add_option('','--enable-raft-test',dest='enable_raft_test',
+                   default=False, action='store_true')
+    opt.parse_args();
 
 def configure(conf):
     _choose_compiler(conf)
@@ -53,21 +69,24 @@ def configure(conf):
     conf.load("compiler_cxx unittest_gtest")
     conf.load("boost")
 
-    conf.env.append_value("CFLAGS", "-std=c99") # fix the problem of missing CLOCK_MONOTONIC
-
     _enable_tcmalloc(conf)
-    _enable_cxx14(conf)
+    _enable_jemalloc(conf)
+    _enable_cxx23(conf)
     _enable_debug(conf)
     _enable_profile(conf)
+    _enable_event_timeout(conf)
     _enable_ipc(conf)
     _enable_rpc_s(conf)
     _enable_piece_count(conf)
     _enable_txn_count(conf)
     _enable_conflict_count(conf)
+    _enable_raft_test(conf)
 #    _enable_snappy(conf)
     #_enable_logging(conf)
     _enable_reuse_coroutine(conf)
-
+    _enable_simulate_wan(conf)
+    _enable_db_checksum(conf)
+    _enable_leaksan(conf)
 
     conf.env.append_value("CXXFLAGS", "-Wno-reorder")
     conf.env.append_value("CXXFLAGS", "-Wno-comment")
@@ -100,6 +119,22 @@ def configure(conf):
 #        conf.check_python_module('tabulate')
 #        conf.check_python_module('yaml')
 
+    if Options.options.skip_txn_server:
+        conf.env.append_value("CXXFLAGS", "-DSKIP_TXN_SERVER")
+    
+    # if Options.options.curp_fast_path:
+    #     conf.env.append_value("CXXFLAGS", "-DCURP_FAST_PATH")
+    # conf.env.append_value("CXXFLAGS", "-lprofiler scripts/pprof".split())
+    conf.env.append_value("LDFLAGS", "-lprofiler")
+
+    # enable mongodb
+    # conf.env.append_value('CXXFLAGS', ['-std=c++17', '-ggdb'])
+    # conf.env.append_value('INCLUDES', ['lib', 'include'])
+    conf.env.append_value('INCLUDES', ['/usr/local/include/mongocxx/v_noabi', '/usr/local/include/bsoncxx/v_noabi'])
+    # conf.env.append_value("LINKFLAGS", ['-lboost_system', '-lpthread', '-lcrypto', '-lssl', '-lmongocxx', '-lbsoncxx'])
+    # conf.env.append_value("LDFLAGS", ['-lboost_system', '-lpthread', '-lcrypto', '-lssl', '-lmongocxx', '-lbsoncxx'])
+    conf.env.append_value("LDFLAGS", ["-lmongocxx", "-lbsoncxx"])
+
 def build(bld):
     _depend("src/rrr/pylib/simplerpcgen/rpcgen.py",
             "src/rrr/pylib/simplerpcgen/rpcgen.g",
@@ -111,15 +146,11 @@ def build(bld):
     _depend("src/deptran/rcc_rpc.h src/deptran/rcc_rpc.py",
             "src/deptran/rcc_rpc.rpc",
             "bin/rpcgen --python --cpp src/deptran/rcc_rpc.rpc")
-    
-    _depend("src/deptran/helloworld.h src/deptran/helloworld.py",
-            "src/deptran/helloworld.rpc",
-            "bin/rpcgen --python --cpp src/deptran/helloworld.rpc")
 
     _gen_srpc_headers()
 
-#     _depend("test/benchmark_service.h", "test/benchmark_service.rpc",
-#             "bin/rpcgen --cpp test/benchmark_service.rpc")
+#     _depend("old-test/benchmark_service.h", "old-test/benchmark_service.rpc",
+#             "bin/rpcgen --cpp old-test/benchmark_service.rpc")
 
     bld.stlib(source=bld.path.ant_glob("extern_interface/scheduler.c"),
               target="externc",
@@ -131,7 +162,7 @@ def build(bld):
                                        "src/rrr/rpc/*.cpp "
                                        "src/rrr/reactor/*.cc"),
               target="rrr",
-              includes="src src/rrr",
+              includes="src src/rrr third-party/rusty-cpp/include",
               uselib="BOOST",
               use="PTHREAD")
 
@@ -140,66 +171,43 @@ def build(bld):
 #              use="base PTHREAD")
 
     bld.stlib(source=bld.path.ant_glob("src/memdb/*.cc"), target="memdb",
-              includes="src src/rrr src/deptran src/base",
+              includes="src src/rrr src/deptran src/base third-party/rusty-cpp/include",
               use="rrr PTHREAD")
 
     bld.shlib(features="pyext",
               source=bld.path.ant_glob("src/rrr/pylib/simplerpc/*.cpp"),
               target="_pyrpc",
-              includes="src src/rrr src/rrr/rpc",
+              includes="src src/rrr src/rrr/rpc third-party/rusty-cpp/include",
               uselib="BOOST",
               use="rrr simplerpc PYTHON")
 
     bld.objects(source=bld.path.ant_glob("src/deptran/*.cc "
                                        "src/deptran/*/*.cc "
                                        "src/bench/*/*.cc",
-                                       excl=['src/deptran/s_main.cc', 'src/deptran/paxos_main_helper.cc', "src/bench/paxos_lib/*"]),
+                                       excl=['src/deptran/s_main.cc', 'src/deptran/paxos_main_helper.cc','src/deptran/lab_solution_raft/*.cc', 'src/bench/paxos_lib/network_bench.cc']),
               target="deptran_objects",
-              includes="src src/rrr src/deptran ",
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
               uselib="YAML-CPP BOOST",
               use="externc rrr memdb PTHREAD PROFILER RT")
 
     bld.shlib(source=bld.path.ant_glob("src/deptran/paxos_main_helper.cc "),
               target="txlog",
-              includes="src src/rrr src/deptran ",
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
               uselib="YAML-CPP BOOST",
               use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
 
     bld.program(source=bld.path.ant_glob("src/deptran/s_main.cc"),
               target="deptran_server",
-              includes="src src/rrr src/deptran ",
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
               uselib="YAML-CPP BOOST",
               use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
 
-    bld.program(source=bld.path.ant_glob("src/run.cc "
-                                         "src/deptran/paxos_main_helper.cc"),
-                target="microbench",
-                includes="src src/rrr src/deptran ",
-                uselib="YAML-CPP BOOST",
-                use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
-
-    bld.program(source=bld.path.ant_glob("src/bench/paxos_lib/network_bench.cc "
-                                         "src/deptran/paxos_main_helper.cc"),
-                target="microbench_paxos_network",
-                includes="src src/rrr src/deptran ",
-                uselib="YAML-CPP BOOST",
-                use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
-
-    bld.program(source=bld.path.ant_glob("src/nc_main.cc "
-                                         "src/deptran/paxos_main_helper.cc"),
-                target="nc_main",
-                includes="src src/rrr src/deptran ",
-                uselib="YAML-CPP BOOST",
-                use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
-    
-    # simple rpc, helloworld
-    bld.program(source=bld.path.ant_glob("src/helloworld.cc "
-                                         "src/deptran/paxos_main_helper.cc"),
-                target="helloworld",
-                includes="src src/rrr src/deptran ",
-                uselib="YAML-CPP BOOST",
-                use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
-
+    #bld.program(source=bld.path.ant_glob("src/run.cc "
+    #                                     "src/deptran/paxos_main_helper.cc"),
+    #            target="microbench",
+    #            includes="src src/rrr src/deptran ",
+    #            uselib="YAML-CPP BOOST",
+    #            use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
 
     bld.add_post_fun(post)
 
@@ -209,6 +217,12 @@ def post(conf):
 #
 # waf helper functions
 #
+
+def _enable_raft_test(conf):
+    if Options.options.enable_raft_test:
+        Logs.pprint("PINK", "Raft lab testing coroutine enabled")
+        conf.env.append_value("CXXFLAGS", "-DRAFT_TEST_CORO")
+
 def _choose_compiler(conf):
     # use clang++ as default compiler (for c++11 support on mac)
     if Options.options.cxx:
@@ -263,27 +277,54 @@ def _enable_snappy(conf):
 
 def _enable_tcmalloc(conf):
     if Options.options.tcmalloc:
+        Logs.pprint("PINK", "tcmalloc enabled")
+        conf.env.append_value("LINKFLAGS", "-Wl,--no-as-needed")
+        conf.env.append_value("LINKFLAGS", "-ltcmalloc")
+        conf.env.append_value("LINKFLAGS", "-Wl,--as-needed")
+
+def _enable_jemalloc(conf):
+    if Options.options.jemalloc:
         Logs.pprint("PINK", "jemalloc enabled")
         conf.env.append_value("LINKFLAGS", "-Wl,--no-as-needed")
         conf.env.append_value("LINKFLAGS", "-ljemalloc")
         conf.env.append_value("LINKFLAGS", "-Wl,--as-needed")
 
+def _enable_simulate_wan(conf):
+    if Options.options.simulate_wan:
+        Logs.pprint("PINK", "simulate wan")
+        conf.env.append_value("CXXFLAGS", "-DSIMULATE_WAN")
+
+def _enable_db_checksum(conf):
+    if Options.options.db_checksum:
+        Logs.pprint("PINK", "db checksum")
+        conf.env.append_value("CXXFLAGS", "-DDB_CHECKSUM")
+
+def _enable_leaksan(conf):
+    if Options.options.leaksan:
+        Logs.pprint("PINK", "leak sanitizer enabled")
+        conf.env.append_value("CXXFLAGS", "-fsanitize=leak")
+
 def _enable_pic(conf):
     conf.env.append_value("CXXFLAGS", "-fPIC")
     conf.env.append_value("LINKFLAGS", "-fPIC")
 
-def _enable_cxx14(conf):
-    Logs.pprint("PINK", "C++14 features enabled")
+def _enable_cxx23(conf):
+    Logs.pprint("PINK", "C++23 features enabled (required for move-only coroutines)")
     if sys.platform == "darwin":
         conf.env.append_value("CXXFLAGS", "-stdlib=libc++")
         conf.env.append_value("LINKFLAGS", "-stdlib=libc++")
-    conf.env.append_value("CXXFLAGS", "-std=c++14")
+    conf.env.append_value("CXXFLAGS", "-std=c++23")
 
 def _enable_profile(conf):
     if Options.options.prof:
         Logs.pprint("PINK", "CPU profiling enabled")
         conf.env.append_value("CXXFLAGS", "-DCPU_PROFILE")
         conf.env.LIB_PROFILER = 'profiler'
+
+def _enable_event_timeout(conf):
+    if Options.options.event_timeout:
+        Logs.pprint("PINK", "event timeout enabled")
+        conf.env.append_value("CXXFLAGS", "-DEVENT_TIMEOUT_CHECK")
 
 def _enable_ipc(conf):
     if Options.options.ipc:
@@ -301,8 +342,8 @@ def _enable_debug(conf):
             conf.env.append_value("CXXFLAGS", "-Wall -pthread -O0 -DNDEBUG -g "
                 "-ggdb -DLOG_INFO -rdynamic -fno-omit-frame-pointer".split())
         else:
-            #conf.env.append_value("CXXFLAGS", "-g -pthread -O2 -DNDEBUG -g -ggdb".split())
             conf.env.append_value("CXXFLAGS", "-g -pthread -O2 -DNDEBUG -DLOG_INFO".split())
+            # conf.env.append_value("CXXFLAGS", "-g -pthread -O0 -DNDEBUG -DLOG_INFO".split())
 
 def _properly_split(args):
     if args == None:
@@ -334,4 +375,3 @@ def _depend(target, source, action):
 def _run_cmd(cmd):
     Logs.pprint('PINK', cmd)
     os.system(cmd)
-

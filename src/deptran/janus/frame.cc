@@ -9,10 +9,11 @@
 #include "coordinator.h"
 #include "scheduler.h"
 #include "tx.h"
+#include "../troad/troad.h"
 
 namespace janus {
 
-REG_FRAME(MODE_JANUS, vector<string>({"brq","baroque","janus"}), JanusFrame);
+REG_FRAME(MODE_JANUS, vector<string>({"brq","baroque","janus"}), TroadJanusFrame);
 
 Coordinator *JanusFrame::CreateCoordinator(cooid_t coo_id,
                                            Config *config,
@@ -21,7 +22,7 @@ Coordinator *JanusFrame::CreateCoordinator(cooid_t coo_id,
                                            uint32_t id,
                                            shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
-  CoordinatorJanus *coord = new CoordinatorJanus(coo_id,
+  auto *coord = new CoordinatorJanus(coo_id,
                                      benchmark,
                                      ccsi,
                                      id);
@@ -44,9 +45,9 @@ TxLogServer *JanusFrame::CreateScheduler() {
 vector<rrr::Service *>
 JanusFrame::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
-                              rrr::PollMgr *poll_mgr,
+                              rusty::Arc<rrr::PollThread> poll_thread_worker,
                               ServerControlServiceImpl *scsi) {
-  return Frame::CreateRpcServices(site_id, sched, poll_mgr, scsi);
+  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
 }
 
 mdb::Row *JanusFrame::CreateRow(const mdb::Schema *schema,
@@ -64,7 +65,7 @@ shared_ptr<Tx> JanusFrame::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-Communicator *JanusFrame::CreateCommo(PollMgr *poll) {
+Communicator *JanusFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
   return new JanusCommo(poll);
 }
 

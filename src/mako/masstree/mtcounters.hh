@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Memory tag enums and thread counter definitions
+// Provides memtag and threadcounter enums for allocation tracking
+// SAFETY: Pure enum definitions (no unsafe operations)
+
 #ifndef MTCOUNTERS_HH
 #define MTCOUNTERS_HH 1
 
@@ -20,6 +24,7 @@ enum memtag {
     // memtags are divided into a *type* and a *pool*.
     // The type is purely for debugging. The pool indicates the pool from
     // which an allocation was taken.
+    // @unsafe - tags travel with raw allocations; misuse can corrupt memdebug state
     memtag_none = 0x000,
     memtag_value = 0x100,
     memtag_limbo = 0x500,

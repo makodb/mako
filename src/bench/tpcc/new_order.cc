@@ -11,6 +11,7 @@ void TpccProcedure::NewOrderInit(TxRequest &req) {
 
 void TpccProcedure::NewOrderRetry() {
   status_[TPCC_NEW_ORDER_0] = WAITING;
+  ranks_[TPCC_NEW_ORDER_0] = RANK_I;
 //  status_[TPCC_NEW_ORDER_1] = WAITING;
 //  status_[TPCC_NEW_ORDER_2] = WAITING;
 //  status_[TPCC_NEW_ORDER_3] = DISPATCHABLE;
@@ -57,10 +58,12 @@ void TpccWorkload::RegNewOrder() {
                {TPCC_COL_DISTRICT_D_NEXT_O_ID},
                ROW_DISTRICT)},
        {TPCC_TB_DISTRICT, {TPCC_VAR_W_ID}},
-       DF_REAL,
+       DF_NO,
        PROC {
 //          verify(cmd.input.size() >= 2);
-          verify(cmd.input[TPCC_VAR_W_ID].get_i32() >= 0);
+         Value buf(0);
+         output[TPCC_VAR_O_ID] = buf;
+         verify(cmd.input[TPCC_VAR_W_ID].get_i32() >= 0);
           mdb::MultiBlob mb(2);
           mb[0] = cmd.input[TPCC_VAR_D_ID].get_blob();
           mb[1] = cmd.input[TPCC_VAR_W_ID].get_blob();
@@ -71,7 +74,6 @@ void TpccWorkload::RegNewOrder() {
               tx.GetTable(TPCC_TB_DISTRICT),
               mb,
               ROW_DISTRICT);
-              Value buf(0);
           // R district
           tx.ReadColumn(row_district,
                            TPCC_COL_DISTRICT_D_TAX,
@@ -80,7 +82,7 @@ void TpccWorkload::RegNewOrder() {
           tx.ReadColumn(row_district,
                            TPCC_COL_DISTRICT_D_NEXT_O_ID,
                            &buf,
-                           TXN_BYPASS); // read d_next_o_id
+                           TXN_IMMEDIATE); // read d_next_o_id
           Value next_o_id = buf;
           output[TPCC_VAR_O_ID] = buf;
           // read d_next_o_id, increment by 1

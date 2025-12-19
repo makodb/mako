@@ -2,7 +2,9 @@
 
 #include "../__dep__.h"
 #include "../coordinator.h"
+#include "../classic/tpc_command.h"
 #include "../frame.h"
+#include <chrono>
 
 namespace janus {
 
@@ -22,12 +24,20 @@ class CoordinatorMultiPaxos : public Coordinator {
   bool in_prepare_ = false; // debug
   bool in_accept = false; // debug
   bool in_commit = false;
+  bool in_forward = false; //debug
   shared_ptr<Marshallable> cmd_{nullptr};
   vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
   CoordinatorMultiPaxos(uint32_t coo_id,
                         int32_t benchmark,
                         ClientControlServiceImpl *ccsi,
                         uint32_t thread_id);
+  ~CoordinatorMultiPaxos() {
+#ifdef LATENCY_DEBUG
+    Log_info("coordinator loc_id_=%d, client2leader_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2leader_.pct50(), client2leader_.pct90(), client2leader_.pct99());
+    // Log_info("coordinator loc_id_=%d, client2test_point_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2test_point_.pct50(), client2test_point_.pct90(), client2test_point_.pct99());
+    Log_info("coordinator loc_id_=%d, client2leader_send_ 50pct: %.2f 90pct: %.2f 99pct: %.2f", loc_id_, client2leader_send_.pct50(), client2leader_send_.pct90(), client2leader_send_.pct99());
+#endif
+  }
   ballot_t curr_ballot_ = 1; // TODO
   uint32_t n_replica_ = 0;   // TODO
   slotid_t slot_id_ = 0;
@@ -63,6 +73,10 @@ class CoordinatorMultiPaxos : public Coordinator {
               const std::function<void()> &exe_callback = []() {}) override;
 
   ballot_t PickBallot();
+  void Submit();
+
+  void Forward();
+
   void Prepare();
 //  void PrepareAck(phase_t phase, Future *fu);
   void Accept();

@@ -13,7 +13,8 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-/* clp.c - Complete source code for CLP.
+/* @unsafe - third-party parser uses raw memory manipulation extensively.
+ * clp.c - Complete source code for CLP.
  * This file is part of CLP, the command line parser package.
  *
  * Copyright (c) 1997-2014 Eddie Kohler, ekohler@gmail.com

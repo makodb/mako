@@ -7,6 +7,7 @@
 #include "lib/timestamp.h"
 #include "lib/server.h"
 #include "lib/common.h"
+#include "lib/transport_request_handle.h"
 #include "benchmarks/sto/Interface.hh"
 #include "benchmarks/common.h"
 #include "benchmarks/bench.h"
@@ -30,16 +31,12 @@ namespace mako
     }
 
     void ShardReceiver::Register(abstract_db *dbX,
-                                 const map<string, abstract_ordered_index *> &open_tablesX,
                                  const map<int, abstract_ordered_index *> &open_tables_table_idX /*,
                                  const map<string, vector<abstract_ordered_index *>> &partitionsX,
                                  const map<string, vector<abstract_ordered_index *>> &remote_partitionsX*/)
     {
         db = dbX;
-        open_tables = open_tablesX;
         open_tables_table_id = open_tables_table_idX;
-        // partitions = partitionsX;
-        // remote_partitions = remote_partitionsX;
 
         txn_obj_buf.reserve(str_arena::MinStrReserveLength);
         txn_obj_buf.resize(db->sizeof_txn_object(0));
@@ -47,6 +44,13 @@ namespace mako
         obj_key0.reserve(128);
         obj_key1.reserve(128);
         obj_v.reserve(256);
+    }
+
+    void ShardReceiver::UpdateTableEntry(int table_id, abstract_ordered_index *table)
+    {
+        if (table_id <= 0 || !table)
+            return;
+        open_tables_table_id[table_id] = table;
     }
 
     // Message handlers.
@@ -505,18 +509,25 @@ namespace mako
 
         int status = ErrorCode::SUCCESS;
         if (req->table_id > 0) {
-            try {
-                bool ret = open_tables_table_id[req->table_id]->shard_get(obj_key0, obj_v);
-                // abort here,
-                //  "not found a key" maybe a expected behavior
-                if (!ret){ // key not found or found but invalid
+            // Check if table exists (may not exist in micro benchmark mode)
+            auto it = open_tables_table_id.find(req->table_id);
+            if (it == open_tables_table_id.end() || it->second == nullptr) {
+                db->shard_abort_txn(nullptr);
+                status = ErrorCode::ABORT;
+            } else {
+                try {
+                    bool ret = it->second->shard_get(obj_key0, obj_v);
+                    // abort here,
+                    //  "not found a key" maybe a expected behavior
+                    if (!ret){ // key not found or found but invalid
+                        db->shard_abort_txn(nullptr);
+                        status = ErrorCode::ABORT;
+                    }
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    // No need to abort, the client side will issue an abort
                     db->shard_abort_txn(nullptr);
                     status = ErrorCode::ABORT;
                 }
-            } catch (abstract_db::abstract_abort_exception &ex) {
-                // No need to abort, the client side will issue an abort
-                db->shard_abort_txn(nullptr);
-                status = ErrorCode::ABORT;
             }
         } else {
             obj_v = "this is a mocked value for erpc_client and erpc_server";
@@ -548,22 +559,21 @@ namespace mako
     void ShardServer::Register(abstract_db *dbX,
                                mako::HelperQueue *queueX,
                                mako::HelperQueue *queueY,
-                               const map<string, abstract_ordered_index *> &open_tablesX /*,
-                               const map<string, vector<abstract_ordered_index *>> &partitionsX,
-                               const map<string, vector<abstract_ordered_index *>> &remote_partitionsX*/)
+                               const map<int, abstract_ordered_index *> &open_tablesX)
     {
         db = dbX;
         queue = queueX;
         queue_response = queueY;
-        open_tables = open_tablesX;
-        // partitions = partitionsX;
-        // remote_partitions = remote_partitionsX;
+        open_tables_table_id = open_tablesX;
+        shardReceiver->Register(db, open_tables_table_id);
+    }
 
-        for (auto &t : open_tablesX) {
-            open_tables_table_id[t.second->get_table_id()] = t.second;
+    void ShardServer::UpdateTable(int table_id, abstract_ordered_index *table)
+    {
+        if (table_id > 0 && table) {
+            open_tables_table_id[table_id] = table;
         }
-
-        shardReceiver->Register(db, open_tables, open_tables_table_id /*, partitions, remote_partitions*/);
+        shardReceiver->UpdateTableEntry(table_id, table);
     }
 
     void ShardServer::Run()
@@ -580,14 +590,24 @@ namespace mako
                 if (!handle) {
                     Panic("the pointer is invalid, p:%s, rIdx:%d, wIdx:%d, count:%d",
                             (void*)handle,
-                                queue->req_buffer_reader_idx,queue->req_buffer_writer_idx, 
+                                queue->req_buffer_reader_idx,queue->req_buffer_writer_idx,
                                 queue->req_cnt);
 
                 }
-                size_t msgLen = shardReceiver->ReceiveRequest(handle->get_req_msgbuf()->get_req_type(),
-                                               reinterpret_cast<char *>(handle->get_req_msgbuf()->buf_),
-                                               reinterpret_cast<char *>(handle->pre_resp_msgbuf_.buf_));
-                queue_response->add_one_req(handle, msgLen);
+
+                // Cast to transport-agnostic interface
+                // The backend has enqueued a TransportRequestHandle* (cast to erpc::ReqHandle*)
+                mako::TransportRequestHandle* req_handle = reinterpret_cast<mako::TransportRequestHandle*>(handle);
+
+                // Use abstract interface methods instead of eRPC-specific API
+                size_t msgLen = shardReceiver->ReceiveRequest(
+                    req_handle->GetRequestType(),
+                    req_handle->GetRequestBuffer(),
+                    req_handle->GetResponseBuffer());
+
+                // Enqueue response via transport-agnostic interface
+                // This will call ErpcRequestHandle::EnqueueResponse() or RrrRequestHandle::EnqueueResponse()
+                req_handle->EnqueueResponse(msgLen);
             }
 
             if (queue->should_stop()) {

@@ -16,6 +16,10 @@ namespace sync_util {
         // latest timestamp for each local Paxos stream
         // Please, we can keep this as vector
         static vector<std::atomic<uint32_t>> local_timestamp_; // timestamp*10+epoch
+#ifndef DISABLE_DISK
+        // latest timestamp for disk persistence per partition
+        static vector<std::atomic<uint32_t>> disk_timestamp_; // timestamp*10+epoch
+#endif
         // Single watermark for the entire system
         static std::atomic<uint32_t> single_watermark_; // timestamp*10+epoch
         
@@ -45,8 +49,11 @@ namespace sync_util {
         static void Init(int shardIdx_X, int nshards_X, int nthreads_X, bool is_leader_X,
                          string cluster_X,
                          transport::Configuration *config_X) {
-            for (int i = 0; i < nthreads; i++) {
+            for (int i = 0; i < nthreads_X; i++) {
                 local_timestamp_[i].store(0, memory_order_relaxed);
+#ifndef DISABLE_DISK
+                disk_timestamp_[i].store(0, memory_order_relaxed);
+#endif
             }
             // Initialize single watermark
             single_watermark_.store(0, memory_order_relaxed);
@@ -80,8 +87,11 @@ namespace sync_util {
         static void reset() {
            for (int i = 0; i < nthreads; i++) {
               local_timestamp_[i].store(0, memory_order_relaxed);
+#ifndef DISABLE_DISK
+              disk_timestamp_[i].store(0, memory_order_relaxed);
+#endif
            }
-           single_watermark_.store(0, memory_order_relaxed); 
+           single_watermark_.store(0, memory_order_relaxed);
         }
 
         static void shutdown() {
@@ -108,9 +118,19 @@ namespace sync_util {
             uint32_t min_so_far = numeric_limits<uint32_t>::max();
 
             for (int i=0; i<nthreads; i++) {
-                auto c = local_timestamp_[i].load(memory_order_acquire) ;
-                if (c >= single_watermark_.load(memory_order_acquire))
-                    min_so_far = min(min_so_far, c);
+                // Take minimum of replication and disk timestamps for each partition
+                auto repl_ts = local_timestamp_[i].load(memory_order_acquire);
+#ifndef DISABLE_DISK
+                auto disk_ts = disk_timestamp_[i].load(memory_order_acquire);
+                // Use the minimum of replication and disk timestamp for this partition
+                auto partition_min = min(repl_ts, disk_ts);
+#else
+                // When disk persistence is disabled, only consider replication timestamp
+                auto partition_min = repl_ts;
+#endif
+
+                if (partition_min >= single_watermark_.load(memory_order_acquire))
+                    min_so_far = min(min_so_far, partition_min);
             }
             if (min_so_far!=numeric_limits<uint32_t>::max()) {
 #if defined(COCO)
@@ -149,7 +169,10 @@ namespace sync_util {
             std::cout<<"start the advancer thread..."<<std::endl;
             for (int i=0; i<nthreads; i++) {
                 local_timestamp_[i].store(0, memory_order_release);
-            } 
+#ifndef DISABLE_DISK
+                disk_timestamp_[i].store(0, memory_order_release);
+#endif
+            }
             worker_running = true;
             thread advancer_thread(&sync_logger::advancer);
             advancer_thread.detach();
@@ -175,6 +198,15 @@ namespace sync_util {
            return single_watermark_.load(memory_order_relaxed);  // timestamp*10+epoch
         }
 
+#ifndef DISABLE_DISK
+        // Update disk persistence timestamp for a partition
+        static void updateDiskTimestamp(int partition_id, uint32_t timestamp) {
+            if (partition_id >= 0 && partition_id < nthreads) {
+                disk_timestamp_[partition_id].store(timestamp, memory_order_release);
+            }
+        }
+#endif
+
         // detached thread to advance local watermark on the current shard
         // there are two ways to advance watermarks: (1) periodically exchange; (2) piggyback in the RPCs in transaction execution
         static void advancer() {
@@ -183,10 +215,20 @@ namespace sync_util {
                 counter++;
                 uint32_t min_so_far = numeric_limits<uint32_t>::max();
                 for (int i=0;i<nthreads;i++) {
-                    auto c = local_timestamp_[i].load(memory_order_acquire) ;
+                    // Take minimum of replication and disk timestamps for each partition
+                    auto repl_ts = local_timestamp_[i].load(memory_order_acquire);
+#ifndef DISABLE_DISK
+                    auto disk_ts = disk_timestamp_[i].load(memory_order_acquire);
+                    // Use the minimum of replication and disk timestamp for this partition
+                    auto partition_min = min(repl_ts, disk_ts);
+#else
+                    // When disk persistence is disabled, only consider replication timestamp
+                    auto partition_min = repl_ts;
+#endif
+
                     uint32_t current_watermark = single_watermark_.load(memory_order_acquire);
-                    if (c>0 && c >= current_watermark)
-                        min_so_far = min(min_so_far, local_timestamp_[i].load(memory_order_acquire));
+                    if (partition_min > 0 && partition_min >= current_watermark)
+                        min_so_far = min(min_so_far, partition_min);
                 }
                 if (min_so_far!=numeric_limits<uint32_t>::max()) {
                     // In single timestamp system, update all shards

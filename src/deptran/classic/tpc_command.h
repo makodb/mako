@@ -25,8 +25,49 @@ class TpcCommitCommand : public Marshallable {
   }
   txnid_t tx_id_ = 0;
   int ret_ = -1;
+  shared_ptr<Marshallable> cmd_{nullptr};
+  ballot_t term;
+  // Optional view data for WRONG_LEADER responses
+  std::shared_ptr<ViewData> sp_view_data_ = nullptr;
+  
   virtual Marshal& ToMarshal(Marshal&) const override;
   virtual Marshal& FromMarshal(Marshal&) override;
+};
+
+class TpcEmptyCommand : public Marshallable {
+ private:
+  shared_ptr<BoxEvent<bool>> event{Reactor::CreateSpEvent<BoxEvent<bool>>()};
+
+ public:
+  TpcEmptyCommand() : Marshallable(MarshallDeputy::CMD_TPC_EMPTY) {}
+  Marshal& ToMarshal(Marshal&) const override;
+  Marshal& FromMarshal(Marshal&) override;
+  void Wait() { event->Wait(); };
+  void Done() { event->Set(1); };
+};
+
+class TpcNoopCommand : public Marshallable {
+  public:
+  TpcNoopCommand() : Marshallable(MarshallDeputy::CMD_NOOP) {}
+
+  Marshal& ToMarshal(Marshal&) const override;
+  Marshal& FromMarshal(Marshal&) override;
+};
+
+class TpcBatchCommand : public Marshallable {
+  uint32_t size_ = 0;
+public:
+  TpcBatchCommand() : Marshallable(MarshallDeputy::CMD_TPC_BATCH) {}
+  vector<shared_ptr<TpcCommitCommand> > cmds_;
+
+  void AddCmd(shared_ptr<TpcCommitCommand> cmd);
+  // @safe
+  void AddCmds(vector<shared_ptr<TpcCommitCommand> >& cmds);
+  void ClearCmd();
+  inline size_t Size() const { return cmds_.size(); }
+  
+  Marshal& ToMarshal(Marshal&) const override;
+  Marshal& FromMarshal(Marshal&) override;
 };
 
 } // namespace janus

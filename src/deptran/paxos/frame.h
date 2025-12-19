@@ -1,4 +1,5 @@
 #pragma once
+#include <rusty/arc.hpp>
 
 #include <deptran/communicator.h>
 #include "../frame.h"
@@ -22,10 +23,10 @@ class MultiPaxosFrame : public Frame {
                                  shared_ptr<TxnRegistry> txn_reg) override;
   Coordinator *CreateBulkCoordinator(Config *config, int benchmark);
   TxLogServer *CreateScheduler() override;
-  Communicator *CreateCommo(PollMgr *poll = nullptr) override;
+  Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None) override;
   vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rrr::PollMgr *poll_mgr,
+                                           rusty::Arc<rrr::PollThread> poll_thread_worker,
                                            ServerControlServiceImpl *scsi) override;
 };
 

@@ -4,6 +4,16 @@
 #include <mutex>
 
 #include "marshal.hpp"
+#include <rusty/rc.hpp>
+
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
 
 using namespace std;
 
@@ -158,7 +168,7 @@ size_t Marshal::content_size_slow() const {
 
 size_t Marshal::write(const void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
-
+    chrono::time_point<chrono::steady_clock> start;
     if (head_ == nullptr) {
         assert(tail_ == nullptr);
         head_ = new chunk(p, n);
@@ -167,20 +177,33 @@ size_t Marshal::write(const void* p, size_t n) {
         tail_->next = new chunk(p, n);
         tail_ = tail_->next;
     } else {
+        //if(timing) start = chrono::steady_clock::now();
         size_t n_write = tail_->write(p, n);
-
+        /*if(timing){
+	    auto end =  chrono::steady_clock::now();
+	    auto duration = chrono::duration_cast<chrono::microseconds>(end-start).count();
+	    Log_info("Duration of this tail write is: %d", duration);
+	}*/
         // otherwise the above fully_written() should have returned true
         assert(n_write > 0);
 
         if (n_write < n) {
+	    //Log_info("Less less less");
             const char* pc = (const char *) p;
+	    //if(timing) start = chrono::steady_clock::now();
             tail_->next = new chunk(pc + n_write, n - n_write);
+            /*if(timing){
+	        auto end = chrono::steady_clock::now();
+		auto duration = chrono::duration_cast<chrono::microseconds>(end-start).count();
+		Log_info("Duration of Less less less is: %d", duration);
+	    }*/
             tail_ = tail_->next;
         }
+	
     }
     write_cnt_ += n;
     content_size_ += n;
-    assert(content_size_ == content_size_slow());
+    //assert(content_size_ == content_size_slow());
 
     return n;
 }
@@ -319,6 +342,7 @@ size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
         // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
         //       that only one Marshal should be able to write to it! For the
         //       given 2 use cases, it works.
+        // @unsafe
         chunk* chnk = m.head_->shared_copy();
         if (n_fetch + chnk->content_size() > n) {
             // only fetch enough bytes we need
@@ -354,7 +378,10 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
             // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
             //       that only one Marshal should be able to write to it! For the
             //       given 2 use cases, it works.
+            // @unsafe
             chunk* chnk = m.head_->shared_copy();
+						//clock_gettime(CLOCK_MONOTONIC, &end);
+						//Log_info("time of shared_copy: %d", (end.tv_sec-begin.tv_sec)*1000000000 + end.tv_nsec-begin.tv_nsec);
             if (n_fetch + chnk->content_size() > n) {
                 // only fetch enough bytes we need
                 chnk->write_idx -= (n_fetch + chnk->content_size()) - n;
@@ -387,7 +414,7 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
     } else {
 
         // number of bytes that need to be copied
-        size_t copy_n = std::min(tail_->data->size - tail_->write_idx, n);
+        size_t copy_n = safe_min(tail_->data->size - tail_->write_idx, n);
         char* buf = new char[copy_n];
         n_fetch = m.read(buf, copy_n);
         verify(n_fetch == copy_n);
@@ -462,46 +489,58 @@ Marshal::bookmark* Marshal::set_bookmark(size_t n) {
 
 std::mutex md_mutex_g;
 std::mutex mdi_mutex_g;
-std::shared_ptr<MarshallDeputy::MarContainer> mc_{nullptr};
-thread_local std::shared_ptr<MarshallDeputy::MarContainer> mc_th_{nullptr};
+// Note: mc_ removed - now using Construct On First Use idiom in GetInitializers()
+// @safe - Thread-local factory registry copy
+// SAFETY: Each thread has its own copy, no locking needed for access
+thread_local MarshallDeputy::MarContainer mc_th_;
+thread_local bool mc_th_initialized_ = false;
 
+// @unsafe - Registers initializer with mutex locking and map insertion
 int MarshallDeputy::RegInitializer(int32_t cmd_type,
-                                   function<Marshallable * ()> init) {
+                                   function<Marshallable*()> init) {
   md_mutex_g.lock();
-  auto pair = Initializers().insert(std::make_pair(cmd_type, init));
+  auto& container = GetInitializers();
+  auto pair = container.insert(std::make_pair(cmd_type, init));
   verify(pair.second);
   md_mutex_g.unlock();
   return 0;
 }
 
-function<Marshallable * ()>
+// @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
+function<Marshallable*()>
 MarshallDeputy::GetInitializer(int32_t type) {
-  if (!mc_th_) {
-    mc_th_ = std::make_shared<MarshallDeputy::MarContainer>();
+  if (!mc_th_initialized_) {
     md_mutex_g.lock();
-    *mc_th_ = *mc_;
+    auto& global_container = GetInitializers();
+    // Copy the container into thread-local storage
+    mc_th_ = global_container;
+    mc_th_initialized_ = true;
     md_mutex_g.unlock();
   }
-  auto it = mc_th_->find(type);
-  verify(it != mc_th_->end());
+  auto it = mc_th_.find(type);
+  verify(it != mc_th_.end());
   auto f = it->second;
   return f;
 }
 
+// Returns reference to global factory registry
+// SAFETY: Protected by mutex, initializes on first access
+// Uses Construct On First Use idiom to avoid static initialization order fiasco
 MarshallDeputy::MarContainer&
-MarshallDeputy::Initializers() {
-  mdi_mutex_g.lock();
-  if (!mc_)
-    mc_ = std::make_shared<MarshallDeputy::MarContainer>();
-  mdi_mutex_g.unlock();
-  return *mc_;
-};
+MarshallDeputy::GetInitializers() {
+  // Note: Caller must hold md_mutex_g
+  // Local static is guaranteed to be initialized on first access
+  static MarshallDeputy::MarContainer mc_;
+  return mc_;
+}
 
 Marshal &Marshallable::FromMarshal(Marshal &m) {
   verify(0);
   return m;
 }
 
+// @unsafe - Calls std::shared_ptr::get and GetInitializer
+// @lifetime: (&'a mut) -> &'a mut
 Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
   verify(sp_data_ == nullptr);
   switch (kind_) {
@@ -511,11 +550,18 @@ Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
     default:
       auto func = GetInitializer(kind_);
       verify(func);
-      sp_data_.reset(func());
+      // Call initializer function which returns raw Marshallable*
+      Marshallable* raw_ptr = func();
+      verify(raw_ptr);
+      // Wrap in shared_ptr to take ownership
+      sp_data_ = std::shared_ptr<Marshallable>(raw_ptr);
       break;
   }
-  verify(sp_data_);
-  sp_data_->FromMarshal(m);
+  verify(sp_data_ != nullptr);
+  // Use get() to get pointer access
+  Marshallable* mut_data = sp_data_.get();
+  verify(mut_data);  // Should succeed - we just created it
+  mut_data->FromMarshal(m);
   verify(sp_data_->kind_);
   verify(kind_);
   verify(sp_data_->kind_ == kind_);

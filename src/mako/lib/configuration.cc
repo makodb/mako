@@ -35,12 +35,14 @@ namespace transport
         warehouses = 1; // default
         nshards = 0;
         is_new_format = false;
-        
+        multi_shard_mode = false;  // default: single-shard mode
+        // local_shard_indices will be populated later via command-line args
+
         YAML::Node config = YAML::LoadFile(file);
-        
+
         // Detect format
         is_new_format = DetectFormat(config);
-        
+
         if (is_new_format) {
             ParseNewFormat(config);
         } else {

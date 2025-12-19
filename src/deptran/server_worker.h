@@ -1,8 +1,10 @@
 #pragma once
+#include <rusty/arc.hpp>
 
 #include "__dep__.h"
 #include "marshal-value.h"
 #include "rcc/graph.h"
+#include "rcc/tx.h"
 #include "rcc/graph_marshaler.h"
 #include "command.h"
 #include "procedure.h"
@@ -20,13 +22,13 @@ class Communicator;
 class Frame;
 class ServerWorker {
  public:
-  rrr::PollMgr *svr_poll_mgr_ = nullptr;
+  rusty::Option<rusty::Arc<rrr::PollThread>> svr_poll_thread_worker_;
   base::ThreadPool *svr_thread_pool_ = nullptr;
   vector<rrr::Service*> services_ = {};
   rrr::Server *rpc_server_ = nullptr;
   base::ThreadPool *thread_pool_g = nullptr;
 
-  rrr::PollMgr *svr_hb_poll_mgr_g = nullptr;
+  rusty::Option<rusty::Arc<rrr::PollThread>> svr_hb_poll_thread_worker_g;
   ServerControlServiceImpl *scsi_ = nullptr;
   rrr::Server *hb_rpc_server_ = nullptr;
   base::ThreadPool *hb_thread_pool_g = nullptr;
@@ -44,6 +46,9 @@ class ServerWorker {
 
   bool launched_{false};
 
+  ~ServerWorker(); // Destructor to cleanup resources
+  int DbChecksum(); // Jetpack: Database checksum for validation
+
   void SetupHeartbeat();
   void PopTable();
   void SetupBase();
@@ -51,6 +56,8 @@ class ServerWorker {
   void SetupCommo();
   void RegisterWorkload();
   void ShutDown();
+  void Pause();
+  void Resume();
 
   static const uint32_t CtrlPortDelta = 10000;
   void WaitForShutdown();

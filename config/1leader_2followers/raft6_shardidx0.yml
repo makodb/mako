@@ -1,0 +1,39 @@
+site:
+  # each line is a partition (Raft group), first 3 sites are replicas (no learner in Raft)
+  # - ["s101:7001", "s201:7101", "s301:7201"]
+  server:
+    - ["s101:7001", "s201:7101", "s301:7201"]
+    - ["s102:7002", "s202:7102", "s302:7202"]
+    - ["s103:7003", "s203:7103", "s303:7203"]
+    - ["s104:7004", "s204:7104", "s304:7204"]
+    - ["s105:7005", "s205:7105", "s305:7205"]
+    - ["s106:7006", "s206:7106", "s306:7206"]
+
+# s101: localhost
+# s201: p1
+# s301: p2
+process:
+  s101: localhost
+  s201: p1
+  s301: p2
+  s102: localhost
+  s202: p1
+  s302: p2
+  s103: localhost
+  s203: p1
+  s303: p2
+  s104: localhost
+  s204: p1
+  s304: p2
+  s105: localhost
+  s205: p1
+  s305: p2
+  s106: localhost
+  s206: p1
+  s306: p2
+
+# process_name - host_addr map
+host:
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
+  p2: 127.0.0.1

@@ -29,7 +29,7 @@ class RccGraph : public Graph<RccTx> {
 //  Graph <TxnInfo> txn_gra_;
   RccServer* sched_{nullptr};
   bool empty_{false};
-  parid_t partition_id_ = 0; // TODO
+//  parid_t partition_id_ = 0; // TODO
 //  std::vector<rrr::Client *> rpc_clients_;
 //  std::vector<RococoProxy *> rpc_proxies_;
 //  std::vector<std::string> server_addrs_;
@@ -48,7 +48,7 @@ class RccGraph : public Graph<RccTx> {
   void RemoveVertex(txnid_t txn_id);
   void RebuildEdgePointer(map<txnid_t, shared_ptr<RccTx>>& index);
   shared_ptr<RccTx> AggregateVertex(shared_ptr<RccTx> rhs_dtxn);
-  void UpgradeStatus(RccTx& v, int8_t status);
+  void UpgradeStatus(RccTx& v, int rank, int8_t status);
 
   virtual map<txnid_t, shared_ptr<RccTx>> Aggregate(epoch_t epoch, RccGraph& graph);
   void SelectGraphCmtUkn(RccTx& dtxn, shared_ptr<RccGraph> new_graph);

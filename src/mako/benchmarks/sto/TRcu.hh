@@ -35,15 +35,19 @@ private:
     }
 
 public:
+    // @unsafe: uses manual memory management (placement new)
     static TRcuGroup* make(unsigned capacity) {
         void* x = new char[sizeof(TRcuGroup) + sizeof(TRcuElement) * (capacity - 1)];
         return new(x) TRcuGroup(capacity);
     }
+    
+    // @unsafe: uses manual memory management (delete[])
     static void free(TRcuGroup* g) {
         g->~TRcuGroup();
         delete[] reinterpret_cast<char*>(g);
     }
 
+    // @unsafe: uses raw union access
     void add(epoch_type epoch, void (*function)(void*), void* argument) {
         assert(tail_ + 2 <= capacity_);
         if (head_ == tail_ || epoch_ != epoch) {
@@ -67,16 +71,20 @@ public:
     TRcuSet();
     ~TRcuSet();
 
+    // @unsafe: calls unsafe TRcuGroup::add and grow
     void add(epoch_type epoch, void (*function)(void*), void* argument) {
         if (unlikely(current_->tail_ + 2 > current_->capacity_))
             grow();
         current_->add(epoch, function, argument);
     }
+    
     void clean_until(epoch_type max_epoch) {
         if (clean_epoch_ != max_epoch)
             hard_clean_until(max_epoch);
         clean_epoch_ = max_epoch;
     }
+    
+    // @safe
     epoch_type clean_epoch() const {
         return clean_epoch_;
     }

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Checkpoint state and visitor pattern for tree serialization
+// Defines ckstate for collecting key-value pairs during checkpoint
+// SAFETY: Uses kvout buffers and msgpack serialization
+
 #ifndef MASSTREE_CHECKPOINT_HH
 #define MASSTREE_CHECKPOINT_HH
 #include "kvrow.hh"
@@ -32,9 +36,11 @@ struct ckstate {
     template <typename SS, typename K>
     void visit_leaf(const SS&, const K&, threadinfo&) {
     }
+    // @unsafe - writes checkpoint rows without additional lifetime tracking
     bool visit_value(Str key, const row_type* value, threadinfo& ti);
 
     template <typename T>
+    // @unsafe - inserts rows via raw pointers and unchecked parsing
     static void insert(T& table, msgpack::parser& par, threadinfo& ti);
 };
 

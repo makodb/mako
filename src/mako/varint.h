@@ -1,9 +1,14 @@
 #ifndef _VARINT_H_
 #define _VARINT_H_
+#ifdef CONFIG_H
+#include CONFIG_H
+#endif
 
 #include <stdint.h>
+#include <cstddef>
 #include "macros.h"
 
+// @unsafe
 // read unsigned varint32 from buffer. assumes the buffer will have enough size
 inline const uint8_t *
 read_uvint32_slow(const uint8_t *buf, uint32_t *value)
@@ -32,6 +37,7 @@ done:
  *
  * Assumes buf points to a well encoded varint
  */
+// @unsafe
 inline ALWAYS_INLINE const uint8_t *
 read_uvint32(const uint8_t *buf, uint32_t *value)
 {
@@ -42,6 +48,7 @@ read_uvint32(const uint8_t *buf, uint32_t *value)
   return read_uvint32_slow(buf, value);
 }
 
+// @unsafe
 inline const uint8_t *
 failsafe_read_uvint32_slow(
     const uint8_t *buf, size_t nbytes, uint32_t *value)
@@ -67,6 +74,7 @@ done:
   return p;
 }
 
+// @unsafe
 inline ALWAYS_INLINE const uint8_t *
 failsafe_read_uvint32(
     const uint8_t *stream, size_t nbytes, uint32_t *value)
@@ -81,6 +89,7 @@ failsafe_read_uvint32(
   return failsafe_read_uvint32_slow(stream, nbytes, value);
 }
 
+// @unsafe
 inline ALWAYS_INLINE size_t
 skip_uvint32(const uint8_t *stream, uint8_t *rawv)
 {
@@ -101,6 +110,7 @@ skip_uvint32(const uint8_t *stream, uint8_t *rawv)
   return 0;
 }
 
+// @unsafe
 inline ALWAYS_INLINE size_t
 failsafe_skip_uvint32(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
 {
@@ -135,6 +145,7 @@ failsafe_skip_uvint32(const uint8_t *stream, size_t nbytes, uint8_t *rawv)
  * write uint32_t as unsigned varint32 to buffer. assumes the buffer will have
  * enough size. returns the position in buf after the value has been written
  */
+// @unsafe
 inline uint8_t *
 write_uvint32(uint8_t *buf, uint32_t value)
 {
@@ -146,6 +157,9 @@ write_uvint32(uint8_t *buf, uint32_t value)
   return buf;
 }
 
+// @unsafe
+// Marked unsafe because 'likely' expands to '__builtin_expect'
+// which is considered an unsafe external function call by the checker.
 inline size_t
 size_uvint32(uint32_t value)
 {

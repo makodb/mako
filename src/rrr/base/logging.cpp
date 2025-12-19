@@ -6,10 +6,19 @@
 #include "threading.hpp"
 #include "logging.hpp"
 
+// External safety annotations for functions used in this module
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
 namespace rrr {
 
 int Log::level_s = Log::DEBUG;
 FILE* Log::fp_s = stdout;
+std::ostream* Log::stm_s = &std::cout;
 pthread_mutex_t Log::m_s = PTHREAD_MUTEX_INITIALIZER;
 
 // @unsafe - Modifies static level under mutex
@@ -29,7 +38,7 @@ void Log::set_file(FILE* fp) {
     Pthread_mutex_unlock(&m_s);
 }
 
-// @safe - Pure string manipulation, returns pointer into input string
+// @unsafe - Returns pointer into input string (raw pointer arithmetic)
 static const char* basename(const char* fpath) {
     if (fpath == nullptr) {
         return nullptr;
@@ -65,8 +74,9 @@ void Log::log_v(int level, int line, const char* file, const char* fmt, va_list 
       offset += sprintf(buf+offset, "[%s:%d] ", filebase, line);
       offset += sprintf(buf+offset, "%s | ", now_str);
       offset += vsprintf(buf+offset, fmt, args);
-      offset += sprintf(buf+offset, "\n");
-      fprintf(fp_s, "%s", buf);
+    //   offset += sprintf(buf+offset, "\n");
+      // fprintf(fp_s, "%s", buf);
+      (*stm_s) << buf << std::endl;
 
 //      fprintf(fp_s, "%c ", indicator[level]);
 //        if (filebase != nullptr) {

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Row type management for Masstree values
+// Provides row allocation, change detection, and log replay interfaces
+// SAFETY: Uses threadinfo allocator, log callbacks, row marker sentinels
+
 #ifndef KVROW_HH
 #define KVROW_HH 1
 #include "kvthread.hh"
@@ -172,6 +176,7 @@ result_t query<R>::run_put(T& table, Str key,
     return inserted ? Inserted : Updated;
 }
 
+// @unsafe - mutates raw row pointers and schedules old versions for RCU reclamation
 template <typename R>
 inline bool query<R>::apply_put(R*& value, bool found, const Json* firstreq,
                                 const Json* lastreq, threadinfo& ti) {
@@ -213,6 +218,7 @@ result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     return inserted ? Inserted : Updated;
 }
 
+// @unsafe - swaps out stored rows and frees previous buffers via RCU
 template <typename R>
 inline bool query<R>::apply_replace(R*& value, bool found, Str new_value,
                                     threadinfo& ti) {
@@ -243,6 +249,7 @@ bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
     return found;
 }
 
+// @unsafe - deletes rows by marking and freeing raw value buffers
 template <typename R>
 inline void query<R>::apply_remove(R*& value, kvtimestamp_t& node_ts,
                                    threadinfo& ti) {

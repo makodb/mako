@@ -7,6 +7,18 @@
 
 #include "misc.hpp"
 
+// External safety annotations for system functions used in this module
+// @external: {
+//   sysconf: [unsafe, (int) -> long]
+//   readlink: [unsafe, (const char*, char*, size_t) -> ssize_t]
+//   snprintf: [unsafe, (char*, size_t, const char*, ...) -> int]
+//   getpid: [unsafe, () -> pid_t]
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
 namespace rrr {
 
 // @unsafe - Direct pointer manipulation for performance
@@ -49,12 +61,14 @@ void time_now_str(char* now) {
     now[23] = '\0';
 }
 
-// @safe - Queries system configuration
+// @unsafe - Calls sysconf (external unsafe)
+// SAFETY: sysconf is POSIX-compliant, thread-safe
 int get_ncpu() {
     return sysconf(_SC_NPROCESSORS_ONLN);
 }
 
-// @safe - Returns static buffer, thread-safe after first call
+// @unsafe - Calls readlink, snprintf, getpid (external unsafe)
+// SAFETY: Returns static buffer, thread-safe after first call
 const char* get_exec_path() {
     static char path[PATH_MAX];
     static bool ready = false;

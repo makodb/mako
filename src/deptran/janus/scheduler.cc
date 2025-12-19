@@ -17,7 +17,7 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
     if (dtxn.epoch_ == 0) {
       dtxn.epoch_ = epoch_mgr_.curr_epoch_;
     }
-    epoch_mgr_.AddToEpoch(dtxn.epoch_, dtxn.tid_, dtxn.IsDecided());
+//    epoch_mgr_.AddToEpoch(dtxn.epoch_, dtxn.tid_, dtxn.IsDecided());
     verify(vertex->id() == pair.second->id());
     verify(vertex_index().count(vertex->id()) > 0);
     index[vertex->id()] = vertex;
@@ -109,6 +109,9 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
                                 shared_ptr<RccGraph> graph,
                                 shared_ptr<RccGraph> res_graph) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
+  verify(0);
+  return 0;
+/**
 //  Log_info("on preaccept: %llx par: %d", txn_id, (int)partition_id_);
 //  if (RandomGenerator::rand(1, 2000) <= 1)
 //    Log_info("on pre-accept graph size: %d", graph.size());
@@ -120,106 +123,98 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
   // TODO FIXME
   // add interference based on cmds.
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(txn_id));
-  dtxn->UpdateStatus(TXN_PAC);
-  dtxn->involve_flag_ = RccTx::INVOLVED;
+  auto& subtx = dtxn->sub_tx_i_;
+  subtx.UpdateStatus(TXN_PAC);
+  subtx.involve_flag_ = RccTx::RccSubTx::INVOLVED;
   RccTx &tinfo = *dtxn;
   int ret;
-  if (dtxn->max_seen_ballot_ > 0) {
+  if (subtx.max_seen_ballot_ > 0) {
     ret = REJECT;
   } else {
-    if (dtxn->status() < TXN_CMT) {
-      if (dtxn->phase_ < PHASE_RCC_DISPATCH && tinfo.status() < TXN_CMT) {
+    if (subtx.status() < TXN_CMT) {
+      if (dtxn->phase_ < PHASE_RCC_DISPATCH && subtx.status() < TXN_CMT) {
         for (auto &c: cmds) {
           map<int32_t, Value> output;
           dtxn->DispatchExecute(const_cast<SimpleCommand &>(c), &output);
         }
       }
     } else {
-      if (dtxn->dreqs_.size() == 0) {
+      if (subtx.dreqs_.size() == 0) {
         for (auto &c: cmds) {
-          dtxn->dreqs_.push_back(c);
+          subtx.dreqs_.push_back(c);
         }
       }
     }
-    verify(!tinfo.fully_dispatched_->value_);
-    tinfo.fully_dispatched_->Set(1);
+    verify(!subtx.fully_dispatched_->value_);
+    subtx.fully_dispatched_->Set(1);
     MinItfrGraph(*dtxn, res_graph, false, 1);
     ret = SUCCESS;
   }
   return ret;
+  */
 }
 
 void SchedulerJanus::OnAccept(const txnid_t txn_id,
+                              int rank,
                               const ballot_t &ballot,
                               shared_ptr<RccGraph> graph,
                               int32_t *res) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
-  auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(txn_id));
-  if (dtxn->max_seen_ballot_ > ballot) {
+  auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(txn_id, rank));
+  verify(rank = RANK_D);
+  auto& subtx = dtxn->subtx(rank);
+  if (subtx.max_seen_ballot_ > ballot) {
     *res = REJECT;
     verify(0); // do not support failure recovery so far.
   } else {
-    dtxn->max_accepted_ballot_ = ballot;
-    dtxn->max_seen_ballot_ = ballot;
+    subtx.max_accepted_ballot_ = ballot;
+    subtx.max_seen_ballot_ = ballot;
     Aggregate(*graph);
     *res = SUCCESS;
   }
 }
 
-int SchedulerJanus::OnInquire(epoch_t epoch,
-                              cmdid_t cmd_id,
-                              shared_ptr<RccGraph> graph) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-  // TODO check epoch, cannot be a too old one.
-  auto sp_tx = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
-  //register an event, triggered when the status >= COMMITTING;
-  verify (sp_tx->Involve(TxLogServer::partition_id_));
-  sp_tx->status_.Wait([](int v)->bool {return v>=TXN_CMT;});
-  InquiredGraph(*sp_tx, graph);
-  return 0;
-}
-
-int SchedulerJanus::OnCommit(const txnid_t cmd_id,
-                             rank_t rank,
-                             bool need_validation,
-                             shared_ptr<RccGraph> sp_graph,
-                             TxnOutput *output) {
-  std::lock_guard<std::recursive_mutex> lock(mtx_);
-//  if (RandomGenerator::rand(1, 2000) <= 1)
-//    Log_info("on commit graph size: %d", graph.size());
-  int ret = SUCCESS;
-  auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
-  dtxn->need_validation_ = need_validation;
-  verify(dtxn->p_output_reply_ == nullptr);
-  dtxn->p_output_reply_ = output;
-  verify(!dtxn->IsAborted());
-  if (dtxn->IsExecuted()) {
-    ret = SUCCESS; // TODO no return output?
-  } else {
-//    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
-//    dtxn->commit_request_received_ = true;
-    if (!sp_graph) {
-      // quick path without graph, no contention.
-      verify(dtxn->fully_dispatched_->value_); //cannot handle non-dispatched now.
-      UpgradeStatus(*dtxn, TXN_DCD);
-      Execute(*dtxn);
-    } else {
-      // with graph
-      auto index = Aggregate(*sp_graph);
-//      TriggerCheckAfterAggregation(*sp_graph);
-      WaitUntilAllPredecessorsAtLeastCommitting(dtxn.get());
-      RccScc& scc = FindSccPred(*dtxn);
-      Decide(scc);
-      WaitUntilAllPredSccExecuted(scc);
-      if (FullyDispatched(scc) && !scc[0]->IsExecuted()) {
-        Execute(scc);
-      }
-    }
-    dtxn->sp_ev_commit_->Wait();
-    ret = dtxn->committed_ ? SUCCESS : REJECT;
-  }
-  return ret;
-}
+//int SchedulerJanus::OnCommit(const txnid_t cmd_id,
+//                             rank_t rank,
+//                             bool need_validation,
+//                             shared_ptr<RccGraph> sp_graph,
+//                             TxnOutput *output) {
+//  std::lock_guard<std::recursive_mutex> lock(mtx_);
+////  if (RandomGenerator::rand(1, 2000) <= 1)
+////    Log_info("on commit graph size: %d", graph.size());
+//  int ret = SUCCESS;
+//  auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
+//  dtxn->need_validation_ = need_validation;
+//  verify(dtxn->p_output_reply_ == nullptr);
+//  dtxn->p_output_reply_ = output;
+//  verify(!dtxn->IsAborted());
+//  if (dtxn->HasLogApplyStarted()) {
+//    ret = SUCCESS; // TODO no return output?
+//  } else {
+////    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
+////    dtxn->commit_request_received_ = true;
+//    if (!sp_graph) {
+//      // quick path without graph, no contention.
+//      verify(dtxn->fully_dispatched_->value_); //cannot handle non-dispatched now.
+//      UpgradeStatus(*dtxn, TXN_DCD);
+//      Execute(dtxn);
+//    } else {
+//      // with graph
+//      auto index = Aggregate(*sp_graph);
+////      TriggerCheckAfterAggregation(*sp_graph);
+//      WaitUntilAllPredecessorsAtLeastCommitting(dtxn.get());
+//      RccScc& scc = FindSccPred(*dtxn);
+//      Decide(scc);
+//      WaitUntilAllPredSccExecuted(scc);
+//      if (FullyDispatched(scc) && !scc[0]->HasLogApplyStarted()) {
+//        Execute(scc);
+//      }
+//    }
+//    dtxn->sp_ev_commit_->Wait();
+//    ret = dtxn->committed_ ? SUCCESS : REJECT;
+//  }
+//  return ret;
+//}
 
 JanusCommo *SchedulerJanus::commo() {
 
