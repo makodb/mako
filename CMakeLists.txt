@@ -907,12 +907,9 @@ add_apps(dbtest src/mako/benchmarks/dbtest.cc)
 add_apps(simpleTransaction examples/simpleTransaction.cc)
 add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
 add_apps(makoCon examples/makoCon.cc)
-<<<<<<< Updated upstream
 add_apps(continuousTransactions examples/continuousTransactions.cc)
-=======
 add_apps(makoConDBBench examples/makoConDBBench.cc)
 add_apps(makoConMultiTrd examples/makoConMultiTrd.cc)
->>>>>>> Stashed changes
 add_apps(simplePaxos examples/simplePaxos.cc)
 add_apps(test_rocksdb_persistence examples/test_rocksdb_persistence.cc)
 add_apps(rocksdb_replay_app src/mako/benchmarks/rocksdb_replay_app.cc)
