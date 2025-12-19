@@ -1,3 +1,6 @@
+// @unsafe - Masstree key/value server daemon
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2014 President and Fellows of Harvard College
@@ -13,9 +16,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe
-namespace mtd_unsafe_file {} // Sets file_default to Unsafe for borrow checker
-// Masstree key/value server daemon
 // Provides network-accessible Masstree with logging and checkpointing
 // SAFETY: Uses raw sockets, POSIX threads, mmap, signal handlers, and unmanaged buffers
 // EXCLUDED FROM BORROW CHECK: Uses kvthread allocator (void* return limitation)
@@ -64,6 +64,7 @@ namespace mtd_unsafe_file {} // Sets file_default to Unsafe for borrow checker
 // @external_unsafe: kpermuter<*
 // @external_unsafe: unknown
 
+// @external_unsafe: hashcode
 #include <stdio.h>
 #include <stdarg.h>
 #include <ctype.h>

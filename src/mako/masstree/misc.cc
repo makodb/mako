@@ -1,3 +1,6 @@
+// @unsafe - Miscellaneous utility functions for argument parsing
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2013 President and Fellows of Harvard College
@@ -13,10 +16,7 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// Miscellaneous utility functions for argument parsing
-//
 // @external_unsafe_type: std::*
-// @external_unsafe: std::*
 // @external_unsafe: strtod
 // @external_unsafe: isspace
 // @external_unsafe: Clp_OptionError

@@ -1,3 +1,5 @@
+// @unsafe - File I/O utilities using raw file descriptors
+// @external_unsafe: std::*
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2014 President and Fellows of Harvard College
@@ -13,7 +15,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// File I/O utilities using raw file descriptors
 // All functions are @unsafe - use POSIX file operations
 //
 // SAFETY NOTE: These functions cannot be made safe because:
@@ -32,6 +33,7 @@
 // @external_unsafe: fsync
 // @external_unsafe: rename
 // @external_unsafe: safe_write
+// @external_unsafe: hashcode
 
 #include "file.hh"
 #include "straccum.hh"

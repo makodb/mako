@@ -119,7 +119,7 @@ struct Str : public String_base<Str> {
         else
             return Str();
     }
-    // @safe - creates bounded substring view
+    // @unsafe - uses reinterpret_cast for pointer conversion
     Str substring(const unsigned char *first, const unsigned char *last) const {
         const unsigned char *u = reinterpret_cast<const unsigned char*>(s);
         if (first <= last && first >= u && last <= u + len)

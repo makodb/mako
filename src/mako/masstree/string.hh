@@ -861,7 +861,7 @@ inline const unsigned char* String::skip_utf8_bom(const unsigned char* first,
         return first;
 }
 
-// @safe - delegates to safe unsigned char version
+// @unsafe - uses reinterpret_cast for pointer conversion
 inline const char* String::skip_utf8_bom(const char* first, const char* last) {
     return reinterpret_cast<const char*>(
         skip_utf8_bom(reinterpret_cast<const unsigned char*>(first),

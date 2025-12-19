@@ -61,7 +61,7 @@ class stringbag {
     };
 
  public:
-    // @safe - pure compile-time constant
+    // @unsafe - uses C-style casts
     /** @brief Return the maximum allowed capacity of a stringbag. */
     static constexpr unsigned max_size() {
         return ((unsigned) (offset_type) -1) + 1;

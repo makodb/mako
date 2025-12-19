@@ -1,3 +1,21 @@
+// @unsafe - Masstree comprehensive test harness and benchmarking tool
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
+// @external_unsafe: ksuf
+// @external_unsafe: ksuf_equals
+// @external_unsafe: ksuf_matches
+// @external_unsafe: assign_ksuf
+// @external_unsafe: assign_initialize
+// @external_unsafe: Masstree::leaf::ksuf
+// @external_unsafe: Masstree::leaf::ksuf_equals
+// @external_unsafe: Masstree::leaf::ksuf_matches
+// @external_unsafe: Masstree::leaf::assign_ksuf
+// @external_unsafe: Masstree::leaf::assign_initialize
+// @external_unsafe: Masstree::leaf<*::ksuf
+// @external_unsafe: Masstree::leaf<*::ksuf_equals
+// @external_unsafe: Masstree::leaf<*::ksuf_matches
+// @external_unsafe: Masstree::leaf<*::assign_ksuf
+// @external_unsafe: Masstree::leaf<*::assign_initialize
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2013 President and Fellows of Harvard College
@@ -13,9 +31,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe
-namespace mttest_unsafe_file {} // Sets file_default to Unsafe for borrow checker
-// Masstree comprehensive test harness and benchmarking tool
 // Performs multi-threaded insert/lookup/scan tests with configurable workloads
 // SAFETY: Uses raw sockets, POSIX threads, global state, and unchecked casts
 // EXCLUDED FROM BORROW CHECK: Uses kvthread allocator (void* return limitation)
@@ -31,8 +46,6 @@ namespace mttest_unsafe_file {} // Sets file_default to Unsafe for borrow checke
 // @external_unsafe: circular_int::*
 // @external_unsafe: lcdf::String_base::*
 // @external_unsafe: Masstree::tcursor::*
-//
-// @unsafe
 // next_full_version_value template function - dereferences node pointer
 // @external_unsafe: lcdf::String_base<*
 // @external_unsafe: lcdf::String::*
@@ -70,7 +83,6 @@ namespace mttest_unsafe_file {} // Sets file_default to Unsafe for borrow checke
 // -*- mode: c++ -*-
 // mttest: key/value tester
 //
-
 #include <stdio.h>
 #include <stdarg.h>
 #include <ctype.h>

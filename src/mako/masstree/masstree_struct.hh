@@ -155,11 +155,11 @@ class internode : public node_base<P> {
     ikey_type ikey(int p) const {
         return ikey0_[p];
     }
-    // @safe - pure comparison of keys
+    // @unsafe - calls ::compare which uses template instantiation
     int compare_key(ikey_type a, int bp) const {
         return ::compare(a, ikey(bp));
     }
-    // @safe - pure comparison of keys
+    // @unsafe - calls ::compare which uses template instantiation
     int compare_key(const key_type& a, int bp) const {
         return ::compare(a.ikey(), ikey(bp));
     }
@@ -439,21 +439,21 @@ class leaf : public node_base<P> {
     bool has_ksuf(int p) const {
         return keylenx_has_ksuf(keylenx_[p]);
     }
-    // @safe - returns suffix string view
+    // @unsafe - returns suffix string view, calls stringbag::get
     Str ksuf(int p, int keylenx) const {
         (void) keylenx;
         masstree_precondition(keylenx_has_ksuf(keylenx));
         return ksuf_ ? ksuf_->get(p) : iksuf_[0].get(p);
     }
-    // @safe - returns suffix string view
+    // @unsafe - returns suffix string view, calls ksuf overload
     Str ksuf(int p) const {
         return ksuf(p, keylenx_[p]);
     }
-    // @safe - suffix comparison
+    // @unsafe - suffix comparison, calls ksuf_equals overload
     bool ksuf_equals(int p, const key_type& ka) const {
         return ksuf_equals(p, ka, keylenx_[p]);
     }
-    // @safe - suffix comparison
+    // @unsafe - suffix comparison, calls ksuf and string_slice::equals_sloppy
     bool ksuf_equals(int p, const key_type& ka, int keylenx) const {
         if (!keylenx_has_ksuf(keylenx))
             return true;
@@ -461,7 +461,7 @@ class leaf : public node_base<P> {
         return s.len == ka.suffix().len
             && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
     }
-    // @safe - suffix matching
+    // @unsafe - suffix matching, calls ksuf and string_slice::equals_sloppy
     // Returns 1 if match & not layer, 0 if no match, <0 if match and layer
     int ksuf_matches(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
@@ -473,7 +473,7 @@ class leaf : public node_base<P> {
         return s.len == ka.suffix().len
             && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
     }
-    // @safe - suffix comparison
+    // @unsafe - suffix comparison, calls ksuf and compare
     int ksuf_compare(int p, const key_type& ka) const {
         int keylenx = keylenx_[p];
         if (!keylenx_has_ksuf(keylenx))
@@ -571,6 +571,7 @@ class leaf : public node_base<P> {
             assign_ksuf(p, ka.suffix(), false, ti);
         }
     }
+    // @unsafe - calls assign_ksuf which does memory operations
     inline void assign_initialize(int p, const key_type& ka, threadinfo& ti) {
         lv_[p] = leafvalue_type::make_empty();
         ikey0_[p] = ka.ikey();
@@ -581,7 +582,7 @@ class leaf : public node_base<P> {
             assign_ksuf(p, ka.suffix(), true, ti);
         }
     }
-    // @safe - copies data between leaves
+    // @unsafe - copies data between leaves, calls assign_ksuf
     inline void assign_initialize(int p, leaf<P>& x, int xp, threadinfo& ti) {
         lv_[p] = x.lv_[xp];
         ikey0_[p] = x.ikey0_[xp];
@@ -595,6 +596,7 @@ class leaf : public node_base<P> {
         ikey0_[p] = ka.ikey();
         keylenx_[p] = layer_keylenx;
     }
+    // @unsafe - manages suffix memory allocation
     void assign_ksuf(int p, Str s, bool initializing, threadinfo& ti);
 
     inline ikey_type ikey_after_insert(const permuter_type& perm, int i,
@@ -763,6 +765,7 @@ leaf<P>* leaf<P>::advance_to_key(const key_type& ka, nodeversion_type& v,
     permutation might not be set up yet. In this case, it is assumed that key
     positions [0,p) are ready: keysuffixes in that range are copied. In either
     case, the key at position p is NOT copied; it is assigned to @a s. */
+// @unsafe - memory allocation and suffix management
 template <typename P>
 void leaf<P>::assign_ksuf(int p, Str s, bool initializing, threadinfo& ti) {
     if ((ksuf_ && ksuf_->assign(p, s))

@@ -1,4 +1,6 @@
-// MsgPack binary serialization format parser
+// @unsafe - MsgPack binary serialization format parser
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 // Functions that parse raw buffers are @unsafe
 //
 // SAFETY NOTE: Parser functions cannot be made safe because:
@@ -15,12 +17,10 @@
 //   htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe]
 //   hashcode: [unsafe]
 // }
-// @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::Json::*
 // @external_unsafe: malloc
 // @external_unsafe: memcpy
-
 #include "msgpack.hh"
 namespace msgpack {
 

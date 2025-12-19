@@ -1,3 +1,7 @@
+// @unsafe - Hash code computation using casts and pointer operations
+// @external_unsafe: std::*
+// Provides hashcode<T> templates compatible with std::hash
+// Uses C-style casts and reinterpret_cast for pointer hashing
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2013 President and Fellows of Harvard College
@@ -13,9 +17,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @safe - Hash code computation for various types
-// Provides hashcode<T> templates compatible with std::hash
-// Pure computation, no memory operations (except pointer hash)
 
 #ifndef CLICK_HASHCODE_HH
 #define CLICK_HASHCODE_HH
@@ -39,7 +40,7 @@
 typedef size_t hashcode_t;	///< Typical type for a hashcode() value.
 
 template <typename T>
-// @safe - delegates to T::hashcode() which is pure computation
+// @unsafe - cannot verify T::hashcode() is safe at compile time
 inline hashcode_t hashcode(T const &x) {
     return x.hashcode();
 }
@@ -124,8 +125,8 @@ inline hashcode_t hashcode(uint64_t const &x) {
 }
 #endif
 
-template <typename T>
 // @unsafe - hashes raw pointer bits
+template <typename T>
 inline hashcode_t hashcode(T * const &x) {
     return reinterpret_cast<uintptr_t>(x) >> 3;
 }

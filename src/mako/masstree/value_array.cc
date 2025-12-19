@@ -1,3 +1,16 @@
+// @unsafe - Fixed-column array value type for Masstree rows
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
+// @external: {
+//   threadinfo: [unsafe_type]
+// }
+// @external_unsafe: circular_int::*
+// @external_unsafe: lcdf::String_base::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::Json::*
+// @external_unsafe: threadinfo::*
+// @external_unsafe: memset
+// @external_unsafe: memcpy
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2014 President and Fellows of Harvard College
@@ -13,21 +26,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// Fixed-column array value type for Masstree rows
-// All functions use raw allocator and memset/memcpy - @unsafe
-//
-// @external: {
-//   threadinfo: [unsafe_type]
-// }
-// @external_unsafe_type: std::*
-// @external_unsafe: std::*
-// @external_unsafe: circular_int::*
-// @external_unsafe: lcdf::String_base::*
-// @external_unsafe: lcdf::String::*
-// @external_unsafe: lcdf::Json::*
-// @external_unsafe: threadinfo::*
-// @external_unsafe: memset
-// @external_unsafe: memcpy
 
 #include "kvrow.hh"
 #include "value_array.hh"

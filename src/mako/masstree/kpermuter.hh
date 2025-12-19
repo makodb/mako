@@ -151,7 +151,7 @@ template <int width> class kpermuter {
         <li>Given j with j == i, q[j] == x</li>
         <li>Given j with i < j < q.size(), q[j] == p[j-1] && q[j] != x</li>
         </ul> */
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - uses C-style casts (value_type)
     int insert_from_back(int i) {
         int value = back();
         // increment size, leave lower slots unchanged
@@ -198,7 +198,7 @@ template <int width> class kpermuter {
         <li>Given j with i <= j < q.size(), q[j] == p[j+1]</li>
         <li>q[q.size()] == p[i]</li>
         </ul> */
-    // @safe - pure bit manipulation on owned value
+    // @unsafe - uses C-style casts (value_type)
     void remove(int i) {
         (void) width;
         if (int(x_ & 15) == i + 1)

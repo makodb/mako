@@ -1,3 +1,6 @@
+// @unsafe - JSON parsing and serialization implementation
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2014 President and Fellows of Harvard College
@@ -14,8 +17,7 @@
  * is legally binding.
  */
 // -*- c-basic-offset: 4 -*-
-// JSON parsing and serialization implementation
-// Most functions use malloc/pointer operations - @unsafe marked individually
+// Most functions use malloc/pointer operations
 //
 // SAFETY NOTE: Most functions cannot be made safe because:
 // 1. ArrayJson/ObjectJson use placement new and manual destructor calls
@@ -30,7 +32,6 @@
 //   lcdf::String: [unsafe_type]
 //   hashcode: [unsafe]
 // }
-// @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::StringAccum::*
 // @external_unsafe: malloc

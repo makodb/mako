@@ -1,3 +1,6 @@
+// @unsafe - Checkpoint serialization for Masstree data persistence
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2013 President and Fellows of Harvard College
@@ -13,8 +16,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// Checkpoint serialization for Masstree data persistence
-//
 // @external: {
 //   threadinfo: [unsafe_type]
 //   lcdf::String: [unsafe_type]
@@ -25,7 +26,6 @@
 // }
 // @external_unsafe_type: std::*
 // @external_unsafe_type: circular_int
-// @external_unsafe: std::*
 // @external_unsafe: lcdf::String_base::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::String_generic::*

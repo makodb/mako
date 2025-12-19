@@ -1,3 +1,7 @@
+// @unsafe - Event system with atomic operations and shared_ptr usage
+// @external_unsafe: std::*
+// @external_unsafe: std::atomic<int>::operator int
+// @external_unsafe: operator int
 
 #pragma once
 
@@ -479,8 +483,9 @@ class ThreadSafeIntEvent : public Event {
 
   bool TestTrigger();
 
+  // @unsafe - atomic load operation
   int get() {
-    return value_;
+    return value_.load();
   }
 
   // Threadsafe

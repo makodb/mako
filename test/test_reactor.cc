@@ -1,5 +1,7 @@
 // @unsafe - Test file with mutable fields in test classes
-// @unsafe {
+// @external_unsafe: std::*
+// @external_unsafe: rrr::*
+// @external_unsafe: operator int
 
 #include <gtest/gtest.h>
 #include <thread>

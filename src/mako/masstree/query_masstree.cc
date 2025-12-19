@@ -1,3 +1,14 @@
+// @unsafe - Masstree query interface and template instantiations
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
+// External type annotations for Masstree internal types
+// @external: {
+//   Masstree::leafvalue: [unsafe_type]
+// }
+//
+// External safety annotations for circular_int, string, and Masstree operations
+// @external_unsafe: circular_int::*
+// @external_unsafe: lcdf::String_base::*
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2014 President and Fellows of Harvard College
@@ -13,21 +24,6 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// @unsafe
-namespace query_masstree_unsafe_file {} // Sets file_default to Unsafe for borrow checker
-// Masstree query interface and template instantiations
-// Explicit template instantiation for common Masstree query operations
-// SAFETY: Uses complex template metaprogramming and raw node traversal
-// EXCLUDED FROM BORROW CHECK: Uses complex template patterns with kvthread allocator
-//
-// External type annotations for Masstree internal types
-// @external: {
-//   Masstree::leafvalue: [unsafe_type]
-// }
-//
-// External safety annotations for circular_int, string, and Masstree operations
-// @external_unsafe: circular_int::*
-// @external_unsafe: lcdf::String_base::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::String_generic::*
 // @external_unsafe: lcdf::Json::*

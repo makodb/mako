@@ -1,3 +1,6 @@
+// @unsafe - Test harness for JSON parsing and serialization
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 // -*- c-basic-offset: 4 -*-
 /*
  * jsontest.{cc,hh} -- regression tests for Json
@@ -15,17 +18,13 @@
  * notice is a summary of the Click LICENSE file; the license in that file is
  * legally binding.
  */
-// Test harness for JSON parsing and serialization
-//
 // @external: {
 //   lcdf::String: [unsafe_type]
 //   htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe]
 //   hashcode: [unsafe]
 // }
-// @external_unsafe: std::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: lcdf::Json::*
-
 #include "json.hh"
 #include <unordered_map>
 using namespace lcdf;

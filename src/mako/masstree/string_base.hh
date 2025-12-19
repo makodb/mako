@@ -97,11 +97,11 @@ class String_base {
     const char* data() const {
         return static_cast<const T*>(this)->data();
     }
-    // @safe - returns stored length via CRTP
+    // @unsafe - uses static_cast pointer dereference via CRTP
     int length() const {
         return static_cast<const T*>(this)->length();
     }
-    // @safe - returns stored length via CRTP
+    // @unsafe - uses static_cast pointer dereference via CRTP
     int size() const {
         return static_cast<const T*>(this)->length();
     }

@@ -1,3 +1,6 @@
+// @unsafe - Core String class implementation with shared substrings
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2013 President and Fellows of Harvard College
@@ -31,12 +34,10 @@
  * notice is a summary of the Click LICENSE file; the license in that file
  * is legally binding.
  */
-// Core String class implementation with shared substrings
 // Uses malloc/free for reference-counted buffers - all functions @unsafe
 //
 // @external: { htons: [unsafe], htonl: [unsafe], htonq: [unsafe], ntohs: [unsafe], ntohl: [unsafe], ntohq: [unsafe], hashcode: [unsafe] }
 // @external_unsafe_type: std::*
-// @external_unsafe: std::*
 // @external_unsafe: lcdf::StringAccum::*
 // @external_unsafe: lcdf::String::assign
 // @external_unsafe: assign
@@ -922,8 +923,7 @@ String::substr(int pos, int len) const
     }
 }
 
-// @safe - pure computation with no raw pointer dereference issues
-// @safe
+// @unsafe - uses const_cast to modify string buffer in place
 static String
 hard_lower(const String& s, int pos)
 {
@@ -950,8 +950,7 @@ String::lower() const
     return *this;
 }
 
-// @safe - pure computation with no raw pointer dereference issues
-// @safe
+// @unsafe - uses const_cast to modify string buffer in place
 static String
 hard_upper(const String& s, int pos)
 {
@@ -977,8 +976,7 @@ String::upper() const
     return *this;
 }
 
-// @safe - pure computation with no raw pointer dereference issues
-// @safe
+// @unsafe - uses reinterpret_cast to access raw bytes
 static String
 hard_printable(const String& s, int pos, int type)
 {

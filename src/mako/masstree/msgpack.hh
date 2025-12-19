@@ -36,11 +36,11 @@ enum {
     nfixint = nfixuint + nfixnegint
 };
 
-// @safe - Pure arithmetic range checking
+// @unsafe - uses C-style cast which checker cannot verify
 inline bool in_range(uint8_t x, unsigned low, unsigned n) {
     return (unsigned) x - low < n;
 }
-// @safe - Pure arithmetic range checking with sign wrapping
+// @unsafe - uses C-style cast which checker cannot verify
 inline bool in_wrapped_range(uint8_t x, unsigned low, unsigned n) {
     return (unsigned) (int8_t) x - low < n;
 }

@@ -33,11 +33,11 @@ template <typename N, bool CONCURRENT = N::concurrent> struct btree_leaflink {};
 // operations.
 template <typename N> struct btree_leaflink<N, true> {
   private:
-    // @safe - pure pointer arithmetic (marker bit)
+    // @unsafe - uses reinterpret_cast for pointer tagging
     static inline N *mark(N *n) {
         return reinterpret_cast<N *>(reinterpret_cast<uintptr_t>(n) + 1);
     }
-    // @safe - pure pointer value check
+    // @unsafe - uses reinterpret_cast for pointer tagging
     static inline bool is_marked(N *n) {
         return reinterpret_cast<uintptr_t>(n) & 1;
     }

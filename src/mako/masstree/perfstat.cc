@@ -1,3 +1,6 @@
+// @unsafe - Performance statistics collection and NUMA topology detection
+// @external_unsafe: std::*
+// @external_unsafe: hashcode
 /* Masstree
  * Eddie Kohler, Yandong Mao, Robert Morris
  * Copyright (c) 2012-2013 President and Fellows of Harvard College
@@ -13,8 +16,7 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
-// Performance statistics collection and NUMA topology detection
-// All functions use NUMA library and system calls - @unsafe
+// All functions use NUMA library and system calls
 //
 // SAFETY NOTE: These functions cannot be made safe because:
 // 1. Template functions use reinterpret_cast with offsetof() for field access
@@ -26,7 +28,6 @@
 // Only the simple initialize() method is marked @safe.
 //
 // @external_unsafe_type: std::*
-// @external_unsafe: std::*
 // @external_unsafe: lcdf::String_base::*
 // @external_unsafe: lcdf::String::*
 // @external_unsafe: threadinfo::*
