@@ -42,70 +42,59 @@ namespace rrr {
 // Future implementation
 // ============================================================================
 
-// @unsafe - Uses rusty::Condvar (low-level sync primitive)
+// @safe - Uses rusty::Mutex and rusty::Condvar together
 void Future::wait() const {
-  std::unique_lock<std::mutex> lock(*condvar_m_.get());
-  ready_cond_.get()->wait(lock, [this]() {
-    auto guard = state_.lock();
-    return guard->ready || guard->timed_out;
-  });
+  auto guard = state_.lock().unwrap();
+  // wait_while: waits WHILE condition is TRUE, stops when FALSE
+  // We want to wait while NOT ready and NOT timed_out
+  guard = ready_cond_.as_mut_unchecked().wait_while(std::move(guard), [](State& s) {
+    return !s.ready && !s.timed_out;
+  }).unwrap();
 }
 
-// @unsafe - Uses rusty::Condvar for timed waiting (low-level sync)
+// @safe - Uses rusty::Mutex and rusty::Condvar together
 void Future::timed_wait(double sec) const {
-  std::unique_lock<std::mutex> lock(*condvar_m_.get());
-
+  auto guard = state_.lock().unwrap();
   auto duration = std::chrono::duration<double>(sec);
-  bool success = ready_cond_.get()->wait_for(lock, duration, [this]() {
-    auto guard = state_.lock();
-    return guard->ready || guard->timed_out;
-  });
+  // wait_timeout_while: waits WHILE condition is TRUE
+  // Returns pair<Guard, bool> where bool = true if condition became false
+  auto result = ready_cond_.as_mut_unchecked().wait_timeout_while(
+    std::move(guard),
+    duration,
+    [](State& s) { return !s.ready && !s.timed_out; }
+  ).unwrap();
+  guard = std::move(result.first);
+  bool condition_became_false = result.second;
 
-  bool is_timed_out = false;
-  {
-    auto guard = state_.lock();
-    if (!success && !guard->ready) {
-      guard->timed_out = true;
-      is_timed_out = true;
-      error_code_.set(ETIMEDOUT);
-    } else {
-      is_timed_out = guard->timed_out;
-    }
+  // If condition is still true (timed out while still waiting)
+  if (!condition_became_false && !(*guard).ready) {
+    (*guard).timed_out = true;
+    error_code_.set(ETIMEDOUT);
   }
-
-  // Release lock before calling callback
-  lock.unlock();
-
-  // NOTE: timed_wait callback still needs Arc parameter update (TODO: requires Arc access)
-  // For now, this is only called in test scenarios
-  // if (is_timed_out && attr_.callback != nullptr) {
-  //   attr_.callback(???);  // Need Arc<Future> to self
-  // }
 }
 
-// @unsafe - Uses rusty::Condvar for notification (low-level sync)
+// @safe - Uses rusty::Mutex and rusty::Condvar together
 void Future::notify_ready(rusty::Arc<Future> self) const {
   bool should_callback = false;
   {
-    std::lock_guard<std::mutex> cv_lock(*condvar_m_.get());
-    {
-      auto guard = state_.lock();
-      if (!guard->timed_out) {
-        guard->ready = true;
-      }
-      should_callback = guard->ready;
+    auto guard = state_.lock().unwrap();
+    if (!(*guard).timed_out) {
+      (*guard).ready = true;
     }
-    // Notify while holding condvar_m_ to prevent race with wait()
-    ready_cond_.get()->notify_all();
-  }
+    should_callback = (*guard).ready;
+  }  // Guard dropped here, releasing lock before notify
+
+  ready_cond_.as_mut_unchecked().notify_all();
 
   // Execute callback outside lock to avoid deadlock
   if (should_callback && attr_.callback != nullptr) {
-    // SAFE: Callback receives Arc<Future> for lifetime safety
     auto x = attr_.callback;
-    Coroutine::CreateRun([x, self]() {  // Capture Arc, not raw pointer
-      x(self);  // Callback receives Arc<Future>
-    }, __FILE__, __LINE__);
+    // @unsafe - Coroutine creation
+    {
+      Coroutine::CreateRun([x, self]() {
+        x(self);
+      }, __FILE__, __LINE__);
+    }
   }
 }
 
@@ -128,18 +117,17 @@ ClientConnection::~ClientConnection() {
 }
 
 // @safe - Cancels all pending futures with error (has internal @unsafe blocks)
-// SAFETY: Protected by spinlock, proper refcount management
+// SAFETY: Protected by SpinMutex, proper refcount management
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
-  // @unsafe - SpinLock pointer dereference and map operations
+  // @unsafe - SpinMutex guard operations
   {
-    pending_fu_l_.get()->lock();
-    for (auto& it: pending_fu_) {
+    auto guard = pending_fu_.lock().unwrap();
+    for (auto& it: *guard) {
       futures.push_back(it.second);  // Copy Arc
     }
-    pending_fu_.clear();  // Clear map (releases its Arc references)
-    pending_fu_l_.get()->unlock();
-  }
+    guard->clear();  // Clear map (releases its Arc references)
+  }  // Guard dropped here, releasing lock
 
   for (auto& fu: futures) {
     fu->error_code_.set(ENOTCONN);
@@ -162,15 +150,17 @@ void ClientConnection::close() {
   invalidate_pending_futures();
 }
 
-// Jetpack: handle_free for explicit future cleanup
+// Jetpack: handle_free for explicit future cleanup (has internal @unsafe blocks)
 void ClientConnection::handle_free(i64 xid) {
-  pending_fu_l_.get()->lock();
-  auto it = pending_fu_.find(xid);
-  if (it != pending_fu_.end()) {
-    pending_fu_.erase(it);
-    // Arc auto-released when removed from map
-  }
-  pending_fu_l_.get()->unlock();
+  // @unsafe - SpinMutex guard operations
+  {
+    auto guard = pending_fu_.lock().unwrap();
+    auto it = guard->find(xid);
+    if (it != guard->end()) {
+      guard->erase(it);
+      // Arc auto-released when removed from map
+    }
+  }  // Guard dropped here, releasing lock
 }
 
 // @unsafe - Establishes TCP/IPC connection to server
@@ -277,16 +267,16 @@ int ClientConnection::handle_write() {
   if (paused_) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
-  // @unsafe - SpinLock pointer dereference
-  { out_l_.get()->lock(); }
-  // @unsafe - I/O operation
-  { out_.write_to_fd(socket_); }
-  if (out_.empty()) {
-    // Return READ-only mode - PollThreadWorker will update epoll
-    result = Pollable::READ;
+  // @unsafe - SpinLock and I/O operations
+  {
+    out_l_.get()->lock();
+    out_.write_to_fd(socket_);
+    if (out_.empty()) {
+      // Return READ-only mode - PollThreadWorker will update epoll
+      result = Pollable::READ;
+    }
+    out_l_.get()->unlock();
   }
-  // @unsafe - SpinLock pointer dereference
-  { out_l_.get()->unlock(); }
   return result;
 }
 
@@ -356,14 +346,20 @@ bool ClientConnection::handle_read_two() {
 
       in_ >> v_reply_xid >> v_error_code;
 
-      pending_fu_l_.get()->lock();
-      auto it = pending_fu_.find(v_reply_xid.get());
-      if (it != pending_fu_.end()) {
-        rusty::Arc<Future> fu = it->second;  // Copy Arc (refcount still 2)
-        verify(fu->xid_ == v_reply_xid.get());
+      rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
+      // @unsafe - SpinMutex guard operations
+      {
+        auto guard = pending_fu_.lock().unwrap();
+        auto it = guard->find(v_reply_xid.get());
+        if (it != guard->end()) {
+          fu_opt = rusty::Some(it->second);  // Copy Arc (refcount still 2)
+          guard->erase(it);  // Remove from map (refcount 2→1)
+        }
+      }  // Guard dropped here, releasing lock
 
-        pending_fu_.erase(it);  // Remove from map (refcount 2→1)
-        pending_fu_l_.get()->unlock();
+      if (fu_opt.is_some()) {
+        auto fu = fu_opt.unwrap();
+        verify(fu->xid_ == v_reply_xid.get());
 
         fu->error_code_.set(v_error_code.get());
         fu->reply_.get()->read_from_marshal(in_,
@@ -375,8 +371,6 @@ bool ClientConnection::handle_read_two() {
         // Arc auto-released when scope exits (refcount 1→0 if user released theirs)
       } else {
         // the future might timed out
-        pending_fu_l_.get()->unlock();
-
         // Jetpack: consume data for timed-out futures
         Marshal reply;
         reply.read_from_marshal(in_,
@@ -397,18 +391,19 @@ bool ClientConnection::handle_read_two() {
 // SAFETY: Uses spinlock for thread-safety
 int ClientConnection::poll_mode() const {
   int mode = Pollable::READ;
-  // @unsafe - SpinLock pointer dereference
-  { out_l_.get()->lock(); }
-  if (!out_.empty()) {
-    mode |= Pollable::WRITE;
+  // @unsafe - SpinLock operations via UnsafeCell
+  {
+    out_l_.get()->lock();
+    if (!out_.empty()) {
+      mode |= Pollable::WRITE;
+    }
+    out_l_.get()->unlock();
   }
-  // @unsafe - SpinLock pointer dereference
-  { out_l_.get()->unlock(); }
   return mode;
 }
 
 // @unsafe - Starts new RPC request with marshaling
-// SAFETY: Protected by spinlocks, proper refcounting
+// SAFETY: Protected by SpinMutex for pending_fu_, direct spinlock for out_
 FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   out_l_.get()->lock();
 
@@ -419,18 +414,22 @@ FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr 
 
   auto fu = Future::create(xid_counter_.next(), attr);
 
-  pending_fu_l_.get()->lock();
-  pending_fu_.insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
-  pending_fu_l_.get()->unlock();
+  // @unsafe - SpinMutex guard operations
+  {
+    auto guard = pending_fu_.lock().unwrap();
+    guard->insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
+  }  // Guard dropped here
 
   // check if the connection gets closed in the meantime
   if (status_ != CONNECTED) {
-    pending_fu_l_.get()->lock();
-    auto it = pending_fu_.find(fu->xid_);
-    if (it != pending_fu_.end()) {
-      pending_fu_.erase(it);  // Arc auto-released when removed from map
-    }
-    pending_fu_l_.get()->unlock();
+    // @unsafe - SpinMutex guard operations
+    {
+      auto guard = pending_fu_.lock().unwrap();
+      auto it = guard->find(fu->xid_);
+      if (it != guard->end()) {
+        guard->erase(it);  // Arc auto-released when removed from map
+      }
+    }  // Guard dropped here
     out_l_.get()->unlock();
 
     return FutureResult::Err(ENOTCONN);

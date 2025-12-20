@@ -30,6 +30,10 @@
 //   std::shared_ptr::get: [unsafe, () -> auto*]
 //   std::shared_ptr::operator=: [unsafe, (const std::shared_ptr<auto>&) -> std::shared_ptr<auto>&]
 //   std::vector::push_back: [unsafe, (auto) -> void]
+//   std::atomic<int>::operator int: [safe, () -> int]
+//   std::atomic<*>::operator T: [safe, () -> T]
+//   std::atomic<*>::load: [safe, () -> T]
+//   std::atomic<*>::store: [safe, (T) -> void]
 // }
 
 // Note: SUCCESS, REPEAT, REJECT macros removed - they conflict with mako's ErrorCode enum
@@ -479,11 +483,12 @@ class ThreadSafeIntEvent : public Event {
 
   bool TestTrigger();
 
+  // @safe - uses std::atomic::load() which is safe
   int get() {
-    return value_;
+    return value_.load();
   }
 
-  // Threadsafe
+  // @unsafe - Threadsafe, uses mutex and atomic
   int Set(int n) {
     std::lock_guard<std::mutex> lock(value_mtx_); // To protect value_
     int t = value_;
@@ -493,6 +498,7 @@ class ThreadSafeIntEvent : public Event {
     return t;
   };
 
+  // @unsafe - uses std::atomic implicit conversion
   virtual bool IsReady() override {
     if (test_) {
       return test_(value_);

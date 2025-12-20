@@ -27,13 +27,13 @@ TEST(ArcMutexThread, BasicCrossThreadAccess) {
     auto mutex_clone = mutex.clone();
 
     auto handle = rusty::thread::spawn([](rusty::Arc<rusty::Mutex<int>> m) {
-        auto guard = m->lock();
+        auto guard = m->lock().unwrap();
         *guard = 42;
     }, std::move(mutex_clone));
 
     handle.join();
 
-    auto guard = mutex->lock();
+    auto guard = mutex->lock().unwrap();
     EXPECT_EQ(*guard, 42);
 }
 
@@ -44,13 +44,13 @@ TEST(ArcMutexThread, ThreadIdType) {
     auto mutex_clone = thread_id_mutex.clone();
 
     auto handle = rusty::thread::spawn([](rusty::Arc<rusty::Mutex<std::thread::id>> m) {
-        auto guard = m->lock();
+        auto guard = m->lock().unwrap();
         *guard = std::this_thread::get_id();
     }, std::move(mutex_clone));
 
     handle.join();
 
-    auto guard = thread_id_mutex->lock();
+    auto guard = thread_id_mutex->lock().unwrap();
     EXPECT_NE(*guard, std::thread::id{});  // Should be set to spawned thread's ID
 }
 
@@ -72,7 +72,7 @@ TEST(ArcMutexThread, ArcToStructWithMutex) {
     auto struct_clone = test_struct.clone();
 
     auto handle = rusty::thread::spawn([](rusty::Arc<TestStruct> s) {
-        auto guard = s->thread_id.lock();
+        auto guard = s->thread_id.lock().unwrap();
         *guard = std::this_thread::get_id();
         s->done.store(true, std::memory_order_release);
     }, std::move(struct_clone));
@@ -80,7 +80,7 @@ TEST(ArcMutexThread, ArcToStructWithMutex) {
     handle.join();
 
     EXPECT_TRUE(test_struct->done.load(std::memory_order_acquire));
-    auto guard = test_struct->thread_id.lock();
+    auto guard = test_struct->thread_id.lock().unwrap();
     EXPECT_NE(*guard, std::thread::id{});
 }
 
@@ -113,7 +113,7 @@ TEST(ArcMutexThread, ExactPollThreadPattern) {
         [](rusty::Arc<PollThreadLike> a, rusty::sync::mpsc::Receiver<int> rx) {
             // This is what caused the hang - locking mutex from spawned thread
             {
-                auto guard = a->poll_thread_id.lock();
+                auto guard = a->poll_thread_id.lock().unwrap();
                 *guard = std::this_thread::get_id();
             }
             a->worker_started.store(true, std::memory_order_release);
@@ -131,7 +131,7 @@ TEST(ArcMutexThread, ExactPollThreadPattern) {
 
     // Store join handle (like PollThread::create() does)
     {
-        auto guard = arc->join_handle.lock();
+        auto guard = arc->join_handle.lock().unwrap();
         *guard = rusty::Some(std::move(handle));
     }
 
@@ -142,7 +142,7 @@ TEST(ArcMutexThread, ExactPollThreadPattern) {
 
     // Verify thread_id was set
     {
-        auto guard = arc->poll_thread_id.lock();
+        auto guard = arc->poll_thread_id.lock().unwrap();
         EXPECT_NE(*guard, std::thread::id{});
     }
 
@@ -151,9 +151,9 @@ TEST(ArcMutexThread, ExactPollThreadPattern) {
 
     // Join the thread
     {
-        auto guard = arc->join_handle.lock();
-        if (guard->is_some()) {
-            guard->take().unwrap().join();
+        auto guard = arc->join_handle.lock().unwrap();
+        if ((*guard).is_some()) {
+            (*guard).take().unwrap().join();
         }
     }
 }
@@ -169,7 +169,7 @@ TEST(ArcMutexThread, RapidLockUnlock) {
         handles.push_back(rusty::thread::spawn(
             [](rusty::Arc<rusty::Mutex<int>> c) {
                 for (int j = 0; j < 100; j++) {
-                    auto guard = c->lock();
+                    auto guard = c->lock().unwrap();
                     (*guard)++;
                 }
             },
@@ -181,7 +181,7 @@ TEST(ArcMutexThread, RapidLockUnlock) {
         h.join();
     }
 
-    auto guard = counter->lock();
+    auto guard = counter->lock().unwrap();
     EXPECT_EQ(*guard, 1000);
 }
 
@@ -193,13 +193,13 @@ TEST(ArcMutexThread, StdThreadWithArcMutex) {
     auto mutex_clone = thread_id_mutex.clone();
 
     std::thread t([m = std::move(mutex_clone)]() {
-        auto guard = m->lock();
+        auto guard = m->lock().unwrap();
         *guard = std::this_thread::get_id();
     });
 
     t.join();
 
-    auto guard = thread_id_mutex->lock();
+    auto guard = thread_id_mutex->lock().unwrap();
     EXPECT_NE(*guard, std::thread::id{});
 }
 
@@ -213,7 +213,7 @@ TEST(ArcMutexThread, StdThreadPollThreadPattern) {
 
     std::thread t([a = std::move(arc_for_thread), rx = std::move(rx)]() mutable {
         {
-            auto guard = a->poll_thread_id.lock();
+            auto guard = a->poll_thread_id.lock().unwrap();
             *guard = std::this_thread::get_id();
         }
         a->worker_started.store(true, std::memory_order_release);
@@ -232,7 +232,7 @@ TEST(ArcMutexThread, StdThreadPollThreadPattern) {
 
     // Verify thread_id was set
     {
-        auto guard = arc->poll_thread_id.lock();
+        auto guard = arc->poll_thread_id.lock().unwrap();
         EXPECT_NE(*guard, std::thread::id{});
     }
 

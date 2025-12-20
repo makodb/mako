@@ -655,7 +655,7 @@ rusty::Arc<PollThread> PollThread::create() {
 
   // Store handle
   {
-    auto guard = arc->join_handle_.lock();
+    auto guard = arc->join_handle_.lock().unwrap();
     *guard = rusty::Some(std::move(handle));
   }
 
@@ -693,11 +693,11 @@ void PollThread::shutdown() const {
   // Join thread
   Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
   {
-    auto guard = join_handle_.lock();
+    auto guard = join_handle_.lock().unwrap();
     Log_debug("[PollThread::shutdown] join_handle lock acquired");
-    if (guard->is_some()) {
+    if ((*guard).is_some()) {
       Log_debug("[PollThread::shutdown] Calling thread.join()...");
-      guard->take().unwrap().join();
+      (*guard).take().unwrap().join();
       Log_debug("[PollThread::shutdown] thread.join() completed!");
     } else {
       Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");

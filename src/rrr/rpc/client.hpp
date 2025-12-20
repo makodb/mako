@@ -71,11 +71,10 @@ class Future { // @unsafe
     rusty::UnsafeCell<Marshal> reply_;  // UnsafeCell for interior mutability in unsafe class
 
     uint64_t timeout_{1000000}; // default timeout 1s (jetpack)
-    rusty::Mutex<State> state_;  // Mutex provides its own interior mutability
-    rusty::UnsafeCell<rusty::Condvar> ready_cond_;  // UnsafeCell for Condvar
-    rusty::UnsafeCell<std::mutex> condvar_m_;  // UnsafeCell for std::mutex
+    rusty::Mutex<State> state_;  // Mutex protects State (ready/timed_out flags)
+    rusty::UnsafeCell<rusty::Condvar> ready_cond_;  // UnsafeCell for interior mutability
 
-    // @unsafe - Notifies waiters using rusty::Condvar (low-level sync operation)
+    // @safe - Uses rusty::Mutex and rusty::Condvar together (Rust-like pattern)
     // Takes Arc<Future> self parameter for callback safety
     void notify_ready(rusty::Arc<Future> self) const;
 
@@ -87,8 +86,7 @@ class Future { // @unsafe
     // @safe - Default initialization with RAII primitives
     Future(i64 xid, const FutureAttr& attr = FutureAttr())
             : xid_(xid), error_code_(0), attr_(attr), reply_(), state_(State{}),
-              ready_cond_(), condvar_m_() {
-        // RAII: UnsafeCells initialize with default-constructed values
+              ready_cond_() {
     }
 
 public:
@@ -99,36 +97,33 @@ public:
         return rusty::Arc<Future>::make(xid, attr);
     }
 
-    // @unsafe - Uses rusty::Mutex guard with pointer-like access
+    // @safe - Uses rusty::Mutex
     bool ready() const {
-        auto guard = state_.lock();
-        return guard->ready;
+        auto guard = state_.lock().unwrap();
+        return (*guard).ready;
     }
 
-    // @unsafe - Blocks on rusty::Condvar (low-level sync operation)
+    // @safe - Uses rusty::Mutex and rusty::Condvar together
     void wait() const;
 
-    // @unsafe - Timed wait using rusty::Condvar (low-level sync operation)
+    // @safe - Uses rusty::Mutex and rusty::Condvar together
     void timed_wait(double sec) const;
 
-    // @unsafe - Thread-safe timed_out check (non-blocking)
-    // SAFETY: Protected by mutex
+    // @safe - Uses rusty::Mutex
     bool timed_out() const {
-        auto guard = state_.lock();
-        return guard->timed_out;
+        auto guard = state_.lock().unwrap();
+        return (*guard).timed_out;
     }
 
     // Returns reference to reply with lifetime tied to Future
     // @lifetime: (&'a) -> &'a
-    // Note: Returns non-const reference even though method is const
-    // This is safe because get_reply() ensures the Future is ready
-    // @unsafe - Dereferences UnsafeCell pointer
+    // @unsafe - Returns reference through UnsafeCell (caller must ensure lifetime safety)
     Marshal& get_reply() const {
         wait();
         return *reply_.get();
     }
 
-    // @unsafe - Calls unsafe wait() with optional timeout
+    // @safe - Calls safe wait()/timed_wait() methods
     i32 get_error_code() const {
         if (timeout_ > 0) {
             double x = timeout_;
@@ -185,12 +180,11 @@ private:
     std::vector<rusty::Arc<Future>> futures_;
 
 public:
-    // @unsafe - Adds future to group (calls Log_error)
+    // @safe - Adds future to group (has internal @unsafe block for Log_error)
     void add(rusty::Arc<Future> f) {
         if (!f) {  // Check Arc validity (empty Arc check)
-            // @unsafe {
-            Log_error("Invalid Future object passed to FutureGroup!");
-            // }
+            // @unsafe
+            { Log_error("Invalid Future object passed to FutureGroup!"); }
             return;
         }
         futures_.push_back(std::move(f));
@@ -219,7 +213,7 @@ class ClientConnection: public Pollable {
     friend class ClientPool;
 
     Marshal in_, out_;
-    rusty::UnsafeCell<SpinLock> out_l_;
+    rusty::UnsafeCell<SpinLock> out_l_;  // Protects out_ (UnsafeCell for interior mutability)
 
     // Non-owning pointer to parent Client (for configuration access)
     Client* client_;
@@ -235,9 +229,8 @@ class ClientConnection: public Pollable {
     // Transaction ID counter for RPC requests
     Counter xid_counter_;
 
-    // Map of pending futures awaiting responses
-    std::unordered_map<i64, rusty::Arc<Future>> pending_fu_;
-    rusty::UnsafeCell<SpinLock> pending_fu_l_;
+    // Map of pending futures awaiting responses (protected by SpinMutex)
+    SpinMutex<std::unordered_map<i64, rusty::Arc<Future>>> pending_fu_{std::unordered_map<i64, rusty::Arc<Future>>()};
 
     enum {
         NEW, CONNECTED, CLOSED
