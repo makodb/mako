@@ -234,6 +234,7 @@ class PollThreadWorker;
 // Using std::variant for type-safe discriminated union
 struct CmdAddPollable { rusty::Arc<Pollable> pollable; };
 struct CmdRemovePollable { int fd; };
+struct CmdClosePollable { int fd; };  // Close socket and drop Arc (thread-safe close)
 struct CmdUpdateMode { int fd; int new_mode; Pollable* poll_ptr; };
 struct CmdAddJob { rusty::Arc<Job> job; };
 struct CmdRemoveJob { rusty::Arc<Job> job; };
@@ -242,6 +243,7 @@ struct CmdShutdown {};
 using PollCommand = std::variant<
     CmdAddPollable,
     CmdRemovePollable,
+    CmdClosePollable,
     CmdUpdateMode,
     CmdAddJob,
     CmdRemoveJob,
@@ -331,6 +333,7 @@ private:
     // Internal implementations (single-threaded, no races)
     void do_add_pollable(rusty::Arc<Pollable> sp_poll);
     void do_remove_pollable(int fd);
+    void do_close_pollable(int fd);  // Close socket and drop Arc
     void do_update_mode(int fd, int new_mode, Pollable* poll_ptr);
     void do_add_job(rusty::Arc<Job> sp_job);
     void do_remove_job(rusty::Arc<Job> sp_job);
@@ -404,6 +407,7 @@ public:
     // Send commands to worker via channel
     void add(rusty::Arc<Pollable> poll) const;
     void remove(Pollable& poll) const;
+    void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops Arc
     void update_mode(Pollable& poll, int new_mode) const;
     void add(rusty::Arc<Job> sp_job) const;
     void remove(rusty::Arc<Job> sp_job) const;

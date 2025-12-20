@@ -61,6 +61,10 @@ public:
     // @unsafe - Handles error events (implementation-specific)
     virtual void handle_error() = 0;
 
+    // @unsafe - Closes the underlying socket/resource (implementation-specific)
+    // Called by PollThreadWorker::do_close_pollable() for thread-safe close
+    virtual void close() = 0;
+
     // @safe - Check if pollable needs write mode update (set by deferred operations)
     // Returns true if update_mode(READ|WRITE) should be called, clears internal flag
     // Default implementation returns false - override in subclasses that need it

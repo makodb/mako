@@ -93,6 +93,16 @@ public:
         // }
     }
 
+    // @unsafe - Closes the file descriptor
+    void close() override {
+        // @unsafe {
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+        // }
+    }
+
     // @unsafe - Modifies mutable field
     void set_read_handler(std::function<void()> handler) const {  // const method
         // @unsafe {

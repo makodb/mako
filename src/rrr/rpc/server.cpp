@@ -141,8 +141,8 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 
 
 // Static member definitions for missing RPC ID tracking
-std::unordered_set<i32> ServerConnection::rpc_id_missing_s;
-SpinLock ServerConnection::rpc_id_missing_l_s;
+// SpinMutex wraps the unordered_set for thread-safe access
+SpinMutex<std::unordered_set<i32>> ServerConnection::rpc_id_missing_s{std::unordered_set<i32>()};
 
 
 // @unsafe - Initializes connection and updates counter
@@ -169,10 +169,11 @@ int ServerConnection::run_async(const std::function<void()>& f) {
   return 0;
 }
 
-// @safe - Begins reply marshaling with locking
+// @safe - Begins reply marshaling with locking (has internal @unsafe block)
 // SAFETY: Protected by output spinlock (SpinLock marked as external)
 void ServerConnection::begin_reply(const Request& req, i32 error_code /* =... */) {
-    out_l_.lock();
+    // @unsafe
+    { out_l_.get()->lock(); }
     v32 v_error_code = error_code;
     v64 v_reply_xid = req.xid;
 
@@ -198,7 +199,8 @@ void ServerConnection::end_reply() {
         pending_write_update_.set(true);
     }
 
-    out_l_.unlock();
+    // @unsafe
+    { out_l_.get()->unlock(); }
 }
 
 // @unsafe - Reads requests and dispatches to handlers
@@ -276,14 +278,16 @@ bool ServerConnection::handle_read() {
             }, __FILE__, __LINE__);
         } else {
             // Track missing RPC IDs and suppress duplicate warnings
-            rpc_id_missing_l_s.lock();
+            // @unsafe - SpinMutex guard operations
             bool surpress_warning = false;
-            if (rpc_id_missing_s.find(rpc_id) == rpc_id_missing_s.end()) {
-                rpc_id_missing_s.insert(rpc_id);
-            } else {
-                surpress_warning = true;
-            }
-            rpc_id_missing_l_s.unlock();
+            {
+                auto guard = rpc_id_missing_s.lock().unwrap();
+                if (guard->find(rpc_id) == guard->end()) {
+                    guard->insert(rpc_id);
+                } else {
+                    surpress_warning = true;
+                }
+            }  // Guard dropped here, releasing lock
             if (!surpress_warning) {
                 Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
             }
@@ -307,13 +311,15 @@ int ServerConnection::handle_write() {
     }
 
     int result = Pollable::MODE_NO_CHANGE;
-    out_l_.lock();
+    // @unsafe
+    { out_l_.get()->lock(); }
     out_.write_to_fd(socket_);
     if (out_.empty()) {
         // Return READ-only mode - PollThreadWorker will update epoll
         result = Pollable::READ;
     }
-    out_l_.unlock();
+    // @unsafe
+    { out_l_.get()->unlock(); }
     return result;
 }
 
@@ -322,52 +328,42 @@ void ServerConnection::handle_error() {
     this->close();
 }
 
-// @safe - Closes connection with proper cleanup
-// SAFETY: Thread-safe with server connection lock, idempotent
+// @unsafe - Closes connection with proper cleanup
+// SAFETY: Should only be called from poll thread (via do_close_pollable or handle_error)
+// Idempotent, proper cleanup sequence
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
-        rusty::Option<rusty::Arc<ServerConnection>> self;
-        // @unsafe - SpinLock operations and iterator access
-        {
-            server_->sconns_l_.lock();
+        status_ = CLOSED;
+        // @unsafe - system call
+        { ::close(socket_); }
+        // @unsafe - logging
+        { Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_); }
 
-            // Find our Arc in server's connection set
-            for (auto it = server_->sconns_.begin(); it != server_->sconns_.end(); ++it) {
+        // Remove from sconns_ (if tracked)
+        // @unsafe - SpinMutex guard operations
+        {
+            auto guard = server_->sconns_.lock().unwrap();
+            for (auto it = guard->begin(); it != guard->end(); ++it) {
                 if (it->get() == this) {
-                    self = rusty::Some(it->clone());
-                    server_->sconns_.erase(it);
+                    guard->erase(it);
                     break;
                 }
             }
-            server_->sconns_l_.unlock();
-        }
-
-        if (self.is_some()) {
-            // @unsafe - const_cast and pointer dereference
-            {
-                auto& conn = const_cast<ServerConnection&>(*self.unwrap());
-                server_->poll_thread_worker_.as_ref().unwrap()->remove(conn);
-            }
-            status_ = CLOSED;
-            // @unsafe - system call
-            { ::close(socket_); }
-            // @unsafe - logging
-            { Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_); }
-        }
+        }  // Guard dropped here, releasing lock
     }
 }
 
-// @safe - Returns poll mode based on output buffer
-// Uses const_cast for interior mutability (SpinLock marked as external)
+// @safe - Returns poll mode based on output buffer (has internal @unsafe blocks)
+// Uses UnsafeCell for interior mutability (const method can access mutable SpinLock)
 int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    // @unsafe - SAFETY: const_cast for interior mutability (SpinLock is thread-safe)
-    { const_cast<SpinLock&>(out_l_).lock(); }
+    // @unsafe
+    { out_l_.get()->lock(); }
     if (!out_.empty()) {
         mode |= Pollable::WRITE;
     }
     // @unsafe
-    { const_cast<SpinLock&>(out_l_).unlock(); }
+    { out_l_.get()->unlock(); }
     return mode;
 }
 
@@ -393,7 +389,7 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 }
 
 // @unsafe - Destroys server and waits for connections
-// SAFETY: Joins thread, closes all connections, waits for cleanup
+// SAFETY: Joins thread, uses request_close() for thread-safe close, waits for cleanup
 Server::~Server() {
     if (status_ == RUNNING) {
         status_ = STOPPING;
@@ -403,35 +399,21 @@ Server::~Server() {
         verify(server_sock_ == -1 && status_ == STOPPED);
     }
 
-    sconns_l_.lock();
-    vector<rusty::Arc<ServerConnection>> sconns;
-    sconns.reserve(sconns_.size());
-    for (auto& sconn : sconns_) {
-        sconns.push_back(sconn.clone());  // Clone Arc from set
-    }
-    // NOTE: do NOT clear sconns_ here, because when running the following
-    // arc_conn->close(), the ServerConnection object will check the sconns_ to
-    // ensure it still resides in sconns_
-    sconns_l_.unlock();
+    // Request close for all connections via poll thread
+    // @unsafe - SpinMutex guard operations
+    {
+        auto guard = sconns_.lock().unwrap();
+        for (auto& sconn : *guard) {
+            poll_thread_worker_.as_ref().unwrap()->request_close(sconn->fd());
+        }
+        guard->clear();  // Clear our references - poll thread owns them now
+    }  // Guard dropped here, releasing lock
 
-    for (auto& it: sconns) {
-        auto& conn = const_cast<ServerConnection&>(*it);
-        conn.close();
-        poll_thread_worker_.as_ref().unwrap()->remove(conn);
-    }
-
+    // Request close for server listener via poll thread
     if (sp_server_listener_.is_some()) {
-        auto& listener = const_cast<ServerListener&>(*sp_server_listener_.as_ref().unwrap());
-        listener.close();
-        poll_thread_worker_.as_ref().unwrap()->remove(listener);
+        poll_thread_worker_.as_ref().unwrap()->request_close(sp_server_listener_.as_ref().unwrap()->fd());
         sp_server_listener_ = rusty::None;  // Reset to None
     }
-
-    // Now clear sconns_ and the local copy to release Arcs
-    sconns_l_.lock();
-    sconns_.clear();
-    sconns_l_.unlock();
-    sconns.clear();  // Release local Arcs
 
     // make sure all open connections are closed
     int alive_connection_count = -1;
@@ -509,11 +491,13 @@ void Server::server_loop(struct addrinfo* svr_addr) {
             int buf_len = 1024 * 1024; // 1M buffer
             setsockopt(clnt_socket, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
             setsockopt(clnt_socket, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
-            sconns_l_.lock();
+            // @unsafe - SpinMutex guard operations
             auto sconn = rusty::Arc<ServerConnection>::make(this, clnt_socket);
             const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
-            sconns_.insert(sconn.clone());  // Insert Arc into set
-            sconns_l_.unlock();
+            {
+                auto guard = sconns_.lock().unwrap();
+                guard->insert(sconn.clone());  // Insert Arc into set
+            }
             poll_thread_worker_.as_ref().unwrap()->add(sconn);
         }
     }
@@ -543,11 +527,13 @@ bool ServerListener::handle_read() {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       verify(set_nonblocking(clnt_socket, true) == 0);
 
+      // @unsafe - SpinMutex guard operations
       auto sconn = rusty::Arc<ServerConnection>::make(server_, clnt_socket);
       const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
-      server_->sconns_l_.lock();
-      server_->sconns_.insert(sconn.clone());  // Insert Arc into set
-      server_->sconns_l_.unlock();
+      {
+          auto guard = server_->sconns_.lock().unwrap();
+          guard->insert(sconn.clone());  // Insert Arc into set
+      }
       server_->poll_thread_worker_.as_ref().unwrap()->add(sconn);
     } else {
       break;

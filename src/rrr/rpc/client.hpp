@@ -255,16 +255,17 @@ class ClientConnection: public Pollable {
     // SAFETY: Protected by spinlock
     void invalidate_pending_futures();
 
+public:
     /**
-     * Only to be called by:
-     * 1: ~Client(), which is called when destroying Client
-     * 2: handle_error(), which is called by PollThread
+     * Closes the connection and cleans up resources.
+     * Called by:
+     * 1: PollThreadWorker::do_close_pollable() for thread-safe close
+     * 2: handle_error() for error handling
      */
     // @safe - Closes connection and cleans up (has internal @unsafe blocks)
     // SAFETY: Thread-safe cleanup sequence
-    void close();
+    void close() override;
 
-public:
     // Public destructor for Arc compatibility
     // @safe - Simple destructor
     ~ClientConnection();

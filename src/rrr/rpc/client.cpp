@@ -136,13 +136,13 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @safe - Closes socket and invalidates futures (has internal @unsafe blocks)
-// SAFETY: Idempotent, proper cleanup sequence
+// @unsafe - Closes socket and invalidates futures
+// SAFETY: Should only be called from poll thread (via do_close_pollable or handle_error)
+// Idempotent, proper cleanup sequence
 void ClientConnection::close() {
   if (status_ == CONNECTED) {
-    // @unsafe - pointer dereference and system call
+    // @unsafe - system call
     {
-      poll_thread_worker_->remove(*this);
       ::close(socket_);
     }
   }
@@ -479,12 +479,9 @@ void ClientConnection::end_request() {
 // ============================================================================
 
 // @safe - Cleanup destructor (has internal @unsafe blocks)
-// SAFETY: Connection cleanup handled by ClientConnection
+// SAFETY: Connection cleanup handled via request_close() to poll thread
 Client::~Client() {
-  if (connection_.get()->is_some()) {
-    // @unsafe - const_cast for interior mutability
-    { const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).close(); }
-  }
+  close();  // Delegate to close() which uses request_close()
 }
 
 // Jetpack: set validity flag on output marshal
@@ -495,11 +492,20 @@ void Client::set_valid(bool valid) const {
 }
 
 // @safe - Closes socket and cleans up (has internal @unsafe blocks)
-// SAFETY: Idempotent, delegates to ClientConnection
+// SAFETY: Uses request_close() for thread-safe close via poll thread
 void Client::close() const {
   if (connection_.get()->is_some()) {
+    // @unsafe - pointer dereference through Arc
+    {
+      auto& conn = *connection_.get()->as_ref().unwrap();
+      if (conn.connected()) {
+        // Request poll thread to close the connection
+        poll_thread_worker_->request_close(conn.fd());
+      }
+    }
+    // Clear connection to prevent further use
     // @unsafe - const_cast for interior mutability
-    { const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).close(); }
+    { *connection_.get() = rusty::None; }
   }
 }
 
