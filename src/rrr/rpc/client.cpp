@@ -47,7 +47,7 @@ void Future::wait() const {
   auto guard = state_.lock().unwrap();
   // wait_while: waits WHILE condition is TRUE, stops when FALSE
   // We want to wait while NOT ready and NOT timed_out
-  guard = ready_cond_.as_mut_unchecked().wait_while(std::move(guard), [](State& s) {
+  guard = ready_cond_.wait_while(std::move(guard), [](State& s) {
     return !s.ready && !s.timed_out;
   }).unwrap();
 }
@@ -58,7 +58,7 @@ void Future::timed_wait(double sec) const {
   auto duration = std::chrono::duration<double>(sec);
   // wait_timeout_while: waits WHILE condition is TRUE
   // Returns pair<Guard, bool> where bool = true if condition became false
-  auto result = ready_cond_.as_mut_unchecked().wait_timeout_while(
+  auto result = ready_cond_.wait_timeout_while(
     std::move(guard),
     duration,
     [](State& s) { return !s.ready && !s.timed_out; }
@@ -84,7 +84,7 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
     should_callback = (*guard).ready;
   }  // Guard dropped here, releasing lock before notify
 
-  ready_cond_.as_mut_unchecked().notify_all();
+  ready_cond_.notify_all();
 
   // Execute callback outside lock to avoid deadlock
   if (should_callback && attr_.callback != nullptr) {

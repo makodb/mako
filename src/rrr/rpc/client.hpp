@@ -72,7 +72,7 @@ class Future { // @unsafe
 
     uint64_t timeout_{1000000}; // default timeout 1s (jetpack)
     rusty::Mutex<State> state_;  // Mutex protects State (ready/timed_out flags)
-    rusty::UnsafeCell<rusty::Condvar> ready_cond_;  // UnsafeCell for interior mutability
+    rusty::Condvar ready_cond_;  // Uses interior mutability (const methods like Rust's &self)
 
     // @safe - Uses rusty::Mutex and rusty::Condvar together (Rust-like pattern)
     // Takes Arc<Future> self parameter for callback safety
