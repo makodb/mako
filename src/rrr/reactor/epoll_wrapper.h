@@ -70,6 +70,11 @@ public:
     // Default implementation returns false - override in subclasses that need it
     // Note: const because called through Arc, uses mutable flag internally
     virtual bool check_pending_write_update() const { return false; }
+
+    // @safe - Check if pollable was closed (via handle_error->close())
+    // Returns true if this pollable should be removed from poll registration
+    // Default returns false - override in subclasses that implement close()
+    virtual bool is_closed() const { return false; }
 };
 
 

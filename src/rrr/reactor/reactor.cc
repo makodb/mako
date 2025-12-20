@@ -460,6 +460,26 @@ void PollThreadWorker::poll_loop() {
         do_update_mode(fd, Pollable::READ | Pollable::WRITE, const_cast<Pollable*>(sp_poll.get()));
       }
     }
+
+    // Check for pollables closed by handle_error() and remove them
+    // This prevents fd reuse issues when old connection is closed but not removed
+    std::vector<int> closed_fds;
+    for (auto& [fd, sp_poll] : fd_to_pollable_) {
+      if (sp_poll->is_closed()) {
+        closed_fds.push_back(fd);
+      }
+    }
+    for (int fd : closed_fds) {
+      auto it = fd_to_pollable_.find(fd);
+      if (it != fd_to_pollable_.end()) {
+        // Remove from epoll if still registered
+        if (mode_.find(fd) != mode_.end()) {
+          poll_.Remove(it->second);
+        }
+        fd_to_pollable_.erase(it);
+        mode_.erase(fd);
+      }
+    }
   }
 
   Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");

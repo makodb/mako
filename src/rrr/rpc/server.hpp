@@ -129,6 +129,9 @@ class ServerListener: public Pollable {
   // Close is marked safe via external annotation
   void close() override;
 
+  // @safe - Check if closed (server_sock_ < 0)
+  bool is_closed() const override { return server_sock_ < 0; }
+
   // @safe - Returns file descriptor
   int fd() const override {return server_sock_;}
 
@@ -295,6 +298,12 @@ public:
             return true;
         }
         return false;
+    }
+
+    // @safe - Check if connection was closed (via handle_error)
+    // Called by poll loop to detect and remove closed connections
+    bool is_closed() const override {
+        return status_ == CLOSED;
     }
 
     // Jetpack: handle_free stub

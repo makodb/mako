@@ -370,6 +370,12 @@ public:
         return false;
     }
 
+    // @safe - Check if connection was closed (via handle_error)
+    // Called by poll loop to detect and remove closed connections
+    bool is_closed() const override {
+        return status_ == CLOSED;
+    }
+
     // Jetpack: handle_free for explicit future cleanup
     void handle_free(i64 xid);
 

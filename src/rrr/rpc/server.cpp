@@ -544,7 +544,10 @@ bool ServerListener::handle_read() {
 
 // @safe - Closes server socket using safe external annotation
 void ServerListener::close() {
-  ::close(server_sock_);
+  if (server_sock_ >= 0) {
+    ::close(server_sock_);
+    server_sock_ = -1;
+  }
 }
 
 // @safe - Creates listener socket and binds to address

@@ -103,6 +103,11 @@ public:
         // }
     }
 
+    // @safe - Check if closed (fd_ == -1)
+    bool is_closed() const override {
+        return fd_ < 0;
+    }
+
     // @unsafe - Modifies mutable field
     void set_read_handler(std::function<void()> handler) const {  // const method
         // @unsafe {
