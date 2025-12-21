@@ -6,6 +6,7 @@
 
 #include <list>
 #include <queue>
+#include <vector>
 #include <functional>
 #include <pthread.h>
 #include <atomic>
@@ -43,6 +44,12 @@
 //   std::__atomic_base::store: [unsafe, (int, std::memory_order) -> void]
 //   std::__atomic_base::load: [unsafe, (std::memory_order) -> int]
 //   nanosleep: [unsafe, (const struct timespec*, struct timespec*) -> int]
+//   std::mutex::lock: [unsafe, () -> void]
+//   std::mutex::unlock: [unsafe, () -> void]
+//   std::condition_variable::wait: [unsafe, (std::unique_lock<std::mutex>&) -> void]
+//   std::condition_variable::notify_one: [unsafe, () -> void]
+//   std::condition_variable::notify_all: [unsafe, () -> void]
+//   std::condition_variable::wait_for: [unsafe, (std::unique_lock<std::mutex>&, duration) -> std::cv_status]
 // }
 
 #define Pthread_spin_init(l, pshared) verify(pthread_spin_init(l, (pshared)) == 0)
@@ -296,117 +303,12 @@ public:
     }
 };
 
-//#define ALL_SPIN_LOCK
-
-#ifdef ALL_SPIN_LOCK
-
-#define Mutex SpinLock
-#define CondVar SpinCondVar
-
-#else
-
-// @unsafe - Uses raw pthread mutex operations for performance
-// SAFETY: All operations are thread-safe when used correctly
-class Mutex: public Lockable {
-public:
-    // @unsafe - Initializes pthread mutex
-    Mutex() : m_() {
-        pthread_mutexattr_t attr;
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-        Pthread_mutex_init(&m_, &attr);
-        pthread_mutexattr_destroy(&attr);
-    }
-    
-    // @unsafe - Destroys pthread mutex
-    ~Mutex() {
-        Pthread_mutex_destroy(&m_);
-    }
-
-    // @unsafe - Acquires mutex lock
-    void lock() {
-        Pthread_mutex_lock(&m_);
-    }
-    
-    // @unsafe - Releases mutex lock
-    void unlock() {
-        Pthread_mutex_unlock(&m_);
-    }
-
-private:
-    friend class CondVar;
-    pthread_mutex_t m_;
-};
-
-// choice between spinlock & mutex:
-// * when n_thread > n_core, use mutex
-// * on virtual machines, use mutex
-
-// @unsafe - Uses raw pthread condition variable for performance
-// SAFETY: All operations are thread-safe when used with proper mutex
-class CondVar: public NoCopy {
-public:
-    // @unsafe - Initializes pthread condition variable
-    CondVar() : cv_() {
-        Pthread_cond_init(&cv_, nullptr);
-    }
-    
-    // @unsafe - Destroys pthread condition variable
-    ~CondVar() {
-        Pthread_cond_destroy(&cv_);
-    }
-
-    // @unsafe - Waits on condition variable with mutex
-    void wait(Mutex& m) {
-        Pthread_cond_wait(&cv_, &m.m_);
-    }
-    
-    // @unsafe - Signals one waiting thread
-    void signal() {
-        Pthread_cond_signal(&cv_);
-    }
-    
-    // @unsafe - Broadcasts to all waiting threads
-    void bcast() {
-        Pthread_cond_broadcast(&cv_);
-    }
-
-    // @unsafe - Timed wait with timeout
-    int timed_wait(Mutex& m, double sec);
-
-private:
-    pthread_cond_t cv_;
-};
-
-#endif // ALL_SPIN_LOCK
-
-// @safe - RAII lock guard that ensures proper lock/unlock
-class ScopedLock: public NoCopy {
-public:
-    // @safe - Acquires lock on construction
-    explicit ScopedLock(Lockable* lock): m_(lock) { 
-        if (m_) m_->lock(); 
-    }
-    
-    // @safe - Acquires lock on construction (reference version)
-    explicit ScopedLock(Lockable& lock): m_(&lock) { 
-        m_->lock(); 
-    }
-    
-    // @safe - Releases lock on destruction
-    ~ScopedLock() { 
-        if (m_) m_->unlock(); 
-    }
-    
-private:
-    Lockable* m_;
-};
-
 
 /**
  * Thread safe queue using rusty::Box for automatic memory management.
  * @unsafe - Uses raw pthread primitives for performance
  * SAFETY: All public methods are thread-safe through mutex protection
+ * Supports move-only types like rusty::Box<T>.
  */
 template<class T>
 class Queue: public NoCopy {
@@ -428,36 +330,37 @@ public:
         // q_ automatically deleted by rusty::Box
     }
 
-    // @unsafe - Thread-safe push with mutex protection
-    void push(const T& e) {
+    // @unsafe - Thread-safe push with mutex protection (move semantics)
+    void push(T e) {
         Pthread_mutex_lock(&m_);
-        q_->push_back(e);
+        q_->push_back(std::move(e));
         Pthread_cond_signal(&not_empty_);
         Pthread_mutex_unlock(&m_);
     }
 
     // @unsafe - Thread-safe try_pop with mutex protection
-    // SAFETY: Returns via output parameter
+    // SAFETY: Returns via output parameter using move semantics
     bool try_pop(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
         if (!q_->empty()) {
             ret = true;
-            *t = q_->front();
+            *t = std::move(q_->front());
             q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
         return ret;
     }
 
-    // @unsafe - Thread-safe try_pop with ignore value
-    // SAFETY: Returns via output parameter
-    bool try_pop_but_ignore(T* t, const T& ignore) {
+    // @unsafe - Thread-safe try_pop that ignores invalid/null items
+    // For rusty::Box<T>, this ignores items where !is_valid()
+    // SAFETY: Returns via output parameter using move semantics
+    bool try_pop_but_ignore_invalid(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
-        if (!q_->empty() && q_->front() != ignore) {
+        if (!q_->empty() && q_->front().is_valid()) {
             ret = true;
-            *t = q_->front();
+            *t = std::move(q_->front());
             q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
@@ -465,7 +368,7 @@ public:
     }
 
     // @unsafe - Thread-safe blocking pop
-    // SAFETY: Returns by value (copy/move), not by reference. Borrow checker false positive.
+    // SAFETY: Returns by value (move), not by reference. Borrow checker false positive.
     T pop() {
         Pthread_mutex_lock(&m_);
         while (q_->empty()) {
@@ -481,8 +384,8 @@ public:
 class ThreadPool: public RefCounted {
     int n_;
     Counter round_robin_;
-    pthread_t* th_;
-    Queue<std::function<void()>*>* q_;
+    std::vector<pthread_t> th_;
+    std::vector<Queue<rusty::Box<std::function<void()>>>> q_;
     bool should_stop_{false};
 
     static void* start_thread_pool(void*);

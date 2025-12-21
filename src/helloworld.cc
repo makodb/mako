@@ -89,14 +89,12 @@ void nc_setup_client(int nkeys, int nthreads, int run) {
 
 
 void *nc_start_server2(void *input) {
-    HelloworldClientServiceImpl *impl = new HelloworldClientServiceImpl();
-    rrr::PollThread *pm = new rrr::PollThread(); // starting a coroutine
-    base::ThreadPool *tp = new base::ThreadPool();  // never use it
-    rrr::Server *server = new rrr::Server(pm, tp);
+    auto poll_arc = PollThread::create();
+    rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
 
-    server->reg_service(*impl);
+    server->reg_service(HelloworldClientServiceImpl{});
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
-    nc_services2.push_back(std::shared_ptr<HelloworldClientServiceImpl>(impl));
+    // Service is now owned by server
     return nullptr;
 }
 

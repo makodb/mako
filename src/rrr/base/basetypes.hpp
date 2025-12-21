@@ -124,10 +124,10 @@ public:
     // Delete copy constructor and copy assignment operator
     NoCopy(const NoCopy&) = delete;
     NoCopy& operator=(const NoCopy&) = delete;
-    
-    // Also delete move operations to prevent any form of copying/moving
-    NoCopy(NoCopy&&) = delete;
-    NoCopy& operator=(NoCopy&&) = delete;
+
+    // Allow move operations
+    NoCopy(NoCopy&&) = default;
+    NoCopy& operator=(NoCopy&&) = default;
 };
 inline NoCopy::~NoCopy() {}
 

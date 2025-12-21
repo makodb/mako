@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <unistd.h>
 #include <random>
@@ -24,7 +25,19 @@ public:
     std::atomic<bool> should_delay{false};
     std::atomic<int> delay_ms{100};
     std::atomic<bool> should_throw{false};
-    
+
+    // Make movable (atomics can't be moved, so we copy values)
+    ExtendedTestService() = default;
+    ExtendedTestService(ExtendedTestService&& other) noexcept
+        : call_count(other.call_count.load()),
+          should_crash(other.should_crash.load()),
+          should_delay(other.should_delay.load()),
+          delay_ms(other.delay_ms.load()),
+          should_throw(other.should_throw.load()) {}
+    ExtendedTestService& operator=(ExtendedTestService&&) = delete;
+    ExtendedTestService(const ExtendedTestService&) = delete;
+    ExtendedTestService& operator=(const ExtendedTestService&) = delete;
+
     void fast_nop(const std::string& input) override {
         call_count++;
         if (should_throw) {
@@ -88,13 +101,12 @@ protected:
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-        service = new ExtendedTestService();
-        server->reg_service(*service);
+        service = server->reg_service(ExtendedTestService{});
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(current_port)).c_str()), 0);
     }
 
     void TearDown() override {
-        if (service) delete service;
+        // service is owned by server, no delete needed
         if (server) delete server;
         // Shutdown PollThread with proper locking
         {

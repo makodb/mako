@@ -1,9 +1,10 @@
 #include <gtest/gtest.h>
 #include <atomic>
-#include <thread>
 #include <chrono>
-#include <vector>
 #include <future>
+#include <memory>
+#include <thread>
+#include <vector>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include "reactor/reactor.h"
@@ -32,10 +33,20 @@ public:
         GET_VALUE = 0x1003,
         ERROR_METHOD = 0x1004
     };
-    
+
     std::atomic<int> call_count{0};
     std::atomic<bool> should_delay{false};
     std::atomic<int> delay_ms{100};
+
+    // Make movable (atomics can't be moved, so we copy values)
+    TestFutureService() = default;
+    TestFutureService(TestFutureService&& other) noexcept
+        : call_count(other.call_count.load()),
+          should_delay(other.should_delay.load()),
+          delay_ms(other.delay_ms.load()) {}
+    TestFutureService& operator=(TestFutureService&&) = delete;
+    TestFutureService(const TestFutureService&) = delete;
+    TestFutureService& operator=(const TestFutureService&) = delete;
 
     // @unsafe - Takes address-of member function pointers
     int __reg_to__(Server* svr) {
@@ -126,9 +137,7 @@ protected:
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-        service = new TestFutureService();
-
-        server->reg_service(*service);
+        service = server->reg_service(TestFutureService{});
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
@@ -144,7 +153,7 @@ protected:
         service->delay_ms = 100;
 
         client.as_ref().unwrap()->close();
-        delete service;
+        // service is owned by server, no delete needed
         delete server;  // Server destructor waits for connections to close
 
         // Shutdown PollThread

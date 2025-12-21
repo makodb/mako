@@ -41,10 +41,11 @@ void ServerControlServiceImpl::set_sig_handler() {
 
 void ServerControlServiceImpl::do_shutdown() {
   Log_info("Shutdown Server Control Service");
-  status_mutex_.lock();
-  status_ = SCS_STOP;
-  status_cond_.bcast();
-  status_mutex_.unlock();
+  {
+    auto guard = status_->lock().unwrap();
+    guard->status = Status::STOP;
+  }
+  status_cond_->notify_all();
 }
 
 void ServerControlServiceImpl::server_shutdown(rrr::DeferredReply defer) {
@@ -53,28 +54,23 @@ void ServerControlServiceImpl::server_shutdown(rrr::DeferredReply defer) {
 }
 
 void ServerControlServiceImpl::server_ready(rrr::i32 *res, rrr::DeferredReply defer) {
-  status_mutex_.lock();
-  if (SCS_RUN == status_) {
-    *res = 1;
-  } else {
-    *res = 0;
+  {
+    auto guard = status_->lock().unwrap();
+    *res = (guard->status == Status::RUN) ? 1 : 0;
   }
-  status_mutex_.unlock();
   defer.reply();
 }
 
 void ServerControlServiceImpl::do_statistics(const char *key,
                                              int64_t value_delta) {
-  std::unordered_map<const char *, ValueTimesPair>::iterator it;
-  stat_m_.lock();
-  it = statistics_.find(key);
-  if (it == statistics_.end())
-    statistics_[key] = (ValueTimesPair) {value_delta, 1};
+  auto guard = stats_->lock().unwrap();
+  auto it = guard->statistics.find(key);
+  if (it == guard->statistics.end())
+    guard->statistics[key] = (ValueTimesPair) {value_delta, 1};
   else {
     it->second.value += value_delta;
     it->second.times++;
   }
-  stat_m_.unlock();
 }
 
 void ServerControlServiceImpl::server_heart_beat(rrr::DeferredReply defer) {
@@ -102,13 +98,13 @@ void ServerControlServiceImpl::server_heart_beat_with_data(ServerResponse *res, 
   if (!sig_handler_set_)
     set_sig_handler();
   alarm(timeout_);
-  stat_m_.lock();
-  std::unordered_map<const char *, ValueTimesPair>::iterator it;
-  for (it = statistics_.begin(); it != statistics_.end(); it++) {
+
+  auto guard = stats_->lock().unwrap();
+  for (auto it = guard->statistics.begin(); it != guard->statistics.end(); it++) {
     res->statistics[std::string(it->first)] = it->second;
   }
 
-  for (auto &pair : stats_) {
+  for (auto &pair : guard->stats) {
     auto &name = pair.first;
     auto &stat = pair.second;
     auto ss = stat->reset();
@@ -120,14 +116,15 @@ void ServerControlServiceImpl::server_heart_beat_with_data(ServerResponse *res, 
     res->statistics[name].times = ss.n_stat_;
   }
 
-  stat_m_.unlock();
   defer.reply();
 }
 
 ServerControlServiceImpl::ServerControlServiceImpl(unsigned int timeout,
                                                    Recorder *recorder) :
         recorder_(recorder),
-        status_(SCS_INIT),
+        stats_(rusty::make_box<rusty::Mutex<Stats>>(Stats{})),
+        status_(rusty::make_box<rusty::Mutex<StatusState>>(StatusState{})),
+        status_cond_(rusty::make_box<rusty::Condvar>()),
         timeout_(timeout),
         sig_handler_set_(false) {
 
@@ -138,18 +135,18 @@ ServerControlServiceImpl::~ServerControlServiceImpl() {
 }
 
 void ServerControlServiceImpl::set_ready() {
-  status_mutex_.lock();
-  status_ = SCS_RUN;
+  {
+    auto guard = status_->lock().unwrap();
+    guard->status = Status::RUN;
+  }
   rrr::CPUInfo::cpu_stat();
-  status_mutex_.unlock();
 }
 
 void ServerControlServiceImpl::wait_for_shutdown() {
   Log_debug("%s", __FUNCTION__);
-  status_mutex_.lock();
-  while (SCS_STOP != status_)
-    status_cond_.wait(status_mutex_);
-  status_mutex_.unlock();
+  auto guard = status_->lock().unwrap();
+  guard = status_cond_->wait_while(std::move(guard),
+      [](StatusState& s) { return s.status != Status::STOP; }).unwrap();
   Log_debug("exit %s", __FUNCTION__);
 }
 
@@ -185,10 +182,11 @@ double timespec2ms(struct timespec time) {
 
 void ClientControlServiceImpl::client_shutdown(rrr::DeferredReply defer) {
   Log_info("Shutdown Client Control Service");
-  status_mutex_.lock();
-  status_ = CCS_STOP;
-  status_cond_.bcast();
-  status_mutex_.unlock();
+  {
+    auto guard = status_->lock().unwrap();
+    guard->status = Status::STOP;
+  }
+  status_cond_->notify_all();
   defer.reply();
 }
 
@@ -202,12 +200,10 @@ void ClientControlServiceImpl::client_force_stop(rrr::DeferredReply defer) {
 
 void ClientControlServiceImpl::client_response(const DepId& dep_id, ClientResponse *res, rrr::DeferredReply defer) {
   std::lock_guard<std::recursive_mutex> guard(mtx_);
-  status_mutex_.lock();
-  if (CCS_FINISH == status_)
-    res->is_finish = (rrr::i32) 1;
-  else
-    res->is_finish = (rrr::i32) 0;
-  status_mutex_.unlock();
+  {
+    auto status_guard = status_->lock().unwrap();
+    res->is_finish = (status_guard->status == Status::FINISH) ? 1 : 0;
+  }
 
   pthread_rwlock_wrlock(&collect_lock_);
   before_last_time_ = last_time_;
@@ -276,65 +272,72 @@ void ClientControlServiceImpl::client_ready_block(rrr::i32 *res,
                                                   rrr::DeferredReply defer) {
   *res = 1;
   bool reply = false;
-  status_mutex_.lock();
-  if (CCS_READY == status_) {
-    reply = true;
-  } else {
-    // Store callback for later reply
-    ready_block_defers_.emplace_back([defer = std::move(defer)]() mutable { defer.reply(); });
+  {
+    auto guard = status_->lock().unwrap();
+    if (guard->status == Status::READY) {
+      reply = true;
+    } else {
+      // Store callback for later reply
+      guard->ready_block_defers.emplace_back([defer = std::move(defer)]() mutable { defer.reply(); });
+    }
   }
-  status_mutex_.unlock();
   if (reply) {
     defer.reply();
   }
 }
 
 void ClientControlServiceImpl::client_ready(rrr::i32 *res, rrr::DeferredReply defer) {
-  status_mutex_.lock();
-  if (CCS_READY == status_)
-    *res = 1;
-  else
-    *res = 0;
-  status_mutex_.unlock();
+  {
+    auto guard = status_->lock().unwrap();
+    *res = (guard->status == Status::READY) ? 1 : 0;
+  }
   defer.reply();
 }
 
 void ClientControlServiceImpl::client_start(rrr::DeferredReply defer) {
-  status_mutex_.lock();
-  status_ = CCS_RUN;
-  status_cond_.bcast();
+  {
+    auto guard = status_->lock().unwrap();
+    guard->status = Status::RUN;
+  }
+  status_cond_->notify_all();
   clock_gettime(&start_time_);
   last_time_ = start_time_;
   before_last_time_ = start_time_;
-  status_mutex_.unlock();
   defer.reply();
 }
 
 void ClientControlServiceImpl::wait_for_start(unsigned int id) {
-  status_mutex_.lock();
   coo_threads_[id] = (pthread_t *) malloc(sizeof(pthread_t));
   *(coo_threads_[id]) = pthread_self();
-  if (++num_ready_ == num_threads_) {
-    status_ = CCS_READY;
-    for (auto& cb : ready_block_defers_) {
-      cb();  // Invoke the stored reply callbacks
+
+  std::vector<rusty::Function<void()>> callbacks_to_invoke;
+  {
+    auto guard = status_->lock().unwrap();
+    guard->num_ready++;
+    if (guard->num_ready == num_threads_) {
+      guard->status = Status::READY;
+      callbacks_to_invoke = std::move(guard->ready_block_defers);
+      guard->ready_block_defers.clear();
     }
-    ready_block_defers_.clear();
+    // Wait until RUN or STOP
+    guard = status_cond_->wait_while(std::move(guard),
+        [](StatusState& s) { return s.status != Status::RUN && s.status != Status::STOP; }).unwrap();
   }
-  while (CCS_RUN != status_ && CCS_STOP != status_)
-    status_cond_.wait(status_mutex_);
-  status_mutex_.unlock();
+  // Invoke callbacks outside the lock
+  for (auto& cb : callbacks_to_invoke) {
+    cb();
+  }
 }
 
 void ClientControlServiceImpl::wait_for_shutdown() {
-  status_mutex_.lock();
-  if (status_ != CCS_STOP) {
-    if (++num_finish_ == num_threads_)
-      status_ = CCS_FINISH;
-    while (CCS_STOP != status_)
-      status_cond_.wait(status_mutex_);
+  auto guard = status_->lock().unwrap();
+  if (guard->status != Status::STOP) {
+    guard->num_finish++;
+    if (guard->num_finish == num_threads_)
+      guard->status = Status::FINISH;
+    guard = status_cond_->wait_while(std::move(guard),
+        [](StatusState& s) { return s.status != Status::STOP; }).unwrap();
   }
-  status_mutex_.unlock();
 }
 
 void ClientControlServiceImpl::client_get_txn_names(std::map<i32, std::string> *txn_names, rrr::DeferredReply defer) {
@@ -344,7 +347,9 @@ void ClientControlServiceImpl::client_get_txn_names(std::map<i32, std::string> *
 
 ClientControlServiceImpl::ClientControlServiceImpl(unsigned int num_threads,
                                                    const std::map<int32_t, std::string> &txn_types)
-        : status_(CCS_INIT), txn_info_(NULL), num_threads_(num_threads), num_ready_(0), num_finish_(0) {
+        : status_(rusty::make_box<rusty::Mutex<StatusState>>(StatusState{})),
+          status_cond_(rusty::make_box<rusty::Condvar>()),
+          txn_info_(NULL), num_threads_(num_threads) {
   pthread_rwlock_init(&collect_lock_, NULL);
   coo_threads_ = (pthread_t **) malloc(sizeof(pthread_t * ) * num_threads_);
   txn_info_ = new std::map<int32_t, txn_info_t>[num_threads_];

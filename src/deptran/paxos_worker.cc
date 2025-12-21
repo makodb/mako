@@ -182,7 +182,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
 
   if (n_current >= n_tot) {
     //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
-    finish_cond.bcast();
+    finish_cond.notify_all();
   }
   return status;
 }
@@ -202,11 +202,11 @@ void PaxosWorker::SetupService() {
   thread_pool_g = new base::ThreadPool(num_threads);
 
   // init rrr::Server
-  rpc_server_ = new rrr::Server(svr_poll_thread_worker_.as_ref().unwrap(), thread_pool_g);
+  rpc_server_ = new rrr::Server(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone()));
 
-  // reg services
+  // reg services (borrowed - services_ is managed by frame/worker)
   for (auto service : services_) {
-    rpc_server_->reg_service(*service);
+    rpc_server_->reg_service_ref(*service);
   }
 
   // start rpc server
@@ -238,11 +238,10 @@ void PaxosWorker::SetupHeartbeat() {
   bool hb = Config::GetConfig()->do_heart_beat();
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
-  scsi_ = new ServerControlServiceImpl(timeout);
-  svr_hb_poll_thread_worker_g = PollThread::create();
+  svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
   hb_thread_pool_g = new rrr::ThreadPool(1);
-  hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
-  hb_rpc_server_->reg_service(*scsi_);
+  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  scsi_ = hb_rpc_server_->reg_service(ServerControlServiceImpl(timeout));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
@@ -264,8 +263,7 @@ void PaxosWorker::WaitForShutdown() {
   if (hb_rpc_server_ != nullptr) {
 //    scsi_->server_heart_beat();
     scsi_->wait_for_shutdown();
-    delete hb_rpc_server_;
-    delete scsi_;
+    delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     hb_thread_pool_g->release();
 
@@ -331,7 +329,7 @@ inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0)
 
     coord.get()->BulkSubmit(sp_m, [this, cnt]() {
       this->n_current += cnt;
-      if(this->n_current >= this->n_tot)this->finish_cond.bcast();
+      if(this->n_current >= this->n_tot)this->finish_cond.notify_all();
     });
 }
 
@@ -603,12 +601,12 @@ void PaxosWorker::WaitForSubmit() {
 	sleep(1);
         Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
   }*/
-  while (n_current < n_tot) {
-    finish_mutex.lock();
-    Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
-    finish_cond.wait(finish_mutex);
-    //Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
-    finish_mutex.unlock();
+  {
+    std::unique_lock<std::mutex> lock(finish_mutex);
+    while (n_current < n_tot) {
+      Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
+      finish_cond.wait(lock);
+    }
   }
   Log_debug("finish task.");
 }

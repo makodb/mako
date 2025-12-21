@@ -15,14 +15,13 @@ void ServerWorker::SetupHeartbeat() {
   bool hb = Config::GetConfig()->do_heart_beat();
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
-  scsi_ = new ServerControlServiceImpl(timeout);
   int n_io_threads = 1;
 //  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_;
 //  hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_thread_pool_g = svr_thread_pool_;
-  hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
-  hb_rpc_server_->reg_service(*scsi_);
+  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  scsi_ = hb_rpc_server_->reg_service(ServerControlServiceImpl(timeout));
 
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
@@ -211,11 +210,11 @@ void ServerWorker::SetupService() {
 //  thread_pool_g = new base::ThreadPool(num_threads);
 
   // init rrr::Server
-  rpc_server_ = new rrr::Server(poll_worker, svr_thread_pool_);
+  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
 
-  // reg services
+  // reg services (borrowed - services_ is managed by frame/worker)
   for (auto service : services_) {
-    rpc_server_->reg_service(*service);
+    rpc_server_->reg_service_ref(*service);
   }
 
   // start rpc server
@@ -235,8 +234,7 @@ void ServerWorker::WaitForShutdown() {
   Log_debug("%s", __FUNCTION__);
   if (hb_rpc_server_ != nullptr) {
     scsi_->wait_for_shutdown();
-    delete hb_rpc_server_;
-    delete scsi_;
+    delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     if (hb_thread_pool_g != svr_thread_pool_)
       hb_thread_pool_g->release();

@@ -1,5 +1,7 @@
 #pragma once
 #include <rusty/arc.hpp>
+#include <mutex>
+#include <condition_variable>
 
 #include "__dep__.h"
 #include "config.h"
@@ -32,8 +34,8 @@ class ClientWorker {
   ClientControlServiceImpl *ccsi{nullptr};
   int32_t n_concurrent_;
   map<cooid_t, bool> n_pause_concurrent_{};  // Jetpack: pause tracking
-  rrr::Mutex finish_mutex{};
-  rrr::CondVar finish_cond{};
+  std::mutex finish_mutex{};
+  std::condition_variable finish_cond{};
   bool forward_requests_to_leader_ = false;
 
   // coordinators_{mutex, cond} synchronization currently only used for open clients

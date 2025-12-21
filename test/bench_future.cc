@@ -1,10 +1,11 @@
 #include <gtest/gtest.h>
 #include <atomic>
-#include <thread>
 #include <chrono>
-#include <vector>
-#include <iostream>
 #include <iomanip>
+#include <iostream>
+#include <memory>
+#include <thread>
+#include <vector>
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include "reactor/reactor.h"
@@ -23,6 +24,14 @@ public:
     };
 
     std::atomic<int> call_count{0};
+
+    // Make movable (atomics can't be moved, so we copy values)
+    BenchService() = default;
+    BenchService(BenchService&& other) noexcept
+        : call_count(other.call_count.load()) {}
+    BenchService& operator=(BenchService&&) = delete;
+    BenchService(const BenchService&) = delete;
+    BenchService& operator=(const BenchService&) = delete;
 
     int __reg_to__(Server* svr) {
         return svr->reg_method(ECHO, this, &BenchService::echo_wrapper);
@@ -56,9 +65,7 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThread::create());
         // Clone the Arc to keep our copy for the client - use as_ref() to borrow
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-        service = new BenchService();
-
-        server->reg_service(*service);
+        service = server->reg_service(BenchService{});
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
 
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
@@ -69,7 +76,7 @@ protected:
 
     void TearDown() override {
         client.as_ref().unwrap()->close();
-        delete service;
+        // service is owned by server, no delete needed
         delete server;
         poll_thread_worker_.as_ref().unwrap()->shutdown();
         std::this_thread::sleep_for(milliseconds(100));

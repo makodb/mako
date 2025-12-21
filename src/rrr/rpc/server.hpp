@@ -411,8 +411,6 @@ class Server: public NoCopy {
     using RequestHandler = std::function<void(rusty::Box<Request>, WeakServerConnection)>;
     std::unordered_map<i32, RequestHandler> handlers_;
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
-    ThreadPool* threadpool_;
-    int server_sock_;
 
     Counter sconns_ctr_;
 
@@ -421,32 +419,43 @@ class Server: public NoCopy {
         std::unordered_set<rusty::Arc<ServerConnection>>()};
     rusty::Option<rusty::Arc<ServerListener>> sp_server_listener_;
 
-    enum {
-        NEW, RUNNING, STOPPING, STOPPED
-    } status_;
-
-    pthread_t loop_th_;
-
-    static void* start_server_loop(void* arg);
-    void server_loop(struct addrinfo* svr_addr);
+    // Owned services - Server takes ownership to ensure services outlive handlers
+    // Stores cleanup functions for type-erased service deletion
+    std::vector<std::function<void()>> service_cleanups_;
 
 public:
     std::string addr_;
 
     // @unsafe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
-    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None, ThreadPool* thrpool = nullptr);
+    Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
     // @unsafe - Destroys server and all connections
-    // SAFETY: Waits for all connections to close
+    // SAFETY: Waits for all connections to close, then deletes owned services
     virtual ~Server();
 
     // @unsafe - Starts server on specified address
     // SAFETY: Proper socket binding and thread creation
     int start(const char* bind_addr);
 
-    // @safe - Registers service
-    int reg_service(Service& svc) {
-        return svc.__reg_to__(this);
+    // @unsafe - Registers service and transfers ownership to Server
+    // Server owns the service, ensuring it outlives all RPC handlers.
+    // Returns raw pointer for caller to use (valid as long as Server lives).
+    // Service types must be movable (not copyable).
+    // Unsafe: uses new/delete and raw pointer dereference
+    template<class S>
+    S* reg_service(S svc) {
+        static_assert(std::is_base_of<Service, S>::value, "S must derive from Service");
+        S* ptr = new S(std::move(svc));
+        service_cleanups_.push_back([ptr]() { delete ptr; });
+        ptr->__reg_to__(this);
+        return ptr;
+    }
+
+    // @unsafe - Registers service without taking ownership (borrowed reference)
+    // Caller must ensure service outlives the Server.
+    // Use this when services are managed externally (e.g., by Frame/Worker).
+    void reg_service_ref(Service& svc) {
+        svc.__reg_to__(this);
     }
 
     /**

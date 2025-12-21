@@ -58,12 +58,12 @@ Recorder::Recorder(const char *path) {
 
 void Recorder::flush_loop() {
     while (true) {
-        mtx_cd_flush_.lock();
-
+        {
+            std::unique_lock<std::mutex> lock(mtx_cd_flush_);
 //        auto now = std::chrono::system_clock::now();
-        cd_flush_.wait(mtx_cd_flush_);
+            cd_flush_.wait(lock);
+        }
         flush_buf();
-        mtx_cd_flush_.unlock();
     }
 }
 
@@ -76,7 +76,7 @@ void Recorder::submit(const std::string &buf,
 		      const std::function<void(void)> &cb) {
 
     io_req_t *req = new io_req_t(buf, cb);
-    ScopedLock(this->mtx_);
+    std::lock_guard<std::mutex> lock(this->mtx_);
     flush_reqs_->push_back(req);
 
 //    if (cb) {
@@ -93,24 +93,25 @@ void Recorder::submit(Marshal &m,
     s.resize(m.content_size());
     m.write((void*)s.data(), m.content_size());
 
-    ScopedLock(this->mtx_);
+    std::lock_guard<std::mutex> lock(this->mtx_);
     flush_reqs_->push_back(req);
 }
 
 void Recorder::flush_buf() {
-    mtx_.lock();
-
     int cnt_flush = 0;
     int sz_flush = 0;
+    int sz;
+    std::list<io_req_t*>* reqs;
 
-    int sz = flush_reqs_->size();
-    auto reqs = flush_reqs_;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        sz = flush_reqs_->size();
+        reqs = flush_reqs_;
 
-    if (sz > 0) {
-	flush_reqs_ = new std::list<io_req_t*>;
+        if (sz > 0) {
+            flush_reqs_ = new std::list<io_req_t*>;
+        }
     }
-
-    mtx_.unlock();
 
     if (sz == 0) {
 	return;
@@ -132,23 +133,27 @@ void Recorder::flush_buf() {
 
     // push to call back reqs.
 
-    mtx_.lock();
-    callback_reqs_->insert(callback_reqs_->end(),
-                           reqs->begin(), reqs->end());
-    mtx_.unlock();
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        callback_reqs_->insert(callback_reqs_->end(),
+                               reqs->begin(), reqs->end());
+    }
     return;
 
 }
 
 void Recorder::invoke_cb() {
-  verify(0);
-    mtx_.lock();
-    int sz = callback_reqs_->size();
-    auto reqs = callback_reqs_;
-    if (sz > 0) {
-        callback_reqs_ = new std::list<io_req_t*>;
+    verify(0);
+    int sz;
+    std::list<io_req_t*>* reqs;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        sz = callback_reqs_->size();
+        reqs = callback_reqs_;
+        if (sz > 0) {
+            callback_reqs_ = new std::list<io_req_t*>;
+        }
     }
-    mtx_.unlock();
 
     if (sz == 0) {
         return;

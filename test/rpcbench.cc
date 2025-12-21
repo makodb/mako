@@ -203,9 +203,8 @@ int main(int argc, char **argv) {
 
     thrpool = new ThreadPool(worker_threads);
     if (is_server) {
-        BenchmarkService svc;
-        Server svr(poll_thread_worker_, thrpool);  // Server takes Option<Arc<...>>
-        svr.reg_service(svc);
+        Server svr(std::move(poll_thread_worker_));  // Server takes Option<Arc<...>>
+        svr.reg_service(BenchmarkService{});
         verify(svr.start(svr_addr) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);

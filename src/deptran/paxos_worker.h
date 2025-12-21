@@ -590,8 +590,8 @@ private:
   inline void _Submit(shared_ptr<Marshallable>);
   inline void _BulkSubmit(shared_ptr<Marshallable>, int);
 
-  rrr::Mutex finish_mutex{};
-  rrr::CondVar finish_cond{};
+  std::mutex finish_mutex{};
+  std::condition_variable finish_cond{};
   bool noops_received=false;
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
@@ -637,7 +637,7 @@ public:
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
   vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(1000000, nullptr);
-  rrr::Mutex nc_submit_l_;
+  std::mutex nc_submit_l_;
   std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
   pthread_t bulkops_th_;
@@ -703,10 +703,10 @@ public:
   int cur_state = 0; // 0 Follower, 1 Leader
   int machine_id = -1;
   int leader_id = -1;
-  rrr::Mutex election_state;
-  rrr::CondVar election_cond{};
-  rrr::Mutex stuff_after_election_mutex_;
-  rrr::CondVar stuff_after_election_cond_{};
+  std::mutex election_state;
+  std::condition_variable election_cond{};
+  std::mutex stuff_after_election_mutex_;
+  std::condition_variable stuff_after_election_cond_{};
   timepoint lastseen = std::chrono::high_resolution_clock::now();
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
 

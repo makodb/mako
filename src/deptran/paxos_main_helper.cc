@@ -524,14 +524,15 @@ void send_no_ops_to_all_workers(int epoch){
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncNoOpLog, ess](){
     int val = pw->SendSyncNoOpLog(syncNoOpLog);
     if(val == -1){
-      ess->stuff_after_election_cond_.bcast();
+      ess->stuff_after_election_cond_.notify_all();
     }
   }));
   auto arc_job_base = rusty::Arc<Job>(arc_job);
   pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
-  es->stuff_after_election_mutex_.lock();
-  es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
-  es->stuff_after_election_mutex_.unlock();
+  {
+    std::unique_lock<std::mutex> lock(es->stuff_after_election_mutex_);
+    es->stuff_after_election_cond_.wait(lock);
+  }
 }
 
 /*
@@ -547,14 +548,15 @@ void send_sync_logs(int epoch){
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
   if(val == -1){
-    ess->stuff_after_election_cond_.bcast();
+    ess->stuff_after_election_cond_.notify_all();
   }
  }));
  auto arc_job_base = rusty::Arc<Job>(arc_job);
  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
- es->stuff_after_election_mutex_.lock();
- es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
- es->stuff_after_election_mutex_.unlock();
+ {
+   std::unique_lock<std::mutex> lock(es->stuff_after_election_mutex_);
+   es->stuff_after_election_cond_.wait(lock);
+ }
 }
 
 void sync_callbacks_for_new_leader(){
@@ -662,7 +664,7 @@ void send_bulk_prep(int send_epoch){
         ess->set_epoch(val);
         ess->state_unlock();
       }
-      ess->election_cond.bcast();
+      ess->election_cond.notify_all();
   }));
   auto arc_job_base = rusty::Arc<Job>(arc_job);
   pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
@@ -699,9 +701,10 @@ void* electionMonitor(void* arg){
     int send_epoch = es->set_epoch();
     es->state_unlock();
     send_bulk_prep(send_epoch);
-    es->election_state.lock();
-    es->election_cond.wait(es->election_state);
-    es->election_state.unlock();
+    {
+      std::unique_lock<std::mutex> lock(es->election_state);
+      es->election_cond.wait(lock);
+    }
     es->state_lock();
     if(send_epoch != es->cur_epoch){
       es->state_unlock();
@@ -1106,14 +1109,12 @@ nc_pclock(char *msg, clockid_t cid)
 }
 
 void *nc_start_server(void *input) {
-    NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
     auto poll_arc = PollThread::create();
-    base::ThreadPool *tp = new base::ThreadPool();  // never use it
-    rrr::Server *server = new rrr::Server(poll_arc, tp);
+    rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
 
-    server->reg_service(*impl);
+    server->reg_service(NetworkClientServiceImpl{});
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
-    nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
+    // Service is now owned by server
     int c=0;
     while (1) {
       c++;

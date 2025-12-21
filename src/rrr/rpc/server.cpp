@@ -369,36 +369,17 @@ int ServerConnection::poll_mode() const {
 
 // @unsafe - Constructs server with PollThread
 // SAFETY: Shared ownership via Arc<Mutex<>>, creates one if not provided
-Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */, ThreadPool* thrpool /* =? */)
-        : server_sock_(-1), status_(NEW) {
-
-    // get rid of eclipse warning
-    memset(&loop_th_, 0, sizeof(loop_th_));
-
+Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */) {
     if (poll_thread_worker.is_none()) {  // Check if Option is None
         poll_thread_worker_ = rusty::Some(PollThread::create());
     } else {
         poll_thread_worker_ = std::move(poll_thread_worker);
     }
-
-//    if (thrpool == nullptr) {
-//        threadpool_ = new ThreadPool;
-//    } else {
-//        threadpool_ = (ThreadPool *) thrpool->ref_copy();
-//    }
 }
 
 // @unsafe - Destroys server and waits for connections
-// SAFETY: Joins thread, uses request_close() for thread-safe close, waits for cleanup
+// SAFETY: Uses request_close() for thread-safe close, waits for cleanup
 Server::~Server() {
-    if (status_ == RUNNING) {
-        status_ = STOPPING;
-        // wait till accepting thread done
-        Pthread_join(loop_th_, nullptr);
-
-        verify(server_sock_ == -1 && status_ == STOPPED);
-    }
-
     // Request close for all connections via poll thread
     // @unsafe - SpinMutex guard operations
     {
@@ -431,80 +412,11 @@ Server::~Server() {
     }
     verify(sconns_ctr_.peek_next() == 0);
 
-//    threadpool_->release();
-    // owned_poll_thread_worker_ automatically released by shared_ptr
-
-    //Log_debug("rrr::Server: destroyed");
-}
-
-struct start_server_loop_args_type {
-    Server* server;
-    struct addrinfo* gai_result;
-    struct addrinfo* svr_addr;
-};
-
-// @unsafe - C-style thread entry point
-// SAFETY: arg is always valid start_server_loop_args_type*
-void* Server::start_server_loop(void* arg) {
-    start_server_loop_args_type* start_server_loop_args = (start_server_loop_args_type*) arg;
-    start_server_loop_args->server->server_loop(start_server_loop_args->svr_addr);
-    freeaddrinfo(start_server_loop_args->gai_result);
-    delete start_server_loop_args;
-    if (arg) {
-        pthread_exit(nullptr);
+    // Clean up owned services (after connections closed, so handlers don't access them)
+    for (auto& cleanup : service_cleanups_) {
+        cleanup();
     }
-    return nullptr;
-}
-
-// @unsafe - Main server accept loop
-// SAFETY: Uses select for safe shutdown, proper socket handling
-void Server::server_loop(struct addrinfo* svr_addr) {
-    fd_set fds;
-    while (status_ == RUNNING) {
-        FD_ZERO(&fds);
-        FD_SET(server_sock_, &fds);
-
-        // use select to avoid waiting on accept when closing server
-        timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 50 * 1000; // 0.05 sec
-        int fdmax = server_sock_;
-
-        int n_ready = select(fdmax + 1, &fds, nullptr, nullptr, &tv);
-        if (n_ready == 0) {
-            continue;
-        }
-        if (status_ != RUNNING) {
-            break;
-        }
-
-#ifdef USE_IPC
-      struct sockaddr_un fsaun;
-        uint32_t from_len;
-      int clnt_socket = ::accept(server_sock_, (struct sockaddr*)&fsaun, &from_len);
-#else
-      int clnt_socket = accept(server_sock_, svr_addr->ai_addr, &svr_addr->ai_addrlen);
-#endif
-        if (clnt_socket >= 0 && status_ == RUNNING) {
-            Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
-            verify(set_nonblocking(clnt_socket, true) == 0);
-            int buf_len = 1024 * 1024; // 1M buffer
-            setsockopt(clnt_socket, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
-            setsockopt(clnt_socket, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
-            // @unsafe - SpinMutex guard operations
-            auto sconn = rusty::Arc<ServerConnection>::make(this, clnt_socket);
-            const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
-            {
-                auto guard = sconns_.lock().unwrap();
-                guard->insert(sconn.clone());  // Insert Arc into set
-            }
-            poll_thread_worker_.as_ref().unwrap()->add(sconn);
-        }
-    }
-
-    close(server_sock_);
-    server_sock_ = -1;
-    status_ = STOPPED;
+    service_cleanups_.clear();
 }
 
 // @unsafe - Accepts new client connections
@@ -675,8 +587,8 @@ int Server::start(const char* bind_addr) {
     Log_error("rrr::Server::start: bind_addr is NULL!");
     return -1;
   }
-  string addr(bind_addr, strlen(bind_addr));
-  sp_server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(this, addr));
+  addr_ = string(bind_addr, strlen(bind_addr));
+  sp_server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(this, addr_));
   poll_thread_worker_.as_ref().unwrap()->add(sp_server_listener_.as_ref().unwrap().clone());
   return 0;
 }

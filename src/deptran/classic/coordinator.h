@@ -16,8 +16,8 @@ class CoordinatorClassic : public Coordinator {
   int debug_cnt = 0;
 	int total = 0;
 	bool prep_slow = false;
-	rrr::Mutex pre_mutex{};
-	rrr::CondVar pre_cond{};
+	std::mutex pre_mutex{};
+	std::condition_variable pre_cond{};
 	map<parid_t, SiteProxyPair> leaders;
   enum Phase { INIT_END = 0, DISPATCH = 1, PREPARE = 2, COMMIT = 3 };
 

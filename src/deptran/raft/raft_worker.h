@@ -39,8 +39,8 @@ private:
   std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
     follower_callback_par_id_return_ = nullptr;
 
-  rrr::Mutex finish_mutex_{};
-  rrr::CondVar finish_cond_{};
+  std::mutex finish_mutex_{};
+  std::condition_variable finish_cond_{};
   std::mutex condition_mutex_;
   struct PendingLog {
     std::string payload;

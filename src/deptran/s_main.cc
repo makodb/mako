@@ -53,12 +53,10 @@ void client_setup_heartbeat(int num_clients) {  // HERE!!!
   bool hb = Config::GetConfig()->do_heart_beat();
   if (hb) {
     // setup controller rpc server
-    ccsi_g = new ClientControlServiceImpl(num_clients, txn_types);
     int n_io_threads = 1;
     cli_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-    base::ThreadPool *thread_pool = new base::ThreadPool(1);
-    cli_hb_server_g = new rrr::Server(cli_poll_thread_worker_g.as_ref().unwrap(), thread_pool);
-    cli_hb_server_g->reg_service(*ccsi_g);
+    cli_hb_server_g = new rrr::Server(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone()));
+    ccsi_g = cli_hb_server_g->reg_service(ClientControlServiceImpl(num_clients, txn_types));
     auto ctrl_port = std::to_string(Config::GetConfig()->get_ctrl_port());
     std::string server_address = std::string("0.0.0.0:").append(ctrl_port);
     Log_info("Start control server on port %s", ctrl_port.c_str());

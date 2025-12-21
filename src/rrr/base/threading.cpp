@@ -1,3 +1,4 @@
+#include <chrono>
 #include <functional>
 #include <sys/time.h>
 
@@ -51,27 +52,6 @@ void SpinLock::lock() {
     }
 }
 
-#ifndef ALL_SPIN_LOCK
-
-// @unsafe - Uses raw pthread timed wait
-// SAFETY: Mutex must be locked by calling thread
-int CondVar::timed_wait(Mutex& m, double sec) {
-    int full_sec = (int) sec;
-    int nsec = int((sec - full_sec) * 1000 * 1000 * 1000);
-    struct timeval tv;
-    gettimeofday(&tv, nullptr);
-    timespec abstime;
-    abstime.tv_sec = tv.tv_sec + full_sec;
-    abstime.tv_nsec = tv.tv_usec * 1000 + nsec;
-    if (abstime.tv_nsec > 1000 * 1000 * 1000) {
-        abstime.tv_nsec -= 1000 * 1000 * 1000;
-        abstime.tv_sec += 1;
-    }
-    return pthread_cond_timedwait(&cv_, &m.m_, &abstime);
-}
-
-#endif // ifndef ALL_SPIN_LOCK
-
 struct start_thread_pool_args {
     ThreadPool* thrpool;
     int id_in_pool;
@@ -86,10 +66,8 @@ void* ThreadPool::start_thread_pool(void* args) {
 }
 
 ThreadPool::ThreadPool(int n /* =... */)
-    : n_(n), round_robin_(), th_(), q_() {
+    : n_(n), round_robin_(), th_(n), q_(n) {
     verify(n_ >= 0);
-    th_ = new pthread_t[n_];
-    q_ = new Queue<function<void()>*> [n_];
 
     for (int i = 0; i < n_; i++) {
         start_thread_pool_args* args = new start_thread_pool_args();
@@ -102,22 +80,21 @@ ThreadPool::ThreadPool(int n /* =... */)
 ThreadPool::~ThreadPool() {
     should_stop_ = true;
     for (int i = 0; i < n_; i++) {
-        q_[i].push(nullptr);  // death pill
+        q_[i].push(rusty::Box<function<void()>>(nullptr));  // death pill
     }
     for (int i = 0; i < n_; i++) {
         Pthread_join(th_[i], nullptr);
     }
     // check if there's left over jobs
     for (int i = 0; i < n_; i++) {
-        function<void()>* job;
+        rusty::Box<function<void()>> job(nullptr);
         while (q_[i].try_pop(&job)) {
-            if (job != nullptr) {
+            if (job.is_valid()) {
                 (*job)();
             }
         }
     }
-    delete[] th_;
-    delete[] q_;
+    // th_ and q_ are now std::vector, automatically cleaned up
 }
 
 int ThreadPool::run_async(const std::function<void()>& f) {
@@ -125,7 +102,7 @@ int ThreadPool::run_async(const std::function<void()>& f) {
         return EPERM;
     }
     int queue_id = round_robin_.next() % n_;
-    q_[queue_id].push(new function<void()>(f));
+    q_[queue_id].push(rusty::make_box<function<void()>>(f));
     return 0;
 }
 
@@ -138,7 +115,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     int stage = 0;
 
     // randomized stealing order
-    int* steal_order = new int[n_];
+    std::vector<int> steal_order(n_);
     for (int i = 0; i < n_; i++) {
         steal_order[i] = i;
     }
@@ -146,9 +123,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     for (int i = 0; i < n_ - 1; i++) {
         int j = r.next(i, n_);
         if (j != i) {
-            int t = steal_order[j];
-            steal_order[j] = steal_order[i];
-            steal_order[i] = t;
+            std::swap(steal_order[j], steal_order[i]);
         }
     }
 
@@ -156,7 +131,7 @@ void ThreadPool::run_thread(int id_in_pool) {
     // succeed: sleep - 1
     // failure: sleep + 10
     for (;;) {
-        function<void()>* job = nullptr;
+        rusty::Box<function<void()>> job(nullptr);
 
         switch(stage) {
         case 0:
@@ -174,8 +149,8 @@ void ThreadPool::run_thread(int id_in_pool) {
         case 3:
             for (int i = 0; i < n_; i++) {
                 if (steal_order[i] != id_in_pool) {
-                    // just don't steal other thread's death pill, otherwise they won't die
-                    if (q_[steal_order[i]].try_pop_but_ignore(&job, nullptr)) {
+                    // just don't steal other thread's death pill (null Box), otherwise they won't die
+                    if (q_[steal_order[i]].try_pop_but_ignore_invalid(&job)) {
                         stage = 0;
                         break;
                     }
@@ -192,17 +167,17 @@ void ThreadPool::run_thread(int id_in_pool) {
         }
 
         if (stage == 0) {
-            if (job == nullptr) {
+            if (!job.is_valid()) {
                 break;
             }
             (*job)();
-            delete job;
+            // job is automatically cleaned up when it goes out of scope
             sleep_req.tv_nsec = clamp(sleep_req.tv_nsec - 1000, min_sleep_nsec, max_sleep_nsec);
         } else {
             sleep_req.tv_nsec = clamp(sleep_req.tv_nsec + 1000, min_sleep_nsec, max_sleep_nsec);
         }
     }
-    delete[] steal_order;
+    // steal_order is automatically cleaned up (std::vector)
 }
 
 void* RunLater::start_run_later(void* thiz) {

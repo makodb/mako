@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <thread>
 #include <unistd.h>
 #include <rusty/arc.hpp>
@@ -31,7 +32,17 @@ public:
     std::atomic<int> call_count{0};
     std::atomic<bool> should_delay{false};
     std::atomic<int> delay_ms{100};
-    
+
+    // Make movable (atomics can't be moved, so we copy values)
+    TestService() = default;
+    TestService(TestService&& other) noexcept
+        : call_count(other.call_count.load()),
+          should_delay(other.should_delay.load()),
+          delay_ms(other.delay_ms.load()) {}
+    TestService& operator=(TestService&&) = delete;
+    TestService(const TestService&) = delete;
+    TestService& operator=(const TestService&) = delete;
+
     void fast_nop(const std::string& input) override {
         call_count++;
     }
@@ -102,9 +113,7 @@ protected:
         auto poll_clone = poll_ref.clone();
         auto server_poll = rusty::Some(std::move(poll_clone));
         server = new Server(std::move(server_poll));
-        service = new TestService();
-
-        server->reg_service(*service);
+        service = server->reg_service(TestService{});
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
@@ -116,7 +125,7 @@ protected:
 
     void TearDown() override {
         client.as_ref().unwrap()->close();
-        delete service;
+        // service is owned by server, no delete needed
         delete server;  // Server destructor waits for connections to close
         poll_thread_worker_.as_ref().unwrap()->shutdown();
     }

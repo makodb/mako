@@ -84,11 +84,11 @@ void RaftWorker::SetupService() {
   thread_pool_g = new base::ThreadPool(num_threads);
 
   // Create RPC server
-  rpc_server_ = new rrr::Server(poll_worker, thread_pool_g);
+  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
 
-  // Register all services
+  // Register all services (borrowed - services_ is managed by frame/worker)
   for (auto service : services_) {
-    rpc_server_->reg_service(*service);
+    rpc_server_->reg_service_ref(*service);
   }
 
   // Start RPC server
@@ -120,11 +120,10 @@ void RaftWorker::SetupHeartbeat() {
 
   // Setup heartbeat/control RPC server
   // ServerControlServiceImpl constructor takes (timeout, recorder)
-  scsi_ = new ServerControlServiceImpl(5, nullptr);
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
   hb_thread_pool_g = new base::ThreadPool(1);
-  hb_rpc_server_ = new rrr::Server(svr_hb_poll_thread_worker_g.as_ref().unwrap(), hb_thread_pool_g);
-  hb_rpc_server_->reg_service(*scsi_);
+  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+  scsi_ = hb_rpc_server_->reg_service(ServerControlServiceImpl(5, nullptr));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);
@@ -152,10 +151,9 @@ void RaftWorker::ShutDown() {
     rpc_server_ = nullptr;
   }
 
-  if (hb_rpc_server_ && scsi_) {
-    delete hb_rpc_server_;
+  if (hb_rpc_server_) {
+    delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     hb_rpc_server_ = nullptr;
-    delete scsi_;
     scsi_ = nullptr;
   }
 
