@@ -11,6 +11,9 @@
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
 
+// Atomic counter for dynamic port allocation to avoid conflicts when tests run in parallel
+static std::atomic<int> g_next_port{10000};
+
 // External safety annotations for STL functions
 // @external: {
 //   std::function::function: [unsafe]
@@ -75,10 +78,10 @@ protected:
     Server* server;
     TestService* service;
     rusty::Option<rusty::Arc<Client>> client;
-    static constexpr int test_port = 8848;
+    int test_port_;  // Dynamic port for this test instance
 
-    RPCTest() {
-        fprintf(stderr, "D [test_rpc] | [TEST] Constructor: Starting...\n");
+    RPCTest() : test_port_(g_next_port.fetch_add(1)) {
+        fprintf(stderr, "D [test_rpc] | [TEST] Constructor: Starting... (port=%d)\n", test_port_);
         fflush(stderr);
         fprintf(stderr, "D [test_rpc] | [TEST] Constructor: Complete!\n");
         fflush(stderr);
@@ -102,11 +105,11 @@ protected:
         service = new TestService();
 
         server->reg_service(*service);
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
+        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+        ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
 
         std::this_thread::sleep_for(milliseconds(100));
     }
@@ -338,7 +341,7 @@ TEST_F(RPCTest, ConnectionResilience) {
 
     // Create new client using factory method
     client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
-    ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port)).c_str()), 0);
+    ASSERT_EQ(client.as_ref().unwrap()->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
 
     std::this_thread::sleep_for(milliseconds(100));
 
@@ -497,15 +500,17 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
         auto handle = rusty::thread::spawn(
             [](rusty::Arc<PollThread> worker,
                int tid,
-               int requests) -> std::pair<int, int> {
+               int requests,
+               int port) -> std::pair<int, int> {
                 int thread_successes = 0;
                 int thread_failures = 0;
 
                 // Each thread creates its own client using the shared PollThread
                 auto thread_client = Client::create(worker);
 
-                // Connect to server
-                int conn_result = thread_client->connect("127.0.0.1:8848");
+                // Connect to server (construct address from port)
+                std::string server_addr = "127.0.0.1:" + std::to_string(port);
+                int conn_result = thread_client->connect(server_addr.c_str());
                 if (conn_result != 0) {
                     thread_failures++;
                     return {thread_successes, thread_failures};
@@ -549,7 +554,8 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
             },
             worker_clone,
             thread_id,
-            requests_per_thread
+            requests_per_thread,
+            test_port_
         );
 
         handles.push_back(std::move(handle));

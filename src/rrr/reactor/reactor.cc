@@ -460,6 +460,26 @@ void PollThreadWorker::poll_loop() {
         do_update_mode(fd, Pollable::READ | Pollable::WRITE, const_cast<Pollable*>(sp_poll.get()));
       }
     }
+
+    // Check for pollables closed by handle_error() and remove them
+    // This prevents fd reuse issues when old connection is closed but not removed
+    std::vector<int> closed_fds;
+    for (auto& [fd, sp_poll] : fd_to_pollable_) {
+      if (sp_poll->is_closed()) {
+        closed_fds.push_back(fd);
+      }
+    }
+    for (int fd : closed_fds) {
+      auto it = fd_to_pollable_.find(fd);
+      if (it != fd_to_pollable_.end()) {
+        // Remove from epoll if still registered
+        if (mode_.find(fd) != mode_.end()) {
+          poll_.Remove(it->second);
+        }
+        fd_to_pollable_.erase(it);
+        mode_.erase(fd);
+      }
+    }
   }
 
   Log_debug("[poll_loop] Exited while loop (stop_=true), starting cleanup");
@@ -492,6 +512,8 @@ void PollThreadWorker::process_commands() {
         do_add_pollable(std::move(arg.pollable));
       } else if constexpr (std::is_same_v<T, CmdRemovePollable>) {
         do_remove_pollable(arg.fd);
+      } else if constexpr (std::is_same_v<T, CmdClosePollable>) {
+        do_close_pollable(arg.fd);
       } else if constexpr (std::is_same_v<T, CmdUpdateMode>) {
         do_update_mode(arg.fd, arg.new_mode, arg.poll_ptr);
       } else if constexpr (std::is_same_v<T, CmdAddJob>) {
@@ -551,6 +573,35 @@ void PollThreadWorker::do_remove_pollable(int fd) {
   }
   // Add to pending_remove (actual removal happens after epoll_wait)
   pending_remove_.insert(fd);
+}
+
+// @unsafe - Closes socket and drops Arc (thread-safe close from poll thread)
+// SAFETY: Called only from poll thread, owns the Pollable via Arc
+void PollThreadWorker::do_close_pollable(int fd) {
+  // Remove from pending_remove if present
+  pending_remove_.erase(fd);
+
+  auto it = fd_to_pollable_.find(fd);
+  if (it == fd_to_pollable_.end()) {
+    return;
+  }
+
+  auto sp_poll = it->second;
+
+  // Remove from epoll if still registered
+  if (mode_.find(fd) != mode_.end()) {
+    poll_.Remove(sp_poll);
+  }
+
+  // Close the socket via Pollable's close() method
+  // @unsafe - const_cast needed because Arc provides const access
+  {
+    const_cast<Pollable&>(*sp_poll).close();
+  }
+
+  // Erase from maps, dropping the Arc
+  fd_to_pollable_.erase(it);
+  mode_.erase(fd);
 }
 
 // @unsafe - Uses raw pointer dereference for poll_ptr
@@ -655,7 +706,7 @@ rusty::Arc<PollThread> PollThread::create() {
 
   // Store handle
   {
-    auto guard = arc->join_handle_.lock();
+    auto guard = arc->join_handle_.lock().unwrap();
     *guard = rusty::Some(std::move(handle));
   }
 
@@ -693,11 +744,11 @@ void PollThread::shutdown() const {
   // Join thread
   Log_debug("[PollThread::shutdown] Acquiring join_handle lock...");
   {
-    auto guard = join_handle_.lock();
+    auto guard = join_handle_.lock().unwrap();
     Log_debug("[PollThread::shutdown] join_handle lock acquired");
-    if (guard->is_some()) {
+    if ((*guard).is_some()) {
       Log_debug("[PollThread::shutdown] Calling thread.join()...");
-      guard->take().unwrap().join();
+      (*guard).take().unwrap().join();
       Log_debug("[PollThread::shutdown] thread.join() completed!");
     } else {
       Log_debug("[PollThread::shutdown] join_handle is None, thread already joined");
@@ -713,6 +764,10 @@ void PollThread::add(rusty::Arc<Pollable> poll) const {
 
 void PollThread::remove(Pollable& poll) const {
   sender_.send(CmdRemovePollable{poll.fd()});
+}
+
+void PollThread::request_close(int fd) const {
+  sender_.send(CmdClosePollable{fd});
 }
 
 void PollThread::update_mode(Pollable& poll, int new_mode) const {

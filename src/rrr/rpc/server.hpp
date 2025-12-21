@@ -3,6 +3,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/option.hpp>
+#include <rusty/unsafe_cell.hpp>
 
 #include <unordered_map>
 #include <unordered_set>
@@ -126,7 +127,10 @@ class ServerListener: public Pollable {
 
   // @safe - Closes server socket
   // Close is marked safe via external annotation
-  void close();
+  void close() override;
+
+  // @safe - Check if closed (server_sock_ < 0)
+  bool is_closed() const override { return server_sock_ < 0; }
 
   // @safe - Returns file descriptor
   int fd() const override {return server_sock_;}
@@ -161,8 +165,8 @@ class ServerConnection: public Pollable {
     friend class ServerListener;
 
     Marshal in_, out_;
-    // Interior mutability handled via const_cast in poll_mode()
-    SpinLock out_l_;
+    // UnsafeCell for interior mutability (const methods need to lock)
+    rusty::UnsafeCell<SpinLock> out_l_;
 
     Server* server_;
     int socket_;
@@ -184,18 +188,21 @@ class ServerConnection: public Pollable {
 
     // get_shared() is now inherited from Pollable base class
 
+public:
     /**
-     * Only to be called by:
-     * 1: ~Server(), which is called when destroying Server
-     * 2: handle_error(), which is called by PollThread
+     * Closes the connection and cleans up resources.
+     * Called by:
+     * 1: PollThreadWorker::do_close_pollable() for thread-safe close
+     * 2: handle_error() for error handling
      */
     // @safe - Closes connection and cleans up (has internal @unsafe blocks)
     // SAFETY: Thread-safe with server connection lock
-    void close();
+    void close() override;
 
+private:
     // used to surpress multiple "no handler for rpc_id=..." errro
-    static std::unordered_set<i32> rpc_id_missing_s;
-    static SpinLock rpc_id_missing_l_s;
+    // SpinMutex provides thread-safe interior mutability
+    static SpinMutex<std::unordered_set<i32>> rpc_id_missing_s;
 
 public:
     // Jetpack-specific member
@@ -293,6 +300,12 @@ public:
         return false;
     }
 
+    // @safe - Check if connection was closed (via handle_error)
+    // Called by poll loop to detect and remove closed connections
+    bool is_closed() const override {
+        return status_ == CLOSED;
+    }
+
     // Jetpack: handle_free stub
     void handle_free() {verify(0);}
 
@@ -386,8 +399,9 @@ class Server: public NoCopy {
 
     Counter sconns_ctr_;
 
-    SpinLock sconns_l_;
-    std::unordered_set<rusty::Arc<ServerConnection>> sconns_{};
+    // SpinMutex provides thread-safe interior mutability for connection set
+    SpinMutex<std::unordered_set<rusty::Arc<ServerConnection>>> sconns_{
+        std::unordered_set<rusty::Arc<ServerConnection>>()};
     rusty::Option<rusty::Arc<ServerListener>> sp_server_listener_;
 
     enum {
