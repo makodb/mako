@@ -1,5 +1,6 @@
 .waf*
 /build
+/build_docker
 .lock-waf*
 *.pyc
 .cproject

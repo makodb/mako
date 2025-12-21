@@ -63,7 +63,7 @@ run_test() {
     fi
 
     # Run test
-    timeout $((RUNTIME + 15)) ./build/dbtest \
+    timeout $((RUNTIME + 15)) ./${BUILD_DIR:-build}/dbtest \
         --num-threads $threads \
         --shard-config "$config" \
         -P localhost \

@@ -24,31 +24,31 @@ trd=6
 echo "Starting shard 0 and shard 1 simultaneously..."
 
 # Start shard 0 followers first
-nohup ./build/simpleTransactionRep 2 0 $trd learner 1 > simple-shard0-learner.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 $trd learner 1 > simple-shard0-learner.log 2>&1 &
 PID_S0_LEARNER=$!
-nohup ./build/simpleTransactionRep 2 0 $trd p2 1 > simple-shard0-p2.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 $trd p2 1 > simple-shard0-p2.log 2>&1 &
 PID_S0_P2=$!
 
 # Start shard 1 followers simultaneously
-nohup ./build/simpleTransactionRep 2 1 $trd learner 1 > simple-shard1-learner.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 $trd learner 1 > simple-shard1-learner.log 2>&1 &
 PID_S1_LEARNER=$!
-nohup ./build/simpleTransactionRep 2 1 $trd p2 1 > simple-shard1-p2.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 $trd p2 1 > simple-shard1-p2.log 2>&1 &
 PID_S1_P2=$!
 
 sleep 2
 
 # Start p1 followers
-nohup ./build/simpleTransactionRep 2 0 $trd p1 1 > simple-shard0-p1.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 $trd p1 1 > simple-shard0-p1.log 2>&1 &
 PID_S0_P1=$!
-nohup ./build/simpleTransactionRep 2 1 $trd p1 1 > simple-shard1-p1.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 $trd p1 1 > simple-shard1-p1.log 2>&1 &
 PID_S1_P1=$!
 
 sleep 3
 
 # Start leaders simultaneously - they wait 5s for setup before starting tests
-nohup ./build/simpleTransactionRep 2 0 $trd localhost 1 > simple-shard0-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 $trd localhost 1 > simple-shard0-localhost.log 2>&1 &
 PID_S0_LOCALHOST=$!
-nohup ./build/simpleTransactionRep 2 1 $trd localhost 1 > simple-shard1-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 $trd localhost 1 > simple-shard1-localhost.log 2>&1 &
 PID_S1_LOCALHOST=$!
 
 # Wait for experiments to run (includes 5s setup wait in simpleTransactionRep)

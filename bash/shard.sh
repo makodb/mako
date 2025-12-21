@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/util.sh"
 
 # Set LD_LIBRARY_PATH to find shared libraries (libtxlog.so, etc.)
-export LD_LIBRARY_PATH="$(pwd)/build:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="$(pwd)/${BUILD_DIR:-build}:${LD_LIBRARY_PATH}"
 
 nshard=$1
 shard=$2
@@ -47,7 +47,7 @@ EOF
 fi
 
 # Build the base command
-CMD="./build/dbtest --num-threads $trd --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml -P $cluster"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml -P $cluster"
 
 # Add --is-micro flag if enabled (value is 1)
 if [ "$is_micro" == "1" ]; then

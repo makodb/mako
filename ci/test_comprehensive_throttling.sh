@@ -73,7 +73,7 @@ run_test_no_replication() {
     fi
 
     # Run test
-    timeout $((RUNTIME + 15)) ./build/dbtest \
+    timeout $((RUNTIME + 15)) ./${BUILD_DIR:-build}/dbtest \
         --num-threads $threads \
         --shard-config "$config" \
         -P localhost \
@@ -157,7 +157,7 @@ run_test_with_replication() {
 
     # Start combined leader with replication
     echo "  Starting combined leader..."
-    timeout $((RUNTIME + 30)) ./build/dbtest \
+    timeout $((RUNTIME + 30)) ./${BUILD_DIR:-build}/dbtest \
         --num-threads $threads \
         --shard-config "$config" \
         $paxos_flags \

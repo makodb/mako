@@ -7,23 +7,23 @@ sleep 1
 
 # Start processes with proper synchronization
 echo "Starting p1 (follower)..."
-./build/simplePaxos p1 > a2.log 2>&1 &
+./${BUILD_DIR:-build}/simplePaxos p1 > a2.log 2>&1 &
 p1_pid=$!
 sleep 5  # Give p1 time to fully initialize
 
 echo "Starting p2 (follower)..."
-./build/simplePaxos p2 > a3.log 2>&1 &
+./${BUILD_DIR:-build}/simplePaxos p2 > a3.log 2>&1 &
 p2_pid=$!
 sleep 5  # Give p2 time to fully initialize
 
 echo "Starting learner..."
-./build/simplePaxos learner > a4.log 2>&1 &
+./${BUILD_DIR:-build}/simplePaxos learner > a4.log 2>&1 &
 learner_pid=$!
 sleep 5  # Give learner time to fully initialize
 
 # Start leader last after all followers are ready
 echo "Starting localhost (leader)..."
-./build/simplePaxos localhost > a1.log 2>&1 &
+./${BUILD_DIR:-build}/simplePaxos localhost > a1.log 2>&1 &
 localhost_pid=$!
 
 echo "Waiting for completion..."

@@ -75,7 +75,7 @@ sleep 3
 echo "Starting combined leader process for shards 0 and 1..."
 log_file="${log_prefix}_leader.log"
 
-CMD="./build/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated"
 
 echo "Command: $CMD"
 echo ""

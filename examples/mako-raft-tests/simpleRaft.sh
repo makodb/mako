@@ -16,18 +16,18 @@ sleep 1
 
 # Start followers first, leader last (same order as simplePaxos)
 echo "Starting p1 (follower)..."
-./build/simpleRaft p1 > raft_a2.log 2>&1 &
+./${BUILD_DIR:-build}/simpleRaft p1 > raft_a2.log 2>&1 &
 p1_pid=$!
 sleep 2  # Give p1 time to initialize
 
 echo "Starting p2 (follower)..."
-./build/simpleRaft p2 > raft_a3.log 2>&1 &
+./${BUILD_DIR:-build}/simpleRaft p2 > raft_a3.log 2>&1 &
 p2_pid=$!
 sleep 2  # Give p2 time to initialize
 
 # Start leader last after all followers are ready
 echo "Starting localhost (leader)..."
-./build/simpleRaft localhost > raft_a1.log 2>&1 &
+./${BUILD_DIR:-build}/simpleRaft localhost > raft_a1.log 2>&1 &
 localhost_pid=$!
 
 echo "Waiting for completion..."

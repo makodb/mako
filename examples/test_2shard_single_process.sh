@@ -33,7 +33,7 @@ path=$(pwd)/src/mako
 
 # Build the command for 2-shard single process mode (no replication)
 # Key: -L 0,1 specifies running shards 0 and 1 in the same process
-CMD="./build/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -P localhost -L 0,1"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -P localhost -L 0,1"
 
 echo ""
 echo "Configuration:"

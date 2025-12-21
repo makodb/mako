@@ -23,12 +23,12 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 # Start shard 0 with 3 Raft replicas (no learner in Raft)
 echo "Starting shard 0 with 3 Raft replicas..."
-nohup ./build/simpleTransactionRepRaft 1 0 6 localhost 1 > simple-raft-shard0-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 1 0 6 localhost 1 > simple-raft-shard0-localhost.log 2>&1 &
 PID_LOCALHOST=$!
-nohup ./build/simpleTransactionRepRaft 1 0 6 p2 1 > simple-raft-shard0-p2.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 1 0 6 p2 1 > simple-raft-shard0-p2.log 2>&1 &
 PID_P2=$!
 sleep 1
-nohup ./build/simpleTransactionRepRaft 1 0 6 p1 1 > simple-raft-shard0-p1.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 1 0 6 p1 1 > simple-raft-shard0-p1.log 2>&1 &
 PID_P1=$!
 sleep 2
 

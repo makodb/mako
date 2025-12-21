@@ -20,12 +20,12 @@ sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
 trd=6
-nohup ./build/simpleTransactionRep 2 0 $trd localhost 0 > simple-shard0-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 $trd localhost 0 > simple-shard0-localhost.log 2>&1 &
 SHARD0_PID=$!
 
 # Start shard 1 in background
 echo "Starting shard 1..."
-nohup ./build/simpleTransactionRep 2 1 $trd localhost 0 > simple-shard1-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 $trd localhost 0 > simple-shard1-localhost.log 2>&1 &
 SHARD1_PID=$!
 
 # Wait for experiments to run

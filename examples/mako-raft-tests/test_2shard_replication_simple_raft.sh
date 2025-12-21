@@ -26,24 +26,24 @@ trd=6
 
 # Start shard 0 with 3 Raft replicas (no learner in Raft)
 echo "Starting shard 0 with 3 Raft replicas..."
-nohup ./build/simpleTransactionRepRaft 2 0 $trd localhost 1 > simple-raft-shard0-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 2 0 $trd localhost 1 > simple-raft-shard0-localhost.log 2>&1 &
 PID_S0_LOCALHOST=$!
-nohup ./build/simpleTransactionRepRaft 2 0 $trd p2 1 > simple-raft-shard0-p2.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 2 0 $trd p2 1 > simple-raft-shard0-p2.log 2>&1 &
 PID_S0_P2=$!
 sleep 1
-nohup ./build/simpleTransactionRepRaft 2 0 $trd p1 1 > simple-raft-shard0-p1.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 2 0 $trd p1 1 > simple-raft-shard0-p1.log 2>&1 &
 PID_S0_P1=$!
 
 sleep 2
 
 # Start shard 1 with 3 Raft replicas (no learner in Raft)
 echo "Starting shard 1 with 3 Raft replicas..."
-nohup ./build/simpleTransactionRepRaft 2 1 $trd localhost 1 > simple-raft-shard1-localhost.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 2 1 $trd localhost 1 > simple-raft-shard1-localhost.log 2>&1 &
 PID_S1_LOCALHOST=$!
-nohup ./build/simpleTransactionRepRaft 2 1 $trd p2 1 > simple-raft-shard1-p2.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 2 1 $trd p2 1 > simple-raft-shard1-p2.log 2>&1 &
 PID_S1_P2=$!
 sleep 1
-nohup ./build/simpleTransactionRepRaft 2 1 $trd p1 1 > simple-raft-shard1-p1.log 2>&1 &
+nohup ./${BUILD_DIR:-build}/simpleTransactionRepRaft 2 1 $trd p1 1 > simple-raft-shard1-p1.log 2>&1 &
 PID_S1_P1=$!
 
 # Wait for experiments to run

@@ -31,9 +31,9 @@ case "$ACTION" in
         echo -e "${YELLOW}Building Mako in container...${NC}"
         docker run --rm -v "$(pwd):/workspace" mako-build:ubuntu22 \
             bash -c "cd /workspace && \
-                     rm -rf build && \
-                     mkdir -p build && \
-                     cd build && \
+                     rm -rf build_docker && \
+                     mkdir -p build_docker && \
+                     cd build_docker && \
                      cmake .. && \
                      make -j${JOBS} dbtest"
         echo -e "${GREEN}Build completed successfully!${NC}"
@@ -47,9 +47,9 @@ case "$ACTION" in
     test)
         echo -e "${YELLOW}Running build test in container...${NC}"
         docker run --rm -v "$(pwd):/workspace" -w /workspace janus-ci:ubuntu22 \
-            bash -c "rm -rf build && make -j${JOBS} && \
+            bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j${JOBS} && \
                      echo 'SUCCESS: build completed' && \
-                     ls -la build/dbtest"
+                     ls -la build_docker/dbtest"
         echo -e "${GREEN}Test completed successfully!${NC}"
         ;;
 
@@ -58,7 +58,7 @@ case "$ACTION" in
         CI_TEST=${2:-all}
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container...${NC}"
         docker run --rm -v "$(pwd):/workspace" -w /workspace janus-ci:ubuntu22 \
-            bash -c "rm -rf build && make -j32 && ./ci/ci.sh ${CI_TEST}"
+            bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j32 && BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
 
@@ -66,30 +66,30 @@ case "$ACTION" in
         # Run CI tests without rebuild (assumes build exists and was built in Docker)
         CI_TEST=${2:-shardNoReplication}
 
-        # Check if binary exists and was built for Docker (RUNPATH should be /workspace/build)
-        if [ -f "build/dbtest" ]; then
-            RUNPATH=$(readelf -d build/dbtest 2>/dev/null | grep RUNPATH | grep -o '\[.*\]' | tr -d '[]')
-            if [ "$RUNPATH" != "/workspace/build" ]; then
-                echo -e "${RED}Error: build/dbtest was built locally (RUNPATH: $RUNPATH)${NC}"
+        # Check if binary exists and was built for Docker (RUNPATH should be /workspace/build_docker)
+        if [ -f "build_docker/dbtest" ]; then
+            RUNPATH=$(readelf -d build_docker/dbtest 2>/dev/null | grep RUNPATH | grep -o '\[.*\]' | tr -d '[]')
+            if [ "$RUNPATH" != "/workspace/build_docker" ]; then
+                echo -e "${RED}Error: build_docker/dbtest was built locally (RUNPATH: $RUNPATH)${NC}"
                 echo -e "${YELLOW}Cannot run locally-built binary in Docker due to library path mismatch.${NC}"
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild and test in Docker.${NC}"
                 exit 1
             fi
         else
-            echo -e "${RED}Error: build/dbtest not found. Run './docker_build.sh ci' first.${NC}"
+            echo -e "${RED}Error: build_docker/dbtest not found. Run './docker_build.sh ci' first.${NC}"
             exit 1
         fi
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
         docker run --rm -v "$(pwd):/workspace" -w /workspace janus-ci:ubuntu22 \
-            bash -c "./ci/ci.sh ${CI_TEST}"
+            bash -c "BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
-        
+
     clean)
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
         docker run --rm -v "$(pwd):/workspace" mako-build:ubuntu22 \
-            bash -c "cd /workspace && rm -rf build"
+            bash -c "cd /workspace && rm -rf build_docker"
         echo -e "${GREEN}Clean completed!${NC}"
         ;;
         

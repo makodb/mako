@@ -52,7 +52,7 @@ start_shard() {
     MAKO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
 
     # Usage: continuousTransactions <nshards> <shardIdx> <nthreads> <paxos_proc_name> [is_replicated]
-    nohup "$MAKO_ROOT/build/continuousTransactions" $SHARDS $shard_id $num_workers localhost 0 > continuous-shard${shard_id}.log 2>&1 &
+    nohup "$MAKO_ROOT/${BUILD_DIR:-build}/continuousTransactions" $SHARDS $shard_id $num_workers localhost 0 > continuous-shard${shard_id}.log 2>&1 &
 
     echo $!
 }

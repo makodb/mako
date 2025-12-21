@@ -3,6 +3,9 @@
 
 set -e  # Exit on error
 
+# Build directory (can be overridden via environment variable)
+BUILD_DIR=${BUILD_DIR:-build}
+
 # Function to check for hanging processes after a test
 check_for_hanging_processes() {
     local test_name="$1"
@@ -81,7 +84,7 @@ compile() {
     echo "Running: ./ci/ci.sh compile"
     echo "========================================="
     set -o pipefail
-    make -j32 2>&1 | tee build.log
+    make BUILD_DIR=${BUILD_DIR} -j32 2>&1 | tee build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }
@@ -92,7 +95,7 @@ run_simple_transaction() {
     echo "Running: ./ci/ci.sh simpleTransaction"
     echo "========================================="
     cleanup_processes
-    ./build/simpleTransaction
+    ./${BUILD_DIR}/simpleTransaction
 }
 
 # Function 3: Run simple Paxos test
@@ -301,7 +304,7 @@ run_rrr_unit_tests() {
     echo "========================================="
     echo "Running: ./ci/ci.sh rrrTests"
     echo "========================================="
-    cd build
+    cd ${BUILD_DIR}
     ctest
     local test_result=$?
     cd ..
@@ -324,10 +327,10 @@ run_cpu_throttling_scaling() {
 
 cleanup() {
     cleanup_processes
-    make clean
+    make BUILD_DIR=${BUILD_DIR} clean
     rm -rf ./out-perf.masstree/*
     rm -rf ./src/mako/out-perf.masstree/*
-    rm -rf build/*
+    rm -rf ${BUILD_DIR}/*
 }
 
 # Main entry point with command parsing

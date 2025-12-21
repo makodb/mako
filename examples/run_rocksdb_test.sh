@@ -21,7 +21,7 @@ rm -rf /tmp/${USERNAME}_*
 
 # Run test
 echo "2. Running RocksDB persistence tests..."
-if ./build/test_rocksdb_persistence > /tmp/${USERNAME}_rocksdb_test_output.txt 2>&1; then
+if ./${BUILD_DIR:-build}/test_rocksdb_persistence > /tmp/${USERNAME}_rocksdb_test_output.txt 2>&1; then
     echo "   ✓ Basic persistence tests passed"
     echo ""
     echo "Test output summary:"
@@ -38,7 +38,7 @@ fi
 # Run callback demo test
 echo ""
 echo "3. Running callback demonstration test..."
-if ./build/test_callback_demo > /tmp/${USERNAME}_callback_demo_output.txt 2>&1; then
+if ./${BUILD_DIR:-build}/test_callback_demo > /tmp/${USERNAME}_callback_demo_output.txt 2>&1; then
     echo "   ✓ Callback demo passed"
     echo ""
     echo "Callback demo output:"
@@ -52,7 +52,7 @@ fi
 # Run ordered callbacks test
 echo ""
 echo "4. Running ordered callbacks test..."
-if ./build/test_ordered_callbacks > /tmp/${USERNAME}_ordered_callbacks_output.txt 2>&1; then
+if ./${BUILD_DIR:-build}/test_ordered_callbacks > /tmp/${USERNAME}_ordered_callbacks_output.txt 2>&1; then
     echo "   ✓ Ordered callbacks test passed"
     echo ""
     echo "Ordered callbacks output:"
@@ -66,7 +66,7 @@ fi
 # Run partitioned queues test
 echo ""
 echo "5. Running partitioned queues test..."
-if ./build/test_partitioned_queues > /tmp/${USERNAME}_partitioned_queues_output.txt 2>&1; then
+if ./${BUILD_DIR:-build}/test_partitioned_queues > /tmp/${USERNAME}_partitioned_queues_output.txt 2>&1; then
     echo "   ✓ Partitioned queues test passed"
     echo ""
     echo "Partitioned queues output:"
@@ -80,7 +80,7 @@ fi
 # Run stress test
 echo ""
 echo "6. Running complex stress test (20 threads, 10 partitions, mixed load)..."
-if ./build/test_stress_partitioned_queues > /tmp/${USERNAME}_stress_test_output.txt 2>&1; then
+if ./${BUILD_DIR:-build}/test_stress_partitioned_queues > /tmp/${USERNAME}_stress_test_output.txt 2>&1; then
     # Check if test actually passed by looking for FAILURE in output
     if grep -q "FAILURE" /tmp/${USERNAME}_stress_test_output.txt; then
         echo "   ✗ Stress test failed - found failures in output"

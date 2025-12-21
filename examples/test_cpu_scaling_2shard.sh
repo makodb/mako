@@ -74,8 +74,8 @@ if [ ! -f "$path/config/local-shards2-warehouses${NUM_THREADS}.yml" ]; then
 fi
 
 # Check if dbtest exists
-if [ ! -f "./build/dbtest" ]; then
-    echo "ERROR: ./build/dbtest not found. Please build first."
+if [ ! -f "./${BUILD_DIR:-build}/dbtest" ]; then
+    echo "ERROR: ./${BUILD_DIR:-build}/dbtest not found. Please build first."
     exit 1
 fi
 
@@ -124,7 +124,7 @@ run_test_with_cpu_cap() {
     sleep 2
 
     # Build command
-    local CMD="./build/dbtest --num-threads $NUM_THREADS --shard-config $path/config/local-shards2-warehouses${NUM_THREADS}.yml -P localhost -L 0,1"
+    local CMD="./${BUILD_DIR:-build}/dbtest --num-threads $NUM_THREADS --shard-config $path/config/local-shards2-warehouses${NUM_THREADS}.yml -P localhost -L 0,1"
 
     echo ""
     echo "========================================="

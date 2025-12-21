@@ -37,7 +37,7 @@ for cpu_limit in 1 2 4 8; do
     LOG_FILE="$LOG_DIR/cpu_${cpu_limit}pct.log"
 
     # Run test
-    timeout $((RUNTIME + 15)) ./build/dbtest \
+    timeout $((RUNTIME + 15)) ./${BUILD_DIR:-build}/dbtest \
         --num-threads $THREADS \
         --shard-config "$CONFIG" \
         -P localhost \

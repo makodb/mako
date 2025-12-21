@@ -40,7 +40,7 @@ echo ""
 
 # Start localhost (leaders for both shards)
 echo "Starting localhost (leaders for shards 0,1)..."
-nohup ./build/dbtest \
+nohup ./${BUILD_DIR:-build}/dbtest \
     --num-threads $trd \
     --shard-config $path/config/local-shards2-warehouses$trd.yml \
     -F config/1leader_2followers/paxos${trd}_shardidx0.yml \
@@ -56,7 +56,7 @@ sleep 2
 
 # Start p1 (followers for both shards)
 echo "Starting p1 (followers for shards 0,1)..."
-nohup ./build/dbtest \
+nohup ./${BUILD_DIR:-build}/dbtest \
     --num-threads $trd \
     --shard-config $path/config/local-shards2-warehouses$trd.yml \
     -F config/1leader_2followers/paxos${trd}_shardidx0.yml \
@@ -70,7 +70,7 @@ P1_PID=$!
 
 # Start p2 (followers for both shards)
 echo "Starting p2 (followers for shards 0,1)..."
-nohup ./build/dbtest \
+nohup ./${BUILD_DIR:-build}/dbtest \
     --num-threads $trd \
     --shard-config $path/config/local-shards2-warehouses$trd.yml \
     -F config/1leader_2followers/paxos${trd}_shardidx0.yml \
@@ -84,7 +84,7 @@ P2_PID=$!
 
 # Start learner (learners for both shards)
 echo "Starting learner (learners for shards 0,1)..."
-nohup ./build/dbtest \
+nohup ./${BUILD_DIR:-build}/dbtest \
     --num-threads $trd \
     --shard-config $path/config/local-shards2-warehouses$trd.yml \
     -F config/1leader_2followers/paxos${trd}_shardidx0.yml \
