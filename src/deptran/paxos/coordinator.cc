@@ -26,8 +26,8 @@ BulkCoordinatorMultiPaxos::BulkCoordinatorMultiPaxos(uint32_t coo_id,
 }
 
 void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
-                                   const function<void()>& func,
-                                   const function<void()>& exe_callback) {
+                                   rusty::Function<void()> func,
+                                   rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_DEBUG
   client2leader_.append(SimpleRWCommand::GetCommandMsTimeElaps(cmd));
 #endif
@@ -44,17 +44,17 @@ void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,
   in_submission_ = true;
   cmd_ = cmd;
   verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
-  commit_callback_ = func;
+  commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 
 void BulkCoordinatorMultiPaxos::BulkSubmit(shared_ptr<Marshallable>& cmd,
-                                       const function<void()>& func,
-                                       const function<void()>& exe_callback) {
+                                       rusty::Function<void()> func,
+                                       rusty::Function<void()> exe_callback) {
     verify(!in_submission_);
     in_submission_ = true;
     cmd_ = cmd;
-    commit_callback_ = func;
+    commit_callback_ = std::move(func);
     GotoNextPhase();
 }
 

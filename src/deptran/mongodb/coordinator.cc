@@ -10,8 +10,8 @@ MongodbServer* CoordinatorMongodb::Server() {
 }
 
 void CoordinatorMongodb::Submit(shared_ptr<Marshallable>& cmd,
-                                const function<void()>& func,
-                                const function<void()>& exe_callback) {
+                                rusty::Function<void()> func,
+                                rusty::Function<void()> exe_callback) {
   Server()->Submit(cmd);
   commo()->BroadcastCommit(par_id_, cmd);
   func();

@@ -95,7 +95,7 @@ class FpgaRaftServer : public TxLogServer {
                             ballot_t *reply_term,
                             bool_t *vote_granted,
                             bool_t vote,
-                            const function<void()> &cb) {
+                            rusty::Function<void()> cb) {
       *vote_granted = vote ;
       *reply_term = currentTerm ;
       Log_debug("loc %d vote decision %d, for can_id %d canterm %d curterm %d isleader %d lst_log_idx %d lst_log_term %d", 
@@ -253,7 +253,7 @@ class FpgaRaftServer : public TxLogServer {
                       const ballot_t& can_term,
                       ballot_t *reply_term,
                       bool_t *vote_granted,
-                      const function<void()> &cb) ;
+                      rusty::Function<void()> cb) ;
 
   void OnVote2FPGA(const slotid_t& lst_log_idx,
                       const ballot_t& lst_log_term,
@@ -261,7 +261,7 @@ class FpgaRaftServer : public TxLogServer {
                       const ballot_t& can_term,
                       ballot_t *reply_term,
                       bool_t *vote_granted,
-                      const function<void()> &cb) ;
+                      rusty::Function<void()> cb) ;
 
 
   void OnAppendEntries(const slotid_t slot_id,
@@ -275,7 +275,7 @@ class FpgaRaftServer : public TxLogServer {
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
-                       const function<void()> &cb);
+                       rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
@@ -283,7 +283,7 @@ class FpgaRaftServer : public TxLogServer {
 
   void OnForward(shared_ptr<Marshallable> &cmd, 
                           uint64_t *cmt_idx,
-                          const function<void()> &cb) ;
+                          rusty::Function<void()> cb) ;
 
   void SpCommit(const uint64_t cmt_idx) ;
 

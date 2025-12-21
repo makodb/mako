@@ -72,7 +72,7 @@ def emit_service_and_proxy(service, f, rpc_table):
                     else:
                         func_args += "%s*" % out_arg.type,
                 if func.attr == "defer":
-                    func_args += "rrr::DeferredReply* defer",
+                    func_args += "rrr::DeferredReply defer",
                 f.writeln("virtual void %s(%s)%s;" % (func.name, ", ".join(func_args), postfix))
     f.writeln("private:")
     with f.indent():
@@ -117,8 +117,8 @@ def emit_service_and_proxy(service, f, rpc_table):
                             f.writeln("delete out_%d;" % out_counter)
                             out_counter += 1
                     f.writeln("};");
-                    f.writeln("rrr::DeferredReply* __defer__ = new rrr::DeferredReply(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
-                    invoke_with += "__defer__",
+                    f.writeln("rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
+                    invoke_with += "std::move(__defer__)",
                     f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
                 else: # normal and fast rpc
                     # Don't use lambda - execute directly for all methods

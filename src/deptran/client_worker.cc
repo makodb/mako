@@ -30,7 +30,7 @@ void ClientWorker::retrive_statistic() {
 
 void ClientWorker::ForwardRequestDone(Coordinator* coo,
                                       TxReply* output,
-                                      DeferredReply* defer,
+                                      rusty::Function<void()> reply_cb,
                                       TxReply& txn_reply) {
   verify(coo != nullptr);
   verify(output != nullptr);
@@ -53,7 +53,7 @@ void ClientWorker::ForwardRequestDone(Coordinator* coo,
     }
   }
 
-  defer->reply();
+  reply_cb();
 }
 
 void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
@@ -394,9 +394,9 @@ void ClientWorker::Work() {
   return;
 }
 
-void ClientWorker::AcceptForwardedRequest(TxRequest& request,
+void ClientWorker::AcceptForwardedRequest(TxRequest request,
                                           TxReply* txn_reply,
-                                          rrr::DeferredReply* defer) {
+                                          rrr::DeferredReply defer) {
   const char* f = __FUNCTION__;
 
   Coordinator* coo = nullptr;
@@ -405,19 +405,12 @@ void ClientWorker::AcceptForwardedRequest(TxRequest& request,
   }
   coo->forward_status_ = PROCESS_FORWARD_REQUEST;
 
-  std::function<void()> task = [=]() {
-    TxRequest req(request);
-    req.callback_ = std::bind(&ClientWorker::ForwardRequestDone,
-                              this,
-                              coo,
-                              txn_reply,
-                              defer,
-                              std::placeholders::_1);
-    Log_debug("%s: running forwarded request at site %d", f, my_site_.id);
-    coo->concurrent = n_concurrent_;
-    coo->DoTxAsync(req);
+  request.callback_ = [this, coo, txn_reply, defer = std::move(defer)](TxReply& reply) mutable {
+    ForwardRequestDone(coo, txn_reply, [defer = std::move(defer)]() mutable { defer.reply(); }, reply);
   };
-  task();
+  Log_debug("%s: running forwarded request at site %d", f, my_site_.id);
+  coo->concurrent = n_concurrent_;
+  coo->DoTxAsync(request);
 }
 
 void ClientWorker::FailoverPreprocess(Coordinator* coo) {

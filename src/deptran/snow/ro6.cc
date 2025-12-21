@@ -61,7 +61,7 @@ void start_ro(
 void commit(
         const ChopFinishRequest &req,
         ChopFinishResponse* res,
-        rrr::DeferredReply* defer
+        rrr::DeferredReply defer
 ) {
     1. extract the list of read txn ids in the msg from coordinator
     2. get the columns this txn is going to write
@@ -111,7 +111,7 @@ void TxSnow::kiss(mdb::Row *r, int col, bool immediate) {
 
 void TxSnow::start_ro(const SimpleCommand &cmd,
                        map<int32_t, Value> &output,
-                       rrr::DeferredReply *defer) {
+                       rrr::DeferredReply defer) {
 //    RCCDTxn::start_ro(header, input, output, defer);
 
 //  conflict_txns_.clear();

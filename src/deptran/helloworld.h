@@ -10,7 +10,7 @@ namespace helloworld_client {
 class HelloworldClientService: public rrr::Service {
 public:
     enum {
-        TXN_READ = 0x5d097a6b,
+        TXN_READ = 0x61dc3170,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -24,7 +24,7 @@ public:
     }
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
-    virtual void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply* defer) = 0;
+    virtual void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply defer) = 0;
 private:
     void __txn_read__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<rrr::i64>* in_0 = new std::vector<rrr::i64>;
@@ -41,8 +41,8 @@ private:
             delete in_0;
             delete out_0;
         };
-        rrr::DeferredReply* __defer__ = new rrr::DeferredReply(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_read(*in_0, out_0, __defer__);
+        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
+        this->txn_read(*in_0, out_0, std::move(__defer__));
     }
 };
 

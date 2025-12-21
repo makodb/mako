@@ -3,6 +3,7 @@
 
 #include "rcc/dep_graph.h"
 #include "rcc_rpc.h" // before this one include all the custom data structures.
+#include <rusty/function.hpp>
 
 #include <time.h>
 #include <sys/time.h>
@@ -63,10 +64,12 @@ class ServerControlServiceImpl: public ServerControlService {
   void set_sig_handler();
 
  public:
-  void server_shutdown(DeferredReply*) override;
-  void server_ready(i32 *res, DeferredReply*) override;
-  void server_heart_beat_with_data(ServerResponse *res, DeferredReply*) override;
-  void server_heart_beat(DeferredReply*) override;
+  // Internal shutdown without RPC reply
+  void do_shutdown();
+  void server_shutdown(rrr::DeferredReply defer) override;
+  void server_ready(i32 *res, rrr::DeferredReply defer) override;
+  void server_heart_beat_with_data(ServerResponse *res, rrr::DeferredReply defer) override;
+  void server_heart_beat(rrr::DeferredReply defer) override;
 
   ServerControlServiceImpl(unsigned int timeout = 5, Recorder *recorder = NULL);
   ~ServerControlServiceImpl();
@@ -207,7 +210,7 @@ class ClientControlServiceImpl: public ClientControlService {
     }
   } txn_info_t;
 
-  std::vector<DeferredReply *> ready_block_defers_;
+  std::vector<rusty::Function<void()>> ready_block_defers_;
   //pthread_mutex_t status_mutex_;
   Mutex status_mutex_;
   //pthread_cond_t status_cond_;
@@ -230,14 +233,13 @@ class ClientControlServiceImpl: public ClientControlService {
 
   void LogClientResponse(ClientResponse *res);
  public:
-  void client_get_txn_names(std::map<i32, std::string> *txn_names, DeferredReply*) override;
-  void client_shutdown(DeferredReply*) override;
-  void client_force_stop(DeferredReply*) override;
-  void client_response(const DepId& dep_id, ClientResponse *res, DeferredReply*) override;
-  void client_ready_block(i32 *res,
-                          DeferredReply *defer) override;
-  void client_ready(i32 *res, DeferredReply*) override;
-  void client_start(DeferredReply*) override;
+  void client_get_txn_names(std::map<i32, std::string> *txn_names, rrr::DeferredReply defer) override;
+  void client_shutdown(rrr::DeferredReply defer) override;
+  void client_force_stop(rrr::DeferredReply defer) override;
+  void client_response(const DepId& dep_id, ClientResponse *res, rrr::DeferredReply defer) override;
+  void client_ready_block(i32 *res, rrr::DeferredReply defer) override;
+  void client_ready(i32 *res, rrr::DeferredReply defer) override;
+  void client_start(rrr::DeferredReply defer) override;
 
   ClientControlServiceImpl(unsigned int num_threads, const std::map<int32_t, std::string> &txn_types);
   ~ClientControlServiceImpl();
@@ -303,7 +305,7 @@ class ClientControlServiceImpl: public ClientControlService {
     pthread_rwlock_unlock(&collect_lock_);
   }
 
-  void DispatchTxn(const TxDispatchRequest& req, TxReply* txn_reply, rrr::DeferredReply* defer) override;
+  void DispatchTxn(const TxDispatchRequest& req, TxReply* txn_reply, rrr::DeferredReply defer) override;
 };
 
 }

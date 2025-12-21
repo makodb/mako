@@ -66,8 +66,8 @@ class CoordinatorRaft : public Coordinator {
   void DoTxAsync(TxRequest &req) override {}
 
   void Submit(shared_ptr<Marshallable> &cmd,
-              const std::function<void()> &func = []() {},
-              const std::function<void()> &exe_callback = []() {}) override;
+              rusty::Function<void()> func = {},
+              rusty::Function<void()> exe_callback = {}) override;
 
   void AppendEntries();
   void Commit();

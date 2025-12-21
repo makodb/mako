@@ -4,6 +4,7 @@
 
 #include "__dep__.h"
 #include "command.h"
+#include <rusty/function.hpp>
 #include "rcc/graph.h"
 #include "command_marshaler.h"
 #include "txn_reg.h"
@@ -98,8 +99,8 @@ class TxRequest {
   int client_id_ = -1;
   int cmd_id_in_client_ = -1;
   /******global unique id end********/
-  function<void(TxReply &)> callback_ = [] (TxReply&)->void {verify(0);};
-  function<void()> fail_callback_ = [] () {
+  rusty::Function<void(TxReply &)> callback_ = [] (TxReply&)->void {verify(0);};
+  rusty::Function<void()> fail_callback_ = [] () {
     verify(0);
   };
   void get_log(i64 tid, std::string &log);
@@ -390,7 +391,7 @@ class TxData: public CmdData {
   weak_ptr<TxnRegistry> txn_reg_{};
   Sharding *sss_ = nullptr;
 
-  std::function<void(TxReply &)> callback_;
+  rusty::Function<void(TxReply &)> callback_;
   TxReply reply_;
   struct timespec start_time_;
 

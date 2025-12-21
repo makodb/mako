@@ -83,7 +83,7 @@ int SchedulerTapir::OnFastAccept(txid_t tx_id,
 
 int SchedulerTapir::OnDecide(txid_t tx_id,
                              int32_t decision,
-                             const function<void()> &callback) {
+                             rusty::Function<void()> callback) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto tx = dynamic_pointer_cast<TxTapir>(GetTx(tx_id));
   if (decision == CoordinatorTapir::Decision::COMMIT) {

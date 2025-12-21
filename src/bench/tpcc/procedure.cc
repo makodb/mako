@@ -30,7 +30,7 @@ void TpccProcedure::Init(TxRequest &req) {
   ws_init_ = req.input_;
   ws_ = ws_init_;
   type_ = req.tx_type_;
-  callback_ = req.callback_;
+  callback_ = std::move(req.callback_);
   max_try_ = req.n_try_;
   n_try_ = 1;
   commit_.store(true);

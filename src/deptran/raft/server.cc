@@ -877,14 +877,14 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& can_term,
                                ballot_t *reply_term,
                                bool_t *vote_granted,
-                               const function<void()> &cb) {
+                               rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("raft receives vote from candidate: %llx", can_id);
 
   uint64_t cur_term = currentTerm ;
   if( can_term < cur_term)
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
   }
 
@@ -896,7 +896,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   {
     Log_debug("site %d vote NO for %d (already voted for %d in term %lu)",
               site_id_, can_id, vote_for_, cur_term);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
   }
 
@@ -905,7 +905,7 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   {
     Log_debug("site %d vote YES for %d (already voted for them in term %lu, idempotent)",
               site_id_, can_id, cur_term);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, std::move(cb)) ;
     return ;
   }
 
@@ -924,17 +924,17 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
 
 
-  // TODO del only for test 
+  // TODO del only for test
   verify(lstoff == lastLogIndex ) ;
 
   if( lst_log_term > curlstterm || (lst_log_term == curlstterm && lst_log_idx >= curlstidx) )
   {
     Log_debug("site %d vote for request vote from %d, lastidx %d, lastterm %d", site_id_, can_id, curlstidx, curlstterm);
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, std::move(cb)) ;
     return ;
   }
 
-  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
 
 }
 
@@ -1035,7 +1035,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  uint64_t *followerAppendOK,
                                  uint64_t *followerCurrentTerm,
                                  uint64_t *followerLastLogIndex,
-                                 const function<void()> &cb,
+                                 rusty::Function<void()> cb,
                                  bool trigger_election_now) {
   mtx_.lock();
 
@@ -1223,7 +1223,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                const siteid_t leaderSiteId,
                                uint64_t *followerTerm,
                                bool_t *success,
-                               const function<void()> &cb) {
+                               rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   *followerTerm = currentTerm;

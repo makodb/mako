@@ -20,7 +20,7 @@ class CopilotServiceImpl : public CopilotService {
   CopilotServiceImpl(TxLogServer *sched);
 
   void Forward(const MarshallDeputy& cmd,
-               rrr::DeferredReply* defer) override;
+               rrr::DeferredReply defer) override;
 
   void Prepare(const uint8_t& is_pilot,
                const uint64_t& slot,
@@ -30,7 +30,7 @@ class CopilotServiceImpl : public CopilotService {
                ballot_t* max_ballot,
                uint64_t* dep,
                status_t* status,
-               rrr::DeferredReply* defer) override;
+               rrr::DeferredReply defer) override;
 
   void FastAccept(const uint8_t& is_pilot,
                   const uint64_t& slot,
@@ -40,7 +40,7 @@ class CopilotServiceImpl : public CopilotService {
                   const struct DepId& dep_id,
                   ballot_t* max_ballot,
                   uint64_t* ret_dep,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
   void Accept(const uint8_t& is_pilot,
               const uint64_t& slot,
@@ -49,13 +49,13 @@ class CopilotServiceImpl : public CopilotService {
               const MarshallDeputy& cmd,
               const struct DepId& dep_id,
               ballot_t* max_ballot,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
   void Commit(const uint8_t& is_pilot,
               const uint64_t& slot,
               const uint64_t& dep,
               const MarshallDeputy& cmd,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 };
 
 } // namespace janus

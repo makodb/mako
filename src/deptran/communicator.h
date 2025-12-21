@@ -494,10 +494,10 @@ class Communicator {
                    const std::function<void(int)> &callback) ;*/
   /*void SendCommit(parid_t pid,
                   txnid_t tid,
-                  const std::function<void()> &callback) ;
+                  rusty::Function<void()> callback) ;
   void SendAbort(parid_t pid,
                  txnid_t tid,
-                 const std::function<void()> &callback) ;*/
+                 rusty::Function<void()> callback) ;*/
   void SendEarlyAbort(parid_t pid,
                       txnid_t tid) ;
 

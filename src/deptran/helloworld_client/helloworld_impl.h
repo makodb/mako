@@ -16,7 +16,7 @@ namespace helloworld_client {
     public: 
         HelloworldClientServiceImpl() ;
         
-        void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply* defer) override;
+        void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply defer) override;
         
     public:
         int counter_read = 0;

@@ -39,8 +39,8 @@ bool CoordinatorRaft::IsFPGALeader() {
 
 // @safe
 void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
-                                   const function<void()>& func,
-                                   const function<void()>& exe_callback) {
+                                   rusty::Function<void()> func,
+                                   rusty::Function<void()> exe_callback) {
   if (!IsLeader()) {
     // verify(0);
     auto config = Config::GetConfig();
@@ -100,7 +100,7 @@ void CoordinatorRaft::Submit(shared_ptr<Marshallable>& cmd,
   in_submission_ = true;
   cmd_ = cmd;
   verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
-  commit_callback_ = func;
+  commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 

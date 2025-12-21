@@ -10,7 +10,7 @@ class MongodbServiceImpl: public MongodbService {
   MongodbServiceImpl(TxLogServer* sched);
 
   void Commit(const MarshallDeputy& md_cmd,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
 };
 

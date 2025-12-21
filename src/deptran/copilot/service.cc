@@ -8,11 +8,11 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
 }
 
 void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
-                                 rrr::DeferredReply* defer) {
+                                 rrr::DeferredReply defer) {
   verify(sched_);
   auto coro = Coroutine::CreateRun([&]() {
     sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
-                      std::bind(&rrr::DeferredReply::reply, defer));
+                      [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
@@ -24,7 +24,7 @@ void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                                  ballot_t* max_ballot,
                                  uint64_t* dep,
                                  status_t* status,
-                                 rrr::DeferredReply* defer) {
+                                 rrr::DeferredReply defer) {
   verify(sched_);
   sched_->OnPrepare(is_pilot, slot,
                     ballot,
@@ -33,7 +33,7 @@ void CopilotServiceImpl::Prepare(const uint8_t& is_pilot,
                     max_ballot,
                     dep,
                     status,
-                    bind(&rrr::DeferredReply::reply, defer));
+                    [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
@@ -44,7 +44,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                                     const struct DepId& dep_id,
                                     ballot_t* max_ballot,
                                     uint64_t* ret_dep,
-                                    rrr::DeferredReply* defer) {
+                                    rrr::DeferredReply defer) {
   verify(sched_);
 
 #ifdef COPILOT_TIME_DEBUG
@@ -61,7 +61,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
                          dep_id,
                          max_ballot,
                          ret_dep,
-                         bind(&rrr::DeferredReply::reply, defer));
+                         [defer = std::move(defer)]() mutable { defer.reply(); });
   // });
 }
 
@@ -72,7 +72,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                                 const MarshallDeputy& cmd,
                                 const struct DepId& dep_id,
                                 ballot_t* max_ballot,
-                                rrr::DeferredReply* defer) {
+                                rrr::DeferredReply defer) {
   verify(sched_);
 
   // auto coro = Coroutine::CreateRun([&]() {
@@ -82,7 +82,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                      const_cast<MarshallDeputy&>(cmd).sp_data_,
                      dep_id,
                      max_ballot,
-                     bind(&rrr::DeferredReply::reply, defer));
+                     [defer = std::move(defer)]() mutable { defer.reply(); });
   // });
 }
 
@@ -90,12 +90,12 @@ void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const uint64_t& slot,
                                 const uint64_t& dep,
                                 const MarshallDeputy& cmd,
-                                rrr::DeferredReply* defer) {
+                                rrr::DeferredReply defer) {
   verify(sched_);
   // Coroutine::CreateRun([&]() {
     sched_->OnCommit(is_pilot, slot, dep,
                      const_cast<MarshallDeputy&>(cmd).sp_data_);
-    defer->reply();
+    defer.reply();
   // });
 }
 

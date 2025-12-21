@@ -24,7 +24,7 @@ class MenciusServiceImpl : public MenciusService {
                const ballot_t& ballot,
                ballot_t* max_ballot,
                uint64_t* coro_id,
-               rrr::DeferredReply* defer) override;
+               rrr::DeferredReply defer) override;
 
   void Suggest(const uint64_t& slot,
 	          const uint64_t& time,
@@ -35,12 +35,12 @@ class MenciusServiceImpl : public MenciusService {
               const MarshallDeputy& cmd,
               ballot_t* max_ballot,
               uint64_t* coro_id,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
               const MarshallDeputy& cmd,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
 };
 

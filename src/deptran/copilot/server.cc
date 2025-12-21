@@ -189,7 +189,7 @@ bool CopilotServer::WillWait(int &time_to_wait) const {
 }
 
 void CopilotServer::OnForward(shared_ptr<Marshallable>& cmd,
-                              const function<void()>& cb) {
+                              rusty::Function<void()> cb) {
   verify(isPilot_ || isCopilot_);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_info("This Copilot server is: %d", id_);
@@ -213,7 +213,7 @@ void CopilotServer::OnPrepare(const uint8_t& is_pilot,
                               ballot_t* max_ballot,
                               uint64_t* dep,
                               status_t* status,
-                              const function<void()>& cb) {
+                              rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto ins = GetInstance(slot, is_pilot);
   log_infos_[is_pilot].current_slot = std::max(slot, log_infos_[is_pilot].current_slot);
@@ -267,7 +267,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
                                  const struct DepId& dep_id,
                                  ballot_t* max_ballot,
                                  uint64_t* ret_dep,
-                                 const function<void()> &cb) {
+                                 rusty::Function<void()> cb) {
   // TODO: deal with ballot
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("server %d [FAST_ACCEPT] %s : %lu -> %lu", id_,
@@ -368,7 +368,7 @@ void CopilotServer::OnAccept(const uint8_t& is_pilot,
                              shared_ptr<Marshallable>& cmd,
                              const struct DepId& dep_id,
                              ballot_t* max_ballot,
-                             const function<void()> &cb) {
+                             rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("server %d [ACCEPT     ] %s : %lu -> %lu", id_, toString(is_pilot), slot, dep);
 

@@ -13,7 +13,7 @@ MultiPaxosServiceImpl::MultiPaxosServiceImpl(TxLogServer *sched)
 void MultiPaxosServiceImpl::Forward(const MarshallDeputy& md_cmd,
                                     const uint64_t& dep_id,
                                     uint64_t* coro_id,
-                                    rrr::DeferredReply* defer) {
+                                    rrr::DeferredReply defer) {
   // NOTE: Original Mako leaves this empty - Mako uses ForwardToLearner instead
 }
 
@@ -21,13 +21,13 @@ void MultiPaxosServiceImpl::Prepare(const uint64_t& slot,
                                     const ballot_t& ballot,
                                     ballot_t* max_ballot,
                                     uint64_t* coro_id,
-                                    rrr::DeferredReply* defer) {
+                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   sched_->OnPrepare(slot,
                     ballot,
                     max_ballot,
                     coro_id,
-                    std::bind(&rrr::DeferredReply::reply, defer));
+                    [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
@@ -36,7 +36,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
                                    const MarshallDeputy& md_cmd,
                                    ballot_t* max_ballot,
                                    uint64_t* coro_id,
-                                   rrr::DeferredReply* defer) {
+                                   rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   auto start = chrono::system_clock::now();
 
@@ -61,7 +61,7 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
                      const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                      max_ballot,
                      coro_id,
-                     std::bind(&rrr::DeferredReply::reply, defer));
+                     [defer = std::move(defer)]() mutable { defer.reply(); });
 
   });
 
@@ -74,25 +74,25 @@ void MultiPaxosServiceImpl::Accept(const uint64_t& slot,
 void MultiPaxosServiceImpl::Decide(const uint64_t& slot,
                                    const ballot_t& ballot,
                                    const MarshallDeputy& md_cmd,
-                                   rrr::DeferredReply* defer) {
+                                   rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   auto x = md_cmd.sp_data_;
   sched_->OnCommit(slot, ballot,x);
-  defer->reply();
+  defer.reply();
 }
 
 
 void MultiPaxosServiceImpl::BulkPrepare(const MarshallDeputy& md_cmd,
                                        i32* ballot,
                                        i32* valid,
-                                       rrr::DeferredReply* defer) {
+                                       rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     //std::cout << "send a BulkPrepare\n";
     sched_->OnBulkPrepare(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                           ballot,
                           valid,
-                          std::bind(&rrr::DeferredReply::reply, defer));
+                          [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
@@ -100,13 +100,13 @@ void MultiPaxosServiceImpl::BulkPrepare(const MarshallDeputy& md_cmd,
 void MultiPaxosServiceImpl::Heartbeat(const MarshallDeputy& md_cmd,
                                        i32* ballot,
                                        i32* valid,
-                                       rrr::DeferredReply* defer) {
+                                       rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnHeartbeat(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                           ballot,
                           valid,
-                          std::bind(&rrr::DeferredReply::reply, defer));
+                          [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
@@ -114,7 +114,7 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
                                        i32* ballot,
                                        i32* valid,
                                        MarshallDeputy* ret,
-                                       rrr::DeferredReply* defer) {
+                                       rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   ret->SetMarshallable(std::make_shared<BulkPaxosCmd>());
   auto p = dynamic_pointer_cast<BulkPaxosCmd>(ret->sp_data_);
@@ -124,27 +124,27 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
                           ballot,
                           valid,
                           p,
-                          std::bind(&rrr::DeferredReply::reply, defer));
+                          [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
 void MultiPaxosServiceImpl::BulkAccept(const MarshallDeputy& md_cmd,
                                        i32* ballot,
                                        i32* valid,
-                                       rrr::DeferredReply* defer) {
+                                       rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnBulkAccept(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          ballot,
                          valid,
-                        std::bind(&rrr::DeferredReply::reply, defer));
+                        [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
 void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
                                        i32* ballot,
                                        i32* valid,
-                                       rrr::DeferredReply* defer) {
+                                       rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   // Log_info("BulkDecide RPC handler called");
   Coroutine::CreateRun([&] () {
@@ -152,9 +152,9 @@ void MultiPaxosServiceImpl::BulkDecide(const MarshallDeputy& md_cmd,
     sched_->OnBulkCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          ballot,
                          valid,
-                         std::bind(&rrr::DeferredReply::reply, defer));
+                         [defer = std::move(defer)]() mutable { defer.reply(); });
     // Log_info("BulkDecide coroutine finished");
-    //defer->reply();
+    //defer.reply();
   });
   // Log_info("BulkDecide RPC handler returning");
 }
@@ -163,7 +163,7 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
                                      i32* ballot,
                                      i32* valid,
                                      MarshallDeputy* ret,
-                                     rrr::DeferredReply* defer) {
+                                     rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   ret->SetMarshallable(std::make_shared<SyncLogResponse>());
   auto response = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
@@ -172,7 +172,7 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
                       ballot,
                       valid,
                       response,
-                      std::bind(&rrr::DeferredReply::reply, defer));
+                      [defer = std::move(defer)]() mutable { defer.reply(); });
   //  auto rpx = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
   //   auto xx = (int32_t)rpx->missing_slots.size();
   //   Log_info("received a OnSyncLog2,xxx: %d",xx);
@@ -182,7 +182,7 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
   //         Log_info("yy2 a OnSyncLog2,xxx: %d",j);
   //      }
   //   }
-    defer->reply();
+    defer.reply();
   });
 
 }
@@ -190,28 +190,28 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
 void MultiPaxosServiceImpl::SyncCommit(const MarshallDeputy& md_cmd,
                                      i32* ballot,
                                      i32* valid,
-                                     rrr::DeferredReply* defer) {
+                                     rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnSyncCommit(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          ballot,
                          valid,
-                         std::bind(&rrr::DeferredReply::reply, defer));
-    //defer->reply();
+                         [defer = std::move(defer)]() mutable { defer.reply(); });
+    //defer.reply();
   });
 }
 
 void MultiPaxosServiceImpl::SyncNoOps(const MarshallDeputy& md_cmd,
                                       i32* ballot,
                                       i32* valid,
-                                      rrr::DeferredReply* defer) {
+                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   Coroutine::CreateRun([&] () {
     sched_->OnSyncNoOps(const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                          ballot,
                          valid,
-                         std::bind(&rrr::DeferredReply::reply, defer));
-    //defer->reply();
+                         [defer = std::move(defer)]() mutable { defer.reply(); });
+    //defer.reply();
   });
 }
 
@@ -219,13 +219,13 @@ void MultiPaxosServiceImpl::ForwardToLearnerServer(const rrr::i32& par_id,
                                                    const uint64_t& slot, 
                                                    const ballot_t& ballot, /* slot and ballot from the leader */
                                                    const MarshallDeputy& cmd, 
-                                                   uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) {
+                                                   uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer) {
     verify(sched_ != nullptr);
     *ret_slot = slot;
     *ret_ballot = ballot;
     Coroutine::CreateRun([&] () {
       sched_->OnForwardToLearner(par_id, slot, ballot, const_cast<MarshallDeputy&>(cmd).sp_data_,
-                               std::bind(&rrr::DeferredReply::reply, defer));
+                               [defer = std::move(defer)]() mutable { defer.reply(); });
     });
 }
 

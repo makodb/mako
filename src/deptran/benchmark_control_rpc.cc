@@ -26,7 +26,7 @@ const std::string ServerControlServiceImpl::STAT_RO6_SZ_VECTOR = "ack_start_vect
 
 void ServerControlServiceImpl::shutdown_wrapper(int sig) {
   for (auto s : scsi_s) {
-    s->server_shutdown(nullptr);
+    s->do_shutdown();
   }
 }
 
@@ -39,17 +39,20 @@ void ServerControlServiceImpl::set_sig_handler() {
   sig_handler_set_ = true;
 }
 
-void ServerControlServiceImpl::server_shutdown(DeferredReply* d) {
+void ServerControlServiceImpl::do_shutdown() {
   Log_info("Shutdown Server Control Service");
   status_mutex_.lock();
   status_ = SCS_STOP;
   status_cond_.bcast();
   status_mutex_.unlock();
-  if (d)
-    d->reply();
 }
 
-void ServerControlServiceImpl::server_ready(rrr::i32 *res, DeferredReply* d) {
+void ServerControlServiceImpl::server_shutdown(rrr::DeferredReply defer) {
+  do_shutdown();
+  defer.reply();
+}
+
+void ServerControlServiceImpl::server_ready(rrr::i32 *res, rrr::DeferredReply defer) {
   status_mutex_.lock();
   if (SCS_RUN == status_) {
     *res = 1;
@@ -57,7 +60,7 @@ void ServerControlServiceImpl::server_ready(rrr::i32 *res, DeferredReply* d) {
     *res = 0;
   }
   status_mutex_.unlock();
-  d->reply();
+  defer.reply();
 }
 
 void ServerControlServiceImpl::do_statistics(const char *key,
@@ -74,14 +77,14 @@ void ServerControlServiceImpl::do_statistics(const char *key,
   stat_m_.unlock();
 }
 
-void ServerControlServiceImpl::server_heart_beat(DeferredReply* d) {
+void ServerControlServiceImpl::server_heart_beat(rrr::DeferredReply defer) {
   if (!sig_handler_set_)
     set_sig_handler();
   alarm(timeout_);
-  d->reply();
+  defer.reply();
 }
 
-void ServerControlServiceImpl::server_heart_beat_with_data(ServerResponse *res, DeferredReply* d) {
+void ServerControlServiceImpl::server_heart_beat_with_data(ServerResponse *res, rrr::DeferredReply defer) {
   res->cpu_util = rrr::CPUInfo::cpu_stat()[0];
   if (recorder_) {
     AvgStat r_cnt = recorder_->stat_cnt_.reset();
@@ -118,7 +121,7 @@ void ServerControlServiceImpl::server_heart_beat_with_data(ServerResponse *res, 
   }
 
   stat_m_.unlock();
-  d->reply();
+  defer.reply();
 }
 
 ServerControlServiceImpl::ServerControlServiceImpl(unsigned int timeout,
@@ -180,24 +183,24 @@ double timespec2ms(struct timespec time) {
   return time.tv_sec * 1000.0 + time.tv_nsec / 1000000.0;
 }
 
-void ClientControlServiceImpl::client_shutdown(DeferredReply *defer) {
+void ClientControlServiceImpl::client_shutdown(rrr::DeferredReply defer) {
   Log_info("Shutdown Client Control Service");
   status_mutex_.lock();
   status_ = CCS_STOP;
   status_cond_.bcast();
   status_mutex_.unlock();
-  defer->reply();
+  defer.reply();
 }
 
-void ClientControlServiceImpl::client_force_stop(DeferredReply* defer) {
+void ClientControlServiceImpl::client_force_stop(rrr::DeferredReply defer) {
   int i = 0;
   for (; i < num_threads_; i++)
     if (coo_threads_[i] != NULL)
       pthread_kill(*(coo_threads_[i]), SIGALRM);
-  defer->reply();
+  defer.reply();
 }
 
-void ClientControlServiceImpl::client_response(const DepId& dep_id, ClientResponse *res, DeferredReply* defer) {
+void ClientControlServiceImpl::client_response(const DepId& dep_id, ClientResponse *res, rrr::DeferredReply defer) {
   std::lock_guard<std::recursive_mutex> guard(mtx_);
   status_mutex_.lock();
   if (CCS_FINISH == status_)
@@ -266,34 +269,37 @@ void ClientControlServiceImpl::client_response(const DepId& dep_id, ClientRespon
       it->second.interval_attempt_latencies[use]->clear();
     }
   }
-  defer->reply();
+  defer.reply();
 }
 
 void ClientControlServiceImpl::client_ready_block(rrr::i32 *res,
-                                                  rrr::DeferredReply *defer) {
+                                                  rrr::DeferredReply defer) {
   *res = 1;
   bool reply = false;
   status_mutex_.lock();
-  if (CCS_READY == status_)
+  if (CCS_READY == status_) {
     reply = true;
-  else
-    ready_block_defers_.push_back(defer);
+  } else {
+    // Store callback for later reply
+    ready_block_defers_.emplace_back([defer = std::move(defer)]() mutable { defer.reply(); });
+  }
   status_mutex_.unlock();
-  if (reply)
-    defer->reply();
+  if (reply) {
+    defer.reply();
+  }
 }
 
-void ClientControlServiceImpl::client_ready(rrr::i32 *res, DeferredReply* defer) {
+void ClientControlServiceImpl::client_ready(rrr::i32 *res, rrr::DeferredReply defer) {
   status_mutex_.lock();
   if (CCS_READY == status_)
     *res = 1;
   else
     *res = 0;
   status_mutex_.unlock();
-  defer->reply();
+  defer.reply();
 }
 
-void ClientControlServiceImpl::client_start(DeferredReply* defer) {
+void ClientControlServiceImpl::client_start(rrr::DeferredReply defer) {
   status_mutex_.lock();
   status_ = CCS_RUN;
   status_cond_.bcast();
@@ -301,7 +307,7 @@ void ClientControlServiceImpl::client_start(DeferredReply* defer) {
   last_time_ = start_time_;
   before_last_time_ = start_time_;
   status_mutex_.unlock();
-  defer->reply();
+  defer.reply();
 }
 
 void ClientControlServiceImpl::wait_for_start(unsigned int id) {
@@ -310,8 +316,8 @@ void ClientControlServiceImpl::wait_for_start(unsigned int id) {
   *(coo_threads_[id]) = pthread_self();
   if (++num_ready_ == num_threads_) {
     status_ = CCS_READY;
-    for (auto it : ready_block_defers_) {
-      it->reply();
+    for (auto& cb : ready_block_defers_) {
+      cb();  // Invoke the stored reply callbacks
     }
     ready_block_defers_.clear();
   }
@@ -331,9 +337,9 @@ void ClientControlServiceImpl::wait_for_shutdown() {
   status_mutex_.unlock();
 }
 
-void ClientControlServiceImpl::client_get_txn_names(std::map<i32, std::string> *txn_names, DeferredReply* defer) {
+void ClientControlServiceImpl::client_get_txn_names(std::map<i32, std::string> *txn_names, rrr::DeferredReply defer) {
   *txn_names = txn_names_;
-  defer->reply();
+  defer.reply();
 }
 
 ClientControlServiceImpl::ClientControlServiceImpl(unsigned int num_threads,
@@ -411,7 +417,7 @@ void ClientControlServiceImpl::LogClientResponse(ClientResponse *res) {
 }
 
 void ClientControlServiceImpl::DispatchTxn(
-    const TxDispatchRequest& req, TxReply* txn_reply, rrr::DeferredReply* defer) {
+    const TxDispatchRequest& req, TxReply* txn_reply, rrr::DeferredReply defer) {
   // TODO: fix -- we dont need to do this everytime.
   std::vector<ClientWorker*> locale0_workers;
   for (auto& worker : client_workers_g) {
@@ -431,6 +437,6 @@ void ClientControlServiceImpl::DispatchTxn(
   }
   request.n_try_ = 0;
   request.tx_type_ = req.tx_type;
-  worker->AcceptForwardedRequest(request, txn_reply, defer);
+  worker->AcceptForwardedRequest(std::move(request), txn_reply, std::move(defer));
 }
 }

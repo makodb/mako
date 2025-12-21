@@ -21,10 +21,10 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
 	void Heartbeat(const uint64_t& leaderPrevLogIndex,
 								 const DepId& dep_id,
 								 uint64_t* followerPrevLogIndex,
-								 rrr::DeferredReply* defer) override;
+								 rrr::DeferredReply defer) override;
   void Forward(const MarshallDeputy& cmd,
                uint64_t *cmt_idx,
-               rrr::DeferredReply* defer) override;
+               rrr::DeferredReply defer) override;
 
   void Vote(const uint64_t& lst_log_idx,
                   const ballot_t& lst_log_term,
@@ -32,7 +32,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                   const ballot_t& can_term,
                   ballot_t* reply_term,
                   bool_t *vote_granted,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
   void Vote2FPGA(const uint64_t& lst_log_idx,
                   const ballot_t& lst_log_term,
@@ -40,7 +40,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                   const ballot_t& can_term,
                   ballot_t* reply_term,
                   bool_t *vote_granted,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
 	void AppendEntries2(const uint64_t& slot,
                       const ballot_t& ballot,
@@ -53,7 +53,7 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                       uint64_t *followerAppendOK,
 											uint64_t *followerCurrentTerm,
                       uint64_t *followerLastLogIndex,
-                      rrr::DeferredReply* defer);
+                      rrr::DeferredReply defer);
   
 	void AppendEntries(const uint64_t& slot,
                      const ballot_t& ballot,
@@ -66,13 +66,13 @@ class FpgaRaftServiceImpl : public FpgaRaftService {
                      uint64_t *followerAppendOK,
                      uint64_t *followerCurrentTerm,
                      uint64_t *followerLastLogIndex,
-                     rrr::DeferredReply* defer) override;
+                     rrr::DeferredReply defer) override;
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
 							const DepId& dep_id,
               const MarshallDeputy& cmd,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
 };
 

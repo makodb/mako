@@ -152,7 +152,7 @@ void FpgaRaftServer::OnVote2FPGA(const slotid_t& lst_log_idx,
                             const ballot_t& can_term,
                             ballot_t *reply_term,
                             bool_t *vote_granted,
-                            const function<void()> &cb) {
+                            rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("fpga raft receives vote from candidate: %llx", can_id);
@@ -160,7 +160,7 @@ void FpgaRaftServer::OnVote2FPGA(const slotid_t& lst_log_idx,
   uint64_t cur_term = currentTerm ;
   if( can_term < cur_term)
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
   }
 
@@ -169,7 +169,7 @@ void FpgaRaftServer::OnVote2FPGA(const slotid_t& lst_log_idx,
 //  if( can_term == cur_term && vote_for_ != INVALID_PARID )
   if( can_term == cur_term)
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
   }
 
@@ -188,16 +188,16 @@ void FpgaRaftServer::OnVote2FPGA(const slotid_t& lst_log_idx,
   Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
 
 
-  // TODO del only for test 
+  // TODO del only for test
   verify(lstoff == lastLogIndex ) ;
 
   if( lst_log_term > curlstterm || (lst_log_term == curlstterm && lst_log_idx >= curlstidx) )
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, std::move(cb)) ;
     return ;
   }
 
-  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
 
 }
 
@@ -288,7 +288,7 @@ void FpgaRaftServer::OnVote(const slotid_t& lst_log_idx,
                             const ballot_t& can_term,
                             ballot_t *reply_term,
                             bool_t *vote_granted,
-                            const function<void()> &cb) {
+                            rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("fpga raft receives vote from candidate: %llx", can_id);
@@ -300,7 +300,7 @@ void FpgaRaftServer::OnVote(const slotid_t& lst_log_idx,
   uint64_t cur_term = currentTerm ;
   if( can_term < cur_term)
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
   }
 
@@ -309,7 +309,7 @@ void FpgaRaftServer::OnVote(const slotid_t& lst_log_idx,
 //  if( can_term == cur_term && vote_for_ != INVALID_PARID )
   if( can_term == cur_term)
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
   }
 
@@ -328,16 +328,16 @@ void FpgaRaftServer::OnVote(const slotid_t& lst_log_idx,
   Log_debug("vote for lstoff %d, curlstterm %d, curlstidx %d", lstoff, curlstterm, curlstidx  );
 
 
-  // TODO del only for test 
+  // TODO del only for test
   verify(lstoff == lastLogIndex ) ;
 
   if( lst_log_term > curlstterm || (lst_log_term == curlstterm && lst_log_idx >= curlstidx) )
   {
-    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, cb) ;
+    doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, true, std::move(cb)) ;
     return ;
   }
 
-  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, cb) ;
+  doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
 
 }
 
@@ -387,7 +387,7 @@ void FpgaRaftServer::StartTimer()
                                      uint64_t *followerAppendOK,
                                      uint64_t *followerCurrentTerm,
                                      uint64_t *followerLastLogIndex,
-                                     const function<void()> &cb) {
+                                     rusty::Function<void()> cb) {
 #ifdef LATENCY_LOG_DEBUG
         Log_info("Time of cmd <%d, %d> arrive svr %d OnAppendEntries: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
@@ -478,7 +478,7 @@ void FpgaRaftServer::StartTimer()
 
     void FpgaRaftServer::OnForward(shared_ptr<Marshallable> &cmd, 
                                           uint64_t *cmt_idx,
-                                          const function<void()> &cb) {
+                                          rusty::Function<void()> cb) {
         this->rep_frame_ = this->frame_ ;
         auto co = ((TxLogServer *)(this))->CreateRepCoord(0);
         ((CoordinatorFpgaRaft*)co)->Submit(cmd);

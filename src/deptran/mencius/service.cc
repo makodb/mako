@@ -14,13 +14,13 @@ void MenciusServiceImpl::Prepare(const uint64_t& slot,
                                     const ballot_t& ballot,
                                     ballot_t* max_ballot,
                                     uint64_t* coro_id,
-                                    rrr::DeferredReply* defer) {
+                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   sched_->OnPrepare(slot,
                     ballot,
                     max_ballot,
                     coro_id,
-                    std::bind(&rrr::DeferredReply::reply, defer));
+                    [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void MenciusServiceImpl::Suggest(const uint64_t& slot,
@@ -32,7 +32,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
                                    const MarshallDeputy& md_cmd,
                                    ballot_t* max_ballot,
                                    uint64_t* coro_id,
-                                   rrr::DeferredReply* defer) {
+                                   rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   // auto start = chrono::system_clock::now();
 
@@ -81,7 +81,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
                      const_cast<MarshallDeputy&>(md_cmd).sp_data_,
                      max_ballot,
                      coro_id,
-                     std::bind(&rrr::DeferredReply::reply, defer));
+                     [defer = std::move(defer)]() mutable { defer.reply(); });
 
   });
 
@@ -94,7 +94,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
 void MenciusServiceImpl::Decide(const uint64_t& slot,
                                    const ballot_t& ballot,
                                    const MarshallDeputy& md_cmd,
-                                   rrr::DeferredReply* defer) {
+                                   rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
   auto x = md_cmd.sp_data_;
 
@@ -105,7 +105,7 @@ void MenciusServiceImpl::Decide(const uint64_t& slot,
   sched_->c_mutex.unlock();
 
   sched_->OnCommit(slot, ballot,x);
-  defer->reply();
+  defer.reply();
 }
 
 

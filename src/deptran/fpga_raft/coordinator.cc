@@ -31,8 +31,8 @@ bool CoordinatorFpgaRaft::IsFPGALeader() {
 }
 
 void CoordinatorFpgaRaft::Forward(shared_ptr<Marshallable>& cmd,
-                                   const function<void()>& func,
-                                   const function<void()>& exe_callback) {
+                                   rusty::Function<void()> func,
+                                   rusty::Function<void()> exe_callback) {
     //for(int i = 0; i < 100; i++) Log_info("inside forward");
 		verify(0) ; // TODO delete it
     auto e = commo()->SendForward(par_id_, loc_id_, cmd);
@@ -46,8 +46,8 @@ void CoordinatorFpgaRaft::Forward(shared_ptr<Marshallable>& cmd,
 
 
 void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
-                                   const function<void()>& func,
-                                   const function<void()>& exe_callback) {
+                                   rusty::Function<void()> func,
+                                   rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
   Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
@@ -55,10 +55,10 @@ void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
   if (!IsLeader()) {
     //Log_fatal("i am not the leader; site %d; locale %d",
     //          frame_->site_info_->id, loc_id_);
-    Forward(cmd, func, exe_callback) ;
+    Forward(cmd, std::move(func), std::move(exe_callback)) ;
     return ;
   }
-  
+
 	std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(!in_submission_);
   verify(cmd_ == nullptr);
@@ -66,7 +66,7 @@ void CoordinatorFpgaRaft::Submit(shared_ptr<Marshallable>& cmd,
   in_submission_ = true;
   cmd_ = cmd;
   verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
-  commit_callback_ = func;
+  commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 
@@ -168,7 +168,7 @@ void CoordinatorFpgaRaft::AppendEntries() {
         // TODO should become a follower if the term is smaller
         //if(!IsLeader())
         {
-            Forward(cmd_,commit_callback_) ;
+            Forward(cmd_, std::move(commit_callback_)) ;
             return ;
         }
     }
@@ -228,7 +228,7 @@ void CoordinatorFpgaRaft::GotoNextPhase() {
       } else {
         // TODO
         verify(0);
-        Forward(cmd_,commit_callback_) ;
+        Forward(cmd_, std::move(commit_callback_)) ;
         phase_ = Phase::COMMIT;
       }
     case Phase::ACCEPT:

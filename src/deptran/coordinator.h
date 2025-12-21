@@ -95,8 +95,8 @@ class Coordinator {
   std::vector<int> site_commit_;
   std::vector<int> site_abort_;
   std::vector<int> site_piece_;
-  std::function<void()> commit_callback_ = [] () {verify(0);};
-  std::function<void()> exe_callback_ = [] () {verify(0);};
+  rusty::Function<void()> commit_callback_ = [] () {verify(0);};
+  rusty::Function<void()> exe_callback_ = [] () {verify(0);};
   // above should be reset
 
   /******global unique id begin********/
@@ -175,8 +175,8 @@ class Coordinator {
   virtual void FailoverPauseSocketOut(parid_t, locid_t) { verify(0); };
   virtual void FailoverResumeSocketOut(parid_t, locid_t) { verify(0); };
   virtual void Submit(shared_ptr<Marshallable>& cmd,
-                      const std::function<void()>& commit_callback = [](){},
-                      const std::function<void()>& exe_callback = [](){}) {
+                      rusty::Function<void()> commit_callback = {},
+                      rusty::Function<void()> exe_callback = {}) {
     verify(0);
   }
 
@@ -185,8 +185,8 @@ class Coordinator {
   }
 
   virtual void BulkSubmit(shared_ptr<Marshallable>& cmd,
-                           const std::function<void()>& commit_callback = [](){},
-                           const std::function<void()>& exe_callback = [](){}){
+                           rusty::Function<void()> commit_callback = {},
+                           rusty::Function<void()> exe_callback = {}){
     verify(0);
   }
 

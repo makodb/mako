@@ -21,7 +21,7 @@ bool SchedulerCarousel::Guard(Tx &tx, Row *row, int col_id, bool write) {
 
 int SchedulerCarousel::OnDecide(txid_t tx_id,
                              int32_t decision,
-                             const function<void()> &callback) {
+                             rusty::Function<void()> callback) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto cmd = std::make_shared<TpcCommitCommand>();
   cmd->tx_id_ = tx_id;

@@ -206,7 +206,7 @@ void RaftWorker::WaitForShutdown() {
   StopSubmitThread();
 
   if (hb_rpc_server_ && scsi_) {
-    scsi_->server_shutdown(nullptr);
+    scsi_->do_shutdown();
     scsi_->wait_for_shutdown();
   }
 }

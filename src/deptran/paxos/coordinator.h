@@ -69,8 +69,8 @@ class CoordinatorMultiPaxos : public Coordinator {
 
   void DoTxAsync(TxRequest &req) override {}
   void Submit(shared_ptr<Marshallable> &cmd,
-              const std::function<void()> &func = []() {},
-              const std::function<void()> &exe_callback = []() {}) override;
+              rusty::Function<void()> func = {},
+              rusty::Function<void()> exe_callback = {}) override;
 
   ballot_t PickBallot();
   void Submit();
@@ -105,8 +105,8 @@ public:
                           ClientControlServiceImpl *ccsi,
                           uint32_t thread_id);
     void BulkSubmit(shared_ptr<Marshallable> &cmd,
-                    const std::function<void()> &func = []() {},
-                    const std::function<void()> &exe_callback = []() {});
+                    rusty::Function<void()> func = {},
+                    rusty::Function<void()> exe_callback = {});
 };
 
 } //namespace janus

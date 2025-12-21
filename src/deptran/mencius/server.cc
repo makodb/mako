@@ -11,7 +11,7 @@ void MenciusServer::OnPrepare(slotid_t slot_id,
                             ballot_t ballot,
                             ballot_t *max_ballot,
                             uint64_t* coro_id,
-                            const function<void()> &cb) {
+                            rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("mencius scheduler receives prepare for slot_id: %llx",
@@ -44,7 +44,7 @@ void MenciusServer::OnSuggest(const slotid_t slot_id,
                            shared_ptr<Marshallable> &cmd,
                            ballot_t *max_ballot,
                            uint64_t* coro_id,
-                           const function<void()> &cb) {
+                           rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_info("mencius scheduler suggest for slot_id: %llu", slot_id);
   auto instance = GetInstance(slot_id);

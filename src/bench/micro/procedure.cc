@@ -57,7 +57,7 @@ void MicroProcedure::Init(TxRequest &req) {
   }
 
   n_pieces_all_ = 4;
-  callback_ = req.callback_;
+  callback_ = std::move(req.callback_);
   max_try_ = req.n_try_;
   n_try_ = 1;
 

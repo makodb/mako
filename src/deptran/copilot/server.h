@@ -97,7 +97,7 @@ class CopilotServer : public TxLogServer {
   bool WillWait(int& time_to_wait) const;
 
   void OnForward(shared_ptr<Marshallable>& cmd,
-                 const function<void()> &cb);
+                 rusty::Function<void()> cb);
 
   void OnPrepare(const uint8_t& is_pilot,
                  const uint64_t& slot,
@@ -107,7 +107,7 @@ class CopilotServer : public TxLogServer {
                  ballot_t* max_ballot,
                  uint64_t* dep,
                  status_t* status,
-                 const function<void()> &cb);
+                 rusty::Function<void()> cb);
 
   void OnFastAccept(const uint8_t& is_pilot,
                     const uint64_t& slot,
@@ -117,7 +117,7 @@ class CopilotServer : public TxLogServer {
                     const struct DepId& dep_id,
                     ballot_t* max_ballot,
                     uint64_t* ret_dep,
-                    const function<void()> &cb);
+                    rusty::Function<void()> cb);
 
   void OnAccept(const uint8_t& is_pilot,
                 const uint64_t& slot,
@@ -126,7 +126,7 @@ class CopilotServer : public TxLogServer {
                 shared_ptr<Marshallable>& cmd,
                 const struct DepId& dep_id,
                 ballot_t* max_ballot,
-                const function<void()> &cb);
+                rusty::Function<void()> cb);
 
   void OnCommit(const uint8_t& is_pilot,
                 const uint64_t& slot,

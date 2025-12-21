@@ -572,7 +572,7 @@ void pre_shutdown_step() {
       continue;
     }
     if (worker->hb_rpc_server_ && worker->scsi_) {
-      worker->scsi_->server_shutdown(nullptr);
+      worker->scsi_->do_shutdown();
     }
     worker->WaitForShutdown();
   }

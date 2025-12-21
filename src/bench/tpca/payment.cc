@@ -35,7 +35,7 @@ void TpcaPaymentChopper::Init(TxRequest &req) {
 
   // all pieces are ready
   n_pieces_all_ = 3;
-  callback_ = req.callback_;
+  callback_ = std::move(req.callback_);
   max_try_ = req.n_try_;
   n_try_ = 1;
   n_pieces_dispatchable_ = 3;

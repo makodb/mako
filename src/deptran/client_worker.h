@@ -104,11 +104,11 @@ class ClientWorker {
   void Pause(locid_t locid);  // Jetpack: pause server
   void Resume(locid_t locid);  // Jetpack: resume server
   Coordinator* CreateFailCtrlCoordinator();  // Jetpack: create failover coordinator
-  void AcceptForwardedRequest(TxRequest &request, TxReply* txn_reply, rrr::DeferredReply* defer);
+  void AcceptForwardedRequest(TxRequest request, TxReply* txn_reply, rrr::DeferredReply defer);
 
  protected:
   Coordinator* CreateCoordinator(uint16_t offset_id);
   void RequestDone(Coordinator* coo, TxReply &txn_reply);
-  void ForwardRequestDone(Coordinator* coo, TxReply* output, rrr::DeferredReply* defer, TxReply &txn_reply);
+  void ForwardRequestDone(Coordinator* coo, TxReply* output, rusty::Function<void()> reply_cb, TxReply &txn_reply);
 };
 } // namespace janus

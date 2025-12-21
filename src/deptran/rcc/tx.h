@@ -311,7 +311,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
 
   virtual void start_ro(const SimpleCommand&,
                         map<int32_t, Value> &output,
-                        rrr::DeferredReply *defer);
+                        rrr::DeferredReply defer);
 
 
   virtual mdb::Row *CreateRow(

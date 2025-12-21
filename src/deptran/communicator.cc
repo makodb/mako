@@ -926,7 +926,7 @@ Communicator::SendCommit(Coordinator* coo,
 
 /*void Communicator::SendCommit(parid_t pid,
                               txnid_t tid,
-                              const function<void()>& callback) {
+                              rusty::Function<void()> callback) {
 #ifdef LOG_LEVEL_AS_DEBUG
   ___LogSent(pid, tid);
 #endif
@@ -1068,7 +1068,7 @@ void Communicator::SendEarlyAbort(parid_t pid,
 }
 
 /*void Communicator::SendAbort(parid_t pid, txnid_t tid,
-                             const function<void()>& callback) {
+                             rusty::Function<void()> callback) {
 #ifdef LOG_LEVEL_AS_DEBUG
   ___LogSent(pid, tid);
 #endif

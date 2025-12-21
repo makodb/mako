@@ -131,7 +131,7 @@ class RaftServer : public TxLogServer {
               ballot_t *reply_term,
               bool_t *vote_granted,
               bool_t vote,
-              const function<void()> &cb) {
+              rusty::Function<void()> cb) {
       *vote_granted = vote ;
       *reply_term = currentTerm ;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
@@ -385,7 +385,7 @@ class RaftServer : public TxLogServer {
                      const ballot_t& can_term,
                      ballot_t *reply_term,
                      bool_t *vote_granted,
-                     const function<void()> &cb) ;
+                     rusty::Function<void()> cb) ;
 
   // @unsafe
   void OnAppendEntries(const slotid_t slot_id,
@@ -400,7 +400,7 @@ class RaftServer : public TxLogServer {
                        uint64_t *followerAppendOK,
                        uint64_t *followerCurrentTerm,
                        uint64_t *followerLastLogIndex,
-                       const function<void()> &cb,
+                       rusty::Function<void()> cb,
                        bool trigger_election_now = false);
 
   /**
@@ -423,7 +423,7 @@ class RaftServer : public TxLogServer {
                     const siteid_t leaderSiteId,
                     uint64_t *followerTerm,
                     bool_t *success,
-                    const function<void()> &cb);
+                    rusty::Function<void()> cb);
 
   // @unsafe - Modifies connection state and proxy maps
   void Disconnect(const bool disconnect = true);

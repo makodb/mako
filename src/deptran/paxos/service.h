@@ -22,13 +22,13 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   void Forward(const MarshallDeputy& cmd,
                const uint64_t& dep_id,
                uint64_t* coro_id,
-               rrr::DeferredReply* defer) override;
+               rrr::DeferredReply defer) override;
 
   void Prepare(const uint64_t& slot,
                const ballot_t& ballot,
                ballot_t* max_ballot,
                uint64_t* coro_id,
-               rrr::DeferredReply* defer) override;
+               rrr::DeferredReply defer) override;
 
   void Accept(const uint64_t& slot,
 	      const uint64_t& time,
@@ -36,56 +36,56 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
               const MarshallDeputy& cmd,
               ballot_t* max_ballot,
               uint64_t* coro_id,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
   void Decide(const uint64_t& slot,
               const ballot_t& ballot,
               const MarshallDeputy& cmd,
-              rrr::DeferredReply* defer) override;
+              rrr::DeferredReply defer) override;
 
   void BulkDecide(const MarshallDeputy& cmd,
                   i32* ballot,
                   i32* valid,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
   void BulkAccept(const MarshallDeputy& cmd,
                   i32* ballot,
                   i32* valid,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
   void BulkPrepare(const MarshallDeputy& cmd,
                   i32* ballot,
                   i32* valid,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
   void Heartbeat(const MarshallDeputy& cmd,
                   i32* ballot,
                   i32* valid,
-                  rrr::DeferredReply* defer) override;
+                  rrr::DeferredReply defer) override;
 
   void BulkPrepare2(const MarshallDeputy& md_cmd,
                      i32* ballot,
                      i32* valid,
                      MarshallDeputy* ret,
-                     rrr::DeferredReply* defer) override;
+                     rrr::DeferredReply defer) override;
 
   void SyncLog(const MarshallDeputy& md_cmd,
                      i32* ballot,
                      i32* valid,
                      MarshallDeputy* ret,
-                     rrr::DeferredReply* defer) override;
+                     rrr::DeferredReply defer) override;
 
   void SyncCommit(const MarshallDeputy& md_cmd,
                      i32* ballot,
                      i32* valid,
-                     rrr::DeferredReply* defer) override;
+                     rrr::DeferredReply defer) override;
 
   void SyncNoOps(const MarshallDeputy& md_cmd,
                  i32* ballot,
                  i32* valid,
-                 rrr::DeferredReply* defer) override;
+                 rrr::DeferredReply defer) override;
 
-  void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply* defer) override;
+  void ForwardToLearnerServer(const rrr::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const MarshallDeputy& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, rrr::DeferredReply defer) override;
 
 };
 

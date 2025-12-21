@@ -2,6 +2,7 @@
 #pragma once
 #include <rusty/arc.hpp>
 #include <rusty/cell.hpp>
+#include <rusty/function.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
 
@@ -339,36 +340,52 @@ struct hash<rusty::Arc<rrr::ServerListener>> {
 
 namespace rrr {
 
-// @safe - RAII wrapper for deferred RPC replies
-class DeferredReply: public NoCopy {
+// @safe - RAII wrapper for deferred RPC replies with move semantics
+// Handler receives DeferredReply by value (moved) and calls defer.reply()
+// The destructor handles cleanup (deletes in_ and out_ params allocated by wrapper)
+class DeferredReply {
     rusty::Box<rrr::Request> req_;
     WeakServerConnection weak_sconn_;
-    std::function<void()> marshal_reply_;
-    std::function<void()> cleanup_;
+    rusty::Function<void()> marshal_reply_;
+    rusty::Function<void()> cleanup_;
+    bool replied_ = false;  // Track if reply was sent
 
 public:
+    // Movable but not copyable
+    DeferredReply(DeferredReply&& other) = default;
+    DeferredReply& operator=(DeferredReply&& other) = default;
+    DeferredReply(const DeferredReply&) = delete;
+    DeferredReply& operator=(const DeferredReply&) = delete;
 
     DeferredReply(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn,
-                  const std::function<void()>& marshal_reply, const std::function<void()>& cleanup)
-        : req_(std::move(req)), weak_sconn_(weak_sconn), marshal_reply_(marshal_reply), cleanup_(cleanup) {}
+                  rusty::Function<void()> marshal_reply, rusty::Function<void()> cleanup)
+        : req_(std::move(req)), weak_sconn_(weak_sconn),
+          marshal_reply_(std::move(marshal_reply)), cleanup_(std::move(cleanup)) {}
 
-    // @safe - Cleanup destructor with automatic cleanup
-    // SAFETY: Proper cleanup order, rusty::Box automatically deletes req_
+    // @safe - Cleanup destructor
+    // SAFETY: cleanup_() deletes in_ and out_ params allocated by wrapper
     ~DeferredReply() {
-        cleanup_();
+        if (cleanup_) {
+            cleanup_();
+        }
         // req_ automatically cleaned up by rusty::Box destructor
     }
 
     int run_async(const std::function<void()>& f) {
       // TODO disable threadpool run in RPCs.
-//        auto sconn = weak_sconn_.lock();
-//        if (sconn) return sconn->run_async(f);
       return 0;
     }
 
-    // @safe - Sends reply and self-deletes
-    // SAFETY: Locks weak_ptr before use, gracefully handles closed connections
+    // @unsafe - Sends reply
+    // SAFETY: Can only be called once (checked by replied_ flag)
     void reply() {
+        if (replied_) {
+            Log_warn("DeferredReply::reply() called multiple times, ignoring");
+            return;
+        }
+        replied_ = true;
+
+        // @unsafe - SAFETY: pointer operations within unsafe context
         auto sconn_opt = weak_sconn_.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
@@ -382,7 +399,7 @@ public:
             // Connection closed, silently drop reply
             Log_debug("Connection closed before reply sent, dropping reply");
         }
-        delete this;
+        // Object will be destroyed when it goes out of scope, destructor calls cleanup_()
     }
 };
 

@@ -46,8 +46,8 @@ inline ballot_t CoordinatorCopilot::pickGreaterBallot(ballot_t ballot) {
 }
 
 void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
-                                const std::function<void()> &func,
-                                const std::function<void()> &exe_callback) {
+                                rusty::Function<void()> func,
+                                rusty::Function<void()> exe_callback) {
   verify(IsPilot() || IsCopilot());  // only pilot or copilot can initiate command submission
   done_ = false;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -66,7 +66,7 @@ void CoordinatorCopilot::Submit(shared_ptr<Marshallable> &cmd,
   slot_id_ = slot_and_dep.first;
   dep_ = slot_and_dep.second;
   verify(cmd_now_->kind_ != MarshallDeputy::UNKNOWN);
-  commit_callback_ = func;
+  commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 

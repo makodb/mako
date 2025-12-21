@@ -217,7 +217,7 @@ void RccTx::CommitExecute(int rank) {
 
 void RccTx::start_ro(const SimpleCommand& cmd,
                      map<int32_t, Value> &output,
-                     DeferredReply *defer) {
+                     DeferredReply defer) {
   verify(0);
 }
 

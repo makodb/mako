@@ -15,8 +15,8 @@ CoordinatorMencius::CoordinatorMencius(uint32_t coo_id,
 }
 
 void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
-                                   const function<void()>& func,
-                                   const function<void()>& exe_callback) {
+                                   rusty::Function<void()> func,
+                                   rusty::Function<void()> exe_callback) {
 #ifdef LATENCY_LOG_DEBUG
   Log_info("Time of cmd <%d, %d> arrive svr %d Submit: %.2fms", SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second, loc_id_, SimpleRWCommand::GetMsTimeElaps());
 #endif
@@ -34,7 +34,7 @@ void CoordinatorMencius::Submit(shared_ptr<Marshallable>& cmd,
   in_submission_ = true;
   cmd_ = cmd;
   verify(cmd_->kind_ != MarshallDeputy::UNKNOWN);
-  commit_callback_ = func;
+  commit_callback_ = std::move(func);
   GotoNextPhase();
 }
 

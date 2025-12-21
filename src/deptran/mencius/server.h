@@ -74,7 +74,7 @@ class MenciusServer : public TxLogServer {
                  ballot_t ballot,
                  ballot_t *max_ballot,
                  uint64_t* coro_id,
-                 const function<void()> &cb);
+                 rusty::Function<void()> cb);
 
   void OnSuggest(const slotid_t slot_id,
 		            const uint64_t time,
@@ -85,7 +85,7 @@ class MenciusServer : public TxLogServer {
                 shared_ptr<Marshallable> &cmd,
                 ballot_t *max_ballot,
                 uint64_t* coro_id,
-                const function<void()> &cb);
+                rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,

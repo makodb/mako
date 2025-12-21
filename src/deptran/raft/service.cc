@@ -26,11 +26,11 @@ void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                                     const ballot_t& can_term,
                                     ballot_t* reply_term,
                                     bool_t *vote_granted,
-                                    rrr::DeferredReply* defer) {
+                                    rrr::DeferredReply defer) {
   verify(svr_ != nullptr);
   svr_->OnRequestVote(lst_log_idx,lst_log_term, can_id, can_term,
                     reply_term, vote_granted,
-                    [defer]() { defer->reply(); });
+                    [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 // @safe
@@ -46,10 +46,10 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         uint64_t *followerAppendOK,
                                         uint64_t *followerCurrentTerm,
                                         uint64_t *followerLastLogIndex,
-                                        rrr::DeferredReply* defer) {
+                                        rrr::DeferredReply defer) {
   verify(svr_ != nullptr);
 
-  Coroutine::CreateRun([&] () {
+  Coroutine::CreateRun([=, defer = std::move(defer)]() mutable {
     svr_->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
@@ -62,8 +62,7 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                             followerAppendOK,
                             followerCurrentTerm,
                             followerLastLogIndex,
-                            [defer]() { defer->reply(); });
-
+                            [defer = std::move(defer)]() mutable { defer.reply(); });
   });
 }
 
@@ -79,9 +78,9 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerAppendOK,
                                              uint64_t *followerCurrentTerm,
                                              uint64_t *followerLastLogIndex,
-                                             rrr::DeferredReply* defer) {
+                                             rrr::DeferredReply defer) {
   std::shared_ptr<Marshallable> cmd = nullptr;
-  Coroutine::CreateRun([&] () {
+  Coroutine::CreateRun([=, defer = std::move(defer)]() mutable {
     svr_->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
@@ -94,7 +93,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                             followerAppendOK,
                             followerCurrentTerm,
                             followerLastLogIndex,
-                            [defer]() { defer->reply(); },
+                            [defer = std::move(defer)]() mutable { defer.reply(); },
                             trigger_election_now);
   });
 }
@@ -104,10 +103,10 @@ void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
                                         const siteid_t& leaderSiteId,
                                         uint64_t* followerTerm,
                                         bool_t* success,
-                                        rrr::DeferredReply* defer) {
+                                        rrr::DeferredReply defer) {
   verify(svr_ != nullptr);
   svr_->OnTimeoutNow(leaderTerm, leaderSiteId, followerTerm, success,
-                     [defer]() { defer->reply(); });
+                     [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 } // namespace janus;

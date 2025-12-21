@@ -76,13 +76,13 @@ class PaxosServer : public TxLogServer {
   void OnForward(shared_ptr<Marshallable> &cmd,
                  uint64_t dep_id,
                  uint64_t* coro_id,
-                 const function<void()> &cb);
+                 rusty::Function<void()> cb);
 
   void OnPrepare(slotid_t slot_id,
                  ballot_t ballot,
                  ballot_t *max_ballot,
                  uint64_t* coro_id,
-                 const function<void()> &cb);
+                 rusty::Function<void()> cb);
 
   void OnAccept(const slotid_t slot_id,
 		const uint64_t time,
@@ -90,7 +90,7 @@ class PaxosServer : public TxLogServer {
                 shared_ptr<Marshallable> &cmd,
                 ballot_t *max_ballot,
                 uint64_t* coro_id,
-                const function<void()> &cb);
+                rusty::Function<void()> cb);
 
   void OnCommit(const slotid_t slot_id,
                 const ballot_t ballot,
@@ -99,51 +99,51 @@ class PaxosServer : public TxLogServer {
   void OnBulkPrepare(shared_ptr<Marshallable> &cmd,
                     i32 *ballot,
                     i32* valid,
-                    const function<void()> &cb);
+                    rusty::Function<void()> cb);
 
   void OnHeartbeat(shared_ptr<Marshallable> &cmd,
                     i32 *ballot,
                     i32* valid,
-                    const function<void()> &cb);
+                    rusty::Function<void()> cb);
 
   void OnBulkAccept(shared_ptr<Marshallable> &cmd,
                     i32* ballot,
                     i32 *valid,
-                    const function<void()> &cb);
+                    rusty::Function<void()> cb);
 
   void OnBulkCommit(shared_ptr<Marshallable> &cmd,
                     i32* ballot,
                     i32 *valid,
-                    const function<void()> &cb);
+                    rusty::Function<void()> cb);
 
   void OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                       i32* ballot,
                       i32 *valid,
                       shared_ptr<BulkPaxosCmd> ret_cmd,
-                      const function<void()> &cb);
+                      rusty::Function<void()> cb);
 
   void OnSyncLog(shared_ptr<Marshallable> &cmd,
                       i32* ballot,
                       i32 *valid,
                       shared_ptr<SyncLogResponse> ret_cmd,
-                      const function<void()> &cb);
+                      rusty::Function<void()> cb);
 
   void OnSyncCommit(shared_ptr<Marshallable> &cmd,
                       i32* ballot,
                       i32 *valid,
-                      const function<void()> &cb);
+                      rusty::Function<void()> cb);
 
 
   void OnSyncNoOps(shared_ptr<Marshallable> &cmd,
                   i32* ballot,
                   i32 *valid,
-                  const function<void()> &cb);
+                  rusty::Function<void()> cb);
   
   void OnForwardToLearner(const rrr::i32& par_id,
                         const uint64_t& slot, 
                         const ballot_t& ballot,
                         shared_ptr<Marshallable> &cmd,
-                        const function<void()> &cb);
+                        rusty::Function<void()> cb);
 
   int get_open_slot(){
     return cur_open_slot_++;

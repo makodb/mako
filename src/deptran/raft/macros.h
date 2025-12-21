@@ -48,16 +48,16 @@
 #define _ARGPAIRS(n, ...) _ARGPAIRS##n(__VA_ARGS__)
 
 #define RpcHandler(name, ...) \
-  void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply* defer) override { \
+  void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) override { \
     verify(svr_ != nullptr); \
     if (svr_->IsDisconnected()) { \
       OnDisconnected##name(_PARAMS(__VA_ARGS__)); \
-      defer->reply(); \
+      defer.reply(); \
     }  else { \
-      Handle##name(_PARAMS(__VA_ARGS__), defer); \
+      Handle##name(_PARAMS(__VA_ARGS__), std::move(defer)); \
     } \
   } \
-  void Handle##name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply* defer); \
+  void Handle##name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer); \
   void OnDisconnected##name(_ARGPAIRS(__VA_ARGS__))
 
 #ifdef RAFT_TEST_CORO

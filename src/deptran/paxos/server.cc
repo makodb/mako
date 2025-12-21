@@ -12,7 +12,7 @@ shared_ptr<ElectionState> es = ElectionState::instance();
 void PaxosServer::OnForward(shared_ptr<Marshallable> &cmd,
                             uint64_t dep_id,
                             uint64_t* coro_id,
-                            const function<void()> &cb){
+                            rusty::Function<void()> cb){
   // NOTE: Mako doesn't use this - it uses OnForwardToLearner instead.
   // Empty stub for RPC interface compatibility.
   verify(0); // Should never be called in Mako
@@ -22,7 +22,7 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
                             ballot_t ballot,
                             ballot_t *max_ballot,
                             uint64_t* coro_id,
-                            const function<void()> &cb) {
+                            rusty::Function<void()> cb) {
 
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   Log_debug("multi-paxos scheduler receives prepare for slot_id: %llx",
@@ -52,7 +52,7 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
                            shared_ptr<Marshallable> &cmd,
                            ballot_t *max_ballot,
                            uint64_t* coro_id,
-                           const function<void()> &cb) {
+                           rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   //Log_info("multi-paxos scheduler accept for slot_id: %llx", slot_id);
   auto instance = GetInstance(slot_id);
@@ -113,7 +113,7 @@ void PaxosServer::OnCommit(const slotid_t slot_id,
 void PaxosServer::OnBulkPrepare(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               const function<void()> &cb) {
+                               rusty::Function<void()> cb) {
 
 
   auto bp_log = dynamic_pointer_cast<BulkPrepareLog>(cmd);
@@ -197,7 +197,7 @@ unlock_and_return:
 void PaxosServer::OnHeartbeat(shared_ptr<Marshallable> &cmd,
                               i32* ballot,
                               i32* valid,
-                              const function<void()> &cb){
+                              rusty::Function<void()> cb){
 
   auto hb_log = dynamic_pointer_cast<HeartBeatLog>(cmd);
   es->state_lock();
@@ -256,7 +256,7 @@ void PaxosServer::OnBulkPrepare2(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                shared_ptr<BulkPaxosCmd> ret_cmd,
-                               const function<void()> &cb){
+                               rusty::Function<void()> cb){
   //pthread_setname_np(pthread_self(), "Follower server thread");
   auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
   ballot_t cur_b = bcmd->ballots[0];
@@ -340,7 +340,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
                                shared_ptr<SyncLogResponse> ret_cmd,
-                               const function<void()> &cb){
+                               rusty::Function<void()> cb){
   // auto xx = (int32_t)ret_cmd->missing_slots.size();
   // Log_info("received a OnSyncLog,xxx: %d",xx);
   // for(int i = 0; i < ret_cmd->missing_slots.size(); i++){
@@ -399,7 +399,7 @@ void PaxosServer::OnSyncLog(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               const function<void()> &cb) {
+                               rusty::Function<void()> cb) {
   auto bcmd = dynamic_pointer_cast<BulkPaxosCmd>(cmd);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
@@ -468,7 +468,7 @@ void PaxosServer::OnBulkAccept(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               const function<void()> &cb) {
+                               rusty::Function<void()> cb) {
   //std::lock_guard<std::recursive_mutex> lock(mtx_);
   //mtx_.lock();
   //Log_info("here");
@@ -574,7 +574,7 @@ void PaxosServer::OnSyncCommit(shared_ptr<Marshallable> &cmd,
 void PaxosServer::OnBulkCommit(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               const function<void()> &cb) {
+                               rusty::Function<void()> cb) {
   auto bcmd = dynamic_pointer_cast<PaxosPrepCmd>(cmd);
   *valid = 1;
   ballot_t cur_b = bcmd->ballots[0];
@@ -668,7 +668,7 @@ void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
                                     const uint64_t& slot,
                                     const ballot_t& ballot,
                                     shared_ptr<Marshallable> &cmd,
-                                    const function<void()> &cb) {
+                                    rusty::Function<void()> cb) {
   //Log_info("received slot:%d",slot);
   max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -682,7 +682,7 @@ void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
 void PaxosServer::OnSyncNoOps(shared_ptr<Marshallable> &cmd,
                                i32* ballot,
                                i32* valid,
-                               const function<void()> &cb){
+                               rusty::Function<void()> cb){
 
   auto bcmd = dynamic_pointer_cast<SyncNoOpRequest>(cmd);
   *valid = 1;
