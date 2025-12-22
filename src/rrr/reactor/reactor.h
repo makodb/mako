@@ -105,9 +105,10 @@ class Reactor {
   Reactor(Reactor&&) = delete;
   Reactor& operator=(Reactor&&) = delete;
 
-  // Returns thread-local reactor instance with single-threaded Rc
+  // @unsafe - Returns thread-local reactor instance with single-threaded Rc
   // SAFETY: Thread-local storage, single-threaded access only
   static rusty::Rc<Reactor> GetReactor();
+  // @unsafe - Returns thread-local disk reactor instance
   static rusty::Rc<Reactor> GetDiskReactor();
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
@@ -174,8 +175,9 @@ class Reactor {
   rusty::Rc<Coroutine> CreateRunCoroutine(rusty::Function<void()> func,
                                           const char* file = "",
                                           int64_t line = 0) const;
-  // Main event loop - check_timeout parameter for flexibility (Jetpack)
+  // @unsafe - Main event loop - check_timeout parameter for flexibility (Jetpack)
   void Loop(bool infinite = false, bool check_timeout = true) const;
+  // @unsafe - Disk event loop
   void DiskLoop() const;
   // @unsafe - Continues execution of a paused coroutine with rusty::Rc
   void ContinueCoro(rusty::Rc<Coroutine> sp_coro) const;

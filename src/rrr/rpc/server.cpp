@@ -15,59 +15,30 @@
 #include "server.hpp"
 #include "utils.hpp"
 
-// External safety annotations for atomic operations
-// @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
-// }
-
-// External safety annotations for Log functions
-// @external: {
-//   Log::debug: [unsafe]
-//   Log::info: [unsafe]
-//   Log::error: [unsafe]
-//   Log_debug: [unsafe]
-//   Log_info: [unsafe]
-//   Log_warn: [unsafe]
-//   Log_error: [unsafe]
-// }
-
-// External safety annotations for SpinLock (interior mutability pattern)
-// @external: {
-//   SpinLock::lock: [unsafe]
-//   SpinLock::unlock: [unsafe]
-//   const_cast: [unsafe]
-//   PollThreadWorker::update_mode: [unsafe]
-//   Marshal::write_bookmark: [unsafe]
-// }
-
-// External safety annotations for rusty-cpp Arc (safe smart pointer)
-// @external: {
-//   rusty::Arc::operator->: [safe]
-//   rusty::sync::Arc::operator->: [safe]
-//   rusty::Option::unwrap: [safe]
-//   rusty::sync::Weak::upgrade: [safe]
-// }
-
-// External safety annotations for thread-local worker access
-// @external: {
-//   PollThreadWorker::is_on_poll_thread: [safe]
-//   rrr::PollThreadWorker::is_on_poll_thread: [safe]
-// }
-
-
-using namespace std;
-
-// External safety annotations for std functions used in this module
+// External safety annotations for STL and language features that cannot have in-place annotations
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// now have in-place annotations in their respective headers.
+// Note: std::atomic public API (load, store, etc.) is annotated in event.h
 // @external: {
 //   std::unordered_map::find: [unsafe]
 //   std::unordered_map::end: [unsafe]
 //   std::unordered_map::erase: [unsafe]
 //   std::unordered_map::operator[]: [unsafe]
+//   std::unordered_set::find: [unsafe]
+//   std::unordered_set::end: [unsafe]
+//   std::unordered_set::insert: [unsafe]
+//   std::unordered_set::erase: [unsafe]
+//   std::unordered_set::begin: [unsafe]
+//   std::list::push_back: [unsafe]
+//   std::__cxx11::list::push_back: [unsafe]
 //   std::function::operator=: [unsafe]
+//   std::function::operator(): [unsafe]
+//   operator!=: [unsafe]
+//   operator==: [unsafe]
+//   const_cast: [unsafe]
 // }
+
+using namespace std;
 
 namespace rrr {
 
@@ -145,8 +116,7 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 SpinMutex<std::unordered_set<i32>> ServerConnection::rpc_id_missing_s{std::unordered_set<i32>()};
 
 
-// @unsafe - Initializes connection and updates counter
-// SAFETY: Counter operations are thread-safe
+// @safe - Initializes connection and updates counter
 ServerConnection::ServerConnection(Server* server, int socket)
         : server_(server), socket_(socket), status_(CONNECTED) {
     // increase number of open connections
@@ -204,7 +174,7 @@ void ServerConnection::end_reply() {
 }
 
 // @unsafe - Reads requests and dispatches to handlers
-// SAFETY: Creates coroutines for concurrent handling
+// SAFETY: Contains raw pointer operations (&packet_size, req->m)
 bool ServerConnection::handle_read() {
     if (status_ == CLOSED) {
         return false;
@@ -367,8 +337,7 @@ int ServerConnection::poll_mode() const {
     return mode;
 }
 
-// @unsafe - Constructs server with PollThread
-// SAFETY: Shared ownership via Arc<Mutex<>>, creates one if not provided
+// @safe - Constructs server with PollThread
 Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */) {
     if (poll_thread_worker.is_none()) {  // Check if Option is None
         poll_thread_worker_ = rusty::Some(PollThread::create());
@@ -377,8 +346,7 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
     }
 }
 
-// @unsafe - Destroys server and waits for connections
-// SAFETY: Uses request_close() for thread-safe close, waits for cleanup
+// @safe - Destroys server and waits for connections (calls @unsafe functions)
 Server::~Server() {
     // Request close for all connections via poll thread
     // @unsafe - SpinMutex guard operations
@@ -420,8 +388,7 @@ Server::~Server() {
 }
 
 // @unsafe - Accepts new client connections
-// @unsafe - Calls unsafe Log::debug for connection logging
-// SAFETY: Thread-safe with server connection lock
+// SAFETY: Contains raw pointer operations (p_svr_addr_->ai_addr)
 bool ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
@@ -581,7 +548,7 @@ ServerListener::ServerListener(Server* server, string addr) {
 }
 
 // @unsafe - Starts server listening on specified address
-// SAFETY: Creates listener with proper socket setup
+// SAFETY: Contains raw pointer dereference (sp_server_listener_->)
 int Server::start(const char* bind_addr) {
   if (!bind_addr) {
     Log_error("rrr::Server::start: bind_addr is NULL!");
@@ -593,8 +560,7 @@ int Server::start(const char* bind_addr) {
   return 0;
 }
 
-// @unsafe - Registers RPC handler in map
-// SAFETY: Uses std::unordered_map operations (external annotations not matched)
+// @safe - Registers RPC handler in map (calls @unsafe unordered_map)
 int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
     // disallow duplicate rpc_id
     if (handlers_.find(rpc_id) != handlers_.end()) {
@@ -606,8 +572,7 @@ int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
     return 0;
 }
 
-// @unsafe - Unregisters RPC handler from map
-// SAFETY: Uses std::unordered_map::erase (external annotations not matched)
+// @safe - Unregisters RPC handler from map (calls @unsafe unordered_map)
 void Server::unreg(i32 rpc_id) {
     handlers_.erase(rpc_id);
 }

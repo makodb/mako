@@ -393,6 +393,7 @@ class Marshal: public NoCopy {
       return n_discard;
     }
 
+    // @unsafe - Writes to file descriptor (I/O system call)
     int write_to_fd(int fd) {
       assert(write_idx <= data->size);
 			struct timespec begin2, begin2_cpu, end2, end2_cpu;
@@ -434,6 +435,7 @@ class Marshal: public NoCopy {
       return cnt;
     }
 
+    // @unsafe - Reads from file descriptor (I/O system call)
     int read_from_fd(int fd, size_t bytes = -1) {
       if(bytes == -1)bytes = data->size - write_idx;
       assert(write_idx <= data->size);
@@ -511,28 +513,34 @@ class Marshal: public NoCopy {
     head_ = tail_ = new chunk(block_size);
   }
 
+  // @safe - Simple empty check
   bool empty() const {
     assert(content_size_ == content_size_slow());
     return content_size_ == 0;
   }
+  // @safe - Returns cached content size
   size_t content_size() const {
     assert(content_size_ == content_size_slow());
     return content_size_;
   }
 
+  // @unsafe - Writes data to marshal buffer (uses raw pointer members)
   size_t write(const void *p, size_t n);
   // @unsafe - Reads data from marshal buffer (uses raw pointer members)
   size_t read(void *p, size_t n);
   // @unsafe - Peeks at data without consuming (uses raw pointer members)
   size_t peek(void *p, size_t n) const;
 
+  // @unsafe - Reads from file descriptor (I/O system call)
   size_t read_from_fd(int fd);
 
+  // @unsafe - Reads from file descriptor into chunk (I/O system call)
   size_t chnk_read_from_fd(int fd, size_t bytes);
 
   // @unsafe - Reuses chunks from another marshal (uses raw pointer members)
   size_t read_reuse_chnk(Marshal& m, size_t nbytes);
 
+  // @unsafe - Reads data into chunk (uses raw pointer members)
   size_t read_chnk(void* p, size_t n);
 
   // NOTE: This function is only used *internally* to chop a slice of marshal object.
@@ -542,6 +550,7 @@ class Marshal: public NoCopy {
   // @unsafe - Transfers data between Marshal objects (uses raw pointer members)
   size_t read_from_marshal(Marshal &m, size_t n);
 
+  // @unsafe - Writes to file descriptor (I/O system call)
   size_t write_to_fd(int fd);
 
   void reset(){

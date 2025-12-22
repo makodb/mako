@@ -16,20 +16,23 @@
 #include "client.hpp"
 #include "utils.hpp"
 
-// External safety annotations for atomic operations and STL functions
+// External safety annotations for STL and language features that cannot have in-place annotations
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// now have in-place annotations in their respective headers.
+// Note: std::atomic public API (load, store, etc.) is annotated in event.h
 // @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
 //   std::vector::push_back: [unsafe]
-//   rrr::Log::error: [unsafe]
-//   Log_error: [unsafe]
-//   Log_debug: [unsafe]
-//   std::unordered_map<auto,auto>::clear: [safe]
-//   std::unordered_map<auto,auto,auto,auto,auto>::clear: [safe]
-//   rrr::Marshal::write_to_fd: [unsafe]
-//   rrr::Marshal::empty: [safe]
+//   std::map::find: [unsafe]
+//   std::map::end: [unsafe]
+//   std::map::operator[]: [unsafe]
+//   std::unordered_map::find: [unsafe]
+//   std::unordered_map::end: [unsafe]
+//   std::unordered_map::insert: [unsafe]
+//   std::unordered_map::insert_or_assign: [unsafe]
+//   std::unordered_map::erase: [unsafe]
+//   std::unordered_map::clear: [unsafe]
+//   operator!=: [unsafe]
+//   operator==: [unsafe]
 //   const_cast: [unsafe]
 // }
 
@@ -102,8 +105,7 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // ClientConnection implementation
 // ============================================================================
 
-// @unsafe - Initializes connection
-// SAFETY: Stores references safely
+// @safe - Initializes connection (only stores references)
 ClientConnection::ClientConnection(Client* client, rusty::Arc<PollThread> poll_thread_worker)
     : client_(client),
       poll_thread_worker_(poll_thread_worker),
@@ -150,7 +152,7 @@ void ClientConnection::close() {
   invalidate_pending_futures();
 }
 
-// Jetpack: handle_free for explicit future cleanup (has internal @unsafe blocks)
+// @safe - Jetpack: handle_free for explicit future cleanup (calls @unsafe SpinMutex)
 void ClientConnection::handle_free(i64 xid) {
   // @unsafe - SpinMutex guard operations
   {
@@ -281,8 +283,7 @@ int ClientConnection::handle_write() {
 }
 
 // @unsafe - Reads and processes RPC responses
-// SAFETY: Protected by spinlock, validates packet structure
-// Jetpack: Split into handle_read_one and handle_read_two for batching
+// SAFETY: Contains raw pointer operations (GetReactor()->Loop())
 bool ClientConnection::handle_read() {
   if (!handle_read_one()) {
     return false;
@@ -304,6 +305,7 @@ bool ClientConnection::handle_read() {
   return true;
 }
 
+// @unsafe - Reads data from socket (I/O system call)
 // Jetpack: First phase - read data from socket
 bool ClientConnection::handle_read_one() {
   if (status_ != CONNECTED) {
@@ -318,7 +320,8 @@ bool ClientConnection::handle_read_one() {
   return true;
 }
 
-// Jetpack: Second phase - process packets from buffer
+// @unsafe - Processes packets from buffer
+// SAFETY: Contains raw pointer operations (&packet_size, fu->reply_.get()->)
 bool ClientConnection::handle_read_two() {
   if (status_ != CONNECTED) {
     return false;
@@ -403,7 +406,7 @@ int ClientConnection::poll_mode() const {
 }
 
 // @unsafe - Starts new RPC request with marshaling
-// SAFETY: Protected by SpinMutex for pending_fu_, direct spinlock for out_
+// SAFETY: Contains raw pointer operations (out_l_.get()->lock())
 FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
   out_l_.get()->lock();
 
@@ -447,7 +450,7 @@ FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr 
 }
 
 // @unsafe - Finalizes request packet with size header
-// SAFETY: Updates bookmark, enables write polling
+// SAFETY: Contains raw pointer operations (&*bmark_)
 void ClientConnection::end_request() {
   // set reply size in packet
   if (bmark_.is_some()) {
@@ -484,7 +487,8 @@ Client::~Client() {
   close();  // Delegate to close() which uses request_close()
 }
 
-// Jetpack: set validity flag on output marshal
+// @unsafe - Uses const_cast for interior mutability
+// SAFETY: Contains raw pointer dereference (connection_.get()->)
 void Client::set_valid(bool valid) const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).out_.valid_id = valid;
@@ -509,20 +513,24 @@ void Client::close() const {
   }
 }
 
-// Jetpack: handle_free for explicit future cleanup
+// @unsafe - Uses const_cast for interior mutability
+// SAFETY: Contains raw pointer cast
 void Client::handle_free(i64 xid) const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).handle_free(xid);
   }
 }
 
-// Jetpack: pause/resume for flow control
+// @unsafe - Uses const_cast for interior mutability
+// SAFETY: Contains raw pointer cast
 void Client::pause() const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).pause();
   }
 }
 
+// @unsafe - Uses const_cast for interior mutability
+// SAFETY: Contains raw pointer cast
 void Client::resume() const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).resume();
@@ -555,7 +563,7 @@ int Client::connect(const char* addr, bool client) const {
 }
 
 // @unsafe - Begins RPC request with marshaling
-// SAFETY: Delegates to ClientConnection
+// SAFETY: Contains raw pointer cast in return
 FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
   if (connection_.get()->is_none()) {
     return FutureResult::Err(ENOTCONN);
@@ -566,7 +574,7 @@ FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
 }
 
 // @unsafe - Completes request packet
-// SAFETY: Delegates to ClientConnection
+// SAFETY: Contains raw pointer cast
 void Client::end_request() const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
@@ -577,8 +585,7 @@ void Client::end_request() const {
 // ClientPool implementation
 // ============================================================================
 
-// @unsafe - Constructs pool with PollThread ownership
-// SAFETY: Shared ownership of PollThread
+// @safe - Constructs pool with PollThread ownership
 ClientPool::ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =? */,
                        int parallel_connections /* =? */)
     : parallel_connections_(parallel_connections) {
@@ -591,8 +598,7 @@ ClientPool::ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker 
   }
 }
 
-// @unsafe - Destroys pool and all cached connections
-// SAFETY: Closes all clients and releases PollThread
+// @safe - Destroys pool and all cached connections
 ClientPool::~ClientPool() {
   for (auto& it : cache_) {
     for (auto& client : it.second) {
@@ -607,7 +613,7 @@ ClientPool::~ClientPool() {
 }
 
 // @unsafe - Gets cached or creates new client connections
-// SAFETY: Protected by spinlock, handles connection failures gracefully
+// SAFETY: Contains raw pointer dereference
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
   l_.lock();

@@ -14,13 +14,8 @@
 #include "base/all.hpp"
 #include "utils.hpp"
 
-// External safety annotations for atomic operations
-// @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
-// }
+// Note: std::atomic public API (load, store, etc.) is annotated in event.h
+// No external annotations needed here - utils.cpp doesn't use atomics directly
 
 
 using namespace std;

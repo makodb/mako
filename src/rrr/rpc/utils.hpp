@@ -13,7 +13,8 @@
 #include <pthread.h>
 #include <inttypes.h>
 
-// External annotations for system functions used in utils
+// External annotations for system functions that cannot have in-place annotations
+// Note: Log functions now have in-place annotations in logging.hpp
 // @external: {
 //   fcntl: [unsafe, (int, int, ...) -> int]
 //   socket: [unsafe, (int, int, int) -> int]
@@ -25,11 +26,6 @@
 //   getaddrinfo: [unsafe, (const char*, const char*, const addrinfo*, addrinfo**) -> int]
 //   freeaddrinfo: [unsafe, (addrinfo*) -> void]
 //   close: [unsafe, (int) -> int]
-//   rrr::Log::info: [unsafe, (int, const char*, const char*, ...) -> void]
-//   rrr::Log::error: [unsafe, (int, const char*, const char*, ...) -> void]
-//   rrr::Log::debug: [unsafe, (int, const char*, const char*, ...) -> void]
-//   rrr::Log::warn: [unsafe, (int, const char*, const char*, ...) -> void]
-//   rrr::Log::fatal: [unsafe, (int, const char*, const char*, ...) -> void]
 // }
 
 namespace rrr {

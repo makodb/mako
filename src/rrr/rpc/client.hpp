@@ -11,24 +11,41 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 
-// External safety annotations for system functions used in this module
+// External safety annotations for system functions and STL operations that cannot have in-place annotations
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// now have in-place annotations in their respective headers.
 // @external: {
-//   socket: [unsafe, (int, int, int) -> int]
-//   connect: [unsafe, (int, const struct sockaddr*, socklen_t) -> int]
-//   close: [unsafe, (int) -> int]
-//   setsockopt: [unsafe, (int, int, int, const void*, socklen_t) -> int]
-//   getaddrinfo: [unsafe, (const char*, const char*, const struct addrinfo*, struct addrinfo**) -> int]
-//   freeaddrinfo: [unsafe, (struct addrinfo*) -> void]
-//   gai_strerror: [unsafe, (int) -> const char*]
-//   memset: [unsafe, (void*, int, size_t) -> void*]
-//   strcpy: [unsafe, (char*, const char*) -> char*]
-//   std::lock_guard: [safe, (std::mutex&) -> void]
-//   std::unique_lock: [safe, (std::mutex&) -> void]
-//   std::chrono::duration: [safe, (double) -> void]
-//   std::function: [safe, (auto) -> void]
-//   std::vector::push_back: [safe, (auto) -> void]
-//   rrr::Log::error: [unsafe]
-//   Log_error: [unsafe]
+//   socket: [unsafe]
+//   connect: [unsafe]
+//   close: [unsafe]
+//   setsockopt: [unsafe]
+//   getaddrinfo: [unsafe]
+//   freeaddrinfo: [unsafe]
+//   gai_strerror: [unsafe]
+//   memset: [unsafe]
+//   strcpy: [unsafe]
+//   std::lock_guard: [unsafe]
+//   std::unique_lock: [unsafe]
+//   std::chrono::duration: [unsafe]
+//   std::function: [unsafe]
+//   std::function::operator(): [unsafe]
+//   std::unordered_map::find: [unsafe]
+//   std::unordered_map::end: [unsafe]
+//   std::unordered_map::begin: [unsafe]
+//   std::unordered_map::insert: [unsafe]
+//   std::unordered_map::insert_or_assign: [unsafe]
+//   std::unordered_map::operator[]: [unsafe]
+//   std::unordered_map::erase: [unsafe]
+//   std::unordered_map::clear: [unsafe]
+//   std::vector::push_back: [unsafe]
+//   std::map::find: [unsafe]
+//   std::map::end: [unsafe]
+//   std::map::begin: [unsafe]
+//   std::map::insert: [unsafe]
+//   std::map::operator[]: [unsafe]
+//   operator!=: [unsafe]
+//   operator==: [unsafe]
+//   const_cast: [unsafe]
 // }
 
 namespace rrr {
@@ -135,6 +152,7 @@ public:
         return error_code_.get();
     }
 
+    // @safe - Simple getter
     i64 get_xid() const {
         return xid_;
     }
@@ -157,17 +175,17 @@ public:
     //   Future::safe_release(fu);  // NO-OP, just for compatibility
     // =========================================================================
 
-    // NO-OP: Arc automatically releases when dropped
+    // @safe - NO-OP: Arc automatically releases when dropped
     static inline void safe_release(rusty::Arc<Future> fu) {
         (void)fu;  // Intentionally empty - Arc handles cleanup
     }
 
-    // NO-OP: Legacy overload for any remaining raw pointer usage in old code paths
+    // @safe - NO-OP: Legacy overload for any remaining raw pointer usage in old code paths
     static inline void safe_release(Future* fu) {
         (void)fu;  // Intentionally empty - should not be called in new code
     }
 
-    // NO-OP: Overload for FutureResult (Result<Arc<Future>, i32>) - jetpack compatibility
+    // @safe - NO-OP: Overload for FutureResult (Result<Arc<Future>, i32>) - jetpack compatibility
     static inline void safe_release(FutureResult fu_result) {
         (void)fu_result;  // Intentionally empty - Arc handles cleanup
     }
@@ -190,12 +208,14 @@ public:
         futures_.push_back(std::move(f));
     }
 
+    // @safe - Waits for all futures in group
     void wait_all() {
         for (auto& f : futures_) {
             f->wait();
         }
     }
 
+    // @safe - Destructor waits for futures, Arc auto-cleanup
     ~FutureGroup() {
         wait_all();
         // Arc auto-released when vector destroyed - no manual release needed
@@ -270,10 +290,10 @@ public:
     // @safe - Simple destructor
     ~ClientConnection();
 
-    // @unsafe - Initializes connection
-    // SAFETY: Stores references safely
+    // @safe - Initializes connection (only stores references)
     ClientConnection(Client* client, rusty::Arc<PollThread> poll_thread_worker);
 
+    // @safe - Simple status check
     bool connected() const {
         return status_ == CONNECTED;
     }
@@ -297,11 +317,11 @@ public:
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
     // @unsafe - Begins RPC request with marshaling
-    // SAFETY: Protected by spinlock, returns Arc<Future> for memory safety
+    // SAFETY: Contains raw pointer operations (out_l_.get()->lock())
     FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr());
 
     // @unsafe - Completes request packet
-    // SAFETY: Must be called after begin_request
+    // SAFETY: Contains raw pointer operations (&*bmark_)
     void end_request();
 
     // @safe - Marshals data into output buffer
@@ -324,22 +344,25 @@ public:
         return *this;
     }
 
+    // @safe - Simple getter
     int fd() const override {
         return socket_;
     }
 
+    // @safe - Simple getter
     std::string host() const {
         return host_;
     }
 
-    // Jetpack: pause/resume for flow control
+    // @safe - Jetpack: pause/resume for flow control
     void pause() { paused_ = true; }
+    // @safe
     void resume() { paused_ = false; }
 
     // @safe - Returns poll mode based on output buffer
     int poll_mode() const override;
 
-    // Jetpack: content_size helper
+    // @safe - Jetpack: content_size helper
     size_t content_size() override {
         return in_.content_size();
     }
@@ -350,11 +373,12 @@ public:
     int handle_write() override;
 
     // @unsafe - Reads and processes RPC responses
-    // SAFETY: Protected by spinlock, validates packet structure
+    // SAFETY: Contains raw pointer operations (GetReactor()->Loop())
     bool handle_read() override;
 
-    // Jetpack: split-phase read support
+    // @unsafe - Jetpack: split-phase read support (I/O operations)
     bool handle_read_one() override;
+    // @unsafe
     bool handle_read_two() override;
 
     // @safe - Error handler
@@ -376,7 +400,7 @@ public:
         return status_ == CLOSED;
     }
 
-    // Jetpack: handle_free for explicit future cleanup
+    // @safe - Jetpack: handle_free for explicit future cleanup (calls @unsafe SpinMutex)
     void handle_free(i64 xid);
 
     // Comparison operator for container support
@@ -390,10 +414,11 @@ public:
 
 } // namespace rrr
 
-// Hash specialization for rusty::Arc<ClientConnection>
+// @safe - Hash specialization for rusty::Arc<ClientConnection>
 namespace std {
 template<>
 struct hash<rusty::Arc<rrr::ClientConnection>> {
+    // @safe - Simple pointer hash
     size_t operator()(const rusty::Arc<rrr::ClientConnection>& arc) const {
         return hash<const rrr::ClientConnection*>()(arc.get());
     }
@@ -421,28 +446,35 @@ class Client: public NoCopy {
     rusty::Cell<i32> rpc_id_{0};
 
 public:
-    // Jetpack-specific public members (Cell for interior mutability through Arc)
+    // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
     // These are accessed through getters/setters for thread-safety
     void set_client_mode(bool v) const { is_client_mode_.set(v); }
+    // @safe
     bool client_mode() const { return is_client_mode_.get(); }
+    // @safe
     void set_time(long v) const { time_.set(v); }
+    // @safe
     long time() const { return time_.get(); }
+    // @safe
     void set_timeout(uint64_t v) const { timeout_.set(v); }
+    // @safe
     uint64_t timeout() const { return timeout_.get(); }
+    // @safe
     void set_rpc_id(i32 v) const { rpc_id_.set(v); }
+    // @safe
     i32 rpc_id() const { return rpc_id_.get(); }
 
     // @safe - Cleanup destructor (has internal @unsafe blocks)
     // SAFETY: Connection cleanup handled by ClientConnection
     virtual ~Client();
 
+    // @safe - Simple initialization
     Client(rusty::Arc<PollThread> poll_thread_worker):
         connection_(rusty::None),
         poll_thread_worker_(poll_thread_worker) { }
 
     // Factory method to create Client with Arc
-    // @unsafe - Returns Arc<Client> with explicit reference counting
-    // SAFETY: Arc provides thread-safe reference counting
+    // @safe - Returns Arc<Client> (Arc::make is safe)
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
         return rusty::Arc<Client>::make(poll_thread_worker);
     }
@@ -457,16 +489,15 @@ public:
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
     // @unsafe - Begins RPC request with marshaling
-    // SAFETY: Delegates to ClientConnection
+    // SAFETY: Contains raw pointer cast in return
     FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const;
 
     // @unsafe - Completes request packet
-    // SAFETY: Must be called after begin_request
+    // SAFETY: Contains raw pointer cast
     void end_request() const;
 
     // @unsafe - Marshals data into output buffer
-    // SAFETY: Delegates to ClientConnection
-    // @lifetime: (&'a, const T&) -> &'a
+    // SAFETY: Contains raw pointer cast (const_cast)
     template<class T>
     const Client& operator <<(const T& v) const {
         if (connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected()) {
@@ -477,8 +508,7 @@ public:
 
     // NOTE: this function is used *internally* by Python extension
     // @unsafe - Marshals data from another Marshal
-    // SAFETY: Delegates to ClientConnection
-    // @lifetime: (&'a, Marshal&) -> &'a
+    // SAFETY: Contains raw pointer cast (const_cast)
     const Client& operator <<(Marshal& m) const {
         if (connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected()) {
             const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << m;
@@ -486,12 +516,17 @@ public:
         return *this;
     }
 
+    // @unsafe - Uses const_cast for interior mutability
+    // SAFETY: Contains raw pointer dereference
     void set_valid(bool valid) const;
-    // @unsafe - Establishes TCP connection
-    // SAFETY: Creates ClientConnection and connects
+    // @unsafe - Establishes TCP connection (socket system calls)
     int connect(const char* addr, bool client = true) const;
 
+    // @unsafe - Uses const_cast for interior mutability
+    // SAFETY: Contains raw pointer cast
     void pause() const;
+    // @unsafe - Uses const_cast for interior mutability
+    // SAFETY: Contains raw pointer cast
     void resume() const;
 
     // reentrant, could be called multiple times
@@ -499,11 +534,13 @@ public:
     // SAFETY: Idempotent, delegates to ClientConnection
     void close() const;
 
-    // Jetpack compatibility wrapper
+    // @safe - Jetpack compatibility wrapper
     void close_and_release() {
         close();
     }
 
+    // @unsafe - Accesses UnsafeCell
+    // SAFETY: Contains raw pointer dereference in return
     int fd() const {
         if (connection_.get()->is_some()) {
             return connection_.get()->as_ref().unwrap()->fd();
@@ -511,6 +548,8 @@ public:
         return -1;
     }
 
+    // @unsafe - Accesses UnsafeCell
+    // SAFETY: Contains raw pointer dereference in return
     std::string host() const {
         if (connection_.get()->is_some()) {
             return connection_.get()->as_ref().unwrap()->host();
@@ -518,17 +557,20 @@ public:
         return "";
     }
 
+    // @unsafe - Accesses UnsafeCell
+    // SAFETY: Contains raw pointer dereference in return
     bool connected() const {
         return connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected();
     }
 
-    // Get the underlying connection (for advanced use)
-    // Returns a reference to the connection if it exists
+    // @unsafe - Get the underlying connection
+    // SAFETY: Contains raw pointer dereference
     const rusty::Option<rusty::Arc<ClientConnection>>& connection() const {
         return *connection_.get();
     }
 
-    // Jetpack: handle_free for explicit future cleanup
+    // @unsafe - Jetpack: handle_free for explicit future cleanup
+    // SAFETY: Contains raw pointer cast
     void handle_free(i64 xid) const;
 
 };
@@ -551,16 +593,14 @@ class ClientPool: public NoCopy {
 public:
 
     // @safe - Creates pool with optional PollThread
-    // SAFETY: Shared ownership of PollThread
     ClientPool(rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker = rusty::None, int parallel_connections = 1);
     // @safe - Closes all cached connections
-    // SAFETY: Properly releases all clients and PollThread via Arc
     ~ClientPool();
 
     // return cached client connection
     // on error, return None
-    // @safe - Gets or creates client connection, returns Option<Arc<Client>>
-    // SAFETY: Protected by spinlock, handles connection failures, Arc for thread-safe reference counting
+    // @unsafe - Gets or creates client connection
+    // SAFETY: Contains raw pointer dereference
     rusty::Option<rusty::Arc<rrr::Client>> get_client(const std::string& addr);
 
 };

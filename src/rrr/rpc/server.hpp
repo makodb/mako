@@ -19,41 +19,35 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 
-// External safety annotations for system functions used in this module
+// External safety annotations for system functions and STL operations that cannot have in-place annotations
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// now have in-place annotations in their respective headers.
 // @external: {
 //   bind: [unsafe, (int, const struct sockaddr*, socklen_t) -> int]
 //   listen: [unsafe, (int, int) -> int]
 //   accept: [unsafe, (int, struct sockaddr*, socklen_t*) -> int]
 //   usleep: [unsafe, (useconds_t) -> int]
-// }
-
-// External safety annotations for STL operations used in this module
-// @external: {
-//   operator!=: [safe, (auto, auto) -> bool]
-//   operator==: [safe, (auto, auto) -> bool]
-//   std::*::find: [safe, (auto) -> auto]
-//   std::*::end: [safe, () -> auto]
-//   std::*::begin: [safe, () -> auto]
-//   std::*::insert: [safe, (auto) -> auto]
-//   std::*::operator[]: [safe, (auto) -> auto]
-//   std::*::erase: [safe, (auto) -> auto]
-// }
-
-// External safety annotations for Log functions
-// @external: {
-//   Log::debug: [unsafe]
-//   Log::info: [unsafe]
-//   Log::error: [unsafe]
-//   Log_debug: [unsafe]
-//   Log_info: [unsafe]
-//   Log_warn: [unsafe]
-//   Log_error: [unsafe]
-// }
-
-// External safety annotations for SpinLock (interior mutability pattern)
-// @external: {
-//   SpinLock::lock: [unsafe]
-//   SpinLock::unlock: [unsafe]
+//   operator!=: [unsafe]
+//   operator==: [unsafe]
+//   std::unordered_map::find: [unsafe]
+//   std::unordered_map::end: [unsafe]
+//   std::unordered_map::begin: [unsafe]
+//   std::unordered_map::insert: [unsafe]
+//   std::unordered_map::insert_or_assign: [unsafe]
+//   std::unordered_map::operator[]: [unsafe]
+//   std::unordered_map::erase: [unsafe]
+//   std::unordered_map::clear: [unsafe]
+//   std::unordered_set::find: [unsafe]
+//   std::unordered_set::end: [unsafe]
+//   std::unordered_set::begin: [unsafe]
+//   std::unordered_set::insert: [unsafe]
+//   std::unordered_set::erase: [unsafe]
+//   std::list::push_back: [unsafe]
+//   std::list::begin: [unsafe]
+//   std::list::end: [unsafe]
+//   std::__cxx11::list::push_back: [unsafe]
+//   std::vector::push_back: [unsafe]
+//   std::function::operator(): [unsafe]
 //   const_cast: [unsafe]
 // }
 
@@ -106,6 +100,7 @@ class ServerListener: public Pollable {
     return Pollable::READ;
   }
 
+  // @safe - Not implemented, will abort if called
   // Jetpack: content_size not used for listener
   size_t content_size() override {
     verify(0);
@@ -116,11 +111,12 @@ class ServerListener: public Pollable {
   // Returns MODE_NO_CHANGE since ServerListener never handles write
   int handle_write() override {verify(0); return Pollable::MODE_NO_CHANGE;}
 
-  // @unsafe - Calls unsafe Log::debug for connection logging
-  // SAFETY: Thread-safe with server connection lock
+  // @unsafe - Calls handle_read() which contains raw pointer operations
   // Jetpack: split-phase read support
   bool handle_read_one() override { return handle_read(); }
+  // @safe - Not implemented, will abort if called
   bool handle_read_two() override { verify(0); return true; }
+  // @unsafe - Accepts incoming connections (raw pointer operations)
   bool handle_read() override;
 
   // @safe - Not implemented, will abort if called
@@ -213,10 +209,10 @@ public:
     // @safe - Simple destructor updating counter
     ~ServerConnection();
 
-    // @unsafe - Initializes connection with socket
-    // SAFETY: Increments server connection counter
+    // @safe - Initializes connection with socket
     ServerConnection(Server* server, int socket);
 
+    // @safe - Simple status check
     bool connected() {
       return status_ == CONNECTED;
     }
@@ -243,7 +239,7 @@ public:
     // SAFETY: Protected by output spinlock, uses weak ref to poll thread
     void end_reply();
 
-    // helper function, do some work in background
+    // @safe - Delegates to thread pool (currently a no-op stub)
     int run_async(const std::function<void()>& f);
 
     // @safe - Marshals data into output buffer
@@ -261,6 +257,7 @@ public:
         return *this;
     }
 
+    // @safe - Returns file descriptor
     int fd() const override {
         return socket_;
     }
@@ -269,6 +266,7 @@ public:
     // Uses const_cast for interior mutability (SpinLock marked as external)
     int poll_mode() const override;
 
+    // @safe - Not implemented, will abort if called
     // Jetpack: content_size not used for connection
     size_t content_size() override {
         verify(0);
@@ -280,12 +278,13 @@ public:
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
     int handle_write() override;
 
-    // @unsafe - Reads and processes RPC requests
-    // SAFETY: Creates coroutines for handlers
+    // @unsafe - Reads and processes RPC requests (raw pointer operations)
     bool handle_read() override;  // Batching mode: reads ALL available requests
 
+    // @unsafe - Calls handle_read() which has raw pointer operations
     // Jetpack: split-phase read support
     bool handle_read_one() override { return handle_read(); }
+    // @safe - Not implemented, will abort if called
     bool handle_read_two() override { verify(0); return true; }
 
     // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
@@ -307,6 +306,7 @@ public:
         return status_ == CLOSED;
     }
 
+    // @safe - Not implemented, will abort if called
     // Jetpack: handle_free stub
     void handle_free() {verify(0);}
 
@@ -325,6 +325,7 @@ public:
 namespace std {
 template<>
 struct hash<rusty::Arc<rrr::ServerConnection>> {
+    // @safe - Uses pointer value for hash (no dereference)
     size_t operator()(const rusty::Arc<rrr::ServerConnection>& arc) const {
         return hash<const rrr::ServerConnection*>()(arc.get());
     }
@@ -332,6 +333,7 @@ struct hash<rusty::Arc<rrr::ServerConnection>> {
 
 template<>
 struct hash<rusty::Arc<rrr::ServerListener>> {
+    // @safe - Uses pointer value for hash (no dereference)
     size_t operator()(const rusty::Arc<rrr::ServerListener>& arc) const {
         return hash<const rrr::ServerListener*>()(arc.get());
     }
@@ -357,6 +359,7 @@ public:
     DeferredReply(const DeferredReply&) = delete;
     DeferredReply& operator=(const DeferredReply&) = delete;
 
+    // @safe - Initializes deferred reply with move semantics
     DeferredReply(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn,
                   rusty::Function<void()> marshal_reply, rusty::Function<void()> cleanup)
         : req_(std::move(req)), weak_sconn_(weak_sconn),
@@ -371,6 +374,7 @@ public:
         // req_ automatically cleaned up by rusty::Box destructor
     }
 
+    // @safe - Currently a no-op stub
     int run_async(const std::function<void()>& f) {
       // TODO disable threadpool run in RPCs.
       return 0;
@@ -426,15 +430,14 @@ class Server: public NoCopy {
 public:
     std::string addr_;
 
-    // @unsafe - Creates server with optional PollThread
+    // @safe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
     Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
-    // @unsafe - Destroys server and all connections
+    // @safe - Destroys server and all connections
     // SAFETY: Waits for all connections to close, then deletes owned services
     virtual ~Server();
 
-    // @unsafe - Starts server on specified address
-    // SAFETY: Proper socket binding and thread creation
+    // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
 
     // @unsafe - Registers service and transfers ownership to Server
@@ -474,7 +477,7 @@ public:
      *     // No need to release, shared_ptr handles connection
      *  }
      */
-    // @unsafe - Registers RPC handler function (uses unordered_map)
+    // @safe - Registers RPC handler function (calls @unsafe unordered_map)
     int reg_handler(i32 rpc_id, const RequestHandler& func);
 
     // @unsafe - uses raw pointer svc and member function pointer
@@ -493,7 +496,7 @@ public:
         return 0;
     }
 
-    // @unsafe - Unregisters RPC handler (uses unordered_map)
+    // @safe - Unregisters RPC handler (calls @unsafe unordered_map)
     void unreg(i32 rpc_id);
 };
 
