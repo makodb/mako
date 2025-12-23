@@ -586,11 +586,12 @@ class Marshal: public NoCopy {
     write_cnt_ = 0;
   }
 
-  // @unsafe - Creates bookmark for deferred writes, returns by move
-  // Uses raw pointer operations internally
+  // @safe - Creates bookmark for deferred writes, returns by move
+  // SAFETY: Internal @unsafe block handles raw pointer operations
   bookmark set_bookmark(size_t n);
 
-  // @unsafe - Writes value to bookmark locations (uses pointer operations)
+  // @safe - Writes value to bookmark locations
+  // SAFETY: Internal @unsafe block handles pointer operations
   template<typename T>
   void write_bookmark(bookmark& bm, const T& value) {
     // @unsafe
@@ -659,22 +660,28 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) {
   return m;
 }
 
-// @unsafe
+// @safe - Writes v32 to marshal
 // @lifetime: (&'a, const v32&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
-  char buf[5];
-  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-  verify(m.write(buf, bsize) == bsize);
-  return m;
+  // @unsafe
+  {
+    char buf[5];
+    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+    verify(m.write(buf, bsize) == bsize);
+    return m;
+  }
 }
 
-// @unsafe
+// @safe - Writes v64 to marshal
 // @lifetime: (&'a, const v64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
-  char buf[9];
-  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-  verify(m.write(buf, bsize) == bsize);
-  return m;
+  // @unsafe
+  {
+    char buf[9];
+    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+    verify(m.write(buf, bsize) == bsize);
+    return m;
+  }
 }
 
 // @unsafe

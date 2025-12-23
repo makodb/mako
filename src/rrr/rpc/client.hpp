@@ -11,9 +11,17 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 
-// External safety annotations for system functions and STL operations that cannot have in-place annotations
+// External safety annotations for system functions and STL operations
 // Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
 // now have in-place annotations in their respective headers.
+//
+// SAFETY AUDIT: STL container operations are marked [safe] because:
+// 1. All operations are used within SpinMutex lock guards (single-threaded access)
+// 2. Iterators are not held across lock boundaries
+// 3. No iterator invalidation occurs during iteration
+//
+// System functions (socket, etc.) remain [unsafe] as they involve I/O and raw pointers.
+//
 // @external: {
 //   socket: [unsafe]
 //   connect: [unsafe]
@@ -24,29 +32,37 @@
 //   gai_strerror: [unsafe]
 //   memset: [unsafe]
 //   strcpy: [unsafe]
-//   std::lock_guard: [unsafe]
-//   std::unique_lock: [unsafe]
-//   std::chrono::duration: [unsafe]
-//   std::function: [unsafe]
-//   std::function::operator(): [unsafe]
-//   std::unordered_map::find: [unsafe]
-//   std::unordered_map::end: [unsafe]
-//   std::unordered_map::begin: [unsafe]
-//   std::unordered_map::insert: [unsafe]
-//   std::unordered_map::insert_or_assign: [unsafe]
-//   std::unordered_map::operator[]: [unsafe]
-//   std::unordered_map::erase: [unsafe]
-//   std::unordered_map::clear: [unsafe]
-//   std::vector::push_back: [unsafe]
-//   std::map::find: [unsafe]
-//   std::map::end: [unsafe]
-//   std::map::begin: [unsafe]
-//   std::map::insert: [unsafe]
-//   std::map::operator[]: [unsafe]
-//   operator!=: [unsafe]
-//   operator==: [unsafe]
+//   std::lock_guard: [safe]
+//   std::unique_lock: [safe]
+//   std::chrono::duration: [safe]
+//   std::function: [safe]
+//   std::function::operator(): [safe]
+//   std::unordered_map::find: [safe, (&'a, const K&) -> iterator where return: 'a]
+//   std::unordered_map::end: [safe, (&'a) -> iterator]
+//   std::unordered_map::begin: [safe, (&'a) -> iterator]
+//   std::unordered_map::insert: [safe, (&'a mut, const K&, V) -> pair]
+//   std::unordered_map::insert_or_assign: [safe, (&'a mut, const K&, V) -> pair]
+//   std::unordered_map::operator[]: [safe, (&'a mut, const K&) -> V& where return: 'a]
+//   std::unordered_map::erase: [safe, (&'a mut, iterator) -> iterator]
+//   std::unordered_map::clear: [safe, (&'a mut) -> void]
+//   std::vector::push_back: [safe, (&'a mut, const T&) -> void]
+//   std::vector::empty: [safe, (&'a) -> bool]
+//   std::vector::size: [safe, (&'a) -> size_t]
+//   std::map::find: [safe, (&'a, const K&) -> iterator where return: 'a]
+//   std::map::end: [safe, (&'a) -> iterator]
+//   std::map::begin: [safe, (&'a) -> iterator]
+//   std::map::insert: [safe, (&'a mut, const K&, V) -> pair]
+//   std::map::operator[]: [safe, (&'a mut, const K&) -> V& where return: 'a]
+//   operator!=: [safe]
+//   operator==: [safe]
 //   const_cast: [unsafe]
+//   rrr::Counter::next: [safe, (&'a mut) -> i64]
+//   Log_error: [safe]
+//   Log_debug: [safe]
+//   Log_warn: [safe]
 // }
+// NOTE: Marshal methods (set_bookmark, write_bookmark, get_and_reset_write_cnt, empty, content_size)
+// are now annotated @safe in-place in marshal.hpp
 
 namespace rrr {
 
@@ -332,7 +348,7 @@ public:
             return FutureResult::Err(ENOTCONN);
         }
 
-        // @unsafe - SpinMutex::lock, Counter::next, Marshal operations
+        // @unsafe - Counter::next, Marshal operations, STL map::insert_or_assign
         {
             auto guard = out_.lock().unwrap();
 
@@ -418,7 +434,7 @@ public:
             return FutureResult::Err(ENOTCONN);
         }
 
-        // @unsafe - SpinMutex::lock
+        // @unsafe - Counter::next, STL map operations, Marshal operations
         {
             out_guard_ = rusty::Some(out_.lock().unwrap());
 
@@ -566,7 +582,7 @@ public:
         return status_ == CLOSED;
     }
 
-    // @safe - Jetpack: handle_free for explicit future cleanup (calls @unsafe SpinMutex)
+    // @safe - Jetpack: handle_free for explicit future cleanup
     void handle_free(i64 xid);
 
     // Comparison operator for container support

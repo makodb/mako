@@ -121,7 +121,7 @@ ClientConnection::~ClientConnection() {
 // @safe - Cancels all pending futures with error, protected by SpinMutex
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
-  // @unsafe - SpinMutex guard operations
+  // @unsafe - STL operations (map iteration, list::push_back, map::clear)
   {
     auto guard = pending_fu_.lock().unwrap();
     for (auto& it: *guard) {
@@ -149,9 +149,9 @@ void ClientConnection::close() {
   invalidate_pending_futures();
 }
 
-// @safe - Jetpack: handle_free for explicit future cleanup (calls @unsafe SpinMutex)
+// @safe - Jetpack: handle_free for explicit future cleanup
 void ClientConnection::handle_free(i64 xid) {
-  // @unsafe - SpinMutex guard operations
+  // @unsafe - STL operations (map::find, map::erase)
   {
     auto guard = pending_fu_.lock().unwrap();
     auto it = guard->find(xid);
@@ -264,7 +264,7 @@ int ClientConnection::handle_write() {
   if (paused_) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
-  // @unsafe - SpinMutex::lock and Marshal::write_to_fd
+  // @unsafe - Marshal operations (write_to_fd, empty)
   {
     auto guard = out_.lock().unwrap();
     guard->write_to_fd(socket_);
@@ -342,7 +342,7 @@ bool ClientConnection::handle_read_two() {
       in_ >> v_reply_xid >> v_error_code;
 
       rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
-      // @unsafe - SpinMutex guard operations
+      // @unsafe - STL operations (map::find, map::erase)
       {
         auto guard = pending_fu_.lock().unwrap();
         auto it = guard->find(v_reply_xid.get());
@@ -385,7 +385,7 @@ bool ClientConnection::handle_read_two() {
 // @safe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
   int mode = Pollable::READ;
-  // @unsafe - SpinMutex::lock
+  // @unsafe - Marshal::empty
   {
     auto guard = out_.lock().unwrap();
     if (!guard->empty()) {

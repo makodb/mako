@@ -210,7 +210,7 @@ bool ServerConnection::handle_read() {
             }, __FILE__, __LINE__);
         } else {
             // Track missing RPC IDs and suppress duplicate warnings
-            // @unsafe - SpinMutex guard operations
+            // @unsafe - STL operations (set::find, set::insert)
             bool surpress_warning = false;
             {
                 auto guard = rpc_id_missing_s.lock().unwrap();
@@ -240,7 +240,7 @@ int ServerConnection::handle_write() {
     }
 
     int result = Pollable::MODE_NO_CHANGE;
-    // @unsafe - SpinMutex::lock and Marshal::write_to_fd
+    // @unsafe - Marshal operations (write_to_fd, empty)
     {
         auto guard = out_.lock().unwrap();
         guard->write_to_fd(socket_);
@@ -268,7 +268,7 @@ void ServerConnection::close() {
         { Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_); }
 
         // Remove from sconns_ (if tracked)
-        // @unsafe - SpinMutex guard operations
+        // @unsafe - STL operations (list iteration, list::erase)
         {
             auto guard = server_->sconns_.lock().unwrap();
             for (auto it = guard->begin(); it != guard->end(); ++it) {
@@ -284,7 +284,7 @@ void ServerConnection::close() {
 // @safe - Returns poll mode based on output buffer, protected by SpinMutex
 int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    // @unsafe - SpinMutex::lock
+    // @unsafe - Marshal::empty
     {
         auto guard = out_.lock().unwrap();
         if (!guard->empty()) {
@@ -306,7 +306,7 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 // @safe - Destroys server and waits for connections (calls @unsafe functions)
 Server::~Server() {
     // Request close for all connections via poll thread
-    // @unsafe - SpinMutex guard operations
+    // @unsafe - STL operations (list iteration, list::clear)
     {
         auto guard = sconns_.lock().unwrap();
         for (auto& sconn : *guard) {
@@ -362,7 +362,7 @@ bool ServerListener::handle_read() {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       verify(set_nonblocking(clnt_socket, true) == 0);
 
-      // @unsafe - SpinMutex guard operations
+      // @unsafe - STL operations (list::insert) and const_cast
       auto sconn = rusty::Arc<ServerConnection>::make(server_, clnt_socket);
       const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
       {

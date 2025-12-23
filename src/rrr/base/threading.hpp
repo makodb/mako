@@ -3,6 +3,7 @@
 #include <rusty/box.hpp>
 #include <rusty/result.hpp>
 #include <rusty/option.hpp>
+#include <rusty/unsafe_cell.hpp>
 
 #include <list>
 #include <queue>
@@ -124,67 +125,109 @@ public:
 template<typename T>
 using SpinLockResult = rusty::Result<SpinMutexGuard<T>, SpinPoisonError<T>>;
 
-// @unsafe - SpinMutexGuard - RAII lock guard for SpinMutex<T>
+// @safe - SpinMutexGuard - RAII lock guard for SpinMutex<T>
+// This is safe because:
+// 1. The guard can only be created by SpinMutex::lock() which acquires the lock
+// 2. Data access goes through UnsafeCell which has internal @unsafe blocks
+// 3. The destructor releases the lock automatically (RAII)
+// 4. Non-copyable ensures single ownership of the lock
 template<typename T>
 class SpinMutexGuard {
 private:
     SpinLock* lock_;
-    T* data_;
+    rusty::UnsafeCell<T>* data_;  // Uses UnsafeCell for interior mutability
     bool owns_lock_;
 
     friend class SpinMutex<T>;
 
-    SpinMutexGuard(SpinLock* lock, T* data)
+    // @safe - Private constructor only callable by SpinMutex::lock()
+    SpinMutexGuard(SpinLock* lock, rusty::UnsafeCell<T>* data)
         : lock_(lock), data_(data), owns_lock_(true) {}
 
 public:
-    // Access to data (dereferences pointer)
+    // @safe - Access to data through UnsafeCell
     // @lifetime: (&'a) -> &'a
     T& operator*() {
         // @unsafe
-        { return *data_; }
+        {
+            T& ref = data_->as_mut_unchecked();
+            return ref;
+        }
     }
+
+    // @safe - Const access to data through UnsafeCell
     // @lifetime: (&'a) -> &'a
     const T& operator*() const {
         // @unsafe
-        { return *data_; }
+        {
+            const T& ref = data_->as_ref_unchecked();
+            return ref;
+        }
     }
 
-    // Pointer access
-    // @safe
+    // @safe - Pointer access through UnsafeCell
     // @lifetime: (&'a) -> &'a
-    T* operator->() { return data_; }
-    // @safe
-    // @lifetime: (&'a) -> &'a
-    const T* operator->() const { return data_; }
+    T* operator->() {
+        // @unsafe
+        {
+            return data_->get();
+        }
+    }
 
-    // Get raw pointer
+    // @safe - Const pointer access
     // @lifetime: (&'a) -> &'a
-    T* get() { return data_; }
-    // @lifetime: (&'a) -> &'a
-    const T* get() const { return data_; }
+    const T* operator->() const {
+        // @unsafe
+        {
+            return data_->get_const();
+        }
+    }
 
-    // Get mutable reference
+    // @safe - Get raw pointer through UnsafeCell
+    // @lifetime: (&'a) -> &'a
+    T* get() {
+        // @unsafe
+        {
+            return data_->get();
+        }
+    }
+
+    // @safe - Get const raw pointer
+    // @lifetime: (&'a) -> &'a
+    const T* get() const {
+        // @unsafe
+        {
+            return data_->get_const();
+        }
+    }
+
+    // @safe - Get mutable reference through UnsafeCell
     // @lifetime: (&'a) -> &'a
     T& get_mut() {
         // @unsafe
-        { return *data_; }
+        {
+            T& ref = data_->as_mut_unchecked();
+            return ref;
+        }
     }
 
-    // Non-copyable
+    // Non-copyable (enforces single ownership of lock)
     SpinMutexGuard(const SpinMutexGuard&) = delete;
     SpinMutexGuard& operator=(const SpinMutexGuard&) = delete;
 
-    // @unsafe - Movable (transfers ownership of raw pointers)
+    // @safe - Movable (transfers ownership)
     SpinMutexGuard(SpinMutexGuard&& other) noexcept
         : lock_(other.lock_), data_(other.data_), owns_lock_(other.owns_lock_) {
         other.owns_lock_ = false;
     }
 
+    // @safe - Move assignment
+    // @lifetime: (&'a, SpinMutexGuard<T>) -> &'a
     SpinMutexGuard& operator=(SpinMutexGuard&& other) noexcept {
         if (this != &other) {
             if (owns_lock_ && lock_) {
-                lock_->unlock();
+                // @unsafe
+                { lock_->unlock(); }
             }
             lock_ = other.lock_;
             data_ = other.data_;
@@ -194,16 +237,23 @@ public:
         return *this;
     }
 
-    // @unsafe - Destructor unlocks automatically
+    // @safe - Destructor unlocks automatically (RAII)
     ~SpinMutexGuard() {
         if (owns_lock_ && lock_) {
-            lock_->unlock();
+            // @unsafe
+            { lock_->unlock(); }
         }
     }
 };
 
-// @unsafe - SpinMutex<T> - Thread-safe interior mutability with spinlock
-// Similar to rusty::Mutex<T> but uses SpinLock for low-latency locking.
+// @safe - SpinMutex<T> - Thread-safe interior mutability with spinlock
+// Similar to Rust's Mutex<T> but uses SpinLock for low-latency locking.
+//
+// This is safe because:
+// 1. Data is stored in UnsafeCell which provides interior mutability
+// 2. The lock() method acquires the spinlock before returning the guard
+// 3. The guard releases the lock in its destructor (RAII)
+// 4. All unsafe operations are encapsulated in internal @unsafe blocks
 //
 // Usage:
 //   SpinMutex<int> counter(0);
@@ -216,49 +266,61 @@ template<typename T>
 class SpinMutex : public NoCopy {
 private:
     mutable SpinLock lock_;
-    mutable T data_;
+    mutable rusty::UnsafeCell<T> data_;  // UnsafeCell for interior mutability
 
 public:
     // Type alias for the guard type
     using Guard = SpinMutexGuard<T>;
 
-    // @unsafe - Default constructor for default-constructible types
+    // @safe - Default constructor for default-constructible types
     SpinMutex() : data_() {}
 
-    // @unsafe - Constructor initializes data
+    // @safe - Constructor initializes data
     explicit SpinMutex(T value) : data_(std::move(value)) {}
 
-    // @unsafe - Acquires lock and returns LockResult
+    // @safe - Acquires lock and returns LockResult
     [[nodiscard]] SpinLockResult<T> lock() {
-        lock_.lock();
-        return SpinLockResult<T>::Ok(SpinMutexGuard<T>(&lock_, &data_));
+        // @unsafe
+        {
+            lock_.lock();
+            SpinLock* lock_ptr = &lock_;
+            rusty::UnsafeCell<T>* data_ptr = &data_;
+            return SpinLockResult<T>::Ok(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
     }
 
-    // @unsafe - Acquires lock with const access (interior mutability)
+    // @safe - Acquires lock with const access (interior mutability via UnsafeCell)
     [[nodiscard]] SpinLockResult<T> lock() const {
-        lock_.lock();
-        return SpinLockResult<T>::Ok(SpinMutexGuard<T>(
-            const_cast<SpinLock*>(&lock_),
-            const_cast<T*>(&data_)
-        ));
+        // @unsafe
+        {
+            const_cast<SpinLock&>(lock_).lock();
+            SpinLock* lock_ptr = const_cast<SpinLock*>(&lock_);
+            rusty::UnsafeCell<T>* data_ptr = const_cast<rusty::UnsafeCell<T>*>(&data_);
+            return SpinLockResult<T>::Ok(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
     }
 
-    // @unsafe - Attempts to acquire lock without blocking
+    // @safe - Attempts to acquire lock without blocking
     // Note: Currently always locks since SpinLock doesn't have try_lock
     [[nodiscard]] rusty::Option<SpinMutexGuard<T>> try_lock() {
-        // SpinLock doesn't have try_lock, so we just lock
-        // For a real try_lock, we'd need to modify SpinLock
-        lock_.lock();
-        return rusty::Some(SpinMutexGuard<T>(&lock_, &data_));
+        // @unsafe
+        {
+            lock_.lock();
+            SpinLock* lock_ptr = &lock_;
+            rusty::UnsafeCell<T>* data_ptr = &data_;
+            return rusty::Some(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
     }
 
-    // @unsafe - Attempts to acquire lock with const access (interior mutability)
+    // @safe - Attempts to acquire lock with const access (interior mutability)
     [[nodiscard]] rusty::Option<SpinMutexGuard<T>> try_lock() const {
-        lock_.lock();
-        return rusty::Some(SpinMutexGuard<T>(
-            const_cast<SpinLock*>(&lock_),
-            const_cast<T*>(&data_)
-        ));
+        // @unsafe
+        {
+            const_cast<SpinLock&>(lock_).lock();
+            SpinLock* lock_ptr = const_cast<SpinLock*>(&lock_);
+            rusty::UnsafeCell<T>* data_ptr = const_cast<rusty::UnsafeCell<T>*>(&data_);
+            return rusty::Some(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
     }
 };
 

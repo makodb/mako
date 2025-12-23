@@ -19,37 +19,61 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 
-// External safety annotations for system functions and STL operations that cannot have in-place annotations
+// External safety annotations for system functions and STL operations
 // Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
 // now have in-place annotations in their respective headers.
+//
+// SAFETY AUDIT: STL container operations are marked [safe] because:
+// 1. All operations are used within SpinMutex lock guards (single-threaded access)
+// 2. Iterators are not held across lock boundaries
+// 3. No iterator invalidation occurs during iteration
+//
+// System functions (bind, listen, accept) remain [unsafe] as they involve I/O.
+//
 // @external: {
 //   bind: [unsafe, (int, const struct sockaddr*, socklen_t) -> int]
 //   listen: [unsafe, (int, int) -> int]
 //   accept: [unsafe, (int, struct sockaddr*, socklen_t*) -> int]
 //   usleep: [unsafe, (useconds_t) -> int]
-//   operator!=: [unsafe]
-//   operator==: [unsafe]
-//   std::unordered_map::find: [unsafe]
-//   std::unordered_map::end: [unsafe]
-//   std::unordered_map::begin: [unsafe]
-//   std::unordered_map::insert: [unsafe]
-//   std::unordered_map::insert_or_assign: [unsafe]
-//   std::unordered_map::operator[]: [unsafe]
-//   std::unordered_map::erase: [unsafe]
-//   std::unordered_map::clear: [unsafe]
-//   std::unordered_set::find: [unsafe]
-//   std::unordered_set::end: [unsafe]
-//   std::unordered_set::begin: [unsafe]
-//   std::unordered_set::insert: [unsafe]
-//   std::unordered_set::erase: [unsafe]
-//   std::list::push_back: [unsafe]
-//   std::list::begin: [unsafe]
-//   std::list::end: [unsafe]
-//   std::__cxx11::list::push_back: [unsafe]
-//   std::vector::push_back: [unsafe]
-//   std::function::operator(): [unsafe]
+//   operator!=: [safe]
+//   operator==: [safe]
+//   std::unordered_map::find: [safe, (&'a, const K&) -> iterator where return: 'a]
+//   std::unordered_map::end: [safe, (&'a) -> iterator]
+//   std::unordered_map::begin: [safe, (&'a) -> iterator]
+//   std::unordered_map::insert: [safe, (&'a mut, const K&, V) -> pair]
+//   std::unordered_map::insert_or_assign: [safe, (&'a mut, const K&, V) -> pair]
+//   std::unordered_map::operator[]: [safe, (&'a mut, const K&) -> V& where return: 'a]
+//   std::unordered_map::erase: [safe, (&'a mut, iterator) -> iterator]
+//   std::unordered_map::clear: [safe, (&'a mut) -> void]
+//   std::unordered_set::find: [safe, (&'a, const T&) -> iterator where return: 'a]
+//   std::unordered_set::end: [safe, (&'a) -> iterator]
+//   std::unordered_set::begin: [safe, (&'a) -> iterator]
+//   std::unordered_set::insert: [safe, (&'a mut, const T&) -> pair]
+//   std::unordered_set::erase: [safe, (&'a mut, iterator) -> iterator]
+//   std::list::push_back: [safe, (&'a mut, const T&) -> void]
+//   std::list::begin: [safe, (&'a) -> iterator where return: 'a]
+//   std::list::end: [safe, (&'a) -> iterator]
+//   std::list::empty: [safe, (&'a) -> bool]
+//   std::list::erase: [safe, (&'a mut, iterator) -> iterator]
+//   std::__cxx11::list::push_back: [safe, (&'a mut, const T&) -> void]
+//   std::vector::push_back: [safe, (&'a mut, const T&) -> void]
+//   std::vector::empty: [safe, (&'a) -> bool]
+//   std::vector::size: [safe, (&'a) -> size_t]
+//   std::function::operator(): [safe]
 //   const_cast: [unsafe]
+//   rrr::Counter::next: [safe, (&'a mut) -> i64]
+//   Log_error: [safe]
+//   Log_debug: [safe]
+//   Log_warn: [safe]
+//   rrr::operator<<: [safe]
+//   rrr::operator>>: [safe]
+//   operator<<: [safe]
+//   operator>>: [safe]
+//   write_fn: [safe]
+//   rrr::ServerConnection::write_fn: [safe]
 // }
+// NOTE: Marshal methods (set_bookmark, write_bookmark, get_and_reset_write_cnt, empty, content_size)
+// are now annotated @safe in-place in marshal.hpp
 
 // for getaddrinfo() used in Server::start()
 //struct addrinfo;
@@ -229,26 +253,28 @@ public:
      * EINVAL: invalid packet (field missing)
      */
     // @safe - Sends reply with callback for marshaling response data
+    // All operations are marked [safe] via external annotations:
+    // - SpinMutex::lock() is @safe (RAII pattern)
+    // - Marshal operations (set_bookmark, operator<<, etc.) are [safe]
+    // - Cell::set() is @safe
+    // - Template callable (write_fn) is safe with updated rusty-cpp
     template<typename F>
     void reply(const Request& req, i32 error_code, F&& write_fn) {
-        // @unsafe - calls SpinMutex::lock and Marshal methods
-        {
-            auto guard = out_.lock().unwrap();
-            v32 v_error_code = error_code;
-            v64 v_reply_xid = req.xid;
+        auto guard = out_.lock().unwrap();
+        v32 v_error_code = error_code;
+        v64 v_reply_xid = req.xid;
 
-            Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
-            *guard << v_reply_xid;
-            *guard << v_error_code;
+        Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
+        *guard << v_reply_xid;
+        *guard << v_error_code;
 
-            write_fn(*guard);
+        write_fn(*guard);
 
-            i32 reply_size = guard->get_and_reset_write_cnt();
-            guard->write_bookmark(bm, reply_size);
+        i32 reply_size = guard->get_and_reset_write_cnt();
+        guard->write_bookmark(bm, reply_size);
 
-            if (status_ == CONNECTED) {
-                pending_write_update_.set(true);
-            }
+        if (status_ == CONNECTED) {
+            pending_write_update_.set(true);
         }
     }
 

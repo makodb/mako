@@ -465,26 +465,31 @@ size_t Marshal::write_to_fd(int fd) {
     return n_write;
 }
 
+// @safe - Creates bookmark for deferred writes
+// SAFETY: Internal @unsafe block handles raw pointer and new/delete operations
 Marshal::bookmark Marshal::set_bookmark(size_t n) {
     verify(write_cnt_ == 0);
 
-    bookmark bm;
-    bm.size = n;
-    bm.ptr = new char*[n];
-    for (size_t i = 0; i < n; i++) {
-        if (head_ == nullptr) {
-            head_ = new chunk;
-            tail_ = head_;
-        } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
-            tail_->next = new chunk;
-            tail_ = tail_->next;
+    // @unsafe
+    {
+        bookmark bm;
+        bm.size = n;
+        bm.ptr = new char*[n];
+        for (size_t i = 0; i < n; i++) {
+            if (head_ == nullptr) {
+                head_ = new chunk;
+                tail_ = head_;
+            } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
+                tail_->next = new chunk;
+                tail_ = tail_->next;
+            }
+            bm.ptr[i] = tail_->set_bookmark();
         }
-        bm.ptr[i] = tail_->set_bookmark();
-    }
-    content_size_ += n;
-    assert(content_size_ == content_size_slow());
+        content_size_ += n;
+        assert(content_size_ == content_size_slow());
 
-    return bm;  // Moved out (NRVO)
+        return bm;  // Moved out (NRVO)
+    }
 }
 
 std::mutex md_mutex_g;
