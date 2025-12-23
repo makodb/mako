@@ -187,11 +187,9 @@ protected:
         response.magic = 0xDEADBEEF;
 
         // Send response
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&response, sizeof(response));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&response, sizeof(response));
+        });
     }
 };
 
@@ -488,8 +486,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
     });
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(port_)).c_str()), 0);

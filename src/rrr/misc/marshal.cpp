@@ -465,12 +465,12 @@ size_t Marshal::write_to_fd(int fd) {
     return n_write;
 }
 
-Marshal::bookmark* Marshal::set_bookmark(size_t n) {
+Marshal::bookmark Marshal::set_bookmark(size_t n) {
     verify(write_cnt_ == 0);
 
-    bookmark* bm = new bookmark;
-    bm->size = n;
-    bm->ptr = new char*[bm->size];
+    bookmark bm;
+    bm.size = n;
+    bm.ptr = new char*[n];
     for (size_t i = 0; i < n; i++) {
         if (head_ == nullptr) {
             head_ = new chunk;
@@ -479,12 +479,12 @@ Marshal::bookmark* Marshal::set_bookmark(size_t n) {
             tail_->next = new chunk;
             tail_ = tail_->next;
         }
-        bm->ptr[i] = tail_->set_bookmark();
+        bm.ptr[i] = tail_->set_bookmark();
     }
     content_size_ += n;
     assert(content_size_ == content_size_slow());
 
-    return bm;
+    return bm;  // Moved out (NRVO)
 }
 
 std::mutex md_mutex_g;

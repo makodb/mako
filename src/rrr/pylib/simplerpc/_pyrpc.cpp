@@ -126,15 +126,18 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).begin_reply(*req, error_code);
             if (output_m != NULL) {
-                const_cast<ServerConnection&>(*sconn) << *output_m;
+                const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](Marshal& out) {
+                    out.read_from_marshal(*output_m, output_m->content_size());
+                });
+                delete output_m;
+            } else {
+                const_cast<ServerConnection&>(*sconn).reply(*req, error_code);
             }
-            const_cast<ServerConnection&>(*sconn).end_reply();
-        }
-
-        if (output_m != NULL) {
-            delete output_m;
+        } else {
+            if (output_m != NULL) {
+                delete output_m;
+            }
         }
 
         // cleanup automatic via rusty::Box

@@ -494,10 +494,37 @@ class Marshal: public NoCopy {
 	bool found_dep;
   bool valid_id;
 
-	struct bookmark: public NoCopy {
-    size_t size;
-    char **ptr;
+	// @unsafe - Contains raw pointer for deferred writes
+	struct bookmark {
+    size_t size = 0;
+    char **ptr = nullptr;
 
+    // @safe - Default constructor
+    bookmark() = default;
+
+    // Non-copyable
+    bookmark(const bookmark&) = delete;
+    bookmark& operator=(const bookmark&) = delete;
+
+    // @safe - Move constructor transfers ownership
+    bookmark(bookmark&& other) noexcept : size(other.size), ptr(other.ptr) {
+      other.size = 0;
+      other.ptr = nullptr;
+    }
+
+    // @unsafe - Move assignment (uses delete[])
+    bookmark& operator=(bookmark&& other) noexcept {
+      if (this != &other) {
+        delete[] ptr;
+        size = other.size;
+        ptr = other.ptr;
+        other.size = 0;
+        other.ptr = nullptr;
+      }
+      return *this;
+    }
+
+    // @unsafe - Destructor (uses delete[])
     ~bookmark() {
       delete[] ptr;
     }
@@ -559,24 +586,25 @@ class Marshal: public NoCopy {
     write_cnt_ = 0;
   }
 
-  bookmark *set_bookmark(size_t n);
+  // @unsafe - Creates bookmark for deferred writes, returns by move
+  // Uses raw pointer operations internally
+  bookmark set_bookmark(size_t n);
 
-  // @unsafe - Original pointer-based interface
-  void write_bookmark(bookmark *bm, const void *p) {
-    const char *pc = (const char *) p;
-    assert(bm != nullptr && bm->ptr != nullptr && p != nullptr);
-    for (size_t i = 0; i < bm->size; i++) {
-      *(bm->ptr[i]) = pc[i];
+  // @unsafe - Writes value to bookmark locations (uses pointer operations)
+  template<typename T>
+  void write_bookmark(bookmark& bm, const T& value) {
+    // @unsafe
+    {
+      static_assert(sizeof(T) <= sizeof(size_t) * 8, "bookmark value too large");
+      const char *pc = reinterpret_cast<const char*>(&value);
+      assert(bm.ptr != nullptr);
+      for (size_t i = 0; i < bm.size; i++) {
+        *(bm.ptr[i]) = pc[i];
+      }
     }
   }
 
-  // @unsafe - Reference-taking overload for safer call sites
-  // Delegates to pointer version internally
-  template<typename T>
-  void write_bookmark(bookmark& bm, const T& value) {
-    write_bookmark(&bm, &value);
-  }
-
+  // @safe - Returns and resets write counter
   i32 get_and_reset_write_cnt() {
     i32 cnt = write_cnt_;
     write_cnt_ = 0;

@@ -138,22 +138,38 @@ private:
         : lock_(lock), data_(data), owns_lock_(true) {}
 
 public:
-    // @unsafe - Access to data (dereferences pointer)
-    // @lifetime: self -> return
-    T& operator*() { return *data_; }
-    const T& operator*() const { return *data_; }
+    // Access to data (dereferences pointer)
+    // @lifetime: (&'a) -> &'a
+    T& operator*() {
+        // @unsafe
+        { return *data_; }
+    }
+    // @lifetime: (&'a) -> &'a
+    const T& operator*() const {
+        // @unsafe
+        { return *data_; }
+    }
 
-    // @unsafe - Pointer access
+    // Pointer access
+    // @safe
+    // @lifetime: (&'a) -> &'a
     T* operator->() { return data_; }
+    // @safe
+    // @lifetime: (&'a) -> &'a
     const T* operator->() const { return data_; }
 
-    // @unsafe - Get raw pointer
+    // Get raw pointer
+    // @lifetime: (&'a) -> &'a
     T* get() { return data_; }
+    // @lifetime: (&'a) -> &'a
     const T* get() const { return data_; }
 
-    // @unsafe - Get mutable reference
-    // @lifetime: self -> return
-    T& get_mut() { return *data_; }
+    // Get mutable reference
+    // @lifetime: (&'a) -> &'a
+    T& get_mut() {
+        // @unsafe
+        { return *data_; }
+    }
 
     // Non-copyable
     SpinMutexGuard(const SpinMutexGuard&) = delete;
@@ -205,6 +221,9 @@ private:
 public:
     // Type alias for the guard type
     using Guard = SpinMutexGuard<T>;
+
+    // @unsafe - Default constructor for default-constructible types
+    SpinMutex() : data_() {}
 
     // @unsafe - Constructor initializes data
     explicit SpinMutex(T value) : data_(std::move(value)) {}

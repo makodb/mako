@@ -483,9 +483,10 @@ class ThreadSafeIntEvent : public Event {
 
   bool TestTrigger();
 
-  // @safe - uses std::atomic::load() which is safe
+  // @safe - uses std::atomic::load()
   int get() {
-    return value_.load();
+    // @unsafe - std::atomic::load
+    { return value_.load(); }
   }
 
   // @unsafe - Threadsafe, uses mutex and atomic

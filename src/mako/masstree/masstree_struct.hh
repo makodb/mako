@@ -375,7 +375,8 @@ class leaf : public node_base<P> {
     // @safe - pure arithmetic
     typename nodeversion_type::value_type full_version_value() const {
         static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(permuter_type::size_bits), "not enough bits to add size to version");
-        return (this->version_value() << permuter_type::size_bits) + size();
+        // @unsafe - operator<<
+        { return (this->version_value() << permuter_type::size_bits) + size(); }
     }
     // @unsafe - calls v.unlock() which manipulates version bits
     typename nodeversion_type::value_type full_unlocked_version_value() const {
@@ -442,23 +443,29 @@ class leaf : public node_base<P> {
     Str ksuf(int p, int keylenx) const {
         (void) keylenx;
         masstree_precondition(keylenx_has_ksuf(keylenx));
-        return ksuf_ ? ksuf_->get(p) : iksuf_[0].get(p);
+        // @unsafe - ksuf_->get / iksuf_->get
+        { return ksuf_ ? ksuf_->get(p) : iksuf_[0].get(p); }
     }
     // @safe - returns suffix string view
     Str ksuf(int p) const {
-        return ksuf(p, keylenx_[p]);
+        // @unsafe - calls ksuf(p, keylenx)
+        { return ksuf(p, keylenx_[p]); }
     }
     // @safe - suffix comparison
     bool ksuf_equals(int p, const key_type& ka) const {
-        return ksuf_equals(p, ka, keylenx_[p]);
+        // @unsafe - calls ksuf_equals
+        { return ksuf_equals(p, ka, keylenx_[p]); }
     }
     // @safe - suffix comparison
     bool ksuf_equals(int p, const key_type& ka, int keylenx) const {
         if (!keylenx_has_ksuf(keylenx))
             return true;
-        Str s = ksuf(p, keylenx);
-        return s.len == ka.suffix().len
-            && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
+        // @unsafe - ksuf, suffix, equals_sloppy
+        {
+            Str s = ksuf(p, keylenx);
+            return s.len == ka.suffix().len
+                && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
+        }
     }
     // @safe - suffix matching
     // Returns 1 if match & not layer, 0 if no match, <0 if match and layer
@@ -468,9 +475,12 @@ class leaf : public node_base<P> {
             return 1;
         if (keylenx == layer_keylenx)
             return -(int) sizeof(ikey_type);
-        Str s = ksuf(p, keylenx);
-        return s.len == ka.suffix().len
-            && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
+        // @unsafe - ksuf, suffix, equals_sloppy
+        {
+            Str s = ksuf(p, keylenx);
+            return s.len == ka.suffix().len
+                && string_slice<uintptr_t>::equals_sloppy(s.s, ka.suffix().s, s.len);
+        }
     }
     // @safe - suffix comparison
     int ksuf_compare(int p, const key_type& ka) const {

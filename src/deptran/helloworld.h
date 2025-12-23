@@ -10,7 +10,7 @@ namespace helloworld_client {
 class HelloworldClientService: public rrr::Service {
 public:
     enum {
-        TXN_READ = 0x61dc3170,
+        TXN_READ = 0x17c3db5d,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -30,12 +30,8 @@ private:
         std::vector<rrr::i64>* in_0 = new std::vector<rrr::i64>;
         req->m >> *in_0;
         rrr::i32* out_0 = new rrr::i32;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn) << *out_0;
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
+            m << *out_0;
         };
         auto __cleanup__ = [=] {
             delete in_0;

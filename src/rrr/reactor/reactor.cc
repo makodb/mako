@@ -47,10 +47,13 @@ SpinLock Reactor::trying_job_;
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
 // Returns None if called outside of a coroutine context
 rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
-  if (Reactor::sp_running_coro_th_.is_none()) {
-    return rusty::None;
+  // @unsafe - Rc::clone
+  {
+    if (Reactor::sp_running_coro_th_.is_none()) {
+      return rusty::None;
+    }
+    return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
   }
-  return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
 }
 
 // @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
@@ -72,15 +75,17 @@ void Coroutine::Sleep(uint64_t microseconds) {
 // SAFETY: Thread-local storage with Rc ensures single-threaded access
 rusty::Rc<Reactor>
 Reactor::GetReactor() {
-  if (sp_reactor_th_.is_none()) {
-    Log_debug("create a coroutine scheduler");
-    if (!REUSING_CORO)
-      Log_warn("reusing coroutine not enabled!");
-    sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());  // In-place construction
-    // @unsafe - SAFETY: const_cast to initialize thread_id_ immediately after creation
-    { const_cast<Reactor&>(*sp_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id(); }
+  // @unsafe - Log_debug, Rc::make, Rc::clone
+  {
+    if (sp_reactor_th_.is_none()) {
+      Log_debug("create a coroutine scheduler");
+      if (!REUSING_CORO)
+        Log_warn("reusing coroutine not enabled!");
+      sp_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());  // In-place construction
+      const_cast<Reactor&>(*sp_reactor_th_.as_ref().unwrap()).thread_id_ = std::this_thread::get_id();
+    }
+    return sp_reactor_th_.as_ref().unwrap().clone();
   }
-  return sp_reactor_th_.as_ref().unwrap().clone();
 }
 
 rusty::Rc<Reactor>
@@ -162,41 +167,43 @@ Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int6
 
 // @safe - Checks timeout events and moves ready ones to ready list with std::shared_ptr
 void Reactor::CheckTimeout(std::vector<std::shared_ptr<Event>>& ready_events ) const {
-  auto time_now = Time::now(true);
-  for (auto it = timeout_events_.begin(); it != timeout_events_.end();) {
-    Event& event = **it;
-    auto status = event.status_;
-    switch (status) {
-      case Event::INIT:
-        verify(0);
-      case Event::WAIT: {
-        const auto &wakeup_time = event.wakeup_time_;
-        verify(wakeup_time > 0);
-        if (time_now > wakeup_time) {
-          if (event.IsReady()) {
-            // This is because our event mechanism is not perfect, some events
-            // don't get triggered with arbitrary condition change.
-            event.status_ = Event::READY;
+  // @unsafe - Time::now
+  {
+    auto time_now = Time::now(true);
+    for (auto it = timeout_events_.begin(); it != timeout_events_.end();) {
+      Event& event = **it;
+      auto status = event.status_;
+      switch (status) {
+        case Event::INIT:
+          verify(0);
+        case Event::WAIT: {
+          const auto &wakeup_time = event.wakeup_time_;
+          verify(wakeup_time > 0);
+          if (time_now > wakeup_time) {
+            if (event.IsReady()) {
+              // This is because our event mechanism is not perfect, some events
+              // don't get triggered with arbitrary condition change.
+              event.status_ = Event::READY;
+            } else {
+              event.status_ = Event::TIMEOUT;
+            }
+            // Event will be removed from waiting_events_ when reactor loop scans it
+            ready_events.push_back(*it);
+            it = timeout_events_.erase(it);
           } else {
-            event.status_ = Event::TIMEOUT;
+            it++;
           }
-          // Event will be removed from waiting_events_ when reactor loop scans it
-          ready_events.push_back(*it);
-          it = timeout_events_.erase(it);
-        } else {
-          it++;
+          break;
         }
-        break;
+        case Event::READY:
+        case Event::DONE:
+          it = timeout_events_.erase(it);
+          break;
+        default:
+          verify(0);
       }
-      case Event::READY:
-      case Event::DONE:
-        it = timeout_events_.erase(it);
-        break;
-      default:
-        verify(0);
     }
   }
-
 }
 
 //  be careful this could be called from different coroutines.
@@ -495,6 +502,7 @@ void PollThreadWorker::poll_loop() {
   Log_debug("[poll_loop] Cleanup complete, poll_loop exiting");
 }
 
+// @unsafe - calls try_recv and std::visit
 void PollThreadWorker::process_commands() {
   // Non-blocking receive: process all pending commands
   int cmd_count = 0;
@@ -527,6 +535,7 @@ void PollThreadWorker::process_commands() {
   }
 }
 
+// @unsafe - uses std::set operations
 void PollThreadWorker::TriggerJob() {
   // Copy jobs to process (in case jobs modify the set)
   std::set<rusty::Arc<Job>> jobs_exec = jobs_;
@@ -567,6 +576,7 @@ void PollThreadWorker::do_add_pollable(rusty::Arc<Pollable> sp_poll) {
   poll_.Add(sp_poll, userdata);
 }
 
+// @unsafe - uses STL operations
 void PollThreadWorker::do_remove_pollable(int fd) {
   if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
     return;
@@ -627,14 +637,17 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) 
   }
 }
 
+// @unsafe - uses std::set::insert
 void PollThreadWorker::do_add_job(rusty::Arc<Job> sp_job) {
   jobs_.insert(sp_job);
 }
 
+// @unsafe - uses std::set::erase
 void PollThreadWorker::do_remove_job(rusty::Arc<Job> sp_job) {
   jobs_.erase(sp_job);
 }
 
+// @unsafe - uses std::unordered_set::swap
 void PollThreadWorker::process_pending_removals() {
   std::unordered_set<int> remove_fds;
   remove_fds.swap(pending_remove_);

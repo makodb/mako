@@ -10,13 +10,13 @@ namespace network_client {
 class NetworkClientService: public rrr::Service {
 public:
     enum {
-        TXN_RMW = 0x6a48132e,
-        TXN_READ = 0x42d193e6,
-        TXN_NEW_ORDER = 0x2235eb8b,
-        TXN_PAYMENT = 0x52ca4c61,
-        TXN_DELIVERY = 0x47f31864,
-        TXN_ORDER_STATUS = 0x3b37cafa,
-        TXN_STOCK_LEVEL = 0x359df06b,
+        TXN_RMW = 0x363da7b0,
+        TXN_READ = 0x398e536e,
+        TXN_NEW_ORDER = 0x1b6e0eea,
+        TXN_PAYMENT = 0x519571cf,
+        TXN_DELIVERY = 0x1d8d8152,
+        TXN_ORDER_STATUS = 0x32eef829,
+        TXN_STOCK_LEVEL = 0x57e8e275,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -65,11 +65,7 @@ private:
     void __txn_rmw__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<rrr::i64>* in_0 = new std::vector<rrr::i64>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;
@@ -80,11 +76,7 @@ private:
     void __txn_read__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<rrr::i64>* in_0 = new std::vector<rrr::i64>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;
@@ -95,11 +87,7 @@ private:
     void __txn_new_order__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<int32_t>* in_0 = new std::vector<int32_t>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;
@@ -110,11 +98,7 @@ private:
     void __txn_payment__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<int32_t>* in_0 = new std::vector<int32_t>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;
@@ -125,11 +109,7 @@ private:
     void __txn_delivery__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<int32_t>* in_0 = new std::vector<int32_t>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;
@@ -140,11 +120,7 @@ private:
     void __txn_order_status__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<int32_t>* in_0 = new std::vector<int32_t>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;
@@ -155,11 +131,7 @@ private:
     void __txn_stock_level__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         std::vector<int32_t>* in_0 = new std::vector<int32_t>;
         req->m >> *in_0;
-        auto __marshal_reply__ = [=] {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-            }
+        auto __marshal_reply__ = [=](rrr::Marshal& m) {
         };
         auto __cleanup__ = [=] {
             delete in_0;

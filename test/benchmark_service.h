@@ -32,16 +32,16 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
 class BenchmarkService: public rrr::Service {
 public:
     enum {
-        FAST_PRIME = 0x348e1922,
-        FAST_DOT_PROD = 0x5d887cc1,
-        FAST_ADD = 0x2a40f946,
-        FAST_NOP = 0x17078ae6,
-        FAST_VEC = 0x6ce0090a,
-        PRIME = 0x5a72807d,
-        DOT_PROD = 0x2429b0bf,
-        ADD = 0x142e5d49,
-        NOP = 0x1e36f5a9,
-        SLEEP = 0x468ff641,
+        FAST_PRIME = 0x2565b754,
+        FAST_DOT_PROD = 0x1344ae44,
+        FAST_ADD = 0x408ce338,
+        FAST_NOP = 0x2452f2ca,
+        FAST_VEC = 0x39e93f57,
+        PRIME = 0x2fb49e41,
+        DOT_PROD = 0x3fb84d41,
+        ADD = 0x474264dd,
+        NOP = 0x350b997c,
+        SLEEP = 0x34e486e3,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -110,9 +110,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -126,9 +126,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -142,9 +142,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -155,8 +155,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -168,9 +167,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -182,9 +181,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -198,9 +197,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -214,9 +213,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn) << out_0;
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
+                m << out_0;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -227,8 +226,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -239,8 +237,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
         // req automatically cleaned up by rusty::Box
     }

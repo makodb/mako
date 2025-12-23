@@ -565,11 +565,10 @@ void RrrRpcBackend::RunEventLoop() {
                 }
 
                 // Send response back via rrr/rpc
-                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).begin_reply(*rrr_handle->original_request);
-                rrr::Marshal m;
-                m.write(rrr_handle->response_data.data(), msg_size);
-                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn) << m;
-                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).end_reply();
+                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).reply(
+                    *rrr_handle->original_request, 0, [&](rrr::Marshal& out) {
+                        out.write(rrr_handle->response_data.data(), msg_size);
+                    });
 
                 msg_size_resp_sent_ += msg_size;
                 msg_counter_resp_sent_ += 1;
@@ -727,11 +726,9 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.shard_index = TThread::get_shard_index();
 
         // Send response
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&resp, sizeof(resp));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&resp, sizeof(resp));
+        });
 
         backend->msg_size_resp_sent_ += sizeof(resp);
         backend->msg_counter_resp_sent_ += 1;
@@ -750,11 +747,9 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&resp, sizeof(resp));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&resp, sizeof(resp));
+        });
 
         backend->msg_size_resp_sent_ += sizeof(resp);
         backend->msg_counter_resp_sent_ += 1;
@@ -784,11 +779,9 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&resp, sizeof(resp));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&resp, sizeof(resp));
+        });
 
         backend->msg_size_resp_sent_ += sizeof(resp);
         backend->msg_counter_resp_sent_ += 1;

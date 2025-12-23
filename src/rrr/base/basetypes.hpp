@@ -91,8 +91,10 @@ public:
     i32 get() const {
         return val_;
     }
+    // @safe
     size_t val_size() const {
-        return SparseInt::val_size(val_);
+        // @unsafe - SparseInt::val_size
+        { return SparseInt::val_size(val_); }
     }
 };
 
@@ -110,8 +112,10 @@ public:
     i64 get() const {
         return val_;
     }
+    // @safe
     size_t val_size() const {
-        return SparseInt::val_size(val_);
+        // @unsafe - SparseInt::val_size
+        { return SparseInt::val_size(val_); }
     }
 };
 

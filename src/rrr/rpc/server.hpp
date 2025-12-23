@@ -161,14 +161,11 @@ class ServerConnection: public Pollable {
     friend class Server;
     friend class ServerListener;
 
-    Marshal in_, out_;
-    // UnsafeCell for interior mutability (const methods need to lock)
-    rusty::UnsafeCell<SpinLock> out_l_;
+    Marshal in_;
+    SpinMutex<Marshal> out_;  // Lock + data combined (has interior mutability)
 
     Server* server_;
     int socket_;
-
-    rusty::Option<rusty::Box<Marshal::bookmark>> bmark_;
 
     enum {
         CONNECTED, CLOSED
@@ -218,44 +215,50 @@ public:
     }
 
     /**
-     * Start a reply message. Must be paired with end_reply().
+     * Send a reply message with callback-based marshaling.
      *
      * Reply message format:
      * <size> <xid> <error_code> <ret1> <ret2> ... <retN>
      * NOTE: size does not include size itself (<xid>..<retN>).
      *
-     * User only need to fill <ret1>..<retN>.
+     * The write_fn callback receives a Marshal& to write <ret1>..<retN>.
      *
      * Currently used errno:
      * 0: everything is fine
      * ENOENT: method not found
      * EINVAL: invalid packet (field missing)
      */
-    // @safe - Starts reply marshaling
-    // SAFETY: Protected by output spinlock (SpinLock marked as external)
-    void begin_reply(const Request& req, i32 error_code = 0);
+    // @safe - Sends reply with callback for marshaling response data
+    template<typename F>
+    void reply(const Request& req, i32 error_code, F&& write_fn) {
+        // @unsafe - calls SpinMutex::lock and Marshal methods
+        {
+            auto guard = out_.lock().unwrap();
+            v32 v_error_code = error_code;
+            v64 v_reply_xid = req.xid;
 
-    // @safe - Completes reply packet
-    // SAFETY: Protected by output spinlock, uses weak ref to poll thread
-    void end_reply();
+            Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
+            *guard << v_reply_xid;
+            *guard << v_error_code;
+
+            write_fn(*guard);
+
+            i32 reply_size = guard->get_and_reset_write_cnt();
+            guard->write_bookmark(bm, reply_size);
+
+            if (status_ == CONNECTED) {
+                pending_write_update_.set(true);
+            }
+        }
+    }
+
+    // @safe - Sends empty reply
+    void reply(const Request& req, i32 error_code = 0) {
+        reply(req, error_code, [](Marshal&) {});
+    }
 
     // @safe - Delegates to thread pool (currently a no-op stub)
     int run_async(const std::function<void()>& f);
-
-    // @safe - Marshals data into output buffer
-    // @lifetime: (&'a, const T&) -> &'a
-    template<class T>
-    ServerConnection& operator <<(const T& v) {
-        this->out_ << v;
-        return *this;
-    }
-
-    // @safe - Marshals data from another Marshal
-    // @lifetime: (&'a, Marshal&) -> &'a
-    ServerConnection& operator <<(Marshal& m) {
-        this->out_.read_from_marshal(m, m.content_size());
-        return *this;
-    }
 
     // @safe - Returns file descriptor
     int fd() const override {
@@ -348,7 +351,7 @@ namespace rrr {
 class DeferredReply {
     rusty::Box<rrr::Request> req_;
     WeakServerConnection weak_sconn_;
-    rusty::Function<void()> marshal_reply_;
+    rusty::Function<void(Marshal&)> marshal_reply_;  // Takes Marshal& to write response
     rusty::Function<void()> cleanup_;
     bool replied_ = false;  // Track if reply was sent
 
@@ -361,7 +364,7 @@ public:
 
     // @safe - Initializes deferred reply with move semantics
     DeferredReply(rusty::Box<rrr::Request> req, WeakServerConnection weak_sconn,
-                  rusty::Function<void()> marshal_reply, rusty::Function<void()> cleanup)
+                  rusty::Function<void(Marshal&)> marshal_reply, rusty::Function<void()> cleanup)
         : req_(std::move(req)), weak_sconn_(weak_sconn),
           marshal_reply_(std::move(marshal_reply)), cleanup_(std::move(cleanup)) {}
 
@@ -380,8 +383,8 @@ public:
       return 0;
     }
 
-    // @unsafe - Sends reply
-    // SAFETY: Can only be called once (checked by replied_ flag)
+    // @unsafe - Sends reply using callback-based API (uses const_cast and weak pointer)
+    // Can only be called once (checked by replied_ flag)
     void reply() {
         if (replied_) {
             Log_warn("DeferredReply::reply() called multiple times, ignoring");
@@ -389,19 +392,16 @@ public:
         }
         replied_ = true;
 
-        // @unsafe - SAFETY: pointer operations within unsafe context
-        auto sconn_opt = weak_sconn_.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            // @unsafe - SAFETY: const_cast safe because Arc contents are mutable
-            {
-                const_cast<ServerConnection&>(*sconn).begin_reply(*req_);
-                marshal_reply_();
-                const_cast<ServerConnection&>(*sconn).end_reply();
+        // @unsafe - weak pointer upgrade and const_cast
+        {
+            auto sconn_opt = weak_sconn_.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                const_cast<ServerConnection&>(*sconn).reply(*req_, 0, marshal_reply_);
+            } else {
+                // Connection closed, silently drop reply
+                Log_debug("Connection closed before reply sent, dropping reply");
             }
-        } else {
-            // Connection closed, silently drop reply
-            Log_debug("Connection closed before reply sent, dropping reply");
         }
         // Object will be destroyed when it goes out of scope, destructor calls cleanup_()
     }
@@ -468,10 +468,10 @@ public:
      *     // process request
      *     ..
      *
-     *     // send reply
-     *     server_connection->begin_reply(*req);
-     *     *server_connection << {reply_content};
-     *     server_connection->end_reply();
+     *     // send reply using callback-based API
+     *     server_connection->reply(*req, 0, [&](Marshal& out) {
+     *         out << reply_content;
+     *     });
      *
      *     // cleanup resource - automatic via unique_ptr
      *     // No need to release, shared_ptr handles connection

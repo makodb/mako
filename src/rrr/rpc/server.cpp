@@ -51,8 +51,7 @@ static int g_stat_server_batching_idx;
 static uint64_t g_stat_server_batching_report_time = 0;
 static const uint64_t g_stat_server_batching_report_interval = 1000 * 1000 * 1000;
 
-// @unsafe - Uses global mutable state and calls Log::info
-// SAFETY: Only called from single-threaded server context
+// @unsafe - Uses global mutable state (single-threaded context)
 static void stat_server_batching(size_t batch) {
     g_stat_server_batching_idx = (g_stat_server_batching_idx + 1) % g_stat_server_batching_size;
     g_stat_server_batching[g_stat_server_batching_idx] = batch;
@@ -88,8 +87,7 @@ static unordered_map<i32, pair<Counter, Counter>> g_stat_rpc_counter;
 static uint64_t g_stat_server_rpc_counting_report_time = 0;
 static const uint64_t g_stat_server_rpc_counting_report_interval = 1000 * 1000 * 1000;
 
-// @unsafe - Uses global mutable state and calls Log::info
-// SAFETY: Only called from single-threaded server context
+// @unsafe - Uses global mutable state (single-threaded context)
 static void stat_server_rpc_counting(i32 rpc_id) {
     g_stat_rpc_counter[rpc_id].first.next();
 
@@ -139,42 +137,7 @@ int ServerConnection::run_async(const std::function<void()>& f) {
   return 0;
 }
 
-// @safe - Begins reply marshaling with locking (has internal @unsafe block)
-// SAFETY: Protected by output spinlock (SpinLock marked as external)
-void ServerConnection::begin_reply(const Request& req, i32 error_code /* =... */) {
-    // @unsafe
-    { out_l_.get()->lock(); }
-    v32 v_error_code = error_code;
-    v64 v_reply_xid = req.xid;
-
-    bmark_ = rusty::Some(rusty::Box<Marshal::bookmark>(this->out_.set_bookmark(sizeof(i32)))); // will write reply size later
-
-    *this << v_reply_xid;
-    *this << v_error_code;
-}
-
-// @safe - Completes reply packet
-// SAFETY: Protected by output spinlock, uses weak ref to poll thread
-void ServerConnection::end_reply() {
-    // set reply size in packet
-    if (bmark_.is_some()) {
-        i32 reply_size = out_.get_and_reset_write_cnt();
-        out_.write_bookmark(*bmark_.as_mut().unwrap(), reply_size);
-        bmark_ = rusty::None;  // Reset to None (automatically deletes old value)
-    }
-
-    // Mark that we need write mode update - poll loop will handle it
-    // This avoids the need for direct PollThreadWorker access from here
-    if (status_ == CONNECTED) {
-        pending_write_update_.set(true);
-    }
-
-    // @unsafe
-    { out_l_.get()->unlock(); }
-}
-
-// @unsafe - Reads requests and dispatches to handlers
-// SAFETY: Contains raw pointer operations (&packet_size, req->m)
+// @unsafe - Reads requests (raw pointer operations: &packet_size, req->m)
 bool ServerConnection::handle_read() {
     if (status_ == CLOSED) {
         return false;
@@ -225,8 +188,7 @@ bool ServerConnection::handle_read() {
 
     for (auto& req : complete_requests) {
         if (req->m.content_size() < sizeof(i32)) {
-            begin_reply(*req, EINVAL);
-            end_reply();
+            reply(*req, EINVAL);
             continue;
         }
 
@@ -261,8 +223,7 @@ bool ServerConnection::handle_read() {
             if (!surpress_warning) {
                 Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
             }
-            begin_reply(*req, ENOENT);
-            end_reply();
+            reply(*req, ENOENT);
         }
     }
 
@@ -272,35 +233,32 @@ bool ServerConnection::handle_read() {
     return false;
 }
 
-// @safe - Writes buffered data to socket
-// SAFETY: Protected by output spinlock (SpinLock marked as external)
-// Returns new poll mode, or MODE_NO_CHANGE if no update needed
+// @safe - Writes buffered data to socket, protected by SpinMutex
 int ServerConnection::handle_write() {
     if (status_ == CLOSED) {
         return Pollable::MODE_NO_CHANGE;
     }
 
     int result = Pollable::MODE_NO_CHANGE;
-    // @unsafe
-    { out_l_.get()->lock(); }
-    out_.write_to_fd(socket_);
-    if (out_.empty()) {
-        // Return READ-only mode - PollThreadWorker will update epoll
-        result = Pollable::READ;
-    }
-    // @unsafe
-    { out_l_.get()->unlock(); }
+    // @unsafe - SpinMutex::lock and Marshal::write_to_fd
+    {
+        auto guard = out_.lock().unwrap();
+        guard->write_to_fd(socket_);
+        if (guard->empty()) {
+            // Return READ-only mode - PollThreadWorker will update epoll
+            result = Pollable::READ;
+        }
+    }  // Guard auto-unlocks here
     return result;
 }
 
 // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
 void ServerConnection::handle_error() {
-    this->close();
+    // @unsafe - calls close() which does system calls
+    { this->close(); }
 }
 
-// @unsafe - Closes connection with proper cleanup
-// SAFETY: Should only be called from poll thread (via do_close_pollable or handle_error)
-// Idempotent, proper cleanup sequence
+// @unsafe - Closes connection, should only be called from poll thread
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
         status_ = CLOSED;
@@ -323,17 +281,16 @@ void ServerConnection::close() {
     }
 }
 
-// @safe - Returns poll mode based on output buffer (has internal @unsafe blocks)
-// Uses UnsafeCell for interior mutability (const method can access mutable SpinLock)
+// @safe - Returns poll mode based on output buffer, protected by SpinMutex
 int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    // @unsafe
-    { out_l_.get()->lock(); }
-    if (!out_.empty()) {
-        mode |= Pollable::WRITE;
-    }
-    // @unsafe
-    { out_l_.get()->unlock(); }
+    // @unsafe - SpinMutex::lock
+    {
+        auto guard = out_.lock().unwrap();
+        if (!guard->empty()) {
+            mode |= Pollable::WRITE;
+        }
+    }  // Guard auto-unlocks here
     return mode;
 }
 
@@ -387,8 +344,7 @@ Server::~Server() {
     service_cleanups_.clear();
 }
 
-// @unsafe - Accepts new client connections
-// SAFETY: Contains raw pointer operations (p_svr_addr_->ai_addr)
+// @unsafe - Accepts new client connections (raw pointer: p_svr_addr_->ai_addr)
 bool ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
@@ -421,11 +377,14 @@ bool ServerListener::handle_read() {
   return false;
 }
 
-// @safe - Closes server socket using safe external annotation
+// @safe - Closes server socket
 void ServerListener::close() {
-  if (server_sock_ >= 0) {
-    ::close(server_sock_);
-    server_sock_ = -1;
+  // @unsafe - system call ::close
+  {
+    if (server_sock_ >= 0) {
+      ::close(server_sock_);
+      server_sock_ = -1;
+    }
   }
 }
 
@@ -547,8 +506,7 @@ ServerListener::ServerListener(Server* server, string addr) {
   Log_debug("rrr::Server: started on %s", addr.c_str());
 }
 
-// @unsafe - Starts server listening on specified address
-// SAFETY: Contains raw pointer dereference (sp_server_listener_->)
+// @unsafe - Starts server listening (pointer dereference: sp_server_listener_->)
 int Server::start(const char* bind_addr) {
   if (!bind_addr) {
     Log_error("rrr::Server::start: bind_addr is NULL!");
@@ -560,21 +518,24 @@ int Server::start(const char* bind_addr) {
   return 0;
 }
 
-// @safe - Registers RPC handler in map (calls @unsafe unordered_map)
+// @safe - Registers RPC handler in map
 int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
-    // disallow duplicate rpc_id
-    if (handlers_.find(rpc_id) != handlers_.end()) {
-        return EEXIST;
+    // @unsafe - unordered_map operations
+    {
+        // disallow duplicate rpc_id
+        if (handlers_.find(rpc_id) != handlers_.end()) {
+            return EEXIST;
+        }
+
+        handlers_[rpc_id] = func;
     }
-
-    handlers_[rpc_id] = func;
-
     return 0;
 }
 
-// @safe - Unregisters RPC handler from map (calls @unsafe unordered_map)
+// @safe - Unregisters RPC handler from map
 void Server::unreg(i32 rpc_id) {
-    handlers_.erase(rpc_id);
+    // @unsafe - unordered_map::erase
+    { handlers_.erase(rpc_id); }
 }
 
 } // namespace rrr

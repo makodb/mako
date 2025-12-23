@@ -67,9 +67,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<ServerConnection&>(*sconn) << input;
-            const_cast<ServerConnection&>(*sconn).end_reply();
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+                out << input;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -86,9 +86,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<ServerConnection&>(*sconn) << input;
-            const_cast<ServerConnection&>(*sconn).end_reply();
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+                out << input;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -103,9 +103,9 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<ServerConnection&>(*sconn) << result;
-            const_cast<ServerConnection&>(*sconn).end_reply();
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+                out << result;
+            });
         }
         // req automatically cleaned up by rusty::Box
     }

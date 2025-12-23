@@ -94,17 +94,12 @@ def emit_service_and_proxy(service, f, rpc_table):
                         f.writeln("%s* out_%d = new %s;" % (out_arg.type, out_counter, out_arg.type))
                         invoke_with += "out_%d" % out_counter,
                         out_counter += 1
-                    f.writeln("auto __marshal_reply__ = [=] {");
+                    f.writeln("auto __marshal_reply__ = [=](rrr::Marshal& m) {");
                     with f.indent():
-                        f.writeln("auto sconn_opt = weak_sconn.upgrade();")
-                        f.writeln("if (sconn_opt.is_some()) {")
-                        with f.indent():
-                            f.writeln("auto sconn = sconn_opt.unwrap();")
-                            out_counter = 0
-                            for out_arg in func.output:
-                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn) << *out_%d;" % out_counter)
-                                out_counter += 1
-                        f.writeln("}")
+                        out_counter = 0
+                        for out_arg in func.output:
+                            f.writeln("m << *out_%d;" % out_counter)
+                            out_counter += 1
                     f.writeln("};");
                     f.writeln("auto __cleanup__ = [=] {");
                     with f.indent():
@@ -139,10 +134,14 @@ def emit_service_and_proxy(service, f, rpc_table):
                     f.writeln("if (sconn_opt.is_some()) {")
                     with f.indent():
                         f.writeln("auto sconn = sconn_opt.unwrap();")
-                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);")
-                        for i in range(out_counter):
-                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn) << out_%d;" % i)
-                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).end_reply();")
+                        if out_counter == 0:
+                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
+                        else:
+                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
+                            with f.indent():
+                                for i in range(out_counter):
+                                    f.writeln("m << out_%d;" % i)
+                            f.writeln("});")
                     f.writeln("}")
                     f.writeln("// req automatically cleaned up by rusty::Box")
             f.writeln("}")

@@ -138,13 +138,16 @@ class FrequentJob : public Job {
   virtual ~FrequentJob() {}
   // @safe
   virtual bool Ready() override {
-    uint64_t tm_now = rrr::Time::now();
-    uint64_t s = tm_now - tm_last_;
-    if (s > period_) {
-      tm_last_ = tm_now;
-      return true;
+    // @unsafe - Time::now
+    {
+      uint64_t tm_now = rrr::Time::now();
+      uint64_t s = tm_now - tm_last_;
+      if (s > period_) {
+        tm_last_ = tm_now;
+        return true;
+      }
+      return false;
     }
-    return false;
   }
 
   // @safe

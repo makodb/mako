@@ -358,7 +358,7 @@ TEST_F(MarshalTest, BookmarkOperation) {
     *m << str;
     
     i32 actual_value = 42;
-    m->write_bookmark(bookmark, &actual_value);
+    m->write_bookmark(bookmark, actual_value);
     
     i32 read_value;
     std::string read_str;
@@ -366,8 +366,7 @@ TEST_F(MarshalTest, BookmarkOperation) {
     
     EXPECT_EQ(read_value, actual_value);
     EXPECT_EQ(read_str, str);
-    
-    delete bookmark;
+    // bookmark automatically cleaned up when going out of scope
 }
 
 TEST_F(MarshalTest, MultipleChunks) {
@@ -476,14 +475,16 @@ public:
     // @safe
     // @lifetime: (&'a, &'b mut) -> &'b mut
     Marshal& ToMarshal(Marshal& m) const override {
-        m << id << name << data;
+        // @unsafe - operator<<
+        { m << id << name << data; }
         return m;
     }
 
     // @safe
     // @lifetime: (&'a mut, &'b mut) -> &'b mut
     Marshal& FromMarshal(Marshal& m) override {
-        m >> id >> name >> data;
+        // @unsafe - operator>>
+        { m >> id >> name >> data; }
         return m;
     }
 

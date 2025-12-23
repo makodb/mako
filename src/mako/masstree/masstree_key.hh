@@ -110,7 +110,8 @@ class key {
     /** @brief Return this key's suffix.
         @pre has_suffix() */
     Str suffix() const {
-        return Str(s_ + ikey_size, len_ - ikey_size);
+        // @unsafe - Str constructor
+        { return Str(s_ + ikey_size, len_ - ikey_size); }
     }
     // @safe - pure arithmetic
     /** @brief Return the length of this key's suffix.
@@ -197,7 +198,8 @@ class key {
     // used during scan
     // @safe - returns string view
     Str prefix_string() const {
-        return Str(first_, s_);
+        // @unsafe - Str constructor
+        { return Str(first_, s_); }
     }
     // @safe - pointer arithmetic
     int prefix_length() const {
@@ -205,7 +207,8 @@ class key {
     }
     // @safe - returns string view
     Str full_string() const {
-        return Str(first_, s_ + len_);
+        // @unsafe - Str constructor
+        { return Str(first_, s_ + len_); }
     }
     // @safe - conversion to Str
     operator Str() const {

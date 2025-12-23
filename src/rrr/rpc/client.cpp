@@ -70,8 +70,8 @@ void Future::timed_wait(double sec) const {
   bool condition_became_false = result.second;
 
   // If condition is still true (timed out while still waiting)
-  if (!condition_became_false && !(*guard).ready) {
-    (*guard).timed_out = true;
+  if (!condition_became_false && !guard->ready) {
+    guard->timed_out = true;
     error_code_.set(ETIMEDOUT);
   }
 }
@@ -81,10 +81,10 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
   bool should_callback = false;
   {
     auto guard = state_.lock().unwrap();
-    if (!(*guard).timed_out) {
-      (*guard).ready = true;
+    if (!guard->timed_out) {
+      guard->ready = true;
     }
-    should_callback = (*guard).ready;
+    should_callback = guard->ready;
   }  // Guard dropped here, releasing lock before notify
 
   ready_cond_.notify_all();
@@ -118,8 +118,7 @@ ClientConnection::~ClientConnection() {
   invalidate_pending_futures();
 }
 
-// @safe - Cancels all pending futures with error (has internal @unsafe blocks)
-// SAFETY: Protected by SpinMutex, proper refcount management
+// @safe - Cancels all pending futures with error, protected by SpinMutex
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
   // @unsafe - SpinMutex guard operations
@@ -138,9 +137,7 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
-// @unsafe - Closes socket and invalidates futures
-// SAFETY: Should only be called from poll thread (via do_close_pollable or handle_error)
-// Idempotent, proper cleanup sequence
+// @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
   if (status_ == CONNECTED) {
     // @unsafe - system call
@@ -166,7 +163,6 @@ void ClientConnection::handle_free(i64 xid) {
 }
 
 // @unsafe - Establishes TCP/IPC connection to server
-// SAFETY: Proper socket creation, configuration, and error handling
 int ClientConnection::connect(const char* addr) {
   verify(status_ != CONNECTED);
   string addr_str(addr);
@@ -255,12 +251,11 @@ int ClientConnection::connect(const char* addr) {
 
 // @safe - Simple error handler
 void ClientConnection::handle_error() {
-  close();
+  // @unsafe - calls close() which does system calls
+  { close(); }
 }
 
-// @safe - Writes buffered data to socket (has internal @unsafe blocks)
-// SAFETY: Protected by spinlock, handles partial writes
-// Returns new poll mode, or MODE_NO_CHANGE if no update needed
+// @safe - Writes buffered data to socket, protected by SpinMutex
 int ClientConnection::handle_write() {
   if (status_ != CONNECTED) {
     return Pollable::MODE_NO_CHANGE;
@@ -269,21 +264,19 @@ int ClientConnection::handle_write() {
   if (paused_) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
-  // @unsafe - SpinLock and I/O operations
+  // @unsafe - SpinMutex::lock and Marshal::write_to_fd
   {
-    out_l_.get()->lock();
-    out_.write_to_fd(socket_);
-    if (out_.empty()) {
+    auto guard = out_.lock().unwrap();
+    guard->write_to_fd(socket_);
+    if (guard->empty()) {
       // Return READ-only mode - PollThreadWorker will update epoll
       result = Pollable::READ;
     }
-    out_l_.get()->unlock();
-  }
+  }  // Guard auto-unlocks here
   return result;
 }
 
 // @unsafe - Reads and processes RPC responses
-// SAFETY: Contains raw pointer operations (GetReactor()->Loop())
 bool ClientConnection::handle_read() {
   if (!handle_read_one()) {
     return false;
@@ -321,7 +314,6 @@ bool ClientConnection::handle_read_one() {
 }
 
 // @unsafe - Processes packets from buffer
-// SAFETY: Contains raw pointer operations (&packet_size, fu->reply_.get()->)
 bool ClientConnection::handle_read_two() {
   if (status_ != CONNECTED) {
     return false;
@@ -390,113 +382,116 @@ bool ClientConnection::handle_read_two() {
   return done;
 }
 
-// @safe - Determines polling mode based on output buffer (has internal @unsafe blocks)
-// SAFETY: Uses spinlock for thread-safety
+// @safe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
   int mode = Pollable::READ;
-  // @unsafe - SpinLock operations via UnsafeCell
+  // @unsafe - SpinMutex::lock
   {
-    out_l_.get()->lock();
-    if (!out_.empty()) {
+    auto guard = out_.lock().unwrap();
+    if (!guard->empty()) {
       mode |= Pollable::WRITE;
     }
-    out_l_.get()->unlock();
-  }
+  }  // Guard auto-unlocks here
   return mode;
 }
 
-// @unsafe - Starts new RPC request with marshaling
-// SAFETY: Contains raw pointer operations (out_l_.get()->lock())
+// @safe - Starts new RPC request, guard released in end_request()
 FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
-  out_l_.get()->lock();
-
-  if (status_ != CONNECTED) {
-    out_l_.get()->unlock();
-    return FutureResult::Err(ENOTCONN);
-  }
-
-  auto fu = Future::create(xid_counter_.next(), attr);
-
-  // @unsafe - SpinMutex guard operations
+  // @unsafe - SpinMutex::lock, Counter::next, operator<<, set_bookmark
   {
-    auto guard = pending_fu_.lock().unwrap();
-    guard->insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
-  }  // Guard dropped here
+    out_guard_ = rusty::Some(out_.lock().unwrap());
 
-  // check if the connection gets closed in the meantime
-  if (status_ != CONNECTED) {
-    // @unsafe - SpinMutex guard operations
+    if (status_ != CONNECTED) {
+      out_guard_ = rusty::None;  // Release lock
+      return FutureResult::Err(ENOTCONN);
+    }
+
+    auto fu = Future::create(xid_counter_.next(), attr);
+
     {
       auto guard = pending_fu_.lock().unwrap();
-      auto it = guard->find(fu->xid_);
-      if (it != guard->end()) {
-        guard->erase(it);  // Arc auto-released when removed from map
-      }
+      guard->insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
     }  // Guard dropped here
-    out_l_.get()->unlock();
 
-    return FutureResult::Err(ENOTCONN);
+    // check if the connection gets closed in the meantime
+    if (status_ != CONNECTED) {
+      {
+        auto guard = pending_fu_.lock().unwrap();
+        auto it = guard->find(fu->xid_);
+        if (it != guard->end()) {
+          guard->erase(it);  // Arc auto-released when removed from map
+        }
+      }  // Guard dropped here
+      out_guard_ = rusty::None;  // Release lock
+
+      return FutureResult::Err(ENOTCONN);
+    }
+
+    // Set bookmark for packet size (will fill later)
+    bmark_ = rusty::Some(out_guard_.as_mut().unwrap()->set_bookmark(sizeof(i32)));
+
+    *this << v64(fu->xid_);
+    *this << rpc_id;
+
+    // Arc is in pending_fu_ (refcount=2), return copy to caller
+    return FutureResult::Ok(fu);
   }
-
-  // Set bookmark for packet size (will fill later)
-  Marshal::bookmark* bm = out_.set_bookmark(sizeof(i32));
-  bmark_ = rusty::Some(rusty::Box<Marshal::bookmark>(bm));
-
-  *this << v64(fu->xid_);
-  *this << rpc_id;
-
-  // Arc is in pending_fu_ (refcount=2), return copy to caller
-  return FutureResult::Ok(fu);
 }
 
-// @unsafe - Finalizes request packet with size header
-// SAFETY: Contains raw pointer operations (&*bmark_)
+// @safe - Finalizes request packet, releases guard from begin_request()
 void ClientConnection::end_request() {
-  // set reply size in packet
-  if (bmark_.is_some()) {
-    i32 request_size = out_.get_and_reset_write_cnt();
-    out_.write_bookmark(&*bmark_.as_mut().unwrap(), &request_size);
-    bmark_ = rusty::None;  // Reset to None (automatically deletes old value)
+  // @unsafe - calls write_bookmark which uses raw pointer operations
+  {
+    // set reply size in packet
+    if (bmark_.is_some() && out_guard_.is_some()) {
+      i32 request_size = out_guard_.as_mut().unwrap()->get_and_reset_write_cnt();
+      out_guard_.as_mut().unwrap()->write_bookmark(bmark_.as_mut().unwrap(), request_size);
+      bmark_ = rusty::None;  // Reset to None
+    }
   }
 
   // Jetpack: reset flags
-  out_.found_dep = false;
-  out_.valid_id = false;
+  if (out_guard_.is_some()) {
+    out_guard_.as_mut().unwrap()->found_dep = false;
+    out_guard_.as_mut().unwrap()->valid_id = false;
+  }
 
   // always enable write events since the code above guaranteed there
   // will be some data to send
   // NOTE: end_request() may be called from user threads OR the poll thread.
-  if (PollThreadWorker::is_on_poll_thread()) {
-    // On poll thread - set flag, poll loop will handle update_mode
-    pending_write_update_.set(true);
-  } else {
-    // On user thread - use channel to notify poll thread
-    poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+  // @unsafe - PollThreadWorker operations
+  {
+    if (PollThreadWorker::is_on_poll_thread()) {
+      // On poll thread - set flag, poll loop will handle update_mode
+      pending_write_update_.set(true);
+    } else {
+      // On user thread - use channel to notify poll thread
+      poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+    }
   }
 
-  out_l_.get()->unlock();
+  out_guard_ = rusty::None;  // Release lock via RAII
 }
 
 // ============================================================================
 // Client implementation (facade that delegates to ClientConnection)
 // ============================================================================
 
-// @safe - Cleanup destructor (has internal @unsafe blocks)
-// SAFETY: Connection cleanup handled via request_close() to poll thread
+// @safe - Cleanup destructor, uses request_close() for thread-safe close
 Client::~Client() {
   close();  // Delegate to close() which uses request_close()
 }
 
 // @unsafe - Uses const_cast for interior mutability
-// SAFETY: Contains raw pointer dereference (connection_.get()->)
 void Client::set_valid(bool valid) const {
   if (connection_.get()->is_some()) {
-    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).out_.valid_id = valid;
+    auto& conn = const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap());
+    auto guard = conn.out_.lock().unwrap();
+    guard->valid_id = valid;
   }
 }
 
-// @safe - Closes socket and cleans up (has internal @unsafe blocks)
-// SAFETY: Uses request_close() for thread-safe close via poll thread
+// @safe - Closes socket via request_close() for thread-safe cleanup
 void Client::close() const {
   if (connection_.get()->is_some()) {
     // @unsafe - pointer dereference through Arc
@@ -514,7 +509,6 @@ void Client::close() const {
 }
 
 // @unsafe - Uses const_cast for interior mutability
-// SAFETY: Contains raw pointer cast
 void Client::handle_free(i64 xid) const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).handle_free(xid);
@@ -522,7 +516,6 @@ void Client::handle_free(i64 xid) const {
 }
 
 // @unsafe - Uses const_cast for interior mutability
-// SAFETY: Contains raw pointer cast
 void Client::pause() const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).pause();
@@ -530,7 +523,6 @@ void Client::pause() const {
 }
 
 // @unsafe - Uses const_cast for interior mutability
-// SAFETY: Contains raw pointer cast
 void Client::resume() const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).resume();
@@ -538,7 +530,6 @@ void Client::resume() const {
 }
 
 // @unsafe - Establishes TCP/IPC connection to server
-// SAFETY: Creates ClientConnection and connects
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
   auto conn = rusty::Arc<ClientConnection>::make(const_cast<Client*>(this), poll_thread_worker_);
@@ -563,7 +554,6 @@ int Client::connect(const char* addr, bool client) const {
 }
 
 // @unsafe - Begins RPC request with marshaling
-// SAFETY: Contains raw pointer cast in return
 FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
   if (connection_.get()->is_none()) {
     return FutureResult::Err(ENOTCONN);
@@ -574,7 +564,6 @@ FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
 }
 
 // @unsafe - Completes request packet
-// SAFETY: Contains raw pointer cast
 void Client::end_request() const {
   if (connection_.get()->is_some()) {
     const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
@@ -613,7 +602,6 @@ ClientPool::~ClientPool() {
 }
 
 // @unsafe - Gets cached or creates new client connections
-// SAFETY: Contains raw pointer dereference
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
   l_.lock();

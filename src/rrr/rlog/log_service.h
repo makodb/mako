@@ -10,15 +10,15 @@ namespace rlog {
 class RLogService: public rrr::Service {
 public:
     enum {
-        LOG = 0x11c8d44d,
-        AGGREGATE_QPS = 0x5678549c,
+        LOG = 0x56efef9c,
+        AGGREGATE_QPS = 0x47d594ad,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
-        if ((ret = svr->reg(LOG, this, &RLogService::__log__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(LOG, this, &RLogService::__log__wrapper__)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg(AGGREGATE_QPS, this, &RLogService::__aggregate_qps__wrapper__)) != 0) {
+        if ((ret = svr->reg_method(AGGREGATE_QPS, this, &RLogService::__aggregate_qps__wrapper__)) != 0) {
             goto err;
         }
         return 0;
@@ -45,8 +45,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
         // req automatically cleaned up by rusty::Box
     }
@@ -59,8 +58,7 @@ private:
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
             auto sconn = sconn_opt.unwrap();
-            const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-            const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+            const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
         // req automatically cleaned up by rusty::Box
     }

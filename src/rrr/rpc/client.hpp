@@ -111,7 +111,8 @@ public:
     // Factory method for Arc creation
     // @safe - Creates Future wrapped in Arc for memory safety
     static rusty::Arc<Future> create(i64 xid, const FutureAttr& attr = FutureAttr()) {
-        return rusty::Arc<Future>::make(xid, attr);
+        // @unsafe - Arc::make
+        { return rusty::Arc<Future>::make(xid, attr); }
     }
 
     // @safe - Uses rusty::Mutex
@@ -198,14 +199,16 @@ private:
     std::vector<rusty::Arc<Future>> futures_;
 
 public:
-    // @safe - Adds future to group (has internal @unsafe block for Log_error)
+    // @safe - Adds future to group
     void add(rusty::Arc<Future> f) {
-        if (!f) {  // Check Arc validity (empty Arc check)
-            // @unsafe
-            { Log_error("Invalid Future object passed to FutureGroup!"); }
-            return;
+        // @unsafe - Log_error, push_back
+        {
+            if (!f) {  // Check Arc validity (empty Arc check)
+                Log_error("Invalid Future object passed to FutureGroup!");
+                return;
+            }
+            futures_.push_back(std::move(f));
         }
-        futures_.push_back(std::move(f));
     }
 
     // @safe - Waits for all futures in group
@@ -232,8 +235,9 @@ class ClientConnection: public Pollable {
     friend class Client;
     friend class ClientPool;
 
-    Marshal in_, out_;
-    rusty::UnsafeCell<SpinLock> out_l_;  // Protects out_ (UnsafeCell for interior mutability)
+    Marshal in_;
+    SpinMutex<Marshal> out_;  // Lock + data combined (has interior mutability)
+    mutable rusty::Option<SpinMutexGuard<Marshal>> out_guard_;  // Guard stored during request building
 
     // Non-owning pointer to parent Client (for configuration access)
     Client* client_;
@@ -244,7 +248,7 @@ class ClientConnection: public Pollable {
     int socket_;
 
     // Bookmark for request size (will be filled after marshaling)
-    rusty::Option<rusty::Box<Marshal::bookmark>> bmark_;
+    rusty::Option<Marshal::bookmark> bmark_;
 
     // Transaction ID counter for RPC requests
     Counter xid_counter_;
@@ -324,22 +328,22 @@ public:
     // SAFETY: Contains raw pointer operations (&*bmark_)
     void end_request();
 
-    // @safe - Marshals data into output buffer
+    // @safe - Marshals data into output buffer (via stored guard)
     // @lifetime: (&'a, const T&) -> &'a
     template<class T>
     ClientConnection& operator <<(const T& v) {
-        if (status_ == CONNECTED) {
-            this->out_ << v;
+        if (status_ == CONNECTED && out_guard_.is_some()) {
+            *out_guard_.as_mut().unwrap() << v;
         }
         return *this;
     }
 
     // NOTE: this function is used *internally* by Python extension
-    // @safe - Marshals data from another Marshal
+    // @safe - Marshals data from another Marshal (via stored guard)
     // @lifetime: (&'a, Marshal&) -> &'a
     ClientConnection& operator <<(Marshal& m) {
-        if (status_ == CONNECTED) {
-            this->out_.read_from_marshal(m, m.content_size());
+        if (status_ == CONNECTED && out_guard_.is_some()) {
+            out_guard_.as_mut().unwrap()->read_from_marshal(m, m.content_size());
         }
         return *this;
     }
@@ -351,7 +355,8 @@ public:
 
     // @safe - Simple getter
     std::string host() const {
-        return host_;
+        // @unsafe - std::string copy constructor
+        { return host_; }
     }
 
     // @safe - Jetpack: pause/resume for flow control
@@ -474,9 +479,10 @@ public:
         poll_thread_worker_(poll_thread_worker) { }
 
     // Factory method to create Client with Arc
-    // @safe - Returns Arc<Client> (Arc::make is safe)
+    // @safe - Returns Arc<Client>
     static rusty::Arc<Client> create(rusty::Arc<PollThread> poll_thread_worker) {
-        return rusty::Arc<Client>::make(poll_thread_worker);
+        // @unsafe - Arc::make
+        { return rusty::Arc<Client>::make(poll_thread_worker); }
     }
 
     /**
