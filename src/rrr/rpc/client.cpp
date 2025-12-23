@@ -395,84 +395,6 @@ int ClientConnection::poll_mode() const {
   return mode;
 }
 
-// @safe - Starts new RPC request, guard released in end_request()
-FutureResult ClientConnection::begin_request(i32 rpc_id, const FutureAttr& attr /* =... */) {
-  // @unsafe - SpinMutex::lock, Counter::next, operator<<, set_bookmark
-  {
-    out_guard_ = rusty::Some(out_.lock().unwrap());
-
-    if (status_ != CONNECTED) {
-      out_guard_ = rusty::None;  // Release lock
-      return FutureResult::Err(ENOTCONN);
-    }
-
-    auto fu = Future::create(xid_counter_.next(), attr);
-
-    {
-      auto guard = pending_fu_.lock().unwrap();
-      guard->insert_or_assign(fu->xid_, fu);  // Store Arc in map (refcount now 2)
-    }  // Guard dropped here
-
-    // check if the connection gets closed in the meantime
-    if (status_ != CONNECTED) {
-      {
-        auto guard = pending_fu_.lock().unwrap();
-        auto it = guard->find(fu->xid_);
-        if (it != guard->end()) {
-          guard->erase(it);  // Arc auto-released when removed from map
-        }
-      }  // Guard dropped here
-      out_guard_ = rusty::None;  // Release lock
-
-      return FutureResult::Err(ENOTCONN);
-    }
-
-    // Set bookmark for packet size (will fill later)
-    bmark_ = rusty::Some(out_guard_.as_mut().unwrap()->set_bookmark(sizeof(i32)));
-
-    *this << v64(fu->xid_);
-    *this << rpc_id;
-
-    // Arc is in pending_fu_ (refcount=2), return copy to caller
-    return FutureResult::Ok(fu);
-  }
-}
-
-// @safe - Finalizes request packet, releases guard from begin_request()
-void ClientConnection::end_request() {
-  // @unsafe - calls write_bookmark which uses raw pointer operations
-  {
-    // set reply size in packet
-    if (bmark_.is_some() && out_guard_.is_some()) {
-      i32 request_size = out_guard_.as_mut().unwrap()->get_and_reset_write_cnt();
-      out_guard_.as_mut().unwrap()->write_bookmark(bmark_.as_mut().unwrap(), request_size);
-      bmark_ = rusty::None;  // Reset to None
-    }
-  }
-
-  // Jetpack: reset flags
-  if (out_guard_.is_some()) {
-    out_guard_.as_mut().unwrap()->found_dep = false;
-    out_guard_.as_mut().unwrap()->valid_id = false;
-  }
-
-  // always enable write events since the code above guaranteed there
-  // will be some data to send
-  // NOTE: end_request() may be called from user threads OR the poll thread.
-  // @unsafe - PollThreadWorker operations
-  {
-    if (PollThreadWorker::is_on_poll_thread()) {
-      // On poll thread - set flag, poll loop will handle update_mode
-      pending_write_update_.set(true);
-    } else {
-      // On user thread - use channel to notify poll thread
-      poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
-    }
-  }
-
-  out_guard_ = rusty::None;  // Release lock via RAII
-}
-
 // ============================================================================
 // Client implementation (facade that delegates to ClientConnection)
 // ============================================================================
@@ -553,22 +475,6 @@ int Client::connect(const char* addr, bool client) const {
   return result;
 }
 
-// @unsafe - Begins RPC request with marshaling
-FutureResult Client::begin_request(i32 rpc_id, const FutureAttr& attr) const {
-  if (connection_.get()->is_none()) {
-    return FutureResult::Err(ENOTCONN);
-  }
-
-  rpc_id_.set(rpc_id);
-  return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).begin_request(rpc_id, attr);
-}
-
-// @unsafe - Completes request packet
-void Client::end_request() const {
-  if (connection_.get()->is_some()) {
-    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
-  }
-}
 
 // ============================================================================
 // ClientPool implementation

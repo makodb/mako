@@ -237,7 +237,6 @@ class ClientConnection: public Pollable {
 
     Marshal in_;
     SpinMutex<Marshal> out_;  // Lock + data combined (has interior mutability)
-    mutable rusty::Option<SpinMutexGuard<Marshal>> out_guard_;  // Guard stored during request building
 
     // Non-owning pointer to parent Client (for configuration access)
     Client* client_;
@@ -246,9 +245,6 @@ class ClientConnection: public Pollable {
     rusty::Arc<PollThread> poll_thread_worker_;
 
     int socket_;
-
-    // Bookmark for request size (will be filled after marshaling)
-    rusty::Option<Marshal::bookmark> bmark_;
 
     // Transaction ID counter for RPC requests
     Counter xid_counter_;
@@ -274,6 +270,14 @@ class ClientConnection: public Pollable {
     uint64_t packets_{0};
     bool paused_{false};
     bool is_client_mode_{false};  // Jetpack: distinguishes client vs server mode
+
+    // =========================================================================
+    // Backwards-compatible API state (DEPRECATED - use request() lambda instead)
+    // WARNING: These member variables are NOT thread-safe for concurrent use.
+    // Each thread must use its own Client/ClientConnection.
+    // =========================================================================
+    rusty::Option<SpinMutexGuard<Marshal>> out_guard_{rusty::None};
+    rusty::Option<Marshal::bookmark> bmark_{rusty::None};
 
     // @safe - Cancels all pending futures (has internal @unsafe blocks)
     // SAFETY: Protected by spinlock
@@ -311,7 +315,8 @@ public:
     int connect(const char* addr);
 
     /**
-     * Start a new request. Must be paired with end_request().
+     * Send an RPC request with a lambda for writing arguments.
+     * Thread-safe: lock is acquired and released within this single call.
      *
      * The request packet format is: <size> <xid> <rpc_id> <arg1> <arg2> ... <argN>
      * NOTE: size does not include the size itself (<xid>..<argN>).
@@ -320,32 +325,188 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @unsafe - Begins RPC request with marshaling
-    // SAFETY: Contains raw pointer operations (out_l_.get()->lock())
-    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr());
+    // @unsafe - Thread-safe RPC request with lambda for marshaling
+    template<typename F>
+    FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) {
+        if (status_ != CONNECTED) {
+            return FutureResult::Err(ENOTCONN);
+        }
 
-    // @unsafe - Completes request packet
-    // SAFETY: Contains raw pointer operations (&*bmark_)
-    void end_request();
+        // @unsafe - SpinMutex::lock, Counter::next, Marshal operations
+        {
+            auto guard = out_.lock().unwrap();
 
-    // @safe - Marshals data into output buffer (via stored guard)
-    // @lifetime: (&'a, const T&) -> &'a
+            // Double-check connection status after acquiring lock
+            if (status_ != CONNECTED) {
+                return FutureResult::Err(ENOTCONN);
+            }
+
+            auto fu = Future::create(xid_counter_.next(), attr);
+
+            {
+                auto pending_guard = pending_fu_.lock().unwrap();
+                pending_guard->insert_or_assign(fu->xid_, fu);
+            }
+
+            // Check if connection closed while we were setting up
+            if (status_ != CONNECTED) {
+                {
+                    auto pending_guard = pending_fu_.lock().unwrap();
+                    auto it = pending_guard->find(fu->xid_);
+                    if (it != pending_guard->end()) {
+                        pending_guard->erase(it);
+                    }
+                }
+                return FutureResult::Err(ENOTCONN);
+            }
+
+            // Set bookmark for packet size (will fill after marshaling)
+            Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
+
+            *guard << v64(fu->xid_);
+            *guard << rpc_id;
+
+            // Call user's write function to marshal arguments
+            write_fn(*guard);
+
+            // Fill in the packet size
+            i32 request_size = guard->get_and_reset_write_cnt();
+            guard->write_bookmark(bmark, request_size);
+
+            // Reset Jetpack flags
+            guard->found_dep = false;
+            guard->valid_id = false;
+
+            // Signal that we have data to write
+            if (PollThreadWorker::is_on_poll_thread()) {
+                pending_write_update_.set(true);
+            } else {
+                poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+            }
+
+            return FutureResult::Ok(fu);
+        }
+    }
+
+    // @unsafe - Convenience overload without callback
+    template<typename F>
+    FutureResult request(i32 rpc_id, F&& write_fn) {
+        // @unsafe - calls request()
+        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
+    }
+
+    // @unsafe - Convenience overload for requests with no arguments
+    FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) {
+        // @unsafe - calls request()
+        { return request(rpc_id, attr, [](Marshal&) {}); }
+    }
+
+    // =========================================================================
+    // Backwards-compatible API (DEPRECATED - use request() lambda instead)
+    // WARNING: NOT thread-safe for concurrent use from multiple threads.
+    // Each thread must use its own Client/ClientConnection.
+    // =========================================================================
+
+    /**
+     * Begin an RPC request (DEPRECATED - use request() with lambda instead).
+     * Returns a Future for the response.
+     * Must be followed by marshaling arguments and end_request().
+     */
+    // @unsafe - Acquires lock and stores guard as member
+    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) {
+        if (status_ != CONNECTED) {
+            return FutureResult::Err(ENOTCONN);
+        }
+
+        // @unsafe - SpinMutex::lock
+        {
+            out_guard_ = rusty::Some(out_.lock().unwrap());
+
+            if (status_ != CONNECTED) {
+                out_guard_ = rusty::None;
+                return FutureResult::Err(ENOTCONN);
+            }
+
+            auto fu = Future::create(xid_counter_.next(), attr);
+
+            {
+                auto pending_guard = pending_fu_.lock().unwrap();
+                pending_guard->insert_or_assign(fu->xid_, fu);
+            }
+
+            if (status_ != CONNECTED) {
+                {
+                    auto pending_guard = pending_fu_.lock().unwrap();
+                    auto it = pending_guard->find(fu->xid_);
+                    if (it != pending_guard->end()) {
+                        pending_guard->erase(it);
+                    }
+                }
+                out_guard_ = rusty::None;
+                return FutureResult::Err(ENOTCONN);
+            }
+
+            bmark_ = rusty::Some(out_guard_.as_mut().unwrap()->set_bookmark(sizeof(i32)));
+
+            *out_guard_.as_mut().unwrap() << v64(fu->xid_);
+            *out_guard_.as_mut().unwrap() << rpc_id;
+
+            return FutureResult::Ok(fu);
+        }
+    }
+
+    /**
+     * Marshal operator for backwards-compatible API.
+     * Marshals data to the output buffer during a request.
+     */
+    // @unsafe - Writes through stored guard
     template<class T>
-    ClientConnection& operator <<(const T& v) {
-        if (status_ == CONNECTED && out_guard_.is_some()) {
+    ClientConnection& operator<<(const T& v) {
+        if (out_guard_.is_some()) {
             *out_guard_.as_mut().unwrap() << v;
         }
         return *this;
     }
 
-    // NOTE: this function is used *internally* by Python extension
-    // @safe - Marshals data from another Marshal (via stored guard)
-    // @lifetime: (&'a, Marshal&) -> &'a
-    ClientConnection& operator <<(Marshal& m) {
-        if (status_ == CONNECTED && out_guard_.is_some()) {
-            out_guard_.as_mut().unwrap()->read_from_marshal(m, m.content_size());
+    /**
+     * Special overload for streaming a Marshal buffer (used by Python bindings).
+     * Copies the contents of the input Marshal to the output buffer.
+     */
+    // @unsafe - Writes through stored guard
+    ClientConnection& operator<<(const Marshal& m) {
+        if (out_guard_.is_some()) {
+            out_guard_.as_mut().unwrap()->read_from_marshal(const_cast<Marshal&>(m), m.content_size());
         }
         return *this;
+    }
+
+    /**
+     * End the current RPC request (DEPRECATED - use request() with lambda).
+     * Completes the packet and releases the lock.
+     */
+    // @unsafe - Uses stored guard and bookmark
+    void end_request() {
+        if (out_guard_.is_none() || bmark_.is_none()) {
+            return;
+        }
+
+        auto& guard = out_guard_.as_mut().unwrap();
+        auto& bmark = bmark_.as_mut().unwrap();
+
+        i32 request_size = guard->get_and_reset_write_cnt();
+        guard->write_bookmark(bmark, request_size);
+
+        guard->found_dep = false;
+        guard->valid_id = false;
+
+        if (PollThreadWorker::is_on_poll_thread()) {
+            pending_write_update_.set(true);
+        } else {
+            poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+        }
+
+        bmark_ = rusty::None;
+        out_guard_ = rusty::None;
     }
 
     // @safe - Simple getter
@@ -486,7 +647,8 @@ public:
     }
 
     /**
-     * Start a new request. Must be paired with end_request().
+     * Send an RPC request with a lambda for writing arguments.
+     * Thread-safe: lock is acquired and released within this single call.
      *
      * The request packet format is: <size> <xid> <rpc_id> <arg1> <arg2> ... <argN>
      *
@@ -494,32 +656,86 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @unsafe - Begins RPC request with marshaling
-    // SAFETY: Contains raw pointer cast in return
-    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const;
+    // @unsafe - Thread-safe RPC request with lambda for marshaling
+    template<typename F>
+    FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
+        if (connection_.get()->is_none()) {
+            return FutureResult::Err(ENOTCONN);
+        }
+        rpc_id_.set(rpc_id);
+        // @unsafe - calls ClientConnection::request()
+        { return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap())
+            .request(rpc_id, attr, std::forward<F>(write_fn)); }
+    }
 
-    // @unsafe - Completes request packet
-    // SAFETY: Contains raw pointer cast
-    void end_request() const;
+    // @unsafe - Convenience overload without callback
+    template<typename F>
+    FutureResult request(i32 rpc_id, F&& write_fn) const {
+        // @unsafe - calls request()
+        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
+    }
 
-    // @unsafe - Marshals data into output buffer
-    // SAFETY: Contains raw pointer cast (const_cast)
+    // @unsafe - Convenience overload for requests with no arguments
+    FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
+        // @unsafe - calls request()
+        { return request(rpc_id, attr, [](Marshal&) {}); }
+    }
+
+    // =========================================================================
+    // Backwards-compatible API (DEPRECATED - use request() lambda instead)
+    // WARNING: NOT thread-safe for concurrent use from multiple threads.
+    // Each thread must use its own Client.
+    // =========================================================================
+
+    /**
+     * Begin an RPC request (DEPRECATED - use request() with lambda instead).
+     * Returns a Future for the response.
+     * Must be followed by marshaling arguments with operator<< and end_request().
+     */
+    // @unsafe - Delegates to ClientConnection
+    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
+        if (connection_.get()->is_none()) {
+            return FutureResult::Err(ENOTCONN);
+        }
+        rpc_id_.set(rpc_id);
+        return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap())
+            .begin_request(rpc_id, attr);
+    }
+
+    /**
+     * Marshal operator for backwards-compatible API.
+     * Marshals data to the output buffer during a request.
+     */
+    // @unsafe - Delegates to ClientConnection
     template<class T>
-    const Client& operator <<(const T& v) const {
-        if (connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected()) {
+    const Client& operator<<(const T& v) const {
+        if (connection_.get()->is_some()) {
             const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << v;
         }
         return *this;
     }
 
-    // NOTE: this function is used *internally* by Python extension
-    // @unsafe - Marshals data from another Marshal
-    // SAFETY: Contains raw pointer cast (const_cast)
-    const Client& operator <<(Marshal& m) const {
-        if (connection_.get()->is_some() && connection_.get()->as_ref().unwrap()->connected()) {
+    /**
+     * Special overload for streaming a Marshal buffer (used by Python bindings).
+     * Copies the contents of the input Marshal to the output buffer.
+     */
+    // @unsafe - Delegates to ClientConnection
+    const Client& operator<<(const Marshal& m) const {
+        if (connection_.get()->is_some()) {
             const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << m;
         }
         return *this;
+    }
+
+    /**
+     * End the current RPC request (DEPRECATED - use request() with lambda).
+     * Completes the packet and releases the lock.
+     */
+    // @unsafe - Delegates to ClientConnection
+    void end_request() const {
+        if (connection_.get()->is_some()) {
+            const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
+        }
     }
 
     // @unsafe - Uses const_cast for interior mutability

@@ -249,14 +249,9 @@ protected:
 public:
     BenchmarkProxy(rrr::Client* cl): __cl__(cl) { }
     rrr::FutureResult async_fast_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_PRIME, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << n;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& m) {
+            m << n;
+        });
     }
     rrr::i32 fast_prime(const rrr::i32& n, rrr::i8* flag) {
         auto __fu_result__ = this->async_fast_prime(n);
@@ -272,15 +267,10 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_DOT_PROD, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << p1;
-        *__cl__ << p2;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& m) {
+            m << p1;
+            m << p2;
+        });
     }
     rrr::i32 fast_dot_prod(const point3& p1, const point3& p2, double* v) {
         auto __fu_result__ = this->async_fast_dot_prod(p1, p2);
@@ -296,15 +286,10 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_ADD, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << a;
-        *__cl__ << b;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& m) {
+            m << a;
+            m << b;
+        });
     }
     rrr::i32 fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
         auto __fu_result__ = this->async_fast_add(a, b);
@@ -320,14 +305,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_NOP, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << in_0;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& m) {
+            m << in_0;
+        });
     }
     rrr::i32 fast_nop(const std::string& in_0) {
         auto __fu_result__ = this->async_fast_nop(in_0);
@@ -340,14 +320,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_vec(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::FAST_VEC, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << n;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& m) {
+            m << n;
+        });
     }
     rrr::i32 fast_vec(const rrr::i32& n, std::vector<rrr::i64>* v) {
         auto __fu_result__ = this->async_fast_vec(n);
@@ -363,14 +338,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::PRIME, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << n;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& m) {
+            m << n;
+        });
     }
     rrr::i32 prime(const rrr::i32& n, rrr::i8* flag) {
         auto __fu_result__ = this->async_prime(n);
@@ -386,15 +356,10 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::DOT_PROD, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << p1;
-        *__cl__ << p2;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& m) {
+            m << p1;
+            m << p2;
+        });
     }
     rrr::i32 dot_prod(const point3& p1, const point3& p2, double* v) {
         auto __fu_result__ = this->async_dot_prod(p1, p2);
@@ -410,15 +375,10 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::ADD, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << a;
-        *__cl__ << b;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& m) {
+            m << a;
+            m << b;
+        });
     }
     rrr::i32 add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
         auto __fu_result__ = this->async_add(a, b);
@@ -434,14 +394,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::NOP, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << in_0;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& m) {
+            m << in_0;
+        });
     }
     rrr::i32 nop(const std::string& in_0) {
         auto __fu_result__ = this->async_nop(in_0);
@@ -454,14 +409,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_sleep(const double& sec, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(BenchmarkService::SLEEP, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << sec;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& m) {
+            m << sec;
+        });
     }
     rrr::i32 sleep(const double& sec) {
         auto __fu_result__ = this->async_sleep(sec);
