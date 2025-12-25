@@ -16,24 +16,14 @@
 #include "client.hpp"
 #include "utils.hpp"
 
-// External safety annotations for STL and language features that cannot have in-place annotations
-// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
+// Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
+//
 // @external: {
-//   std::vector::push_back: [unsafe]
-//   std::map::find: [unsafe]
-//   std::map::end: [unsafe]
-//   std::map::operator[]: [unsafe]
-//   std::unordered_map::find: [unsafe]
-//   std::unordered_map::end: [unsafe]
-//   std::unordered_map::insert: [unsafe]
-//   std::unordered_map::insert_or_assign: [unsafe]
-//   std::unordered_map::erase: [unsafe]
-//   std::unordered_map::clear: [unsafe]
-//   operator!=: [unsafe]
-//   operator==: [unsafe]
 //   const_cast: [unsafe]
+//   std::__cxx11::basic_string::basic_string: [safe]
 // }
 
 
@@ -121,14 +111,12 @@ ClientConnection::~ClientConnection() {
 // @safe - Cancels all pending futures with error, protected by SpinMutex
 void ClientConnection::invalidate_pending_futures() {
   list<rusty::Arc<Future>> futures;
-  // @unsafe - STL operations (map iteration, list::push_back, map::clear)
-  {
-    auto guard = pending_fu_.lock().unwrap();
-    for (auto& it: *guard) {
-      futures.push_back(it.second);  // Copy Arc
-    }
-    guard->clear();  // Clear map (releases its Arc references)
-  }  // Guard dropped here, releasing lock
+  auto guard = pending_fu_.lock().unwrap();
+  for (auto& it: *guard) {
+    futures.push_back(it.second);  // Copy Arc
+  }
+  guard->clear();  // Clear map (releases its Arc references)
+  // Guard dropped here, releasing lock
 
   for (auto& fu: futures) {
     fu->error_code_.set(ENOTCONN);
@@ -151,15 +139,13 @@ void ClientConnection::close() {
 
 // @safe - Jetpack: handle_free for explicit future cleanup
 void ClientConnection::handle_free(i64 xid) {
-  // @unsafe - STL operations (map::find, map::erase)
-  {
-    auto guard = pending_fu_.lock().unwrap();
-    auto it = guard->find(xid);
-    if (it != guard->end()) {
-      guard->erase(it);
-      // Arc auto-released when removed from map
-    }
-  }  // Guard dropped here, releasing lock
+  auto guard = pending_fu_.lock().unwrap();
+  auto it = guard->find(xid);
+  if (it != guard->end()) {
+    guard->erase(it);
+    // Arc auto-released when removed from map
+  }
+  // Guard dropped here, releasing lock
 }
 
 // @unsafe - Establishes TCP/IPC connection to server
@@ -264,15 +250,13 @@ int ClientConnection::handle_write() {
   if (paused_) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
-  // @unsafe - Marshal operations (write_to_fd, empty)
-  {
-    auto guard = out_.lock().unwrap();
-    guard->write_to_fd(socket_);
-    if (guard->empty()) {
-      // Return READ-only mode - PollThreadWorker will update epoll
-      result = Pollable::READ;
-    }
-  }  // Guard auto-unlocks here
+  auto guard = out_.lock().unwrap();
+  guard->write_to_fd(socket_);
+  if (guard->empty()) {
+    // Return READ-only mode - PollThreadWorker will update epoll
+    result = Pollable::READ;
+  }
+  // Guard auto-unlocks here
   return result;
 }
 
@@ -329,7 +313,7 @@ bool ClientConnection::handle_read_two() {
   for (int i = 0; i < iters; i++) {
     i32 packet_size;
 
-    int n_peek = in_.peek(&packet_size, sizeof(i32));
+    int n_peek = in_.peek(packet_size);
 
     if (n_peek == sizeof(i32)
         && in_.content_size() >= packet_size + sizeof(i32)) {
@@ -385,13 +369,11 @@ bool ClientConnection::handle_read_two() {
 // @safe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
   int mode = Pollable::READ;
-  // @unsafe - Marshal::empty
-  {
-    auto guard = out_.lock().unwrap();
-    if (!guard->empty()) {
-      mode |= Pollable::WRITE;
-    }
-  }  // Guard auto-unlocks here
+  auto guard = out_.lock().unwrap();
+  if (!guard->empty()) {
+    mode |= Pollable::WRITE;
+  }
+  // Guard auto-unlocks here
   return mode;
 }
 
@@ -413,20 +395,17 @@ void Client::set_valid(bool valid) const {
   }
 }
 
-// @safe - Closes socket via request_close() for thread-safe cleanup
+// @unsafe - Closes socket via request_close() for thread-safe cleanup
+// Uses UnsafeCell::get() for interior mutability
 void Client::close() const {
   if (connection_.get()->is_some()) {
-    // @unsafe - pointer dereference through Arc
-    {
-      auto& conn = *connection_.get()->as_ref().unwrap();
-      if (conn.connected()) {
-        // Request poll thread to close the connection
-        poll_thread_worker_->request_close(conn.fd());
-      }
+    auto& conn = *connection_.get()->as_ref().unwrap();
+    if (conn.connected()) {
+      // Request poll thread to close the connection
+      poll_thread_worker_->request_close(conn.fd());
     }
     // Clear connection to prevent further use
-    // @unsafe - const_cast for interior mutability
-    { *connection_.get() = rusty::None; }
+    *connection_.get() = rusty::None;
   }
 }
 

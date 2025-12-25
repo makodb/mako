@@ -672,10 +672,12 @@ void PollThreadWorker::process_pending_removals() {
 }
 
 
-// Update poll mode directly (bypasses channel)
+// @safe - Update poll mode directly (bypasses channel)
 // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
-void PollThreadWorker::update_mode(int fd, int new_mode, Pollable* poll_ptr) {
-  do_update_mode(fd, new_mode, poll_ptr);
+// SAFETY: Internal @unsafe block handles epoll operations and address-of
+void PollThreadWorker::update_mode(Pollable& poll, int new_mode) {
+  // @unsafe - address-of operation and epoll modification
+  { do_update_mode(poll.fd(), new_mode, &poll); }
 }
 
 // =============================================================================
@@ -783,10 +785,15 @@ void PollThread::request_close(int fd) const {
   sender_.send(CmdClosePollable{fd});
 }
 
+// @safe - Sends update mode command via channel
+// SAFETY: Channel send is thread-safe
 void PollThread::update_mode(Pollable& poll, int new_mode) const {
-  auto result = sender_.send(CmdUpdateMode{poll.fd(), new_mode, &poll});
-  if (result.is_err()) {
-    Log_error("PollThread::update_mode: send failed! Channel disconnected?");
+  // @unsafe - channel send and pointer operations
+  {
+    auto result = sender_.send(CmdUpdateMode{poll.fd(), new_mode, &poll});
+    if (result.is_err()) {
+      Log_error("PollThread::update_mode: send failed! Channel disconnected?");
+    }
   }
 }
 

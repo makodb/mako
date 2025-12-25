@@ -86,17 +86,16 @@ static void* client_proc(void*) {
     }
     auto do_work = [cl, &fu_attr, rpc_id] {
         if (!should_stop) {
-            auto fu_result = cl->begin_request(rpc_id, fu_attr);
+            auto fu_result = cl->request(rpc_id, fu_attr, [rpc_id](rrr::Marshal& m) {
+                if (rpc_id == BenchmarkService::FAST_NOP || rpc_id == BenchmarkService::NOP) {
+                    m << request_str;
+                } else if (rpc_id == BenchmarkService::FAST_VEC) {
+                    m << rpc_bench_vector_size;
+                }
+            });
             if (fu_result.is_err()) {
                 return;
             }
-            auto fu = fu_result.unwrap();
-            if (rpc_id == BenchmarkService::FAST_NOP || rpc_id == BenchmarkService::NOP) {
-                *cl << request_str;
-            } else if (rpc_id == BenchmarkService::FAST_VEC) {
-                *cl << rpc_bench_vector_size;
-            }
-            cl->end_request();
             // Arc auto-released
             req_counter.next();
         }

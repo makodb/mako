@@ -55,11 +55,18 @@
 //   std::map::operator[]: [safe, (&'a mut, const K&) -> V& where return: 'a]
 //   operator!=: [safe]
 //   operator==: [safe]
+//   std::__detail::operator!=: [safe]
+//   std::__detail::operator==: [safe]
 //   const_cast: [unsafe]
 //   rrr::Counter::next: [safe, (&'a mut) -> i64]
 //   Log_error: [safe]
 //   Log_debug: [safe]
 //   Log_warn: [safe]
+//   rrr::operator<<: [safe]
+//   rrr::operator>>: [safe]
+//   operator<<: [safe]
+//   operator>>: [safe]
+//   write_fn: [safe]
 // }
 // NOTE: Marshal methods (set_bookmark, write_bookmark, get_and_reset_write_cnt, empty, content_size)
 // are now annotated @safe in-place in marshal.hpp
@@ -217,7 +224,7 @@ private:
 public:
     // @safe - Adds future to group
     void add(rusty::Arc<Future> f) {
-        // @unsafe - Log_error, push_back
+        // @unsafe - Log_error, push_back (external function annotations)
         {
             if (!f) {  // Check Arc validity (empty Arc check)
                 Log_error("Invalid Future object passed to FutureGroup!");
@@ -287,14 +294,6 @@ class ClientConnection: public Pollable {
     bool paused_{false};
     bool is_client_mode_{false};  // Jetpack: distinguishes client vs server mode
 
-    // =========================================================================
-    // Backwards-compatible API state (DEPRECATED - use request() lambda instead)
-    // WARNING: These member variables are NOT thread-safe for concurrent use.
-    // Each thread must use its own Client/ClientConnection.
-    // =========================================================================
-    rusty::Option<SpinMutexGuard<Marshal>> out_guard_{rusty::None};
-    rusty::Option<Marshal::bookmark> bmark_{rusty::None};
-
     // @safe - Cancels all pending futures (has internal @unsafe blocks)
     // SAFETY: Protected by spinlock
     void invalidate_pending_futures();
@@ -341,188 +340,87 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @unsafe - Thread-safe RPC request with lambda for marshaling
+    // @safe - Thread-safe RPC request with lambda for marshaling
+    // All operations are now @safe:
+    // - SpinMutex::lock() is @safe
+    // - Counter::next is [safe] via external annotation
+    // - STL map operations are [safe] via external annotations
+    // - Marshal operations are @safe
+    // - PollThreadWorker::is_on_poll_thread() is @safe
+    // - PollThread::update_mode() is @safe
+    // - Cell::set() is @safe
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) {
         if (status_ != CONNECTED) {
             return FutureResult::Err(ENOTCONN);
         }
 
-        // @unsafe - Counter::next, Marshal operations, STL map::insert_or_assign
-        {
-            auto guard = out_.lock().unwrap();
+        auto guard = out_.lock().unwrap();
 
-            // Double-check connection status after acquiring lock
-            if (status_ != CONNECTED) {
-                return FutureResult::Err(ENOTCONN);
-            }
-
-            auto fu = Future::create(xid_counter_.next(), attr);
-
-            {
-                auto pending_guard = pending_fu_.lock().unwrap();
-                pending_guard->insert_or_assign(fu->xid_, fu);
-            }
-
-            // Check if connection closed while we were setting up
-            if (status_ != CONNECTED) {
-                {
-                    auto pending_guard = pending_fu_.lock().unwrap();
-                    auto it = pending_guard->find(fu->xid_);
-                    if (it != pending_guard->end()) {
-                        pending_guard->erase(it);
-                    }
-                }
-                return FutureResult::Err(ENOTCONN);
-            }
-
-            // Set bookmark for packet size (will fill after marshaling)
-            Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
-
-            *guard << v64(fu->xid_);
-            *guard << rpc_id;
-
-            // Call user's write function to marshal arguments
-            write_fn(*guard);
-
-            // Fill in the packet size
-            i32 request_size = guard->get_and_reset_write_cnt();
-            guard->write_bookmark(bmark, request_size);
-
-            // Reset Jetpack flags
-            guard->found_dep = false;
-            guard->valid_id = false;
-
-            // Signal that we have data to write
-            if (PollThreadWorker::is_on_poll_thread()) {
-                pending_write_update_.set(true);
-            } else {
-                poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
-            }
-
-            return FutureResult::Ok(fu);
-        }
-    }
-
-    // @unsafe - Convenience overload without callback
-    template<typename F>
-    FutureResult request(i32 rpc_id, F&& write_fn) {
-        // @unsafe - calls request()
-        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
-    }
-
-    // @unsafe - Convenience overload for requests with no arguments
-    FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) {
-        // @unsafe - calls request()
-        { return request(rpc_id, attr, [](Marshal&) {}); }
-    }
-
-    // =========================================================================
-    // Backwards-compatible API (DEPRECATED - use request() lambda instead)
-    // WARNING: NOT thread-safe for concurrent use from multiple threads.
-    // Each thread must use its own Client/ClientConnection.
-    // =========================================================================
-
-    /**
-     * Begin an RPC request (DEPRECATED - use request() with lambda instead).
-     * Returns a Future for the response.
-     * Must be followed by marshaling arguments and end_request().
-     */
-    // @unsafe - Acquires lock and stores guard as member
-    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) {
+        // Double-check connection status after acquiring lock
         if (status_ != CONNECTED) {
             return FutureResult::Err(ENOTCONN);
         }
 
-        // @unsafe - Counter::next, STL map operations, Marshal operations
+        auto fu = Future::create(xid_counter_.next(), attr);
+
         {
-            out_guard_ = rusty::Some(out_.lock().unwrap());
+            auto pending_guard = pending_fu_.lock().unwrap();
+            pending_guard->insert_or_assign(fu->xid_, fu);
+        }
 
-            if (status_ != CONNECTED) {
-                out_guard_ = rusty::None;
-                return FutureResult::Err(ENOTCONN);
-            }
-
-            auto fu = Future::create(xid_counter_.next(), attr);
-
+        // Check if connection closed while we were setting up
+        if (status_ != CONNECTED) {
             {
                 auto pending_guard = pending_fu_.lock().unwrap();
-                pending_guard->insert_or_assign(fu->xid_, fu);
-            }
-
-            if (status_ != CONNECTED) {
-                {
-                    auto pending_guard = pending_fu_.lock().unwrap();
-                    auto it = pending_guard->find(fu->xid_);
-                    if (it != pending_guard->end()) {
-                        pending_guard->erase(it);
-                    }
+                auto it = pending_guard->find(fu->xid_);
+                if (it != pending_guard->end()) {
+                    pending_guard->erase(it);
                 }
-                out_guard_ = rusty::None;
-                return FutureResult::Err(ENOTCONN);
             }
-
-            bmark_ = rusty::Some(out_guard_.as_mut().unwrap()->set_bookmark(sizeof(i32)));
-
-            *out_guard_.as_mut().unwrap() << v64(fu->xid_);
-            *out_guard_.as_mut().unwrap() << rpc_id;
-
-            return FutureResult::Ok(fu);
-        }
-    }
-
-    /**
-     * Marshal operator for backwards-compatible API.
-     * Marshals data to the output buffer during a request.
-     */
-    // @unsafe - Writes through stored guard
-    template<class T>
-    ClientConnection& operator<<(const T& v) {
-        if (out_guard_.is_some()) {
-            *out_guard_.as_mut().unwrap() << v;
-        }
-        return *this;
-    }
-
-    /**
-     * Special overload for streaming a Marshal buffer (used by Python bindings).
-     * Copies the contents of the input Marshal to the output buffer.
-     */
-    // @unsafe - Writes through stored guard
-    ClientConnection& operator<<(const Marshal& m) {
-        if (out_guard_.is_some()) {
-            out_guard_.as_mut().unwrap()->read_from_marshal(const_cast<Marshal&>(m), m.content_size());
-        }
-        return *this;
-    }
-
-    /**
-     * End the current RPC request (DEPRECATED - use request() with lambda).
-     * Completes the packet and releases the lock.
-     */
-    // @unsafe - Uses stored guard and bookmark
-    void end_request() {
-        if (out_guard_.is_none() || bmark_.is_none()) {
-            return;
+            return FutureResult::Err(ENOTCONN);
         }
 
-        auto& guard = out_guard_.as_mut().unwrap();
-        auto& bmark = bmark_.as_mut().unwrap();
+        // Set bookmark for packet size (will fill after marshaling)
+        Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
 
+        *guard << v64(fu->xid_);
+        *guard << rpc_id;
+
+        // Call user's write function to marshal arguments
+        write_fn(*guard);
+
+        // Fill in the packet size
         i32 request_size = guard->get_and_reset_write_cnt();
         guard->write_bookmark(bmark, request_size);
 
+        // Reset Jetpack flags
         guard->found_dep = false;
         guard->valid_id = false;
 
+        // Signal that we have data to write
         if (PollThreadWorker::is_on_poll_thread()) {
             pending_write_update_.set(true);
         } else {
             poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
         }
 
-        bmark_ = rusty::None;
-        out_guard_ = rusty::None;
+        return FutureResult::Ok(fu);
+    }
+
+    // @safe - Convenience overload without callback
+    // SAFETY: Internal @unsafe block for template overload call
+    template<typename F>
+    FutureResult request(i32 rpc_id, F&& write_fn) {
+        // @unsafe - calls main request overload
+        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
+    }
+
+    // @safe - Convenience overload for requests with no arguments
+    // SAFETY: Internal @unsafe block for template overload call
+    FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) {
+        // @unsafe - calls main request overload
+        { return request(rpc_id, attr, [](Marshal&) {}); }
     }
 
     // @safe - Simple getter
@@ -532,7 +430,7 @@ public:
 
     // @safe - Simple getter
     std::string host() const {
-        // @unsafe - std::string copy constructor
+        // @unsafe - string copy constructor
         { return host_; }
     }
 
@@ -672,86 +570,34 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @unsafe - Thread-safe RPC request with lambda for marshaling
+    // @safe - Thread-safe RPC request with lambda for marshaling
+    // SAFETY: Internal @unsafe block for UnsafeCell access and const_cast
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        if (connection_.get()->is_none()) {
-            return FutureResult::Err(ENOTCONN);
+        // @unsafe - UnsafeCell::get() and const_cast for interior mutability
+        {
+            if (connection_.get()->is_none()) {
+                return FutureResult::Err(ENOTCONN);
+            }
+            rpc_id_.set(rpc_id);
+            return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap())
+                .request(rpc_id, attr, std::forward<F>(write_fn));
         }
-        rpc_id_.set(rpc_id);
-        // @unsafe - calls ClientConnection::request()
-        { return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap())
-            .request(rpc_id, attr, std::forward<F>(write_fn)); }
     }
 
-    // @unsafe - Convenience overload without callback
+    // @safe - Convenience overload without callback
+    // SAFETY: Internal @unsafe block for template overload call
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
-        // @unsafe - calls request()
+        // @unsafe - calls main request overload
         { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
     }
 
-    // @unsafe - Convenience overload for requests with no arguments
+    // @safe - Convenience overload for requests with no arguments
+    // SAFETY: Internal @unsafe block for template overload call
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        // @unsafe - calls request()
+        // @unsafe - calls main request overload
         { return request(rpc_id, attr, [](Marshal&) {}); }
-    }
-
-    // =========================================================================
-    // Backwards-compatible API (DEPRECATED - use request() lambda instead)
-    // WARNING: NOT thread-safe for concurrent use from multiple threads.
-    // Each thread must use its own Client.
-    // =========================================================================
-
-    /**
-     * Begin an RPC request (DEPRECATED - use request() with lambda instead).
-     * Returns a Future for the response.
-     * Must be followed by marshaling arguments with operator<< and end_request().
-     */
-    // @unsafe - Delegates to ClientConnection
-    FutureResult begin_request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        if (connection_.get()->is_none()) {
-            return FutureResult::Err(ENOTCONN);
-        }
-        rpc_id_.set(rpc_id);
-        return const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap())
-            .begin_request(rpc_id, attr);
-    }
-
-    /**
-     * Marshal operator for backwards-compatible API.
-     * Marshals data to the output buffer during a request.
-     */
-    // @unsafe - Delegates to ClientConnection
-    template<class T>
-    const Client& operator<<(const T& v) const {
-        if (connection_.get()->is_some()) {
-            const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << v;
-        }
-        return *this;
-    }
-
-    /**
-     * Special overload for streaming a Marshal buffer (used by Python bindings).
-     * Copies the contents of the input Marshal to the output buffer.
-     */
-    // @unsafe - Delegates to ClientConnection
-    const Client& operator<<(const Marshal& m) const {
-        if (connection_.get()->is_some()) {
-            const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()) << m;
-        }
-        return *this;
-    }
-
-    /**
-     * End the current RPC request (DEPRECATED - use request() with lambda).
-     * Completes the packet and releases the lock.
-     */
-    // @unsafe - Delegates to ClientConnection
-    void end_request() const {
-        if (connection_.get()->is_some()) {
-            const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).end_request();
-        }
     }
 
     // @unsafe - Uses const_cast for interior mutability
@@ -768,11 +614,11 @@ public:
     void resume() const;
 
     // reentrant, could be called multiple times
-    // @safe - Closes socket and cleans up (has internal @unsafe blocks)
-    // SAFETY: Idempotent, delegates to ClientConnection
+    // @unsafe - Closes socket and cleans up
+    // Uses UnsafeCell::get() for interior mutability
     void close() const;
 
-    // @safe - Jetpack compatibility wrapper
+    // @unsafe - Jetpack compatibility wrapper
     void close_and_release() {
         close();
     }

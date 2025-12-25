@@ -147,14 +147,9 @@ protected:
 public:
     NetworkClientProxy(rrr::Client* cl): __cl__(cl) { }
     rrr::FutureResult async_txn_rmw(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_RMW, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_RMW, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_rmw(const std::vector<rrr::i64>& _req) {
         auto __fu_result__ = this->async_txn_rmw(_req);
@@ -167,14 +162,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_READ, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_READ, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_read(const std::vector<rrr::i64>& _req) {
         auto __fu_result__ = this->async_txn_read(_req);
@@ -187,14 +177,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_txn_new_order(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_NEW_ORDER, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_NEW_ORDER, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_new_order(const std::vector<int32_t>& _req) {
         auto __fu_result__ = this->async_txn_new_order(_req);
@@ -207,14 +192,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_txn_payment(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_PAYMENT, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_PAYMENT, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_payment(const std::vector<int32_t>& _req) {
         auto __fu_result__ = this->async_txn_payment(_req);
@@ -227,14 +207,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_txn_delivery(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_DELIVERY, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_DELIVERY, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_delivery(const std::vector<int32_t>& _req) {
         auto __fu_result__ = this->async_txn_delivery(_req);
@@ -247,14 +222,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_txn_order_status(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_order_status(const std::vector<int32_t>& _req) {
         auto __fu_result__ = this->async_txn_order_status(_req);
@@ -267,14 +237,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_txn_stock_level(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_stock_level(const std::vector<int32_t>& _req) {
         auto __fu_result__ = this->async_txn_stock_level(_req);

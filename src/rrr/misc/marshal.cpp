@@ -240,88 +240,74 @@ size_t Marshal::read_chnk(void* p, size_t n){
     return n_read;
 }
 
+// @safe - Reads data from marshal buffer
+// SAFETY: Internal @unsafe block handles raw pointer casting and arithmetic
 size_t Marshal::read(void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
     assert(empty() || (head_ != nullptr && !head_->fully_read()));
 
-    char* pc = (char *) p;
-    size_t n_read = 0;
-    while (n_read < n && head_ != nullptr && head_->content_size() > 0) {
-        size_t cnt = head_->read(pc + n_read, n - n_read);
-        if (head_->fully_read()) {
-            if (tail_ == head_) {
-                // deleted the only chunk
-                tail_ = nullptr;
+    // @unsafe - raw pointer casting and arithmetic
+    {
+        char* pc = (char *) p;
+        size_t n_read = 0;
+        while (n_read < n && head_ != nullptr && head_->content_size() > 0) {
+            size_t cnt = head_->read(pc + n_read, n - n_read);
+            if (head_->fully_read()) {
+                if (tail_ == head_) {
+                    // deleted the only chunk
+                    tail_ = nullptr;
+                }
+                chunk* chnk = head_;
+                head_ = head_->next;
+                //delete chnk;
             }
-            chunk* chnk = head_;
-            head_ = head_->next;
-            //delete chnk;
+            if (cnt == 0) {
+                // currently there's no data available, so stop
+                break;
+            }
+            n_read += cnt;
         }
-        if (cnt == 0) {
-            // currently there's no data available, so stop
-            break;
-        }
-        n_read += cnt;
+        assert(content_size_ >= n_read);
+        content_size_ -= n_read;
+        assert(content_size_ == content_size_slow());
+
+        assert(n_read <= n);
+        assert(tail_ == nullptr || tail_->next == nullptr);
+        assert(empty() || (head_ != nullptr && !head_->fully_read()));
+
+        return n_read;
     }
-    assert(content_size_ >= n_read);
-    content_size_ -= n_read;
-    assert(content_size_ == content_size_slow());
-
-    assert(n_read <= n);
-    assert(tail_ == nullptr || tail_->next == nullptr);
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-
-    return n_read;
 }
 
-size_t Marshal::peek(void* p, size_t n) const {
-    assert(tail_ == nullptr || tail_->next == nullptr);
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-    //Log_info("is peeking empty %d %d", empty(), n);
-    char* pc = (char *) p;
-    size_t n_peek = 0;
-    chunk* chnk = head_;
-    while (chnk != nullptr && n - n_peek > 0) {
-	//Log_info("wkwkakakak");
-        size_t cnt = chnk->peek(pc + n_peek, n - n_peek);
-        if (cnt == 0) {
-            // no more data to peek, quit
-            break;
-        }
-        n_peek += cnt;
-        chnk = chnk->next;
-    }
-
-    assert(n_peek <= n);
-    assert(tail_ == nullptr || tail_->next == nullptr);
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-    return n_peek;
-}
-
+// @safe - Reads from file descriptor (I/O system call)
+// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
 size_t Marshal::read_from_fd(int fd) {
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
+    // @unsafe - I/O system calls and raw pointer operations
+    {
+        assert(empty() || (head_ != nullptr && !head_->fully_read()));
 
-    size_t n_bytes = 0;
-    for (;;) {
-        if (head_ == nullptr) {
-            head_ = new chunk;
-            tail_ = head_;
-        } else if (tail_->fully_written()) {
-            tail_->next = new chunk;
-            tail_ = tail_->next;
+        size_t n_bytes = 0;
+        for (;;) {
+            if (head_ == nullptr) {
+                head_ = new chunk;
+                tail_ = head_;
+            } else if (tail_->fully_written()) {
+                tail_->next = new chunk;
+                tail_ = tail_->next;
+            }
+            int r = tail_->read_from_fd(fd);
+            if (r <= 0) {
+                break;
+            }
+            n_bytes += r;
         }
-        int r = tail_->read_from_fd(fd);
-        if (r <= 0) {
-            break;
-        }
-        n_bytes += r;
+        write_cnt_ += n_bytes;
+        content_size_ += n_bytes;
+        assert(content_size_ == content_size_slow());
+
+        assert(empty() || (head_ != nullptr && !head_->fully_read()));
+        return n_bytes;
     }
-    write_cnt_ += n_bytes;
-    content_size_ += n_bytes;
-    assert(content_size_ == content_size_slow());
-
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-    return n_bytes;
 }
 
 // the marshal object should have a chunk allocated with necessary size
@@ -433,36 +419,41 @@ size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
 }
 
 
+// @safe - Writes to file descriptor (I/O system call)
+// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
 size_t Marshal::write_to_fd(int fd) {
-    size_t n_write = 0;
-    bool ok = false;
-    while (!empty()) {
-        int cnt = head_->write_to_fd(fd);
-	//Log_info("written %d bytes of %d", head_->read_idx, head_->write_idx);
-        if (head_->fully_read()) {
-            if (head_ == tail_) {
-                tail_ = nullptr;
+    // @unsafe
+    {
+        size_t n_write = 0;
+        bool ok = false;
+        while (!empty()) {
+            int cnt = head_->write_to_fd(fd);
+            //Log_info("written %d bytes of %d", head_->read_idx, head_->write_idx);
+            if (head_->fully_read()) {
+                if (head_ == tail_) {
+                    tail_ = nullptr;
+                }
+                //Log_info("fully read a chunk of size %d %d", head_->data->size, head_->write_idx);
+                chunk* chnk = head_;
+                head_ = head_->next;
+                delete chnk;
+                ok = true;
             }
-	    //Log_info("fully read a chunk of size %d %d", head_->data->size, head_->write_idx);
-            chunk* chnk = head_;
-            head_ = head_->next;
-            delete chnk;
-	    ok = true;
-        }
-        if (cnt <= 0) {
-	    //Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
-            break;
-        } else {
-	    //Log_info("written %lld bytes of %lld", head_->read_idx, head_->write_idx);	
-	}
-        assert(content_size_ >= (size_t) cnt);
-        content_size_ -= cnt;
-        n_write += cnt;
-	//if(ok) break;
+            if (cnt <= 0) {
+                //Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
+                break;
+            } else {
+                //Log_info("written %lld bytes of %lld", head_->read_idx, head_->write_idx);
+            }
+            assert(content_size_ >= (size_t) cnt);
+            content_size_ -= cnt;
+            n_write += cnt;
+            //if(ok) break;
 
+        }
+        assert(content_size_ == content_size_slow());
+        return n_write;
     }
-    assert(content_size_ == content_size_slow());
-    return n_write;
 }
 
 // @safe - Creates bookmark for deferred writes

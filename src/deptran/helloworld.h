@@ -48,14 +48,9 @@ protected:
 public:
     HelloworldClientProxy(rrr::Client* cl): __cl__(cl) { }
     rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(HelloworldClientService::TXN_READ, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << _req;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << _req;
+        });
     }
     rrr::i32 txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val) {
         auto __fu_result__ = this->async_txn_read(_req);

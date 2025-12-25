@@ -18,10 +18,14 @@
 #include "base/all.hpp"
 #include "rusty/arc.hpp"
 
+// External safety annotations for pure functions
+// @external: {
+//   std::min: [safe]
+// }
 
 namespace rrr {
 
-// @unsafe - Wrapper for std::min to satisfy borrow checker
+// @safe - Wrapper for std::min (pure function, no side effects)
 template<typename T>
 inline T safe_min(const T& a, const T& b) {
   return std::min(a, b);
@@ -349,14 +353,18 @@ class Marshal: public NoCopy {
       return n_write;
     }
 
-    // @unsafe - Reads data from chunk buffer (uses raw pointer arithmetic)
+    // @safe - Reads data from chunk buffer
+    // SAFETY: Internal @unsafe block handles raw pointer arithmetic and memcpy
     size_t read(void *p, size_t n) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
       size_t n_read = safe_min(n, write_idx - read_idx);
-      if (n_read > 0) {
-        memcpy(p, data->ptr + read_idx, n_read);
+      // @unsafe - raw pointer arithmetic
+      {
+        if (n_read > 0) {
+          memcpy(p, data->ptr + read_idx, n_read);
+        }
       }
       read_idx += n_read;
 
@@ -369,13 +377,17 @@ class Marshal: public NoCopy {
       return data->shared_data;
     }
 
-    // @unsafe - Peeks at data in chunk buffer (uses raw pointer arithmetic)
+    // @safe - Peeks at data in chunk buffer
+    // SAFETY: Internal @unsafe block handles raw pointer arithmetic and memcpy
     size_t peek(void *p, size_t n) const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
       size_t n_peek = safe_min(n, write_idx - read_idx);
-      if (n_peek > 0) {
-        memcpy(p, data->ptr + read_idx, n_peek);
+      // @unsafe - raw pointer arithmetic
+      {
+        if (n_peek > 0) {
+          memcpy(p, data->ptr + read_idx, n_peek);
+        }
       }
 
       return n_peek;
@@ -393,46 +405,50 @@ class Marshal: public NoCopy {
       return n_discard;
     }
 
-    // @unsafe - Writes to file descriptor (I/O system call)
+    // @safe - Writes to file descriptor (I/O system call)
+    // SAFETY: Internal @unsafe block handles I/O system calls and raw pointer operations
     int write_to_fd(int fd) {
-      assert(write_idx <= data->size);
-			struct timespec begin2, begin2_cpu, end2, end2_cpu;
-			/*clock_gettime(CLOCK_MONOTONIC, &begin2);		
-			clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin2_cpu);*/
-      int cnt;
-      if(data->shared_data){
-        // Safety check: marshallable_entity must have valid sp_data_
-        if (data->marshallable_entity.sp_data_ == nullptr) {
-          Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
-          return -1;
+      // @unsafe
+      {
+        assert(write_idx <= data->size);
+        struct timespec begin2, begin2_cpu, end2, end2_cpu;
+        /*clock_gettime(CLOCK_MONOTONIC, &begin2);
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin2_cpu);*/
+        int cnt;
+        if(data->shared_data){
+          // Safety check: marshallable_entity must have valid sp_data_
+          if (data->marshallable_entity.sp_data_ == nullptr) {
+            Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
+            return -1;
+          }
+          cnt = data->marshallable_entity.WriteToFd(fd, data->written_to_socket);
+          data->written_to_socket += cnt;
+          //Log_info("wrote %d bytes of ghost %d", cnt, fd);
         }
-        cnt = data->marshallable_entity.WriteToFd(fd, data->written_to_socket);
-        data->written_to_socket += cnt;
-	//Log_info("wrote %d bytes of ghost %d", cnt, fd);
-      }
-      else{
-        cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-	//Log_info("wrote %d bytes of normal %d", cnt, fd);
-      }
+        else{
+          cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
+          //Log_info("wrote %d bytes of normal %d", cnt, fd);
+        }
 #ifdef RPC_STATISTICS
-      if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
-      else{
-        Log_debug("Missed RPC stats, shared data used in raw_bytes");
-      }
+        if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
+        else{
+          Log_debug("Missed RPC stats, shared data used in raw_bytes");
+        }
 #endif // RPC_STATISTICS
-      //if(cnt == -1)verify(0);
-      if (cnt > 0) {
-				/*clock_gettime(CLOCK_MONOTONIC, &end2);
-				clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end2_cpu);
-				long total_cpu2 = (end2_cpu.tv_sec - begin2_cpu.tv_sec)*1000000000 + (end2_cpu.tv_nsec - begin2_cpu.tv_nsec);
-				long total_time2 = (end2.tv_sec - begin2.tv_sec)*1000000000 + (end2.tv_nsec - begin2.tv_nsec);
-				double util2 = (double) total_cpu2/total_time2;
-				Log_info("elapsed CPU time (fd write of %d): %f", write_idx - read_idx, util2);*/
-        read_idx += cnt;
-      }
+        //if(cnt == -1)verify(0);
+        if (cnt > 0) {
+          /*clock_gettime(CLOCK_MONOTONIC, &end2);
+          clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end2_cpu);
+          long total_cpu2 = (end2_cpu.tv_sec - begin2_cpu.tv_sec)*1000000000 + (end2_cpu.tv_nsec - begin2_cpu.tv_nsec);
+          long total_time2 = (end2.tv_sec - begin2.tv_sec)*1000000000 + (end2.tv_nsec - begin2.tv_nsec);
+          double util2 = (double) total_cpu2/total_time2;
+          Log_info("elapsed CPU time (fd write of %d): %f", write_idx - read_idx, util2);*/
+          read_idx += cnt;
+        }
 
-      assert(write_idx <= data->size);
-      return cnt;
+        assert(write_idx <= data->size);
+        return cnt;
+      }
     }
 
     // @unsafe - Reads from file descriptor (I/O system call)
@@ -553,12 +569,48 @@ class Marshal: public NoCopy {
 
   // @unsafe - Writes data to marshal buffer (uses raw pointer members)
   size_t write(const void *p, size_t n);
-  // @unsafe - Reads data from marshal buffer (uses raw pointer members)
+  // @safe - Reads data from marshal buffer (raw pointer version, for internal use)
+  // SAFETY: Internal @unsafe block handles raw pointer operations
   size_t read(void *p, size_t n);
-  // @unsafe - Peeks at data without consuming (uses raw pointer members)
-  size_t peek(void *p, size_t n) const;
+  // @safe - Reads data into a reference (type-safe version)
+  // SAFETY: Internal @unsafe block handles raw pointer operations
+  template<typename T>
+  size_t read(T& out, size_t n = sizeof(T)) {
+    static_assert(std::is_trivially_copyable_v<T>, "read requires trivially copyable type");
+    // @unsafe - reinterpret_cast for type-safe wrapper
+    {
+      return read(reinterpret_cast<void*>(&out), n);
+    }
+  }
+  // @safe - Peeks at data without consuming
+  // SAFETY: Internal @unsafe block handles raw pointer operations
+  template<typename T>
+  size_t peek(T& out, size_t n = sizeof(T)) const {
+    static_assert(std::is_trivially_copyable_v<T>, "peek requires trivially copyable type");
+    // @unsafe - raw pointer operations
+    {
+      assert(tail_ == nullptr || tail_->next == nullptr);
+      assert(empty() || (head_ != nullptr && !head_->fully_read()));
+      char* pc = reinterpret_cast<char*>(&out);
+      size_t n_peek = 0;
+      chunk* chnk = head_;
+      while (chnk != nullptr && n - n_peek > 0) {
+        size_t cnt = chnk->peek(pc + n_peek, n - n_peek);
+        if (cnt == 0) {
+          break;
+        }
+        n_peek += cnt;
+        chnk = chnk->next;
+      }
+      assert(n_peek <= n);
+      assert(tail_ == nullptr || tail_->next == nullptr);
+      assert(empty() || (head_ != nullptr && !head_->fully_read()));
+      return n_peek;
+    }
+  }
 
-  // @unsafe - Reads from file descriptor (I/O system call)
+  // @safe - Reads from file descriptor (I/O system call)
+  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
   size_t read_from_fd(int fd);
 
   // @unsafe - Reads from file descriptor into chunk (I/O system call)
@@ -577,7 +629,8 @@ class Marshal: public NoCopy {
   // @unsafe - Transfers data between Marshal objects (uses raw pointer members)
   size_t read_from_marshal(Marshal &m, size_t n);
 
-  // @unsafe - Writes to file descriptor (I/O system call)
+  // @safe - Writes to file descriptor (I/O system call)
+  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
   size_t write_to_fd(int fd);
 
   void reset(){
@@ -893,7 +946,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
 // @lifetime: (&'a, v32&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   char byte0;
-  verify(m.peek(&byte0, 1) == 1);
+  verify(m.peek(byte0, 1) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[5];
   verify(m.read(buf, bsize) == bsize);
@@ -906,8 +959,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
 // @lifetime: (&'a, v64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   char byte0;
-  //Log_info("peeking data of %d", m.peek(&byte0, 1));
-  verify(m.peek(&byte0, 1) == 1);
+  //Log_info("peeking data of %d", m.peek(byte0, 1));
+  verify(m.peek(byte0, 1) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[9];
   verify(m.read(buf, bsize) == bsize);

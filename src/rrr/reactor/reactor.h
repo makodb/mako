@@ -306,14 +306,10 @@ public:
     // Returns true if called from a poll thread, false otherwise.
     static bool is_on_poll_thread() { return current_worker_ != nullptr; }
 
-    // Update poll mode directly (bypasses channel)
+    // @safe - Update poll mode directly (bypasses channel)
     // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
-    void update_mode(int fd, int new_mode, Pollable* poll_ptr);
-
-    // @unsafe - Reference-taking overload (takes address of poll internally)
-    void update_mode(Pollable& poll, int new_mode) {
-        update_mode(poll.fd(), new_mode, &poll);
-    }
+    // SAFETY: Internal @unsafe block handles epoll operations and address-of
+    void update_mode(Pollable& poll, int new_mode);
 
 private:
     // Thread-local storage for current worker (raw pointer for internal use only)
@@ -410,6 +406,8 @@ public:
     void add(rusty::Arc<Pollable> poll) const;
     void remove(Pollable& poll) const;
     void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops Arc
+    // @safe - Sends update mode command via channel
+    // SAFETY: Channel send is thread-safe
     void update_mode(Pollable& poll, int new_mode) const;
     void add(rusty::Arc<Job> sp_job) const;
     void remove(rusty::Arc<Job> sp_job) const;

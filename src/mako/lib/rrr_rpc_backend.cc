@@ -262,30 +262,22 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     }
     rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-    Debug("RrrRpcBackend::SendToShard: Got client, calling begin_request");
+    Debug("RrrRpcBackend::SendToShard: Got client, calling request");
 
-    // Begin request with rrr/rpc
-    auto fu_result = client->begin_request(req_type);
+    // Send request with lambda API
+    auto fu_result = client->request(req_type, [&](rrr::Marshal& out) {
+        out.write(tls_buffers.request_buffer.data(), msg_len);
+    });
     if (fu_result.is_err()) {
-        Warning("Failed to begin_request for req_type %d", req_type);
+        Warning("Failed to send request for req_type %d", req_type);
         return false;
     }
     auto fu = fu_result.unwrap();
 
-    Debug("RrrRpcBackend::SendToShard: begin_request succeeded, writing request data");
-
-    // Write request data using client's << operator
-    rrr::Marshal m;
-    m.write(tls_buffers.request_buffer.data(), msg_len);
-    *client << m;
-
     msg_size_req_sent_ += msg_len;
     msg_counter_req_sent_ += 1;
 
-    Debug("RrrRpcBackend::SendToShard: Calling end_request to send RPC");
-
-    // Send request
-    client->end_request();
+    Debug("RrrRpcBackend::SendToShard: Request sent");
 
     Debug("RrrRpcBackend::SendToShard: Waiting for response");
 
@@ -361,26 +353,22 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         }
         rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-        Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling begin_request", shard_idx);
+        Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling request", shard_idx);
 
-        auto fu_result = client->begin_request(req_type);
+        auto fu_result = client->request(req_type, [&](rrr::Marshal& out) {
+            out.write(tls_buffers.request_buffer.data(), req_len);
+        });
         if (fu_result.is_err()) {
-            Warning("Failed to begin_request for shard %d", shard_idx);
+            Warning("Failed to send request for shard %d", shard_idx);
             continue;
         }
         auto fu = fu_result.unwrap();
 
-        // Write request data using client's << operator
-        rrr::Marshal m;
-        m.write(tls_buffers.request_buffer.data(), req_len);
-        *client << m;
-
         msg_size_req_sent_ += req_len;
         msg_counter_req_sent_ += 1;
 
-        Debug("RrrRpcBackend::SendToAll: Calling end_request for shard %d", shard_idx);
+        Debug("RrrRpcBackend::SendToAll: Request sent to shard %d", shard_idx);
 
-        client->end_request();
         futures.push_back(std::move(fu));
     }
 
@@ -452,19 +440,15 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         if (client_opt.is_none()) continue;
         rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-        auto fu_result = client->begin_request(req_type);
+        auto fu_result = client->request(req_type, [raw_data, req_len](rrr::Marshal& out) {
+            out.write(raw_data, req_len);
+        });
         if (fu_result.is_err()) continue;
         auto fu = fu_result.unwrap();
-
-        // Write request data using client's << operator
-        rrr::Marshal m;
-        m.write(raw_data, req_len);
-        *client << m;
 
         msg_size_req_sent_ += req_len;
         msg_counter_req_sent_ += 1;
 
-        client->end_request();
         futures.push_back(std::move(fu));
     }
 

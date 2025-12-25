@@ -113,12 +113,11 @@ TEST_F(FutureBenchmark, CreateReleaseThroughput) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
-        ASSERT_TRUE(fu_result.is_ok());
-        auto fu = fu_result.unwrap();
         i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+            m << val;
+        });
+        ASSERT_TRUE(fu_result.is_ok());
         // Arc auto-released (fire-and-forget)
     }
 
@@ -135,12 +134,12 @@ TEST_F(FutureBenchmark, CreateWaitReleaseThroughput) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
+        i32 val = i;
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+            m << val;
+        });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
 
         fu->wait();
         i32 result;
@@ -167,13 +166,12 @@ TEST_F(FutureBenchmark, BatchOperations) {
 
         // Create batch
         for (int i = 0; i < batch_size; i++) {
-            auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
-            ASSERT_TRUE(fu_result.is_ok());
-            auto fu = fu_result.unwrap();
             i32 val = batch * batch_size + i;
-            *client.as_ref().unwrap() << val;
-            client.as_ref().unwrap()->end_request();
-            futures.push_back(fu);
+            auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+                m << val;
+            });
+            ASSERT_TRUE(fu_result.is_ok());
+            futures.push_back(fu_result.unwrap());
         }
 
         // Wait and release all
@@ -198,12 +196,12 @@ TEST_F(FutureBenchmark, RefCopyOverhead) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < iterations; i++) {
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO);
+        i32 val = i;
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, FutureAttr(), [&](Marshal& m) {
+            m << val;
+        });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
 
         // Simulate passing Future around (Arc copies)
         auto fu_copy1 = fu;
@@ -233,12 +231,12 @@ TEST_F(FutureBenchmark, CallbackOverhead) {
             f->get_reply() >> result;
         });
 
-        auto fu_result = client.as_ref().unwrap()->begin_request(BenchService::ECHO, attr);
+        i32 val = i;
+        auto fu_result = client.as_ref().unwrap()->request(BenchService::ECHO, attr, [&](Marshal& m) {
+            m << val;
+        });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        i32 val = i;
-        *client.as_ref().unwrap() << val;
-        client.as_ref().unwrap()->end_request();
 
         fu->wait();
         // Arc auto-released

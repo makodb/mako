@@ -195,18 +195,12 @@ protected:
 
 TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
     // Send a simple request
-    auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+    std::string request_data = "Hello, Transport!";
+    auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+        m.write(request_data.data(), request_data.size());
+    });
     ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request";
     auto fu = fu_result.unwrap();
-
-    // Write request data
-    std::string request_data = "Hello, Transport!";
-    rrr::Marshal m;
-    m.write(request_data.data(), request_data.size());
-    *client_.as_ref().unwrap() << m;
-
-    // Send request
-    client_.as_ref().unwrap()->end_request();
 
     // Wait for response
     fu->wait();
@@ -231,15 +225,12 @@ TEST_F(RrrRpcDirectTest, BasicRequestResponse) {
 TEST_F(RrrRpcDirectTest, MultipleRequestTypes) {
     // Test sending different request types
     for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
-        auto fu_result = client_.as_ref().unwrap()->begin_request(req_type);
+        std::string data = "Request_" + std::to_string(req_type);
+        auto fu_result = client_.as_ref().unwrap()->request(req_type, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+            m.write(data.data(), data.size());
+        });
         ASSERT_TRUE(fu_result.is_ok()) << "Failed to begin request type " << (int)req_type;
         auto fu = fu_result.unwrap();
-
-        std::string data = "Request_" + std::to_string(req_type);
-        rrr::Marshal m;
-        m.write(data.data(), data.size());
-        *client_.as_ref().unwrap() << m;
-        client_.as_ref().unwrap()->end_request();
 
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
@@ -263,17 +254,12 @@ TEST_F(RrrRpcDirectTest, ConcurrentRequests) {
 
     // Send all requests without waiting
     for (int i = 0; i < num_requests; i++) {
-        auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
-        ASSERT_TRUE(fu_result.is_ok());
-        auto fu = fu_result.unwrap();
-
         std::string data = "Concurrent_" + std::to_string(i);
-        rrr::Marshal m;
-        m.write(data.data(), data.size());
-        *client_.as_ref().unwrap() << m;
-        client_.as_ref().unwrap()->end_request();
-
-        futures.push_back(std::move(fu));
+        auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+            m.write(data.data(), data.size());
+        });
+        ASSERT_TRUE(fu_result.is_ok());
+        futures.push_back(fu_result.unwrap());
     }
 
     // Wait for all responses
@@ -290,14 +276,11 @@ TEST_F(RrrRpcDirectTest, LargePayload) {
     const size_t payload_size = 1024 * 1024;
     std::vector<char> large_data(payload_size, 'X');
 
-    auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+    auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+        m.write(large_data.data(), large_data.size());
+    });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-
-    rrr::Marshal m;
-    m.write(large_data.data(), large_data.size());
-    *client_.as_ref().unwrap() << m;
-    client_.as_ref().unwrap()->end_request();
 
     fu->wait();
     EXPECT_EQ(fu->get_error_code(), 0);
@@ -328,15 +311,12 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
             std::this_thread::sleep_for(milliseconds(50));
 
             for (int i = 0; i < requests_per_thread; i++) {
-                auto fu_result = thread_client->begin_request(TEST_REQ_TYPE_START);
+                std::string data = "Thread_" + std::to_string(t) + "_" + std::to_string(i);
+                auto fu_result = thread_client->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+                    m.write(data.data(), data.size());
+                });
                 if (fu_result.is_err()) continue;
                 auto fu = fu_result.unwrap();
-
-                std::string data = "Thread_" + std::to_string(t) + "_" + std::to_string(i);
-                rrr::Marshal m;
-                m.write(data.data(), data.size());
-                *thread_client << m;
-                thread_client->end_request();
 
                 fu->wait();
                 if (fu->get_error_code() == 0) {
@@ -357,15 +337,12 @@ TEST_F(RrrRpcDirectTest, ThreadSafetyMultipleClients) {
 }
 
 TEST_F(RrrRpcDirectTest, RequestWithTimeout) {
-    auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+    std::string data = "Timeout_Test";
+    auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+        m.write(data.data(), data.size());
+    });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-
-    std::string data = "Timeout_Test";
-    rrr::Marshal m;
-    m.write(data.data(), data.size());
-    *client_.as_ref().unwrap() << m;
-    client_.as_ref().unwrap()->end_request();
 
     // Use timed_wait instead of wait
     fu->timed_wait(5.0);  // 5 second timeout
@@ -381,16 +358,12 @@ TEST_F(RrrRpcDirectTest, StressThroughput) {
     auto start = high_resolution_clock::now();
 
     for (int i = 0; i < num_requests; i++) {
-        auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
+        uint32_t seq = i;
+        auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+            m.write(&seq, sizeof(seq));
+        });
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-
-        // Minimal payload for throughput test
-        uint32_t seq = i;
-        rrr::Marshal m;
-        m.write(&seq, sizeof(seq));
-        *client_.as_ref().unwrap() << m;
-        client_.as_ref().unwrap()->end_request();
 
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
@@ -419,17 +392,12 @@ TEST_F(RrrRpcDirectTest, StressPipelined) {
 
         // Send batch
         for (int i = 0; i < batch_size; i++) {
-            auto fu_result = client_.as_ref().unwrap()->begin_request(TEST_REQ_TYPE_START);
-            if (fu_result.is_err()) continue;
-            auto fu = fu_result.unwrap();
-
             uint32_t seq = batch * batch_size + i;
-            rrr::Marshal m;
-            m.write(&seq, sizeof(seq));
-            *client_.as_ref().unwrap() << m;
-            client_.as_ref().unwrap()->end_request();
-
-            futures.push_back(std::move(fu));
+            auto fu_result = client_.as_ref().unwrap()->request(TEST_REQ_TYPE_START, rrr::FutureAttr(), [&](rrr::Marshal& m) {
+                m.write(&seq, sizeof(seq));
+            });
+            if (fu_result.is_err()) continue;
+            futures.push_back(fu_result.unwrap());
         }
 
         // Wait for batch
@@ -496,12 +464,11 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(port_)).c_str()), 0);
     std::this_thread::sleep_for(milliseconds(100));
 
-    // Send request
+    // Send request - use no-op lambda to avoid template overload issues
     {
-        auto fu_result = client->begin_request(1);
+        auto fu_result = client->request(1, rrr::FutureAttr(), [](rrr::Marshal&) {});
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        client->end_request();
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
     }
@@ -517,10 +484,9 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
 
     // Send another request
     {
-        auto fu_result = client2->begin_request(1);
+        auto fu_result = client2->request(1, rrr::FutureAttr(), [](rrr::Marshal&) {});
         ASSERT_TRUE(fu_result.is_ok());
         auto fu = fu_result.unwrap();
-        client2->end_request();
         fu->wait();
         EXPECT_EQ(fu->get_error_code(), 0);
     }

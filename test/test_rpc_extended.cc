@@ -133,12 +133,11 @@ TEST_F(ExtendedRPCTest, MultipleClients) {
     std::vector<rusty::Arc<Future>> futures;
     for (int i = 0; i < num_clients; i++) {
         std::string input = "Client_" + std::to_string(i);
-        auto fu_result = clients[i]->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = clients[i]->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+            m << input;
+        });
         ASSERT_TRUE(fu_result.is_ok());
-        auto fu = fu_result.unwrap();
-        *clients[i] << input;
-        clients[i]->end_request();
-        futures.push_back(std::move(fu));
+        futures.push_back(fu_result.unwrap());
     }
 
     // Wait for all requests
@@ -163,12 +162,12 @@ TEST_F(ExtendedRPCTest, ClientReconnection) {
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     // Make initial request
-    auto fu1_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    std::string input1 = "Request1";
+    auto fu1_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+        m << input1;
+    });
     ASSERT_TRUE(fu1_result.is_ok());
     auto fu1 = fu1_result.unwrap();
-    std::string input1 = "Request1";
-    *client << input1;
-    client->end_request();
     fu1->wait();
     EXPECT_EQ(fu1->get_error_code(), 0);
     // Arc auto-released
@@ -187,12 +186,12 @@ TEST_F(ExtendedRPCTest, ClientReconnection) {
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     // Make another request
-    auto fu2_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+    std::string input2 = "Request2";
+    auto fu2_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+        m << input2;
+    });
     ASSERT_TRUE(fu2_result.is_ok());
     auto fu2 = fu2_result.unwrap();
-    std::string input2 = "Request2";
-    *client << input2;
-    client->end_request();
     fu2->wait();
     EXPECT_EQ(fu2->get_error_code(), 0);
     // Arc auto-released
@@ -213,12 +212,12 @@ TEST_F(ExtendedRPCTest, RequestTimeout) {
     service->delay_ms = 5000; // 5 seconds
 
     // Make request with timeout
-    auto fu_result = client->begin_request(benchmark::BenchmarkService::NOP);
+    std::string input = "Timeout test";
+    auto fu_result = client->request(benchmark::BenchmarkService::NOP, FutureAttr(), [&](Marshal& m) {
+        m << input;
+    });
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
-    std::string input = "Timeout test";
-    *client << input;
-    client->end_request();
 
     // Wait with timeout - Future doesn't have timed_wait, use wait() and time it manually
     auto start = steady_clock::now();
@@ -244,12 +243,12 @@ TEST_F(ExtendedRPCTest, RapidConnectDisconnect) {
         ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
         // Make a quick request
-        auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        std::string input = "Cycle_" + std::to_string(i);
+        auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+            m << input;
+        });
         if (fu_result.is_err()) continue;
         auto fu = fu_result.unwrap();
-        std::string input = "Cycle_" + std::to_string(i);
-        *client << input;
-        client->end_request();
         fu->wait();
 
         EXPECT_EQ(fu->get_error_code(), 0);
@@ -274,12 +273,11 @@ TEST_F(ExtendedRPCTest, MixedPayloadSizes) {
 
     for (int size : sizes) {
         std::string payload(size, 'A' + (size % 26));
-        auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+            m << payload;
+        });
         if (fu_result.is_err()) continue;
-        auto fu = fu_result.unwrap();
-        *client << payload;
-        client->end_request();
-        futures.push_back(fu);
+        futures.push_back(fu_result.unwrap());
     }
 
     for (auto fu : futures) {
@@ -309,12 +307,11 @@ TEST_F(ExtendedRPCTest, BurstTraffic) {
         auto start = steady_clock::now();
         for (int i = 0; i < burst_size; i++) {
             std::string input = "Burst_" + std::to_string(burst) + "_" + std::to_string(i);
-            auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+            auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+                m << input;
+            });
             if (fu_result.is_err()) continue;
-            auto fu = fu_result.unwrap();
-            *client << input;
-            client->end_request();
-            futures.push_back(fu);
+            futures.push_back(fu_result.unwrap());
         }
 
         // Wait for all in burst
@@ -351,31 +348,28 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
     for (int i = 0; i < 20; i++) {
         if (i % 3 == 0) {
             // NOP request
-            auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
-            if (fu_result.is_err()) continue;
-            auto fu = fu_result.unwrap();
             std::string input = "NOP_" + std::to_string(i);
-            *client << input;
-            client->end_request();
-            futures.push_back(fu);
+            auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+                m << input;
+            });
+            if (fu_result.is_err()) continue;
+            futures.push_back(fu_result.unwrap());
         } else if (i % 3 == 1) {
             // PRIME request
-            auto fu_result = client->begin_request(benchmark::BenchmarkService::PRIME);
-            if (fu_result.is_err()) continue;
-            auto fu = fu_result.unwrap();
             i32 n = 7 + i;
-            *client << n;
-            client->end_request();
-            futures.push_back(fu);
+            auto fu_result = client->request(benchmark::BenchmarkService::PRIME, FutureAttr(), [&](Marshal& m) {
+                m << n;
+            });
+            if (fu_result.is_err()) continue;
+            futures.push_back(fu_result.unwrap());
         } else {
             // FAST_VEC request
-            auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_VEC);
-            ASSERT_TRUE(fu_result.is_ok());
-            auto fu = fu_result.unwrap();
             i32 n = 10;
-            *client << n;
-            client->end_request();
-            futures.push_back(fu);
+            auto fu_result = client->request(benchmark::BenchmarkService::FAST_VEC, FutureAttr(), [&](Marshal& m) {
+                m << n;
+            });
+            ASSERT_TRUE(fu_result.is_ok());
+            futures.push_back(fu_result.unwrap());
         }
     }
 
@@ -417,12 +411,11 @@ TEST_F(ExtendedRPCTest, PipelinedRequests) {
     auto start = steady_clock::now();
     for (int i = 0; i < pipeline_depth; i++) {
         std::string input = "Pipelined_" + std::to_string(i);
-        auto fu_result = client->begin_request(benchmark::BenchmarkService::FAST_NOP);
+        auto fu_result = client->request(benchmark::BenchmarkService::FAST_NOP, FutureAttr(), [&](Marshal& m) {
+            m << input;
+        });
         if (fu_result.is_err()) continue;
-        auto fu = fu_result.unwrap();
-        *client << input;
-        client->end_request();
-        futures.push_back(fu);
+        futures.push_back(fu_result.unwrap());
     }
 
     // Now wait for all

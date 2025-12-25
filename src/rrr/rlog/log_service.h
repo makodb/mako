@@ -10,8 +10,8 @@ namespace rlog {
 class RLogService: public rrr::Service {
 public:
     enum {
-        LOG = 0x56efef9c,
-        AGGREGATE_QPS = 0x47d594ad,
+        LOG = 0x5bc70059,
+        AGGREGATE_QPS = 0x29110f07,
     };
     int __reg_to__(rrr::Server* svr) {
         int ret = 0;
@@ -70,17 +70,12 @@ protected:
 public:
     RLogProxy(rrr::Client* cl): __cl__(cl) { }
     rrr::FutureResult async_log(const rrr::i32& level, const std::string& source, const rrr::i64& msg_id, const std::string& message, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(RLogService::LOG, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << level;
-        *__cl__ << source;
-        *__cl__ << msg_id;
-        *__cl__ << message;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(RLogService::LOG, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << level;
+            __m__ << source;
+            __m__ << msg_id;
+            __m__ << message;
+        });
     }
     rrr::i32 log(const rrr::i32& level, const std::string& source, const rrr::i64& msg_id, const std::string& message) {
         auto __fu_result__ = this->async_log(level, source, msg_id, message);
@@ -93,15 +88,10 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_aggregate_qps(const std::string& metric_name, const rrr::i32& increment, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        auto __fu_result__ = __cl__->begin_request(RLogService::AGGREGATE_QPS, __fu_attr__);
-        if (__fu_result__.is_err()) {
-            return __fu_result__;  // Propagate error
-        }
-        auto __fu__ = __fu_result__.unwrap();
-        *__cl__ << metric_name;
-        *__cl__ << increment;
-        __cl__->end_request();
-        return rrr::FutureResult::Ok(__fu__);
+        return __cl__->request(RLogService::AGGREGATE_QPS, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << metric_name;
+            __m__ << increment;
+        });
     }
     rrr::i32 aggregate_qps(const std::string& metric_name, const rrr::i32& increment) {
         auto __fu_result__ = this->async_aggregate_qps(metric_name, increment);

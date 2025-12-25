@@ -335,17 +335,17 @@ TEST_F(MarshalTest, PartialReadWrite) {
 TEST_F(MarshalTest, PeekOperation) {
     i32 val1 = 100;
     i32 val2 = 200;
-    
+
     *m << val1 << val2;
-    
+
     i32 peeked_val;
-    size_t peeked = m->peek(&peeked_val, sizeof(i32));
+    size_t peeked = m->peek(peeked_val);
     EXPECT_EQ(peeked, sizeof(i32));
     EXPECT_EQ(peeked_val, val1);
-    
+
     i32 read_val1, read_val2;
     *m >> read_val1 >> read_val2;
-    
+
     EXPECT_EQ(read_val1, val1);
     EXPECT_EQ(read_val2, val2);
 }

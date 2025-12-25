@@ -15,27 +15,28 @@
 #include "server.hpp"
 #include "utils.hpp"
 
-// External safety annotations for STL and language features that cannot have in-place annotations
-// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
+// Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 // Note: std::atomic public API (load, store, etc.) is annotated in event.h
+//
 // @external: {
-//   std::unordered_map::find: [unsafe]
-//   std::unordered_map::end: [unsafe]
-//   std::unordered_map::erase: [unsafe]
-//   std::unordered_map::operator[]: [unsafe]
-//   std::unordered_set::find: [unsafe]
-//   std::unordered_set::end: [unsafe]
-//   std::unordered_set::insert: [unsafe]
-//   std::unordered_set::erase: [unsafe]
-//   std::unordered_set::begin: [unsafe]
-//   std::list::push_back: [unsafe]
-//   std::__cxx11::list::push_back: [unsafe]
-//   std::function::operator=: [unsafe]
-//   std::function::operator(): [unsafe]
-//   operator!=: [unsafe]
-//   operator==: [unsafe]
 //   const_cast: [unsafe]
+//   std::function::operator=: [safe]
+//   std::list::push_back: [safe]
+//   std::list::begin: [safe]
+//   std::list::end: [safe]
+//   std::list::iterator::operator++: [safe]
+//   std::list::iterator::operator*: [safe]
+//   std::list::iterator::operator!=: [safe]
+//   std::unordered_map::find: [safe]
+//   std::unordered_map::end: [safe]
+//   std::unordered_map::iterator::operator!=: [safe]
+//   std::unordered_map::iterator::operator->: [safe]
+//   std::set::find: [safe]
+//   std::set::end: [safe]
+//   std::set::insert: [safe]
+//   std::set::iterator::operator!=: [safe]
 // }
 
 using namespace std;
@@ -137,7 +138,9 @@ int ServerConnection::run_async(const std::function<void()>& f) {
   return 0;
 }
 
-// @unsafe - Reads requests (raw pointer operations: &packet_size, req->m)
+// @safe - Reads requests from socket and dispatches to handlers
+// Uses internal @unsafe block for Coroutine::CreateRun, Reactor::Loop,
+// and loop-local variable tracking (borrow checker requires this for loops with moves)
 bool ServerConnection::handle_read() {
     if (status_ == CLOSED) {
         return false;
@@ -160,75 +163,87 @@ bool ServerConnection::handle_read() {
 
     std::list<rusty::Box<Request>> complete_requests;
 
-    // Process ALL complete packets in the buffer
-    for (;;) {
-        i32 packet_size;
-        int n_peek = in_.peek(&packet_size, sizeof(i32));
-        if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
-            // consume the packet size
-            verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
+    // @unsafe - Coroutine::CreateRun and Reactor::Loop require unsafe context
+    {
+        // Process ALL complete packets in the buffer
+        for (;;) {
+            i32 packet_size;
+            int n_peek = in_.peek(packet_size);
+            if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
+                // consume the packet size (using type-safe read with reference)
+                verify(in_.read(packet_size) == sizeof(i32));
 
-            auto req = rusty::Box<Request>(new Request());
-            verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
+                auto req = rusty::make_box<Request>();
+                verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
 
-            v64 v_xid;
-            req->m >> v_xid;
-            req->xid = v_xid.get();
-            complete_requests.push_back(std::move(req));
+                v64 v_xid;
+                req->m >> v_xid;
+                req->xid = v_xid.get();
+                complete_requests.push_back(std::move(req));
 
-        } else {
-            // packet not complete or there's no more packet to process
-            break;
-        }
-    }
-
-#ifdef RPC_STATISTICS
-    stat_server_batching(complete_requests.size());
-#endif // RPC_STATISTICS
-
-    for (auto& req : complete_requests) {
-        if (req->m.content_size() < sizeof(i32)) {
-            reply(*req, EINVAL);
-            continue;
-        }
-
-        i32 rpc_id;
-        req->m >> rpc_id;
-
-#ifdef RPC_STATISTICS
-        stat_server_rpc_counting(rpc_id);
-#endif // RPC_STATISTICS
-
-        auto it = server_->handlers_.find(rpc_id);
-        if (it != server_->handlers_.end()) {
-            // rusty::Function allows direct capture of move-only types like rusty::Box
-            // Lambda captures rusty::Box<Request> by move, maintaining single ownership semantics
-            auto weak_this = weak_self_;
-            // Jetpack: pass file/line for debugging; mako-dev block_read_in not used in this branch
-            Coroutine::CreateRun([handler = it->second, req = std::move(req), weak_this]() mutable {
-                handler(std::move(req), weak_this);
-            }, __FILE__, __LINE__);
-        } else {
-            // Track missing RPC IDs and suppress duplicate warnings
-            // @unsafe - STL operations (set::find, set::insert)
-            bool surpress_warning = false;
-            {
-                auto guard = rpc_id_missing_s.lock().unwrap();
-                if (guard->find(rpc_id) == guard->end()) {
-                    guard->insert(rpc_id);
-                } else {
-                    surpress_warning = true;
-                }
-            }  // Guard dropped here, releasing lock
-            if (!surpress_warning) {
-                Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
+            } else {
+                // packet not complete or there's no more packet to process
+                break;
             }
-            reply(*req, ENOENT);
         }
-    }
 
-    // Pump reactor after processing batch
-    Reactor::GetReactor()->Loop();
+#ifdef RPC_STATISTICS
+        stat_server_batching(complete_requests.size());
+#endif // RPC_STATISTICS
+
+        // Process each request
+        while (!complete_requests.empty()) {
+            // Extract request from list - this creates a fresh req each iteration
+            rusty::Box<Request> req = std::move(complete_requests.front());
+            complete_requests.pop_front();
+
+            // Validate request size
+            if (req->m.content_size() < sizeof(i32)) {
+                reply(*req, EINVAL);
+                // req destroyed here, not moved
+            } else {
+                i32 rpc_id;
+                req->m >> rpc_id;
+
+#ifdef RPC_STATISTICS
+                stat_server_rpc_counting(rpc_id);
+#endif // RPC_STATISTICS
+
+                auto it = server_->handlers_.find(rpc_id);
+                if (it == server_->handlers_.end()) {
+                    // Handler not found - track missing RPC IDs and suppress duplicate warnings
+                    bool surpress_warning = false;
+                    {
+                        auto guard = rpc_id_missing_s.lock().unwrap();
+                        if (guard->find(rpc_id) == guard->end()) {
+                            guard->insert(rpc_id);
+                        } else {
+                            surpress_warning = true;
+                        }
+                    }  // Guard dropped here, releasing lock
+                    if (!surpress_warning) {
+                        Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
+                    }
+                    reply(*req, ENOENT);
+                    // req destroyed here, not moved
+                } else {
+                    // Handler found - dispatch to coroutine
+                    // rusty::Function allows direct capture of move-only types like rusty::Box
+                    // Lambda captures rusty::Box<Request> by move, maintaining single ownership semantics
+                    auto weak_this = weak_self_;
+                    auto handler = it->second;
+                    // Move req into local before capture to help checker understand ownership transfer
+                    rusty::Box<Request> req_owned = std::move(req);
+                    Coroutine::CreateRun([handler, req_owned = std::move(req_owned), weak_this]() mutable {
+                        handler(std::move(req_owned), weak_this);
+                    }, __FILE__, __LINE__);
+                }
+            }
+            // req is out of scope here regardless of path
+        }
+
+        Reactor::GetReactor()->Loop();
+    }
 
     return false;
 }
@@ -240,36 +255,32 @@ int ServerConnection::handle_write() {
     }
 
     int result = Pollable::MODE_NO_CHANGE;
-    // @unsafe - Marshal operations (write_to_fd, empty)
-    {
-        auto guard = out_.lock().unwrap();
-        guard->write_to_fd(socket_);
-        if (guard->empty()) {
-            // Return READ-only mode - PollThreadWorker will update epoll
-            result = Pollable::READ;
-        }
-    }  // Guard auto-unlocks here
+    auto guard = out_.lock().unwrap();
+    guard->write_to_fd(socket_);
+    if (guard->empty()) {
+        // Return READ-only mode - PollThreadWorker will update epoll
+        result = Pollable::READ;
+    }
+    // Guard auto-unlocks here
     return result;
 }
 
-// @safe - Error handler (explicit this-> is now safe in rusty-cpp)
+// @safe - Error handler
 void ServerConnection::handle_error() {
-    // @unsafe - calls close() which does system calls
-    { this->close(); }
+    this->close();
 }
 
-// @unsafe - Closes connection, should only be called from poll thread
+// @safe - Closes connection, should only be called from poll thread
+// SAFETY: Internal @unsafe block for system calls and pointer operations
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
         status_ = CLOSED;
-        // @unsafe - system call
-        { ::close(socket_); }
-        // @unsafe - logging
-        { Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_); }
-
-        // Remove from sconns_ (if tracked)
-        // @unsafe - STL operations (list iteration, list::erase)
+        // @unsafe - system call, logging, and iterator operations
         {
+            ::close(socket_);
+            Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_);
+
+            // Remove from sconns_ (if tracked)
             auto guard = server_->sconns_.lock().unwrap();
             for (auto it = guard->begin(); it != guard->end(); ++it) {
                 if (it->get() == this) {
@@ -277,20 +288,19 @@ void ServerConnection::close() {
                     break;
                 }
             }
-        }  // Guard dropped here, releasing lock
+            // Guard dropped here, releasing lock
+        }
     }
 }
 
 // @safe - Returns poll mode based on output buffer, protected by SpinMutex
 int ServerConnection::poll_mode() const {
     int mode = Pollable::READ;
-    // @unsafe - Marshal::empty
-    {
-        auto guard = out_.lock().unwrap();
-        if (!guard->empty()) {
-            mode |= Pollable::WRITE;
-        }
-    }  // Guard auto-unlocks here
+    auto guard = out_.lock().unwrap();
+    if (!guard->empty()) {
+        mode |= Pollable::WRITE;
+    }
+    // Guard auto-unlocks here
     return mode;
 }
 
@@ -378,13 +388,12 @@ bool ServerListener::handle_read() {
 }
 
 // @safe - Closes server socket
+// SAFETY: Internal @unsafe block for ::close() system call
 void ServerListener::close() {
-  // @unsafe - system call ::close
-  {
-    if (server_sock_ >= 0) {
-      ::close(server_sock_);
-      server_sock_ = -1;
-    }
+  if (server_sock_ >= 0) {
+    // @unsafe - system call
+    { ::close(server_sock_); }
+    server_sock_ = -1;
   }
 }
 
@@ -520,22 +529,17 @@ int Server::start(const char* bind_addr) {
 
 // @safe - Registers RPC handler in map
 int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
-    // @unsafe - unordered_map operations
-    {
-        // disallow duplicate rpc_id
-        if (handlers_.find(rpc_id) != handlers_.end()) {
-            return EEXIST;
-        }
-
-        handlers_[rpc_id] = func;
+    // disallow duplicate rpc_id
+    if (handlers_.find(rpc_id) != handlers_.end()) {
+        return EEXIST;
     }
+    handlers_[rpc_id] = func;
     return 0;
 }
 
 // @safe - Unregisters RPC handler from map
 void Server::unreg(i32 rpc_id) {
-    // @unsafe - unordered_map::erase
-    { handlers_.erase(rpc_id); }
+    handlers_.erase(rpc_id);
 }
 
 } // namespace rrr

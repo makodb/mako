@@ -181,20 +181,14 @@ def emit_service_and_proxy(service, f, rpc_table):
                 out_counter += 1
             f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
             with f.indent():
-                f.writeln("auto __fu_result__ = __cl__->begin_request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
                 if len(async_call_params) > 0:
-                    f.writeln("if (__fu_result__.is_err()) {")
+                    f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
                     with f.indent():
-                        f.writeln("return __fu_result__;  // Propagate error")
-                    f.writeln("}")
-                    f.writeln("auto __fu__ = __fu_result__.unwrap();")
-                    for param in async_call_params:
-                        f.writeln("*__cl__ << %s;" % param)
-                f.writeln("__cl__->end_request();")
-                if len(async_call_params) > 0:
-                    f.writeln("return rrr::FutureResult::Ok(__fu__);")
+                        for param in async_call_params:
+                            f.writeln("__m__ << %s;" % param)
+                    f.writeln("});")
                 else:
-                    f.writeln("return __fu_result__;")
+                    f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
             f.writeln("}")
             f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
             with f.indent():
