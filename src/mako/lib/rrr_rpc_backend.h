@@ -31,6 +31,46 @@ namespace mako {
 
 // Forward declarations
 class HelperQueue;
+class RrrRpcBackend;
+
+/**
+ * TransportBackendService: Service implementation for RrrRpcBackend
+ *
+ * Handles a range of RPC IDs and forwards them to the backend's RequestHandler.
+ * This is a proper Service subclass that avoids std::function type erasure.
+ */
+class TransportBackendService : public rrr::Service {
+public:
+    TransportBackendService(RrrRpcBackend* backend, rrr::i32 rpc_start, rrr::i32 rpc_end)
+        : backend_(backend), rpc_start_(rpc_start), rpc_end_(rpc_end) {}
+
+    // @safe - with @unsafe block for loop
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+        // @unsafe - loop iteration
+        {
+            for (rrr::i32 rpc_id = rpc_start_; rpc_id <= rpc_end_; ++rpc_id) {
+                int ret = svr.reg_rpc(rpc_id, svc_index);
+                if (ret != 0) {
+                    // Unregister on failure
+                    for (rrr::i32 id = rpc_start_; id < rpc_id; ++id) {
+                        svr.unreg(id);
+                    }
+                    return ret;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // @safe
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
+                      rrr::WeakServerConnection weak_sconn) override;
+
+private:
+    RrrRpcBackend* backend_;
+    rrr::i32 rpc_start_;
+    rrr::i32 rpc_end_;
+};
 
 /**
  * RrrRequestHandle: rrr/rpc implementation of TransportRequestHandle
@@ -38,8 +78,6 @@ class HelperQueue;
  * Implements the transport-agnostic interface for rrr/rpc requests.
  * Stores request/response data extracted from rrr::Request.
  */
-// Forward declaration (defined below)
-class RrrRpcBackend;
 
 class RrrRequestHandle : public TransportRequestHandle {
 public:
@@ -105,6 +143,9 @@ public:
  * ensure proper synchronization if using from multiple threads.
  */
 class RrrRpcBackend : public TransportBackend {
+    // Grant access to RequestHandler for dispatch
+    friend class TransportBackendService;
+
 public:
     RrrRpcBackend(const transport::Configuration& config,
                   int shard_idx,

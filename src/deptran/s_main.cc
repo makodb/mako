@@ -4,6 +4,7 @@
 #include "procedure.h"
 #include "command_marshaler.h"
 #include "benchmark_control_rpc.h"
+#include "client_status.h"
 #include "server_worker.h"
 #include "../rrr/reactor/event.h"
 #include "scheduler.h"
@@ -16,7 +17,9 @@
 
 using namespace janus;
 
-static ClientControlServiceImpl *ccsi_g = nullptr;
+// Shared client status for synchronization and statistics
+// Can be accessed by both RPC service and external callers (ClientWorker, Coordinators)
+static rusty::Option<rusty::Arc<ClientStatus>> client_status_g = rusty::None;
 static rusty::Option<rusty::Arc<rrr::PollThread>> cli_poll_thread_worker_g = rusty::None;
 static rrr::Server *cli_hb_server_g = nullptr;
 
@@ -44,19 +47,26 @@ Frequency frequency;
   Distribution client2leader, client2leader_send, client2test_point;
 #endif
 
-void client_setup_heartbeat(int num_clients) {  // HERE!!!
+void client_setup_heartbeat(int num_clients) {
   Log_info("%s in client_setup_heartbeat", __FUNCTION__);
   std::map<int32_t, std::string> txn_types;
   Frame* f = Frame::GetFrame(Config::GetConfig()->tx_proto_);
   f->GetTxTypes(txn_types);
   delete f;
+
+  // Always create shared client status (needed for ClientWorker/Coordinator stats)
+  client_status_g = rusty::Some(rusty::Arc<ClientStatus>::make(num_clients, txn_types));
+
   bool hb = Config::GetConfig()->do_heart_beat();
   if (hb) {
     // setup controller rpc server
-    int n_io_threads = 1;
     cli_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
     cli_hb_server_g = new rrr::Server(rusty::Some(cli_poll_thread_worker_g.as_ref().unwrap().clone()));
-    ccsi_g = cli_hb_server_g->reg_service(ClientControlServiceImpl(num_clients, txn_types));
+
+    // Create service with Arc<ClientStatus>, register as owned Box<Service>
+    cli_hb_server_g->reg_service(rusty::make_box<ClientControlServiceImpl>(
+        client_status_g.as_ref().unwrap().clone()));
+
     auto ctrl_port = std::to_string(Config::GetConfig()->get_ctrl_port());
     std::string server_address = std::string("0.0.0.0:").append(ctrl_port);
     Log_info("Start control server on port %s", ctrl_port.c_str());
@@ -78,10 +88,14 @@ void client_launch_workers(vector<Config::SiteInfo> &client_sites) {
   int core_id = 0; // [JetPack] usually run 1 replica on each process on cloud setting
 #endif
   for (uint32_t client_id = 0; client_id < client_sites.size(); client_id++) {
+    // Pass Arc<ClientStatus> to ClientWorker for synchronization and statistics
+    auto client_status = client_status_g.is_some()
+        ? rusty::Some(client_status_g.as_ref().unwrap().clone())
+        : rusty::None;
     ClientWorker* worker = new ClientWorker(client_id,
                                             client_sites[client_id],
                                             Config::GetConfig(),
-                                            ccsi_g,
+                                            std::move(client_status),
                                             rusty::None,
                                             &(failover_triggers[client_id]),
                                             &failover_server_quit,

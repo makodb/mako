@@ -21,9 +21,9 @@ namespace janus {
 // @safe
 CoordinatorRaft::CoordinatorRaft(uint32_t coo_id,
                                              int32_t benchmark,
-                                             ClientControlServiceImpl* ccsi,
+                                             rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                              uint32_t thread_id)
-    : Coordinator(coo_id, benchmark, ccsi, thread_id),
+    : Coordinator(coo_id, benchmark, std::move(client_status), thread_id),
       slot_hint_(rusty::Arc<rusty::Cell<slotid_t>>::make(0)) {
 }
 

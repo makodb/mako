@@ -38,26 +38,28 @@ public:
     std::atomic<bool> should_delay{false};
     std::atomic<int> delay_ms{100};
 
-    // Make movable (atomics can't be moved, so we copy values)
-    TestFutureService() = default;
-    TestFutureService(TestFutureService&& other) noexcept
-        : call_count(other.call_count.load()),
-          should_delay(other.should_delay.load()),
-          delay_ms(other.delay_ms.load()) {}
-    TestFutureService& operator=(TestFutureService&&) = delete;
-    TestFutureService(const TestFutureService&) = delete;
-    TestFutureService& operator=(const TestFutureService&) = delete;
-
-    // @unsafe - Takes address-of member function pointers
-    int __reg_to__(Server* svr) {
+    // Registers RPC IDs with server using service index
+    // @safe
+    int __reg_to__(Server& svr, size_t svc_index) override {
         int ret = 0;
-        ret = svr->reg_method(FAST_ECHO, this, &TestFutureService::fast_echo_wrapper);
-        ret = svr->reg_method(SLOW_ECHO, this, &TestFutureService::slow_echo_wrapper);
-        ret = svr->reg_method(GET_VALUE, this, &TestFutureService::get_value_wrapper);
-        ret = svr->reg_method(ERROR_METHOD, this, &TestFutureService::error_method_wrapper);
-        return ret;
+        if ((ret = svr.reg_rpc(FAST_ECHO, svc_index)) != 0) return ret;
+        if ((ret = svr.reg_rpc(SLOW_ECHO, svc_index)) != 0) return ret;
+        if ((ret = svr.reg_rpc(GET_VALUE, svc_index)) != 0) return ret;
+        if ((ret = svr.reg_rpc(ERROR_METHOD, svc_index)) != 0) return ret;
+        return 0;
     }
-    
+
+    // @safe - Virtual dispatch for RPC requests
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+        switch (rpc_id) {
+        case FAST_ECHO: fast_echo_wrapper(std::move(req), weak_sconn); break;
+        case SLOW_ECHO: slow_echo_wrapper(std::move(req), weak_sconn); break;
+        case GET_VALUE: get_value_wrapper(std::move(req), weak_sconn); break;
+        case ERROR_METHOD: error_method_wrapper(std::move(req), weak_sconn); break;
+        default: break;
+        }
+    }
+
 private:
     void fast_echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
@@ -71,7 +73,6 @@ private:
                 out << input;
             });
         }
-        // req automatically cleaned up by rusty::Box
     }
 
     void slow_echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
@@ -80,7 +81,7 @@ private:
         req->m >> input;
 
         if (should_delay) {
-            std::this_thread::sleep_for(milliseconds(delay_ms));
+            std::this_thread::sleep_for(milliseconds(delay_ms.load()));
         }
 
         auto sconn_opt = weak_sconn.upgrade();
@@ -90,7 +91,6 @@ private:
                 out << input;
             });
         }
-        // req automatically cleaned up by rusty::Box
     }
 
     void get_value_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
@@ -107,14 +107,11 @@ private:
                 out << result;
             });
         }
-        // req automatically cleaned up by rusty::Box
     }
 
     void error_method_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
         call_count++;
         // Don't reply - simulate an error
-        // req automatically cleaned up by rusty::Box
-        // sconn automatically released by Arc
     }
 };
 
@@ -122,7 +119,7 @@ class FutureTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
     Server* server;
-    TestFutureService* service;
+    TestFutureService* service_;  // Raw pointer for test access (server owns via Box)
     rusty::Option<rusty::Arc<Client>> client;
     static constexpr int base_port = 8849;  // Base port, different from RPC test
     static int test_counter;  // Counter for unique ports per test
@@ -137,7 +134,11 @@ protected:
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-        service = server->reg_service(TestFutureService{});
+
+        // Create service, store raw pointer for test access, server takes ownership via Box
+        auto service_box = rusty::make_box<TestFutureService>();
+        service_ = service_box.get();  // Store raw pointer before transferring ownership
+        server->reg_service(std::move(service_box));
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
@@ -149,11 +150,10 @@ protected:
 
     void TearDown() override {
         // Reset service state flags to prevent test interaction
-        service->should_delay = false;
-        service->delay_ms = 100;
+        service_->should_delay = false;
+        service_->delay_ms = 100;
 
         client.as_ref().unwrap()->close();
-        // service is owned by server, no delete needed
         delete server;  // Server destructor waits for connections to close
 
         // Shutdown PollThread
@@ -190,8 +190,8 @@ TEST_F(FutureTest, BasicFutureCreation) {
 }
 
 TEST_F(FutureTest, FutureReadyCheck) {
-    service->should_delay = true;
-    service->delay_ms = 100;
+    service_->should_delay = true;
+    service_->delay_ms = 100;
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](Marshal& m) {
@@ -209,7 +209,7 @@ TEST_F(FutureTest, FutureReadyCheck) {
 
     // Arc auto-released
 
-    service->should_delay = false;
+    service_->should_delay = false;
 }
 
 TEST_F(FutureTest, FutureWait) {
@@ -231,8 +231,8 @@ TEST_F(FutureTest, FutureWait) {
 
 // Once a future times out, it shouldn't be waited on again
 // TEST_F(FutureTest, FutureTimedWait) {
-//     service->should_delay = true;
-//     service->delay_ms = 2000;  // 2 seconds delay
+//     service_->should_delay = true;
+//     service_->delay_ms = 2000;  // 2 seconds delay
 //     
 //     Future* fu = client->begin_request(TestFutureService::SLOW_ECHO);
 //     std::string input = "test";
@@ -251,7 +251,7 @@ TEST_F(FutureTest, FutureWait) {
 //     
 //     fu->release();
 //     
-//     service->should_delay = false;
+//     service_->should_delay = false;
 // }
 
 TEST_F(FutureTest, FutureCallback) {
@@ -387,8 +387,8 @@ TEST_F(FutureTest, StressTestManyFutures) {
 
 // This test should now pass with pthread_cond_broadcast fix
 TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
-    service->should_delay = true;
-    service->delay_ms = 200;
+    service_->should_delay = true;
+    service_->delay_ms = 200;
 
     std::string input = "test";
     auto fu_result = client.as_ref().unwrap()->request(TestFutureService::SLOW_ECHO, FutureAttr(), [&](Marshal& m) {
@@ -419,7 +419,7 @@ TEST_F(FutureTest, ConcurrentWaitersOnSameFuture) {
 
     // Arc auto-released
 
-    service->should_delay = false;
+    service_->should_delay = false;
 }
 
 TEST_F(FutureTest, TimedWaitWithQuickResponse) {

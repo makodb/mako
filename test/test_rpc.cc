@@ -33,27 +33,17 @@ public:
     std::atomic<bool> should_delay{false};
     std::atomic<int> delay_ms{100};
 
-    // Make movable (atomics can't be moved, so we copy values)
-    TestService() = default;
-    TestService(TestService&& other) noexcept
-        : call_count(other.call_count.load()),
-          should_delay(other.should_delay.load()),
-          delay_ms(other.delay_ms.load()) {}
-    TestService& operator=(TestService&&) = delete;
-    TestService(const TestService&) = delete;
-    TestService& operator=(const TestService&) = delete;
-
     void fast_nop(const std::string& input) override {
         call_count++;
     }
-    
+
     void nop(const std::string& input) override {
         call_count++;
         if (should_delay) {
-            std::this_thread::sleep_for(milliseconds(delay_ms));
+            std::this_thread::sleep_for(milliseconds(delay_ms.load()));
         }
     }
-    
+
     void fast_prime(const i32& n, i8* flag) override {
         call_count++;
         bool is_prime = true;
@@ -69,14 +59,14 @@ public:
         }
         *flag = is_prime ? 1 : 0;
     }
-    
+
     void fast_vec(const i32& n, std::vector<i64>* v) override {
         call_count++;
         for (i32 i = 0; i < n; i++) {
             v->push_back(i);
         }
     }
-    
+
     void sleep(const double& sec) override {
         call_count++;
         std::this_thread::sleep_for(std::chrono::duration<double>(sec));
@@ -87,7 +77,7 @@ class RPCTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;  // Shared Arc<PollThread>
     Server* server;
-    TestService* service;
+    TestService* service_;  // Raw pointer for test access (server owns via Box)
     rusty::Option<rusty::Arc<Client>> client;
     int test_port_;  // Dynamic port for this test instance
 
@@ -113,7 +103,11 @@ protected:
         auto poll_clone = poll_ref.clone();
         auto server_poll = rusty::Some(std::move(poll_clone));
         server = new Server(std::move(server_poll));
-        service = server->reg_service(TestService{});
+
+        // Create service, store raw pointer for test access, server takes ownership via Box
+        auto service_box = rusty::make_box<TestService>();
+        service_ = service_box.get();  // Store raw pointer before transferring ownership
+        server->reg_service(std::move(service_box));
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
 
         // Client must be created with factory method to initialize weak_self_
@@ -125,8 +119,8 @@ protected:
 
     void TearDown() override {
         client.as_ref().unwrap()->close();
-        // service is owned by server, no delete needed
         delete server;  // Server destructor waits for connections to close
+        // service_ destroyed after server (unique_ptr member order)
         poll_thread_worker_.as_ref().unwrap()->shutdown();
     }
 };
@@ -142,7 +136,7 @@ TEST_F(RPCTest, BasicNop) {
     fu->wait();
 
     EXPECT_EQ(fu->get_error_code(), 0);
-    EXPECT_EQ(service->call_count, 1);
+    EXPECT_EQ(service_->call_count, 1);
     // Arc auto-released
 }
 
@@ -166,7 +160,7 @@ TEST_F(RPCTest, MultipleRequests) {
         // Arc auto-released
     }
 
-    EXPECT_EQ(service->call_count, num_requests);
+    EXPECT_EQ(service_->call_count, num_requests);
 }
 
 TEST_F(RPCTest, ConcurrentRequests) {
@@ -215,7 +209,7 @@ TEST_F(RPCTest, ConcurrentRequests) {
     }
 
     EXPECT_EQ(success_count, num_threads * requests_per_thread);
-    EXPECT_EQ(service->call_count, num_threads * requests_per_thread);
+    EXPECT_EQ(service_->call_count, num_threads * requests_per_thread);
 }
 
 TEST_F(RPCTest, LargePayload) {
@@ -411,11 +405,11 @@ TEST_F(RPCTest, PipelinedRequests) {
         // Arc auto-released
     }
 
-    EXPECT_EQ(service->call_count, num_requests);
+    EXPECT_EQ(service_->call_count, num_requests);
 }
 
 TEST_F(RPCTest, SlowClientFastServer) {
-    service->should_delay = false;
+    service_->should_delay = false;
 
     std::vector<rusty::Arc<Future>> futures;
 
@@ -439,8 +433,8 @@ TEST_F(RPCTest, SlowClientFastServer) {
 }
 
 TEST_F(RPCTest, FastClientSlowServer) {
-    service->should_delay = true;
-    service->delay_ms = 50;
+    service_->should_delay = true;
+    service_->delay_ms = 50;
 
     auto start = high_resolution_clock::now();
 
@@ -465,9 +459,9 @@ TEST_F(RPCTest, FastClientSlowServer) {
     auto end = high_resolution_clock::now();
     auto duration = duration_cast<milliseconds>(end - start);
 
-    EXPECT_GE(duration.count(), num_requests * service->delay_ms / 2);
+    EXPECT_GE(duration.count(), num_requests * service_->delay_ms / 2);
 
-    service->should_delay = false;
+    service_->should_delay = false;
 }
 
 class ConnectionErrorTest : public ::testing::Test {
@@ -612,8 +606,8 @@ TEST_F(RPCTest, MultiThreadedStressTest) {
 
     // The service call_count should match (though it may be slightly off due to timing)
     // We check it's at least close to expected
-    EXPECT_GE(service->call_count.load(), expected_total * 0.95)
-        << "Service call count too low: " << service->call_count.load();
+    EXPECT_GE(service_->call_count.load(), expected_total * 0.95)
+        << "Service call count too low: " << service_->call_count.load();
 }
 
 int main(int argc, char** argv) {

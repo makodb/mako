@@ -203,7 +203,7 @@ int main(int argc, char **argv) {
     thrpool = new ThreadPool(worker_threads);
     if (is_server) {
         Server svr(std::move(poll_thread_worker_));  // Server takes Option<Arc<...>>
-        svr.reg_service(BenchmarkService{});
+        svr.reg_service(rusty::make_box<BenchmarkService>());
         verify(svr.start(svr_addr) == 0);
 
         Pthread_mutex_init(&g_stop_mutex, nullptr);

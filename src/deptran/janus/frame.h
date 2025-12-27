@@ -1,5 +1,6 @@
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 
 #include "../frame.h"
 
@@ -12,14 +13,13 @@ class JanusFrame : public Frame {
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,
-                                 ClientControlServiceImpl *ccsi,
+                                 rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                  uint32_t id,
                                  shared_ptr<TxnRegistry> txn_reg) override;
   TxLogServer *CreateScheduler() override;
-  vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
+  vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                           ServerControlServiceImpl *scsi)
+                                           rusty::Arc<rrr::PollThread> poll_thread_worker)
   override;
   mdb::Row *CreateRow(const mdb::Schema *schema,
                       vector<Value> &row_data) override;

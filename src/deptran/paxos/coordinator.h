@@ -29,7 +29,7 @@ class CoordinatorMultiPaxos : public Coordinator {
   vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md{};
   CoordinatorMultiPaxos(uint32_t coo_id,
                         int32_t benchmark,
-                        ClientControlServiceImpl *ccsi,
+                        rusty::Option<rusty::Arc<ClientStatus>> client_status,
                         uint32_t thread_id);
   ~CoordinatorMultiPaxos() {
 #ifdef LATENCY_DEBUG
@@ -102,7 +102,7 @@ public:
     void GotoNextPhase();
     BulkCoordinatorMultiPaxos(uint32_t coo_id,
                           int32_t benchmark,
-                          ClientControlServiceImpl *ccsi,
+                          rusty::Option<rusty::Arc<ClientStatus>> client_status,
                           uint32_t thread_id);
     void BulkSubmit(shared_ptr<Marshallable> &cmd,
                     rusty::Function<void()> func = {},

@@ -224,6 +224,7 @@ class MarshallDeputy {
 };
 
 class Marshal: public NoCopy {
+private:
   // Migrated from RefCounted to std::shared_ptr for automatic reference counting
   struct raw_bytes {
     char *ptr = nullptr;
@@ -265,7 +266,6 @@ class Marshal: public NoCopy {
   };
 
   struct chunk: public NoCopy {
-
    private:
 
     // Private constructor for shared_copy - takes shared_ptr by value, copies it
@@ -299,8 +299,6 @@ class Marshal: public NoCopy {
     chunk(const void *p, size_t n)
         : data(std::make_shared<raw_bytes>(p, n)),
           read_idx(0), write_idx(n), next(nullptr) { }
-    chunk(const chunk&) = delete;
-    chunk& operator=(const chunk&) = delete;
     // Destructor is now default - shared_ptr handles cleanup automatically
     ~chunk() = default;
 
@@ -548,8 +546,6 @@ class Marshal: public NoCopy {
 
   Marshal()
       : head_(nullptr), tail_(nullptr), write_cnt_(0), content_size_(0) { }
-  Marshal(const Marshal &) = delete;
-  Marshal &operator=(const Marshal &) = delete;
   ~Marshal();
 
   void init_block_read(size_t block_size){

@@ -10,47 +10,62 @@ namespace network_client {
 class NetworkClientService: public rrr::Service {
 public:
     enum {
-        TXN_RMW = 0x363da7b0,
-        TXN_READ = 0x398e536e,
-        TXN_NEW_ORDER = 0x1b6e0eea,
-        TXN_PAYMENT = 0x519571cf,
-        TXN_DELIVERY = 0x1d8d8152,
-        TXN_ORDER_STATUS = 0x32eef829,
-        TXN_STOCK_LEVEL = 0x57e8e275,
+        TXN_RMW = 0x501a4bd6,
+        TXN_READ = 0x29021dfd,
+        TXN_NEW_ORDER = 0x56a4f50a,
+        TXN_PAYMENT = 0x4d46bb07,
+        TXN_DELIVERY = 0x2d078ab2,
+        TXN_ORDER_STATUS = 0x6da87d5d,
+        TXN_STOCK_LEVEL = 0x2a79c256,
     };
-    int __reg_to__(rrr::Server* svr) {
+    // Registers RPC IDs with server using service index
+    // @safe
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
-        if ((ret = svr->reg_method(TXN_RMW, this, &NetworkClientService::__txn_rmw__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_RMW, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(TXN_READ, this, &NetworkClientService::__txn_read__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_READ, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(TXN_NEW_ORDER, this, &NetworkClientService::__txn_new_order__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_NEW_ORDER, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(TXN_PAYMENT, this, &NetworkClientService::__txn_payment__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_PAYMENT, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(TXN_DELIVERY, this, &NetworkClientService::__txn_delivery__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_DELIVERY, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(TXN_ORDER_STATUS, this, &NetworkClientService::__txn_order_status__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_ORDER_STATUS, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(TXN_STOCK_LEVEL, this, &NetworkClientService::__txn_stock_level__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_STOCK_LEVEL, svc_index)) != 0) {
             goto err;
         }
         return 0;
     err:
-        svr->unreg(TXN_RMW);
-        svr->unreg(TXN_READ);
-        svr->unreg(TXN_NEW_ORDER);
-        svr->unreg(TXN_PAYMENT);
-        svr->unreg(TXN_DELIVERY);
-        svr->unreg(TXN_ORDER_STATUS);
-        svr->unreg(TXN_STOCK_LEVEL);
+        svr.unreg(TXN_RMW);
+        svr.unreg(TXN_READ);
+        svr.unreg(TXN_NEW_ORDER);
+        svr.unreg(TXN_PAYMENT);
+        svr.unreg(TXN_DELIVERY);
+        svr.unreg(TXN_ORDER_STATUS);
+        svr.unreg(TXN_STOCK_LEVEL);
         return ret;
+    }
+    // @safe - Virtual dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+        switch (rpc_id) {
+        case TXN_RMW: __txn_rmw__wrapper__(std::move(req), weak_sconn); break;
+        case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;
+        case TXN_NEW_ORDER: __txn_new_order__wrapper__(std::move(req), weak_sconn); break;
+        case TXN_PAYMENT: __txn_payment__wrapper__(std::move(req), weak_sconn); break;
+        case TXN_DELIVERY: __txn_delivery__wrapper__(std::move(req), weak_sconn); break;
+        case TXN_ORDER_STATUS: __txn_order_status__wrapper__(std::move(req), weak_sconn); break;
+        case TXN_STOCK_LEVEL: __txn_stock_level__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
     }
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use

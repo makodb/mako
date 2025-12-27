@@ -14,13 +14,13 @@ REG_FRAME(MODE_CAROUSEL, vector<string>({"carousel"}), FrameCarousel);
 Coordinator *FrameCarousel::CreateCoordinator(cooid_t coo_id,
                                            Config *config,
                                            int benchmark,
-                                           ClientControlServiceImpl *ccsi,
+                                           rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                            uint32_t id,
                                            shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   CoordinatorCarousel *coord = new CoordinatorCarousel(coo_id,
                                                  benchmark,
-                                                 ccsi,
+                                                 std::move(client_status),
                                                  id);
   coord->txn_reg_ = txn_reg;
   coord->frame_ = this;
@@ -52,12 +52,11 @@ shared_ptr<Tx> FrameCarousel::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-vector<rrr::Service *>
+vector<rusty::Box<rrr::Service>>
 FrameCarousel::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
-                              rusty::Arc<rrr::PollThread> poll_thread_worker,
-                              ServerControlServiceImpl *scsi) {
-  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
+                              rusty::Arc<rrr::PollThread> poll_thread_worker) {
+  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker);
 }
 
 } // namespace janus

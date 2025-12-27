@@ -25,7 +25,6 @@ class ClassicServiceImpl : public ClassicService {
 
 //  std::mutex mtx_;
   Recorder* recorder_{nullptr};
-  ServerControlServiceImpl* scsi_; // for statistics;
   Communicator* comm_{nullptr};
 
   TxLogServer* dtxn_sched_;
@@ -172,8 +171,7 @@ class ClassicServiceImpl : public ClassicService {
   ClassicServiceImpl() = delete;
 
   ClassicServiceImpl(TxLogServer* sched,
-                     rusty::Arc<rrr::PollThread> poll_thread_worker,
-                     ServerControlServiceImpl* scsi = NULL);
+                     rusty::Arc<rrr::PollThread> poll_thread_worker);
 
   void RccDispatch(const vector<SimpleCommand>& cmd,
                    int32_t* res,

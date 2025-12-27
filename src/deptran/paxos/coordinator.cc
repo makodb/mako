@@ -13,16 +13,16 @@ std::shared_ptr<ElectionState> es_cc = ElectionState::instance();
 
 CoordinatorMultiPaxos::CoordinatorMultiPaxos(uint32_t coo_id,
                                              int32_t benchmark,
-                                             ClientControlServiceImpl* ccsi,
+                                             rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                             uint32_t thread_id)
-    : Coordinator(coo_id, benchmark, ccsi, thread_id) {
+    : Coordinator(coo_id, benchmark, std::move(client_status), thread_id) {
 }
 
 BulkCoordinatorMultiPaxos::BulkCoordinatorMultiPaxos(uint32_t coo_id,
                                              int32_t benchmark,
-                                             ClientControlServiceImpl* ccsi,
+                                             rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                              uint32_t thread_id)
-  : CoordinatorMultiPaxos(coo_id, benchmark, ccsi, thread_id) {
+  : CoordinatorMultiPaxos(coo_id, benchmark, std::move(client_status), thread_id) {
 }
 
 void CoordinatorMultiPaxos::Submit(shared_ptr<Marshallable>& cmd,

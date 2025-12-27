@@ -19,11 +19,11 @@ namespace janus {
 
 CoordinatorClassic::CoordinatorClassic(uint32_t coo_id,
                                        int benchmark,
-                                       ClientControlServiceImpl* ccsi,
+                                       rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                        uint32_t thread_id)
     : Coordinator(coo_id,
                   benchmark,
-                  ccsi,
+                  std::move(client_status),
                   thread_id) {
   verify(commo_ == nullptr);
 }
@@ -77,8 +77,8 @@ void CoordinatorClassic::DoTxAsync(TxRequest& req) {
   auto config = Config::GetConfig();
   bool not_forwarding = forward_status_ != PROCESS_FORWARD_REQUEST;
 
-  if (ccsi_ && not_forwarding) {
-    ccsi_->txn_start_one(thread_id_, cmd->type_);
+  if (client_status_.is_some() && not_forwarding) {
+    client_status_.as_ref().unwrap()->txn_start_one(thread_id_, cmd->type_);
   }
   if (config->forwarding_enabled_ && forward_status_ == FORWARD_TO_LEADER) {
     Log_info("forward to leader: %d; cooid: %d",
@@ -198,12 +198,12 @@ void CoordinatorClassic::Restart() {
   Log_debug("assigning tx_id: %" PRIx64, ongoing_tx_id_);
   TxData* txn = (TxData*) cmd_;
   double last_latency = txn->last_attempt_latency();
-  if (ccsi_)
-    ccsi_->txn_retry_one(this->thread_id_, txn->type_, last_latency);
+  if (client_status_.is_some())
+    client_status_.as_ref().unwrap()->txn_retry_one(this->thread_id_, txn->type_, last_latency);
   auto& max_retry = Config::GetConfig()->max_retry_;
   if (n_retry_ > max_retry && max_retry >= 0) {
-    if (ccsi_)
-      ccsi_->txn_give_up_one(this->thread_id_, txn->type_);
+    if (client_status_.is_some())
+      client_status_.as_ref().unwrap()->txn_give_up_one(this->thread_id_, txn->type_);
     End();
   } else {
     Log_info("retry count %d, max_retry: %d, this coord: %llx", n_retry_, max_retry, this);
@@ -724,19 +724,19 @@ void CoordinatorClassic::Report(TxReply& txn_reply,
 ) {
 
   bool not_forwarding = forward_status_ != PROCESS_FORWARD_REQUEST;
-  if (ccsi_ && not_forwarding) {
+  if (client_status_.is_some() && not_forwarding) {
     if (txn_reply.res_ == SUCCESS) {
 #ifdef TXN_STAT
       txn_stats_[ch->tx_type_].one(ch->proxies_.size(), ch->p_types_);
 #endif // ifdef TXN_STAT
-      ccsi_->txn_success_one(thread_id_,
+      client_status_.as_ref().unwrap()->txn_success_one(thread_id_,
                              txn_reply.txn_type_,
                              txn_reply.start_time_,
                              txn_reply.time_,
                              last_latency,
                              txn_reply.n_try_);
     } else
-      ccsi_->txn_reject_one(thread_id_,
+      client_status_.as_ref().unwrap()->txn_reject_one(thread_id_,
                             txn_reply.txn_type_,
                             txn_reply.start_time_,
                             txn_reply.time_,

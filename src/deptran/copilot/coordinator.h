@@ -51,7 +51,7 @@ class CoordinatorCopilot : public Coordinator {
   enum Phase : int { INIT_END = 0, PREPARE, FAST_ACCEPT, ACCEPT, COMMIT };
   CoordinatorCopilot(uint32_t coo_id,
   					         int32_t benchmark,
-                     ClientControlServiceImpl *ccsi,
+                     rusty::Option<rusty::Arc<ClientStatus>> client_status,
                      uint32_t thread_id);
   virtual ~CoordinatorCopilot();
 

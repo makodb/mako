@@ -21,7 +21,10 @@ void ServerWorker::SetupHeartbeat() {
 //  hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_thread_pool_g = svr_thread_pool_;
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
-  scsi_ = hb_rpc_server_->reg_service(ServerControlServiceImpl(timeout));
+
+  // Create shared status and pass clone to service
+  server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
+  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
 
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
@@ -29,7 +32,7 @@ void ServerWorker::SetupHeartbeat() {
   hb_rpc_server_->start(addr_port.c_str());
   if (hb_rpc_server_ != nullptr) {
     // Log_info("notify ready to control script for %s", bind_addr.c_str());
-    scsi_->set_ready();
+    server_status_.as_ref().unwrap()->set_ready();
   }
   Log_info("heartbeat setup for %s on %s",
            this->site_info_->name.c_str(), addr_port.c_str());
@@ -176,30 +179,37 @@ void ServerWorker::SetupService() {
   // Use as_ref().unwrap() to borrow without consuming the Option
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
-  // init service implementation
+  // init rrr::Server first (before registering services)
+  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
+
+  // Create and register services (ownership transferred to rpc_server_)
 #ifdef RAFT_TEST_CORO
   // In test mode, only initialize replication services
   if (rep_frame_ != nullptr) {
-    auto s2 = rep_frame_->CreateRpcServices(site_info_->id,
-                                            rep_sched_,
-                                            poll_worker,
-                                            scsi_);
-    services_.insert(services_.end(), s2.begin(), s2.end());
+    auto services = rep_frame_->CreateRpcServices(site_info_->id,
+                                                   rep_sched_,
+                                                   poll_worker);
+    for (auto& svc : services) {
+      rpc_server_->reg_service(std::move(svc));
+    }
   }
 #else
   if (tx_frame_ != nullptr) {
-    services_ = tx_frame_->CreateRpcServices(site_info_->id,
-                                             tx_sched_,
-                                             poll_worker,
-                                             scsi_);
+    auto services = tx_frame_->CreateRpcServices(site_info_->id,
+                                                  tx_sched_,
+                                                  poll_worker);
+    for (auto& svc : services) {
+      rpc_server_->reg_service(std::move(svc));
+    }
   }
 
   if (rep_frame_ != nullptr) {
-    auto s2 = rep_frame_->CreateRpcServices(site_info_->id,
-                                            rep_sched_,
-                                            poll_worker,
-                                            scsi_);
-    services_.insert(services_.end(), s2.begin(), s2.end());
+    auto services = rep_frame_->CreateRpcServices(site_info_->id,
+                                                   rep_sched_,
+                                                   poll_worker);
+    for (auto& svc : services) {
+      rpc_server_->reg_service(std::move(svc));
+    }
   }
 #endif
 
@@ -208,14 +218,6 @@ void ServerWorker::SetupService() {
 
   uint32_t num_threads = 1;
 //  thread_pool_g = new base::ThreadPool(num_threads);
-
-  // init rrr::Server
-  rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
-
-  // reg services (borrowed - services_ is managed by frame/worker)
-  for (auto service : services_) {
-    rpc_server_->reg_service_ref(*service);
-  }
 
   // start rpc server
   Log_debug("starting server at %s", bind_addr.c_str());
@@ -233,23 +235,26 @@ void ServerWorker::SetupService() {
 void ServerWorker::WaitForShutdown() {
   Log_debug("%s", __FUNCTION__);
   if (hb_rpc_server_ != nullptr) {
-    scsi_->wait_for_shutdown();
+    hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     if (hb_thread_pool_g != svr_thread_pool_)
       hb_thread_pool_g->release();
 
-    for (auto service : services_) {
-      if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(service)) {
-        auto& recorder = s->recorder_;
-        if (recorder) {
-          auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
-          auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
-          Log::info("Log to disk, average log per flush: %lld,"
-                        " average size per flush: %lld",
-                    n_flush_avg_, sz_flush_avg_);
+    // Use for_each_service to access services owned by rpc_server_
+    if (rpc_server_ != nullptr) {
+      rpc_server_->for_each_service([](rrr::Service& service) {
+        if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
+          auto& recorder = s->recorder_;
+          if (recorder) {
+            auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
+            auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
+            Log::info("Log to disk, average log per flush: %lld,"
+                          " average size per flush: %lld",
+                      n_flush_avg_, sz_flush_avg_);
+          }
         }
-      }
+      });
     }
   }
   Log_debug("exit %s", __FUNCTION__);
@@ -309,13 +314,12 @@ void ServerWorker::Resume() {
 }
 
 void ServerWorker::ShutDown() {
-  Log_debug("deleting services, num: %d", services_.size());
+  Log_debug("deleting rpc_server_ (services owned by server)");
 
   // Merged: mako-dev's cleanup + Jetpack's rep_sched_ deletion
+  // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
-  for (auto service : services_) {
-    delete service;
-  }
+  rpc_server_ = nullptr;
 
   // Modern C++ - smart pointer auto-cleanup
   // svr_poll_thread_worker_ automatically released by shared_ptr

@@ -8,11 +8,11 @@ namespace janus {
 
 CoordinatorCarousel::CoordinatorCarousel(uint32_t coo_id,
                                        int benchmark,
-                                       ClientControlServiceImpl* ccsi,
+                                       rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                        uint32_t thread_id)
     : CoordinatorClassic(coo_id,
                   benchmark,
-                  ccsi,
+                  std::move(client_status),
                   thread_id), using_basic_(Config::GetConfig()->carousel_basic_mode()) {
   verify(commo_ == nullptr);
 }

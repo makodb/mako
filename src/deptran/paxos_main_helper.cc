@@ -174,7 +174,7 @@ void microbench_paxos() {
     Log_info("shutdown Server Control Service after task finish");
     for (auto& worker : pxs_workers_g) {
         if (worker->hb_rpc_server_ != nullptr) {
-            worker->scsi_->do_shutdown();
+            worker->hb_rpc_server_->do_shutdown();
         }
     }
 }
@@ -1002,7 +1002,7 @@ void pre_shutdown_step(){
     Log_info("shutdown Server Control Service after task finish total submit %d", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {
         if (worker->hb_rpc_server_ != nullptr) {
-            worker->scsi_->do_shutdown();
+            worker->hb_rpc_server_->do_shutdown();
         }
     }
 }
@@ -1112,7 +1112,7 @@ void *nc_start_server(void *input) {
     auto poll_arc = PollThread::create();
     rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
 
-    server->reg_service(NetworkClientServiceImpl{});
+    server->reg_service(rusty::make_box<NetworkClientServiceImpl>());
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
     // Service is now owned by server
     int c=0;

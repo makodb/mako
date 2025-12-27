@@ -14,14 +14,14 @@ MongodbFrame::MongodbFrame(int mode) : Frame(mode) {
 Coordinator *MongodbFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
                                                 int benchmark,
-                                                ClientControlServiceImpl *ccsi,
+                                                rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                                 uint32_t id,
                                                 shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   CoordinatorMongodb *coo;
   coo = new CoordinatorMongodb(coo_id,
                                 benchmark,
-                                ccsi,
+                                std::move(client_status),
                                 id);
   coo->frame_ = this;
   verify(commo_ != nullptr);
@@ -45,15 +45,14 @@ Communicator *MongodbFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> po
   return commo_;
 }
 
-vector<rrr::Service *>
+vector<rusty::Box<rrr::Service>>
 MongodbFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
-                                   rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                   ServerControlServiceImpl *scsi) {
+                                   rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<Service *>();
+  auto result = std::vector<rusty::Box<Service>>();
   switch (config->replica_proto_) {
-    case MODE_MONGODB:result.push_back(new MongodbServiceImpl(rep_sched));
+    case MODE_MONGODB:result.push_back(rusty::make_box<MongodbServiceImpl>(rep_sched));
     default:break;
   }
   return result;

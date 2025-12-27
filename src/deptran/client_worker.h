@@ -1,5 +1,6 @@
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/option.hpp>
 #include <mutex>
 #include <condition_variable>
 
@@ -7,10 +8,9 @@
 #include "config.h"
 #include "communicator.h"
 #include "procedure.h"
+#include "client_status.h"
 
 namespace janus {
-
-class ClientControlServiceImpl;
 class Workload;
 class CoordinatorBase;
 class Frame;
@@ -31,7 +31,8 @@ class ClientWorker {
   uint32_t id;
   uint32_t duration;
   int outbound;  // Jetpack: track outbound requests
-  ClientControlServiceImpl *ccsi{nullptr};
+  // Shared client status for synchronization and statistics
+  rusty::Option<rusty::Arc<ClientStatus>> client_status_;
   int32_t n_concurrent_;
   map<cooid_t, bool> n_pause_concurrent_{};  // Jetpack: pause tracking
   std::mutex finish_mutex{};
@@ -85,10 +86,11 @@ class ClientWorker {
 
  public:
   // Merged constructor: Jetpack failover params + mako-dev PollThread type
+  // Takes Arc<ClientStatus> for synchronization and statistics instead of raw pointer
   ClientWorker(uint32_t id,
                Config::SiteInfo& site_info,
                Config* config,
-               ClientControlServiceImpl* ccsi,
+               rusty::Option<rusty::Arc<ClientStatus>> client_status,
                rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None,
                bool* volatile failover = nullptr,
                volatile bool* failover_server_quit = nullptr,

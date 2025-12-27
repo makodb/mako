@@ -10,22 +10,32 @@ namespace rlog {
 class RLogService: public rrr::Service {
 public:
     enum {
-        LOG = 0x5bc70059,
-        AGGREGATE_QPS = 0x29110f07,
+        LOG = 0x64f5fb19,
+        AGGREGATE_QPS = 0x168dd4e3,
     };
-    int __reg_to__(rrr::Server* svr) {
+    // Registers RPC IDs with server using service index
+    // @safe
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
-        if ((ret = svr->reg_method(LOG, this, &RLogService::__log__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(LOG, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(AGGREGATE_QPS, this, &RLogService::__aggregate_qps__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(AGGREGATE_QPS, svc_index)) != 0) {
             goto err;
         }
         return 0;
     err:
-        svr->unreg(LOG);
-        svr->unreg(AGGREGATE_QPS);
+        svr.unreg(LOG);
+        svr.unreg(AGGREGATE_QPS);
         return ret;
+    }
+    // @safe - Virtual dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+        switch (rpc_id) {
+        case LOG: __log__wrapper__(std::move(req), weak_sconn); break;
+        case AGGREGATE_QPS: __aggregate_qps__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
     }
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use

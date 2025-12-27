@@ -11,9 +11,9 @@ namespace janus {
 
 CoordinatorRule::CoordinatorRule(uint32_t coo_id,
                                        int32_t benchmark,
-                                       ClientControlServiceImpl *ccsi,
+                                       rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                        uint32_t thread_id)
-  : CoordinatorClassic(coo_id, benchmark, ccsi, thread_id) {
+  : CoordinatorClassic(coo_id, benchmark, std::move(client_status), thread_id) {
   // if (Config::GetConfig()->replica_proto_ == MODE_FPGA_RAFT) {
   //   margin_success_rate_ = 0.724;
   // } else if (Config::GetConfig()->replica_proto_ == MODE_COPILOT) {

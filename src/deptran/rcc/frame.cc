@@ -22,13 +22,13 @@ Executor *FrameRococo::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
 Coordinator *FrameRococo::CreateCoordinator(cooid_t coo_id,
                                             Config *config,
                                             int benchmark,
-                                            ClientControlServiceImpl *ccsi,
+                                            rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                             uint32_t id,
                                             shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   RccCoord *coord = new RccCoord(coo_id,
                                  benchmark,
-                                 ccsi,
+                                 std::move(client_status),
                                  id);
   coord->txn_reg_ = txn_reg;
   coord->frame_ = this;
@@ -41,17 +41,11 @@ TxLogServer *FrameRococo::CreateScheduler() {
   return sched;
 }
 
-vector<rrr::Service *>
+vector<rusty::Box<rrr::Service>>
 FrameRococo::CreateRpcServices(uint32_t site_id,
                                TxLogServer *sched,
-                               rusty::Arc<rrr::PollThread> poll_thread_worker,
-                               ServerControlServiceImpl *scsi) {
-//  auto config = Config::GetConfig();
-//  auto result = std::vector<Service *>();
-//  auto s = new RococoServiceImpl(sched, poll_thread_worker, scsi);
-//  result.push_back(s);
-//  return result;
-  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
+                               rusty::Arc<rrr::PollThread> poll_thread_worker) {
+  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker);
 }
 
 mdb::Row *FrameRococo::CreateRow(const mdb::Schema *schema,

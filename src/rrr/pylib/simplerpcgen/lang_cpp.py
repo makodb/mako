@@ -32,14 +32,13 @@ def emit_service_and_proxy(service, f, rpc_table):
                 rpc_code = rpc_table["%s.%s" % (service.name, func.name)]
                 f.writeln("%s = %s," % (func.name.upper(), hex(rpc_code)))
         f.writeln("};")
-        f.writeln("int __reg_to__(rrr::Server* svr) {")
+        f.writeln("// Registers RPC IDs with server using service index")
+        f.writeln("// @safe")
+        f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index) override {")
         with f.indent():
             f.writeln("int ret = 0;")
             for func in service.functions:
-                if func.attr == "raw":
-                    f.writeln("if ((ret = svr->reg_method(%s, this, &%sService::%s)) != 0) {" % (func.name.upper(), service.name, func.name))
-                else:
-                    f.writeln("if ((ret = svr->reg_method(%s, this, &%sService::__%s__wrapper__)) != 0) {" % (func.name.upper(), service.name, func.name))
+                f.writeln("if ((ret = svr.reg_rpc(%s, svc_index)) != 0) {" % func.name.upper())
                 with f.indent():
                     f.writeln("goto err;")
                 f.writeln("}")
@@ -47,8 +46,20 @@ def emit_service_and_proxy(service, f, rpc_table):
         f.writeln("err:")
         with f.indent():
             for func in service.functions:
-                f.writeln("svr->unreg(%s);" % func.name.upper())
+                f.writeln("svr.unreg(%s);" % func.name.upper())
             f.writeln("return ret;")
+        f.writeln("}")
+        f.writeln("// @safe - Virtual dispatch for RPC requests")
+        f.writeln("void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {")
+        with f.indent():
+            f.writeln("switch (rpc_id) {")
+            for func in service.functions:
+                if func.attr == "raw":
+                    f.writeln("case %s: %s(std::move(req), weak_sconn); break;" % (func.name.upper(), func.name))
+                else:
+                    f.writeln("case %s: __%s__wrapper__(std::move(req), weak_sconn); break;" % (func.name.upper(), func.name))
+            f.writeln("default: break;  // Unknown RPC ID, ignore")
+            f.writeln("}")
         f.writeln("}")
         f.writeln("// these RPC handler functions need to be implemented by user")
         f.writeln("// for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use")

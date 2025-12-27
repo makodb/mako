@@ -8,6 +8,8 @@
 // @external: {
 //   va_start: [unsafe, (va_list&, ...) -> void]
 //   va_end: [unsafe, (va_list&) -> void]
+//   __builtin_va_start: [unsafe, (va_list&, ...) -> void]
+//   __builtin_va_end: [unsafe, (va_list&) -> void]
 //   vfprintf: [safe, (FILE*, const char*, va_list) -> int]
 //   vsprintf: [unsafe, (char*, const char*, va_list) -> int]
 //   sprintf: [unsafe, (char*, const char*, ...) -> int]
@@ -35,8 +37,7 @@ class Log {
     // have to use pthread mutex because Mutex class cannot be init'ed correctly as static var
     static pthread_mutex_t m_s;
 
-    // @unsafe - Uses vsprintf to format strings into stack buffer
-    // SAFETY: Buffer is sized appropriately; mutex ensures thread safety
+    // Private helper - contains internal unsafe blocks for va_list processing
     static void log_v(int level, int line, const char* file, const char* fmt, va_list args);
 public:
 
@@ -44,44 +45,26 @@ public:
         FATAL = 0, ERROR = 1, WARN = 2, INFO = 3, DEBUG = 4
     };
 
-    // @unsafe - Modifies static FILE pointer under mutex
-    // SAFETY: Mutex ensures thread-safe modification
+    // @safe - Thread-safe configuration; uses internal mutex
     static void set_file(FILE* fp);
-    // @unsafe - Modifies static level under mutex
-    // SAFETY: Mutex ensures thread-safe modification
+    // @safe - Thread-safe configuration; uses internal mutex
     static void set_level(int level);
 
-    // @unsafe - Variadic functions using va_list
-    // SAFETY: Proper va_start/va_end usage; thread-safe via mutex
+    // @safe - Thread-safe variadic logging (contains internal unsafe blocks)
     static void log(int level, int line, const char* file, const char* fmt, ...);
 
-    // @unsafe - Variadic logging functions
-    // SAFETY: Proper va_start/va_end usage; thread-safe via mutex
-    // @unsafe
+    // @safe - Thread-safe logging functions (contain internal unsafe blocks)
     static void fatal(int line, const char* file, const char* fmt, ...);
-    // @unsafe
     static void error(int line, const char* file, const char* fmt, ...);
-    // @unsafe
     static void warn(int line, const char* file, const char* fmt, ...);
-    // @unsafe
     static void info(int line, const char* file, const char* fmt, ...);
-    // @unsafe Variadic logging helper invoked by macros
-    // SAFETY: Uses mutex-protected formatting and ensures va_end
-    // @unsafe
     static void debug(int line, const char* file, const char* fmt, ...);
 
-    // @unsafe - Variadic logging functions without file/line
-    // SAFETY: Proper va_start/va_end usage; thread-safe via mutex
-    // @unsafe
+    // @safe - Thread-safe logging functions without file/line (contain internal unsafe blocks)
     static void fatal(const char* fmt, ...);
-    // @unsafe
     static void error(const char* fmt, ...);
-    // @unsafe
     static void warn(const char* fmt, ...);
-    // @unsafe
     static void info(const char* fmt, ...);
-    // @unsafe Variadic logging helper without file/line metadata
-    // SAFETY: Uses mutex-protected formatting and ensures va_end
     static void debug(const char* fmt, ...);
 };
 

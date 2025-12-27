@@ -20,8 +20,8 @@
 #include <std_annotation.hpp>
 
 // @external: {
-//   rrr::Log::debug: [unsafe],
-//   rrr::Log::error: [unsafe],
+//   rrr::Log::debug: [safe],
+//   rrr::Log::error: [safe],
 //   rrr::Event::Test: [unsafe]
 // }
 
@@ -75,7 +75,7 @@ void Coroutine::Sleep(uint64_t microseconds) {
 // SAFETY: Thread-local storage with Rc ensures single-threaded access
 rusty::Rc<Reactor>
 Reactor::GetReactor() {
-  // @unsafe - Log_debug, Rc::make, Rc::clone
+  // @unsafe - Rc::make, Rc::clone
   {
     if (sp_reactor_th_.is_none()) {
       Log_debug("create a coroutine scheduler");

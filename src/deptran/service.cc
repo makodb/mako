@@ -1,5 +1,6 @@
 #include "__dep__.h"
 #include "benchmark_control_rpc.h"
+#include "stats_registry.h"
 #include "carousel/scheduler.h"
 #include "classic/scheduler.h"
 #include "classic/tpc_command.h"
@@ -22,9 +23,8 @@
 namespace janus {
 
 ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
-                                       rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                       ServerControlServiceImpl* scsi) : scsi_(
-    scsi), dtxn_sched_(sched), poll_thread_worker_(poll_thread_worker) {
+                                       rusty::Arc<rrr::PollThread> poll_thread_worker)
+    : dtxn_sched_(sched), poll_thread_worker_(poll_thread_worker) {
 
 #ifdef PIECE_COUNT
   piece_count_timer_.start();
@@ -828,20 +828,14 @@ void ClassicServiceImpl::JetpackPullRecSetIns(const epoch_t& jepoch,
 
 
 void ClassicServiceImpl::RegisterStats() {
-  if (scsi_) {
-    scsi_->set_recorder(recorder_);
-    scsi_->set_recorder(recorder_);
-    scsi_->set_stat(ServerControlServiceImpl::STAT_SZ_SCC, &stat_sz_scc_);
-    scsi_->set_stat(ServerControlServiceImpl::STAT_SZ_GRAPH_START,
-                    &stat_sz_gra_start_);
-    scsi_->set_stat(ServerControlServiceImpl::STAT_SZ_GRAPH_COMMIT,
-                    &stat_sz_gra_commit_);
-    scsi_->set_stat(ServerControlServiceImpl::STAT_SZ_GRAPH_ASK,
-                    &stat_sz_gra_ask_);
-    scsi_->set_stat(ServerControlServiceImpl::STAT_N_ASK, &stat_n_ask_);
-    scsi_->set_stat(ServerControlServiceImpl::STAT_RO6_SZ_VECTOR,
-                    &stat_ro6_sz_vector_);
-  }
+  auto& registry = StatsRegistry::instance();
+  registry.set_recorder(recorder_);
+  registry.set_stat(StatsRegistry::STAT_SZ_SCC, &stat_sz_scc_);
+  registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_START, &stat_sz_gra_start_);
+  registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_COMMIT, &stat_sz_gra_commit_);
+  registry.set_stat(StatsRegistry::STAT_SZ_GRAPH_ASK, &stat_sz_gra_ask_);
+  registry.set_stat(StatsRegistry::STAT_N_ASK, &stat_n_ask_);
+  registry.set_stat(StatsRegistry::STAT_RO6_SZ_VECTOR, &stat_ro6_sz_vector_);
 }
 
 void ClassicServiceImpl::MsgString(const string& arg,

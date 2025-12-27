@@ -26,18 +26,6 @@ public:
     std::atomic<int> delay_ms{100};
     std::atomic<bool> should_throw{false};
 
-    // Make movable (atomics can't be moved, so we copy values)
-    ExtendedTestService() = default;
-    ExtendedTestService(ExtendedTestService&& other) noexcept
-        : call_count(other.call_count.load()),
-          should_crash(other.should_crash.load()),
-          should_delay(other.should_delay.load()),
-          delay_ms(other.delay_ms.load()),
-          should_throw(other.should_throw.load()) {}
-    ExtendedTestService& operator=(ExtendedTestService&&) = delete;
-    ExtendedTestService(const ExtendedTestService&) = delete;
-    ExtendedTestService& operator=(const ExtendedTestService&) = delete;
-
     void fast_nop(const std::string& input) override {
         call_count++;
         if (should_throw) {
@@ -47,14 +35,14 @@ public:
             abort(); // Simulate crash
         }
     }
-    
+
     void nop(const std::string& input) override {
         call_count++;
         if (should_delay) {
-            std::this_thread::sleep_for(milliseconds(delay_ms));
+            std::this_thread::sleep_for(milliseconds(delay_ms.load()));
         }
     }
-    
+
     void fast_prime(const i32& n, i8* flag) override {
         call_count++;
         bool is_prime = true;
@@ -70,14 +58,14 @@ public:
         }
         *flag = is_prime ? 1 : 0;
     }
-    
+
     void fast_vec(const i32& n, std::vector<i64>* v) override {
         call_count++;
         for (i32 i = 0; i < n; i++) {
             v->push_back(i);
         }
     }
-    
+
     void sleep(const double& sec) override {
         call_count++;
         std::this_thread::sleep_for(std::chrono::duration<double>(sec));
@@ -88,7 +76,7 @@ class ExtendedRPCTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
     Server* server;
-    ExtendedTestService* service;
+    ExtendedTestService* service_;  // Raw pointer for test access (server owns via Box)
     static constexpr int test_port_base = 9000;
     static std::atomic<int> port_offset;
     int current_port;
@@ -101,12 +89,15 @@ protected:
 
         // Server now takes Option<Arc<...>> - use as_ref() to borrow and clone
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-        service = server->reg_service(ExtendedTestService{});
+
+        // Create service, store raw pointer for test access, server takes ownership via Box
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        service_ = service_box.get();  // Store raw pointer before transferring ownership
+        server->reg_service(std::move(service_box));
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(current_port)).c_str()), 0);
     }
 
     void TearDown() override {
-        // service is owned by server, no delete needed
         if (server) delete server;
         // Shutdown PollThread with proper locking
         {
@@ -147,7 +138,7 @@ TEST_F(ExtendedRPCTest, MultipleClients) {
         // Arc auto-released
     }
 
-    EXPECT_EQ(service->call_count, num_clients);
+    EXPECT_EQ(service_->call_count, num_clients);
 
     // Cleanup
     for (auto client : clients) {
@@ -196,7 +187,7 @@ TEST_F(ExtendedRPCTest, ClientReconnection) {
     EXPECT_EQ(fu2->get_error_code(), 0);
     // Arc auto-released
 
-    EXPECT_EQ(service->call_count, 2);
+    EXPECT_EQ(service_->call_count, 2);
 
     client->close();
     // Arc handles cleanup automatically
@@ -208,8 +199,8 @@ TEST_F(ExtendedRPCTest, RequestTimeout) {
     ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(current_port)).c_str()), 0);
 
     // Set service to delay longer than timeout
-    service->should_delay = true;
-    service->delay_ms = 5000; // 5 seconds
+    service_->should_delay = true;
+    service_->delay_ms = 5000; // 5 seconds
 
     // Make request with timeout
     std::string input = "Timeout test";
@@ -260,7 +251,7 @@ TEST_F(ExtendedRPCTest, RapidConnectDisconnect) {
         std::this_thread::sleep_for(milliseconds(10));
     }
 
-    EXPECT_EQ(service->call_count, num_cycles);
+    EXPECT_EQ(service_->call_count, num_cycles);
 }
 
 // Test 5: Mixed payload sizes
@@ -286,7 +277,7 @@ TEST_F(ExtendedRPCTest, MixedPayloadSizes) {
         // Arc auto-released
     }
 
-    EXPECT_EQ(service->call_count, static_cast<int>(sizes.size()));
+    EXPECT_EQ(service_->call_count, static_cast<int>(sizes.size()));
 
     client->close();
     // Arc handles cleanup automatically
@@ -331,7 +322,7 @@ TEST_F(ExtendedRPCTest, BurstTraffic) {
         std::this_thread::sleep_for(milliseconds(100));
     }
 
-    EXPECT_EQ(service->call_count, burst_size * num_bursts);
+    EXPECT_EQ(service_->call_count, burst_size * num_bursts);
 
     client->close();
     // Arc handles cleanup automatically
@@ -393,7 +384,7 @@ TEST_F(ExtendedRPCTest, InterleavedRequestTypes) {
             // Arc auto-released
     }
 
-    EXPECT_EQ(service->call_count, 20);
+    EXPECT_EQ(service_->call_count, 20);
 
     client->close();
     // Arc handles cleanup automatically
@@ -429,7 +420,7 @@ TEST_F(ExtendedRPCTest, PipelinedRequests) {
     auto duration = duration_cast<milliseconds>(end - start).count();
     std::cout << "Pipelined " << pipeline_depth << " requests completed in " << duration << "ms" << std::endl;
 
-    EXPECT_EQ(service->call_count, pipeline_depth);
+    EXPECT_EQ(service_->call_count, pipeline_depth);
 
     client->close();
     // Arc handles cleanup automatically

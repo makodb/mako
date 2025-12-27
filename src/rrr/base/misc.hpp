@@ -93,13 +93,16 @@ erase(Container& l,
   return std::reverse_iterator<typename Container::iterator>(it);
 }
 
-// @safe - Abstract interface with no implementation
+// @interface
 class Job {
  public:
+  // @safe
   virtual bool Ready() = 0;
+  // @unsafe - Work may call external functions
   virtual void Work() = 0;
+  // @safe
   virtual bool Done() = 0;
-  virtual ~Job(){};
+  virtual ~Job() = default;
 };
 
 // @safe - Simple job wrapper with safe state management

@@ -4,6 +4,7 @@
 #include "../frame.h"
 #include "../constants.h"
 #include "commo.h"
+#include <rusty/box.hpp>
 
 namespace janus {
 
@@ -13,7 +14,7 @@ class FrameCarousel : public Frame {
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,
-                                 ClientControlServiceImpl *ccsi,
+                                 rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                  uint32_t id,
                                  shared_ptr<TxnRegistry>) override;
   TxLogServer *CreateScheduler() override;
@@ -24,9 +25,8 @@ class FrameCarousel : public Frame {
   shared_ptr<Tx> CreateTx(epoch_t epoch, txnid_t tid,
                           bool ro, TxLogServer *mgr) override;
 
-  vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
+  vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
                                            TxLogServer *dtxn_sched,
-                                           rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                           ServerControlServiceImpl *scsi) override;  
+                                           rusty::Arc<rrr::PollThread> poll_thread_worker) override;  
 };
 } // namespace janus

@@ -21,6 +21,13 @@
 
 using namespace mako;
 
+// TransportBackendService::__dispatch__ implementation
+// @safe - forwards to RrrRpcBackend::RequestHandler
+void TransportBackendService::__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
+                                           rrr::WeakServerConnection weak_sconn) {
+    RrrRpcBackend::RequestHandler(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn, backend_);
+}
+
 // External callbacks registered by bench.cc and dbtest.cc
 extern std::function<int(int,int)> bench_callback_;
 extern std::function<int(int,int)> dbtest_callback_;
@@ -70,13 +77,13 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
     // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
     server_ = new rrr::Server(poll_thread_worker_.as_ref().unwrap().clone());
 
-    // Register request handlers for all request types
-    // Note: We capture both req_type and 'this' in the lambda
-    for (uint8_t req_type = st_nr_req_types; req_type <= end_nr_req_types; req_type++) {
-        server_->reg_handler(req_type, [this, req_type](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-            RequestHandler(req_type, std::move(req), weak_sconn, this);
-        });
-    }
+    // Register TransportBackendService to handle all request types in the range
+    auto svc = rusty::make_box<TransportBackendService>(
+        this,
+        static_cast<rrr::i32>(st_nr_req_types),
+        static_cast<rrr::i32>(end_nr_req_types)
+    );
+    server_->reg_service(std::move(svc));
 
     // Start listening on the port
     int ret = server_->start(("0.0.0.0:" + port_str).c_str());

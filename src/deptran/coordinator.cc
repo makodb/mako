@@ -4,7 +4,6 @@
 #include "constants.h"
 #include "sharding.h"
 #include "workload.h"
-#include "benchmark_control_rpc.h"
 
 /**
  * What shoud we do to change this to asynchronous?
@@ -25,10 +24,10 @@ std::unordered_set<txid_t> Coordinator::_dbg_txid_set_{};
 
 Coordinator::Coordinator(uint32_t coo_id,
                          int32_t benchmark,
-                         ClientControlServiceImpl *ccsi,
+                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
                          uint32_t thread_id) : coo_id_(coo_id),
                                                benchmark_(benchmark),
-                                               ccsi_(ccsi),
+                                               client_status_(std::move(client_status)),
                                                thread_id_(thread_id),
                                                mtx_() {
   uint64_t k = coo_id_;

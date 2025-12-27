@@ -24,9 +24,9 @@ bool FreeDangling(Communicator* comm, vector<std::pair<uint16_t, rrr::i64> > &da
 
 CoordinatorCopilot::CoordinatorCopilot(uint32_t coo_id,
                                        int32_t benchmark,
-                                       ClientControlServiceImpl *ccsi,
+                                       rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                        uint32_t thread_id)
-  : Coordinator(coo_id, benchmark, ccsi, thread_id) {}
+  : Coordinator(coo_id, benchmark, std::move(client_status), thread_id) {}
 
 CoordinatorCopilot::~CoordinatorCopilot() {
   // Log_debug("copilot coord %d destroyed", (int)coo_id_);

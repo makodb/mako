@@ -8,9 +8,9 @@
 #include "communicator.h"
 #include "scheduler.h"
 #include "client_worker.h"
+#include "client_status.h"
 
 namespace janus {
-class ClientControlServiceImpl;
 
 enum ForwardRequestState { NONE=0, PROCESS_FORWARD_REQUEST, FORWARD_TO_LEADER };
 
@@ -51,7 +51,8 @@ class Coordinator {
   std::shared_ptr<QuorumEvent> sp_quorum_event;
   std::shared_ptr<IntEvent> sp_int_event;
   int benchmark_;
-  ClientControlServiceImpl *ccsi_ = nullptr;
+  // Shared client status for statistics tracking
+  rusty::Option<rusty::Arc<ClientStatus>> client_status_;
   uint32_t thread_id_;
   bool batch_optimal_ = false;
 	bool slow_ = false;
@@ -146,9 +147,10 @@ class Coordinator {
   } txn_stat_t;
   std::unordered_map<int32_t, txn_stat_t> txn_stats_;
 #endif /* ifdef TXN_STAT */
+  // Constructor takes Arc<ClientStatus> for statistics tracking
   Coordinator(uint32_t coo_id,
               int benchmark,
-              ClientControlServiceImpl *ccsi = NULL,
+              rusty::Option<rusty::Arc<ClientStatus>> client_status = rusty::None,
               uint32_t thread_id = 0);
 
   virtual ~Coordinator();

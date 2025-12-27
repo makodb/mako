@@ -86,8 +86,7 @@ int find_open_port() {
     return -1;
 }
 
-// @unsafe - Calls unsafe Log::error on failure
-// SAFETY: Buffer is properly sized, error logging is thread-safe
+// @unsafe - Uses raw buffer for gethostname system call
 std::string get_host_name() {
     char buffer[1024];
     if (gethostname(buffer, 1024) != 0) {

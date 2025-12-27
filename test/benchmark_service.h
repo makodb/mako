@@ -32,62 +32,80 @@ inline rrr::Marshal& operator >>(rrr::Marshal& m, point3& o) {
 class BenchmarkService: public rrr::Service {
 public:
     enum {
-        FAST_PRIME = 0x2565b754,
-        FAST_DOT_PROD = 0x1344ae44,
-        FAST_ADD = 0x408ce338,
-        FAST_NOP = 0x2452f2ca,
-        FAST_VEC = 0x39e93f57,
-        PRIME = 0x2fb49e41,
-        DOT_PROD = 0x3fb84d41,
-        ADD = 0x474264dd,
-        NOP = 0x350b997c,
-        SLEEP = 0x34e486e3,
+        FAST_PRIME = 0x2a7259ef,
+        FAST_DOT_PROD = 0x4dd80f8c,
+        FAST_ADD = 0x5db68837,
+        FAST_NOP = 0x21bfc0ab,
+        FAST_VEC = 0x5322e011,
+        PRIME = 0x3ec8d31a,
+        DOT_PROD = 0x53be0a74,
+        ADD = 0x6008b4f5,
+        NOP = 0x12d59407,
+        SLEEP = 0x364f2762,
     };
-    int __reg_to__(rrr::Server* svr) {
+    // Registers RPC IDs with server using service index
+    // @safe
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
-        if ((ret = svr->reg_method(FAST_PRIME, this, &BenchmarkService::__fast_prime__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(FAST_PRIME, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(FAST_DOT_PROD, this, &BenchmarkService::__fast_dot_prod__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(FAST_DOT_PROD, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(FAST_ADD, this, &BenchmarkService::__fast_add__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(FAST_ADD, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(FAST_NOP, this, &BenchmarkService::__fast_nop__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(FAST_NOP, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(FAST_VEC, this, &BenchmarkService::__fast_vec__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(FAST_VEC, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(PRIME, this, &BenchmarkService::__prime__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(PRIME, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(DOT_PROD, this, &BenchmarkService::__dot_prod__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(DOT_PROD, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(ADD, this, &BenchmarkService::__add__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(ADD, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(NOP, this, &BenchmarkService::__nop__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(NOP, svc_index)) != 0) {
             goto err;
         }
-        if ((ret = svr->reg_method(SLEEP, this, &BenchmarkService::__sleep__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(SLEEP, svc_index)) != 0) {
             goto err;
         }
         return 0;
     err:
-        svr->unreg(FAST_PRIME);
-        svr->unreg(FAST_DOT_PROD);
-        svr->unreg(FAST_ADD);
-        svr->unreg(FAST_NOP);
-        svr->unreg(FAST_VEC);
-        svr->unreg(PRIME);
-        svr->unreg(DOT_PROD);
-        svr->unreg(ADD);
-        svr->unreg(NOP);
-        svr->unreg(SLEEP);
+        svr.unreg(FAST_PRIME);
+        svr.unreg(FAST_DOT_PROD);
+        svr.unreg(FAST_ADD);
+        svr.unreg(FAST_NOP);
+        svr.unreg(FAST_VEC);
+        svr.unreg(PRIME);
+        svr.unreg(DOT_PROD);
+        svr.unreg(ADD);
+        svr.unreg(NOP);
+        svr.unreg(SLEEP);
         return ret;
+    }
+    // @safe - Virtual dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+        switch (rpc_id) {
+        case FAST_PRIME: __fast_prime__wrapper__(std::move(req), weak_sconn); break;
+        case FAST_DOT_PROD: __fast_dot_prod__wrapper__(std::move(req), weak_sconn); break;
+        case FAST_ADD: __fast_add__wrapper__(std::move(req), weak_sconn); break;
+        case FAST_NOP: __fast_nop__wrapper__(std::move(req), weak_sconn); break;
+        case FAST_VEC: __fast_vec__wrapper__(std::move(req), weak_sconn); break;
+        case PRIME: __prime__wrapper__(std::move(req), weak_sconn); break;
+        case DOT_PROD: __dot_prod__wrapper__(std::move(req), weak_sconn); break;
+        case ADD: __add__wrapper__(std::move(req), weak_sconn); break;
+        case NOP: __nop__wrapper__(std::move(req), weak_sconn); break;
+        case SLEEP: __sleep__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
     }
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
@@ -249,8 +267,8 @@ protected:
 public:
     BenchmarkProxy(rrr::Client* cl): __cl__(cl) { }
     rrr::FutureResult async_fast_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& m) {
-            m << n;
+        return __cl__->request(BenchmarkService::FAST_PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << n;
         });
     }
     rrr::i32 fast_prime(const rrr::i32& n, rrr::i8* flag) {
@@ -267,9 +285,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& m) {
-            m << p1;
-            m << p2;
+        return __cl__->request(BenchmarkService::FAST_DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << p1;
+            __m__ << p2;
         });
     }
     rrr::i32 fast_dot_prod(const point3& p1, const point3& p2, double* v) {
@@ -286,9 +304,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& m) {
-            m << a;
-            m << b;
+        return __cl__->request(BenchmarkService::FAST_ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << a;
+            __m__ << b;
         });
     }
     rrr::i32 fast_add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
@@ -305,8 +323,8 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& m) {
-            m << in_0;
+        return __cl__->request(BenchmarkService::FAST_NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << in_0;
         });
     }
     rrr::i32 fast_nop(const std::string& in_0) {
@@ -320,8 +338,8 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_fast_vec(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& m) {
-            m << n;
+        return __cl__->request(BenchmarkService::FAST_VEC, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << n;
         });
     }
     rrr::i32 fast_vec(const rrr::i32& n, std::vector<rrr::i64>* v) {
@@ -338,8 +356,8 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_prime(const rrr::i32& n, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& m) {
-            m << n;
+        return __cl__->request(BenchmarkService::PRIME, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << n;
         });
     }
     rrr::i32 prime(const rrr::i32& n, rrr::i8* flag) {
@@ -356,9 +374,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_dot_prod(const point3& p1, const point3& p2, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& m) {
-            m << p1;
-            m << p2;
+        return __cl__->request(BenchmarkService::DOT_PROD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << p1;
+            __m__ << p2;
         });
     }
     rrr::i32 dot_prod(const point3& p1, const point3& p2, double* v) {
@@ -375,9 +393,9 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_add(const rrr::v32& a, const rrr::v32& b, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& m) {
-            m << a;
-            m << b;
+        return __cl__->request(BenchmarkService::ADD, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << a;
+            __m__ << b;
         });
     }
     rrr::i32 add(const rrr::v32& a, const rrr::v32& b, rrr::v32* a_add_b) {
@@ -394,8 +412,8 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_nop(const std::string& in_0, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& m) {
-            m << in_0;
+        return __cl__->request(BenchmarkService::NOP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << in_0;
         });
     }
     rrr::i32 nop(const std::string& in_0) {
@@ -409,8 +427,8 @@ public:
         return __ret__;
     }
     rrr::FutureResult async_sleep(const double& sec, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        return __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& m) {
-            m << sec;
+        return __cl__->request(BenchmarkService::SLEEP, __fu_attr__, [&](rrr::Marshal& __m__) {
+            __m__ << sec;
         });
     }
     rrr::i32 sleep(const double& sec) {

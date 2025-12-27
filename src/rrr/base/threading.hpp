@@ -338,7 +338,7 @@ private:
 public:
     // @safe - Default constructor
     SpinCondVar() = default;
-    
+
     // @safe - Default destructor
     ~SpinCondVar() = default;
 

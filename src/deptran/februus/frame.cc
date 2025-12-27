@@ -15,13 +15,13 @@ REG_FRAME(MODE_FEBRUUS, vector<string>({"feb","februus"}), FrameFebruus);
 Coordinator *FrameFebruus::CreateCoordinator(cooid_t coo_id,
                                              Config *config,
                                              int benchmark,
-                                             ClientControlServiceImpl *ccsi,
+                                             rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                              uint32_t id,
                                              shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   CoordinatorFebruus *coord = new CoordinatorFebruus(coo_id,
                                                      benchmark,
-                                                     ccsi,
+                                                     std::move(client_status),
                                                      id);
   coord->txn_reg_ = txn_reg;
   coord->frame_ = this;

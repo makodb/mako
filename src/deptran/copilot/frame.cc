@@ -25,12 +25,12 @@ CopilotFrame::~CopilotFrame() {
 Coordinator *CopilotFrame::CreateCoordinator(cooid_t coo_id,
                                             Config *config,
                                             int benchmark,
-                                            ClientControlServiceImpl *ccsi,
+                                            rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                             uint32_t id,
                                             shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   // TODO: pool used coordinator to avoid creating every time
-  auto coord = new CoordinatorCopilot(coo_id, benchmark, ccsi, id);
+  auto coord = new CoordinatorCopilot(coo_id, benchmark, std::move(client_status), id);
 
   setupCoordinator(coord, config);  
 
@@ -57,16 +57,15 @@ Communicator *CopilotFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> po
   return commo_;
 }
 
-vector<rrr::Service *>
+vector<rusty::Box<rrr::Service>>
 CopilotFrame::CreateRpcServices(uint32_t site_id,
                                 TxLogServer *rep_sched,
-                                rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                ServerControlServiceImpl *scsi) {
+                                rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = vector<Service *>();
+  auto result = vector<rusty::Box<Service>>();
   switch (config->replica_proto_) {
     case MODE_COPILOT:
-      result.push_back(new CopilotServiceImpl(rep_sched));
+      result.push_back(rusty::make_box<CopilotServiceImpl>(rep_sched));
       break;
     default:
       break;

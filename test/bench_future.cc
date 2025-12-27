@@ -25,16 +25,17 @@ public:
 
     std::atomic<int> call_count{0};
 
-    // Make movable (atomics can't be moved, so we copy values)
-    BenchService() = default;
-    BenchService(BenchService&& other) noexcept
-        : call_count(other.call_count.load()) {}
-    BenchService& operator=(BenchService&&) = delete;
-    BenchService(const BenchService&) = delete;
-    BenchService& operator=(const BenchService&) = delete;
+    // Registers RPC IDs with server using service index
+    // @safe
+    int __reg_to__(Server& svr, size_t svc_index) override {
+        return svr.reg_rpc(ECHO, svc_index);
+    }
 
-    int __reg_to__(Server* svr) {
-        return svr->reg_method(ECHO, this, &BenchService::echo_wrapper);
+    // @safe - Virtual dispatch for RPC requests
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+        if (rpc_id == ECHO) {
+            echo_wrapper(std::move(req), weak_sconn);
+        }
     }
 
 private:
@@ -57,7 +58,6 @@ class FutureBenchmark : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;
     Server* server;
-    BenchService* service;
     rusty::Option<rusty::Arc<Client>> client;
     static constexpr int base_port = 8950;
 
@@ -65,7 +65,9 @@ protected:
         poll_thread_worker_ = rusty::Some(PollThread::create());
         // Clone the Arc to keep our copy for the client - use as_ref() to borrow
         server = new Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-        service = server->reg_service(BenchService{});
+
+        // Register service - server takes ownership via Box
+        server->reg_service(rusty::make_box<BenchService>());
         ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(base_port)).c_str()), 0);
 
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));
@@ -76,7 +78,6 @@ protected:
 
     void TearDown() override {
         client.as_ref().unwrap()->close();
-        // service is owned by server, no delete needed
         delete server;
         poll_thread_worker_.as_ref().unwrap()->shutdown();
         std::this_thread::sleep_for(milliseconds(100));

@@ -4,6 +4,7 @@
 #include "../__dep__.h"
 #include "../coordinator.h"
 #include "../benchmark_control_rpc.h"
+#include "../server_status.h"
 #include "../frame.h"
 #include "../scheduler.h"
 #include "../communicator.h"
@@ -74,13 +75,13 @@ public:
 
   // RPC infrastructure
   rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  vector<rrr::Service*> services_ = {};
+  // Services are now owned by rpc_server_ via reg_service()
   rrr::Server* rpc_server_ = nullptr;
   base::ThreadPool* thread_pool_g = nullptr;
 
   // Heartbeat/control RPC
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
-  ServerControlServiceImpl* scsi_ = nullptr;
+  rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   rrr::Server* hb_rpc_server_ = nullptr;
   base::ThreadPool* hb_thread_pool_g = nullptr;
 

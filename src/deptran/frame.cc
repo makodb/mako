@@ -181,7 +181,7 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
 Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
                                       Config *config,
                                       int benchmark,
-                                      ClientControlServiceImpl *ccsi,
+                                      rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                       uint32_t id,
                                       shared_ptr<TxnRegistry> txn_reg) {
   // TODO: clean this up; make Coordinator subclasses assign txn_reg_
@@ -193,7 +193,7 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
     case MODE_2PL:
       coo = new Coordinator2pl(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
@@ -201,21 +201,21 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
     case MODE_RPC_NULL:
       coo = new CoordinatorOcc(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
     case MODE_RCC:
       coo = new RccCoord(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
     case MODE_RO6:
       coo = new RO6Coord(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
@@ -225,7 +225,7 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
     case MODE_RULE:
       coo = new CoordinatorRule(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
@@ -234,7 +234,7 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
     default:
       coo = new CoordinatorNone(coo_id,
                           benchmark,
-                          ccsi,
+                          client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                           id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
@@ -442,12 +442,11 @@ Workload * Frame::CreateTxGenerator() {
   return gen;
 }
 
-vector<rrr::Service *> Frame::CreateRpcServices(uint32_t site_id,
+vector<rusty::Box<rrr::Service>> Frame::CreateRpcServices(uint32_t site_id,
                                                 TxLogServer *dtxn_sched,
-                                                rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                                ServerControlServiceImpl *scsi) {
+                                                rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<Service *>();
+  auto result = std::vector<rusty::Box<Service>>();
   switch(mode_) {
     case MODE_MDCC:
     case MODE_2PL:
@@ -459,7 +458,7 @@ vector<rrr::Service *> Frame::CreateRpcServices(uint32_t site_id,
     case MODE_RCC:
     case MODE_NOTX:
     default:
-      result.push_back(new ClassicServiceImpl(dtxn_sched, poll_thread_worker, scsi));
+      result.push_back(rusty::make_box<ClassicServiceImpl>(dtxn_sched, poll_thread_worker));
       break;
   }
   return result;

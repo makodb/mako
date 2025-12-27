@@ -39,7 +39,7 @@ class CoordinatorClassic : public Coordinator {
 
   CoordinatorClassic(uint32_t coo_id,
                      int benchmark,
-                     ClientControlServiceImpl* ccsi,
+                     rusty::Option<rusty::Arc<ClientStatus>> client_status,
                      uint32_t thread_id);
 
   virtual ~CoordinatorClassic() {}

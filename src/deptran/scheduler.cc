@@ -211,7 +211,7 @@ Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
   coord = rep_frame_->CreateCoordinator(cid++,
                                         Config::GetConfig(),
                                         benchmark,
-                                        nullptr,
+                                        rusty::None,
                                         id++,
                                         txn_reg_);
   coord->frame_ = rep_frame_;
@@ -1082,8 +1082,8 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
       // Create a temporary coordinator for dispatching
       // Using a special coordinator ID for recovery operations
       auto coo = std::make_unique<CoordinatorClassic>(999999, // special ID for recovery
-                                                       Config::GetConfig()->benchmark_, 
-                                                       nullptr, 
+                                                       Config::GetConfig()->benchmark_,
+                                                       rusty::None,
                                                        0);
       coo->loc_id_ = site_id_;
       coo->par_id_ = partition_id_;

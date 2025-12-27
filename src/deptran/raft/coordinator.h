@@ -32,7 +32,7 @@ class CoordinatorRaft : public Coordinator {
   shared_ptr<Marshallable> cmd_{nullptr};
   CoordinatorRaft(uint32_t coo_id,
                         int32_t benchmark,
-                        ClientControlServiceImpl *ccsi,
+                        rusty::Option<rusty::Arc<ClientStatus>> client_status,
                         uint32_t thread_id);
   ballot_t curr_ballot_ = 1; // TODO
   uint32_t n_replica_ = 0;   // TODO

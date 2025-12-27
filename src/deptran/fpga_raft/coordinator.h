@@ -31,7 +31,7 @@ class CoordinatorFpgaRaft : public Coordinator {
   shared_ptr<Marshallable> cmd_{nullptr};
   CoordinatorFpgaRaft(uint32_t coo_id,
                         int32_t benchmark,
-                        ClientControlServiceImpl *ccsi,
+                        rusty::Option<rusty::Arc<ClientStatus>> client_status,
                         uint32_t thread_id);
   ~CoordinatorFpgaRaft();
   ballot_t curr_ballot_ = 1; // TODO

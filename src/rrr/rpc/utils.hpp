@@ -36,7 +36,7 @@ int set_nonblocking(int fd, bool nonblocking);
 // @unsafe - Uses address-of operations for socket functions
 int find_open_port();
 
-// @unsafe - Calls unsafe Log::error on failure
+// @unsafe - Uses raw buffer for gethostname system call
 std::string get_host_name();
 
 } // namespace rrr

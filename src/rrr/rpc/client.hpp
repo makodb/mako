@@ -224,14 +224,11 @@ private:
 public:
     // @safe - Adds future to group
     void add(rusty::Arc<Future> f) {
-        // @unsafe - Log_error, push_back (external function annotations)
-        {
-            if (!f) {  // Check Arc validity (empty Arc check)
-                Log_error("Invalid Future object passed to FutureGroup!");
-                return;
-            }
-            futures_.push_back(std::move(f));
+        if (!f) {  // Check Arc validity (empty Arc check)
+            Log_error("Invalid Future object passed to FutureGroup!");
+            return;
         }
+        futures_.push_back(std::move(f));
     }
 
     // @safe - Waits for all futures in group
@@ -279,7 +276,7 @@ class ClientConnection: public Pollable {
         NEW, CONNECTED, CLOSED
     } status_;
 
-    // Flag set by end_request() to indicate write mode update needed
+    // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
     // Cell provides interior mutability for safe access through const methods
     rusty::Cell<bool> pending_write_update_{false};
@@ -675,7 +672,6 @@ class ClientPool: public NoCopy {
     int parallel_connections_;
 
 public:
-
     // @safe - Creates pool with optional PollThread
     ClientPool(rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker = rusty::None, int parallel_connections = 1);
     // @safe - Closes all cached connections

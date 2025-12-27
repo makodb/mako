@@ -1,9 +1,12 @@
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/option.hpp>
 #include "__dep__.h"
 #include "constants.h"
 #include "txn_reg.h"
 #include "config.h"
+#include "client_status.h"
 
 namespace janus {
 
@@ -15,7 +18,6 @@ class TxRequest;
 class Tx;
 class Executor;
 class TxLogServer;
-class ClientControlServiceImpl;
 class ServerControlServiceImpl;
 class TxnRegistry;
 class Communicator;
@@ -45,10 +47,11 @@ class Frame {
   };
   virtual ~Frame() {};
   // for both dtxn and rep
+  // Takes Arc<ClientStatus> for statistics tracking instead of raw pointer
   virtual Coordinator *CreateCoordinator(cooid_t coo_id,
                                          Config *config,
                                          int benchmark,
-                                         ClientControlServiceImpl *ccsi,
+                                         rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                          uint32_t id,
                                          shared_ptr<TxnRegistry> txn_reg);
 
@@ -71,10 +74,9 @@ class Frame {
                                   TxLogServer *sch);
 
   Workload *CreateTxGenerator();
-  virtual vector<rrr::Service *> CreateRpcServices(uint32_t site_id,
+  virtual vector<rusty::Box<rrr::Service>> CreateRpcServices(uint32_t site_id,
                                                    TxLogServer *dtxn_sched,
-                                                   rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                                   ServerControlServiceImpl *scsi);
+                                                   rusty::Arc<rrr::PollThread> poll_thread_worker);
 };
 
 #define RANDOM_VAR_NAME(var, file, line) \

@@ -1,10 +1,13 @@
 // @unsafe - RPC server module uses raw sockets and mutable spinlocks
 #pragma once
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/function.hpp>
 #include <rusty/option.hpp>
 #include <rusty/unsafe_cell.hpp>
+#include <rusty/vec.hpp>
+#include <rusty/rusty.hpp>  // For rusty::Mutex, rusty::Condvar
 
 #include <unordered_map>
 #include <unordered_set>
@@ -97,12 +100,25 @@ struct Request {
     i64 xid;
 };
 
-// @safe - Abstract service interface
+// Forward declaration for WeakServerConnection
+class ServerConnection;
+
+// Type alias for Arc weak reference (must be before Service for __dispatch__)
+using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
+
+// @interface
 class Service {
 public:
-    virtual ~Service() {}
-    // @safe - Virtual method for service registration
-    virtual int __reg_to__(Server*) = 0;
+    virtual ~Service() = default;
+    // Virtual method for service registration with index (used by reg_service)
+    // Returns list of RPC IDs that this service handles
+    // @safe
+    virtual int __reg_to__(Server&, size_t svc_index) = 0;
+
+    // @safe - Virtual dispatch method for handling RPC requests
+    // Each service implements this to route requests to the appropriate handler
+    // Uses virtual dispatch to avoid raw pointer capture and static_cast
+    virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
 };
 
 // @unsafe - Server listener handling incoming connections
@@ -170,12 +186,6 @@ class ServerListener: public Pollable {
     }
   };
 };
-
-// Forward declaration
-class ServerConnection;
-
-// Type alias for Arc weak reference
-using WeakServerConnection = rusty::sync::Weak<ServerConnection>;
 
 // @unsafe - Uses mutable SpinLock for interior mutability
 class ServerConnection: public Pollable {
@@ -438,8 +448,9 @@ public:
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
-    using RequestHandler = std::function<void(rusty::Box<Request>, WeakServerConnection)>;
-    std::unordered_map<i32, RequestHandler> handlers_;
+    // Maps RPC ID to service index for virtual dispatch
+    // @safe - Simple integer map lookup, no pointers or type erasure
+    std::unordered_map<i32, size_t> rpc_to_service_;
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
 
     Counter sconns_ctr_;
@@ -450,8 +461,13 @@ class Server: public NoCopy {
     rusty::Option<rusty::Arc<ServerListener>> sp_server_listener_;
 
     // Owned services - Server takes ownership to ensure services outlive handlers
-    // Stores cleanup functions for type-erased service deletion
-    std::vector<std::function<void()>> service_cleanups_;
+    // Stores Box-wrapped services with automatic cleanup via Vec destructor
+    rusty::Vec<rusty::Box<Service>> services_;
+
+    // Shutdown coordination - allows workers to wait for shutdown signal
+    struct ShutdownState { bool shutdown = false; };
+    rusty::Mutex<ShutdownState> shutdown_state_{ShutdownState{}};
+    rusty::Condvar shutdown_cond_;
 
 public:
     std::string addr_;
@@ -466,25 +482,15 @@ public:
     // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
 
-    // @unsafe - Registers service and transfers ownership to Server
-    // Server owns the service, ensuring it outlives all RPC handlers.
-    // Returns raw pointer for caller to use (valid as long as Server lives).
-    // Service types must be movable (not copyable).
-    // Unsafe: uses new/delete and raw pointer dereference
-    template<class S>
-    S* reg_service(S svc) {
-        static_assert(std::is_base_of<Service, S>::value, "S must derive from Service");
-        S* ptr = new S(std::move(svc));
-        service_cleanups_.push_back([ptr]() { delete ptr; });
-        ptr->__reg_to__(this);
-        return ptr;
-    }
-
-    // @unsafe - Registers service without taking ownership (borrowed reference)
-    // Caller must ensure service outlives the Server.
-    // Use this when services are managed externally (e.g., by Frame/Worker).
-    void reg_service_ref(Service& svc) {
-        svc.__reg_to__(this);
+    // @safe - Registers service and transfers ownership to Server
+    // Server owns the service via Box<Service>, ensuring it outlives all RPC handlers.
+    // Accepts Box<Derived> which converts to Box<Service> via move constructor.
+    void reg_service(rusty::Box<Service> svc) {
+        services_.push(std::move(svc));
+        // Get index AFTER push - this is the position of the service we just added
+        size_t svc_index = services_.size() - 1;
+        // Register handlers using the index (service is safely stored in services_)
+        services_[svc_index]->__reg_to__(*this, svc_index);
     }
 
     /**
@@ -503,27 +509,41 @@ public:
      *     // No need to release, shared_ptr handles connection
      *  }
      */
-    // @safe - Registers RPC handler function (calls @unsafe unordered_map)
-    int reg_handler(i32 rpc_id, const RequestHandler& func);
-
-    // @unsafe - uses raw pointer svc and member function pointer
-    template<class S>
-    int reg_method(i32 rpc_id, S* svc, void (S::*svc_func)(rusty::Box<Request>, WeakServerConnection)) {
-
+    // @safe - Registers an RPC ID to be handled by the service at svc_index
+    // The actual dispatch is done via virtual Service::__dispatch__
+    // No pointers or type erasure - just maps rpc_id to service index
+    int reg_rpc(i32 rpc_id, size_t svc_index) {
         // disallow duplicate rpc_id
-        if (handlers_.find(rpc_id) != handlers_.end()) {
+        if (rpc_to_service_.find(rpc_id) != rpc_to_service_.end()) {
             return EEXIST;
         }
-
-        handlers_[rpc_id] = [svc, svc_func] (rusty::Box<Request> req, WeakServerConnection sconn) {
-            (svc->*svc_func)(std::move(req), sconn);
-        };
-
+        rpc_to_service_[rpc_id] = svc_index;
         return 0;
     }
 
-    // @safe - Unregisters RPC handler (calls @unsafe unordered_map)
+    // @safe - Unregisters RPC handler
     void unreg(i32 rpc_id);
+
+    // @safe - Signals shutdown to waiting threads
+    void do_shutdown();
+
+    // @safe - Blocks until shutdown is signaled
+    void wait_for_shutdown();
+
+    // @safe - Iterate over all registered services
+    // Useful for cleanup operations like flushing recorders at shutdown.
+    // The callback receives a Service& reference; use dynamic_cast to get concrete type.
+    template<typename F>
+    void for_each_service(F&& callback) {
+        for (size_t i = 0; i < services_.size(); ++i) {
+            callback(*services_[i]);
+        }
+    }
+
+    // @safe - Returns the number of registered services
+    size_t service_count() const {
+        return services_.size();
+    }
 };
 
 } // namespace rrr

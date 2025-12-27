@@ -139,10 +139,14 @@ Coordinator* ClientWorker::CreateFailCtrlCoordinator() {
   cooid_t coo_id = cli_id_;
   uint64_t offset_id = 1000000; // TODO temp value
   coo_id = (coo_id << 16) + offset_id;
+  // Clone Arc<ClientStatus> for coordinator to use for statistics
+  auto client_status = client_status_.is_some()
+      ? rusty::Some(client_status_.as_ref().unwrap().clone())
+      : rusty::None;
   auto coo = frame_->CreateCoordinator(coo_id,
                                        config_,
                                        benchmark,
-                                       ccsi,
+                                       std::move(client_status),
                                        id,
                                        txn_reg_);
   coo->frame_ = frame_;
@@ -160,10 +164,14 @@ Coordinator* ClientWorker::CreateFailCtrlCoordinator() {
 Coordinator* ClientWorker::CreateCoordinator(uint16_t offset_id) {
   cooid_t coo_id = cli_id_;
   coo_id = (coo_id << 16) + offset_id;
+  // Clone Arc<ClientStatus> for coordinator to use for statistics
+  auto client_status = client_status_.is_some()
+      ? rusty::Some(client_status_.as_ref().unwrap().clone())
+      : rusty::None;
   auto coo = frame_->CreateCoordinator(coo_id,
                                        config_,
                                        benchmark,
-                                       ccsi,
+                                       std::move(client_status),
                                        id,
                                        txn_reg_);
   coo->frame_ = frame_;
@@ -191,8 +199,8 @@ void ClientWorker::Work() {
   workload->RegisterPrecedures();
 
   commo_->WaitConnectClientLeaders();
-  if (ccsi) {
-    ccsi->wait_for_start(id);
+  if (client_status_.is_some()) {
+    client_status_.as_ref().unwrap()->wait_for_start(id);
   }
   Log_debug("after wait for start");
 
@@ -386,9 +394,9 @@ void ClientWorker::Work() {
   fflush(stderr);
   fflush(stdout);
 
-  if (ccsi) {
+  if (client_status_.is_some()) {
     Log_info("%s: wait_for_shutdown at client %d", __FUNCTION__, cli_id_);
-    ccsi->wait_for_shutdown();
+    client_status_.as_ref().unwrap()->wait_for_shutdown();
   }
   delete timer_;
   return;
@@ -514,11 +522,12 @@ void ClientWorker::SearchLeader(Coordinator* coo) {
 }
 
 // Merged constructor: Jetpack failover params + mako-dev PollThread type
+// Takes Arc<ClientStatus> for synchronization and statistics instead of raw pointer
 ClientWorker::ClientWorker(
     uint32_t id,
     Config::SiteInfo& site_info,
     Config* config,
-    ClientControlServiceImpl* ccsi,
+    rusty::Option<rusty::Arc<ClientStatus>> client_status,
     rusty::Option<rusty::Arc<PollThread>> poll_thread_worker,
     bool* volatile failover_trigger,
     volatile bool* failover_server_quit,
@@ -531,7 +540,7 @@ ClientWorker::ClientWorker(
     benchmark(config->benchmark()),
     mode(config->get_mode()),
     duration(config->get_duration()),
-    ccsi(ccsi),
+    client_status_(std::move(client_status)),
     n_concurrent_(config->get_concurrent_txn()),
     failover_trigger_(failover_trigger),
     failover_server_quit_(failover_server_quit),

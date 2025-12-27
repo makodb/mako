@@ -571,8 +571,8 @@ void pre_shutdown_step() {
     if (!worker) {
       continue;
     }
-    if (worker->hb_rpc_server_ && worker->scsi_) {
-      worker->scsi_->do_shutdown();
+    if (worker->hb_rpc_server_) {
+      worker->hb_rpc_server_->do_shutdown();
     }
     worker->WaitForShutdown();
   }

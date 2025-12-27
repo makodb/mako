@@ -3,10 +3,13 @@
 
 #include "rcc/dep_graph.h"
 #include "rcc_rpc.h" // before this one include all the custom data structures.
+#include "server_status.h"
+#include "client_status.h"
 #include <rusty/function.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/condvar.hpp>
 #include <rusty/box.hpp>
+#include <rusty/arc.hpp>
 
 #include <time.h>
 #include <sys/time.h>
@@ -29,36 +32,9 @@ double timespec2ms(struct timespec time);
 bool operator<(const struct timespec &lhs, const struct timespec &rhs);
 
 class ServerControlServiceImpl: public ServerControlService {
- public:
-
-  static const std::string STAT_SZ_SCC;
-  static const std::string STAT_N_ASK;
-  static const std::string STAT_SZ_GRAPH_START;
-  static const std::string STAT_SZ_GRAPH_COMMIT;
-  static const std::string STAT_SZ_GRAPH_ASK;
-  static const std::string STAT_RO6_SZ_VECTOR;
-
-  enum class Status { INIT, RUN, STOP };
-
-  // Protected data for statistics
-  struct Stats {
-    std::unordered_map<const char *, ValueTimesPair> statistics;
-    std::map<std::string, AvgStat *> stats;
-  };
-
-  // Protected data for status
-  struct StatusState {
-    Status status = Status::INIT;
-  };
-
  private:
-  Recorder *recorder_;
-
-  // rusty::Mutex<T> wraps and protects the data
-  // Box makes it movable (rusty::Mutex is non-movable like Rust)
-  rusty::Box<rusty::Mutex<Stats>> stats_;
-  rusty::Box<rusty::Mutex<StatusState>> status_;
-  rusty::Box<rusty::Condvar> status_cond_;
+  // Shared status - owned externally, service just observes/modifies
+  rusty::Arc<ServerStatus> status_;
 
   unsigned int timeout_;
   bool sig_handler_set_;
@@ -77,172 +53,37 @@ class ServerControlServiceImpl: public ServerControlService {
   void server_heart_beat_with_data(ServerResponse *res, rrr::DeferredReply defer) override;
   void server_heart_beat(rrr::DeferredReply defer) override;
 
-  ServerControlServiceImpl(unsigned int timeout = 5, Recorder *recorder = NULL);
+  ServerControlServiceImpl(rusty::Arc<ServerStatus> status,
+                           unsigned int timeout = 5,
+                           Recorder *recorder = nullptr);
   ~ServerControlServiceImpl();
 
-  // Movable but not copyable (Box<Mutex> and Box<Condvar> are movable)
+  // Movable but not copyable (Arc is movable and clonable)
   ServerControlServiceImpl(ServerControlServiceImpl&&) = default;
   ServerControlServiceImpl& operator=(ServerControlServiceImpl&&) = default;
   ServerControlServiceImpl(const ServerControlServiceImpl&) = delete;
   ServerControlServiceImpl& operator=(const ServerControlServiceImpl&) = delete;
 
-  void set_ready();
-  void wait_for_shutdown();
-
   void do_statistics(const char *key, int64_t value_delta);
-
-  // TODO to replace this with get_stat
-  void set_recorder(Recorder *recorder) {
-    recorder_ = recorder;
-  }
-
-  AvgStat *get_stat(std::string str) {
-    auto guard = stats_->lock().unwrap();
-    auto &stat = guard->stats[str];
-    if (stat == NULL) {
-      stat = new AvgStat();
-    }
-    return stat;
-  }
-
-  void set_stat(const std::string str, AvgStat *stat) {
-    auto guard = stats_->lock().unwrap();
-    guard->stats[str] = stat;
-  }
-
 };
 
+/**
+ * ClientControlServiceImpl handles RPC requests for client control.
+ * Shared state is managed by ClientStatus, which can be held by both
+ * this service and external callers (ClientWorker, Coordinators).
+ *
+ * This allows using reg_service() with owned Box<Service> while
+ * external code can still access the shared state via Arc<ClientStatus>.
+ */
 class ClientControlServiceImpl: public ClientControlService {
- public:
-  enum class LatencyCollectionStatus { LAST_PERIOD, THIS_PERIOD, IGNORE };
-  enum class Status { INIT, READY, RUN, FINISH, STOP };
-
-  struct txn_info_t {
-    int32_t txn_type;
-    int32_t commit_txn;
-    int32_t start_txn;
-    int32_t total_txn;
-    int32_t total_try;
-    int32_t retries_exhausted;
-    std::vector<double> *interval_latencies[2];
-    std::vector<double> *last_interval_latencies[2];
-    std::vector<double> *interval_attempt_latencies[2];
-    std::vector<int32_t> *num_try[2];
-    std::vector<double> interval_latency;
-
-    txn_info_t() {
-      txn_type = -1;
-      start_txn = 0;
-      commit_txn = 0;
-      total_txn = 0;
-      total_try = 0;
-      retries_exhausted = 0;
-      num_try[0] = new std::vector<int32_t>();
-      num_try[1] = new std::vector<int32_t>();
-
-      interval_latencies[0] = new std::vector<double>();
-      interval_latencies[1] = new std::vector<double>();
-
-      last_interval_latencies[0] = new std::vector<double>();
-      last_interval_latencies[1] = new std::vector<double>();
-
-      interval_attempt_latencies[0] = new std::vector<double>();
-      interval_attempt_latencies[1] = new std::vector<double>();
-    }
-
-    void init(int32_t _txn_type) {
-      txn_type = _txn_type;
-    }
-
-    void destroy() {
-      delete interval_latencies[0];
-      delete interval_latencies[1];
-      delete last_interval_latencies[0];
-      delete last_interval_latencies[1];
-      delete interval_attempt_latencies[0];
-      delete interval_attempt_latencies[1];
-      delete num_try[0];
-      delete num_try[1];
-    }
-
-    void start(bool switzh) {
-      start_txn++;
-    }
-
-    void give_up() {
-      retries_exhausted++;
-    }
-
-    void retry(bool switzh, double attempt_latency) {
-      total_try++;
-      if (switzh)
-        interval_attempt_latencies[0]->push_back(attempt_latency);
-      else
-        interval_attempt_latencies[1]->push_back(attempt_latency);
-    }
-
-    void succ(bool switzh, LatencyCollectionStatus lcs, double latency, double attempt_latency, int32_t tried) {
-      total_txn++;
-      total_try++;
-      commit_txn++;
-      int use = 1;
-      if (switzh)
-        use = 0;
-      num_try[use]->push_back(tried);
-      switch (lcs) {
-        case LatencyCollectionStatus::THIS_PERIOD:
-          interval_latencies[use]->push_back(latency);
-          break;
-        case LatencyCollectionStatus::LAST_PERIOD:
-          last_interval_latencies[use]->push_back(latency);
-          break;
-        case LatencyCollectionStatus::IGNORE:
-        default:
-          break;
-      }
-      interval_attempt_latencies[use]->push_back(attempt_latency);
-      interval_latency.push_back(latency);
-    }
-
-    void rej(bool switzh, LatencyCollectionStatus lcs, double latency, double attempt_latency, int32_t tried) {
-      total_txn++;
-      total_try++;
-      if (switzh)
-        interval_attempt_latencies[0]->push_back(attempt_latency);
-      else
-        interval_attempt_latencies[1]->push_back(attempt_latency);
-    }
-  };
-
-  // Protected data for status
-  struct StatusState {
-    Status status = Status::INIT;
-    unsigned int num_ready = 0;
-    unsigned int num_finish = 0;
-    std::vector<rusty::Function<void()>> ready_block_defers;
-  };
-
  private:
-  // rusty::Mutex<T> wraps and protects the data
-  // Box makes it movable (rusty::Mutex is non-movable like Rust)
-  rusty::Box<rusty::Mutex<StatusState>> status_;
-  rusty::Box<rusty::Condvar> status_cond_;
-
-  pthread_t **coo_threads_;
-  std::map<int32_t, txn_info_t>* txn_info_;
-  bool txn_info_switch_;
-
-  std::recursive_mutex mtx_ = {};
-  pthread_rwlock_t collect_lock_;
-
-  unsigned int num_threads_;
-  struct timespec start_time_;
-  struct timespec last_time_, before_last_time_;
-
-  std::map<int32_t, std::string> txn_names_;
+  // Shared status - owned externally, service just observes/modifies
+  rusty::Arc<ClientStatus> status_;
 
   void LogClientResponse(ClientResponse *res);
+
  public:
+  // RPC handlers
   void client_get_txn_names(std::map<i32, std::string> *txn_names, rrr::DeferredReply defer) override;
   void client_shutdown(rrr::DeferredReply defer) override;
   void client_force_stop(rrr::DeferredReply defer) override;
@@ -250,72 +91,17 @@ class ClientControlServiceImpl: public ClientControlService {
   void client_ready_block(i32 *res, rrr::DeferredReply defer) override;
   void client_ready(i32 *res, rrr::DeferredReply defer) override;
   void client_start(rrr::DeferredReply defer) override;
-
-  ClientControlServiceImpl(unsigned int num_threads, const std::map<int32_t, std::string> &txn_types);
-  ~ClientControlServiceImpl();
-  void wait_for_start(unsigned int id);
-  void wait_for_shutdown();
-
-  inline void txn_give_up_one(txnid_t id, int32_t txn_type) {
-    std::lock_guard<std::recursive_mutex> guard(mtx_);
-    pthread_rwlock_rdlock(&collect_lock_);
-    verify(id >= 0 && id < num_threads_);
-    verify(txn_info_[id].find(txn_type) != txn_info_[id].end());
-    txn_info_[id][txn_type].give_up();
-    pthread_rwlock_unlock(&collect_lock_);
-  }
-
-  inline void txn_start_one(unsigned int id, int32_t txn_type) {
-    std::lock_guard<std::recursive_mutex> guard(mtx_);
-    pthread_rwlock_rdlock(&collect_lock_);
-    verify(id >= 0 && id < num_threads_);
-    verify(txn_info_[id].find(txn_type) != txn_info_[id].end());
-    txn_info_[id][txn_type].start(txn_info_switch_);
-    pthread_rwlock_unlock(&collect_lock_);
-  }
-
-  inline void txn_retry_one(unsigned int id, int32_t txn_type, double attempt_latency) {
-    std::lock_guard<std::recursive_mutex> guard(mtx_);
-    pthread_rwlock_rdlock(&collect_lock_);
-    txn_info_[id][txn_type].retry(txn_info_switch_, attempt_latency);
-    pthread_rwlock_unlock(&collect_lock_);
-  }
-
-  inline void txn_success_one(unsigned int id,
-                              int32_t txn_type,
-                              struct timespec start_time,
-                              double latency,
-                              double attempt_latency,
-                              int32_t tried) {
-    std::lock_guard<std::recursive_mutex> guard(mtx_);
-    pthread_rwlock_rdlock(&collect_lock_);
-    auto lcs = LatencyCollectionStatus::IGNORE;
-    if (last_time_ < start_time)
-      lcs = LatencyCollectionStatus::THIS_PERIOD;
-    else if (before_last_time_ < start_time)
-      lcs = LatencyCollectionStatus::LAST_PERIOD;
-    txn_info_[id][txn_type].succ(txn_info_switch_, lcs, latency, attempt_latency, tried);
-    pthread_rwlock_unlock(&collect_lock_);
-  }
-
-  inline void txn_reject_one(unsigned int id,
-                             int32_t txn_type,
-                             struct timespec start_time,
-                             double latency,
-                             double attempt_latency,
-                             int32_t tried) {
-    std::lock_guard<std::recursive_mutex> guard(mtx_);
-    pthread_rwlock_rdlock(&collect_lock_);
-    auto lcs = LatencyCollectionStatus::IGNORE;
-    if (last_time_ < start_time)
-      lcs = LatencyCollectionStatus::THIS_PERIOD;
-    else if (before_last_time_ < start_time)
-      lcs = LatencyCollectionStatus::LAST_PERIOD;
-    txn_info_[id][txn_type].rej(txn_info_switch_, lcs, latency, attempt_latency, tried);
-    pthread_rwlock_unlock(&collect_lock_);
-  }
-
   void DispatchTxn(const TxDispatchRequest& req, TxReply* txn_reply, rrr::DeferredReply defer) override;
+
+  // Constructor takes Arc<ClientStatus> - shared state managed externally
+  ClientControlServiceImpl(rusty::Arc<ClientStatus> status);
+  ~ClientControlServiceImpl();
+
+  // Movable but not copyable (Arc is movable and clonable)
+  ClientControlServiceImpl(ClientControlServiceImpl&&) = default;
+  ClientControlServiceImpl& operator=(ClientControlServiceImpl&&) = default;
+  ClientControlServiceImpl(const ClientControlServiceImpl&) = delete;
+  ClientControlServiceImpl& operator=(const ClientControlServiceImpl&) = delete;
 };
 
 }

@@ -69,26 +69,24 @@ void RaftWorker::SetupService() {
   // Create poll thread worker
   svr_poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
 
-  // Register Raft services (returns vector)
   // Use as_ref().unwrap() to borrow without consuming the Option
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
-  if (rep_frame_ != nullptr) {
-    services_ = rep_frame_->CreateRpcServices(site_info_->id,
-                                              rep_sched_,
-                                              poll_worker,
-                                              scsi_);
-  }
 
   // Create thread pool
   uint32_t num_threads = 1;
   thread_pool_g = new base::ThreadPool(num_threads);
 
-  // Create RPC server
+  // Create RPC server first (before registering services)
   rpc_server_ = new rrr::Server(rusty::Some(poll_worker.clone()));
 
-  // Register all services (borrowed - services_ is managed by frame/worker)
-  for (auto service : services_) {
-    rpc_server_->reg_service_ref(*service);
+  // Create and register Raft services (ownership transferred to rpc_server_)
+  if (rep_frame_ != nullptr) {
+    auto services = rep_frame_->CreateRpcServices(site_info_->id,
+                                                   rep_sched_,
+                                                   poll_worker);
+    for (auto& svc : services) {
+      rpc_server_->reg_service(std::move(svc));
+    }
   }
 
   // Start RPC server
@@ -119,11 +117,14 @@ void RaftWorker::SetupHeartbeat() {
   }
 
   // Setup heartbeat/control RPC server
-  // ServerControlServiceImpl constructor takes (timeout, recorder)
+  // ServerControlServiceImpl constructor takes (status, timeout, recorder)
   svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
   hb_thread_pool_g = new base::ThreadPool(1);
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
-  scsi_ = hb_rpc_server_->reg_service(ServerControlServiceImpl(5, nullptr));
+
+  // Create shared status and pass clone to service
+  server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
+  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), 5, nullptr));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = site_info_->GetHostAddr(CtrlPortDelta);
@@ -152,9 +153,9 @@ void RaftWorker::ShutDown() {
   }
 
   if (hb_rpc_server_) {
-    delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
+    delete hb_rpc_server_;  // Server destructor cleans up owned services
     hb_rpc_server_ = nullptr;
-    scsi_ = nullptr;
+    server_status_ = rusty::None;
   }
 
   if (hb_thread_pool_g) {
@@ -167,10 +168,7 @@ void RaftWorker::ShutDown() {
     thread_pool_g = nullptr;
   }
 
-  for (auto service : services_) {
-    delete service;
-  }
-  services_.clear();
+  // Services are now owned by rpc_server_ and deleted with it
 
   StopSubmitThread();
 
@@ -203,9 +201,9 @@ void RaftWorker::ShutDown() {
 void RaftWorker::WaitForShutdown() {
   StopSubmitThread();
 
-  if (hb_rpc_server_ && scsi_) {
-    scsi_->do_shutdown();
-    scsi_->wait_for_shutdown();
+  if (hb_rpc_server_) {
+    hb_rpc_server_->do_shutdown();
+    hb_rpc_server_->wait_for_shutdown();
   }
 }
 

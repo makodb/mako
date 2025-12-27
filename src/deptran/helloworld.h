@@ -10,17 +10,26 @@ namespace helloworld_client {
 class HelloworldClientService: public rrr::Service {
 public:
     enum {
-        TXN_READ = 0x17c3db5d,
+        TXN_READ = 0x167b15c5,
     };
-    int __reg_to__(rrr::Server* svr) {
+    // Registers RPC IDs with server using service index
+    // @safe
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
         int ret = 0;
-        if ((ret = svr->reg_method(TXN_READ, this, &HelloworldClientService::__txn_read__wrapper__)) != 0) {
+        if ((ret = svr.reg_rpc(TXN_READ, svc_index)) != 0) {
             goto err;
         }
         return 0;
     err:
-        svr->unreg(TXN_READ);
+        svr.unreg(TXN_READ);
         return ret;
+    }
+    // @safe - Virtual dispatch for RPC requests
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {
+        switch (rpc_id) {
+        case TXN_READ: __txn_read__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
     }
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use

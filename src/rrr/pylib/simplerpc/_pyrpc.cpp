@@ -2,6 +2,7 @@
 
 #include <string>
 #include <memory>
+#include <map>
 
 #include "rpc/server.hpp"
 #include "rpc/client.hpp"
@@ -16,6 +17,57 @@
 
 
 using namespace rrr;
+
+// Forward declaration
+class GILHelper;
+
+/**
+ * PythonRpcService: Service implementation for Python RPC bindings
+ *
+ * Accumulates handlers via add_handler(), then registers all RPC IDs
+ * when the service is registered with the server.
+ * IMPORTANT: All handlers must be added before calling server->start()
+ */
+class PythonRpcService : public Service {
+public:
+    ~PythonRpcService() {
+        // Release Python references
+        for (auto& [rpc_id, func] : handlers_) {
+            Py_XDECREF(func);
+        }
+    }
+
+    // Add a handler for an RPC ID (must be called before registration)
+    void add_handler(i32 rpc_id, PyObject* func) {
+        Py_XINCREF(func);
+        handlers_[rpc_id] = func;
+    }
+
+    // @safe - with @unsafe block for loop
+    int __reg_to__(Server& svr, size_t svc_index) override {
+        // @unsafe - loop iteration
+        {
+            for (auto& [rpc_id, func] : handlers_) {
+                int ret = svr.reg_rpc(rpc_id, svc_index);
+                if (ret != 0) {
+                    // Unregister on failure
+                    for (auto& [id, _] : handlers_) {
+                        if (id >= rpc_id) break;
+                        svr.unreg(id);
+                    }
+                    return ret;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // @safe
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override;
+
+private:
+    std::map<i32, PyObject*> handlers_;
+};
 
 // Wrapper to hold Arc<Mutex<>> for Python binding
 struct PollThreadWrapper {
@@ -38,6 +90,58 @@ public:
     }
 };
 
+// PythonRpcService::__dispatch__ implementation
+// @safe
+void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) {
+    auto it = handlers_.find(rpc_id);
+    if (it == handlers_.end()) {
+        return;  // Unknown RPC ID
+    }
+
+    PyObject* func = it->second;
+    Marshal* output_m = NULL;
+    int error_code = 0;
+    {
+        unsigned long inner_u = (unsigned long) &req->m;
+        GILHelper inner_gil_helper;
+        PyObject* params = Py_BuildValue("(k)", inner_u);
+        PyObject* result = PyObject_CallObject(func, params);
+        if (result == NULL) {
+            // exception handling
+            error_code = -1;
+            if (PyErr_ExceptionMatches(PyExc_NotImplementedError)) {
+                error_code = ENOSYS;
+            }
+            PyErr_Clear();
+        } else {
+            output_m = (Marshal*) PyLong_AsLong(result);
+            Py_XDECREF(params);
+            Py_XDECREF(result);
+        }
+    }
+
+    auto sconn_opt = weak_sconn.upgrade();
+    if (sconn_opt.is_some()) {
+        auto sconn = sconn_opt.unwrap();
+        if (output_m != NULL) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](Marshal& out) {
+                out.read_from_marshal(*output_m, output_m->content_size());
+            });
+            delete output_m;
+        } else {
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code);
+        }
+    } else {
+        if (output_m != NULL) {
+            delete output_m;
+        }
+    }
+}
+
+// Map from Server* to its PythonRpcService* (before registration)
+// The service is moved to the Server when server_start is called
+static std::map<Server*, PythonRpcService*> pending_python_services_;
+
 static PyObject* _pyrpc_init_server(PyObject* self, PyObject* args) {
     GILHelper gil_helper;
     unsigned long n_threads;
@@ -57,13 +161,20 @@ static PyObject* _pyrpc_fini_server(PyObject* self, PyObject* args) {
         return NULL;
 
     Py_BEGIN_ALLOW_THREADS {
-
         Server* svr = (Server*) u;
+
+        // Clean up any pending (unregistered) service
+        auto it = pending_python_services_.find(svr);
+        if (it != pending_python_services_.end()) {
+            delete it->second;
+            pending_python_services_.erase(it);
+        }
+
         delete svr;
     }
     Py_END_ALLOW_THREADS
 
-        Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject* _pyrpc_server_start(PyObject* self, PyObject* args) {
@@ -73,6 +184,15 @@ static PyObject* _pyrpc_server_start(PyObject* self, PyObject* args) {
     if (!PyArg_ParseTuple(args, "ks", &u, &addr))
         return NULL;
     Server* svr = (Server*) u;
+
+    // Register any pending Python service before starting
+    auto it = pending_python_services_.find(svr);
+    if (it != pending_python_services_.end()) {
+        // Transfer ownership to Server via Box
+        svr->reg_service(rusty::Box<Service>(it->second));
+        pending_python_services_.erase(it);
+    }
+
     int ret = svr->start(addr);
     return Py_BuildValue("i", ret);
 }
@@ -97,54 +217,20 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
         return NULL;
     Server* svr = (Server*) u;
 
-    // incr ref_count on PyObject func
-    // This reference count will be decreased when shutting down server
-    Py_XINCREF(func);
+    // Get or create the pending PythonRpcService for this server
+    auto it = pending_python_services_.find(svr);
+    PythonRpcService* svc;
+    if (it == pending_python_services_.end()) {
+        svc = new PythonRpcService();
+        pending_python_services_[svr] = svc;
+    } else {
+        svc = it->second;
+    }
 
-    int ret = svr->reg_handler(rpc_id, [func](rusty::Box<Request> req, WeakServerConnection weak_sconn) {
-        Marshal* output_m = NULL;
-        int error_code = 0;
-        {
-            unsigned long inner_u = (unsigned long) &req->m;
-            GILHelper inner_gil_helper;
-            PyObject* params = Py_BuildValue("(k)", inner_u);
-            PyObject* result = PyObject_CallObject(func, params);
-            if (result == NULL) {
-                // exception handling
-                error_code = -1; // generic error code
-                if (PyErr_ExceptionMatches(PyExc_NotImplementedError)) {
-                    error_code = ENOSYS;
-                }
-                PyErr_Clear();
-            } else {
-                output_m = (Marshal*) PyLong_AsLong(result);
-                Py_XDECREF(params);
-                Py_XDECREF(result);
-            }
-        }
+    // Add the handler to the service (increments ref count internally)
+    svc->add_handler(rpc_id, func);
 
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            if (output_m != NULL) {
-                const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](Marshal& out) {
-                    out.read_from_marshal(*output_m, output_m->content_size());
-                });
-                delete output_m;
-            } else {
-                const_cast<ServerConnection&>(*sconn).reply(*req, error_code);
-            }
-        } else {
-            if (output_m != NULL) {
-                delete output_m;
-            }
-        }
-
-        // cleanup automatic via rusty::Box
-        // sconn automatically released by Arc
-    });
-
-    return Py_BuildValue("i", ret);
+    return Py_BuildValue("i", 0);  // Success
 }
 
 static PyObject* _pyrpc_init_poll_thread_worker(PyObject* self, PyObject* args) {

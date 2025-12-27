@@ -67,6 +67,68 @@ inline const char* TransportTypeToString(TransportType type) {
 
 } // namespace mako
 
+// ============= Test Service Classes =============
+
+// TestRangeService: handles a range of RPC IDs for testing
+class TestRangeService : public rrr::Service {
+public:
+    using Handler = std::function<void(uint8_t, rusty::Box<rrr::Request>, rrr::WeakServerConnection)>;
+
+    TestRangeService(rrr::i32 rpc_start, rrr::i32 rpc_end, Handler handler)
+        : rpc_start_(rpc_start), rpc_end_(rpc_end), handler_(std::move(handler)) {}
+
+    // @safe - with @unsafe block for loop
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+        // @unsafe - loop iteration
+        {
+            for (rrr::i32 rpc_id = rpc_start_; rpc_id <= rpc_end_; ++rpc_id) {
+                int ret = svr.reg_rpc(rpc_id, svc_index);
+                if (ret != 0) {
+                    for (rrr::i32 id = rpc_start_; id < rpc_id; ++id) {
+                        svr.unreg(id);
+                    }
+                    return ret;
+                }
+            }
+        }
+        return 0;
+    }
+
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
+                      rrr::WeakServerConnection weak_sconn) override {
+        handler_(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn);
+    }
+
+private:
+    rrr::i32 rpc_start_;
+    rrr::i32 rpc_end_;
+    Handler handler_;
+};
+
+// TestSingleService: handles a single RPC ID for testing
+class TestSingleService : public rrr::Service {
+public:
+    using Handler = std::function<void(rusty::Box<rrr::Request>, rrr::WeakServerConnection)>;
+
+    TestSingleService(rrr::i32 rpc_id, Handler handler)
+        : rpc_id_(rpc_id), handler_(std::move(handler)) {}
+
+    int __reg_to__(rrr::Server& svr, size_t svc_index) override {
+        return svr.reg_rpc(rpc_id_, svc_index);
+    }
+
+    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
+                      rrr::WeakServerConnection weak_sconn) override {
+        if (rpc_id == rpc_id_) {
+            handler_(std::move(req), weak_sconn);
+        }
+    }
+
+private:
+    rrr::i32 rpc_id_;
+    Handler handler_;
+};
+
 // ============= Transport Type Utility Tests (Integration) =============
 
 class TransportTypeIntegrationTest : public ::testing::Test {};
@@ -119,13 +181,15 @@ protected:
         // Create server
         server_ = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
 
-        // Register request handlers for test request types
-        for (uint8_t req_type = TEST_REQ_TYPE_START; req_type <= TEST_REQ_TYPE_END; req_type++) {
-            server_->reg_handler(req_type, [this, req_type](rusty::Box<rrr::Request> req,
-                                                     rrr::WeakServerConnection weak_sconn) {
+        // Register TestRangeService to handle test request types
+        auto svc = rusty::make_box<TestRangeService>(
+            static_cast<rrr::i32>(TEST_REQ_TYPE_START),
+            static_cast<rrr::i32>(TEST_REQ_TYPE_END),
+            [this](uint8_t req_type, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
                 HandleRequest(req_type, std::move(req), weak_sconn);
-            });
-        }
+            }
+        );
+        server_->reg_service(std::move(svc));
 
         // Start server
         std::string addr = "0.0.0.0:" + std::to_string(port_);
@@ -449,7 +513,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
 
     // Start server
     auto server = new rrr::Server(rusty::Some(poll_thread_worker_.as_ref().unwrap().clone()));
-    server->reg_handler(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
+    auto svc = rusty::make_box<TestSingleService>(1, [&](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
         request_count++;
         auto sconn_opt = weak_sconn.upgrade();
         if (sconn_opt.is_some()) {
@@ -457,6 +521,7 @@ TEST_F(ConnectionResilienceTest, ReconnectAfterServerRestart) {
             const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
         }
     });
+    server->reg_service(std::move(svc));
     ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(port_)).c_str()), 0);
 
     // Connect client

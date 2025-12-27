@@ -119,7 +119,7 @@ public:
     }
 };
 
-// @safe
+// @interface
 class NoCopy {
 protected:
     NoCopy() = default;

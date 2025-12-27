@@ -47,14 +47,14 @@ Executor *MultiPaxosFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
 Coordinator *MultiPaxosFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
                                                 int benchmark,
-                                                ClientControlServiceImpl *ccsi,
+                                                rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                                 uint32_t id,
                                                 shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   CoordinatorMultiPaxos *coo;
   coo = new CoordinatorMultiPaxos(coo_id,
                                   benchmark,
-                                  ccsi,
+                                  std::move(client_status),
                                   id);
   coo->frame_ = this;
   verify(commo_ != nullptr);
@@ -71,7 +71,7 @@ Coordinator *MultiPaxosFrame::CreateCoordinator(cooid_t coo_id,
 Coordinator *MultiPaxosFrame::CreateBulkCoordinator(Config *config, int benchmark) {
     verify(config != nullptr);
     CoordinatorMultiPaxos *coo;
-    coo = new BulkCoordinatorMultiPaxos(0, benchmark, nullptr, 0);
+    coo = new BulkCoordinatorMultiPaxos(0, benchmark, rusty::None, 0);
     coo->frame_ = this;
     verify(commo_ != nullptr);
     coo->commo_ = commo_;
@@ -101,15 +101,14 @@ Communicator *MultiPaxosFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>>
   return commo_;
 }
 
-vector<rrr::Service *>
+vector<rusty::Box<rrr::Service>>
 MultiPaxosFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
-                                   rusty::Arc<rrr::PollThread> poll_thread_worker,
-                                   ServerControlServiceImpl *scsi) {
+                                   rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<Service *>();
+  auto result = std::vector<rusty::Box<Service>>();
   switch (config->replica_proto_) {
-    case MODE_MULTI_PAXOS:result.push_back(new MultiPaxosServiceImpl(rep_sched));
+    case MODE_MULTI_PAXOS:result.push_back(rusty::make_box<MultiPaxosServiceImpl>(rep_sched));
     default:break;
   }
   return result;

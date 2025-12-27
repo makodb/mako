@@ -209,8 +209,8 @@ bool ServerConnection::handle_read() {
                 stat_server_rpc_counting(rpc_id);
 #endif // RPC_STATISTICS
 
-                auto it = server_->handlers_.find(rpc_id);
-                if (it == server_->handlers_.end()) {
+                auto it = server_->rpc_to_service_.find(rpc_id);
+                if (it == server_->rpc_to_service_.end()) {
                     // Handler not found - track missing RPC IDs and suppress duplicate warnings
                     bool surpress_warning = false;
                     {
@@ -227,15 +227,15 @@ bool ServerConnection::handle_read() {
                     reply(*req, ENOENT);
                     // req destroyed here, not moved
                 } else {
-                    // Handler found - dispatch to coroutine
-                    // rusty::Function allows direct capture of move-only types like rusty::Box
-                    // Lambda captures rusty::Box<Request> by move, maintaining single ownership semantics
+                    // Service found - dispatch via virtual method
+                    // Uses virtual dispatch to avoid raw pointer capture and static_cast
+                    size_t svc_index = it->second;
+                    Service* svc = server_->services_[svc_index].get();
                     auto weak_this = weak_self_;
-                    auto handler = it->second;
-                    // Move req into local before capture to help checker understand ownership transfer
+                    // Move req into local before capture
                     rusty::Box<Request> req_owned = std::move(req);
-                    Coroutine::CreateRun([handler, req_owned = std::move(req_owned), weak_this]() mutable {
-                        handler(std::move(req_owned), weak_this);
+                    Coroutine::CreateRun([svc, rpc_id, req_owned = std::move(req_owned), weak_this]() mutable {
+                        svc->__dispatch__(rpc_id, std::move(req_owned), weak_this);
                     }, __FILE__, __LINE__);
                 }
             }
@@ -275,7 +275,7 @@ void ServerConnection::handle_error() {
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
         status_ = CLOSED;
-        // @unsafe - system call, logging, and iterator operations
+        // @unsafe - system call and iterator operations
         {
             ::close(socket_);
             Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_);
@@ -347,11 +347,9 @@ Server::~Server() {
     }
     verify(sconns_ctr_.peek_next() == 0);
 
-    // Clean up owned services (after connections closed, so handlers don't access them)
-    for (auto& cleanup : service_cleanups_) {
-        cleanup();
-    }
-    service_cleanups_.clear();
+    // Services are automatically cleaned up when services_ vector is destroyed
+    // (Box destructor calls delete on each service)
+    services_.clear();
 }
 
 // @unsafe - Accepts new client connections (raw pointer: p_svr_addr_->ai_addr)
@@ -527,19 +525,28 @@ int Server::start(const char* bind_addr) {
   return 0;
 }
 
-// @safe - Registers RPC handler in map
-int Server::reg_handler(i32 rpc_id, const RequestHandler& func) {
-    // disallow duplicate rpc_id
-    if (handlers_.find(rpc_id) != handlers_.end()) {
-        return EEXIST;
-    }
-    handlers_[rpc_id] = func;
-    return 0;
+// @safe - Unregisters RPC mapping from map
+void Server::unreg(i32 rpc_id) {
+    rpc_to_service_.erase(rpc_id);
 }
 
-// @safe - Unregisters RPC handler from map
-void Server::unreg(i32 rpc_id) {
-    handlers_.erase(rpc_id);
+// @safe - Signals shutdown to waiting threads
+void Server::do_shutdown() {
+    Log_debug("Server::do_shutdown");
+    {
+        auto guard = shutdown_state_.lock().unwrap();
+        guard->shutdown = true;
+    }
+    shutdown_cond_.notify_all();
+}
+
+// @safe - Blocks until shutdown is signaled
+void Server::wait_for_shutdown() {
+    Log_debug("Server::wait_for_shutdown");
+    auto guard = shutdown_state_.lock().unwrap();
+    guard = shutdown_cond_.wait_while(std::move(guard),
+        [](ShutdownState& s) { return !s.shutdown; }).unwrap();
+    Log_debug("Server::wait_for_shutdown - done");
 }
 
 } // namespace rrr

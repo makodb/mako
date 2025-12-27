@@ -12,7 +12,7 @@ class FrameFebruus : public Frame {
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,
-                                 ClientControlServiceImpl *ccsi,
+                                 rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                  uint32_t id,
                                  shared_ptr<TxnRegistry> txn_reg) override;
 //  vector<rrr::Service *> CreateRpcServices(uint32_t site_id,

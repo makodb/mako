@@ -190,23 +190,23 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
 void PaxosWorker::SetupService() {
   std::string bind_addr = site_info_->GetBindAddress();
   svr_poll_thread_worker_ = PollThread::create();
-  if (rep_frame_ != nullptr) {
-    services_ = rep_frame_->CreateRpcServices(site_info_->id,
-                                              rep_sched_,
-                                              svr_poll_thread_worker_.as_ref().unwrap(),
-                                              scsi_);
-    Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d",
-      site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
-  }
+
   uint32_t num_threads = 1;
   thread_pool_g = new base::ThreadPool(num_threads);
 
-  // init rrr::Server
+  // init rrr::Server first (before registering services)
   rpc_server_ = new rrr::Server(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone()));
 
-  // reg services (borrowed - services_ is managed by frame/worker)
-  for (auto service : services_) {
-    rpc_server_->reg_service_ref(*service);
+  // Create and register services (ownership transferred to rpc_server_)
+  if (rep_frame_ != nullptr) {
+    auto services = rep_frame_->CreateRpcServices(site_info_->id,
+                                                   rep_sched_,
+                                                   svr_poll_thread_worker_.as_ref().unwrap());
+    Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d",
+      site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
+    for (auto& svc : services) {
+      rpc_server_->reg_service(std::move(svc));
+    }
   }
 
   // start rpc server
@@ -241,7 +241,10 @@ void PaxosWorker::SetupHeartbeat() {
   svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
   hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
-  scsi_ = hb_rpc_server_->reg_service(ServerControlServiceImpl(timeout));
+
+  // Create shared status and pass clone to service
+  server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
+  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
 
   auto port = site_info_->port + CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
@@ -249,7 +252,7 @@ void PaxosWorker::SetupHeartbeat() {
   hb_rpc_server_->start(addr_port.c_str());
   if (hb_rpc_server_ != nullptr) {
     // Log_info("notify ready to control script for %s", bind_addr.c_str());
-    scsi_->set_ready();
+    server_status_.as_ref().unwrap()->set_ready();
   }
   Log_info("heartbeat setup for %s on %s",
            site_info_->name.c_str(), addr_port.c_str());
@@ -262,34 +265,35 @@ void PaxosWorker::WaitForShutdown() {
   }
   if (hb_rpc_server_ != nullptr) {
 //    scsi_->server_heart_beat();
-    scsi_->wait_for_shutdown();
+    hb_rpc_server_->wait_for_shutdown();
     delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
     // svr_hb_poll_thread_worker_g automatically released by shared_ptr
     hb_thread_pool_g->release();
 
-    for (auto service : services_) {
-      if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(service)) {
-        auto& recorder = s->recorder_;
-        if (recorder) {
-          auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
-          auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
-          Log::info("Log to disk, average log per flush: %lld,"
-                    " average size per flush: %lld",
-                    n_flush_avg_, sz_flush_avg_);
+    // Use for_each_service to access services owned by rpc_server_
+    if (rpc_server_ != nullptr) {
+      rpc_server_->for_each_service([](rrr::Service& service) {
+        if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
+          auto& recorder = s->recorder_;
+          if (recorder) {
+            auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
+            auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
+            Log::info("Log to disk, average log per flush: %lld,"
+                      " average size per flush: %lld",
+                      n_flush_avg_, sz_flush_avg_);
+          }
         }
-      }
+      });
     }
   }
 }
 
 void PaxosWorker::ShutDown() {
-  Log_info("site %s deleting services, num: %d %d %d %d", site_info_->name.c_str(), services_.size(), 0, (int)n_current, (int)n_tot);
+  Log_info("site %s shutting down, n_current: %d, n_tot: %d", site_info_->name.c_str(), (int)n_current, (int)n_tot);
   verify(rpc_server_ != nullptr);
+  // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
   rpc_server_ = nullptr;
-  for (auto service : services_) {
-    delete service;
-  }
   thread_pool_g->release();
   for (auto c : created_coordinators_) {
     delete c;
@@ -673,7 +677,7 @@ inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
   auto coord = rep_frame_->CreateCoordinator(cid++,
                                              Config::GetConfig(),
                                              0,
-                                             nullptr,
+                                             rusty::None,
                                              id++,
                                              nullptr);
   coord->par_id_ = site_info_->partition_id_;
