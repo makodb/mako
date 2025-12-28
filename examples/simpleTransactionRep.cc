@@ -8,6 +8,7 @@
 #include <vector>
 #include <map>
 #include <mako.hh>
+#include "db.hh"
 #include "examples/common.h"
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
@@ -697,30 +698,41 @@ int main(int argc, char **argv) {
     int is_replicated = std::stoi(argv[5]);
 
     // Build config path - fix the format string to use std::to_string
-    std::string config_path = get_current_absolute_path() 
-            + "../src/mako/config/local-shards" + std::to_string(nshards) 
+    std::string config_path = get_current_absolute_path()
+            + "../src/mako/config/local-shards" + std::to_string(nshards)
             + "-warehouses" + std::to_string(nthreads) + ".yml";
-    vector<string> paxos_config_file{
+    std::vector<std::string> paxos_config_files{
         get_current_absolute_path() + "../config/1leader_2followers/paxos" + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
         get_current_absolute_path() + "../config/occ_paxos.yml"
     };
-    
-    auto& benchConfig = BenchmarkConfig::getInstance();
-    benchConfig.setNshards(nshards);
-    benchConfig.setShardIndex(shardIdx);
-    benchConfig.setNthreads(nthreads);
-    benchConfig.setPaxosProcName(paxos_proc_name);
-    benchConfig.setIsReplicated(is_replicated);
 
-    auto config = new transport::Configuration(config_path);
-    benchConfig.setConfig(config);
-    benchConfig.setPaxosConfigFile(paxos_config_file);
+    // Use the new RocksDB-like Open interface
+    mako::Options options;
+    options.num_shards = nshards;
+    options.shard_index = shardIdx;
+    options.num_threads = nthreads;
+    options.paxos_proc_name = paxos_proc_name;
+    options.paxos_config_files = paxos_config_files;
+    options.replication.enabled = (is_replicated != 0);
+    options.replication.is_leader = (paxos_proc_name == "localhost");
 
-    abstract_db* replicated_db = init_env();
+    // Create transport configuration
+    auto transport_config = new transport::Configuration(config_path);
+    options.transport_config = transport_config;
+
+    // Open the database using the new interface
+    mako::DB* mako_db = nullptr;
+    mako::Status status = mako::DB::Open(options, "/tmp/mako_simple_txn", &mako_db);
+    if (!status.ok()) {
+        std::cerr << "Failed to open database: " << status.ToString() << std::endl;
+        return 1;
+    }
 
     printf("=== Mako Transaction Tests  ===\n");
-    
-    abstract_db* db = initWithDB();
+
+    // Get the underlying abstract_db for operations
+    abstract_db* db = mako_db->GetDB();
+    auto& benchConfig = BenchmarkConfig::getInstance();
 
     if (benchConfig.getLeaderConfig()) {
         // pre-declare sharded tables
@@ -751,12 +763,15 @@ int main(int argc, char **argv) {
     db_close();
 
     // Data integrity verification on followers, learners and leaders
+    // Note: mako::DB::Open() returns the correct db for each role:
+    // - Leaders get the db from initWithDB()
+    // - Followers/learners get the db from init_env()
     {
-        abstract_db* db2 = benchConfig.getLeaderConfig() ? db : replicated_db;
-        bool verification_passed = verify_data_integrity(db2, nshards, nthreads);
+        bool verification_passed = verify_data_integrity(db, nshards, nthreads);
 
         if (!verification_passed) {
             printf("\n" RED "VERIFICATION FAILED - Database integrity compromised!" RESET "\n");
+            delete mako_db;
             return 1;
         }
     }
@@ -764,5 +779,6 @@ int main(int argc, char **argv) {
     printf("\n" GREEN "All tests completed successfully!" RESET "\n");
     std::cout.flush();
 
+    delete mako_db;
     return 0;
 }
