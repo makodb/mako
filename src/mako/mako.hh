@@ -43,6 +43,7 @@
 
 
 // Initialize Rust wrapper: communicate with rust-based redis client
+/*
 static void initialize_rust_wrapper()
 {
   RustWrapper* g_rust_wrapper = new RustWrapper();
@@ -53,7 +54,7 @@ static void initialize_rust_wrapper()
   }
   std::cout << "Successfully initialized rust wrapper!" << std::endl;
   g_rust_wrapper->start_polling();
-}
+}*/
 
 static void print_system_info()
 {

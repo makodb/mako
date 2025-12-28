@@ -487,6 +487,7 @@ pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 list(APPEND CFLAGS ${LIBEVENT_CFLAGS})
 list(APPEND LDFLAGS ${LIBEVENT_LDFLAGS})
 list(APPEND CXXFLAGS ${ASIO_CFLAGS})
+list(APPEND CXXFLAGS -fno-omit-frame-pointer)
 
 # Source files
 set(MAKO_SRCFILES
@@ -913,6 +914,9 @@ add_apps(test_callback_demo examples/test_callback_demo.cc)
 add_apps(test_ordered_callbacks examples/test_ordered_callbacks.cc)
 add_apps(test_partitioned_queues examples/test_partitioned_queues.cc)
 add_apps(test_stress_partitioned_queues examples/test_stress_partitioned_queues.cc)
+add_apps(makoCon examples/makoCon.cc)
+add_apps(makoConDBBench examples/makoConDBBench.cc)
+add_apps(makoConMultiTrd examples/makoConMultiTrd.cc)
 
 # Raft test executables (only when MAKO_USE_RAFT is enabled)
 if(MAKO_USE_RAFT)
