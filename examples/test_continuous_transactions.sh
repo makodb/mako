@@ -3,9 +3,17 @@
 # Script to test continuous transaction execution with real-time statistics
 # Tests with configurable number of shards and workers
 
+# Source common utilities (includes GDB_PREFIX for debugging)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../bash/util.sh"
+
 echo "========================================="
 echo "Continuous Transaction Test"
 echo "========================================="
+
+if [ "$GDB_ENABLED" == "1" ]; then
+    echo "[GDB] Debug mode enabled"
+fi
 
 # Default values
 DEFAULT_SHARDS=2
@@ -40,6 +48,9 @@ rm -f continuous-shard*.log
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
+# Get the script directory and construct path to executable
+MAKO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+
 # Function to start a shard
 start_shard() {
     local shard_id=$1
@@ -47,12 +58,8 @@ start_shard() {
 
     echo "Starting shard $shard_id with $num_workers workers..."
 
-    # Get the script directory and construct path to executable
-    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-    MAKO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
-
     # Usage: continuousTransactions <nshards> <shardIdx> <nthreads> <paxos_proc_name> [is_replicated]
-    nohup "$MAKO_ROOT/${BUILD_DIR:-build}/continuousTransactions" $SHARDS $shard_id $num_workers localhost 0 > continuous-shard${shard_id}.log 2>&1 &
+    nohup $GDB_PREFIX "$MAKO_ROOT/${BUILD_DIR:-build}/continuousTransactions" $SHARDS $shard_id $num_workers localhost 0 > continuous-shard${shard_id}.log 2>&1 &
 
     echo $!
 }

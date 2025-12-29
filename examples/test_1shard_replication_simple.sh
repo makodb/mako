@@ -2,9 +2,17 @@
 
 # Script to test 1-shard experiments with replication using simpleTransactionRep
 
+# Source common utilities (includes GDB_PREFIX for debugging)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../bash/util.sh"
+
 echo "========================================="
 echo "Testing 1-shard setup with replication using simpleTransactionRep"
 echo "========================================="
+
+if [ "$GDB_ENABLED" == "1" ]; then
+    echo "[GDB] Debug mode enabled"
+fi
 
 ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
@@ -14,14 +22,14 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 # Start shard 0 in background - capture ALL PIDs
 echo "Starting shard 0..."
-nohup ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 localhost 1 > simple-shard0-localhost.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 localhost 1 > simple-shard0-localhost.log 2>&1 &
 PID_LOCALHOST=$!
-nohup ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 learner 1 > simple-shard0-learner.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 learner 1 > simple-shard0-learner.log 2>&1 &
 PID_LEARNER=$!
-nohup ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 p2 1 > simple-shard0-p2.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 p2 1 > simple-shard0-p2.log 2>&1 &
 PID_P2=$!
 sleep 1
-nohup ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 p1 1  > simple-shard0-p1.log 2>&1 &
+nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 6 p1 1  > simple-shard0-p1.log 2>&1 &
 PID_P1=$!
 sleep 2
 
@@ -52,14 +60,14 @@ if [ ! -f "simple-shard0-p1.log" ]; then
 else
     # Get the last occurrence of replay_batch
     last_replay_batch=$(grep "replay_batch:" "simple-shard0-p1.log" | tail -1)
-    
+
     if [ -z "$last_replay_batch" ]; then
         echo "  ✗ No 'replay_batch' keyword found in simple-shard0-p1.log"
         failed=1
     else
         # Extract the replay_batch number (assuming format: "replay_batch:XXX")
         replay_count=$(echo "$last_replay_batch" | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p')
-        
+
         if [ -z "$replay_count" ]; then
             echo "  ✗ Could not extract replay_batch value"
             echo "    Last line: $last_replay_batch"

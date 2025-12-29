@@ -14,6 +14,27 @@ read_makorc_value() {
     echo "$default"
 }
 
+# GDB_ENABLED: Set from ~/.makorc (use_gdb: 1 to enable)
+# Scripts can use this variable directly to conditionally run under GDB
+GDB_ENABLED=$(read_makorc_value "use_gdb" "0")
+
+# GDB_PREFIX: If GDB is enabled, this prefix wraps commands with gdb batch mode
+# Usage: $GDB_PREFIX ./executable args > logfile 2>&1
+GDB_PREFIX=""
+GDB_LOG_DIR="./crash_logs"
+if [ "$GDB_ENABLED" == "1" ]; then
+    mkdir -p "$GDB_LOG_DIR"
+    GDB_CMD_FILE="${GDB_LOG_DIR}/gdb_cmd.txt"
+    cat > "${GDB_CMD_FILE}" <<EOF
+set pagination off
+run
+echo \n========== CRASH DETECTED ==========\n
+thread apply all bt full
+quit
+EOF
+    GDB_PREFIX="gdb -batch -x ${GDB_CMD_FILE} --args"
+fi
+
 # wait for nohup jobs DONE
 wait_for_jobs() {
   echo "Wait for jobs..."

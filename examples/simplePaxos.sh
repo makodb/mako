@@ -1,3 +1,12 @@
+#!/bin/bash
+
+# Source common utilities (includes GDB_PREFIX for debugging)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../bash/util.sh"
+
+if [ "$GDB_ENABLED" == "1" ]; then
+    echo "[GDB] Debug mode enabled"
+fi
 
 rm -f a1.log a2.log a3.log a4.log
 
@@ -7,28 +16,28 @@ sleep 1
 
 # Start processes with proper synchronization
 echo "Starting p1 (follower)..."
-./${BUILD_DIR:-build}/simplePaxos p1 > a2.log 2>&1 &
+$GDB_PREFIX ./${BUILD_DIR:-build}/simplePaxos p1 > a2.log 2>&1 &
 p1_pid=$!
 sleep 5  # Give p1 time to fully initialize
 
 echo "Starting p2 (follower)..."
-./${BUILD_DIR:-build}/simplePaxos p2 > a3.log 2>&1 &
+$GDB_PREFIX ./${BUILD_DIR:-build}/simplePaxos p2 > a3.log 2>&1 &
 p2_pid=$!
 sleep 5  # Give p2 time to fully initialize
 
 echo "Starting learner..."
-./${BUILD_DIR:-build}/simplePaxos learner > a4.log 2>&1 &
+$GDB_PREFIX ./${BUILD_DIR:-build}/simplePaxos learner > a4.log 2>&1 &
 learner_pid=$!
 sleep 5  # Give learner time to fully initialize
 
 # Start leader last after all followers are ready
 echo "Starting localhost (leader)..."
-./${BUILD_DIR:-build}/simplePaxos localhost > a1.log 2>&1 &
+$GDB_PREFIX ./${BUILD_DIR:-build}/simplePaxos localhost > a1.log 2>&1 &
 localhost_pid=$!
 
 echo "Waiting for completion..."
 # Wait longer for all processes to complete - needs more time for 300 messages across 3 partitions
-sleep 40 
+sleep 40
 
 tail -n 1 a1.log a2.log a3.log a4.log
 

@@ -9,9 +9,17 @@
 # 3. Show "Initialized ShardContext for shard" for each shard
 # 4. Show "agg_persist_throughput" keyword
 
+# Source common utilities (includes GDB_PREFIX for debugging)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../bash/util.sh"
+
 echo "========================================="
 echo "Testing multi-shard single process mode"
 echo "========================================="
+
+if [ "$GDB_ENABLED" == "1" ]; then
+    echo "[GDB] Debug mode enabled"
+fi
 
 # Clean up old log files
 rm -f nfs_sync_*
@@ -46,7 +54,7 @@ echo ""
 
 # Start multi-shard process in background
 echo "Starting multi-shard single process..."
-nohup $CMD > $log_file 2>&1 &
+nohup $GDB_PREFIX $CMD > "$log_file" 2>&1 &
 PROCESS_PID=$!
 sleep 2
 

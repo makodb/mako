@@ -12,12 +12,20 @@
 # Success criteria:
 # - Throughput should scale roughly linearly with CPU cap increase
 
+# Source common utilities (includes GDB_PREFIX for debugging)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../bash/util.sh"
+
 set -e
 
 echo "========================================="
 echo "CPU Scaling Test: 2-shard single process"
 echo "========================================="
 echo ""
+
+if [ "$GDB_ENABLED" == "1" ]; then
+    echo "[GDB] Debug mode enabled"
+fi
 
 # Configuration
 NUM_THREADS=6  # Use 6 threads to avoid TPC-C workload crashes with high thread counts
@@ -132,10 +140,10 @@ run_test_with_cpu_cap() {
         echo "Testing with UNLIMITED CPU (baseline)"
         echo "========================================="
         echo "Starting dbtest without CPU limit..."
-        echo "Command: $CMD"
+        echo "Command: $GDB_PREFIX $CMD"
 
         # Run without CPU limit
-        $CMD > "$log_file" 2>&1 &
+        $GDB_PREFIX $CMD > "$log_file" 2>&1 &
     else
         # Convert system percentage to cgroups CPUQuota (100% = 1 CPU core)
         # For total system percentage: cpu_percent% of NUM_CPUS cores
@@ -144,10 +152,10 @@ run_test_with_cpu_cap() {
         echo "Testing with ${cpu_percent}% CPU cap (CPUQuota=${cpu_quota}%)"
         echo "========================================="
         echo "Starting dbtest with CPU limit..."
-        echo "Command: systemd-run --user --scope -p CPUQuota=${cpu_quota}% $CMD"
+        echo "Command: systemd-run --user --scope -p CPUQuota=${cpu_quota}% $GDB_PREFIX $CMD"
 
         # Run with CPU limit using systemd-run
-        systemd-run --user --scope -p CPUQuota=${cpu_quota}% $CMD > "$log_file" 2>&1 &
+        systemd-run --user --scope -p CPUQuota=${cpu_quota}% $GDB_PREFIX $CMD > "$log_file" 2>&1 &
     fi
 
     local PID=$!

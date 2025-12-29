@@ -13,9 +13,17 @@
 # 1. Show "agg_persist_throughput" keyword
 # 2. System completes without transaction aborts
 
+# Source common utilities (includes GDB_PREFIX for debugging)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/../bash/util.sh"
+
 echo "========================================="
 echo "Testing 2-shard single process mode WITH replication"
 echo "========================================="
+
+if [ "$GDB_ENABLED" == "1" ]; then
+    echo "[GDB] Debug mode enabled"
+fi
 
 # Clean up old log files
 rm -f nfs_sync_*
@@ -45,6 +53,7 @@ echo ""
 
 # Start follower processes for both shards first
 # These need to be ready to receive replication messages
+# Note: Followers use bash/shard.sh which has its own GDB support
 echo "Starting follower processes..."
 
 # Shard 0 followers
@@ -80,7 +89,7 @@ CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config
 echo "Command: $CMD"
 echo ""
 
-nohup $CMD > $log_file 2>&1 &
+nohup $GDB_PREFIX $CMD > "$log_file" 2>&1 &
 LEADER_PID=$!
 
 # Wait for benchmark to complete
