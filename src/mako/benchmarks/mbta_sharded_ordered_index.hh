@@ -12,6 +12,8 @@
 
 #include "abstract_ordered_index.h"
 #include "benchmarks/benchmark_config.h"
+#include "../lib/common.h"
+#include "../status.hh"
 
 class mbta_sharded_ordered_index {
 public:
@@ -90,6 +92,30 @@ public:
   void remove(void *txn, int32_t key) {
     remove(txn, lcdf::Str(reinterpret_cast<const char *>(&key), sizeof(key)));
   }
+
+  // ========================================================================
+  // RocksDB-like Get/Put/Delete wrappers (return mako::Status)
+  // ========================================================================
+
+  /**
+   * Get a value by key (RocksDB-style wrapper)
+   * @return Status::OK() if found, Status::NotFound() if key doesn't exist
+   */
+  mako::Status Get(void *txn, const std::string &key, std::string &value);
+
+  /**
+   * Put a key-value pair (RocksDB-style wrapper)
+   * IMPORTANT: Value must be pre-encoded with mako::Encode() and must remain
+   * valid until commit_txn() is called (StringWrapper stores only a pointer).
+   * @return Status::OK() on success
+   */
+  mako::Status Put(void *txn, const std::string &key, const std::string &value);
+
+  /**
+   * Delete a key (RocksDB-style wrapper)
+   * @return Status::OK() on success
+   */
+  mako::Status Delete(void *txn, const std::string &key);
 
   void scan(void *txn,
             const std::string &start_key,
@@ -267,6 +293,36 @@ mbta_sharded_ordered_index::check_shard(const lcdf::Str &key) const {
     return 0;
   }
   return static_cast<int>(hash_key(key) % shard_tables_.size());
+}
+
+// ============================================================================
+// RocksDB-like Get/Put/Delete Implementation
+// ============================================================================
+
+inline mako::Status mbta_sharded_ordered_index::Get(
+    void *txn,
+    const std::string &key,
+    std::string &value) {
+  bool found = get(txn, key, value);
+  return found ? mako::Status::OK() : mako::Status::NotFound();
+}
+
+inline mako::Status mbta_sharded_ordered_index::Put(
+    void *txn,
+    const std::string &key,
+    const std::string &value) {
+  // NOTE: The value must already be encoded with mako::Encode() by the caller,
+  // and the encoded value must remain valid until commit_txn() is called.
+  // This is because StringWrapper stores only a pointer to avoid copying.
+  put(txn, key, value);
+  return mako::Status::OK();
+}
+
+inline mako::Status mbta_sharded_ordered_index::Delete(
+    void *txn,
+    const std::string &key) {
+  remove(txn, key);
+  return mako::Status::OK();
 }
 
 #endif  // MAKO_BENCHMARKS_MBTA_SHARDED_ORDERED_INDEX_HH

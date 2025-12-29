@@ -40,6 +40,23 @@ if (!status.ok()) {
 }
 ```
 
+**Common WriteOptions:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `sync` | bool | `false` | If `true`, the write is flushed to disk (via `fsync`) before returning. This provides durability but is slower. |
+| `disableWAL` | bool | `false` | If `true`, skips writing to the Write-Ahead Log. Faster but data may be lost on crash. |
+| `no_slowdown` | bool | `false` | If `true`, returns immediately with `Status::Incomplete()` if the write would stall due to write buffer limits. |
+| `low_pri` | bool | `false` | If `true`, the write is given lower priority in the rate limiter. |
+
+Example with options:
+```cpp
+rocksdb::WriteOptions write_options;
+write_options.sync = true;        // Ensure durability
+write_options.disableWAL = false; // Keep WAL for crash recovery
+db->Put(write_options, "important_key", "important_value");
+```
+
 ### Reading Data (Get)
 
 To retrieve a value by its key, use the `Get` method.
@@ -57,6 +74,34 @@ if (status.ok()) {
 } else {
   // Handle other errors
 }
+```
+
+**Common ReadOptions:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `verify_checksums` | bool | `true` | If `true`, verifies data checksums during reads. Disabling can improve performance but risks reading corrupted data. |
+| `fill_cache` | bool | `true` | If `true`, data read from disk is cached in the block cache. Set to `false` for bulk scans to avoid polluting the cache. |
+| `snapshot` | const Snapshot* | `nullptr` | If set, reads data as of a specific point-in-time snapshot. Enables consistent reads across multiple Get/Iterator calls. |
+| `readahead_size` | size_t | `0` | Configures readahead for iterators. Useful for sequential scans (e.g., 2MB for large scans). |
+| `prefix_same_as_start` | bool | `false` | For prefix iterators only: ensures iteration stays within the same prefix. |
+| `total_order_seek` | bool | `false` | If `true`, disables prefix bloom filters for this read, enabling full table scans. |
+
+Example with options:
+```cpp
+rocksdb::ReadOptions read_options;
+read_options.verify_checksums = true;  // Ensure data integrity
+read_options.fill_cache = false;       // Don't pollute cache during bulk scan
+
+// Using a snapshot for consistent reads
+const rocksdb::Snapshot* snapshot = db->GetSnapshot();
+read_options.snapshot = snapshot;
+
+std::string value;
+db->Get(read_options, "my_key", &value);
+
+// Release the snapshot when done
+db->ReleaseSnapshot(snapshot);
 ```
 
 ### Deleting Data
