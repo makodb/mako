@@ -28,7 +28,7 @@ if [ "$GDB_ENABLED" == "1" ]; then
     cat > "${GDB_CMD_FILE}" <<EOF
 set pagination off
 run
-echo \n========== CRASH DETECTED ==========\n
+echo \n========== thread apply all bt full ==========\n
 thread apply all bt full
 quit
 EOF

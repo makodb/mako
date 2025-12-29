@@ -27,7 +27,7 @@ public:
     }
 
     void initialize() {
-        scoped_db_thread_ctx ctx(db, false);
+        mako::DB::InitThread(db);
     }
 
     void test_basic_transactions() {

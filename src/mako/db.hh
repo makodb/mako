@@ -28,6 +28,7 @@
 #include "status.hh"
 #include "benchmarks/abstract_db.h"
 #include "benchmarks/benchmark_config.h"
+#include "benchmarks/bench.h"
 #include "lib/configuration.h"
 
 #include <string>
@@ -151,6 +152,22 @@ public:
      * Check if the database is open
      */
     bool IsOpen() const { return is_open_; }
+
+    /**
+     * Initialize thread context for database operations
+     *
+     * This static method initializes the current thread for database operations.
+     * It is a convenience wrapper that only works on leader nodes.
+     *
+     * IMPORTANT: This method only works on leader nodes. For non-leader
+     * (follower/learner) nodes, this method does nothing.
+     *
+     * @param db  The abstract_db pointer to initialize thread context for
+     *
+     * Example:
+     *   mako::DB::InitThread(db);
+     */
+    static void InitThread(abstract_db* db);
 
 private:
     // Private constructor - use Open() to create instances
@@ -283,6 +300,13 @@ inline Status DB::Close() {
     db_ = nullptr;
     is_open_ = false;
     return Status::OK();
+}
+
+inline void DB::InitThread(abstract_db* db) {
+    if (!BenchmarkConfig::getInstance().getLeaderConfig()) {
+        return;
+    }
+    scoped_db_thread_ctx ctx(db, false); // TODO: be careful about thread_end
 }
 
 #endif  // _MAKO_COMMON_H_

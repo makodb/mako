@@ -122,13 +122,13 @@ Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int6
     n_created_coroutines_++;
     if (n_created_coroutines_ % 1024 == 0) {
       // Jetpack: Include server_id_ for debugging in distributed environment
-      Log_info("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
-               (int)n_created_coroutines_,
-               (int)n_busy_coroutines_,
-               (int)n_idle_coroutines_,
-               server_id_,
-               file,
-               (long long)line);
+      // Log_info("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
+      //          (int)n_created_coroutines_,
+      //          (int)n_busy_coroutines_,
+      //          (int)n_idle_coroutines_,
+      //          server_id_,
+      //          file,
+      //          (long long)line);
     }
   }
 
