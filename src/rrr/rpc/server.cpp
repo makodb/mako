@@ -192,7 +192,7 @@ bool ServerConnection::handle_read() {
     { stat_server_batching(complete_requests.size()); }
 #endif // RPC_STATISTICS
 
-    // @unsafe - STL ops, server_-> raw pointer, mutex, coroutine creation
+    // @unsafe - ctx_-> raw pointer dereference, coroutine creation
     {
         // Process each request
         while (!complete_requests.empty()) {
@@ -351,9 +351,9 @@ bool ServerListener::handle_read() {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       verify(set_nonblocking(clnt_socket, true) == 0);
 
-      // @unsafe - STL operations and const_cast
       auto sconn = rusty::Arc<ServerConnection>::make(ctx_.clone(), clnt_socket);
-      const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
+      // @unsafe - const_cast to initialize weak_self_ (safe: we just created this object)
+      { const_cast<ServerConnection&>(*sconn).weak_self_ = sconn; }
       {
           // Track fd for shutdown cleanup (Server reads this list in destructor)
           auto guard = sconn_fds_.lock().unwrap();

@@ -187,11 +187,6 @@ class ServerListener: public Pollable {
   // Returns MODE_NO_CHANGE since ServerListener never handles write
   int handle_write() override {verify(0); return Pollable::MODE_NO_CHANGE;}
 
-  // @unsafe - Calls handle_read() which contains raw pointer operations
-  // Jetpack: split-phase read support
-  bool handle_read_one() override { return handle_read(); }
-  // @safe - Not implemented, will abort if called
-  bool handle_read_two() override { verify(0); return true; }
   // @unsafe - Accepts incoming connections (raw pointer operations)
   bool handle_read() override;
 
@@ -356,14 +351,8 @@ public:
 
     // @safe - Reads and processes RPC requests
     // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
-    // Internal @unsafe blocks wrap: server_-> dereference, STL ops, coroutine creation.
+    // Internal @unsafe blocks wrap: ctx_-> dereference, coroutine creation, Reactor access.
     bool handle_read() override;  // Batching mode: reads ALL available requests
-
-    // @safe - Calls handle_read() which is @safe
-    // Jetpack: split-phase read support
-    bool handle_read_one() override { return handle_read(); }
-    // @safe - Not implemented, will abort if called
-    bool handle_read_two() override { verify(0); return true; }
 
     // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
     void handle_error() override;

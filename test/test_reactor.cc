@@ -64,15 +64,6 @@ public:
         return true;
     }
 
-    // Required by Pollable interface - break handle_read into two halves
-    bool handle_read_one() override {
-        return true;  // Test implementation
-    }
-
-    bool handle_read_two() override {
-        return true;  // Test implementation
-    }
-
     // @unsafe - Uses mutable field
     // Returns MODE_NO_CHANGE since test doesn't need mode updates
     int handle_write() override {

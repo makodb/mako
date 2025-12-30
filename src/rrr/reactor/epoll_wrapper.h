@@ -51,9 +51,6 @@ public:
     // @unsafe - Handles read events (implementation-specific)
     virtual size_t content_size() = 0;
     virtual bool handle_read() = 0;
-    // Break handle_read into two halves to solve reverse backlog problem
-    virtual bool handle_read_one() = 0;
-    virtual bool handle_read_two() = 0;
     // @unsafe - Handles write events (implementation-specific)
     // Returns new poll mode, or MODE_NO_CHANGE (-1) if no update needed
     // PollThreadWorker will call update_mode() based on return value
@@ -82,7 +79,6 @@ public:
 // SAFETY: Proper file descriptor management and error checking
 class Epoll {
  private:
-  std::vector<Pollable*> pending{};
 	int zero_count = 0;
 	long have_count = 0;
   long no_count = 0;
@@ -128,10 +124,6 @@ class Epoll {
   // Delete copy constructor and copy assignment
   Epoll(const Epoll&) = delete;
   Epoll& operator=(const Epoll&) = delete;
-
-  // Jetpack split-phase event processing methods
-  std::vector<struct timespec> Wait_One(int& num_ev, bool& slow);
-  void Wait_Two();
 
   // @unsafe - Adds file descriptor to epoll/kqueue
   // SAFETY: Uses system calls with proper error checking, Arc for polymorphism

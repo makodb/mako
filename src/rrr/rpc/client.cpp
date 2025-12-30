@@ -24,6 +24,12 @@
 // @external: {
 //   const_cast: [unsafe]
 //   std::__cxx11::basic_string::basic_string: [safe]
+//   std::map::find: [safe]
+//   std::map::erase: [safe]
+//   std::map::end: [safe]
+//   std::unordered_map::find: [safe]
+//   std::unordered_map::erase: [safe]
+//   std::unordered_map::end: [safe]
 // }
 
 
@@ -145,7 +151,8 @@ void ClientConnection::handle_free(i64 xid) const {
   // Guard dropped here, releasing lock
 }
 
-// @unsafe - Establishes TCP/IPC connection to server
+// @safe - Establishes TCP/IPC connection to server
+// SAFETY: Syscalls wrapped in minimal @unsafe blocks with proper error handling
 int ClientConnection::connect(const char* addr) {
   verify(status_ != CONNECTED);
   string addr_str(addr);
@@ -159,20 +166,26 @@ int ClientConnection::connect(const char* addr) {
   string port = addr_str.substr(idx + 1);
 
 #ifdef USE_IPC
-  struct sockaddr_un saun;
-  saun.sun_family = AF_UNIX;
-  string ipc_addr = "rsock" + port;
-  strcpy(saun.sun_path, ipc_addr.data());
-  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (sock < 0) {
-    perror("client: socket");
-    exit(1);
-  }
-  socket_ = sock;
-  auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-  if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
-    perror("client: connect");
-    exit(1);
+  // @unsafe - IPC socket creation and connect syscalls
+  {
+    struct sockaddr_un saun;
+    saun.sun_family = AF_UNIX;
+    string ipc_addr = "rsock" + port;
+    strcpy(saun.sun_path, ipc_addr.data());
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+      Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
+      return errno;
+    }
+    socket_ = sock;
+    auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
+    if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
+      int err = errno;
+      Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
+      ::close(socket_);
+      socket_ = -1;
+      return err;
+    }
   }
 #else
 
@@ -188,34 +201,42 @@ int ClientConnection::connect(const char* addr) {
     return EINVAL;
   }
 
-  for (rp = result; rp != nullptr; rp = rp->ai_next) {
-    int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (sock == -1) {
-      continue;
-    }
-    socket_ = sock;
+  // @unsafe - TCP socket creation, options, and connect syscalls
+  {
+    for (rp = result; rp != nullptr; rp = rp->ai_next) {
+      int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+      if (sock == -1) {
+        continue;
+      }
+      socket_ = sock;
 
-    const int yes = 1;
-    verify(setsockopt(socket_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
-    verify(setsockopt(socket_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
-    int buf_len = 1024 * 1024;
-    setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
-    setsockopt(socket_, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
+      const int yes = 1;
+      verify(setsockopt(socket_, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == 0);
+      verify(setsockopt(socket_, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes)) == 0);
+      int buf_len = 1024 * 1024;
+      setsockopt(socket_, SOL_SOCKET, SO_RCVBUF, &buf_len, sizeof(buf_len));
+      setsockopt(socket_, SOL_SOCKET, SO_SNDBUF, &buf_len, sizeof(buf_len));
 
-    if (::connect(socket_, rp->ai_addr, rp->ai_addrlen) == 0) {
-      break;
+      if (::connect(socket_, rp->ai_addr, rp->ai_addrlen) == 0) {
+        break;
+      }
+      ::close(socket_);
+      socket_ = -1;
     }
-    ::close(socket_);
-    socket_ = -1;
+    freeaddrinfo(result);
   }
-  freeaddrinfo(result);
 
   if (rp == nullptr) {
     // failed to connect
     return ENOTCONN;
   }
 #endif
-  verify(set_nonblocking(socket_, true) == 0);
+
+  // @unsafe - set_nonblocking syscall
+  {
+    verify(set_nonblocking(socket_, true) == 0);
+  }
+
   Log_debug("rrr::ClientConnection: connected to %s", addr);
 
   status_ = CONNECTED;
@@ -257,31 +278,8 @@ int ClientConnection::handle_write() {
   return result;
 }
 
-// @unsafe - Reads and processes RPC responses
+// @safe - Reads and processes RPC responses
 bool ClientConnection::handle_read() {
-  if (!handle_read_one()) {
-    return false;
-  }
-
-  while (true) {
-    bool done = handle_read_two();
-    if (done) {
-      break;
-    }
-    if (status_ != CONNECTED) {
-      return false;
-    }
-  }
-
-  // Ensure any ready futures wake their waiting coroutines (Jetpack + mako compatibility)
-  Reactor::GetReactor()->Loop();
-
-  return true;
-}
-
-// @unsafe - Reads data from socket (I/O system call)
-// Jetpack: First phase - read data from socket
-bool ClientConnection::handle_read_one() {
   if (status_ != CONNECTED) {
     return false;
   }
@@ -291,25 +289,9 @@ bool ClientConnection::handle_read_one() {
     return false;
   }
 
-  return true;
-}
-
-// @unsafe - Processes packets from buffer
-bool ClientConnection::handle_read_two() {
-  if (status_ != CONNECTED) {
-    return false;
-  }
-
-  bool done = false;
-  int iters = 5;
-
-  if (is_client_mode_) {
-    iters = INT_MAX;
-  }
-
-  for (int i = 0; i < iters; i++) {
+  // Process all available packets
+  while (status_ == CONNECTED) {
     i32 packet_size;
-
     int n_peek = in_.peek(packet_size);
 
     if (n_peek == sizeof(i32)
@@ -323,7 +305,6 @@ bool ClientConnection::handle_read_two() {
       in_ >> v_reply_xid >> v_error_code;
 
       rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
-      // @unsafe - STL operations (map::find, map::erase)
       {
         auto guard = pending_fu_.lock().unwrap();
         auto it = guard->find(v_reply_xid.get());
@@ -338,7 +319,7 @@ bool ClientConnection::handle_read_two() {
         verify(fu->xid_ == v_reply_xid.get());
 
         fu->error_code_.set(v_error_code.get());
-        fu->reply_.get()->read_from_marshal(in_,
+        fu->reply_.borrow_mut()->read_from_marshal(in_,
                                             packet_size - v_reply_xid.val_size()
                                                 - v_error_code.val_size());
 
@@ -346,21 +327,21 @@ bool ClientConnection::handle_read_two() {
 
         // Arc auto-released when scope exits (refcount 1→0 if user released theirs)
       } else {
-        // the future might timed out
-        // Jetpack: consume data for timed-out futures
+        // the future might have timed out - consume data anyway
         Marshal reply;
         reply.read_from_marshal(in_,
                                 packet_size - v_reply_xid.val_size()
                                 - v_error_code.val_size());
       }
     } else {
-      done = true;
+      // No complete packet available
       break;
     }
   }
 
   Reactor::GetReactor()->Loop();
-  return done;
+
+  return true;
 }
 
 // @safe - Determines polling mode based on output buffer, protected by SpinMutex

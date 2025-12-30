@@ -97,10 +97,10 @@ struct FutureAttr {
     std::function<void(rusty::Arc<Future>)> callback;
 };
 
-// Thread-safe future for async RPC results using low-level synchronization
-// Uses mutable fields and condition variables which require unsafe operations
+// @safe - Thread-safe future for async RPC results
+// Uses rusty::Arc for memory safety, RefCell/Cell for interior mutability
 // MIGRATED: Now uses rusty::Arc<Future> instead of RefCounted for memory safety
-class Future { // @unsafe
+class Future {
     friend class rusty::Arc<Future>;  // Allow Arc to construct/destroy
     friend class Client;              // Client needs to call private constructor and set error
     friend class ClientConnection;    // ClientConnection needs access to set error and notify
@@ -114,7 +114,7 @@ class Future { // @unsafe
     rusty::Cell<i32> error_code_;  // Cell for interior mutability of Copy type
 
     FutureAttr attr_;
-    rusty::UnsafeCell<Marshal> reply_;  // UnsafeCell for interior mutability in unsafe class
+    rusty::RefCell<Marshal> reply_;  // RefCell for interior mutability with runtime borrow checking
 
     uint64_t timeout_{1000000}; // default timeout 1s (jetpack)
     rusty::Mutex<State> state_;  // Mutex protects State (ready/timed_out flags)
@@ -164,10 +164,10 @@ public:
 
     // Returns reference to reply with lifetime tied to Future
     // @lifetime: (&'a) -> &'a
-    // @unsafe - Returns reference through UnsafeCell (caller must ensure lifetime safety)
+    // @safe - Uses RefCell with runtime borrow checking
     Marshal& get_reply() const {
         wait();
-        return *reply_.get();
+        return *reply_.borrow_mut();
     }
 
     // @safe - Calls safe wait()/timed_wait() methods
@@ -449,14 +449,8 @@ public:
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
     int handle_write() override;
 
-    // @unsafe - Reads and processes RPC responses
-    // SAFETY: Contains raw pointer operations (GetReactor()->Loop())
+    // @safe - Reads and processes RPC responses
     bool handle_read() override;
-
-    // @unsafe - Jetpack: split-phase read support (I/O operations)
-    bool handle_read_one() override;
-    // @unsafe
-    bool handle_read_two() override;
 
     // @safe - Error handler
     void handle_error() override;
