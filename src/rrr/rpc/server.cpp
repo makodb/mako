@@ -188,62 +188,57 @@ bool ServerConnection::handle_read() {
     }
 
 #ifdef RPC_STATISTICS
-    // @unsafe - Global mutable state
-    { stat_server_batching(complete_requests.size()); }
+    stat_server_batching(complete_requests.size());
 #endif // RPC_STATISTICS
 
-    // @unsafe - ctx_-> raw pointer dereference, coroutine creation
-    {
-        // Process each request
-        while (!complete_requests.empty()) {
-            rusty::Box<Request> req = std::move(complete_requests.front());
-            complete_requests.pop_front();
+    // Process each request
+    while (!complete_requests.empty()) {
+        rusty::Box<Request> req = std::move(complete_requests.front());
+        complete_requests.pop_front();
 
-            if (req->m.content_size() < sizeof(i32)) {
-                reply(*req, EINVAL);
-            } else {
-                i32 rpc_id;
-                req->m >> rpc_id;
+        if (req->m.content_size() < sizeof(i32)) {
+            reply(*req, EINVAL);
+        } else {
+            i32 rpc_id;
+            req->m >> rpc_id;
 
 #ifdef RPC_STATISTICS
-                stat_server_rpc_counting(rpc_id);
+            stat_server_rpc_counting(rpc_id);
 #endif // RPC_STATISTICS
 
-                auto it = ctx_->rpc_to_service.find(rpc_id);
-                if (it == ctx_->rpc_to_service.end()) {
-                    // Handler not found - track missing RPC IDs
-                    bool surpress_warning = false;
-                    {
-                        auto guard = rpc_id_missing_s.lock().unwrap();
-                        if (guard->find(rpc_id) == guard->end()) {
-                            guard->insert(rpc_id);
-                        } else {
-                            surpress_warning = true;
-                        }
+            auto it = ctx_->rpc_to_service.find(rpc_id);
+            if (it == ctx_->rpc_to_service.end()) {
+                // Handler not found - track missing RPC IDs
+                bool surpress_warning = false;
+                {
+                    auto guard = rpc_id_missing_s.lock().unwrap();
+                    if (guard->find(rpc_id) == guard->end()) {
+                        guard->insert(rpc_id);
+                    } else {
+                        surpress_warning = true;
                     }
-                    if (!surpress_warning) {
-                        Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
-                    }
-                    reply(*req, ENOENT);
-                } else {
-                    // Service found - dispatch via virtual method using RefCell
-                    size_t svc_index = it->second;
-                    auto weak_this = weak_self_;
-                    auto ctx = ctx_.clone();  // Clone Arc for the coroutine
-                    Coroutine::CreateRun([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
-                        // Borrow inside coroutine - guard released when lambda exits
-                        // (*guard) dereferences RefMut to get Box<Service>&
-                        // (*guard)-> calls Box::operator-> to get Service*
-                        auto guard = ctx->services[svc_index].borrow_mut();
-                        (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
-                    }, __FILE__, __LINE__);
                 }
+                if (!surpress_warning) {
+                    Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
+                }
+                reply(*req, ENOENT);
+            } else {
+                // Service found - dispatch via virtual method using RefCell
+                size_t svc_index = it->second;
+                auto weak_this = weak_self_;
+                auto ctx = ctx_.clone();  // Clone Arc for the coroutine
+                Coroutine::CreateRun([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
+                    // Borrow inside coroutine - guard released when lambda exits
+                    // (*guard) dereferences RefMut to get Box<Service>&
+                    // (*guard)-> calls Box::operator-> to get Service*
+                    auto guard = ctx->services[svc_index].borrow_mut();
+                    (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
+                }, __FILE__, __LINE__);
             }
         }
     }
 
-    // @unsafe - Reactor operations
-    { Reactor::GetReactor()->Loop(); }
+    Reactor::GetReactor()->Loop();
 
     return false;
 }

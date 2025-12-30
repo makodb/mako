@@ -350,8 +350,8 @@ public:
     int handle_write() override;
 
     // @safe - Reads and processes RPC requests
-    // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
-    // Internal @unsafe blocks wrap: ctx_-> dereference, coroutine creation, Reactor access.
+    // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers,
+    // Arc for shared context, RefCell for interior mutability, Coroutine::CreateRun for async.
     bool handle_read() override;  // Batching mode: reads ALL available requests
 
     // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
