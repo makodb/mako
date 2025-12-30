@@ -20,14 +20,12 @@ using namespace mako;
 
 class TransactionWorker {
 public:
-    TransactionWorker(abstract_db *db, int worker_id = 0)
-        : db(db), worker_id_(worker_id), original_worker_id_(worker_id) {
-        txn_obj_buf.reserve(str_arena::MinStrReserveLength);
-        txn_obj_buf.resize(db->sizeof_txn_object(0));
+    TransactionWorker(mako::DB *mako_db, int worker_id = 0)
+        : mako_db_(mako_db), worker_id_(worker_id), original_worker_id_(worker_id) {
     }
 
     void initialize() {
-        mako::DB::InitThread(db);
+        mako_db_->InitThread();
     }
 
     void test_basic_transactions() {
@@ -35,39 +33,39 @@ public:
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex() ;
         worker_id_ = worker_id_ * 100 + home_shard_index ;
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        mbta_sharded_ordered_index *table = mako_db_->GetDB()->open_sharded_index("customer_0");
 
         // Write 5 keys - unique per worker to avoid contention
         for (size_t i = 0; i < 5; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string key = "test_key_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
-            // Encode value - must remain valid until commit_txn()
+            // Encode value - must remain valid until Commit()
             std::string value = mako::Encode("test_value_w" + std::to_string(worker_id_) + "_" + std::to_string(i));
             try {
                 mako::Status s = table->Put(txn, key, value);
                 if (!s.ok()) {
                     printf("Put failed: %s - %s\n", key.c_str(), s.ToString().c_str());
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     continue;
                 }
 
                 if (BenchmarkConfig::getInstance().getNshards()==2) {
                     int remote_shard = home_shard_index==0?1:0;
                     std::string key2 = "test_key2_w" + std::to_string(worker_id_) + "_" + std::to_string(i) + "_remote";
-                    // Encode value2 - must remain valid until commit_txn()
+                    // Encode value2 - must remain valid until Commit()
                     std::string value2 = mako::Encode("test_value2_w" + std::to_string(worker_id_) + "_" + std::to_string(i));
                     s = table->Put(txn, key2, value2);
                     if (!s.ok()) {
                         printf("Put failed: %s - %s\n", key2.c_str(), s.ToString().c_str());
-                        db->abort_txn(txn);
+                        mako_db_->Rollback(txn);
                         continue;
                     }
                 }
 
-                db->commit_txn(txn);
+                mako_db_->Commit(txn);
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Write aborted: %s\n", key.c_str());
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
             }
         }
         VERIFY_PASS("Write 5 records");
@@ -75,27 +73,27 @@ public:
         // Read and verify 5 keys
         bool all_reads_ok = true;
         for (size_t i = 0; i < 5; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string key = "test_key_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
             std::string value = "";
             try {
                 mako::Status s = table->Get(txn, key, value);
                 if (s.ok()) {
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     std::string expected = "test_value_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
                     if (value.find(expected) == std::string::npos) {
                         all_reads_ok = false;
                         break;
                     }
                 } else {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     printf("Get failed: %s - %s\n", key.c_str(), s.ToString().c_str());
                     all_reads_ok = false;
                     break;
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
                 printf("Read aborted: %s\n", key.c_str());
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 all_reads_ok = false;
                 break;
             }
@@ -106,28 +104,28 @@ public:
             // Read and verify 5 keys
             bool all_reads_ok = true;
             for (size_t i = 0; i < 5; i++) {
-                void *txn = db->new_txn(0, arena, txn_buf());
+                void *txn = mako_db_->BeginTransaction();
                 int remote_shard = home_shard_index==0?1:0;
                 std::string key = "test_key2_w" + std::to_string(worker_id_) + "_" + std::to_string(i) + "_remote";
                 std::string value = "";
                 try {
                     mako::Status s = table->Get(txn, key, value);
                     if (s.ok()) {
-                        db->commit_txn(txn);
+                        mako_db_->Commit(txn);
                         std::string expected = "test_value2_w" + std::to_string(worker_id_) + "_" + std::to_string(i);
                         if (value.find(expected) == std::string::npos) {
                             all_reads_ok = false;
                             break;
                         }
                     } else {
-                        db->abort_txn(txn);
+                        mako_db_->Rollback(txn);
                         printf("Get failed: %s - %s\n", key.c_str(), s.ToString().c_str());
                         all_reads_ok = false;
                         break;
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     printf("Read aborted: %s\n", key.c_str());
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     all_reads_ok = false;
                     break;
                 }
@@ -142,29 +140,29 @@ public:
         printf("\n[TEST_SINGLE_KEY] === Testing Single Key Contention Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        mbta_sharded_ordered_index *table = mako_db_->GetDB()->open_sharded_index("customer_0");
 
         // All threads write to the SAME key to create high contention
         std::string shared_key = "contention_key_shared";
 
         int commits = 0, aborts = 0;
         for (size_t i = 0; i < 10; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf());
-            // Encode value - must remain valid until commit_txn()
+            void *txn = mako_db_->BeginTransaction();
+            // Encode value - must remain valid until Commit()
             std::string value = mako::Encode("worker_" + std::to_string(worker_id_) + "_iter_" + std::to_string(i));
             try {
                 mako::Status s = table->Put(txn, shared_key, value);
                 if (s.ok()) {
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     commits++;
                     printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] txn %zu COMMITTED\n", home_shard_index, worker_id_, i);
                 } else {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     aborts++;
                     printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] txn %zu PUT FAILED: %s\n", home_shard_index, worker_id_, i, s.ToString().c_str());
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 aborts++;
                 printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] txn %zu ABORTED\n", home_shard_index, worker_id_, i);
             }
@@ -177,11 +175,11 @@ public:
         if (original_worker_id_ == 0) {
             std::this_thread::sleep_for(std::chrono::seconds(3));
 
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string value;
             try {
                 mako::Status s = table->Get(txn, shared_key, value);
-                db->commit_txn(txn);
+                mako_db_->Commit(txn);
                 if (s.ok()) {
                     printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] Final read: key '%s' EXISTS with value: %s\n",
                            home_shard_index, worker_id_, shared_key.c_str(), value.substr(0, 50).c_str());
@@ -193,7 +191,7 @@ public:
                            home_shard_index, worker_id_, s.ToString().c_str());
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_SINGLE_KEY] [Shard %d Worker %d] Final read ABORTED\n",
                        home_shard_index, worker_id_);
             }
@@ -204,7 +202,7 @@ public:
         printf("\n[TEST_OVERLAP_KEYS] === Testing Overlapping Keys Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        mbta_sharded_ordered_index *table = mako_db_->GetDB()->open_sharded_index("customer_0");
 
         // Workers access overlapping key ranges
         // Worker 0,1 share keys 0-4, Worker 2,3 share keys 5-9, etc.
@@ -212,26 +210,26 @@ public:
 
         int commits = 0, aborts = 0;
         for (size_t i = 0; i < 10; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             // Access keys in the shared range for this group
             std::string key = "overlap_key_" + std::to_string(key_group + (i % 5));
-            // Encode value - must remain valid until commit_txn()
+            // Encode value - must remain valid until Commit()
             std::string value = mako::Encode("worker_" + std::to_string(worker_id_) + "_iter_" + std::to_string(i));
             try {
                 mako::Status s = table->Put(txn, key, value);
                 if (s.ok()) {
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     commits++;
                     printf("[TEST_OVERLAP_KEYS] [Shard %d Worker %d] key=%s txn %zu COMMITTED\n",
                            home_shard_index, worker_id_, key.c_str(), i);
                 } else {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     aborts++;
                     printf("[TEST_OVERLAP_KEYS] [Shard %d Worker %d] key=%s txn %zu PUT FAILED: %s\n",
                            home_shard_index, worker_id_, key.c_str(), i, s.ToString().c_str());
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 aborts++;
                 printf("[TEST_OVERLAP_KEYS] [Shard %d Worker %d] key=%s txn %zu ABORTED\n",
                        home_shard_index, worker_id_, key.c_str(), i);
@@ -249,17 +247,17 @@ public:
             int total_existing_keys = 0;
             for (int group = 0; group < 10; group++) {
                 for (size_t i = 0; i < 5; i++) {
-                    void *txn = db->new_txn(0, arena, txn_buf());
+                    void *txn = mako_db_->BeginTransaction();
                     std::string key = "overlap_key_" + std::to_string(group * 5 + i);
                     std::string value;
                     try {
                         mako::Status s = table->Get(txn, key, value);
-                        db->commit_txn(txn);
+                        mako_db_->Commit(txn);
                         if (s.ok()) {
                             total_existing_keys++;
                         }
                     } catch (abstract_db::abstract_abort_exception &ex) {
-                        db->abort_txn(txn);
+                        mako_db_->Rollback(txn);
                     }
                 }
             }
@@ -277,21 +275,21 @@ public:
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
         int remote_shard_index = home_shard_index == 0 ? 1 : 0;
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        mbta_sharded_ordered_index *table = mako_db_->GetDB()->open_sharded_index("customer_0");
 
         // All threads access the same keys on both shards
         int commits = 0, aborts = 0;
         for (size_t i = 0; i < 10; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string shared_local_key = "cross_shard_local";
             std::string shared_remote_key = "cross_shard_remote";
-            // Encode value - must remain valid until commit_txn()
+            // Encode value - must remain valid until Commit()
             std::string value = mako::Encode("worker_" + std::to_string(worker_id_) + "_iter_" + std::to_string(i));
 
             try {
                 mako::Status s1 = table->Put(txn, shared_local_key, value);
                 if (!s1.ok()) {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     aborts++;
                     printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] txn %zu PUT local FAILED: %s\n",
                            home_shard_index, worker_id_, i, s1.ToString().c_str());
@@ -299,23 +297,23 @@ public:
                 }
                 mako::Status s2 = table->Put(txn, shared_remote_key, value);
                 if (!s2.ok()) {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     aborts++;
                     printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] txn %zu PUT remote FAILED: %s\n",
                            home_shard_index, worker_id_, i, s2.ToString().c_str());
                     continue;
                 }
-                db->commit_txn(txn);
+                mako_db_->Commit(txn);
                 commits++;
                 printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] txn %zu (local:%d remote:%d) COMMITTED\n",
                        home_shard_index, worker_id_, i, home_shard_index, remote_shard_index);
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 aborts++;
                 printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] txn %zu (local:%d remote:%d) ABORTED\n",
                        home_shard_index, worker_id_, i, home_shard_index, remote_shard_index);
             } catch (int error_code) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 aborts++;
                 printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] txn %zu (local:%d remote:%d) ABORTED (timeout/error: %d)\n",
                        home_shard_index, worker_id_, i, home_shard_index, remote_shard_index, error_code);
@@ -330,12 +328,12 @@ public:
             std::this_thread::sleep_for(std::chrono::seconds(3));
 
             // Read to verify records on local shard
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string local_key = "cross_shard_local";
             std::string local_value;
             try {
                 mako::Status s = table->Get(txn, local_key, local_value);
-                db->commit_txn(txn);
+                mako_db_->Commit(txn);
                 if (s.ok()) {
                     printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: local key EXISTS on shard %d\n",
                            home_shard_index, worker_id_, home_shard_index);
@@ -347,23 +345,23 @@ public:
                            home_shard_index, worker_id_, s.ToString().c_str());
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: local key read ABORTED\n",
                        home_shard_index, worker_id_);
             } catch (int error_code) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: local key read ABORTED (timeout/error: %d)\n",
                        home_shard_index, worker_id_, error_code);
             }
 
             // Read to verify records on remote shard (sequential - after txn completes)
             {
-                void *txn2 = db->new_txn(0, arena, txn_buf());
+                void *txn2 = mako_db_->BeginTransaction();
                 std::string remote_key = "cross_shard_remote";
                 std::string remote_value;
                 try {
                     mako::Status s = table->Get(txn2, remote_key, remote_value);
-                    db->commit_txn(txn2);
+                    mako_db_->Commit(txn2);
                     if (s.ok()) {
                         printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: remote key EXISTS on shard %d\n",
                                home_shard_index, worker_id_, remote_shard_index);
@@ -375,11 +373,11 @@ public:
                                home_shard_index, worker_id_, s.ToString().c_str());
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
-                    db->abort_txn(txn2);
+                    mako_db_->Rollback(txn2);
                     printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: remote key read ABORTED\n",
                            home_shard_index, worker_id_);
                 } catch (int error_code) {
-                    db->abort_txn(txn2);
+                    mako_db_->Rollback(txn2);
                     printf("[TEST_CROSS_SHARD] [Shard %d Worker %d] Final read: remote key read ABORTED (timeout/error: %d)\n",
                            home_shard_index, worker_id_, error_code);
                 }
@@ -391,20 +389,20 @@ public:
         printf("\n[TEST_RW_CONTENTION] === Testing Read-Write Contention Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        mbta_sharded_ordered_index *table = mako_db_->GetDB()->open_sharded_index("customer_0");
 
         // Half the workers read, half write to the same keys
         bool is_writer = (worker_id_ % 2 == 0);
 
         int commits = 0, aborts = 0;
         for (size_t i = 0; i < 10; i++) {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string key = "rw_key_" + std::to_string(i % 3); // 3 shared keys
 
             try {
                 mako::Status s = mako::Status::OK();
                 if (is_writer) {
-                    // Encode value - must remain valid until commit_txn()
+                    // Encode value - must remain valid until Commit()
                     std::string value = mako::Encode("writer_" + std::to_string(worker_id_) + "_" + std::to_string(i));
                     s = table->Put(txn, key, value);
                 } else {
@@ -416,18 +414,18 @@ public:
                     }
                 }
                 if (s.ok()) {
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     commits++;
                     printf("[TEST_RW_CONTENTION] [Shard %d Worker %d] %s key=%s txn %zu COMMITTED\n",
                            home_shard_index, worker_id_, is_writer ? "WRITE" : "READ", key.c_str(), i);
                 } else {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     aborts++;
                     printf("[TEST_RW_CONTENTION] [Shard %d Worker %d] %s key=%s txn %zu FAILED: %s\n",
                            home_shard_index, worker_id_, is_writer ? "WRITE" : "READ", key.c_str(), i, s.ToString().c_str());
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 aborts++;
                 printf("[TEST_RW_CONTENTION] [Shard %d Worker %d] %s key=%s txn %zu ABORTED\n",
                        home_shard_index, worker_id_, is_writer ? "WRITE" : "READ", key.c_str(), i);
@@ -444,17 +442,17 @@ public:
 
             int existing_keys = 0;
             for (size_t i = 0; i < 3; i++) {
-                void *txn = db->new_txn(0, arena, txn_buf());
+                void *txn = mako_db_->BeginTransaction();
                 std::string key = "rw_key_" + std::to_string(i);
                 std::string value;
                 try {
                     mako::Status s = table->Get(txn, key, value);
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     if (s.ok()) {
                         existing_keys++;
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                 }
             }
             printf("[TEST_RW_CONTENTION] [Shard %d Worker %d] Final read: %d out of 3 keys exist\n",
@@ -466,30 +464,30 @@ public:
         printf("\n[TEST_DELETE] === Testing Delete Interface Thread:%ld ===\n", std::this_thread::get_id());
 
         int home_shard_index = BenchmarkConfig::getInstance().getShardIndex();
-        mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
+        mbta_sharded_ordered_index *table = mako_db_->GetDB()->open_sharded_index("customer_0");
 
         // Each worker has its own unique key to delete
         std::string key = "delete_test_key_w" + std::to_string(worker_id_);
-        // Encode value - must remain valid until commit_txn()
+        // Encode value - must remain valid until Commit()
         std::string value = mako::Encode("value_to_delete_w" + std::to_string(worker_id_));
 
         // Step 1: Put a key
         {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             try {
                 mako::Status s = table->Put(txn, key, value);
                 if (s.ok()) {
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     printf("[TEST_DELETE] [Shard %d Worker %d] Put key '%s' COMMITTED\n",
                            home_shard_index, worker_id_, key.c_str());
                 } else {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     printf("[TEST_DELETE] [Shard %d Worker %d] Put FAILED: %s\n",
                            home_shard_index, worker_id_, s.ToString().c_str());
                     return;
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_DELETE] [Shard %d Worker %d] Put ABORTED\n",
                        home_shard_index, worker_id_);
                 return;
@@ -498,11 +496,11 @@ public:
 
         // Step 2: Verify key exists
         {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string read_value;
             try {
                 mako::Status s = table->Get(txn, key, read_value);
-                db->commit_txn(txn);
+                mako_db_->Commit(txn);
                 if (s.ok()) {
                     printf("[TEST_DELETE] [Shard %d Worker %d] Get before delete: key EXISTS\n",
                            home_shard_index, worker_id_);
@@ -512,7 +510,7 @@ public:
                     return;
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_DELETE] [Shard %d Worker %d] Get before delete ABORTED\n",
                        home_shard_index, worker_id_);
                 return;
@@ -521,21 +519,21 @@ public:
 
         // Step 3: Delete the key
         {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             try {
                 mako::Status s = table->Delete(txn, key);
                 if (s.ok()) {
-                    db->commit_txn(txn);
+                    mako_db_->Commit(txn);
                     printf("[TEST_DELETE] [Shard %d Worker %d] Delete COMMITTED\n",
                            home_shard_index, worker_id_);
                 } else {
-                    db->abort_txn(txn);
+                    mako_db_->Rollback(txn);
                     printf("[TEST_DELETE] [Shard %d Worker %d] Delete FAILED: %s\n",
                            home_shard_index, worker_id_, s.ToString().c_str());
                     return;
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_DELETE] [Shard %d Worker %d] Delete ABORTED\n",
                        home_shard_index, worker_id_);
                 return;
@@ -544,11 +542,11 @@ public:
 
         // Step 4: Verify key is gone
         {
-            void *txn = db->new_txn(0, arena, txn_buf());
+            void *txn = mako_db_->BeginTransaction();
             std::string read_value;
             try {
                 mako::Status s = table->Get(txn, key, read_value);
-                db->commit_txn(txn);
+                mako_db_->Commit(txn);
                 if (s.IsNotFound()) {
                     printf("[TEST_DELETE] [Shard %d Worker %d] Get after delete: key NOT FOUND (correct!)\n",
                            home_shard_index, worker_id_);
@@ -560,7 +558,7 @@ public:
                            home_shard_index, worker_id_, s.ToString().c_str());
                 }
             } catch (abstract_db::abstract_abort_exception &ex) {
-                db->abort_txn(txn);
+                mako_db_->Rollback(txn);
                 printf("[TEST_DELETE] [Shard %d Worker %d] Get after delete ABORTED\n",
                        home_shard_index, worker_id_);
             }
@@ -568,21 +566,18 @@ public:
     }
 
 protected:
-    abstract_db *const db;
+    mako::DB* mako_db_;
     int worker_id_;
     int original_worker_id_;
-    str_arena arena;
-    std::string txn_obj_buf;
-    inline void *txn_buf() { return (void *)txn_obj_buf.data(); }
 };
 
-void run_worker_tests(abstract_db *db, int worker_id,
+void run_worker_tests(mako::DB *mako_db, int worker_id,
                       spin_barrier *barrier_ready,
                       spin_barrier *barrier_start) {
     // Add thread ID to distinguish workers
     printf("[Worker %d] Starting on thread %ld\n", worker_id, std::this_thread::get_id());
 
-    auto worker = new TransactionWorker(db, worker_id);
+    auto worker = new TransactionWorker(mako_db, worker_id);
     worker->initialize();
 
     // Ensure all workers complete initialization before proceeding
@@ -599,7 +594,7 @@ void run_worker_tests(abstract_db *db, int worker_id,
     printf("[Worker %d] Completed\n", worker_id);
 }
 
-void run_tests(abstract_db* db) {
+void run_tests(mako::DB* mako_db) {
     // Pre-open tables ONCE before creating threads to avoid serialization
     size_t nthreads = BenchmarkConfig::getInstance().getNthreads();
     std::vector<std::thread> worker_threads;
@@ -608,7 +603,7 @@ void run_tests(abstract_db* db) {
     spin_barrier barrier_start(1);
 
     for (size_t i = 0; i < nthreads; ++i) {
-        worker_threads.emplace_back(run_worker_tests, db, i,
+        worker_threads.emplace_back(run_worker_tests, mako_db, i,
                                     &barrier_ready, &barrier_start);
     }
 
@@ -931,7 +926,7 @@ int main(int argc, char **argv) {
     }
 
     if (benchConfig.getLeaderConfig()) {
-        run_tests(db);
+        run_tests(mako_db);
     }
 
     std::this_thread::sleep_for(std::chrono::seconds(5));

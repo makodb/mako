@@ -156,18 +156,32 @@ public:
     /**
      * Initialize thread context for database operations
      *
-     * This static method initializes the current thread for database operations.
+     * This method initializes the current thread for database operations.
      * It is a convenience wrapper that only works on leader nodes.
      *
      * IMPORTANT: This method only works on leader nodes. For non-leader
      * (follower/learner) nodes, this method does nothing.
      *
-     * @param db  The abstract_db pointer to initialize thread context for
-     *
      * Example:
-     *   mako::DB::InitThread(db);
+     *   mako_db->InitThread();
      */
-    static void InitThread(abstract_db* db);
+    void InitThread();
+
+    /**
+     * Begin a new transaction
+     * Returns void* txn pointer (same as abstract_db->new_txn())
+     */
+    void* BeginTransaction();
+
+    /**
+     * Commit a transaction
+     */
+    void Commit(void* txn);
+
+    /**
+     * Rollback a transaction
+     */
+    void Rollback(void* txn);
 
 private:
     // Private constructor - use Open() to create instances
@@ -181,6 +195,10 @@ private:
     abstract_db* db_ = nullptr;
     bool is_open_ = false;
     bool owns_db_ = true;  // Whether we should delete db_ on close
+
+    // Thread-local helpers for BeginTransaction
+    str_arena& get_arena();
+    std::string& get_txn_buf();
 };
 
 // ============================================================================
@@ -302,11 +320,46 @@ inline Status DB::Close() {
     return Status::OK();
 }
 
-inline void DB::InitThread(abstract_db* db) {
+inline void DB::InitThread() {
     if (!BenchmarkConfig::getInstance().getLeaderConfig()) {
         return;
     }
-    scoped_db_thread_ctx ctx(db, false); // TODO: be careful about thread_end
+    scoped_db_thread_ctx ctx(db_, false); // TODO: be careful about thread_end
+}
+
+inline str_arena& DB::get_arena() {
+    thread_local str_arena arena;
+    return arena;
+}
+
+inline std::string& DB::get_txn_buf() {
+    thread_local std::string txn_buf;
+    if (txn_buf.empty() && db_) {
+        txn_buf.reserve(str_arena::MinStrReserveLength);
+        txn_buf.resize(db_->sizeof_txn_object(0));
+    }
+    return txn_buf;
+}
+
+inline void* DB::BeginTransaction() {
+    if (!is_open_ || !db_) {
+        return nullptr;
+    }
+    str_arena& arena = get_arena();
+    std::string& txn_buf = get_txn_buf();
+    return db_->new_txn(0, arena, txn_buf.data());
+}
+
+inline void DB::Commit(void* txn) {
+    //if (txn && db_) {
+        db_->commit_txn(txn);
+    //}
+}
+
+inline void DB::Rollback(void* txn) {
+    //if (txn && db_) {
+        db_->abort_txn(txn);
+    //}
 }
 
 #endif  // _MAKO_COMMON_H_
