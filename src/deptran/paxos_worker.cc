@@ -273,7 +273,7 @@ void PaxosWorker::WaitForShutdown() {
     // Use for_each_service to access services owned by rpc_server_
     if (rpc_server_ != nullptr) {
       rpc_server_->for_each_service([](rrr::Service& service) {
-        if (DepTranServiceImpl* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
+        if (auto* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
           auto& recorder = s->recorder_;
           if (recorder) {
             auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;

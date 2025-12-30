@@ -55,9 +55,16 @@ class Coroutine {
   // Using rusty::Function to support move-only callables (e.g., lambdas capturing rusty::Box)
   // Creates and runs coroutine with rusty::Rc ownership
   // Template wrapper to support file/line debugging parameters (Jetpack)
+  // @safe - Wraps callable and delegates to CreateRunImpl. Memory-safe:
+  //   - rusty::Function safely captures the callable
+  //   - Returns rusty::Rc for safe reference counting
+  //   - Internal coroutine state is managed by Reactor
+  //   SAFETY: CreateRunImpl is @unsafe due to internal raw pointer operations,
+  //   but the public API is safe - callers get an Rc<Coroutine> with proper ownership.
   template <typename Func>
   static rusty::Rc<Coroutine> CreateRun(Func&& func, const char* file = "", int64_t line = 0) {
-    return CreateRunImpl(rusty::Function<void()>(std::forward<Func>(func)), file, line);
+    // @unsafe - CreateRunImpl uses raw pointer operations internally
+    { return CreateRunImpl(rusty::Function<void()>(std::forward<Func>(func)), file, line); }
   }
 
   static void Sleep(uint64_t microseconds);
@@ -68,13 +75,15 @@ class Coroutine {
 
   enum Status { INIT = 0, STARTED, PAUSED, RESUMED, FINISHED, FINALIZING, RECYCLED };
 
-  // Interior mutability for use with rusty::Rc (const methods need to modify state)
-  mutable Status status_ = INIT;
-  mutable bool needs_finalize_ = false;  // Jetpack: track finalization state
-  mutable rusty::Function<void()> func_{};
+  // Interior mutability using Cell/RefCell for use with rusty::Rc
+  // Cell<T> for Copy types, RefCell<T> for non-Copy types
+  rusty::Cell<Status> status_{INIT};
+  rusty::Cell<bool> needs_finalize_{false};  // Jetpack: track finalization state
+  rusty::RefCell<rusty::Function<void()>> func_{};
 
   // Migrated from std::unique_ptr to rusty::Box with Option for nullable semantics
-  mutable rusty::Option<rusty::Box<boost_coro_task_t>> boost_coro_task_{};
+  rusty::RefCell<rusty::Option<rusty::Box<boost_coro_task_t>>> boost_coro_task_{};
+  // boost::optional with reference - keep mutable as it's inherently unsafe (holds raw reference)
   mutable boost::optional<boost_coro_yield_t&> boost_coro_yield_{};
 
   Coroutine() = delete;
@@ -82,11 +91,17 @@ class Coroutine {
   ~Coroutine();
   // @unsafe - Uses std::bind and function pointers
   void BoostRunWrapper(boost_coro_yield_t& yield);
-  // @unsafe - Uses std::bind and function pointers
+  // @safe - Initializes and starts a coroutine
+  // Memory-safe: Uses Cell/RefCell for interior mutability, Box for ownership.
+  // Internal @unsafe block wraps const_cast and boost coroutine creation.
   void Run() const;  // Made const for Rc compatibility
-  // @unsafe - Calls boost coroutine yield
+  // @safe - Yields control back to the reactor
+  // Memory-safe: Uses boost::optional reference and Cell for status.
+  // Internal @unsafe block wraps boost yield call.
   void Yield() const;  // Made const for Rc compatibility
-  // @unsafe - Resumes boost coroutine
+  // @safe - Resumes a paused coroutine
+  // Memory-safe: Uses RefCell for boost_coro_task_ access.
+  // Internal @unsafe block wraps boost coroutine resume.
   void Continue() const;  // Made const for Rc compatibility
   bool Finished() const;
   void DoFinalize();

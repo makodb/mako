@@ -353,68 +353,69 @@ size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
     return n_fetch;
 }
 
+// @safe - Transfers data between Marshal objects
+// SAFETY: Internal @unsafe block wraps raw pointer operations
 size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
     assert(m.content_size() >= n);   // require m.content_size() >= n > 0
     size_t n_fetch = 0;
 
-    if ((head_ == nullptr && tail_ == nullptr) || tail_->fully_written()) {
-        // efficiently copy data by only copying pointers
-        while (n_fetch < n) {
-	   //Log_info("wkwkakakak");
-            // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
-            //       that only one Marshal should be able to write to it! For the
-            //       given 2 use cases, it works.
-            // @unsafe
-            chunk* chnk = m.head_->shared_copy();
-						//clock_gettime(CLOCK_MONOTONIC, &end);
-						//Log_info("time of shared_copy: %d", (end.tv_sec-begin.tv_sec)*1000000000 + end.tv_nsec-begin.tv_nsec);
-            if (n_fetch + chnk->content_size() > n) {
-                // only fetch enough bytes we need
-                chnk->write_idx -= (n_fetch + chnk->content_size()) - n;
-            }
-            size_t cnt = chnk->content_size();
-            assert(cnt > 0);
-            n_fetch += cnt;
-            verify(m.head_->discard(cnt) == cnt);
-            if (head_ == nullptr) {
-                head_ = tail_ = chnk;
-            } else {
-                tail_->next = chnk;
-                tail_ = chnk;
-            }
-            if (m.head_->fully_read()) {
-                if (m.tail_ == m.head_) {
-                    // deleted the only chunk
-                    m.tail_ = nullptr;
+    // @unsafe - Raw pointer operations (head_, tail_, chunk*)
+    {
+        if ((head_ == nullptr && tail_ == nullptr) || tail_->fully_written()) {
+            // efficiently copy data by only copying pointers
+            while (n_fetch < n) {
+                // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
+                //       that only one Marshal should be able to write to it! For the
+                //       given 2 use cases, it works.
+                chunk* chnk = m.head_->shared_copy();
+                if (n_fetch + chnk->content_size() > n) {
+                    // only fetch enough bytes we need
+                    chnk->write_idx -= (n_fetch + chnk->content_size()) - n;
                 }
-                chunk* next = m.head_->next;
-                delete m.head_;
-                m.head_ = next;
+                size_t cnt = chnk->content_size();
+                assert(cnt > 0);
+                n_fetch += cnt;
+                verify(m.head_->discard(cnt) == cnt);
+                if (head_ == nullptr) {
+                    head_ = tail_ = chnk;
+                } else {
+                    tail_->next = chnk;
+                    tail_ = chnk;
+                }
+                if (m.head_->fully_read()) {
+                    if (m.tail_ == m.head_) {
+                        // deleted the only chunk
+                        m.tail_ = nullptr;
+                    }
+                    chunk* next = m.head_->next;
+                    delete m.head_;
+                    m.head_ = next;
+                }
+            }
+            write_cnt_ += n_fetch;
+            content_size_ += n_fetch;
+            verify(m.content_size_ >= n_fetch);
+            m.content_size_ -= n_fetch;
+
+        } else {
+
+            // number of bytes that need to be copied
+            size_t copy_n = safe_min(tail_->data->size - tail_->write_idx, n);
+            char* buf = new char[copy_n];
+            n_fetch = m.read(buf, copy_n);
+            verify(n_fetch == copy_n);
+            verify(this->write(buf, n_fetch) == n_fetch);
+            delete[] buf;
+
+            size_t leftover = n - copy_n;
+            if (leftover > 0) {
+                verify(tail_->fully_written());
+                n_fetch += this->read_from_marshal(m, leftover);
             }
         }
-        write_cnt_ += n_fetch;
-        content_size_ += n_fetch;
-        verify(m.content_size_ >= n_fetch);
-        m.content_size_ -= n_fetch;
-
-    } else {
-
-        // number of bytes that need to be copied
-        size_t copy_n = safe_min(tail_->data->size - tail_->write_idx, n);
-        char* buf = new char[copy_n];
-        n_fetch = m.read(buf, copy_n);
-        verify(n_fetch == copy_n);
-        verify(this->write(buf, n_fetch) == n_fetch);
-        delete[] buf;
-
-        size_t leftover = n - copy_n;
-        if (leftover > 0) {
-            verify(tail_->fully_written());
-            n_fetch += this->read_from_marshal(m, leftover);
-        }
+        assert(n_fetch == n);
+        assert(content_size_ == content_size_slow());
     }
-    assert(n_fetch == n);
-    assert(content_size_ == content_size_slow());
     return n_fetch;
 }
 

@@ -119,7 +119,8 @@ void Event::Wait(uint64_t timeout) {
 
     wp_coro_ = sp_coro;
     status_ = WAIT;
-    verify(sp_coro->status_ != Coroutine::FINISHED && sp_coro->status_ != Coroutine::RECYCLED);
+    auto coro_status = sp_coro->status_.get();
+    verify(coro_status != Coroutine::FINISHED && coro_status != Coroutine::RECYCLED);
     sp_coro->Yield();
 #ifdef EVENT_TIMEOUT_CHECK
     if (__debug_timeout_ && status_ == TIMEOUT) {

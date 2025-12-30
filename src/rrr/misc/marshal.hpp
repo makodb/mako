@@ -622,7 +622,8 @@ private:
   // Use case 1: In C++ server io thread, when a compelete packet is received, read it off
   //             into a Marshal object and hand over to worker threads.
   // Use case 2: In Python extension, buffer message in Marshal object, and send to network.
-  // @unsafe - Transfers data between Marshal objects (uses raw pointer members)
+  // @safe - Transfers data between Marshal objects
+  // SAFETY: Internal @unsafe block wraps raw pointer operations (head_, tail_, chunk*)
   size_t read_from_marshal(Marshal &m, size_t n);
 
   // @safe - Writes to file descriptor (I/O system call)

@@ -33,7 +33,7 @@ const int64_t n_max_coroutine = 2000;
 
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
-thread_local rusty::Option<rusty::Rc<Coroutine>> Reactor::sp_running_coro_th_{};
+thread_local rusty::RefCell<rusty::Option<rusty::Rc<Coroutine>>> Reactor::sp_running_coro_th_{};
 thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> Reactor::clients_{};
 
 // Thread-local storage for PollThreadWorker (raw pointer for direct access)
@@ -47,12 +47,13 @@ SpinLock Reactor::trying_job_;
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
 // Returns None if called outside of a coroutine context
 rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
-  // @unsafe - Rc::clone
+  // @unsafe - RefCell::borrow, Rc::clone
   {
-    if (Reactor::sp_running_coro_th_.is_none()) {
+    auto guard = Reactor::sp_running_coro_th_.borrow();
+    if ((*guard).is_none()) {
       return rusty::None;
     }
-    return rusty::Some(Reactor::sp_running_coro_th_.as_ref().unwrap().clone());
+    return rusty::Some((*guard).as_ref().unwrap().clone());
   }
 }
 
@@ -98,71 +99,133 @@ Reactor::GetDiskReactor() {
   return sp_disk_reactor_th_.as_ref().unwrap().clone();
 }
 
+// =============================================================================
+// Helper functions for CreateRunCoroutine
+// =============================================================================
+
+// @safe - Gets a recycled coroutine or creates a new one
+rusty::Rc<Coroutine>
+Reactor::GetOrCreateCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
+  // @unsafe
+  {
+    if (REUSING_CORO && available_coros_.size() > 0) {
+      n_idle_coroutines_--;
+      auto sp_coro = available_coros_.back().clone();
+      available_coros_.pop_back();
+      // Use Cell/RefCell for interior mutability (safe: single-threaded)
+      const auto& coro = *sp_coro;
+      const_cast<Coroutine&>(coro).id = Coroutine::global_id++;  // id is not Cell yet
+      *coro.func_.borrow_mut() = std::move(func);
+      *coro.boost_coro_task_.borrow_mut() = rusty::None;
+      coro.status_.set(Coroutine::INIT);
+      return sp_coro;
+    } else {
+      auto sp_coro = rusty::Rc<Coroutine>::make(std::move(func));
+      n_created_coroutines_++;
+      if (n_created_coroutines_ % 1024 == 0) {
+        Log_debug("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
+                 (int)n_created_coroutines_,
+                 (int)n_busy_coroutines_,
+                 (int)n_idle_coroutines_,
+                 server_id_,
+                 file,
+                 (long long)line);
+      }
+      return sp_coro;
+    }
+  }
+}
+
+// @safe - Saves current running coroutine to allow nesting
+rusty::Option<rusty::Rc<Coroutine>>
+Reactor::SaveRunningCoroutine() const {
+  // @unsafe
+  {
+    auto guard = sp_running_coro_th_.borrow();
+    if ((*guard).is_some()) {
+      return rusty::Some((*guard).as_ref().unwrap().clone());
+    }
+    return rusty::Option<rusty::Rc<Coroutine>>{};
+  }
+}
+
+// @safe - Restores previously saved running coroutine
+void Reactor::RestoreRunningCoroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const {
+  // @unsafe
+  {
+    *sp_running_coro_th_.borrow_mut() = old_coro;
+  }
+}
+
+// @safe - Sets the current running coroutine
+void Reactor::SetRunningCoroutine(const rusty::Rc<Coroutine>& coro) const {
+  // @unsafe
+  {
+    *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
+  }
+}
+
+// @safe - Registers coroutine in the active set
+void Reactor::RegisterCoroutine(const rusty::Rc<Coroutine>& coro) const {
+  // @unsafe
+  {
+    auto pair = coros_.insert(coro.clone());
+    if (!pair.second) {
+      Log_error("[DEBUG] RegisterCoroutine: Failed to insert coroutine into coros_ set!");
+      Log_error("[DEBUG] coros_ size: %zu, REUSING_CORO: %d", coros_.size(), REUSING_CORO);
+    }
+    verify(pair.second);
+    verify(coros_.size() > 0);
+  }
+}
+
+// =============================================================================
+// Main CreateRunCoroutine - orchestrates the helper functions
+// =============================================================================
+
 /**
  * @param func
  * @return
  */
-// @unsafe - Creates and runs coroutine, dereferences raw pointers internally
+// @safe - Creates and runs coroutine using safe helper functions
 rusty::Rc<Coroutine>
 Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
-  rusty::Option<rusty::Rc<Coroutine>> sp_coro;
-  if (REUSING_CORO && available_coros_.size() > 0) {
-    n_idle_coroutines_--;
-    sp_coro = rusty::Some(available_coros_.back().clone());
-    available_coros_.pop_back();
-    // Rc provides const access, use const_cast to modify (safe: single-threaded)
-    auto& coro = const_cast<Coroutine&>(*sp_coro.as_ref().unwrap());
-    coro.id = Coroutine::global_id++;
-    coro.func_ = std::move(func);
-    // Reset boost_coro_task_ when reusing a recycled coroutine for a new function
-    coro.boost_coro_task_ = rusty::None;
-    coro.status_ = Coroutine::INIT;
-  } else {
-    sp_coro = rusty::Some(rusty::Rc<Coroutine>::make(std::move(func)));
-    n_created_coroutines_++;
-    if (n_created_coroutines_ % 1024 == 0) {
-      // Jetpack: Include server_id_ for debugging in distributed environment
-      // Log_info("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
-      //          (int)n_created_coroutines_,
-      //          (int)n_busy_coroutines_,
-      //          (int)n_idle_coroutines_,
-      //          server_id_,
-      //          file,
-      //          (long long)line);
+  // Step 1: Get or create a coroutine
+  auto sp_coro = GetOrCreateCoroutine(std::move(func), file, line);
+
+  // @unsafe
+  {
+    n_busy_coroutines_++;
+  }
+
+  // Step 2: Save current running coroutine context (for nesting)
+  auto sp_old_coro = SaveRunningCoroutine();
+
+  // Step 3: Set this as the running coroutine
+  SetRunningCoroutine(sp_coro);
+
+  // Step 4: Register in the active coroutines set
+  RegisterCoroutine(sp_coro);
+
+  // Step 5: Run the coroutine
+  // @unsafe
+  {
+    sp_coro->Run();
+    if (sp_coro->Finished()) {
+      coros_.erase(sp_coro.clone());
     }
   }
 
-  n_busy_coroutines_++;
-
-  // Save old coroutine context - clone to avoid moving
-  auto sp_old_coro = sp_running_coro_th_.is_some()
-    ? rusty::Some(sp_running_coro_th_.as_ref().unwrap().clone())
-    : rusty::Option<rusty::Rc<Coroutine>>{};
-  sp_running_coro_th_ = rusty::Some(sp_coro.as_ref().unwrap().clone());
-
-  if (sp_coro.is_none()) {
-    Log_error("[DEBUG] CreateRunCoroutine: sp_coro is null!");
-  }
-  verify(sp_coro.is_some());
-  auto pair = coros_.insert(sp_coro.as_ref().unwrap().clone());
-  if (!pair.second) {
-    Log_error("[DEBUG] CreateRunCoroutine: Failed to insert coroutine into coros_ set!");
-    Log_error("[DEBUG] coros_ size before insert: %zu", coros_.size());
-    Log_error("[DEBUG] REUSING_CORO: %d", REUSING_CORO);
-  }
-  verify(pair.second);
-  verify(coros_.size() > 0);
-
-  sp_coro.as_ref().unwrap()->Run();
-  if (sp_coro.as_ref().unwrap()->Finished()) {
-    coros_.erase(sp_coro.as_ref().unwrap().clone());
+  // Step 6: Process events
+  // @unsafe
+  {
+    Loop(false, true);
   }
 
-  Loop(false, true);  // Process events AND check timeouts
+  // Step 7: Restore previous running coroutine
+  RestoreRunningCoroutine(sp_old_coro);
 
-  // yielded or finished, reset to old coro.
-  sp_running_coro_th_ = sp_old_coro;
-  return sp_coro.as_ref().unwrap().clone();
+  return sp_coro;
 }
 
 // @safe - Checks timeout events and moves ready ones to ready list with std::shared_ptr
@@ -313,7 +376,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
         if (coros_.find(sp_coro) == coros_.end()) {
           continue;
         }
-        verify(sp_coro->status_ == Coroutine::PAUSED);
+        verify(sp_coro->status_.get() == Coroutine::PAUSED);
         if (sp_event->status_ == Event::READY) {
           sp_event->status_ = Event::DONE;
         } else {
@@ -335,32 +398,47 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
 void Reactor::ContinueCoro(rusty::Rc<Coroutine> sp_coro) const {
 //  verify(!sp_running_coro_th_.is_none()); // disallow nested coros
   // Clone to avoid moving - must preserve the old value
-  auto sp_old_coro = sp_running_coro_th_.is_some()
-    ? rusty::Some(sp_running_coro_th_.as_ref().unwrap().clone())
-    : rusty::Option<rusty::Rc<Coroutine>>{};
-  sp_running_coro_th_ = rusty::Some(sp_coro.clone());
-  verify(!sp_running_coro_th_.as_ref().unwrap()->Finished());
+  // Use RefCell for explicit interior mutability of thread-local state
+  rusty::Option<rusty::Rc<Coroutine>> sp_old_coro;
+  {
+    auto guard = sp_running_coro_th_.borrow();
+    sp_old_coro = (*guard).is_some()
+      ? rusty::Some((*guard).as_ref().unwrap().clone())
+      : rusty::Option<rusty::Rc<Coroutine>>{};
+  }
+  *sp_running_coro_th_.borrow_mut() = rusty::Some(sp_coro.clone());
+  {
+    auto guard = sp_running_coro_th_.borrow();
+    verify(!(*guard).as_ref().unwrap()->Finished());
+  }
   n_active_coroutines_++;
 
-  if (sp_coro->status_ == Coroutine::INIT) {
+  if (sp_coro->status_.get() == Coroutine::INIT) {
     sp_coro->Run();
   } else {
     // PAUSED or RECYCLED
-    sp_running_coro_th_.as_ref().unwrap()->Continue();
+    auto guard = sp_running_coro_th_.borrow();
+    (*guard).as_ref().unwrap()->Continue();
   }
-  if (sp_running_coro_th_.as_ref().unwrap()->Finished()) {
-    auto sp_coro_ref = sp_running_coro_th_.as_ref().unwrap().clone();
-    Recycle(sp_coro_ref);
+  {
+    auto guard = sp_running_coro_th_.borrow();
+    if ((*guard).as_ref().unwrap()->Finished()) {
+      auto sp_coro_ref = (*guard).as_ref().unwrap().clone();
+      // Need to drop guard before Recycle since Recycle may modify other state
+      // Actually, Recycle takes sp_coro by reference and doesn't access sp_running_coro_th_
+      Recycle(sp_coro_ref);
+    }
   }
-  sp_running_coro_th_ = sp_old_coro;
+  *sp_running_coro_th_.borrow_mut() = sp_old_coro;
 }
 
 void Reactor::Recycle(rusty::Rc<Coroutine>& sp_coro) const {
   // This fixes the bug that coroutines are not recycling if they don't finish immediately.
   if (REUSING_CORO) {
-    // Rc provides const access, use const_cast to modify (safe: single-threaded)
-    const_cast<Coroutine&>(*sp_coro).status_ = Coroutine::RECYCLED;
-    const_cast<Coroutine&>(*sp_coro).func_ = {};
+    // Use Cell/RefCell for interior mutability (safe: single-threaded)
+    const auto& coro = *sp_coro;
+    coro.status_.set(Coroutine::RECYCLED);
+    *coro.func_.borrow_mut() = {};
     n_idle_coroutines_++;
     available_coros_.push_back(sp_coro.clone());
   }
@@ -616,7 +694,7 @@ void PollThreadWorker::do_close_pollable(int fd) {
 
 // @unsafe - Uses raw pointer dereference for poll_ptr
 // SAFETY: poll_ptr is guaranteed to be valid by caller (from fd_to_pollable_ map)
-void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) {
+void PollThreadWorker::do_update_mode(int fd, int new_mode, const Pollable* poll_ptr) {
   if (fd_to_pollable_.find(fd) == fd_to_pollable_.end()) {
     return;
   }
@@ -631,7 +709,8 @@ void PollThreadWorker::do_update_mode(int fd, int new_mode, Pollable* poll_ptr) 
 
   if (new_mode != old_mode) {
     // @unsafe {
-    void* userdata = poll_ptr;
+    // const_cast safe: userdata is only used for lookup, not mutation
+    void* userdata = const_cast<Pollable*>(poll_ptr);
     poll_.Update(*poll_ptr, userdata, new_mode, old_mode);
     // }
   }
@@ -787,7 +866,7 @@ void PollThread::request_close(int fd) const {
 
 // @safe - Sends update mode command via channel
 // SAFETY: Channel send is thread-safe
-void PollThread::update_mode(Pollable& poll, int new_mode) const {
+void PollThread::update_mode(const Pollable& poll, int new_mode) const {
   // @unsafe - channel send and pointer operations
   {
     auto result = sender_.send(CmdUpdateMode{poll.fd(), new_mode, &poll});

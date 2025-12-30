@@ -24,6 +24,9 @@
 //   const_cast: [unsafe]
 //   std::function::operator=: [safe]
 //   std::list::push_back: [safe]
+//   std::list::front: [safe]
+//   std::list::pop_front: [safe]
+//   std::list::empty: [safe]
 //   std::list::begin: [safe]
 //   std::list::end: [safe]
 //   std::list::iterator::operator++: [safe]
@@ -37,6 +40,12 @@
 //   std::set::end: [safe]
 //   std::set::insert: [safe]
 //   std::set::iterator::operator!=: [safe]
+//   std::vector::operator[]: [safe]
+//   rusty::sync::Weak::Weak: [safe]
+//   rrr::WeakServerConnection: [safe]
+//   rrr::Coroutine::CreateRun: [safe]
+//   rrr::Reactor::GetReactor: [safe]
+//   rrr::Reactor::Loop: [safe]
 // }
 
 using namespace std;
@@ -115,17 +124,14 @@ static void stat_server_rpc_counting(i32 rpc_id) {
 SpinMutex<std::unordered_set<i32>> ServerConnection::rpc_id_missing_s{std::unordered_set<i32>()};
 
 
-// @safe - Initializes connection and updates counter
-ServerConnection::ServerConnection(Server* server, int socket)
-        : server_(server), socket_(socket), status_(CONNECTED) {
-    // increase number of open connections
-    server_->sconns_ctr_.next(1);
+// @safe - Initializes connection
+ServerConnection::ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket)
+        : ctx_(std::move(ctx)), socket_(socket), status_(CONNECTED) {
 }
 
-// @safe - Updates connection counter
+// @safe - Arc prevents premature destruction of RpcServiceContext
 ServerConnection::~ServerConnection() {
-    // decrease number of open connections
-    server_->sconns_ctr_.next(-1);
+    // Arc reference to RpcServiceContext is automatically released
 }
 
 // get_shared() is now inherited from Pollable base class
@@ -139,8 +145,7 @@ int ServerConnection::run_async(const std::function<void()>& f) {
 }
 
 // @safe - Reads requests from socket and dispatches to handlers
-// Uses internal @unsafe block for Coroutine::CreateRun, Reactor::Loop,
-// and loop-local variable tracking (borrow checker requires this for loops with moves)
+// Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
 bool ServerConnection::handle_read() {
     if (status_ == CLOSED) {
         return false;
@@ -152,55 +157,50 @@ bool ServerConnection::handle_read() {
     // The old code only processed ONE packet per handle_read() call,
     // causing hangs when multiple requests arrive together.
 
-    // First, read all available data from the socket into the buffer
     size_t bytes_read = in_.read_from_fd(socket_);
     if (bytes_read == 0 && in_.content_size() < sizeof(i32)) {
-        // Connection made no forward progress and there isn't enough buffered
-        // data to decode a packet header yet. Mirror legacy behavior by
-        // deferring until we either read more bytes or the peer closes.
         return false;
     }
 
     std::list<rusty::Box<Request>> complete_requests;
 
-    // @unsafe - Coroutine::CreateRun and Reactor::Loop require unsafe context
-    {
-        // Process ALL complete packets in the buffer
-        for (;;) {
-            i32 packet_size;
-            int n_peek = in_.peek(packet_size);
-            if (n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32)) {
-                // consume the packet size (using type-safe read with reference)
-                verify(in_.read(packet_size) == sizeof(i32));
+    // Parse ALL complete packets from the buffer
+    // Pattern: add to list first, then fill via reference to avoid move tracking issues
+    for (;;) {
+        i32 packet_size;
+        int n_peek = in_.peek(packet_size);
 
-                auto req = rusty::make_box<Request>();
-                verify(req->m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
-
-                v64 v_xid;
-                req->m >> v_xid;
-                req->xid = v_xid.get();
-                complete_requests.push_back(std::move(req));
-
-            } else {
-                // packet not complete or there's no more packet to process
-                break;
-            }
+        // Check exit condition first (inverted logic)
+        if (!(n_peek == sizeof(i32) && in_.content_size() >= packet_size + sizeof(i32))) {
+            break;
         }
 
+        verify(in_.read(packet_size) == sizeof(i32));
+
+        // Add to list first, then fill via reference (avoids move tracking issues)
+        complete_requests.push_back(rusty::make_box<Request>());
+        Request& req = *complete_requests.back();
+        verify(req.m.read_from_marshal(in_, packet_size) == (size_t) packet_size);
+
+        v64 v_xid;
+        req.m >> v_xid;
+        req.xid = v_xid.get();
+    }
+
 #ifdef RPC_STATISTICS
-        stat_server_batching(complete_requests.size());
+    // @unsafe - Global mutable state
+    { stat_server_batching(complete_requests.size()); }
 #endif // RPC_STATISTICS
 
+    // @unsafe - STL ops, server_-> raw pointer, mutex, coroutine creation
+    {
         // Process each request
         while (!complete_requests.empty()) {
-            // Extract request from list - this creates a fresh req each iteration
             rusty::Box<Request> req = std::move(complete_requests.front());
             complete_requests.pop_front();
 
-            // Validate request size
             if (req->m.content_size() < sizeof(i32)) {
                 reply(*req, EINVAL);
-                // req destroyed here, not moved
             } else {
                 i32 rpc_id;
                 req->m >> rpc_id;
@@ -209,9 +209,9 @@ bool ServerConnection::handle_read() {
                 stat_server_rpc_counting(rpc_id);
 #endif // RPC_STATISTICS
 
-                auto it = server_->rpc_to_service_.find(rpc_id);
-                if (it == server_->rpc_to_service_.end()) {
-                    // Handler not found - track missing RPC IDs and suppress duplicate warnings
+                auto it = ctx_->rpc_to_service.find(rpc_id);
+                if (it == ctx_->rpc_to_service.end()) {
+                    // Handler not found - track missing RPC IDs
                     bool surpress_warning = false;
                     {
                         auto guard = rpc_id_missing_s.lock().unwrap();
@@ -220,30 +220,30 @@ bool ServerConnection::handle_read() {
                         } else {
                             surpress_warning = true;
                         }
-                    }  // Guard dropped here, releasing lock
+                    }
                     if (!surpress_warning) {
                         Log_warn("rrr::ServerConnection: no handler for rpc_id = %d", rpc_id);
                     }
                     reply(*req, ENOENT);
-                    // req destroyed here, not moved
                 } else {
-                    // Service found - dispatch via virtual method
-                    // Uses virtual dispatch to avoid raw pointer capture and static_cast
+                    // Service found - dispatch via virtual method using RefCell
                     size_t svc_index = it->second;
-                    Service* svc = server_->services_[svc_index].get();
                     auto weak_this = weak_self_;
-                    // Move req into local before capture
-                    rusty::Box<Request> req_owned = std::move(req);
-                    Coroutine::CreateRun([svc, rpc_id, req_owned = std::move(req_owned), weak_this]() mutable {
-                        svc->__dispatch__(rpc_id, std::move(req_owned), weak_this);
+                    auto ctx = ctx_.clone();  // Clone Arc for the coroutine
+                    Coroutine::CreateRun([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
+                        // Borrow inside coroutine - guard released when lambda exits
+                        // (*guard) dereferences RefMut to get Box<Service>&
+                        // (*guard)-> calls Box::operator-> to get Service*
+                        auto guard = ctx->services[svc_index].borrow_mut();
+                        (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
                     }, __FILE__, __LINE__);
                 }
             }
-            // req is out of scope here regardless of path
         }
-
-        Reactor::GetReactor()->Loop();
     }
+
+    // @unsafe - Reactor operations
+    { Reactor::GetReactor()->Loop(); }
 
     return false;
 }
@@ -275,21 +275,13 @@ void ServerConnection::handle_error() {
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
         status_ = CLOSED;
-        // @unsafe - system call and iterator operations
+        // @unsafe - system call
         {
             ::close(socket_);
-            Log_debug("server@%s close ServerConnection at fd=%d", server_->addr_.c_str(), socket_);
-
-            // Remove from sconns_ (if tracked)
-            auto guard = server_->sconns_.lock().unwrap();
-            for (auto it = guard->begin(); it != guard->end(); ++it) {
-                if (it->get() == this) {
-                    guard->erase(it);
-                    break;
-                }
-            }
-            // Guard dropped here, releasing lock
+            Log_debug("server@%s close ServerConnection at fd=%d", ctx_->addr.c_str(), socket_);
         }
+        // Note: We don't remove fd from Server's sconn_fds_ list.
+        // At shutdown, Server will request_close on all fds (closed ones are no-ops).
     }
 }
 
@@ -305,51 +297,40 @@ int ServerConnection::poll_mode() const {
 }
 
 // @safe - Constructs server with PollThread
+// ctx_ starts as None; created in start() after all registrations
 Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... */) {
     if (poll_thread_worker.is_none()) {  // Check if Option is None
-        poll_thread_worker_ = rusty::Some(PollThread::create());
+        poll_thread_ = rusty::Some(PollThread::create());
     } else {
-        poll_thread_worker_ = std::move(poll_thread_worker);
+        poll_thread_ = std::move(poll_thread_worker);
     }
 }
 
-// @safe - Destroys server and waits for connections (calls @unsafe functions)
+// @safe - Destroys server and requests close for all connections
+// Arc<RpcServiceContext> ensures services live until all connections are done
 Server::~Server() {
-    // Request close for all connections via poll thread
-    // @unsafe - STL operations (list iteration, list::clear)
-    {
-        auto guard = sconns_.lock().unwrap();
-        for (auto& sconn : *guard) {
-            poll_thread_worker_.as_ref().unwrap()->request_close(sconn->fd());
-        }
-        guard->clear();  // Clear our references - poll thread owns them now
-    }  // Guard dropped here, releasing lock
+    // Request close for server listener and all its connections via poll thread
+    if (server_listener_.is_some()) {
+        auto& listener = server_listener_.as_ref().unwrap();
 
-    // Request close for server listener via poll thread
-    if (sp_server_listener_.is_some()) {
-        poll_thread_worker_.as_ref().unwrap()->request_close(sp_server_listener_.as_ref().unwrap()->fd());
-        sp_server_listener_ = rusty::None;  // Reset to None
+        // Request close for all connections accepted by this listener
+        {
+            auto guard = listener->sconn_fds_.lock().unwrap();
+            for (int fd : *guard) {
+                poll_thread_.as_ref().unwrap()->request_close(fd);
+            }
+            // Note: Some fds may already be closed, request_close on closed fds is a no-op.
+        }
+
+        // Request close for the listener itself
+        poll_thread_.as_ref().unwrap()->request_close(listener->fd());
+        server_listener_ = rusty::None;  // Reset to None
     }
 
-    // make sure all open connections are closed
-    int alive_connection_count = -1;
-    for (;;) {
-        int new_alive_connection_count = sconns_ctr_.peek_next();
-        if (new_alive_connection_count <= 0) {
-            break;
-        }
-        if (alive_connection_count == -1 || new_alive_connection_count < alive_connection_count) {
-            Log_debug("waiting for %d alive connections to shutdown", new_alive_connection_count);
-        }
-        alive_connection_count = new_alive_connection_count;
-        // sleep 0.05 sec because this is the timeout for PollThread's epoll()
-        usleep(50 * 1000);
-    }
-    verify(sconns_ctr_.peek_next() == 0);
-
-    // Services are automatically cleaned up when services_ vector is destroyed
-    // (Box destructor calls delete on each service)
-    services_.clear();
+    // No need to wait for connections - Arc<RpcServiceContext> ensures services
+    // stay alive until the last ServerConnection drops its Arc reference.
+    // Services are automatically cleaned up when last Arc is dropped.
+    ctx_ = rusty::None;
 }
 
 // @unsafe - Accepts new client connections (raw pointer: p_svr_addr_->ai_addr)
@@ -370,14 +351,15 @@ bool ServerListener::handle_read() {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       verify(set_nonblocking(clnt_socket, true) == 0);
 
-      // @unsafe - STL operations (list::insert) and const_cast
-      auto sconn = rusty::Arc<ServerConnection>::make(server_, clnt_socket);
+      // @unsafe - STL operations and const_cast
+      auto sconn = rusty::Arc<ServerConnection>::make(ctx_.clone(), clnt_socket);
       const_cast<ServerConnection&>(*sconn).weak_self_ = sconn;  // Initialize weak to self
       {
-          auto guard = server_->sconns_.lock().unwrap();
-          guard->insert(sconn.clone());  // Insert Arc into set
+          // Track fd for shutdown cleanup (Server reads this list in destructor)
+          auto guard = sconn_fds_.lock().unwrap();
+          guard->push(clnt_socket);
       }
-      server_->poll_thread_worker_.as_ref().unwrap()->add(sconn);
+      PollThreadWorker::add_pollable_from_current_thread(sconn);
     } else {
       break;
     }
@@ -397,9 +379,8 @@ void ServerListener::close() {
 
 // @safe - Creates listener socket and binds to address
 // All socket operations are marked safe via external annotations
-ServerListener::ServerListener(Server* server, string addr) {
-  server_ = server;
-  addr_ = addr;
+ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
+    : ctx_(std::move(ctx)), addr_(addr) {
   size_t idx = addr.find(":");
   if (idx == string::npos) {
     Log_error("rrr::Server: bad bind address: %s", addr.c_str());
@@ -513,21 +494,35 @@ ServerListener::ServerListener(Server* server, string addr) {
   Log_debug("rrr::Server: started on %s", addr.c_str());
 }
 
-// @unsafe - Starts server listening (pointer dereference: sp_server_listener_->)
+// @unsafe - Starts server listening (pointer dereference: server_listener_->)
 int Server::start(const char* bind_addr) {
   if (!bind_addr) {
     Log_error("rrr::Server::start: bind_addr is NULL!");
     return -1;
   }
-  addr_ = string(bind_addr, strlen(bind_addr));
-  sp_server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(this, addr_));
-  poll_thread_worker_.as_ref().unwrap()->add(sp_server_listener_.as_ref().unwrap().clone());
+
+  // Wrap each service in RefCell for interior mutability
+  rusty::Vec<rusty::RefCell<rusty::Box<Service>>> wrapped_services;
+  for (size_t i = 0; i < pending_services_.size(); ++i) {
+    wrapped_services.push(rusty::RefCell<rusty::Box<Service>>(std::move(pending_services_[i])));
+  }
+
+  // Create immutable RpcServiceContext from pending registration data
+  std::string addr_str(bind_addr, strlen(bind_addr));
+  ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
+      std::move(pending_rpc_to_service_),
+      std::move(wrapped_services),
+      addr_str));
+
+  server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
+      ctx_.as_ref().unwrap().clone(), addr_str));
+  poll_thread_.as_ref().unwrap()->add(server_listener_.as_ref().unwrap().clone());
   return 0;
 }
 
-// @safe - Unregisters RPC mapping from map
+// @safe - Unregisters RPC mapping from pending map (must be called before start())
 void Server::unreg(i32 rpc_id) {
-    rpc_to_service_.erase(rpc_id);
+    pending_rpc_to_service_.erase(rpc_id);
 }
 
 // @safe - Signals shutdown to waiting threads

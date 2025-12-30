@@ -82,12 +82,10 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
   // Execute callback outside lock to avoid deadlock
   if (should_callback && attr_.callback != nullptr) {
     auto x = attr_.callback;
-    // @unsafe - Coroutine creation
-    {
-      Coroutine::CreateRun([x, self]() {
-        x(self);
-      }, __FILE__, __LINE__);
-    }
+    // Coroutine::CreateRun is now @safe
+    Coroutine::CreateRun([x, self]() {
+      x(self);
+    }, __FILE__, __LINE__);
   }
 }
 
@@ -96,9 +94,8 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // ============================================================================
 
 // @safe - Initializes connection (only stores references)
-ClientConnection::ClientConnection(Client* client, rusty::Arc<PollThread> poll_thread_worker)
-    : client_(client),
-      poll_thread_worker_(poll_thread_worker),
+ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
+    : poll_thread_worker_(poll_thread_worker),
       socket_(-1),
       status_(NEW) {
 }
@@ -138,7 +135,7 @@ void ClientConnection::close() {
 }
 
 // @safe - Jetpack: handle_free for explicit future cleanup
-void ClientConnection::handle_free(i64 xid) {
+void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
   auto it = guard->find(xid);
   if (it != guard->end()) {
@@ -247,7 +244,7 @@ int ClientConnection::handle_write() {
     return Pollable::MODE_NO_CHANGE;
   }
   // Jetpack: respect pause state
-  if (paused_) return Pollable::MODE_NO_CHANGE;
+  if (paused_.get()) return Pollable::MODE_NO_CHANGE;
 
   int result = Pollable::MODE_NO_CHANGE;
   auto guard = out_.lock().unwrap();
@@ -386,69 +383,73 @@ Client::~Client() {
   close();  // Delegate to close() which uses request_close()
 }
 
-// @unsafe - Uses const_cast for interior mutability
+// @safe - Sets connection validity using RefCell
 void Client::set_valid(bool valid) const {
-  if (connection_.get()->is_some()) {
-    auto& conn = const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap());
-    auto guard = conn.out_.lock().unwrap();
-    guard->valid_id = valid;
+  auto guard = connection_.borrow_mut();
+  if (guard->is_some()) {
+    auto out_guard = guard->as_mut().unwrap()->out_.lock().unwrap();
+    out_guard->valid_id = valid;
   }
 }
 
-// @unsafe - Closes socket via request_close() for thread-safe cleanup
-// Uses UnsafeCell::get() for interior mutability
+// @safe - Closes socket via request_close() for thread-safe cleanup
 void Client::close() const {
-  if (connection_.get()->is_some()) {
-    auto& conn = *connection_.get()->as_ref().unwrap();
+  auto guard = connection_.borrow_mut();
+  if (guard->is_some()) {
+    auto& conn = *guard->as_ref().unwrap();
     if (conn.connected()) {
       // Request poll thread to close the connection
       poll_thread_worker_->request_close(conn.fd());
     }
     // Clear connection to prevent further use
-    *connection_.get() = rusty::None;
+    *guard = rusty::None;
   }
 }
 
-// @unsafe - Uses const_cast for interior mutability
+// @safe - Jetpack: handle_free for explicit future cleanup
 void Client::handle_free(i64 xid) const {
-  if (connection_.get()->is_some()) {
-    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).handle_free(xid);
+  auto guard = connection_.borrow();
+  if (guard->is_some()) {
+    guard->as_ref().unwrap()->handle_free(xid);
   }
 }
 
-// @unsafe - Uses const_cast for interior mutability
+// @safe - Pauses the connection
 void Client::pause() const {
-  if (connection_.get()->is_some()) {
-    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).pause();
+  auto guard = connection_.borrow();
+  if (guard->is_some()) {
+    guard->as_ref().unwrap()->pause();
   }
 }
 
-// @unsafe - Uses const_cast for interior mutability
+// @safe - Resumes the connection
 void Client::resume() const {
-  if (connection_.get()->is_some()) {
-    const_cast<ClientConnection&>(*connection_.get()->as_ref().unwrap()).resume();
+  auto guard = connection_.borrow();
+  if (guard->is_some()) {
+    guard->as_ref().unwrap()->resume();
   }
 }
 
-// @unsafe - Establishes TCP/IPC connection to server
+// @safe - Establishes TCP/IPC connection to server
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
-  auto conn = rusty::Arc<ClientConnection>::make(const_cast<Client*>(this), poll_thread_worker_);
+  auto conn = rusty::Arc<ClientConnection>::make(poll_thread_worker_);
 
   // Initialize weak self-reference for poll thread registration
-  // const_cast is safe - we need to mutate the newly created connection
+  // const_cast is safe here - we just created this connection and have the only reference
   const_cast<WeakClientConnection&>(conn->weak_self_) = conn;
 
-  // Set client mode
+  // Set client mode (const_cast safe - newly created, single owner)
   const_cast<bool&>(conn->is_client_mode_) = client;
   is_client_mode_.set(client);
 
-  // Attempt to connect
+  // Attempt to connect (const_cast safe - newly created, single owner)
   int result = const_cast<ClientConnection&>(*conn).connect(addr);
 
   if (result == 0) {
     // Connection successful, store it
-    *connection_.get() = rusty::Some(std::move(conn));
+    auto guard = connection_.borrow_mut();
+    *guard = rusty::Some(std::move(conn));
   }
 
   return result;

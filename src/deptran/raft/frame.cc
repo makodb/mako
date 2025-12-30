@@ -105,8 +105,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
   Log_info("CreateCommo: Thread ID = %lu", std::this_thread::get_id());
-  auto coro_opt = Reactor::sp_running_coro_th_;
-  Log_info("CreateCommo: sp_running_coro_th_ = %p", coro_opt.is_some() ? (void*)coro_opt.unwrap().get() : nullptr);
+  {
+    auto guard = Reactor::sp_running_coro_th_.borrow();
+    Log_info("CreateCommo: sp_running_coro_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+  }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
     commo_ = std::make_unique<RaftCommo>(poll_thread_worker);

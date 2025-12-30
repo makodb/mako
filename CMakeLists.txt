@@ -43,8 +43,8 @@ if(NOT EXISTS ${CPP_BORROW_CHECKER})
 endif()
 
 # Enable borrow checking (can be disabled with -DENABLE_BORROW_CHECKING=OFF)
-# Force ON here so the checker runs unless explicitly turned off
-set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable RustyCpp borrow checking" FORCE)
+# Don't use FORCE so command-line option takes precedence
+set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable RustyCpp borrow checking")
 if(ENABLE_BORROW_CHECKING)
     enable_borrow_checking()
 endif()

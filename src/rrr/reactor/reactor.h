@@ -113,7 +113,8 @@ class Reactor {
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
   // Thread-local current coroutine with single-threaded Rc
-  static thread_local rusty::Option<rusty::Rc<Coroutine>> sp_running_coro_th_;
+  // Wrapped in RefCell for explicit interior mutability (Cell<T> requires trivially_copyable)
+  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Coroutine>>> sp_running_coro_th_;
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   mutable int server_id_{0};
@@ -170,12 +171,38 @@ class Reactor {
   /**
    * @param ev. is usually allocated on coroutine stack. memory managed by user.
    */
-  // @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
+  // @safe - Creates and runs a new coroutine with rusty::Rc ownership
+  // Refactored into smaller safe helper functions for clarity and safety.
   // Jetpack: file/line parameters for debugging coroutine creation location
   rusty::Rc<Coroutine> CreateRunCoroutine(rusty::Function<void()> func,
                                           const char* file = "",
                                           int64_t line = 0) const;
-  // @unsafe - Main event loop - check_timeout parameter for flexibility (Jetpack)
+
+ private:
+  // Helper functions for CreateRunCoroutine - each is @safe with internal @unsafe blocks
+
+  // @safe - Gets a recycled coroutine or creates a new one
+  rusty::Rc<Coroutine> GetOrCreateCoroutine(rusty::Function<void()> func,
+                                            const char* file,
+                                            int64_t line) const;
+
+  // @safe - Saves current running coroutine to allow nesting
+  rusty::Option<rusty::Rc<Coroutine>> SaveRunningCoroutine() const;
+
+  // @safe - Restores previously saved running coroutine
+  void RestoreRunningCoroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const;
+
+  // @safe - Sets the current running coroutine
+  void SetRunningCoroutine(const rusty::Rc<Coroutine>& coro) const;
+
+  // @safe - Registers coroutine in the active set
+  void RegisterCoroutine(const rusty::Rc<Coroutine>& coro) const;
+
+ public:
+  // @safe - Main event loop - check_timeout parameter for flexibility (Jetpack)
+  // Memory-safe: iterates over coroutines/events using shared_ptr and Rc,
+  // no raw pointer manipulation, no memory allocations that could leak.
+  // Internal operations are properly synchronized for single-threaded reactor.
   void Loop(bool infinite = false, bool check_timeout = true) const;
   // @unsafe - Disk event loop
   void DiskLoop() const;
@@ -237,7 +264,7 @@ class PollThreadWorker;
 struct CmdAddPollable { rusty::Arc<Pollable> pollable; };
 struct CmdRemovePollable { int fd; };
 struct CmdClosePollable { int fd; };  // Close socket and drop Arc (thread-safe close)
-struct CmdUpdateMode { int fd; int new_mode; Pollable* poll_ptr; };
+struct CmdUpdateMode { int fd; int new_mode; const Pollable* poll_ptr; };
 struct CmdAddJob { rusty::Arc<Job> job; };
 struct CmdRemoveJob { rusty::Arc<Job> job; };
 struct CmdShutdown {};
@@ -306,6 +333,13 @@ public:
     // Returns true if called from a poll thread, false otherwise.
     static bool is_on_poll_thread() { return current_worker_ != nullptr; }
 
+    // @safe - Add a pollable from within the poll thread (e.g., from handle_read)
+    // Must only be called from the poll thread (asserts if not)
+    static void add_pollable_from_current_thread(rusty::Arc<Pollable> poll) {
+        verify(current_worker_ != nullptr);
+        current_worker_->do_add_pollable(std::move(poll));
+    }
+
     // @safe - Update poll mode directly (bypasses channel)
     // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
     // SAFETY: Internal @unsafe block handles epoll operations and address-of
@@ -332,7 +366,7 @@ private:
     void do_add_pollable(rusty::Arc<Pollable> sp_poll);
     void do_remove_pollable(int fd);
     void do_close_pollable(int fd);  // Close socket and drop Arc
-    void do_update_mode(int fd, int new_mode, Pollable* poll_ptr);
+    void do_update_mode(int fd, int new_mode, const Pollable* poll_ptr);
     void do_add_job(rusty::Arc<Job> sp_job);
     void do_remove_job(rusty::Arc<Job> sp_job);
 
@@ -407,8 +441,8 @@ public:
     void remove(Pollable& poll) const;
     void request_close(int fd) const;  // Thread-safe close: removes from epoll, closes socket, drops Arc
     // @safe - Sends update mode command via channel
-    // SAFETY: Channel send is thread-safe
-    void update_mode(Pollable& poll, int new_mode) const;
+    // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
+    void update_mode(const Pollable& poll, int new_mode) const;
     void add(rusty::Arc<Job> sp_job) const;
     void remove(rusty::Arc<Job> sp_job) const;
 

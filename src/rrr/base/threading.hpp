@@ -262,6 +262,7 @@ public:
 //       *guard += 1;
 //   }  // Lock released here
 //
+// @safe
 template<typename T>
 class SpinMutex : public NoCopy {
 private:

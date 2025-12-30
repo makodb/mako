@@ -85,6 +85,8 @@
 namespace rrr {
 
 class Server;
+class ServerConnection;
+struct RpcServiceContext;
 
 /**
  * The raw packet sent from client will be like this:
@@ -121,13 +123,47 @@ public:
     virtual void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection sconn) = 0;
 };
 
+/**
+ * Shared context for RPC service dispatch.
+ *
+ * This struct is shared between Server, ServerListener, and ServerConnection
+ * via Arc<RpcServiceContext> to avoid raw pointer dependencies.
+ *
+ * SAFETY: The struct is constructed once in Server::start() and shared via Arc.
+ * All fields are immutable after construction. Services use RefCell for interior
+ * mutability, allowing non-const __dispatch__ calls through const Arc access.
+ *
+ * NOTE: RefCell is single-threaded. All RPC dispatches must occur on the same thread.
+ */
+struct RpcServiceContext {
+    // Maps RPC ID to service index for virtual dispatch (immutable after setup)
+    const std::unordered_map<i32, size_t> rpc_to_service;
+
+    // Owned services wrapped in RefCell for interior mutability
+    // RefCell allows mutable access through const reference (borrow_mut)
+    const rusty::Vec<rusty::RefCell<rusty::Box<Service>>> services;
+
+    // Server address for logging (immutable after setup)
+    const std::string addr;
+
+    // Constructor taking ownership of all data
+    RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
+                      rusty::Vec<rusty::RefCell<rusty::Box<Service>>> svcs,
+                      std::string address)
+        : rpc_to_service(std::move(rpc_map))
+        , services(std::move(svcs))
+        , addr(std::move(address)) {}
+};
+
 // @unsafe - Server listener handling incoming connections
 // SAFETY: Manages socket lifecycle and address info properly
 class ServerListener: public Pollable {
   friend class Server;
  public:
   std::string addr_;
-  Server* server_;  // Non-owning pointer to parent server
+  rusty::Arc<RpcServiceContext> ctx_;  // Shared dispatch context
+  // File descriptors of accepted connections - Server reads this at shutdown
+  SpinMutex<rusty::Vec<int>> sconn_fds_{rusty::Vec<int>()};
   // cannot use smart pointers for memory management because this pointer
   // needs to be freed by freeaddrinfo.
   struct addrinfo* p_gai_result_{nullptr};
@@ -173,7 +209,7 @@ class ServerListener: public Pollable {
   int fd() const override {return server_sock_;}
 
   // @safe - Constructor with proper error handling
-  ServerListener(Server* s, std::string addr);
+  ServerListener(rusty::Arc<RpcServiceContext> ctx, std::string addr);
 
 //protected:
   // @safe - Frees addrinfo structures
@@ -187,7 +223,8 @@ class ServerListener: public Pollable {
   };
 };
 
-// @unsafe - Uses mutable SpinLock for interior mutability
+// @safe - Handles individual client connections
+// Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
 class ServerConnection: public Pollable {
     // Handles individual client connections
     // SAFETY: Thread-safe with spinlocks, proper Arc lifetime management
@@ -198,7 +235,7 @@ class ServerConnection: public Pollable {
     Marshal in_;
     SpinMutex<Marshal> out_;  // Lock + data combined (has interior mutability)
 
-    Server* server_;
+    rusty::Arc<RpcServiceContext> ctx_;  // Shared dispatch context
     int socket_;
 
     enum {
@@ -236,12 +273,12 @@ public:
     // Jetpack-specific member
     int count = 0;
 
-    // Public destructor for shared_ptr compatibility
-    // @safe - Simple destructor updating counter
+    // Public destructor - Arc prevents premature destruction
+    // @safe - Simple destructor
     ~ServerConnection();
 
     // @safe - Initializes connection with socket
-    ServerConnection(Server* server, int socket);
+    ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket);
 
     // @safe - Simple status check
     bool connected() {
@@ -317,10 +354,12 @@ public:
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
     int handle_write() override;
 
-    // @unsafe - Reads and processes RPC requests (raw pointer operations)
+    // @safe - Reads and processes RPC requests
+    // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
+    // Internal @unsafe blocks wrap: server_-> dereference, STL ops, coroutine creation.
     bool handle_read() override;  // Batching mode: reads ALL available requests
 
-    // @unsafe - Calls handle_read() which has raw pointer operations
+    // @safe - Calls handle_read() which is @safe
     // Jetpack: split-phase read support
     bool handle_read_one() override { return handle_read(); }
     // @safe - Not implemented, will abort if called
@@ -349,35 +388,10 @@ public:
     // Jetpack: handle_free stub
     void handle_free() {verify(0);}
 
-    // Comparison operator for std::unordered_set<rusty::Arc<ServerConnection>>
-    friend bool operator==(const rusty::Arc<ServerConnection>& lhs, const rusty::Arc<ServerConnection>& rhs) {
-        return lhs.get() == rhs.get();
-    }
-
-    // Hash function for std::unordered_set
-    friend struct std::hash<rusty::Arc<ServerConnection>>;
 };
 
 } // namespace rrr
 
-// Hash specializations for rusty::Arc types
-namespace std {
-template<>
-struct hash<rusty::Arc<rrr::ServerConnection>> {
-    // @safe - Uses pointer value for hash (no dereference)
-    size_t operator()(const rusty::Arc<rrr::ServerConnection>& arc) const {
-        return hash<const rrr::ServerConnection*>()(arc.get());
-    }
-};
-
-template<>
-struct hash<rusty::Arc<rrr::ServerListener>> {
-    // @safe - Uses pointer value for hash (no dereference)
-    size_t operator()(const rusty::Arc<rrr::ServerListener>& arc) const {
-        return hash<const rrr::ServerListener*>()(arc.get());
-    }
-};
-}
 
 namespace rrr {
 
@@ -448,21 +462,20 @@ public:
 class Server: public NoCopy {
     friend class ServerConnection;
  public:
-    // Maps RPC ID to service index for virtual dispatch
-    // @safe - Simple integer map lookup, no pointers or type erasure
-    std::unordered_map<i32, size_t> rpc_to_service_;
-    rusty::Option<rusty::Arc<PollThread>> poll_thread_worker_;  // Shared ownership via Arc<Mutex<>>
+    // Pending registration data (before start() is called)
+    // These are moved into RpcServiceContext in start()
+    rusty::Vec<rusty::Box<Service>> pending_services_;
+    std::unordered_map<i32, size_t> pending_rpc_to_service_;
 
-    Counter sconns_ctr_;
+    // Shared context containing RPC dispatch info and services
+    // Created in start() after all registrations are complete
+    // None until start() is called
+    rusty::Option<rusty::Arc<RpcServiceContext>> ctx_;
 
-    // SpinMutex provides thread-safe interior mutability for connection set
-    SpinMutex<std::unordered_set<rusty::Arc<ServerConnection>>> sconns_{
-        std::unordered_set<rusty::Arc<ServerConnection>>()};
-    rusty::Option<rusty::Arc<ServerListener>> sp_server_listener_;
+    // Poll thread for async I/O - shared with ServerListener
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_;
 
-    // Owned services - Server takes ownership to ensure services outlive handlers
-    // Stores Box-wrapped services with automatic cleanup via Vec destructor
-    rusty::Vec<rusty::Box<Service>> services_;
+    rusty::Option<rusty::Arc<ServerListener>> server_listener_;
 
     // Shutdown coordination - allows workers to wait for shutdown signal
     struct ShutdownState { bool shutdown = false; };
@@ -470,13 +483,11 @@ class Server: public NoCopy {
     rusty::Condvar shutdown_cond_;
 
 public:
-    std::string addr_;
-
     // @safe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
     Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
-    // @safe - Destroys server and all connections
-    // SAFETY: Waits for all connections to close, then deletes owned services
+    // @safe - Destroys server and requests close for all connections
+    // SAFETY: Arc<RpcServiceContext> ensures services live until all connections are done
     virtual ~Server();
 
     // @unsafe - Starts server on specified address (raw pointer dereference)
@@ -485,12 +496,13 @@ public:
     // @safe - Registers service and transfers ownership to Server
     // Server owns the service via Box<Service>, ensuring it outlives all RPC handlers.
     // Accepts Box<Derived> which converts to Box<Service> via move constructor.
+    // Must be called before start().
     void reg_service(rusty::Box<Service> svc) {
-        services_.push(std::move(svc));
+        pending_services_.push(std::move(svc));
         // Get index AFTER push - this is the position of the service we just added
-        size_t svc_index = services_.size() - 1;
-        // Register handlers using the index (service is safely stored in services_)
-        services_[svc_index]->__reg_to__(*this, svc_index);
+        size_t svc_index = pending_services_.size() - 1;
+        // Register handlers using the index (service is safely stored in pending_services_)
+        pending_services_[svc_index]->__reg_to__(*this, svc_index);
     }
 
     /**
@@ -512,12 +524,13 @@ public:
     // @safe - Registers an RPC ID to be handled by the service at svc_index
     // The actual dispatch is done via virtual Service::__dispatch__
     // No pointers or type erasure - just maps rpc_id to service index
+    // Must be called before start().
     int reg_rpc(i32 rpc_id, size_t svc_index) {
         // disallow duplicate rpc_id
-        if (rpc_to_service_.find(rpc_id) != rpc_to_service_.end()) {
+        if (pending_rpc_to_service_.find(rpc_id) != pending_rpc_to_service_.end()) {
             return EEXIST;
         }
-        rpc_to_service_[rpc_id] = svc_index;
+        pending_rpc_to_service_[rpc_id] = svc_index;
         return 0;
     }
 
@@ -533,16 +546,30 @@ public:
     // @safe - Iterate over all registered services
     // Useful for cleanup operations like flushing recorders at shutdown.
     // The callback receives a Service& reference; use dynamic_cast to get concrete type.
+    // Must be called after start().
     template<typename F>
     void for_each_service(F&& callback) {
-        for (size_t i = 0; i < services_.size(); ++i) {
-            callback(*services_[i]);
+        auto& ctx = ctx_.as_ref().unwrap();
+        for (size_t i = 0; i < ctx->services.size(); ++i) {
+            auto guard = ctx->services[i].borrow_mut();
+            // guard is RefMut<Box<Service>>, *guard is Box<Service>&, **guard is Service&
+            callback(**guard);
         }
     }
 
     // @safe - Returns the number of registered services
+    // Can be called before or after start().
     size_t service_count() const {
-        return services_.size();
+        if (ctx_.is_some()) {
+            return ctx_.as_ref().unwrap()->services.size();
+        }
+        return pending_services_.size();
+    }
+
+    // Returns the server address (copy to avoid reference through Arc)
+    // Must be called after start().
+    std::string addr() const {
+        return ctx_.as_ref().unwrap()->addr;
     }
 };
 
