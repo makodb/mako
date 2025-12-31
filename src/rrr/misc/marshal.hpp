@@ -28,7 +28,8 @@ namespace rrr {
 // @safe - Wrapper for std::min (pure function, no side effects)
 template<typename T>
 inline T safe_min(const T& a, const T& b) {
-  return std::min(a, b);
+  // @unsafe
+  { return std::min(a, b); }
 }
 
 #ifdef RPC_STATISTICS

@@ -298,8 +298,11 @@ public:
         v64 v_reply_xid = req.xid;
 
         Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
-        *guard << v_reply_xid;
-        *guard << v_error_code;
+        // @unsafe
+        {
+            *guard << v_reply_xid;
+            *guard << v_error_code;
+        }
 
         write_fn(*guard);
 
@@ -507,11 +510,14 @@ public:
     // Must be called before start().
     int reg_rpc(i32 rpc_id, size_t svc_index) {
         // disallow duplicate rpc_id
-        if (pending_rpc_to_service_.find(rpc_id) != pending_rpc_to_service_.end()) {
-            return EEXIST;
+        // @unsafe
+        {
+            if (pending_rpc_to_service_.find(rpc_id) != pending_rpc_to_service_.end()) {
+                return EEXIST;
+            }
+            pending_rpc_to_service_[rpc_id] = svc_index;
+            return 0;
         }
-        pending_rpc_to_service_[rpc_id] = svc_index;
-        return 0;
     }
 
     // @safe - Unregisters RPC handler

@@ -10,10 +10,12 @@ namespace janus {
 class SimpleCommand;
 class SchedulerCarousel : public SchedulerClassic {
  public:
-/*//  using Scheduler::Scheduler;
-  SchedulerCarousel() : SchedulerClassic() {
-    epoch_enabled_ = true;
-  }*/
+/*
+  // using Scheduler::Scheduler;
+  // SchedulerCarousel() : SchedulerClassic() {
+  //   epoch_enabled_ = true;
+  // }
+*/
   SchedulerCarousel();
 
   virtual bool Guard(Tx &tx_box, Row *row, int col_id, bool write) override;

@@ -764,6 +764,49 @@ if(RAFT_BORROW_SRC)
     endif()
 endif()
 
+# Deptran worker files for borrow checking (critical files using rusty::Option/Arc)
+# These files had use-after-move bugs that weren't caught because borrow checking
+# was not enabled for src/deptran/
+set(DEPTRAN_BORROW_SRC
+    "src/deptran/paxos_worker.cc"
+    "src/deptran/server_worker.cc"
+    "src/deptran/client_worker.cc"
+    "src/deptran/communicator.cc"
+    "src/deptran/paxos_main_helper.cc"
+    "src/deptran/service.cc"
+    "src/deptran/frame.cc"
+    "src/deptran/coordinator.cc"
+)
+
+if(DEPTRAN_BORROW_SRC)
+    add_library(deptran_borrow OBJECT ${DEPTRAN_BORROW_SRC})
+    set_target_properties(deptran_borrow PROPERTIES EXCLUDE_FROM_ALL YES)
+
+    target_include_directories(deptran_borrow PUBLIC
+        src
+        src/rrr
+        src/memdb
+        src/deptran
+        src/bench
+        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+        dependencies/yaml-cpp/include
+        ${Boost_INCLUDE_DIRS}
+    )
+    target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
+    target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
+
+    # Add borrow checking for deptran files (same style as RRR library)
+    if(ENABLE_BORROW_CHECKING)
+        add_borrow_check_target(deptran_borrow)
+
+        # Create a convenience target to check only deptran files
+        add_custom_target(borrow_check_deptran
+            DEPENDS borrow_check_all_deptran_borrow
+            COMMENT "Running borrow checker on Deptran worker sources"
+        )
+    endif()
+endif()
+
 # Build stamp files
 add_custom_command(
   OUTPUT ${O}/${W}/buildstamp ${O}/${W}/buildstamp.bench ${O}/${W}/buildstamp.masstree
@@ -936,6 +979,14 @@ endif()
 # if(ENABLE_BORROW_CHECKING)
 #     add_borrow_check_target(dbtest)
 # endif()
+
+# Enable deptran borrow checking by default for dbtest and related apps
+if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_deptran)
+    add_dependencies(dbtest borrow_check_deptran)
+    if(MAKO_USE_RAFT)
+        add_dependencies(deptran_server borrow_check_deptran)
+    endif()
+endif()
 
 add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)

@@ -344,15 +344,11 @@ public:
      *   - Ok(Arc<Future>) on success
      *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
      */
-    // @safe - Thread-safe RPC request with lambda for marshaling
-    // All operations are now @safe:
-    // - SpinMutex::lock() is @safe
-    // - Counter::next is [safe] via external annotation
-    // - STL map operations are [safe] via external annotations
-    // - Marshal operations are @safe
-    // - PollThreadWorker::is_on_poll_thread() is @safe
-    // - PollThread::update_mode() is @safe
-    // - Cell::set() is @safe
+    // @unsafe - Thread-safe RPC request with lambda for marshaling
+    // Contains multiple operations requiring unsafe context:
+    // - Counter::next (atomic but not annotated)
+    // - STL map operations (well-defined but not annotated)
+    // - Marshal operator<< (serialization)
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
         if (status_ != CONNECTED) {
@@ -412,13 +408,13 @@ public:
         return FutureResult::Ok(fu);
     }
 
-    // @safe - Convenience overload without callback
+    // @unsafe - Convenience overload without callback (calls @unsafe request)
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
         return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
     }
 
-    // @safe - Convenience overload for requests with no arguments
+    // @unsafe - Convenience overload for requests with no arguments (calls @unsafe request)
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
         return request(rpc_id, attr, [](Marshal&) {});
     }
@@ -430,7 +426,8 @@ public:
 
     // @safe - Simple getter (string copy is safe)
     std::string host() const {
-        return host_;
+        // @unsafe
+        { return host_; }
     }
 
     // @safe - Jetpack: pause/resume for flow control (Cell for interior mutability)
@@ -572,18 +569,21 @@ public:
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
-        return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn));
+        // @unsafe
+        { return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn)); }
     }
 
     // @safe - Convenience overload without callback
     template<typename F>
     FutureResult request(i32 rpc_id, F&& write_fn) const {
-        return request(rpc_id, FutureAttr(), std::forward<F>(write_fn));
+        // @unsafe
+        { return request(rpc_id, FutureAttr(), std::forward<F>(write_fn)); }
     }
 
     // @safe - Convenience overload for requests with no arguments
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
-        return request(rpc_id, attr, [](Marshal&) {});
+        // @unsafe
+        { return request(rpc_id, attr, [](Marshal&) {}); }
     }
 
     // @safe - Sets connection validity
@@ -618,9 +618,11 @@ public:
     std::string host() const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            return guard->as_ref().unwrap()->host();
+            // @unsafe
+            { return guard->as_ref().unwrap()->host(); }
         }
-        return "";
+        // @unsafe
+        { return ""; }
     }
 
     // @safe - Returns connection status

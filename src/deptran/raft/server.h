@@ -98,7 +98,7 @@ class RaftServer : public TxLogServer {
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
 
-  // @safe - Check if I am the preferred leader
+  // @unsafe - Uses INVALID_SITEID macro with integer cast
   bool AmIPreferredLeader() const {
     return preferred_leader_site_id_ != INVALID_SITEID &&
            site_id_ == preferred_leader_site_id_;
@@ -204,7 +204,7 @@ class RaftServer : public TxLogServer {
     }
   }
 
-  // @safe
+  // @unsafe - Calls RandomGenerator::rand_double (not annotated)
   double randDuration()
   {
     // election timeout between 0.4 and 0.7 seconds
@@ -266,7 +266,7 @@ class RaftServer : public TxLogServer {
   // @unsafe
   bool Start(shared_ptr<Marshallable> &cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
 
-  // @safe
+  // @unsafe - Dereferences raw pointers
   void GetState(bool *is_leader, uint64_t *term) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
     *is_leader = IsLeader();
@@ -428,7 +428,7 @@ class RaftServer : public TxLogServer {
   // @unsafe - Modifies connection state and proxy maps
   void Disconnect(const bool disconnect = true);
 
-  // @safe - Calls Disconnect (@unsafe) and resetTimer (@unsafe)
+  // @unsafe - Calls Disconnect (@unsafe) and resetTimer (@unsafe)
   void Reconnect() {
     Disconnect(false);
     resetTimer("reconnect");
