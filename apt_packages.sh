@@ -51,4 +51,4 @@ sudo apt-get --assume-yes install ninja-build pkg-config valgrind python3-dev cy
 
 sudo apt-get --assume-yes install gh cargo openssh-server
 # for rusty-cpp-checker
-sudo apt-get --assume-yes install llvm-14-dev libclang-14-dev libz3-dev
+sudo apt-get --assume-yes install llvm-14-dev libclang-16-dev libz3-dev
