@@ -417,20 +417,23 @@ void Client::resume() const {
 }
 
 // @unsafe - Establishes TCP/IPC connection to server
-// Contains const_cast and calls to unsafe connect()
+// Uses Arc::get_mut() for exclusive mutable access during initialization
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
   auto conn = rusty::Arc<ClientConnection>::make(poll_thread_worker_);
 
-  // Initialize weak self-reference for poll thread registration (const_cast safe: newly created)
-  const_cast<WeakClientConnection&>(conn->weak_self_) = conn;
+  // Use get_mut() since we're the sole owner (strong_count == 1)
+  // This is Rust's idiomatic pattern for init-before-sharing
+  ClientConnection* mut_conn = conn.get_mut();
+  verify(mut_conn != nullptr);  // Must succeed for freshly-created Arc
 
-  // Set client mode (const_cast safe: newly created, single owner)
-  const_cast<bool&>(conn->is_client_mode_) = client;
+  // Initialize fields through mutable pointer (no const_cast needed)
+  mut_conn->weak_self_ = conn;
+  mut_conn->is_client_mode_ = client;
   is_client_mode_.set(client);
 
-  // Attempt to connect
-  int result = const_cast<ClientConnection&>(*conn).connect(addr);
+  // Call connect through mutable pointer
+  int result = mut_conn->connect(addr);
 
   if (result == 0) {
     // Connection successful, store it

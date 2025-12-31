@@ -286,13 +286,12 @@ public:
      * EINVAL: invalid packet (field missing)
      */
     // @safe - Sends reply with callback for marshaling response data
-    // All operations are marked [safe] via external annotations:
-    // - SpinMutex::lock() is @safe (RAII pattern)
-    // - Marshal operations (set_bookmark, operator<<, etc.) are [safe]
-    // - Cell::set() is @safe
-    // - Template callable (write_fn) is safe with updated rusty-cpp
+    // All operations use interior mutability:
+    // - SpinMutex::lock() const: uses UnsafeCell for interior mutability
+    // - Cell::set(): interior mutability for pending_write_update_
+    // - status_: read-only access
     template<typename F>
-    void reply(const Request& req, i32 error_code, F&& write_fn) {
+    void reply(const Request& req, i32 error_code, F&& write_fn) const {
         auto guard = out_.lock().unwrap();
         v32 v_error_code = error_code;
         v64 v_reply_xid = req.xid;
@@ -315,7 +314,7 @@ public:
     }
 
     // @safe - Sends empty reply
-    void reply(const Request& req, i32 error_code = 0) {
+    void reply(const Request& req, i32 error_code = 0) const {
         reply(req, error_code, [](Marshal&) {});
     }
 
@@ -416,8 +415,9 @@ public:
       return 0;
     }
 
-    // @unsafe - Sends reply using callback-based API (uses const_cast and weak pointer)
+    // @safe - Sends reply using callback-based API
     // Can only be called once (checked by replied_ flag)
+    // Uses weak pointer upgrade (safe: returns Option)
     void reply() {
         if (replied_) {
             Log_warn("DeferredReply::reply() called multiple times, ignoring");
@@ -425,12 +425,13 @@ public:
         }
         replied_ = true;
 
-        // @unsafe - weak pointer upgrade and const_cast
+        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
         {
             auto sconn_opt = weak_sconn_.upgrade();
             if (sconn_opt.is_some()) {
                 auto sconn = sconn_opt.unwrap();
-                const_cast<ServerConnection&>(*sconn).reply(*req_, 0, marshal_reply_);
+                // No const_cast needed: reply() is now a const method with interior mutability
+                sconn->reply(*req_, 0, marshal_reply_);
             } else {
                 // Connection closed, silently drop reply
                 Log_debug("Connection closed before reply sent, dropping reply");
