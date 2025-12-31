@@ -111,7 +111,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
-    commo_ = std::make_unique<RaftCommo>(poll_thread_worker);
+    commo_ = std::make_unique<RaftCommo>(std::move(poll_thread_worker));
   }
 
   #ifdef RAFT_TEST_CORO
@@ -147,8 +147,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
     raft_test_coro_ = Coroutine::CreateRun([this] () {
       Log_info("Test coroutine: Starting execution");
       Log_info("Test coroutine: Thread ID = %lu", std::this_thread::get_id());
-      auto test_coro_opt = Reactor::sp_running_coro_th_;
-      Log_info("Test coroutine: sp_running_coro_th_ = %p", test_coro_opt.is_some() ? (void*)test_coro_opt.unwrap().get() : nullptr);
+      {
+        auto guard = Reactor::sp_running_coro_th_.borrow();
+        Log_info("Test coroutine: sp_running_coro_th_ = %p", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+      }
 
       // Yield until all 5 communicators are initialized
       Log_info("Test coroutine: About to yield");

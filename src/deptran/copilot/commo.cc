@@ -91,7 +91,7 @@ void CopilotPrepareQuorumEvent::Show() {
 }
 
 
-CopilotCommo::CopilotCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) : Communicator(poll_thread_worker) {}
+CopilotCommo::CopilotCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) : Communicator(std::move(poll_thread_worker)) {}
 
 shared_ptr<CopilotPrepareQuorumEvent>
 CopilotCommo::BroadcastPrepare(parid_t par_id,

@@ -10,7 +10,7 @@
 namespace janus {
 
 CarouselCommo::CarouselCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker):
-  Communicator(poll_thread_worker),
+  Communicator(std::move(poll_thread_worker)),
   using_basic_(Config::GetConfig()->carousel_basic_mode()) {}
 
 void CarouselCommo::BroadcastReadAndPrepare(

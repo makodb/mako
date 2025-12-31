@@ -51,7 +51,7 @@ TxLogServer *CopilotFrame::CreateScheduler() {
 
 Communicator *CopilotFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   if (commo_ == nullptr) {
-    commo_ = new CopilotCommo(poll_thread_worker);
+    commo_ = new CopilotCommo(std::move(poll_thread_worker));
   }
 
   return commo_;

@@ -171,36 +171,27 @@ class ServerListener: public Pollable {
 
   int server_sock_{0};
 
-  // @safe - Returns constant poll mode
   int poll_mode() const override {
-    return Pollable::READ;
+    return PollMode::READ;
   }
 
-  // @safe - Not implemented, will abort if called
-  // Jetpack: content_size not used for listener
   size_t content_size() override {
     verify(0);
     return 0;
   }
 
-  // @safe - Not implemented, will abort if called
-  // Returns MODE_NO_CHANGE since ServerListener never handles write
-  int handle_write() override {verify(0); return Pollable::MODE_NO_CHANGE;}
+  int handle_write() override {verify(0); return PollMode::NO_CHANGE;}
 
-  // @unsafe - Accepts incoming connections (raw pointer operations)
   bool handle_read() override;
 
-  // @safe - Not implemented, will abort if called
   void handle_error() override {verify(0);}
 
-  // @safe - Closes server socket
-  // Close is marked safe via external annotation
   void close() override;
 
-  // @safe - Check if closed (server_sock_ < 0)
   bool is_closed() const override { return server_sock_ < 0; }
 
-  // @safe - Returns file descriptor
+  bool check_pending_write_update() const override { return false; }
+
   int fd() const override {return server_sock_;}
 
   // @safe - Constructor with proper error handling
@@ -218,7 +209,7 @@ class ServerListener: public Pollable {
   };
 };
 
-// @safe - Handles individual client connections
+// @unsafe - Inherits from @interface Pollable (rusty-cpp namespace resolution bug workaround)
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
 class ServerConnection: public Pollable {
     // Handles individual client connections
@@ -255,7 +246,7 @@ public:
      * 1: PollThreadWorker::do_close_pollable() for thread-safe close
      * 2: handle_error() for error handling
      */
-    // @safe - Closes connection and cleans up (has internal @unsafe blocks)
+    // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe with server connection lock
     void close() override;
 
@@ -354,7 +345,7 @@ public:
     // Arc for shared context, RefCell for interior mutability, Coroutine::CreateRun for async.
     bool handle_read() override;  // Batching mode: reads ALL available requests
 
-    // @safe - Error handler (explicit this-> is now safe in rusty-cpp)
+    // @safe - Error handler
     void handle_error() override;
 
     // @safe - Check and clear pending write update flag
@@ -367,7 +358,7 @@ public:
         return false;
     }
 
-    // @safe - Check if connection was closed (via handle_error)
+    // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
     bool is_closed() const override {
         return status_ == CLOSED;

@@ -18,7 +18,7 @@
 namespace janus {
 
 // @safe
-RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(poll) {
+RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(std::move(poll)) {
 //  verify(poll != nullptr);
 }
 

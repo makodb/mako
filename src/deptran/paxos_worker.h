@@ -682,7 +682,8 @@ public:
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
   void register_apply_callback_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>);
   rusty::Arc<rrr::PollThread> GetPollThread(){
-      return svr_poll_thread_worker_.as_ref().unwrap();
+      verify(svr_poll_thread_worker_.is_some());
+      return svr_poll_thread_worker_.as_ref().unwrap().clone();
   }
 };
 

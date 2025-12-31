@@ -61,7 +61,7 @@ shared_ptr<Tx> FrameRococo::CreateTx(epoch_t epoch, txnid_t tid,
 }
 
 Communicator *FrameRococo::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
-  return new RccCommo(poll);
+  return new RccCommo(std::move(poll));
 }
 
 } // namespace janus

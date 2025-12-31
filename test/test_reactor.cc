@@ -31,7 +31,7 @@ private:
 
 public:
     ~TestPollable() override = default;
-    explicit TestPollable(int fd, int mode = READ)
+    explicit TestPollable(int fd, int mode = PollMode::READ)
         : fd_(fd), mode_(mode) {}
 
     int fd() const override {
@@ -72,7 +72,7 @@ public:
             write_handler_();
         }
         // }
-        return Pollable::MODE_NO_CHANGE;
+        return PollMode::NO_CHANGE;
     }
 
     // @unsafe - Uses mutable field
@@ -97,6 +97,11 @@ public:
     // @safe - Check if closed (fd_ == -1)
     bool is_closed() const override {
         return fd_ < 0;
+    }
+
+    // @safe - Test class doesn't use pending write updates
+    bool check_pending_write_update() const override {
+        return false;
     }
 
     // @unsafe - Modifies mutable field
@@ -181,7 +186,7 @@ TEST_F(ReactorTest, PollReadEvent) {
 
     std::atomic<bool> read_triggered{false};
 
-    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::READ));
+    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
     p->set_read_handler([&read_triggered, fd1]() {
         read_triggered = true;
         // Read data to clear the event
@@ -215,7 +220,7 @@ TEST_F(ReactorTest, PollWriteEvent) {
 
     std::atomic<bool> write_triggered{false};
 
-    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::WRITE));
+    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::WRITE));
     p->set_write_handler([&write_triggered]() {
         write_triggered = true;
     });
@@ -243,14 +248,14 @@ TEST_F(ReactorTest, MultipleEvents) {
 
     std::atomic<int> events_triggered{0};
 
-    auto p1 = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::READ));
+    auto p1 = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
     p1->set_read_handler([&events_triggered, fd1]() {
         events_triggered++;
         char buf[256];
         read(fd1, buf, sizeof(buf));
     });
 
-    auto p2 = rusty::Arc<TestPollable>::new_(TestPollable(fd3, Pollable::READ));
+    auto p2 = rusty::Arc<TestPollable>::new_(TestPollable(fd3, PollMode::READ));
     p2->set_read_handler([&events_triggered, fd3]() {
         events_triggered++;
         char buf[256];
@@ -289,7 +294,7 @@ TEST_F(ReactorTest, UpdateMode) {
     std::atomic<bool> read_triggered{false};
     std::atomic<bool> write_triggered{false};
 
-    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::READ));
+    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
     p->set_read_handler([&read_triggered, fd1]() {
         read_triggered = true;
         char buf[256];
@@ -310,10 +315,10 @@ TEST_F(ReactorTest, UpdateMode) {
     EXPECT_FALSE(write_triggered);
 
     // Change to WRITE mode
-    p->set_mode(Pollable::WRITE);
+    p->set_mode(PollMode::WRITE);
     {
         Pollable& pollable_ref = const_cast<Pollable&>(static_cast<const Pollable&>(*p));
-        poll_thread_worker_.as_ref().unwrap()->update_mode(pollable_ref, Pollable::WRITE);
+        poll_thread_worker_.as_ref().unwrap()->update_mode(pollable_ref, PollMode::WRITE);
     }
 
     std::this_thread::sleep_for(milliseconds(100));
@@ -332,7 +337,7 @@ TEST_F(ReactorTest, ErrorHandling) {
 
     std::atomic<bool> error_triggered{false};
 
-    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::READ));
+    auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
     p->set_error_handler([&error_triggered]() {
         error_triggered = true;
     });
@@ -463,7 +468,7 @@ TEST_F(ReactorTest, StressTest) {
         socket_pairs.push_back(create_socket_pair());
         auto [fd1, fd2] = socket_pairs.back();
 
-        auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::READ));
+        auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
         p->set_read_handler([&total_events, fd1]() {
             total_events++;
             char buf[256];
@@ -538,7 +543,7 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
 
         // Add pollables WITHOUT explicit remove
         for (auto& [fd1, fd2] : socket_pairs) {
-            auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, Pollable::READ));
+            auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
             test_poll_worker->add(p);
         }
 

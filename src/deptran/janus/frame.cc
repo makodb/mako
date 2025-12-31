@@ -65,7 +65,7 @@ shared_ptr<Tx> JanusFrame::CreateTx(epoch_t epoch, txnid_t tid,
 }
 
 Communicator *JanusFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
-  return new JanusCommo(poll);
+  return new JanusCommo(std::move(poll));
 }
 
 } // namespace janus

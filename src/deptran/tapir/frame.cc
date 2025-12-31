@@ -29,7 +29,7 @@ Coordinator *FrameTapir::CreateCoordinator(cooid_t coo_id,
 
 Communicator *FrameTapir::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // Default: return null;
-  commo_ = new TapirCommo(poll_thread_worker);
+  commo_ = new TapirCommo(std::move(poll_thread_worker));
   return commo_;
 }
 

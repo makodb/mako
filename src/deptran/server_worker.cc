@@ -17,7 +17,7 @@ void ServerWorker::SetupHeartbeat() {
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   int n_io_threads = 1;
 //  svr_hb_poll_thread_worker_g = new rrr::PollThread(n_io_threads);
-  svr_hb_poll_thread_worker_g = svr_poll_thread_worker_;
+  svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
 //  hb_thread_pool_g = new rrr::ThreadPool(1);
   hb_thread_pool_g = svr_thread_pool_;
   hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
@@ -263,14 +263,14 @@ void ServerWorker::WaitForShutdown() {
 void ServerWorker::SetupCommo() {
   verify(svr_poll_thread_worker_.is_some());
   if (tx_frame_) {
-    tx_commo_ = tx_frame_->CreateCommo(svr_poll_thread_worker_);
+    tx_commo_ = tx_frame_->CreateCommo(svr_poll_thread_worker_.clone());
     if (tx_commo_) {
       tx_commo_->loc_id_ = site_info_->locale_id;
     }
     tx_sched_->commo_ = tx_commo_;
   }
   if (rep_frame_) {
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_);
+    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
     if (rep_commo_) {
       rep_commo_->loc_id_ = site_info_->locale_id;
     }

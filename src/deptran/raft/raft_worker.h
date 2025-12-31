@@ -146,9 +146,9 @@ public:
   // Application callback (called from RaftServer::applyLogs)
   int Next(int slot, shared_ptr<Marshallable> cmd);
 
-  // Helper methods
+  // Helper methods - returns a clone of the poll thread worker
   rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {
-    return svr_poll_thread_worker_;
+    return svr_poll_thread_worker_.clone();
   }
 
   RaftServer* GetRaftServer() {

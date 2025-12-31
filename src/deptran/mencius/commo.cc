@@ -12,7 +12,7 @@
 
 namespace janus {
 
-MenciusCommo::MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(poll) {
+MenciusCommo::MenciusCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(std::move(poll)) {
 //  verify(poll != nullptr);
 }
 

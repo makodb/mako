@@ -12,7 +12,7 @@ public:
     SharedIntEvent dispatch_quota{};
 
     CommunicatorNoneCopilot(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::Option<rusty::Arc<PollThread>>())
-     :Communicator(poll_thread_worker) {
+     :Communicator(std::move(poll_thread_worker)) {
         dispatch_quota.value_ = 3 * max_pending_rpc_;
     }
 

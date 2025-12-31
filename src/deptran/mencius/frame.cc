@@ -58,7 +58,7 @@ Communicator *MenciusFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> po
   // GetFrame method. MenciusCommo currently seems ok to share among the
   // clients of this method.
   if (commo_ == nullptr) {
-    commo_ = new MenciusCommo(poll);
+    commo_ = new MenciusCommo(std::move(poll));
   }
   return commo_;
 }

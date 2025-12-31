@@ -151,8 +151,8 @@ void ClientConnection::handle_free(i64 xid) const {
   // Guard dropped here, releasing lock
 }
 
-// @safe - Establishes TCP/IPC connection to server
-// SAFETY: Syscalls wrapped in minimal @unsafe blocks with proper error handling
+// @unsafe - Establishes TCP/IPC connection to server
+// Contains syscalls, raw pointers, and other unsafe operations
 int ClientConnection::connect(const char* addr) {
   verify(status_ != CONNECTED);
   string addr_str(addr);
@@ -161,49 +161,51 @@ int ClientConnection::connect(const char* addr) {
     Log_error("rrr::ClientConnection: bad connect address: %s", addr);
     return EINVAL;
   }
+  // @unsafe { - string operations
   string host = addr_str.substr(0, idx);
   host_ = host;
   string port = addr_str.substr(idx + 1);
+  // }
 
 #ifdef USE_IPC
-  // @unsafe - IPC socket creation and connect syscalls
-  {
-    struct sockaddr_un saun;
-    saun.sun_family = AF_UNIX;
-    string ipc_addr = "rsock" + port;
-    strcpy(saun.sun_path, ipc_addr.data());
-    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (sock < 0) {
-      Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
-      return errno;
-    }
-    socket_ = sock;
-    auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-    if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
-      int err = errno;
-      Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
-      ::close(socket_);
-      socket_ = -1;
-      return err;
-    }
+  // @unsafe { - IPC socket creation and connect syscalls
+  struct sockaddr_un saun;
+  saun.sun_family = AF_UNIX;
+  string ipc_addr = "rsock" + port;
+  strcpy(saun.sun_path, ipc_addr.data());
+  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (sock < 0) {
+    Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
+    return errno;
   }
+  socket_ = sock;
+  auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
+  if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
+    int err = errno;
+    Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
+    ::close(socket_);
+    socket_ = -1;
+    return err;
+  }
+  // }
 #else
 
   struct addrinfo hints, * result, * rp;
+  // @unsafe { - memset and getaddrinfo
   memset(&hints, 0, sizeof(struct addrinfo));
 
   hints.ai_family = AF_INET; // ipv4
   hints.ai_socktype = SOCK_STREAM; // tcp
 
   int r = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
+  // }
   if (r != 0) {
     Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(r));
     return EINVAL;
   }
 
-  // @unsafe - TCP socket creation, options, and connect syscalls
-  {
-    for (rp = result; rp != nullptr; rp = rp->ai_next) {
+  // @unsafe { - TCP socket creation, options, and connect syscalls
+  for (rp = result; rp != nullptr; rp = rp->ai_next) {
       int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
       if (sock == -1) {
         continue;
@@ -223,8 +225,8 @@ int ClientConnection::connect(const char* addr) {
       ::close(socket_);
       socket_ = -1;
     }
-    freeaddrinfo(result);
-  }
+  freeaddrinfo(result);
+  // }
 
   if (rp == nullptr) {
     // failed to connect
@@ -242,9 +244,11 @@ int ClientConnection::connect(const char* addr) {
   status_ = CONNECTED;
 
   // Register with poll thread using weak_self_
+  // @unsafe { - Weak::upgrade and PollThread::add
   auto self = weak_self_.upgrade();
   if (self.is_some()) {
     poll_thread_worker_->add(self.unwrap());
+  // }
   } else {
     Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
     return EINVAL;
@@ -262,17 +266,17 @@ void ClientConnection::handle_error() {
 // @safe - Writes buffered data to socket, protected by SpinMutex
 int ClientConnection::handle_write() {
   if (status_ != CONNECTED) {
-    return Pollable::MODE_NO_CHANGE;
+    return PollMode::NO_CHANGE;
   }
   // Jetpack: respect pause state
-  if (paused_.get()) return Pollable::MODE_NO_CHANGE;
+  if (paused_.get()) return PollMode::NO_CHANGE;
 
-  int result = Pollable::MODE_NO_CHANGE;
+  int result = PollMode::NO_CHANGE;
   auto guard = out_.lock().unwrap();
   guard->write_to_fd(socket_);
   if (guard->empty()) {
     // Return READ-only mode - PollThreadWorker will update epoll
-    result = Pollable::READ;
+    result = PollMode::READ;
   }
   // Guard auto-unlocks here
   return result;
@@ -346,10 +350,10 @@ bool ClientConnection::handle_read() {
 
 // @safe - Determines polling mode based on output buffer, protected by SpinMutex
 int ClientConnection::poll_mode() const {
-  int mode = Pollable::READ;
+  int mode = PollMode::READ;
   auto guard = out_.lock().unwrap();
   if (!guard->empty()) {
-    mode |= Pollable::WRITE;
+    mode |= PollMode::WRITE;
   }
   // Guard auto-unlocks here
   return mode;
@@ -380,7 +384,8 @@ void Client::close() const {
     auto& conn = *guard->as_ref().unwrap();
     if (conn.connected()) {
       // Request poll thread to close the connection
-      poll_thread_worker_->request_close(conn.fd());
+      // @unsafe - PollThread::request_close
+      { poll_thread_worker_->request_close(conn.fd()); }
     }
     // Clear connection to prevent further use
     *guard = rusty::None;
@@ -411,20 +416,20 @@ void Client::resume() const {
   }
 }
 
-// @safe - Establishes TCP/IPC connection to server
+// @unsafe - Establishes TCP/IPC connection to server
+// Contains const_cast and calls to unsafe connect()
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
   auto conn = rusty::Arc<ClientConnection>::make(poll_thread_worker_);
 
-  // Initialize weak self-reference for poll thread registration
-  // const_cast is safe here - we just created this connection and have the only reference
+  // Initialize weak self-reference for poll thread registration (const_cast safe: newly created)
   const_cast<WeakClientConnection&>(conn->weak_self_) = conn;
 
-  // Set client mode (const_cast safe - newly created, single owner)
+  // Set client mode (const_cast safe: newly created, single owner)
   const_cast<bool&>(conn->is_client_mode_) = client;
   is_client_mode_.set(client);
 
-  // Attempt to connect (const_cast safe - newly created, single owner)
+  // Attempt to connect
   int result = const_cast<ClientConnection&>(*conn).connect(addr);
 
   if (result == 0) {

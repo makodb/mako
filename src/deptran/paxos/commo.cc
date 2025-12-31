@@ -10,7 +10,7 @@
 namespace janus {
 
 MultiPaxosCommo::MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll)
-  : Communicator(poll) {
+  : Communicator(std::move(poll)) {
 }
 
 // Jetpack: SendForward for forwarding commands to leader

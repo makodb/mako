@@ -193,8 +193,12 @@ bool ServerConnection::handle_read() {
 
     // Process each request
     while (!complete_requests.empty()) {
-        rusty::Box<Request> req = std::move(complete_requests.front());
-        complete_requests.pop_front();
+        // @unsafe - std::list::front() and pop_front()
+        rusty::Box<Request> req = [&complete_requests]() {
+            auto r = std::move(complete_requests.front());
+            complete_requests.pop_front();
+            return r;
+        }();
 
         if (req->m.content_size() < sizeof(i32)) {
             reply(*req, EINVAL);
@@ -246,15 +250,15 @@ bool ServerConnection::handle_read() {
 // @safe - Writes buffered data to socket, protected by SpinMutex
 int ServerConnection::handle_write() {
     if (status_ == CLOSED) {
-        return Pollable::MODE_NO_CHANGE;
+        return PollMode::NO_CHANGE;
     }
 
-    int result = Pollable::MODE_NO_CHANGE;
+    int result = PollMode::NO_CHANGE;
     auto guard = out_.lock().unwrap();
     guard->write_to_fd(socket_);
     if (guard->empty()) {
         // Return READ-only mode - PollThreadWorker will update epoll
-        result = Pollable::READ;
+        result = PollMode::READ;
     }
     // Guard auto-unlocks here
     return result;
@@ -265,7 +269,7 @@ void ServerConnection::handle_error() {
     this->close();
 }
 
-// @safe - Closes connection, should only be called from poll thread
+// @safe - Closes connection
 // SAFETY: Internal @unsafe block for system calls and pointer operations
 void ServerConnection::close() {
     if (status_ == CONNECTED) {
@@ -282,10 +286,10 @@ void ServerConnection::close() {
 
 // @safe - Returns poll mode based on output buffer, protected by SpinMutex
 int ServerConnection::poll_mode() const {
-    int mode = Pollable::READ;
+    int mode = PollMode::READ;
     auto guard = out_.lock().unwrap();
     if (!guard->empty()) {
-        mode |= Pollable::WRITE;
+        mode |= PollMode::WRITE;
     }
     // Guard auto-unlocks here
     return mode;
@@ -328,23 +332,29 @@ Server::~Server() {
     ctx_ = rusty::None;
 }
 
-// @unsafe - Accepts new client connections (raw pointer: p_svr_addr_->ai_addr)
+// @safe - Accepts new client connections
+// SAFETY: All unsafe operations wrapped in @unsafe blocks
 bool ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
 //  FD_SET(server_sock_, &fds);
 
   while (true) {
+    int clnt_socket;
+    // @unsafe - syscall with raw pointers
+    {
 #ifdef USE_IPC
-    struct sockaddr_un fsaun;
+      struct sockaddr_un fsaun;
       uint32_t from_len;
-    int clnt_socket = ::accept(server_sock_, (struct sockaddr*)&fsaun, &from_len);
+      clnt_socket = ::accept(server_sock_, (struct sockaddr*)&fsaun, &from_len);
 #else
-    int clnt_socket = ::accept(server_sock_, p_svr_addr_->ai_addr, &p_svr_addr_->ai_addrlen);
+      clnt_socket = ::accept(server_sock_, p_svr_addr_->ai_addr, &p_svr_addr_->ai_addrlen);
 #endif
+    }
     if (clnt_socket >= 0) {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
-      verify(set_nonblocking(clnt_socket, true) == 0);
+      // @unsafe - set_nonblocking
+      { verify(set_nonblocking(clnt_socket, true) == 0); }
 
       auto sconn = rusty::Arc<ServerConnection>::make(ctx_.clone(), clnt_socket);
       // @unsafe - const_cast to initialize weak_self_ (safe: we just created this object)
@@ -354,7 +364,8 @@ bool ServerListener::handle_read() {
           auto guard = sconn_fds_.lock().unwrap();
           guard->push(clnt_socket);
       }
-      PollThreadWorker::add_pollable_from_current_thread(sconn);
+      // @unsafe - add_pollable_from_current_thread
+      { PollThreadWorker::add_pollable_from_current_thread(sconn); }
     } else {
       break;
     }

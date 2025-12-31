@@ -32,46 +32,37 @@ using std::shared_ptr;
 // Forward declaration
 class PollThreadWorker;
 
-// @safe - Abstract interface for pollable file descriptors
+// Pollable mode constants (moved outside interface for @interface compliance)
+namespace PollMode {
+    static constexpr int READ = 0x1;
+    static constexpr int WRITE = 0x2;
+    // Special return value for handle_write() indicating no mode change needed
+    static constexpr int NO_CHANGE = -1;
+}
+
+// @interface
 class Pollable {
 public:
-    virtual ~Pollable() {}
+    virtual ~Pollable() = default;
 
-    // Special return value for handle_write() indicating no mode change needed
-    static constexpr int MODE_NO_CHANGE = -1;
-
-    enum {
-        READ = 0x1, WRITE = 0x2
-    };
-
-    // Returns file descriptor
+    // @safe
     virtual int fd() const = 0;
-    // Returns current poll mode (READ/WRITE flags)
+    // @safe
     virtual int poll_mode() const = 0;
-    // @unsafe - Handles read events (implementation-specific)
+    // @safe
     virtual size_t content_size() = 0;
+    // @safe
     virtual bool handle_read() = 0;
-    // @unsafe - Handles write events (implementation-specific)
-    // Returns new poll mode, or MODE_NO_CHANGE (-1) if no update needed
-    // PollThreadWorker will call update_mode() based on return value
+    // @safe
     virtual int handle_write() = 0;
-    // @unsafe - Handles error events (implementation-specific)
+    // @safe
     virtual void handle_error() = 0;
-
-    // @unsafe - Closes the underlying socket/resource (implementation-specific)
-    // Called by PollThreadWorker::do_close_pollable() for thread-safe close
+    // @safe
     virtual void close() = 0;
-
-    // @safe - Check if pollable needs write mode update (set by deferred operations)
-    // Returns true if update_mode(READ|WRITE) should be called, clears internal flag
-    // Default implementation returns false - override in subclasses that need it
-    // Note: const because called through Arc, uses mutable flag internally
-    virtual bool check_pending_write_update() const { return false; }
-
-    // @safe - Check if pollable was closed (via handle_error->close())
-    // Returns true if this pollable should be removed from poll registration
-    // Default returns false - override in subclasses that implement close()
-    virtual bool is_closed() const { return false; }
+    // @safe
+    virtual bool check_pending_write_update() const = 0;
+    // @safe
+    virtual bool is_closed() const = 0;
 };
 
 
@@ -133,7 +124,7 @@ class Epoll {
     auto fd = poll->fd();
 #ifdef USE_KQUEUE
     struct kevent ev;
-    if (poll_mode & Pollable::READ) {
+    if (poll_mode & PollMode::READ) {
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
       ev.flags = EV_ADD;
@@ -141,7 +132,7 @@ class Epoll {
       ev.udata = userdata;  // Store slot index instead of raw pointer
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if (poll_mode & Pollable::WRITE) {
+    if (poll_mode & PollMode::WRITE) {
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
       ev.flags = EV_ADD;
@@ -157,7 +148,7 @@ class Epoll {
     ev.data.ptr = userdata;  // Store slot index instead of raw pointer
     ev.events = EPOLLET | EPOLLIN | EPOLLRDHUP; // EPOLLERR and EPOLLHUP are included by default
 
-    if (poll_mode & Pollable::WRITE) {
+    if (poll_mode & PollMode::WRITE) {
         ev.events |= EPOLLOUT;
     }
     verify(epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev) == 0);
@@ -201,7 +192,7 @@ class Epoll {
     auto fd = poll.fd();
 #ifdef USE_KQUEUE
     struct kevent ev;
-    if ((new_mode & Pollable::READ) && !(old_mode & Pollable::READ)) {
+    if ((new_mode & PollMode::READ) && !(old_mode & PollMode::READ)) {
       // add READ
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -210,7 +201,7 @@ class Epoll {
       ev.filter = EVFILT_READ;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if (!(new_mode & Pollable::READ) && (old_mode & Pollable::READ)) {
+    if (!(new_mode & PollMode::READ) && (old_mode & PollMode::READ)) {
       // del READ
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -219,7 +210,7 @@ class Epoll {
       ev.filter = EVFILT_READ;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if ((new_mode & Pollable::WRITE) && !(old_mode & Pollable::WRITE)) {
+    if ((new_mode & PollMode::WRITE) && !(old_mode & PollMode::WRITE)) {
       // add WRITE
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -228,7 +219,7 @@ class Epoll {
       ev.filter = EVFILT_WRITE;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if (!(new_mode & Pollable::WRITE) && (old_mode & Pollable::WRITE)) {
+    if (!(new_mode & PollMode::WRITE) && (old_mode & PollMode::WRITE)) {
       // del WRITE
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -243,10 +234,10 @@ class Epoll {
 
     ev.data.ptr = userdata;  // Store slot index instead of raw pointer
     ev.events = EPOLLET | EPOLLRDHUP;
-    if (new_mode & Pollable::READ) {
+    if (new_mode & PollMode::READ) {
         ev.events |= EPOLLIN;
     }
-    if (new_mode & Pollable::WRITE) {
+    if (new_mode & PollMode::WRITE) {
         ev.events |= EPOLLOUT;
     }
     int rc = epoll_ctl(poll_fd_, EPOLL_CTL_MOD, fd, &ev);
@@ -291,7 +282,7 @@ class Epoll {
       }
       if (evlist[i].filter == EVFILT_WRITE) {
         int new_mode = poll->handle_write();
-        if (new_mode != Pollable::MODE_NO_CHANGE) {
+        if (new_mode != PollMode::NO_CHANGE) {
           update_mode(poll, new_mode);
         }
       }
@@ -326,7 +317,7 @@ class Epoll {
       }
       if (evlist[i].events & EPOLLOUT) {
           int new_mode = poll->handle_write();
-          if (new_mode != Pollable::MODE_NO_CHANGE) {
+          if (new_mode != PollMode::NO_CHANGE) {
             update_mode(poll, new_mode);
           }
       }

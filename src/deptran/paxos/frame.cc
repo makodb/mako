@@ -96,7 +96,7 @@ Communicator *MultiPaxosFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>>
   // GetFrame method. MultiPaxosCommo currently seems ok to share among the
   // clients of this method.
   if (commo_ == nullptr) {
-    commo_ = new MultiPaxosCommo(poll);
+    commo_ = new MultiPaxosCommo(std::move(poll));
   }
   return commo_;
 }

@@ -333,14 +333,15 @@ public:
     // Returns true if called from a poll thread, false otherwise.
     static bool is_on_poll_thread() { return current_worker_ != nullptr; }
 
-    // @safe - Add a pollable from within the poll thread (e.g., from handle_read)
+    // @unsafe - Add a pollable from within the poll thread (e.g., from handle_read)
     // Must only be called from the poll thread (asserts if not)
+    // SAFETY: Dereferences raw pointer current_worker_ and calls do_add_pollable
     static void add_pollable_from_current_thread(rusty::Arc<Pollable> poll) {
         verify(current_worker_ != nullptr);
         current_worker_->do_add_pollable(std::move(poll));
     }
 
-    // @safe - Update poll mode directly (bypasses channel)
+    // @unsafe - Update poll mode directly (bypasses channel)
     // Only safe to call from the poll thread (e.g., from ServerConnection::end_reply)
     // SAFETY: Internal @unsafe block handles epoll operations and address-of
     void update_mode(Pollable& poll, int new_mode);

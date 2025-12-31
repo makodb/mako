@@ -264,7 +264,7 @@ public:
 //
 // @safe
 template<typename T>
-class SpinMutex : public NoCopy {
+class SpinMutex {
 private:
     mutable SpinLock lock_;
     mutable rusty::UnsafeCell<T> data_;  // UnsafeCell for interior mutability
@@ -332,7 +332,7 @@ auto make_spin_mutex(T value) {
 }
 
 // @safe - Spin-based condition variable using atomic flag
-class SpinCondVar: public NoCopy {
+class SpinCondVar {
 private:
     std::atomic<int> flag_{0};
 

@@ -96,16 +96,13 @@ erase(Container& l,
 // @interface
 class Job {
  public:
-  // @safe
   virtual bool Ready() = 0;
-  // @unsafe - Work may call external functions
   virtual void Work() = 0;
-  // @safe
   virtual bool Done() = 0;
   virtual ~Job() = default;
 };
 
-// @safe - Simple job wrapper with safe state management
+// @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug workaround)
 class OneTimeJob : public Job {
  public:
   // @safe
@@ -114,15 +111,16 @@ class OneTimeJob : public Job {
   bool done_{false};
   bool ready_{true};
   std::function<void()> func_{};
-  // @safe
+  // Interface method - inherits @unsafe from Job
   bool Ready() override {
     return ready_;
   }
-  // @safe
+  // Interface method - inherits @unsafe from Job
   bool Done() override {
     return done_;
   }
-  // @unsafe - Calls std::function::operator() (external unsafe)
+  // Interface method - inherits @unsafe from Job
+  // Calls std::function::operator() (external unsafe)
   // SAFETY: Executes user-provided function, caller ensures validity
   void Work() override {
     ready_ = false;
@@ -132,28 +130,26 @@ class OneTimeJob : public Job {
   virtual ~OneTimeJob(){};
 };
 
-// @safe - Periodic job with safe time tracking
+// @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug workaround)
 class FrequentJob : public Job {
  public:
   uint64_t tm_last_ = 0;
   uint64_t period_ = 0;
 
   virtual ~FrequentJob() {}
-  // @safe
+  // Interface method - inherits @unsafe from Job
   virtual bool Ready() override {
-    // @unsafe - Time::now
-    {
-      uint64_t tm_now = rrr::Time::now();
-      uint64_t s = tm_now - tm_last_;
-      if (s > period_) {
-        tm_last_ = tm_now;
-        return true;
-      }
-      return false;
+    // Time::now is @unsafe
+    uint64_t tm_now = rrr::Time::now();
+    uint64_t s = tm_now - tm_last_;
+    if (s > period_) {
+      tm_last_ = tm_now;
+      return true;
     }
+    return false;
   }
 
-  // @safe
+  // Interface method - inherits @unsafe from Job
   virtual bool Done() override {
     // never done.
     return false;

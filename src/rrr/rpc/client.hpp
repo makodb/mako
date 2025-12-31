@@ -162,12 +162,14 @@ public:
         return (*guard).timed_out;
     }
 
-    // Returns reference to reply with lifetime tied to Future
-    // @lifetime: (&'a) -> &'a
-    // @safe - Uses RefCell with runtime borrow checking
+    // @unsafe - Returns reference to reply
+    // WARNING: The returned reference is only valid while the caller holds it
+    // and no other borrows are active. The RefCell guard is a temporary.
+    // TODO: Refactor to return the RefMut guard directly for proper lifetime tracking
     Marshal& get_reply() const {
         wait();
-        return *reply_.borrow_mut();
+        // @unsafe - Returning reference through temporary guard
+        { return *reply_.borrow_mut(); }
     }
 
     // @safe - Calls safe wait()/timed_wait() methods
@@ -254,7 +256,7 @@ public:
 // Type alias for Arc weak reference to ClientConnection
 using WeakClientConnection = rusty::sync::Weak<ClientConnection>;
 
-// @safe - Handles individual client connections to servers
+// @unsafe - Inherits from @interface Pollable (rusty-cpp namespace resolution bug workaround)
 // Similar to ServerConnection but for client-side connections
 // Uses SpinMutex for thread-safe interior mutability, Arc for shared ownership
 // Note: connect() and handle_read() contain @unsafe blocks for socket I/O
@@ -307,7 +309,7 @@ public:
      * 1: PollThreadWorker::do_close_pollable() for thread-safe close
      * 2: handle_error() for error handling
      */
-    // @safe - Closes connection and cleans up (has internal @unsafe blocks)
+    // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe cleanup sequence
     void close() override;
 
@@ -404,7 +406,7 @@ public:
         if (PollThreadWorker::is_on_poll_thread()) {
             pending_write_update_.set(true);
         } else {
-            poll_thread_worker_->update_mode(*this, Pollable::READ | Pollable::WRITE);
+            poll_thread_worker_->update_mode(*this, PollMode::READ | PollMode::WRITE);
         }
 
         return FutureResult::Ok(fu);
@@ -421,7 +423,7 @@ public:
         return request(rpc_id, attr, [](Marshal&) {});
     }
 
-    // @safe - Simple getter
+    // @safe - Returns file descriptor
     int fd() const override {
         return socket_;
     }
@@ -444,7 +446,7 @@ public:
         return in_.content_size();
     }
 
-    // @safe - Writes buffered data to socket (has internal @unsafe blocks)
+    // @safe - Writes buffered data to socket
     // SAFETY: Protected by output spinlock
     // Returns new poll mode, or MODE_NO_CHANGE if no update needed
     int handle_write() override;
@@ -465,7 +467,7 @@ public:
         return false;
     }
 
-    // @safe - Check if connection was closed (via handle_error)
+    // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
     bool is_closed() const override {
         return status_ == CLOSED;
@@ -498,11 +500,12 @@ struct hash<rusty::Arc<rrr::ClientConnection>> {
 
 namespace rrr {
 
-// @safe - RPC client facade that owns a ClientConnection
+// @unsafe - RPC client facade that owns a ClientConnection
+// (Marked unsafe due to mutable field for interior mutability)
 // Thread-safe through delegation to ClientConnection
 // Client provides the user-facing API, ClientConnection handles socket I/O
 // Similar to Server/ServerConnection pattern
-class Client: public NoCopy {
+class Client {
     // The underlying connection that handles socket I/O
     // RefCell for interior mutability (const methods need to delegate to connection)
     mutable rusty::RefCell<rusty::Option<rusty::Arc<ClientConnection>>> connection_;
@@ -585,7 +588,7 @@ public:
 
     // @safe - Sets connection validity
     void set_valid(bool valid) const;
-    // @safe - Establishes TCP connection (socket system calls in ClientConnection)
+    // @unsafe - Establishes TCP connection (contains const_cast and unsafe connect)
     int connect(const char* addr, bool client = true) const;
 
     // @safe - Pauses the connection
@@ -643,7 +646,7 @@ public:
 
 // @safe - Thread-safe pool of client connections using Arc
 // MIGRATED: Now uses rusty::Arc<Client> for cached connections
-class ClientPool: public NoCopy {
+class ClientPool {
     rrr::Rand rand_;
 
     // owns a shared reference to PollThread

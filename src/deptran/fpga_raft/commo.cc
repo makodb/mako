@@ -9,7 +9,7 @@
 
 namespace janus {
 
-FpgaRaftCommo::FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) : Communicator(poll_thread_worker) {
+FpgaRaftCommo::FpgaRaftCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) : Communicator(std::move(poll_thread_worker)) {
 //  verify(poll != nullptr);
 }
 

@@ -102,7 +102,8 @@ void RaftWorker::SetupCommo() {
   verify(rep_frame_ != nullptr);
   verify(rep_sched_ != nullptr);
 
-  rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_);
+  // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThreadWorker()
+  rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
 
   rep_sched_->commo_ = rep_commo_;
 }

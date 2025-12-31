@@ -317,7 +317,7 @@ TxData* Frame::CreateTxnCommand(TxRequest& req, shared_ptr<TxnRegistry> reg) {
 //}
 
 Communicator* Frame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
-  commo_ = new Communicator(poll_thread_worker);
+  commo_ = new Communicator(std::move(poll_thread_worker));
   return commo_;
 }
 

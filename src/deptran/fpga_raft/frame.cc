@@ -91,7 +91,7 @@ Communicator *FpgaRaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> p
   // GetFrame method. FpgaRaftCommo currently seems ok to share among the
   // clients of this method.
   if (commo_ == nullptr) {
-    commo_ = new FpgaRaftCommo(poll_thread_worker);
+    commo_ = new FpgaRaftCommo(std::move(poll_thread_worker));
   }
   return commo_;
 }

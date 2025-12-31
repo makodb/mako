@@ -153,7 +153,7 @@ Reactor::SaveRunningCoroutine() const {
 void Reactor::RestoreRunningCoroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const {
   // @unsafe
   {
-    *sp_running_coro_th_.borrow_mut() = old_coro;
+    *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
   }
 }
 
@@ -223,7 +223,7 @@ Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int6
   }
 
   // Step 7: Restore previous running coroutine
-  RestoreRunningCoroutine(sp_old_coro);
+  RestoreRunningCoroutine(std::move(sp_old_coro));
 
   return sp_coro;
 }
@@ -429,7 +429,7 @@ void Reactor::ContinueCoro(rusty::Rc<Coroutine> sp_coro) const {
       Recycle(sp_coro_ref);
     }
   }
-  *sp_running_coro_th_.borrow_mut() = sp_old_coro;
+  *sp_running_coro_th_.borrow_mut() = std::move(sp_old_coro);
 }
 
 void Reactor::Recycle(rusty::Rc<Coroutine>& sp_coro) const {
@@ -542,7 +542,7 @@ void PollThreadWorker::poll_loop() {
     // underlying Pollable uses interior mutability (mutable pending_write_update_ flag)
     for (auto& [fd, sp_poll] : fd_to_pollable_) {
       if (sp_poll->check_pending_write_update()) {
-        do_update_mode(fd, Pollable::READ | Pollable::WRITE, const_cast<Pollable*>(sp_poll.get()));
+        do_update_mode(fd, PollMode::READ | PollMode::WRITE, const_cast<Pollable*>(sp_poll.get()));
       }
     }
 

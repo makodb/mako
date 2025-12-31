@@ -29,7 +29,7 @@ Coordinator *FrameCarousel::CreateCoordinator(cooid_t coo_id,
 
 Communicator *FrameCarousel::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // Default: return null;
-  commo_ = new CarouselCommo(poll_thread_worker);
+  commo_ = new CarouselCommo(std::move(poll_thread_worker));
   return commo_;
 }
 

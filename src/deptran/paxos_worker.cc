@@ -225,7 +225,8 @@ void PaxosWorker::SetupService() {
 
 void PaxosWorker::SetupCommo() {
   if (rep_frame_) {
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_);
+    // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThread()
+    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
     if (rep_commo_) {
       rep_commo_->loc_id_ = site_info_->locale_id;
     }
