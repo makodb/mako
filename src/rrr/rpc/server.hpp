@@ -21,6 +21,7 @@
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
+#include "utils.hpp"
 
 // External safety annotations for system functions and STL operations
 // Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
@@ -164,9 +165,9 @@ class ServerListener: public Pollable {
   rusty::Arc<RpcServiceContext> ctx_;  // Shared dispatch context
   // File descriptors of accepted connections - Server reads this at shutdown
   SpinMutex<rusty::Vec<int>> sconn_fds_{rusty::Vec<int>()};
-  // cannot use smart pointers for memory management because this pointer
-  // needs to be freed by freeaddrinfo.
-  struct addrinfo* p_gai_result_{nullptr};
+  // AddrInfo RAII wrapper - automatically frees addrinfo on destruction
+  AddrInfo gai_result_;
+  // Pointer into the linked list of addresses (points within gai_result_)
   struct addrinfo* p_svr_addr_{nullptr};
 
   int server_sock_{0};
@@ -198,14 +199,10 @@ class ServerListener: public Pollable {
   ServerListener(rusty::Arc<RpcServiceContext> ctx, std::string addr);
 
 //protected:
-  // @safe - Frees addrinfo structures
-  // freeaddrinfo is marked safe via external annotation
+  // @safe - AddrInfo RAII wrapper handles freeaddrinfo automatically
   virtual ~ServerListener() {
-    if (p_gai_result_ != nullptr) {
-      freeaddrinfo(p_gai_result_);
-      p_gai_result_ = nullptr;
-      p_svr_addr_ = nullptr;
-    }
+    // gai_result_ RAII wrapper automatically calls freeaddrinfo
+    p_svr_addr_ = nullptr;  // Clear pointer into freed memory
   };
 };
 

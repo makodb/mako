@@ -190,22 +190,25 @@ int ClientConnection::connect(const char* addr) {
   // }
 #else
 
-  struct addrinfo hints, * result, * rp;
-  // @unsafe { - memset and getaddrinfo
+  struct addrinfo hints;
+  // @unsafe { - memset
   memset(&hints, 0, sizeof(struct addrinfo));
+  // }
 
   hints.ai_family = AF_INET; // ipv4
   hints.ai_socktype = SOCK_STREAM; // tcp
 
-  int r = getaddrinfo(host.c_str(), port.c_str(), &hints, &result);
-  // }
-  if (r != 0) {
-    Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(r));
+  // Use AddrInfo RAII wrapper - automatically frees on scope exit
+  auto addr_result = AddrInfo::resolve(host.c_str(), port.c_str(), &hints);
+  if (addr_result.is_err()) {
+    Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
     return EINVAL;
   }
+  auto addr_info = addr_result.unwrap();
 
   // @unsafe { - TCP socket creation, options, and connect syscalls
-  for (rp = result; rp != nullptr; rp = rp->ai_next) {
+  struct addrinfo* rp = nullptr;
+  for (rp = addr_info.get(); rp != nullptr; rp = rp->ai_next) {
       int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
       if (sock == -1) {
         continue;
@@ -225,7 +228,7 @@ int ClientConnection::connect(const char* addr) {
       ::close(socket_);
       socket_ = -1;
     }
-  freeaddrinfo(result);
+  // AddrInfo automatically freed when addr_info goes out of scope
   // }
 
   if (rp == nullptr) {

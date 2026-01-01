@@ -1174,7 +1174,7 @@ Communicator::BroadcastMessage(shardid_t shard_id,
         Log_info("Get a error message in reply");
         return;
       }
-      auto& marshal = fu->get_reply();
+      auto marshal = fu->get_reply();
       marshal >> msg_ev->msg_;
       msg_ev->Set(1);
     };

@@ -289,11 +289,11 @@ TEST_F(FutureTest, FutureGetReply) {
     ASSERT_TRUE(fu_result.is_ok());
     auto fu = fu_result.unwrap();
 
-    // get_reply() should wait internally
-    Marshal& reply = fu->get_reply();
+    // get_reply() returns guard for lifetime safety
+    auto reply_guard = fu->get_reply();
 
     i32 result;
-    reply >> result;
+    *reply_guard >> result;
 
     EXPECT_EQ(result, 34);  // 17 * 2
 

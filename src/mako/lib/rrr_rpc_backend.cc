@@ -312,10 +312,10 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
         return false;  // Arc auto-released
     }
 
-    // Read response
-    rrr::Marshal& resp_marshal = fu->get_reply();
+    // Read response (guard ensures lifetime safety)
+    auto resp_guard = fu->get_reply();
     std::vector<char> resp_buffer(tls_buffers.response_len);
-    resp_marshal.read(resp_buffer.data(), tls_buffers.response_len);
+    resp_guard->read(resp_buffer.data(), tls_buffers.response_len);
 
     // Deliver response to receiver (only if not stopping)
     if (!stop_ && src) {
@@ -407,10 +407,10 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
             continue;  // Arc auto-released
         }
 
-        // Read response
-        rrr::Marshal& resp_marshal = fu->get_reply();
+        // Read response (guard ensures lifetime safety)
+        auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_marshal.read(resp_buffer.data(), resp_len);
+        resp_guard->read(resp_buffer.data(), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
@@ -485,10 +485,10 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
             continue;  // Arc auto-released
         }
 
-        // Read response
-        rrr::Marshal& resp_marshal = fu->get_reply();
+        // Read response (guard ensures lifetime safety)
+        auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_marshal.read(resp_buffer.data(), resp_len);
+        resp_guard->read(resp_buffer.data(), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {

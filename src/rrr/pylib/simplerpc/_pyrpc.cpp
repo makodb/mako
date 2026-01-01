@@ -337,7 +337,8 @@ static PyObject* _pyrpc_client_sync_call(PyObject* self, PyObject* args) {
         auto fu = fu_result.unwrap();
         error_code = fu->get_error_code();
         if (error_code == 0) {
-            m_rep->read_from_marshal(fu->get_reply(), fu->get_reply().content_size());
+            auto reply_guard = fu->get_reply();
+            m_rep->read_from_marshal(*reply_guard, reply_guard->content_size());
         }
         // TODO: Python bindings need rework for Arc<Future>
         // Arc will be automatically released
@@ -585,7 +586,8 @@ static PyObject* _pyrpc_future_wait(PyObject* self, PyObject* args) {
     } else {
         error_code = fu->get_error_code();
         if (error_code == 0) {
-            m_rep->read_from_marshal(fu->get_reply(), fu->get_reply().content_size());
+            auto reply_guard = fu->get_reply();
+            m_rep->read_from_marshal(*reply_guard, reply_guard->content_size());
         }
         // TODO: Python bindings need rework for Arc<Future>
         // Arc will be automatically released
@@ -618,7 +620,8 @@ static PyObject* _pyrpc_future_timedwait(PyObject* self, PyObject* args) {
         fu->timed_wait(wait_sec);
         error_code = fu->get_error_code();
         if (error_code == 0) {
-            m_rep->read_from_marshal(fu->get_reply(), fu->get_reply().content_size());
+            auto reply_guard = fu->get_reply();
+            m_rep->read_from_marshal(*reply_guard, reply_guard->content_size());
         }
         // TODO: Python bindings need rework for Arc<Future>
         // Arc will be automatically released

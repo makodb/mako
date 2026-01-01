@@ -411,18 +411,25 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   }
 
 #else
-  struct addrinfo hints, *result, *rp;
+  struct addrinfo hints;
   memset(&hints, 0, sizeof(struct addrinfo));
   hints.ai_family = AF_INET; // ipv4
   hints.ai_socktype = SOCK_STREAM; // tcp
   hints.ai_flags = AI_PASSIVE; // server side
 
-  int r = getaddrinfo((host == "0.0.0.0") ? nullptr : host.c_str(), port.c_str(), &hints, &result);
-  if (r != 0) {
-    Log_error("rrr::Server: getaddrinfo(): %s", gai_strerror(r));
+  // Use AddrInfo RAII wrapper
+  auto addr_result = AddrInfo::resolve(
+      (host == "0.0.0.0") ? nullptr : host.c_str(),
+      port.c_str(),
+      &hints);
+  if (addr_result.is_err()) {
+    Log_error("rrr::Server: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
+    verify(0);  // Fatal error
   }
+  gai_result_ = addr_result.unwrap();
 
-  for (rp = result; rp != nullptr; rp = rp->ai_next) {
+  struct addrinfo* rp = nullptr;
+  for (rp = gai_result_.get(); rp != nullptr; rp = rp->ai_next) {
     server_sock_ = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (server_sock_ == -1) {
       continue;
@@ -467,7 +474,7 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
     Log_error("rrr::Server: FATAL - failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
     Log_error("rrr::Server: This is likely because the port is already in use by another process");
     Log_error("rrr::Server: Please check: sudo lsof -i :%s or sudo ss -tulpn | grep %s", port.c_str(), port.c_str());
-    freeaddrinfo(result);
+    // gai_result_ RAII wrapper handles freeaddrinfo automatically
 
     // Print more helpful message and abort
     fprintf(stderr, "\n====== FATAL ERROR ======\n");
@@ -478,7 +485,7 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 
     verify(0);  // Fatal error - cannot start server
   } else {
-    p_gai_result_ = result;
+    // gai_result_ already stores the AddrInfo, just save pointer into the list
     p_svr_addr_ = rp;
   }
 #endif

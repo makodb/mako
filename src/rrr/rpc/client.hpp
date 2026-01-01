@@ -12,6 +12,22 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 
+namespace rrr {
+
+// Stream operator for RefMut<Marshal> - allows get_reply() >> x pattern
+// This forwards to Marshal's operator>> while caller holds the guard
+template<typename U>
+Marshal& operator>>(rusty::RefMut<Marshal>& guard, U& value) {
+    return *guard >> value;
+}
+
+template<typename U>
+Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
+    return *guard >> value;
+}
+
+} // namespace rrr
+
 // External safety annotations for system functions and STL operations
 // Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
 // now have in-place annotations in their respective headers.
@@ -162,14 +178,11 @@ public:
         return (*guard).timed_out;
     }
 
-    // @unsafe - Returns reference to reply
-    // WARNING: The returned reference is only valid while the caller holds it
-    // and no other borrows are active. The RefCell guard is a temporary.
-    // TODO: Refactor to return the RefMut guard directly for proper lifetime tracking
-    Marshal& get_reply() const {
+    // @safe - Returns guard for reply (Rust-idiomatic lifetime safety)
+    // Caller holds the guard, ensuring the reference can't outlive it
+    rusty::RefMut<Marshal> get_reply() const {
         wait();
-        // @unsafe - Returning reference through temporary guard
-        { return *reply_.borrow_mut(); }
+        return reply_.borrow_mut();
     }
 
     // @safe - Calls safe wait()/timed_wait() methods
