@@ -416,7 +416,7 @@ void Client::resume() const {
   }
 }
 
-// @unsafe - Establishes TCP/IPC connection to server
+// @safe - Establishes TCP/IPC connection to server
 // Uses Arc::get_mut() for exclusive mutable access during initialization
 int Client::connect(const char* addr, bool client) const {
   // Create the ClientConnection
@@ -424,16 +424,24 @@ int Client::connect(const char* addr, bool client) const {
 
   // Use get_mut() since we're the sole owner (strong_count == 1)
   // This is Rust's idiomatic pattern for init-before-sharing
-  ClientConnection* mut_conn = conn.get_mut();
-  verify(mut_conn != nullptr);  // Must succeed for freshly-created Arc
+  auto opt = conn.get_mut();
+  verify(opt.is_some());  // Must succeed for freshly-created Arc
+  ClientConnection& mut_conn = opt.unwrap();
 
-  // Initialize fields through mutable pointer (no const_cast needed)
-  mut_conn->weak_self_ = conn;
-  mut_conn->is_client_mode_ = client;
+  // Initialize fields through mutable reference (no const_cast needed)
+  // @unsafe - Weak pointer assignment
+  {
+    mut_conn.weak_self_ = conn;
+  }
+  mut_conn.is_client_mode_ = client;
   is_client_mode_.set(client);
 
-  // Call connect through mutable pointer
-  int result = mut_conn->connect(addr);
+  // Call connect through mutable reference
+  int result = 0;
+  // @unsafe - Low-level TCP/IPC connection
+  {
+    result = mut_conn.connect(addr);
+  }
 
   if (result == 0) {
     // Connection successful, store it

@@ -90,7 +90,7 @@ TEST_F(SiloMultiSiteStressTest, FourSitesConcurrentTrees) {
     // Worker for each site
     // Get raw pointers for thread use (Arc ensures lifetime)
     auto site_worker = [&](int site_idx) {
-        SiloRuntime* site = sites[site_idx].get_mut();
+        SiloRuntime* site = sites[site_idx].as_ptr();
         site->BindToCurrentThread();
 
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, site_idx * 100);
@@ -124,7 +124,7 @@ TEST_F(SiloMultiSiteStressTest, FourSitesConcurrentTrees) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop_epochs.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
@@ -175,7 +175,7 @@ TEST_F(SiloMultiSiteStressTest, HighConcurrencyMultipleThreadsPerSite) {
 
     // Worker that does RCU operations
     auto worker = [&](int site_idx, int thread_idx) {
-        SiloRuntime* site = sites[site_idx].get_mut();
+        SiloRuntime* site = sites[site_idx].as_ptr();
         site->BindToCurrentThread();
 
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS,
@@ -214,7 +214,7 @@ TEST_F(SiloMultiSiteStressTest, HighConcurrencyMultipleThreadsPerSite) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop_epochs.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::microseconds(500));
             }
         });
@@ -272,7 +272,7 @@ TEST_F(SiloMultiSiteStressTest, EpochIsolationUnderStress) {
             int delay_us = 100 * (s + 1);
 
             while (!stop.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(increment);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(increment);
                 epoch_increments[s] += increment;
                 std::this_thread::sleep_for(std::chrono::microseconds(delay_us));
             }
@@ -286,7 +286,7 @@ TEST_F(SiloMultiSiteStressTest, EpochIsolationUnderStress) {
 
     // Verify epochs advanced independently
     for (int s = 0; s < NUM_SITES; ++s) {
-        mrcu_epoch_type final_epoch = sites[s].get_mut()->masstree_context()->get_epoch();
+        mrcu_epoch_type final_epoch = sites[s].as_ptr()->masstree_context()->get_epoch();
         mrcu_epoch_type expected_delta = epoch_increments[s].load();
 
         EXPECT_EQ(final_epoch, initial_epochs[s] + expected_delta)
@@ -294,7 +294,7 @@ TEST_F(SiloMultiSiteStressTest, EpochIsolationUnderStress) {
 
         // Each site should have different final epochs (due to different rates)
         for (int other = s + 1; other < NUM_SITES; ++other) {
-            mrcu_epoch_type other_epoch = sites[other].get_mut()->masstree_context()->get_epoch();
+            mrcu_epoch_type other_epoch = sites[other].as_ptr()->masstree_context()->get_epoch();
             // Epochs likely differ (not guaranteed but very likely with different rates)
             // Just verify they're all positive
             EXPECT_GT(final_epoch, 1u);
@@ -322,11 +322,11 @@ TEST_F(SiloMultiSiteStressTest, ThreadRegistryIsolation) {
     for (int s = 0; s < NUM_SITES; ++s) {
         for (int t = 0; t < THREADS_PER_SITE; ++t) {
             threads.emplace_back([&, s, t]() {
-                sites[s].get_mut()->BindToCurrentThread();
+                sites[s].as_ptr()->BindToCurrentThread();
                 threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS,
                     s * 100 + t);
                 ASSERT_NE(ti, nullptr);
-                EXPECT_EQ(ti->context(), sites[s].get_mut()->masstree_context());
+                EXPECT_EQ(ti->context(), sites[s].as_ptr()->masstree_context());
 
                 std::lock_guard<std::mutex> lock(mtx);
                 site_threadinfos[s].push_back(ti);
@@ -339,10 +339,10 @@ TEST_F(SiloMultiSiteStressTest, ThreadRegistryIsolation) {
     // Verify each site's thread list
     for (int s = 0; s < NUM_SITES; ++s) {
         std::set<threadinfo*> site_set;
-        for (threadinfo* ti = sites[s].get_mut()->masstree_context()->get_allthreads();
+        for (threadinfo* ti = sites[s].as_ptr()->masstree_context()->get_allthreads();
              ti; ti = ti->next()) {
             site_set.insert(ti);
-            EXPECT_EQ(ti->context(), sites[s].get_mut()->masstree_context())
+            EXPECT_EQ(ti->context(), sites[s].as_ptr()->masstree_context())
                 << "Thread belongs to wrong context";
         }
 
@@ -388,7 +388,7 @@ TEST_F(SiloMultiSiteStressTest, HeavyInsertSearchWorkload) {
     std::atomic<int> sites_done{0};
 
     auto heavy_worker = [&](int site_idx) {
-        SiloRuntime* site = sites[site_idx].get_mut();
+        SiloRuntime* site = sites[site_idx].as_ptr();
         site->BindToCurrentThread();
 
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, site_idx);
@@ -430,7 +430,7 @@ TEST_F(SiloMultiSiteStressTest, HeavyInsertSearchWorkload) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop_epochs.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
@@ -473,7 +473,7 @@ TEST_F(SiloMultiSiteStressTest, ManySitesStress) {
     std::atomic<bool> stop{false};
 
     auto worker = [&](int site_idx) {
-        sites[site_idx].get_mut()->BindToCurrentThread();
+        sites[site_idx].as_ptr()->BindToCurrentThread();
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, site_idx);
 
         ti->rcu_start();
@@ -497,7 +497,7 @@ TEST_F(SiloMultiSiteStressTest, ManySitesStress) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::microseconds(200));
             }
         });
@@ -540,7 +540,7 @@ TEST_F(SiloMultiSiteStressTest, InterleavedOperations) {
         for (int round = 0; round < NUM_ROUNDS; ++round) {
             // Pick a random site
             int site_idx = site_dist(rng);
-            SiloRuntime* site = sites[site_idx].get_mut();
+            SiloRuntime* site = sites[site_idx].as_ptr();
             site->BindToCurrentThread();
 
             threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS,
@@ -566,7 +566,7 @@ TEST_F(SiloMultiSiteStressTest, InterleavedOperations) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::microseconds(100));
             }
         });
@@ -604,7 +604,7 @@ TEST_F(SiloMultiSiteStressTest, LongRunningConcurrent) {
     for (auto& op : ops_count) op.store(0);
 
     auto continuous_worker = [&](int site_idx, int thread_idx) {
-        sites[site_idx].get_mut()->BindToCurrentThread();
+        sites[site_idx].as_ptr()->BindToCurrentThread();
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS,
             site_idx * 1000 + thread_idx);
 
@@ -630,7 +630,7 @@ TEST_F(SiloMultiSiteStressTest, LongRunningConcurrent) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::microseconds(500));
             }
         });
@@ -682,7 +682,7 @@ TEST_F(SiloMultiSiteStressTest, SiteCreationUnderLoad) {
             SiloRuntime* site;
             {
                 std::lock_guard<std::mutex> lock(sites_mutex);
-                site = sites[worker_id % sites.size()].get_mut();
+                site = sites[worker_id % sites.size()].as_ptr();
             }
 
             site->BindToCurrentThread();
@@ -717,7 +717,7 @@ TEST_F(SiloMultiSiteStressTest, SiteCreationUnderLoad) {
     for (int s = 0; s < INITIAL_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });
@@ -765,7 +765,7 @@ TEST_F(SiloMultiSiteStressTest, MixedTreeOperationsStress) {
     }
 
     auto mixed_worker = [&](int site_idx) {
-        sites[site_idx].get_mut()->BindToCurrentThread();
+        sites[site_idx].as_ptr()->BindToCurrentThread();
         threadinfo* ti = threadinfo::make(threadinfo::TI_PROCESS, site_idx);
 
         std::mt19937 rng(site_idx * 1000);
@@ -813,7 +813,7 @@ TEST_F(SiloMultiSiteStressTest, MixedTreeOperationsStress) {
     for (int s = 0; s < NUM_SITES; ++s) {
         epoch_threads.emplace_back([&, s]() {
             while (!stop.load()) {
-                sites[s].get_mut()->masstree_context()->increment_epoch(2);
+                sites[s].as_ptr()->masstree_context()->increment_epoch(2);
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         });

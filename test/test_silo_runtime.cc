@@ -47,8 +47,8 @@ protected:
     }
 
     // Helper to get the runtime pointer (use as_ref to avoid moving the Arc)
-    SiloRuntime* site1() { return site1_.as_ref().unwrap().get_mut(); }
-    SiloRuntime* site2() { return site2_.as_ref().unwrap().get_mut(); }
+    SiloRuntime* site1() { return site1_.as_ref().unwrap().as_ptr(); }
+    SiloRuntime* site2() { return site2_.as_ref().unwrap().as_ptr(); }
 
     // Use Option<Arc> for nullable Arc members (gtest requires default-constructible fixtures)
     rusty::Option<rusty::Arc<SiloRuntime>> site1_;

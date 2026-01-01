@@ -80,12 +80,12 @@ SiloRuntime* SiloRuntime::Current() {
     return GlobalDefault();
 }
 
-// @safe
+// @unsafe - Returns raw pointer for legacy compatibility
 // @lifetime: &'static
 SiloRuntime* SiloRuntime::GlobalDefault() {
     // Fast path: already initialized
     if (s_global_default_) {
-        return s_global_default_.get_mut();
+        return s_global_default_.as_ptr();
     }
 
     // Slow path: thread-safe lazy initialization
@@ -96,7 +96,7 @@ SiloRuntime* SiloRuntime::GlobalDefault() {
         s_global_default_ = Create();
     }
 
-    return s_global_default_.get_mut();
+    return s_global_default_.as_ptr();
 }
 
 // =========================================================================
