@@ -47,6 +47,17 @@ class ServerWorker {
 
   bool launched_{false};
 
+  // Default constructor
+  ServerWorker() = default;
+
+  // No copy - ServerWorker owns resources
+  ServerWorker(const ServerWorker&) = delete;
+  ServerWorker& operator=(const ServerWorker&) = delete;
+
+  // Move operations - required for std::vector
+  ServerWorker(ServerWorker&& other) noexcept = default;
+  ServerWorker& operator=(ServerWorker&& other) noexcept = default;
+
   ~ServerWorker(); // Destructor to cleanup resources
   int DbChecksum(); // Jetpack: Database checksum for validation
 

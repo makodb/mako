@@ -144,7 +144,7 @@ void client_launch_workers(vector<Config::SiteInfo> &client_sites) {
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
   auto config = Config::GetConfig();
   Log_info("server enabled, number of sites: %d", server_sites.size());
-  svr_workers_g.resize(server_sites.size(), ServerWorker());
+  svr_workers_g.resize(server_sites.size());
   int i=0;
   vector<std::thread> setup_ths;
   int core_id = 1;

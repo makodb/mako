@@ -28,23 +28,74 @@ sleep 1
 nohup bash bash/shard_raft.sh 2 0 $trd p1 0 1 > shard0-p1.log 2>&1 &
 SHARD0_PID=$!
 
-sleep 2
+# Wait longer for shard 0 to fully initialize before starting shard 1
+# This prevents port conflicts during startup
+sleep 5
 
 # Start shard 1 in background
 echo "Starting shard 1 with Raft replication..."
 nohup bash bash/shard_raft.sh 2 1 $trd localhost 0 1 > shard1-localhost.log 2>&1 &
+sleep 1
 nohup bash bash/shard_raft.sh 2 1 $trd p2 0 1 > shard1-p2.log 2>&1 &
 sleep 1
 nohup bash bash/shard_raft.sh 2 1 $trd p1 0 1 > shard1-p1.log 2>&1 &
 SHARD1_PID=$!
 
-# Wait for experiments to run
-echo "Running experiments for 60 seconds..."
-sleep 60
+# Wait for benchmarks to complete (poll for completion markers)
+echo "Waiting for benchmarks to complete..."
+log_file0="shard0-localhost.log"
+log_file1="shard1-localhost.log"
+max_wait=120  # Maximum wait time in seconds
+wait_count=0
 
-# Kill the processes
-echo "Stopping shards..."
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+while [ $wait_count -lt $max_wait ]; do
+    shard0_done=0
+    shard1_done=0
+
+    # Check if throughput output appeared for each shard
+    if [ -f "$log_file0" ] && grep -q "agg_persist_throughput" "$log_file0" 2>/dev/null; then
+        shard0_done=1
+    fi
+    if [ -f "$log_file1" ] && grep -q "agg_persist_throughput" "$log_file1" 2>/dev/null; then
+        shard1_done=1
+    fi
+
+    if [ $shard0_done -eq 1 ] && [ $shard1_done -eq 1 ]; then
+        echo "Both benchmarks completed after ${wait_count}s"
+        sleep 2  # Give a moment for final output
+        break
+    fi
+
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed, shard0=$shard0_done, shard1=$shard1_done)"
+    fi
+done
+
+if [ $wait_count -ge $max_wait ]; then
+    echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
+fi
+
+# Graceful shutdown: SIGTERM first
+echo "Stopping shards (graceful)..."
+
+# First, kill the parent bash scripts to prevent them from respawning dbtest
+pkill -TERM -f "bash/shard_raft.sh" 2>/dev/null || true
+
+# Send SIGTERM to all dbtest processes
+pkill -TERM dbtest 2>/dev/null || true
+sleep 3
+
+# Force kill any remaining processes
+echo "Force killing remaining processes..."
+pkill -9 -f "bash/shard_raft.sh" 2>/dev/null || true
+pkill -9 dbtest 2>/dev/null || true
+killall -9 dbtest 2>/dev/null || true
+
+# Wait for OS to clean up
+sleep 2
+
 wait $SHARD0_PID $SHARD1_PID 2>/dev/null
 
 echo ""
@@ -110,11 +161,12 @@ for i in 0 1; do
         if [ -f "$node_log" ]; then
             # Check for replay_batch metric (indicates follower replication)
             if grep -q "replay_batch:" "$node_log"; then
-                replay_count=$(grep "replay_batch:" "$node_log" | tail -1 | sed 's/.*replay_batch://' | awk '{print $1}')
+                # Extract replay count and remove trailing comma/whitespace
+                replay_count=$(grep "replay_batch:" "$node_log" | tail -1 | sed 's/.*replay_batch://' | awk '{print $1}' | tr -d ',')
                 echo "  ✓ Node $node - replay_batch: $replay_count"
 
                 # Warn if replay count is very low (indicates potential replication issues)
-                if [ "$node" != "localhost" ] && [ -n "$replay_count" ]; then
+                if [ "$node" != "localhost" ] && [ -n "$replay_count" ] && [ "$replay_count" -gt 0 ]; then
                     if [ "$replay_count" -lt 1000 ]; then
                         echo "    ⚠ Warning: replay_batch is low, may indicate follower replication issues"
                     fi
