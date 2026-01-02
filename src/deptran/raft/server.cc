@@ -314,7 +314,9 @@ bool JetpackRecoveryEnabled() {
 
 // @safe - Uses rusty::Box for timer ownership
 RaftServer::RaftServer(Frame * frame)
-  : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
+  : timer_(rusty::Box<Timer>::make(Timer())),  // Initialize Box in member initializer list
+    persistence_(nullptr),
+    persistence_enabled_(false)
 {
   frame_ = frame ;
 #ifdef RAFT_TEST_CORO
@@ -372,6 +374,63 @@ uint64_t RaftServer::GetElectionTimeout() {
 void RaftServer::Setup() {
   // Record startup time for grace period logic
   startup_timestamp_ = Time::now();
+
+  // ========== INITIALIZE PERSISTENCE ==========
+  const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
+  bool should_enable = (persistence_flag &&
+                       (strcmp(persistence_flag, "1") == 0 ||
+                        strcmp(persistence_flag, "true") == 0));
+
+  if (should_enable) {
+    Log_info("[RAFT-PERSISTENCE] Initializing for site %d partition %d",
+             site_id_, partition_id_);
+
+    persistence_ = std::make_unique<RaftPersistence>();
+
+    std::string base_path = "/tmp";
+    const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
+    if (custom_path && custom_path[0] != '\0') {
+      base_path = custom_path;
+    }
+
+    if (!persistence_->Init(site_id_, partition_id_, base_path)) {
+      Log_error("[RAFT-PERSISTENCE] Init failed - continuing without persistence");
+      persistence_.reset();
+    } else {
+      persistence_enabled_ = true;
+
+      // ========== LOAD PERSISTED STATE ==========
+      uint64_t loaded_term = 0;
+      uint32_t loaded_vote_for = INVALID_SITEID;
+
+      persistence_->LoadTerm(loaded_term);
+      persistence_->LoadVotedFor(loaded_vote_for);
+
+      Log_info("[RAFT-PERSISTENCE] Loaded: term=%lu votedFor=%u",
+               loaded_term, loaded_vote_for);
+
+      currentTerm = loaded_term;
+      vote_for_ = loaded_vote_for;
+
+      // Load logs
+      std::map<slotid_t, std::shared_ptr<RaftData>> loaded_logs;
+      if (persistence_->LoadAllLogs(loaded_logs)) {
+        Log_info("[RAFT-PERSISTENCE] Loaded %zu log entries", loaded_logs.size());
+
+        for (const auto& pair : loaded_logs) {
+          raft_logs_[pair.first] = pair.second;
+          if (pair.first > lastLogIndex) {
+            lastLogIndex = pair.first;
+          }
+        }
+      }
+
+      Log_info("[RAFT-PERSISTENCE] Recovery complete: term=%lu vote=%u lastLogIndex=%lu",
+               currentTerm, vote_for_, lastLogIndex);
+    }
+  } else {
+    Log_info("[RAFT-PERSISTENCE] Disabled (set MAKO_RAFT_PERSISTENCE=1 to enable)");
+  }
 
 #ifdef RAFT_TEST_CORO
   if (heartbeat_) {
@@ -728,6 +787,9 @@ void RaftServer::HeartbeatLoop() {
         if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
           Log_debug("newCommitIndex %d", newCommitIndex);
           commitIndex = newCommitIndex;
+
+          // Persist commit index (can be async, not critical for safety)
+          PersistCommitIndex(commitIndex, "HeartbeatLoop: leader commit");
         }
         // leader apply logs applicable
         if (commitIndex > executeIndex)
@@ -1020,6 +1082,10 @@ bool RaftServer::RequestVote() {
     auto prev_local_term = currentTerm;
     currentTerm++ ;
     vote_for_ = site_id_;  // Vote for ourselves when starting election
+
+    // CRITICAL: Persist term and vote BEFORE sending RequestVote RPCs
+    PersistState(currentTerm, vote_for_, "RequestVote: starting election");
+
     LogTermChange("starting election", prev_local_term, currentTerm);
     PersistTermAndVote();  // Persist term increment and self-vote
     lstoff = lastLogIndex - snapidx_ ;
@@ -1102,6 +1168,10 @@ bool RaftServer::RequestVote() {
       auto prev_local_term = currentTerm;
       currentTerm = new_term;
       vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+
+      // CRITICAL: Persist term after observing higher term from election responses
+      PersistState(currentTerm, vote_for_, "RequestVote: observed higher term");
+
       LogTermChange("observed higher term from RequestVote replies", prev_local_term, currentTerm);
     }
   	req_voting_ = false ;
@@ -1306,6 +1376,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           auto prev_term = currentTerm;
           currentTerm = leaderCurrentTerm;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+
+          // CRITICAL: Persist term before accepting any entries from new leader
+          PersistState(currentTerm, vote_for_, "OnAppendEntries: new leader term");
+
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server %d, set to be follower", loc_id_ ) ;
           setIsLeader(false) ;
@@ -1332,8 +1406,9 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         auto instance = GetRaftInstance(lastLogIndex);
         instance->log_ = cmd;
         instance->term = leaderNextLogTerm;
-        // Persist the log entry
-        PersistLogEntry(lastLogIndex, *instance);
+
+        // CRITICAL: Persist log entry before responding AppendEntries OK
+        PersistLogEntry(lastLogIndex, *instance, "OnAppendEntries: follower entry");
         // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted log entry at index %ld, term=%ld, lastLogIndex now=%ld",
         //          this->loc_id_, lastLogIndex, leaderNextLogTerm, lastLogIndex);
         // // Log the command that was accepted
@@ -1344,17 +1419,16 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 #ifdef RAFT_BATCH_OPTIMIZATION
         auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
         int cnt = 0;
-        std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>> entries_to_persist;
         for (shared_ptr<TpcCommitCommand>& c: cmds->cmds_) {
           cnt++;
           lastLogIndex = leaderPrevLogIndex + cnt;
           auto instance = GetRaftInstance(lastLogIndex);
           instance->log_ = c;
           instance->term = dynamic_pointer_cast<TpcCommitCommand>(c)->term;
-          entries_to_persist.emplace_back(lastLogIndex, instance);
+
+          // CRITICAL: Persist each log entry in batch
+          PersistLogEntry(lastLogIndex, *instance, "OnAppendEntries: batch entry");
         }
-        // Persist all entries in batch
-        PersistLogEntries(entries_to_persist);
 #endif
       }
 
@@ -1363,8 +1437,11 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       if (leaderCommitIndex > commitIndex) {
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
+
+        // Persist commit index (can be async, not critical for safety)
+        PersistCommitIndex(commitIndex, "OnAppendEntries: follower commit");
+
         need_apply = true;
-        PersistCommitIndex();  // Persist commitIndex update
       }
 
       *followerAppendOK = 1;
@@ -1511,6 +1588,9 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
 
     currentTerm = leaderTerm;
     vote_for_ = INVALID_SITEID;  // Reset vote for new term
+
+    // CRITICAL: Persist term before responding to TimeoutNow
+    PersistState(currentTerm, vote_for_, "OnTimeoutNow: leader higher term");
 
     if (is_leader_) {
       setIsLeader(false);  // Step down from leadership

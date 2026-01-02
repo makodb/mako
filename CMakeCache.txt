@@ -377,7 +377,7 @@ LLVM_CONFIG_EXECUTABLE:FILEPATH=/usr/lib/llvm-14/bin/llvm-config
 LOG_LEVEL:STRING=none
 
 //Build Mako with the Raft replication helper
-MAKO_USE_RAFT:BOOL=ON
+MAKO_USE_RAFT:BOOL=OFF
 
 //Enable MEGA benchmark
 MEGA_BENCHMARK:BOOL=OFF
@@ -408,7 +408,7 @@ PKG_CONFIG_EXECUTABLE:FILEPATH=/usr/bin/pkg-config
 PMEM_LIB:FILEPATH=/usr/lib/x86_64-linux-gnu/libpmem.so
 
 //Enable Raft lab testing coroutine
-RAFT_TEST:BOOL=OFF
+RAFT_TEST:BOOL=ON
 
 //Use RoCE if TRANSPORT is infiniband
 ROCE:BOOL=OFF

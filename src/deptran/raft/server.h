@@ -5,6 +5,7 @@
 #include "../scheduler.h"
 #include "../classic/tpc_command.h"
 #include "commo.h"
+#include "raft_persistence.h"
 #include <rusty/box.hpp>
 #include "rpc/log_storage.hpp"
 #include "rpc/snapshot_manager.hpp"
@@ -182,6 +183,10 @@ class RaftServer : public TxLogServer {
           auto prev_term = currentTerm;
           currentTerm = can_term ;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+
+          // CRITICAL: Persist term before responding to vote request
+          PersistState(currentTerm, vote_for_, "doVote: observed higher term");
+
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
           PersistTermAndVote();  // Persist term/vote change
       }
@@ -190,6 +195,10 @@ class RaftServer : public TxLogServer {
       {
           setIsLeader(false) ;
           vote_for_ = can_id ;
+
+          // CRITICAL: Persist vote BEFORE responding to candidate
+          PersistState(currentTerm, vote_for_, "doVote: granting vote");
+
 #ifdef RAFT_LEADER_ELECTION_DEBUG
           Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
 #endif
@@ -247,6 +256,38 @@ class RaftServer : public TxLogServer {
     return RandomGenerator::rand_double(0.4, 0.7) ;
   }
 
+  // @unsafe - Calls persistence_ which may be nullptr
+  void PersistState(uint64_t term, siteid_t voted_for, const char* reason = "unspecified") {
+    if (!persistence_enabled_ || !persistence_) return;
+
+    bool success = persistence_->PersistState(term, voted_for);
+    if (!success) {
+      Log_error("[RAFT-PERSISTENCE] Failed to persist state (term=%lu votedFor=%u reason=%s)",
+                term, voted_for, reason);
+    } else {
+      Log_debug("[RAFT-PERSISTENCE] Persisted: term=%lu votedFor=%u (%s)",
+                term, voted_for, reason);
+    }
+  }
+
+  // @unsafe - Calls persistence_ which may be nullptr
+  void PersistLogEntry(slotid_t slot_id, const RaftData& entry, const char* reason = "unspecified") {
+    if (!persistence_enabled_ || !persistence_) return;
+
+    bool success = persistence_->PersistLogEntry(slot_id, entry);
+    if (!success) {
+      Log_error("[RAFT-PERSISTENCE] Failed to persist log slot=%lu (%s)", slot_id, reason);
+    } else {
+      Log_debug("[RAFT-PERSISTENCE] Persisted log: slot=%lu (%s)", slot_id, reason);
+    }
+  }
+
+  // @unsafe - Calls persistence_ which may be nullptr
+  void PersistCommitIndex(uint64_t commit_index, const char* reason = "unspecified") {
+    if (!persistence_enabled_ || !persistence_) return;
+    persistence_->PersistCommitIndex(commit_index);
+  }
+
   /**
    * Get dynamic election timeout based on preferred replica role and grace period
    *
@@ -276,6 +317,10 @@ class RaftServer : public TxLogServer {
   uint64_t executeIndex = 0;
   map<slotid_t, shared_ptr<RaftData>> raft_logs_{};
 //  vector<shared_ptr<RaftData>> raft_logs_{};
+
+  // Persistence layer for crash recovery (optional - can be nullptr)
+  std::unique_ptr<RaftPersistence> persistence_;
+  bool persistence_enabled_ = false;
 
   // For looping_ control usage, once ready_for_replication_ is ready (set to 1), a specific coroutine will do replication
   std::recursive_mutex ready_for_replication_mtx_{};
@@ -320,6 +365,9 @@ class RaftServer : public TxLogServer {
     instance->term = currentTerm;
 		instance->slot_id = slot_id;
 		instance->ballot = ballot;
+
+    // CRITICAL: Persist log entry before replicating to followers
+    PersistLogEntry(lastLogIndex, *instance, "SetLocalAppend: leader log");
 
 #ifndef RAFT_TEST_CORO
     if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){

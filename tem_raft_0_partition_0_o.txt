@@ -1,0 +1,2259 @@
+======================================
+Reading Raft persistence: /tmp/raft_0_partition_0
+======================================
+
+Column families found: default state logs meta 
+
+========== STATE ==========
+Term: 41
+VotedFor: 1
+
+========== METADATA ==========
+CommitIndex: 249
+
+========== LOGS ==========
+
+Log Entry [0]:
+  Key: log:0000000000000001
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [1]:
+  Key: log:0000000000000002
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [2]:
+  Key: log:0000000000000003
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [3]:
+  Key: log:0000000000000004
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [4]:
+  Key: log:0000000000000005
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [5]:
+  Key: log:0000000000000006
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [6]:
+  Key: log:0000000000000007
+  SlotID: 18446744073709551615
+  Term: 11
+  PrevTerm: 11
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [7]:
+  Key: log:0000000000000008
+  SlotID: 0
+  Term: 17
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [8]:
+  Key: log:0000000000000009
+  SlotID: 0
+  Term: 17
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [9]:
+  Key: log:0000000000000010
+  SlotID: 18446744073709551615
+  Term: 22
+  PrevTerm: 22
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [10]:
+  Key: log:0000000000000011
+  SlotID: 18446744073709551615
+  Term: 22
+  PrevTerm: 22
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [11]:
+  Key: log:0000000000000012
+  SlotID: 18446744073709551615
+  Term: 23
+  PrevTerm: 22
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [12]:
+  Key: log:0000000000000013
+  SlotID: 18446744073709551615
+  Term: 23
+  PrevTerm: 22
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [13]:
+  Key: log:0000000000000014
+  SlotID: 18446744073709551615
+  Term: 24
+  PrevTerm: 22
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [14]:
+  Key: log:0000000000000015
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [15]:
+  Key: log:0000000000000016
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [16]:
+  Key: log:0000000000000017
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [17]:
+  Key: log:0000000000000018
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [18]:
+  Key: log:0000000000000019
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [19]:
+  Key: log:0000000000000020
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [20]:
+  Key: log:0000000000000021
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [21]:
+  Key: log:0000000000000022
+  SlotID: 0
+  Term: 24
+  PrevTerm: 0
+  Ballot: 0
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [22]:
+  Key: log:0000000000000023
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [23]:
+  Key: log:0000000000000024
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [24]:
+  Key: log:0000000000000025
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [25]:
+  Key: log:0000000000000026
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [26]:
+  Key: log:0000000000000027
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [27]:
+  Key: log:0000000000000028
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [28]:
+  Key: log:0000000000000029
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [29]:
+  Key: log:0000000000000030
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [30]:
+  Key: log:0000000000000031
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [31]:
+  Key: log:0000000000000032
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [32]:
+  Key: log:0000000000000033
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [33]:
+  Key: log:0000000000000034
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [34]:
+  Key: log:0000000000000035
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [35]:
+  Key: log:0000000000000036
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [36]:
+  Key: log:0000000000000037
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [37]:
+  Key: log:0000000000000038
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [38]:
+  Key: log:0000000000000039
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [39]:
+  Key: log:0000000000000040
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [40]:
+  Key: log:0000000000000041
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [41]:
+  Key: log:0000000000000042
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [42]:
+  Key: log:0000000000000043
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [43]:
+  Key: log:0000000000000044
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [44]:
+  Key: log:0000000000000045
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [45]:
+  Key: log:0000000000000046
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [46]:
+  Key: log:0000000000000047
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [47]:
+  Key: log:0000000000000048
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [48]:
+  Key: log:0000000000000049
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [49]:
+  Key: log:0000000000000050
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [50]:
+  Key: log:0000000000000051
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [51]:
+  Key: log:0000000000000052
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [52]:
+  Key: log:0000000000000053
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [53]:
+  Key: log:0000000000000054
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [54]:
+  Key: log:0000000000000055
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [55]:
+  Key: log:0000000000000056
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [56]:
+  Key: log:0000000000000057
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [57]:
+  Key: log:0000000000000058
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [58]:
+  Key: log:0000000000000059
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [59]:
+  Key: log:0000000000000060
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [60]:
+  Key: log:0000000000000061
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [61]:
+  Key: log:0000000000000062
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [62]:
+  Key: log:0000000000000063
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [63]:
+  Key: log:0000000000000064
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [64]:
+  Key: log:0000000000000065
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [65]:
+  Key: log:0000000000000066
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [66]:
+  Key: log:0000000000000067
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [67]:
+  Key: log:0000000000000068
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [68]:
+  Key: log:0000000000000069
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [69]:
+  Key: log:0000000000000070
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [70]:
+  Key: log:0000000000000071
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [71]:
+  Key: log:0000000000000072
+  SlotID: 18446744073709551615
+  Term: 29
+  PrevTerm: 29
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [72]:
+  Key: log:0000000000000073
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [73]:
+  Key: log:0000000000000074
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [74]:
+  Key: log:0000000000000075
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [75]:
+  Key: log:0000000000000076
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [76]:
+  Key: log:0000000000000077
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [77]:
+  Key: log:0000000000000078
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [78]:
+  Key: log:0000000000000079
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [79]:
+  Key: log:0000000000000080
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [80]:
+  Key: log:0000000000000081
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [81]:
+  Key: log:0000000000000082
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [82]:
+  Key: log:0000000000000083
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [83]:
+  Key: log:0000000000000084
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [84]:
+  Key: log:0000000000000085
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [85]:
+  Key: log:0000000000000086
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [86]:
+  Key: log:0000000000000087
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [87]:
+  Key: log:0000000000000088
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [88]:
+  Key: log:0000000000000089
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [89]:
+  Key: log:0000000000000090
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [90]:
+  Key: log:0000000000000091
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [91]:
+  Key: log:0000000000000092
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [92]:
+  Key: log:0000000000000093
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [93]:
+  Key: log:0000000000000094
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [94]:
+  Key: log:0000000000000095
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [95]:
+  Key: log:0000000000000096
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [96]:
+  Key: log:0000000000000097
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [97]:
+  Key: log:0000000000000098
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [98]:
+  Key: log:0000000000000099
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [99]:
+  Key: log:0000000000000100
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [100]:
+  Key: log:0000000000000101
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [101]:
+  Key: log:0000000000000102
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [102]:
+  Key: log:0000000000000103
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [103]:
+  Key: log:0000000000000104
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [104]:
+  Key: log:0000000000000105
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [105]:
+  Key: log:0000000000000106
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [106]:
+  Key: log:0000000000000107
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [107]:
+  Key: log:0000000000000108
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [108]:
+  Key: log:0000000000000109
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [109]:
+  Key: log:0000000000000110
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [110]:
+  Key: log:0000000000000111
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [111]:
+  Key: log:0000000000000112
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [112]:
+  Key: log:0000000000000113
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [113]:
+  Key: log:0000000000000114
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [114]:
+  Key: log:0000000000000115
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [115]:
+  Key: log:0000000000000116
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [116]:
+  Key: log:0000000000000117
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [117]:
+  Key: log:0000000000000118
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [118]:
+  Key: log:0000000000000119
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [119]:
+  Key: log:0000000000000120
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [120]:
+  Key: log:0000000000000121
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [121]:
+  Key: log:0000000000000122
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [122]:
+  Key: log:0000000000000123
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [123]:
+  Key: log:0000000000000124
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [124]:
+  Key: log:0000000000000125
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [125]:
+  Key: log:0000000000000126
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [126]:
+  Key: log:0000000000000127
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [127]:
+  Key: log:0000000000000128
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [128]:
+  Key: log:0000000000000129
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [129]:
+  Key: log:0000000000000130
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [130]:
+  Key: log:0000000000000131
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [131]:
+  Key: log:0000000000000132
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [132]:
+  Key: log:0000000000000133
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [133]:
+  Key: log:0000000000000134
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [134]:
+  Key: log:0000000000000135
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [135]:
+  Key: log:0000000000000136
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [136]:
+  Key: log:0000000000000137
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [137]:
+  Key: log:0000000000000138
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [138]:
+  Key: log:0000000000000139
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [139]:
+  Key: log:0000000000000140
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [140]:
+  Key: log:0000000000000141
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [141]:
+  Key: log:0000000000000142
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [142]:
+  Key: log:0000000000000143
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [143]:
+  Key: log:0000000000000144
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [144]:
+  Key: log:0000000000000145
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [145]:
+  Key: log:0000000000000146
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [146]:
+  Key: log:0000000000000147
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [147]:
+  Key: log:0000000000000148
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [148]:
+  Key: log:0000000000000149
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [149]:
+  Key: log:0000000000000150
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [150]:
+  Key: log:0000000000000151
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [151]:
+  Key: log:0000000000000152
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [152]:
+  Key: log:0000000000000153
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [153]:
+  Key: log:0000000000000154
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [154]:
+  Key: log:0000000000000155
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [155]:
+  Key: log:0000000000000156
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [156]:
+  Key: log:0000000000000157
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [157]:
+  Key: log:0000000000000158
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [158]:
+  Key: log:0000000000000159
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [159]:
+  Key: log:0000000000000160
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [160]:
+  Key: log:0000000000000161
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [161]:
+  Key: log:0000000000000162
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [162]:
+  Key: log:0000000000000163
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [163]:
+  Key: log:0000000000000164
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [164]:
+  Key: log:0000000000000165
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [165]:
+  Key: log:0000000000000166
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [166]:
+  Key: log:0000000000000167
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [167]:
+  Key: log:0000000000000168
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [168]:
+  Key: log:0000000000000169
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [169]:
+  Key: log:0000000000000170
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [170]:
+  Key: log:0000000000000171
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [171]:
+  Key: log:0000000000000172
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [172]:
+  Key: log:0000000000000173
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [173]:
+  Key: log:0000000000000174
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [174]:
+  Key: log:0000000000000175
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [175]:
+  Key: log:0000000000000176
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [176]:
+  Key: log:0000000000000177
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [177]:
+  Key: log:0000000000000178
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [178]:
+  Key: log:0000000000000179
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [179]:
+  Key: log:0000000000000180
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [180]:
+  Key: log:0000000000000181
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [181]:
+  Key: log:0000000000000182
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [182]:
+  Key: log:0000000000000183
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [183]:
+  Key: log:0000000000000184
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [184]:
+  Key: log:0000000000000185
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [185]:
+  Key: log:0000000000000186
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [186]:
+  Key: log:0000000000000187
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [187]:
+  Key: log:0000000000000188
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [188]:
+  Key: log:0000000000000189
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [189]:
+  Key: log:0000000000000190
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [190]:
+  Key: log:0000000000000191
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [191]:
+  Key: log:0000000000000192
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [192]:
+  Key: log:0000000000000193
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [193]:
+  Key: log:0000000000000194
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [194]:
+  Key: log:0000000000000195
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [195]:
+  Key: log:0000000000000196
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [196]:
+  Key: log:0000000000000197
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [197]:
+  Key: log:0000000000000198
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [198]:
+  Key: log:0000000000000199
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [199]:
+  Key: log:0000000000000200
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [200]:
+  Key: log:0000000000000201
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [201]:
+  Key: log:0000000000000202
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [202]:
+  Key: log:0000000000000203
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [203]:
+  Key: log:0000000000000204
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [204]:
+  Key: log:0000000000000205
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [205]:
+  Key: log:0000000000000206
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [206]:
+  Key: log:0000000000000207
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [207]:
+  Key: log:0000000000000208
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [208]:
+  Key: log:0000000000000209
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [209]:
+  Key: log:0000000000000210
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [210]:
+  Key: log:0000000000000211
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [211]:
+  Key: log:0000000000000212
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [212]:
+  Key: log:0000000000000213
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [213]:
+  Key: log:0000000000000214
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [214]:
+  Key: log:0000000000000215
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [215]:
+  Key: log:0000000000000216
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [216]:
+  Key: log:0000000000000217
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [217]:
+  Key: log:0000000000000218
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [218]:
+  Key: log:0000000000000219
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [219]:
+  Key: log:0000000000000220
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [220]:
+  Key: log:0000000000000221
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [221]:
+  Key: log:0000000000000222
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [222]:
+  Key: log:0000000000000223
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [223]:
+  Key: log:0000000000000224
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [224]:
+  Key: log:0000000000000225
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [225]:
+  Key: log:0000000000000226
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [226]:
+  Key: log:0000000000000227
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [227]:
+  Key: log:0000000000000228
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [228]:
+  Key: log:0000000000000229
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [229]:
+  Key: log:0000000000000230
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [230]:
+  Key: log:0000000000000231
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [231]:
+  Key: log:0000000000000232
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [232]:
+  Key: log:0000000000000233
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [233]:
+  Key: log:0000000000000234
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [234]:
+  Key: log:0000000000000235
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [235]:
+  Key: log:0000000000000236
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [236]:
+  Key: log:0000000000000237
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [237]:
+  Key: log:0000000000000238
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [238]:
+  Key: log:0000000000000239
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [239]:
+  Key: log:0000000000000240
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [240]:
+  Key: log:0000000000000241
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [241]:
+  Key: log:0000000000000242
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [242]:
+  Key: log:0000000000000243
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [243]:
+  Key: log:0000000000000244
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [244]:
+  Key: log:0000000000000245
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [245]:
+  Key: log:0000000000000246
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [246]:
+  Key: log:0000000000000247
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [247]:
+  Key: log:0000000000000248
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Log Entry [248]:
+  Key: log:0000000000000249
+  SlotID: 18446744073709551615
+  Term: 37
+  PrevTerm: 37
+  Ballot: 1
+  MaxBallotSeen: 0
+  MaxBallotAccepted: 0
+
+Total log entries: 249
+
+======================================
