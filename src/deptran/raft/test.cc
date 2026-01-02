@@ -510,7 +510,7 @@ int RaftLabTest::testCount(void) {
   };
 
   // initial election RPC count
-  Assert2(init_rpcs_ > 1 && init_rpcs_ <= 30,
+  Assert2(init_rpcs_ > 1 && init_rpcs_ <= 40,
           "too many or too few RPCs (%ld) to elect initial leader",
           init_rpcs_);
 

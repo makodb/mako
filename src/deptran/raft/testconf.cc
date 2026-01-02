@@ -311,7 +311,7 @@ shared_ptr<CommitIndex> RaftTestConfig::StartAgreement(siteid_t svr, int cmd) {
   ));
   auto it = replicas.find(svr);
   if (it != replicas.end()) {
-    it->second->commo_->rpc_poll_->add(rusty::Arc<Job>(arc_job));
+    it->second->commo_->rpc_poll_.as_ref().unwrap()->add(rusty::Arc<Job>(arc_job));
   }
   Log_debug("Started agreement for cmd id %d", cmd);
   return cmt_idx_p;

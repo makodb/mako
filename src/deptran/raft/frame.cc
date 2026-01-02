@@ -32,7 +32,7 @@ RaftFrame::~RaftFrame() {
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-std::shared_ptr<Coroutine> RaftFrame::raft_test_coro_ = nullptr;
+rusty::Option<rusty::Rc<Coroutine>> RaftFrame::raft_test_coro_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
@@ -141,10 +141,10 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   // Only site 0 creates and manages the test coroutine
   if (site_info_->locale_id == 0) {
     Log_info("CreateCommo: About to create test coroutine");
-    verify(raft_test_coro_ == nullptr);
+    verify(raft_test_coro_.is_none());
     Log_info("Creating Raft test coroutine");
-    
-    raft_test_coro_ = Coroutine::create_run([this] () {
+
+    raft_test_coro_ = rusty::Some(Coroutine::create_run([this] () {
       Log_info("Test coroutine: Starting execution");
       Log_info("Test coroutine: Thread ID = %lu", std::this_thread::get_id());
       {
@@ -170,8 +170,8 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
       // Turn off Reactor loop
       Reactor::get_reactor()->looping_ = false;
       return;
-    });
-    Log_info("raft_test_coro_ id=%d", raft_test_coro_->id);
+    }));
+    Log_info("raft_test_coro_ id=%d", raft_test_coro_.as_ref().unwrap()->id);
     
     // wait until n_commo_created_ == 5, then resume the coroutine
     raft_test_mutex_.lock();
@@ -181,7 +181,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
       raft_test_mutex_.lock();
     }
     raft_test_mutex_.unlock();
-    Reactor::get_reactor()->ContinueCoro(raft_test_coro_);
+    Reactor::get_reactor()->continue_coro(raft_test_coro_.as_ref().unwrap().clone());
   }
   #endif
 
