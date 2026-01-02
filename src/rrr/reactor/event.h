@@ -65,7 +65,7 @@ class Event : public std::enable_shared_from_this<Event> {
 #ifdef EVENT_TIMEOUT_CHECK
   bool __debug_timeout_{false};
 #endif
-  EventStatus status_{INIT};
+  rusty::Cell<EventStatus> status_{INIT};
   void* _dbg_p_scheduler_{nullptr};  // Jetpack: for debugging
   uint64_t type_{0};
   function<bool(int)> test_{};
@@ -363,7 +363,7 @@ class AndEvent : public Event {
     // Include null check for safety
     return std::all_of(events_.begin(), events_.end(),
                        [](const std::shared_ptr<Event>& e) {
-                         return e && (e->IsReady() || e->status_ == Event::DONE);
+                         return e && (e->IsReady() || e->status_.get() == Event::DONE);
                        });
   }
 

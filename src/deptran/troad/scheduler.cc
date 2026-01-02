@@ -193,7 +193,7 @@ int SchedulerTroad::OnCommit(const txnid_t cmd_id,
       return sp_tx->local_validated_->is_set_;
     };
     sp_e->Wait(120*1000*1000);
-    if (sp_e->status_ == Event::TIMEOUT) {
+    if (sp_e->status_.get() == Event::TIMEOUT) {
       verify(!weird);
       verify(0);
     }

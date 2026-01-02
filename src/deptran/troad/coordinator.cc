@@ -126,7 +126,7 @@ void CoordinatorTroad::Commit() {
   for (auto i = 0 ; i < events.size(); i++) {
     auto &ev = events[i];
     ev->Wait(100 * 1000 * 1000);
-    verify(ev->status_ != Event::TIMEOUT);
+    verify(ev->status_.get() != Event::TIMEOUT);
     if (ev->No()) {
       verify(0);
     } else if (ev->Yes()) {
@@ -158,7 +158,7 @@ void CoordinatorTroad::NotifyValidation() {
   auto& partitions = GetTxPartitions(*cmd_, rank_);
   auto ev1 = commo()->CollectValidation(cmd_->id_, partitions);
   ev1->Wait(100*1000*1000);
-  verify(ev1->status_ != Event::TIMEOUT);
+  verify(ev1->status_.get() != Event::TIMEOUT);
   int res;
   if (ev1->Yes()) {
     res = SUCCESS;

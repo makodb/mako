@@ -86,21 +86,21 @@ TEST(AndEventTest, AndWithTimeout) {
         // Wait with 50ms timeout
         and_event->Wait(50000);
         completed = true;
-        if (and_event->status_ == Event::TIMEOUT) {
+        if (and_event->status_.get() == Event::TIMEOUT) {
             timed_out = true;
         }
     });
-    
+
     // Set only one event
     event1->Set(1);
-    
+
     // Wait for timeout
     std::this_thread::sleep_for(milliseconds(100));
     reactor->Loop(false);
-    
+
     EXPECT_TRUE(completed);
     // Should have timed out since event2 was never set
-    EXPECT_TRUE(timed_out || and_event->status_ == Event::TIMEOUT);
+    EXPECT_TRUE(timed_out || and_event->status_.get() == Event::TIMEOUT);
 }
 
 TEST(AndEventTest, VariadicConstructor) {

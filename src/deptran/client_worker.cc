@@ -319,7 +319,7 @@ void ClientWorker::Work() {
 #endif
           Wait_recordplace(ev, Wait(600*1000*1000));
           this->outbound--;
-          verify(ev->status_ != Event::TIMEOUT);
+          verify(ev->status_.get() != Event::TIMEOUT);
         } else {
           auto sp_event = Reactor::CreateSpEvent<NeverEvent>();
           Wait_recordplace(sp_event, Wait(pow(10, 6)));
@@ -331,7 +331,7 @@ void ClientWorker::Work() {
           verify(coo->coo_id_ > 0);
           verify(coo->_inuse_);
           verify(coo->coo_id_ > 0);
-          verify(ev->status_ != Event::TIMEOUT);
+          verify(ev->status_.get() != Event::TIMEOUT);
           if (coo->committed_) {
             success++;
           }
@@ -503,7 +503,7 @@ void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
       }
 
       coo->sp_ev_commit_->Set(1);
-      auto& status = coo->sp_ev_done_->status_;
+      auto status = coo->sp_ev_done_->status_.get();
       verify(status == Event::WAIT || status == Event::INIT);
       coo->sp_ev_done_->Set(1);
       delete req;

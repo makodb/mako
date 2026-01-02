@@ -227,7 +227,7 @@ TEST(CoroutineTest, timeout) {
     auto t2 = Time::now(true);
     ASSERT_GT(t2, t1 + timeout);
     Log_debug("end timeout, end wait");
-    Reactor::GetReactor()->looping_ = false;
+    Reactor::GetReactor()->looping_.set(false);
   });
   Reactor::GetReactor()->Loop(true);
 }

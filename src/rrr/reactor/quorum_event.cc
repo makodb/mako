@@ -33,7 +33,7 @@ void QuorumEvent::Finalize(
      avoid accesing the quorum event object or its members after this line */
 
     // didn't receive all RPC replies
-    if (final_ev->status_ == Event::TIMEOUT) {
+    if (final_ev->status_.get() == Event::TIMEOUT) {
       // Log_info("finalized timeout");
       ret = finalize_func(dangling_rpc);
     }
@@ -55,7 +55,7 @@ void QuorumEvent::VoteYes() {
   Test();
   vec_timestamp_.push_back(Time::now(true) - begin_timestamp_);
 
-  if (finalize_event_->status_ != Event::TIMEOUT)
+  if (finalize_event_->status_.get() != Event::TIMEOUT)
     finalize_event_->Set(n_voted_yes_ + n_voted_no_);
 }
 
@@ -63,7 +63,7 @@ void QuorumEvent::VoteNo() {
   n_voted_no_++;
   Test();
 
-  if (finalize_event_->status_ != Event::TIMEOUT)
+  if (finalize_event_->status_.get() != Event::TIMEOUT)
     finalize_event_->Set(n_voted_yes_ + n_voted_no_);
 }
 

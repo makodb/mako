@@ -908,7 +908,7 @@ int RccServer::OnInquireValidation(txid_t tx_id, int rank) {
   int ret = 0;
   verify(dtxn->subtx(rank).__debug_commit_received_);
   dtxn->subtx(rank).local_validated_->Wait(60*1000*1000);
-  if (dtxn->subtx(rank).local_validated_->status_ == Event::TIMEOUT) {
+  if (dtxn->subtx(rank).local_validated_->status_.get() == Event::TIMEOUT) {
     verify(dtxn->subtx(rank).status()>=TXN_CMT);
     verify(0);
     ret = -1; //TODO come back and remove this after the correctness checker.
@@ -1183,7 +1183,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
       return subtx.local_validated_->is_set_;
     };
     sp_e->Wait(60 * 1000 * 1000);
-    if (sp_e->status_ == Event::TIMEOUT) {
+    if (sp_e->status_.get() == Event::TIMEOUT) {
       verify(!weird);
       verify(0);
     }

@@ -616,7 +616,7 @@ void RaftServer::HeartbeatLoop() {
                                               &ret_term,
                                               &ret_last_log_index);
         r->Wait(500000); // bound wait to avoid leader stall on slow/lost followers
-        if (r->status_ == Event::TIMEOUT) {
+        if (r->status_.get() == Event::TIMEOUT) {
           continue;
         }
 

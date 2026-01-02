@@ -15,6 +15,8 @@
 #include <rusty/arc.hpp>
 #include <rusty/mutex.hpp>
 #include <rusty/sync/mpsc.hpp>
+#include <rusty/vecdeque.hpp>
+#include <rusty/btreeset.hpp>
 #include "base/misc.hpp"
 #include "event.h"
 #include "quorum_event.h"
@@ -92,8 +94,38 @@ using std::make_unique;
 using std::make_shared;
 
 class Coroutine;
-// TODO for now we depend on the rpc services, fix in the future.
-// @unsafe - Thread-safe reactor with thread-local storage and mutable fields for interior mutability
+
+/**
+ * @class Reactor
+ * @brief Thread-local event loop and coroutine scheduler
+ *
+ * MEMORY SAFETY MODEL:
+ *
+ * 1. THREAD AFFINITY
+ *    - Each Reactor is pinned to its creating thread via thread_id_
+ *    - Loop() verifies thread ownership at entry
+ *    - Thread-local storage (sp_reactor_th_) prevents cross-thread access
+ *
+ * 2. INTERIOR MUTABILITY (RustyCpp Patterns)
+ *    - Cell<T>: Used for primitive counters and flags (looping_, thread_id_, etc.)
+ *    - RefCell<T>: Used for complex types (sp_running_coro_th_)
+ *    - mutable containers: STL containers with const method access
+ *
+ * 3. SMART POINTER USAGE
+ *    - Rc<Coroutine>: Single-threaded reference counting for coroutines
+ *    - shared_ptr<Event>: For polymorphic event types
+ *    - Weak<Coroutine>: Events hold weak refs to avoid cycles
+ *
+ * 4. SYNCHRONIZATION
+ *    - ready_events_mutex_: Protects ready_events_ for multi-threaded Raft
+ *    - disk_job_: SpinLock for disk event queue
+ *    - Most operations are single-threaded (no locks needed)
+ *
+ * SAFETY INVARIANTS:
+ * - One active coroutine per reactor at any time
+ * - Events never outlive their coroutines (weak refs)
+ * - Loop() only called from owning thread
+ */
 class Reactor {
  public:
   // Default constructor - all fields have default constructors
@@ -126,38 +158,40 @@ class Reactor {
    * in case it is freed by the caller after a yield.
    */
   // Events managed with std::shared_ptr (polymorphism support)
-  // Interior mutability for const methods
-  mutable std::list<std::shared_ptr<Event>> all_events_{};
-  mutable std::list<std::shared_ptr<Event>> waiting_events_{};
+  // Using rusty::VecDeque for @safe extract_if operations
+  mutable rusty::VecDeque<std::shared_ptr<Event>> all_events_{};
+  mutable rusty::VecDeque<std::shared_ptr<Event>> waiting_events_{};
   mutable std::vector<std::shared_ptr<Event>> ready_events_{};  // Thread-safe ready events for Raft
-  mutable std::list<std::shared_ptr<Event>> timeout_events_{};
-  mutable std::list<std::shared_ptr<Event>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent - polled separately
+  mutable rusty::VecDeque<std::shared_ptr<Event>> timeout_events_{};
+  mutable rusty::VecDeque<std::shared_ptr<Event>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent - polled separately
   // Disk events for async I/O
   mutable std::vector<std::shared_ptr<Event>> disk_events_{};
-  mutable std::list<std::shared_ptr<Event>> ready_disk_events_{};
+  mutable rusty::VecDeque<std::shared_ptr<Event>> ready_disk_events_{};
   mutable std::vector<std::shared_ptr<Event>> network_events_{};
-  mutable std::list<std::shared_ptr<Event>> ready_network_events_{};
+  mutable rusty::VecDeque<std::shared_ptr<Event>> ready_network_events_{};
   // Coroutines managed with single-threaded Rc
-  mutable std::set<rusty::Rc<Coroutine>> coros_{};
+  // Using rusty::BTreeSet for @safe contains() checks
+  mutable rusty::BTreeSet<rusty::Rc<Coroutine>> coros_{};
   mutable std::vector<rusty::Rc<Coroutine>> available_coros_{};
   mutable std::unordered_map<uint64_t, std::function<void(Event&)>> processors_{};
   mutable std::unordered_map<std::string, FILE*> opened_files_{};
   static thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> clients_;
   static thread_local std::unordered_set<std::string> dangling_ips_;
-  mutable bool looping_{false};
-  mutable bool slow_{false};
-  mutable long disk_times[50];
-  mutable int disk_count{0};
-  mutable int disk_index{0};
-  mutable int slow_count{0};
-  mutable int trying_count{0};
-  std::thread::id thread_id_{};
-  // Jetpack coroutine counters - mutable for access through const Rc<Reactor>
-  mutable int64_t n_created_coroutines_{0};
-  mutable int64_t n_busy_coroutines_{0};
-  mutable int64_t n_active_coroutines_{0};
-  mutable int64_t n_active_coroutines_2_{0};
-  mutable int64_t n_idle_coroutines_{0};
+  // Interior mutability using Cell<T> for safe const method access
+  rusty::Cell<bool> looping_{false};
+  rusty::Cell<bool> slow_{false};
+  mutable long disk_times[50];  // Array - keep mutable for now
+  rusty::Cell<int> disk_count_{0};
+  rusty::Cell<int> disk_index_{0};
+  rusty::Cell<int> slow_count_{0};
+  rusty::Cell<int> trying_count_{0};
+  rusty::Cell<std::thread::id> thread_id_{};
+  // Jetpack coroutine counters - using Cell for interior mutability
+  rusty::Cell<int64_t> n_created_coroutines_{0};
+  rusty::Cell<int64_t> n_busy_coroutines_{0};
+  rusty::Cell<int64_t> n_active_coroutines_{0};
+  rusty::Cell<int64_t> n_active_coroutines_2_{0};
+  rusty::Cell<int64_t> n_idle_coroutines_{0};
   static SpinLock disk_job_;
 	static SpinLock trying_job_;
 #ifdef REUSE_CORO
@@ -167,7 +201,7 @@ class Reactor {
 #endif
 
   // Checks and processes timeout events with std::shared_ptr
-  void CheckTimeout(std::vector<std::shared_ptr<Event>>&) const;
+  void CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
   /**
    * @param ev. is usually allocated on coroutine stack. memory managed by user.
    */
@@ -213,8 +247,8 @@ class Reactor {
   void ReadyEventsThreadSafePushBack(std::shared_ptr<Event> ev) const;
 
   ~Reactor() {
-    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.size()=%zu, coros_.size()=%zu",
-              all_events_.size(), coros_.size());
+    Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
+              all_events_.len(), coros_.len());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }

@@ -19,8 +19,8 @@ uint64_t Event::GetCoroId(){
 }
 
 bool Event::IsSlow() {
-	bool result = Reactor::GetReactor()->slow_;
-	Reactor::GetReactor()->slow_ = false;
+	bool result = Reactor::GetReactor()->slow_.get();
+	Reactor::GetReactor()->slow_.set(false);
 	return result;
 }
 
@@ -53,11 +53,11 @@ bool Event::IsSlow() {
 void Event::Wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
-  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_ == std::this_thread::get_id());
-  if (status_ == DONE) return; // TODO: yidawu add for the second use the event.
-  // verify(status_ == INIT);
+  verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == std::this_thread::get_id());
+  if (status_.get() == DONE) return; // TODO: yidawu add for the second use the event.
+  // verify(status_.get() == INIT);
   if (IsReady()) {
-    status_ = DONE; // no need to wait.
+    status_.set(DONE); // no need to wait.
     return;
   } else {
 //    if (status_ == WAIT) {
@@ -118,12 +118,12 @@ void Event::Wait(uint64_t timeout) {
 //      events.insert(it, shared_from_this());
 
     wp_coro_ = sp_coro;
-    status_ = WAIT;
+    status_.set(WAIT);
     auto coro_status = sp_coro->status_.get();
     verify(coro_status != Coroutine::FINISHED && coro_status != Coroutine::RECYCLED);
     sp_coro->Yield();
 #ifdef EVENT_TIMEOUT_CHECK
-    if (__debug_timeout_ && status_ == TIMEOUT) {
+    if (__debug_timeout_ && status_.get() == TIMEOUT) {
       Log_info("timeout");
       verify(0);
     }
@@ -141,40 +141,40 @@ void Event::RecordPlace(const char* file, int line) {
 bool Event::Test() {
   verify(__debug_creator); // if this fails, the event is not created by reactor.
   if (IsReady()) {
-    if (status_ == INIT) {
+    if (status_.get() == INIT) {
       // wait has not been called, do nothing until wait happens.
-      status_ = DONE;
-    } else if (status_ == WAIT) {
+      status_.set(DONE);
+    } else if (status_.get() == WAIT) {
       auto option_coro = wp_coro_.upgrade();
       verify(option_coro.is_some());
-      verify(status_ != DEBUG);
-      status_ = READY;
+      verify(status_.get() != DEBUG);
+      status_.set(READY);
       // TESTING: Push to ready_events_ since we disabled waiting_events_ scanning
       auto reactor = Reactor::GetReactor();
-      if (std::this_thread::get_id() == reactor->thread_id_) {
+      if (std::this_thread::get_id() == reactor->thread_id_.get()) {
         // Same thread - direct push
         reactor->ready_events_.push_back(shared_from_this());
       } else {
         // Different thread - thread-safe push
         reactor->ReadyEventsThreadSafePushBack(shared_from_this());
       }
-    } else if (status_ == READY) {
+    } else if (status_.get() == READY) {
       // This could happen for a quorum event.
       Log_debug("event status ready, triggered?");
-    } else if (status_ == DONE) {
+    } else if (status_.get() == DONE) {
       // do nothing
-    } else if (status_ == TIMEOUT) {
+    } else if (status_.get() == TIMEOUT) {
       // do nothing
       // [Jetpack] recklessly comment this: failure recovery may enconter this, reason unknow, maybe some command wait too much time?
     } else {
-      verify(0); 
+      verify(0);
     }
     return true;
   }
   else {
     // Reset DONE status to INIT for event reuse (from Jetpack)
-    if (status_ == DONE) {
-      status_ = INIT;
+    if (status_.get() == DONE) {
+      status_.set(INIT);
     }
   }
   return false;
@@ -242,13 +242,13 @@ int DiskEvent::Write_Spec() {
 
 
 bool IntEvent::TestTrigger() {
-  verify(status_ <= WAIT);
+  verify(status_.get() <= WAIT);
   if (value_ == target_) {
-    if (status_ == INIT) {
+    if (status_.get() == INIT) {
       // do nothing until wait happens.
-      status_ = DONE;
-    } else if (status_ == WAIT) {
-      status_ = READY;
+      status_.set(DONE);
+    } else if (status_.get() == WAIT) {
+      status_.set(READY);
     } else {
       verify(0);
     }
@@ -261,7 +261,7 @@ int SharedIntEvent::Set(const int& v) {
   auto ret = value_;
   value_ = v;
   for (auto& sp_ev : events_) {
-    if (sp_ev->status_ <= Event::WAIT) {
+    if (sp_ev->status_.get() <= Event::WAIT) {
       if (sp_ev->target_ <= v) {
         sp_ev->Set(v);
       }
@@ -279,9 +279,9 @@ bool SharedIntEvent::WaitUntilGreaterOrEqualThan(int x, int timeout) {
   sp_ev->target_ = x;
   auto it = events_.insert(events_.end(), sp_ev);
   sp_ev->Wait(timeout);
-  // verify(sp_ev->status_ != Event::TIMEOUT);  // why can't it be timeout?
+  // verify(sp_ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
-  bool if_timeout = (sp_ev->status_ == Event::TIMEOUT);
+  bool if_timeout = (sp_ev->status_.get() == Event::TIMEOUT);
   events_.erase(it);
   return if_timeout;
 }
@@ -310,16 +310,16 @@ ThreadSafeIntEvent::ThreadSafeIntEvent(int tar) :target_(tar) {
 }
 
 bool ThreadSafeIntEvent::TestTrigger() {
-  if (status_ > WAIT) {
+  if (status_.get() > WAIT) {
     Log_debug("Event already triggered!");
     return false;
   }
   if (value_ >= target_) {
-    if (status_ == INIT) {
+    if (status_.get() == INIT) {
       // do nothing until wait happens.
-      status_ = DONE;
-    } else if (status_ == WAIT) {
-      status_ = READY;
+      status_.set(DONE);
+    } else if (status_.get() == WAIT) {
+      status_.set(READY);
     } else {
       verify(0);
     }
@@ -332,27 +332,27 @@ bool Event::ThreadSafeTest() {
   std::lock_guard<std::mutex> lock(status_mtx_);
   verify(__debug_creator); // if this fails, the event is not created by reactor.
   if (IsReady()) {
-    if (status_ == INIT) {
+    if (status_.get() == INIT) {
       // wait has not been called, do nothing until wait happens.
-    } else if (status_ == WAIT) {
+    } else if (status_.get() == WAIT) {
       auto option_coro = wp_coro_.upgrade();
       verify(option_coro.is_some());
-      verify(status_ != DEBUG);
+      verify(status_.get() != DEBUG);
 //      auto sched = Reactor::GetReactor();
 //      verify(sched.get() == _dbg_p_scheduler_);
 //      verify(sched->__debug_set_all_coro_.count(sp_coro.get()) > 0);
 //      verify(sched->coros_.count(sp_coro) > 0);
-      status_ = READY;
+      status_.set(READY);
 
       // Thread-safe push to ready queue for cross-thread event notification
       verify(current_reactor_);
       current_reactor_->ReadyEventsThreadSafePushBack(shared_from_this());
-    } else if (status_ == READY) {
+    } else if (status_.get() == READY) {
       // This could happen for a quorum event.
       Log_info("event status ready, triggered?");
-    } else if (status_ == DONE) {
+    } else if (status_.get() == DONE) {
       // do nothing
-    } else if (status_ == TIMEOUT) {
+    } else if (status_.get() == TIMEOUT) {
       // Jetpack behavior: ignore late triggers after timeout
     } else {
       verify(0);
@@ -360,8 +360,8 @@ bool Event::ThreadSafeTest() {
     return true;
   }
   else{
-    if(status_ == DONE){
-      status_ = INIT;
+    if(status_.get() == DONE){
+      status_.set(INIT);
     }
   }
   return false;

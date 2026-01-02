@@ -43,7 +43,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
             // Event should already be set, so this should complete immediately
             sp_event->Wait(100000);
             completed = true;
-            final_status = sp_event->status_;
+            final_status = static_cast<int>(sp_event->status_.get());
         });
         
         // Process - event is already ready, so waiter should complete
@@ -63,7 +63,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
             // Wait with very short timeout
             sp_event->Wait(1000); // 1ms
             completed = true;
-            final_status = sp_event->status_;
+            final_status = static_cast<int>(sp_event->status_.get());
         });
         
         // Sleep longer than timeout
@@ -132,9 +132,9 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
             // Wait with varying timeouts
             sp_event->Wait((10 + i * 5) * 1000);
             
-            if (sp_event->status_ == Event::TIMEOUT) {
+            if (sp_event->status_.get() == Event::TIMEOUT) {
                 timeout_count++;
-            } else if (sp_event->status_ == Event::DONE) {
+            } else if (sp_event->status_.get() == Event::DONE) {
                 ready_count++;
             }
         });
@@ -179,7 +179,7 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
     
     // Verify all events are in TIMEOUT state
     for (auto& event : events) {
-        EXPECT_EQ(event->status_, Event::TIMEOUT);
+        EXPECT_EQ(event->status_.get(), Event::TIMEOUT);
     }
 }
 
@@ -204,9 +204,9 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
             // Very short timeout
             sp_event->Wait(1000); // 1ms
             
-            if (sp_event->status_ == Event::TIMEOUT) {
+            if (sp_event->status_.get() == Event::TIMEOUT) {
                 timeout_count++;
-            } else if (sp_event->status_ == Event::DONE) {
+            } else if (sp_event->status_.get() == Event::DONE) {
                 ready_count++;
             }
         });
@@ -236,7 +236,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     reactor->CreateRunCoroutine([sp_event, &first_done]() {
         sp_event->Wait(5000); // 5ms timeout
         first_done = true;
-        EXPECT_EQ(sp_event->status_, Event::TIMEOUT);
+        EXPECT_EQ(sp_event->status_.get(), Event::TIMEOUT);
     });
     
     // Wait for timeout
@@ -249,7 +249,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     reactor->CreateRunCoroutine([sp_event, &second_done]() {
         // Event is already in TIMEOUT state
         // The behavior here is interesting - what happens?
-        if (sp_event->status_ == Event::TIMEOUT) {
+        if (sp_event->status_.get() == Event::TIMEOUT) {
             std::cout << "Event already in TIMEOUT state before Wait()" << std::endl;
             second_done = true;
             // Don't try to wait on an already finished event - undefined behavior
@@ -259,9 +259,9 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
             sp_event->Wait(5000);
             second_done = true;
         }
-        
-        std::cout << "Second coroutine completed with event status: " 
-                  << sp_event->status_ << std::endl;
+
+        std::cout << "Second coroutine completed with event status: "
+                  << static_cast<int>(sp_event->status_.get()) << std::endl;
     });
     
     reactor->Loop(false);

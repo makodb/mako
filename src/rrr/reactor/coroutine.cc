@@ -33,7 +33,7 @@ void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
   auto reactor = Reactor::GetReactor();
 //  reactor->coros_;
   while (true) {
-    auto sz = reactor->coros_.size();
+    auto sz = reactor->coros_.len();
     verify(sz > 0);
     verify(*func_.borrow());
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
@@ -43,7 +43,8 @@ void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
       Log_info("Warning: We did not deal with backlog issues");
       needs_finalize_.set(false);
     }
-    Reactor::GetReactor()->n_active_coroutines_--;
+    auto reactor = Reactor::GetReactor();
+    reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
     yield();
   }
 }
@@ -58,7 +59,7 @@ void Coroutine::Run() const {
     verify(status_.get() == INIT);
     status_.set(STARTED);
     auto reactor = Reactor::GetReactor();
-    auto sz = reactor->coros_.size();
+    auto sz = reactor->coros_.len();
     verify(sz > 0);
     auto task = std::bind(&Coroutine::BoostRunWrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
     *boost_coro_task_.borrow_mut() = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));
@@ -77,7 +78,10 @@ void Coroutine::Yield() const {
     auto s = status_.get();
     verify(s == STARTED || s == RESUMED || s == FINALIZING);
     status_.set(PAUSED);
-    Reactor::GetReactor()->n_active_coroutines_--;
+    {
+      auto reactor = Reactor::GetReactor();
+      reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
+    }
     boost_coro_yield_.value()();
   }
 }
