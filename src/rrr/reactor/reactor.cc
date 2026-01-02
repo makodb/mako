@@ -40,7 +40,6 @@ thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollabl
 // Safe because worker outlives all coroutines on its thread
 thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
 thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
-SpinLock Reactor::disk_job_;
 SpinLock Reactor::trying_job_;
 
 // @safe - Returns current coroutine with single-threaded reference counting
@@ -293,12 +292,9 @@ void Reactor::CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events
  * 3. Weak Pointer Safety: All wp_coro_.upgrade() calls checked via is_none()/is_some()
  *    before dereferencing. [RustyCpp: verified Option patterns]
  *
- * 4. Container Mutation: Iterator-based erase patterns in @unsafe blocks.
- *    - erase() returns valid next iterator [Manual audit required]
- *    - shared_ptr ensures no dangling references [Manual audit required]
- *
- * 5. Lock Discipline: disk_job_ mutex held only during container access,
- *    released before ContinueCoro() to prevent deadlock. [Manual audit required]
+ * 4. Container Mutation: Uses safe extract_if/retain patterns (VecDeque).
+ *    - No iterator invalidation issues [RustyCpp: verified]
+ *    - shared_ptr ensures no dangling references
  *
  * INVARIANTS:
  * - Only one coroutine executes at a time per reactor
@@ -313,30 +309,6 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
   looping_.set(infinite);
 
   do {
-    // @unsafe - SpinLock operations
-    {
-      disk_job_.lock();
-      bool has_disk_events = !ready_disk_events_.is_empty();
-      if (has_disk_events) {
-        auto disk_event = ready_disk_events_.pop_front();
-        disk_job_.unlock();
-
-        // Option pattern - RustyCpp can verify is_some() check
-        auto option_coro = disk_event->wp_coro_.upgrade();
-        if (option_coro.is_some()) {
-          auto sp_coro = option_coro.unwrap();
-          // Cell<T> operations - RustyCpp verifies
-          disk_event->status_.set(Event::READY);
-          if (disk_event->status_.get() == Event::READY) {
-            disk_event->status_.set(Event::DONE);
-          }
-          ContinueCoro(sp_coro);
-        }
-      } else {
-        disk_job_.unlock();
-      }
-    }
-
     // Keep processing events until no new ready events are found
     bool found_ready_events = true;
     while (found_ready_events) {
@@ -523,43 +495,6 @@ void Reactor::DisplayWaitingEv() const {
 void Reactor::ReadyEventsThreadSafePushBack(std::shared_ptr<Event> ev) const {
   std::lock_guard<std::mutex> lock(ready_events_mutex_);
   ready_events_.push_back(ev);
-}
-
-void Reactor::DiskLoop() const {
-  Reactor::GetReactor()->disk_job_.lock();
-  auto disk_events = Reactor::GetReactor()->disk_events_;
-  auto it = Reactor::GetReactor()->disk_events_.begin();
-  std::vector<std::shared_ptr<DiskEvent>> pending_disk_events_{};
-  while(it != Reactor::GetReactor()->disk_events_.end()){
-    auto disk_event = std::static_pointer_cast<DiskEvent>(*it);
-    it = Reactor::GetReactor()->disk_events_.erase(it);
-    pending_disk_events_.push_back(disk_event);
-  }
-  Reactor::GetReactor()->disk_job_.unlock();
-
-  int total_written = 0;
-  std::unordered_set<std::string> sync_set{};
-  for (size_t i = 0; i < pending_disk_events_.size(); i++) {
-    total_written += pending_disk_events_[i]->Handle();
-    if (pending_disk_events_[i]->sync) {
-      auto it = sync_set.find(pending_disk_events_[i]->file);
-      if (it == sync_set.end()) {
-        sync_set.insert(pending_disk_events_[i]->file);
-      }
-    }
-  }
-
-  for (auto it = sync_set.begin(); it != sync_set.end(); it++) {
-    int fd = ::open(it->c_str(), O_WRONLY | O_APPEND | O_CREAT, 0777);
-    ::fsync(fd);
-    ::close(fd);
-  }
-
-  for(size_t i = 0; i < pending_disk_events_.size(); i++){
-    Reactor::GetReactor()->disk_job_.lock();
-    Reactor::GetReactor()->ready_disk_events_.push_back(pending_disk_events_[i]);
-    Reactor::GetReactor()->disk_job_.unlock();
-  }
 }
 
 // =============================================================================

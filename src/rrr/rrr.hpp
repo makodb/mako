@@ -19,7 +19,6 @@
 #include "misc/recorder.hpp"
 #include "misc/cpuinfo.hpp"
 #include "misc/netinfo.hpp"
-#include "misc/io.hpp"
 
 #include "reactor/reactor.h"
 #include "reactor/coroutine.h"

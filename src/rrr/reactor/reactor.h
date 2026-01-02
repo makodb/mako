@@ -118,7 +118,6 @@ class Coroutine;
  *
  * 4. SYNCHRONIZATION
  *    - ready_events_mutex_: Protects ready_events_ for multi-threaded Raft
- *    - disk_job_: SpinLock for disk event queue
  *    - Most operations are single-threaded (no locks needed)
  *
  * SAFETY INVARIANTS:
@@ -164,9 +163,6 @@ class Reactor {
   mutable std::vector<std::shared_ptr<Event>> ready_events_{};  // Thread-safe ready events for Raft
   mutable rusty::VecDeque<std::shared_ptr<Event>> timeout_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent - polled separately
-  // Disk events for async I/O
-  mutable std::vector<std::shared_ptr<Event>> disk_events_{};
-  mutable rusty::VecDeque<std::shared_ptr<Event>> ready_disk_events_{};
   mutable std::vector<std::shared_ptr<Event>> network_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> ready_network_events_{};
   // Coroutines managed with single-threaded Rc
@@ -180,9 +176,6 @@ class Reactor {
   // Interior mutability using Cell<T> for safe const method access
   rusty::Cell<bool> looping_{false};
   rusty::Cell<bool> slow_{false};
-  mutable long disk_times[50];  // Array - keep mutable for now
-  rusty::Cell<int> disk_count_{0};
-  rusty::Cell<int> disk_index_{0};
   rusty::Cell<int> slow_count_{0};
   rusty::Cell<int> trying_count_{0};
   rusty::Cell<std::thread::id> thread_id_{};
@@ -192,8 +185,7 @@ class Reactor {
   rusty::Cell<int64_t> n_active_coroutines_{0};
   rusty::Cell<int64_t> n_active_coroutines_2_{0};
   rusty::Cell<int64_t> n_idle_coroutines_{0};
-  static SpinLock disk_job_;
-	static SpinLock trying_job_;
+  static SpinLock trying_job_;
 #ifdef REUSE_CORO
 #define REUSING_CORO (true)
 #else
@@ -238,8 +230,6 @@ class Reactor {
   // no raw pointer manipulation, no memory allocations that could leak.
   // Internal operations are properly synchronized for single-threaded reactor.
   void Loop(bool infinite = false, bool check_timeout = true) const;
-  // @unsafe - Disk event loop
-  void DiskLoop() const;
   // @unsafe - Continues execution of a paused coroutine with rusty::Rc
   void ContinueCoro(rusty::Rc<Coroutine> sp_coro) const;
   void Recycle(rusty::Rc<Coroutine>& sp_coro) const;

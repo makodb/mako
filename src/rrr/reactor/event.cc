@@ -190,57 +190,6 @@ Event::Event() {
   // Otherwise wp_coro_ stays as default empty weak pointer
 }
 
-DiskEvent::DiskEvent(std::string file_, std::vector<std::map<int, i32>> cmd_, Operation op_): Event(),
-																																															cmd(cmd_),
-																																															op(op_),
-																																															file(file_){
-}
-
-DiskEvent::DiskEvent(std::string file_, void* ptr, size_t size, size_t count, Operation op_): Event(),
-																																															buffer(ptr),
-																																															size_(size),
-																																															count_(count),
-																																															op(op_),
-																																															file(file_){
-
-}
-
-DiskEvent::DiskEvent(std::function<void()> f): Event(),
-																							 func_(f){
-}
-
-void DiskEvent::AddToList(){
-  rrr::Reactor::GetReactor()->disk_job_.lock();
-  auto& disk_events = rrr::Reactor::GetReactor()->disk_events_;
-  disk_events.push_back(shared_from_this());
-  //Log_info("thread of disk events: %d", rrr::Reactor::GetReactor()->thread_id_);
-  rrr::Reactor::GetReactor()->disk_job_.unlock();
-}
-
-int DiskEvent::Write_Spec() {
-		/*int fd = ::open(file.c_str(), O_WRONLY | O_APPEND | O_CREAT);
-		::write(fd, buffer, size_);
-		::close(fd);*/
-    FILE* f;
-    // auto it = Reactor::GetReactor()->opened_files_.find(file);
-    // if (it != Reactor::GetReactor()->opened_files_.end()) {
-    //   f = it->second;
-    // } else {
-		  f = fopen(file.c_str(), "ab");
-    //   Reactor::GetReactor()->opened_files_.insert(make_pair(file, f));
-    // }
-		int written = 0;
-		if (f != NULL){
-			written = fwrite(buffer, size_, count_, f);
-			fclose(f);
-		} else {
-			Log_info("file: %s", file.c_str());
-			Log_info("error is: %s", strerror(errno)); 
-		}
-		return written;
-	}
-
-
 bool IntEvent::TestTrigger() {
   verify(status_.get() <= WAIT);
   if (value_ == target_) {
