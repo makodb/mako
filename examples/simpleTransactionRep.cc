@@ -14,6 +14,7 @@
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/spinbarrier.h"
 #include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
+#include "deptran/replication_helper.h"
 
 using namespace std;
 using namespace mako;
@@ -859,11 +860,12 @@ bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
 }
 
 int main(int argc, char **argv) {
-    
+
     // All necessary parameters expected from users
-    if (argc != 6) {
-        printf("Usage: %s <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated>\n", argv[0]);
+    if (argc < 6 || argc > 7) {
+        printf("Usage: %s <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
         printf("Example: %s 2 0 6 localhost 1\n", argv[0]);
+        printf("Example with Raft: %s 2 0 6 localhost 1 raft\n", argv[0]);
         return 1;
     }
 
@@ -873,13 +875,27 @@ int main(int argc, char **argv) {
     std::string paxos_proc_name = std::string(argv[4]);
     int is_replicated = std::stoi(argv[5]);
 
+    // Set replication type if provided (default is paxos)
+    std::string replication_type = "paxos";
+    if (argc == 7) {
+        replication_type = argv[6];
+        janus::set_replication_type_from_string(replication_type);
+        printf("Using replication type: %s\n", replication_type.c_str());
+    }
+
     // Build config path - fix the format string to use std::to_string
     std::string config_path = get_current_absolute_path()
             + "../src/mako/config/local-shards" + std::to_string(nshards)
             + "-warehouses" + std::to_string(nthreads) + ".yml";
+
+    // Use occ_raft.yml for Raft replication, occ_paxos.yml for Paxos
+    std::string occ_config = (replication_type == "raft" || replication_type == "RAFT")
+        ? "../config/occ_raft.yml"
+        : "../config/occ_paxos.yml";
+
     std::vector<std::string> paxos_config_files{
         get_current_absolute_path() + "../config/1leader_2followers/paxos" + std::to_string(nthreads) + "_shardidx" + std::to_string(shardIdx) + ".yml",
-        get_current_absolute_path() + "../config/occ_paxos.yml"
+        get_current_absolute_path() + occ_config
     };
 
     // Use the new RocksDB-like Open interface

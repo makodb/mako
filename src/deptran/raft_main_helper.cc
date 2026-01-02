@@ -1,6 +1,4 @@
-#include "raft_main_helper.h"
-
-#ifdef MAKO_USE_RAFT
+#include "replication_helper.h"
 
 #include "__dep__.h"
 #include "config.h"
@@ -22,6 +20,11 @@ std::function<void(int)> leader_callback_{};
 
 vector<unique_ptr<janus::ClientWorker>>& client_workers_g = janus::client_workers_storage;
 using janus::raft_workers_g;
+
+// ============================================================================
+// Raft Implementation Namespace
+// ============================================================================
+namespace raft_impl {
 
 // leader_replay_cb / follower_replay_cb cache watermark callbacks across role changes.
 std::map<int, std::function<int(const char*&, int, int, int,
@@ -224,7 +227,15 @@ void apply_callbacks_for_partition(uint32_t par_id) {
   }
 }
 
-}  // namespace
+}  // anonymous namespace
+
+// @safe - Helper function accessible from janus:: namespace for leader change handling.
+// Calls internal functions to apply callbacks and notify waiting threads.
+// No ownership transfer; uses references to internal state.
+void handle_leader_change_impl(uint32_t partition_id) {
+  apply_callbacks_for_partition(partition_id);
+  leader_wait_cv.notify_all();
+}
 
 // setup initialises all RaftWorkers for the current process and disables Jetpack.
 std::vector<std::string> setup(int argc, char* argv[]) {
@@ -242,6 +253,17 @@ std::vector<std::string> setup(int argc, char* argv[]) {
   if (ret != SUCCESS) {
     Log_fatal("Read config failed");
     return ret_vector;
+  }
+
+  // Verify that replica_proto_ is set to MODE_RAFT via occ_raft.yml config
+  auto config = Config::GetConfig();
+  if (config->replica_proto_ != MODE_RAFT) {
+    Log_warn("[RAFT-SETUP] replica_proto_=%d is not MODE_RAFT (%d). "
+             "Make sure to use config/occ_raft.yml with 'ab: raft' setting.",
+             config->replica_proto_, MODE_RAFT);
+  } else {
+    Log_info("[RAFT-SETUP] replica_proto_ correctly set to MODE_RAFT (%d)",
+             config->replica_proto_);
   }
 
   auto server_infos = Config::GetConfig()->GetMyServers();
@@ -483,24 +505,8 @@ void register_for_leader_par_id_return(
   apply_callbacks_for_partition(par_id);
 }
 
-namespace janus {
-
-// raft_handle_leader_change re-applies callbacks and notifies any waiters.
-void raft_handle_leader_change(uint32_t partition_id, bool is_leader) {
-  ::apply_callbacks_for_partition(partition_id);
-  Log_info("[RAFT-LEADER-CHANGE] par_id=%u is_leader=%s",
-           partition_id,
-           is_leader ? "true" : "false");
-
-  ::leader_wait_cv.notify_all();
-
-  // Call the callback for BOTH gaining and losing leadership
-  if (leader_callback_) {
-    leader_callback_(is_leader ? 1 : 0);  // 1 = became leader, 0 = lost leadership
-  }
-}
-
-}  // namespace janus
+// Note: raft_handle_leader_change is moved to the end of this file,
+// outside the raft_impl namespace, so it's in janus:: namespace.
 
 // submit forwards a log to the local leader submit queue (if this node leads).
 void submit(const char* log, int len, uint32_t par_id) {
@@ -603,8 +609,8 @@ void set_epoch(int epoch) {
 // upgrade_p1_to_leader keeps the Paxos helper instrumentation happy under Raft.
 void upgrade_p1_to_leader() {
   Log_info("upgrade_p1_to_leader invoked for Raft helper.");
-  if (janus::leader_callback_) {
-    janus::leader_callback_(0);
+  if (::janus::leader_callback_) {
+    ::janus::leader_callback_(0);
   }
 }
 
@@ -714,4 +720,36 @@ std::vector<std::vector<int>>* nc_get_rmw_requests(int /*id*/) {
   return nullptr;
 }
 
-#endif  // MAKO_USE_RAFT
+}  // namespace raft_impl
+
+// ============================================================================
+// Functions in janus:: namespace (outside raft_impl) for callback compatibility
+// @safe - These functions are called by RaftWorker and must be in janus::
+// namespace. They delegate to raft_impl and use the global leader_callback_.
+// ============================================================================
+namespace janus {
+
+// @safe - Called by RaftWorker on leadership changes. Delegates to raft_impl
+// helper and invokes the registered callback if present. No ownership transfer.
+void raft_handle_leader_change(uint32_t partition_id, bool is_leader) {
+  raft_impl::handle_leader_change_impl(partition_id);
+  Log_info("[RAFT-LEADER-CHANGE] par_id=%u is_leader=%s",
+           partition_id,
+           is_leader ? "true" : "false");
+
+  // Call the callback for BOTH gaining and losing leadership
+  // @safe - leader_callback_ is a std::function, invoking is safe
+  if (leader_callback_) {
+    leader_callback_(is_leader ? 1 : 0);  // 1 = became leader, 0 = lost leadership
+  }
+}
+
+// @safe - Runtime dispatch wrapper. Only calls raft_handle_leader_change if
+// the runtime replication type is Raft. No-op for Paxos mode.
+void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader) {
+  if (is_using_raft()) {
+    raft_handle_leader_change(partition_id, is_leader);
+  }
+}
+
+}  // namespace janus

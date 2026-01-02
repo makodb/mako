@@ -15,6 +15,7 @@ trd=$3
 cluster=$4
 is_micro=$5
 is_replicated=$6
+replication_type=${7:-paxos}  # Default to paxos if not specified
 let up=trd+3
 #sudo cgset -r cpuset.mems=0 cpulimit
 #sudo cgset -r cpuset.cpus=0-$up cpulimit
@@ -31,7 +32,13 @@ fi
 
 # Add paxos config and --is-replicated flag only if replication is enabled
 if [ "$is_replicated" == "1" ]; then
-    CMD="$CMD -F config/1leader_2followers/paxos${trd}_shardidx${shard}.yml -F config/occ_paxos.yml --is-replicated"
+    # Use occ_raft.yml for Raft replication, occ_paxos.yml for Paxos
+    if [ "$replication_type" == "raft" ]; then
+        OCC_CONFIG="config/occ_raft.yml"
+    else
+        OCC_CONFIG="config/occ_paxos.yml"
+    fi
+    CMD="$CMD -F config/1leader_2followers/paxos${trd}_shardidx${shard}.yml -F $OCC_CONFIG --is-replicated --replication=$replication_type"
 fi
 
 # Print configuration
@@ -44,6 +51,7 @@ echo "  Number of threads: $trd"
 echo "  Cluster:           $cluster"
 echo "  Micro benchmark:   $([ "$is_micro" == "1" ] && echo "enabled" || echo "disabled")"
 echo "  Replicated mode:   $([ "$is_replicated" == "1" ] && echo "enabled" || echo "disabled")"
+echo "  Replication type:  $replication_type"
 echo "========================================="
 
 # Execute command (with or without gdb based on GDB_PREFIX from util.sh)

@@ -229,6 +229,78 @@ run_2shard_replication_simple() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
+# ============================================================================
+# Raft Replication Tests
+# ============================================================================
+
+run_1shard_replication_raft() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard1ReplicationRaft"
+    echo "========================================="
+    cleanup_processes
+    # Run test and capture exit code (set +e to prevent immediate exit)
+    set +e
+    bash ./examples/test_1shard_replication_raft.sh
+    local test_result=$?
+    set -e
+    # Always check for hanging processes, even if test failed
+    check_for_hanging_processes "shard1ReplicationRaft"
+    local hanging_check=$?
+    # Return failure if either check failed
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
+run_2shard_replication_raft() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard2ReplicationRaft"
+    echo "========================================="
+    cleanup_processes
+    # Run test and capture exit code (set +e to prevent immediate exit)
+    set +e
+    bash ./examples/test_2shard_replication_raft.sh
+    local test_result=$?
+    set -e
+    # Always check for hanging processes, even if test failed
+    check_for_hanging_processes "shard2ReplicationRaft"
+    local hanging_check=$?
+    # Return failure if either check failed
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
+run_1shard_replication_simple_raft() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard1ReplicationSimpleRaft"
+    echo "========================================="
+    cleanup_processes
+    # Run test and capture exit code (set +e to prevent immediate exit)
+    set +e
+    bash ./examples/test_1shard_replication_simple_raft.sh
+    local test_result=$?
+    set -e
+    # Always check for hanging processes, even if test failed
+    check_for_hanging_processes "shard1ReplicationSimpleRaft"
+    local hanging_check=$?
+    # Return failure if either check failed
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
+run_2shard_replication_simple_raft() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard2ReplicationSimpleRaft"
+    echo "========================================="
+    cleanup_processes
+    # Run test and capture exit code (set +e to prevent immediate exit)
+    set +e
+    bash ./examples/test_2shard_replication_simple_raft.sh
+    local test_result=$?
+    set -e
+    # Always check for hanging processes, even if test failed
+    check_for_hanging_processes "shard2ReplicationSimpleRaft"
+    local hanging_check=$?
+    # Return failure if either check failed
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
 run_rocksdb_tests() {
     echo "========================================="
     echo "Running: ./ci/ci.sh rocksdbTests"
@@ -368,6 +440,18 @@ case "${1:-}" in
     shard2ReplicationSimple)
         run_2shard_replication_simple
         ;;
+    shard1ReplicationRaft)
+        run_1shard_replication_raft
+        ;;
+    shard2ReplicationRaft)
+        run_2shard_replication_raft
+        ;;
+    shard1ReplicationSimpleRaft)
+        run_1shard_replication_simple_raft
+        ;;
+    shard2ReplicationSimpleRaft)
+        run_2shard_replication_simple_raft
+        ;;
     rocksdbTests)
         run_rocksdb_tests
         ;;
@@ -397,11 +481,17 @@ case "${1:-}" in
         run_simple_paxos
         run_2shard_no_replication
         run_2shard_no_replication_erpc
+        # Paxos replication tests
         run_1shard_replication
         run_2shard_replication
         run_2shard_replication_erpc
         run_1shard_replication_simple
         run_2shard_replication_simple
+        # Raft replication tests
+        run_1shard_replication_raft
+        run_2shard_replication_raft
+        run_1shard_replication_simple_raft
+        run_2shard_replication_simple_raft
         run_rocksdb_tests
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process

@@ -16,15 +16,10 @@
 
 namespace janus {
 
-#ifdef MAKO_USE_RAFT
+// Runtime replication switching - always declare raft functions
 extern std::function<void(int)> leader_callback_;
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
-static inline void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader) {
-  raft_handle_leader_change(partition_id, is_leader);
-}
-#else
-static inline void NotifyRaftLeaderChange(uint32_t, bool) {}
-#endif
+void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
 // RaftWorker bridges raw RaftServer slots to the callback shape Mako expects.
 class RaftWorker {

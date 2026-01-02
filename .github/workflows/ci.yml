@@ -73,25 +73,19 @@ jobs:
         run: ./ci/ci.sh shard2ReplicationSimple
 
       # =========================================
-      # Mako-Raft Tests (after Paxos replication tests)
+      # Raft Replication Tests (after Paxos replication tests)
       # =========================================
-      # - name: Compile Mako with Raft support
-      #   run: ./ci/ci_mako_raft.sh compile
+      - name: Run tests - 1 shard with Raft replication - dbtest
+        run: ./ci/ci.sh shard1ReplicationRaft
 
-      # - name: Run Raft tests - simple Raft replication
-      #   run: ./ci/ci_mako_raft.sh simpleRaft
+      - name: Run tests - 2 shard with Raft replication - dbtest
+        run: ./ci/ci.sh shard2ReplicationRaft
 
-      # - name: Run Raft tests - 1 shard with Raft replication (dbtest)
-      #   run: ./ci/ci_mako_raft.sh shard1ReplicationRaft
+      - name: Run tests - 1 shard with Raft replication - simpleTransactionRep
+        run: ./ci/ci.sh shard1ReplicationSimpleRaft
 
-      # - name: Run Raft tests - 2 shard with Raft replication (dbtest)
-      #   run: ./ci/ci_mako_raft.sh shard2ReplicationRaft
-
-      # - name: Run Raft tests - 1 shard with Raft replication (simpleTransactionRepRaft)
-      #   run: ./ci/ci_mako_raft.sh shard1ReplicationSimpleRaft
-
-      # - name: Run Raft tests - 2 shard with Raft replication (simpleTransactionRepRaft)
-      #   run: ./ci/ci_mako_raft.sh shard2ReplicationSimpleRaft
+      - name: Run tests - 2 shard with Raft replication - simpleTransactionRep
+        run: ./ci/ci.sh shard2ReplicationSimpleRaft
 
       # =========================================
       # Non-replication tests (run last)

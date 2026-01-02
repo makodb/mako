@@ -28,11 +28,8 @@
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 
-#ifdef MAKO_USE_RAFT
-#include "deptran/raft_main_helper.h"
-#else
-#include "deptran/s_main.h"
-#endif
+// Runtime replication switching - unified interface
+#include "deptran/replication_helper.h"
 
 #include "lib/configuration.h"
 #include "lib/fasttransport.h"
@@ -661,14 +658,14 @@ static void setup_leader_election_callbacks()
         break;
       }
 #endif
-#if !defined(FAIL_NEW_VERSION) || defined(MAKO_USE_RAFT)
+#if !defined(FAIL_NEW_VERSION)
       // for the partial datacenter failure
       case 0: {
-#ifdef MAKO_USE_RAFT
-        // Raft: Leader stepped down - no action needed, Raft handles internally
-        break;
-#else
-        // 0. stop exchange client + server on the new leader (learner)
+        if (janus::is_using_raft()) {
+          // Raft: Leader stepped down - no action needed, Raft handles internally
+          break;
+        }
+        // Paxos: 0. stop exchange client + server on the new leader (learner)
         sync_util::sync_logger::exchange_running = false;
         // 1. issue a control command to all other leader partition servers to
         //    1.1 pause other servers DB threads
@@ -684,23 +681,22 @@ static void setup_leader_election_callbacks()
         printf("first connection:%d\n",
             std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count());
         break;
-#endif
       }
       case 2: {// notify that you're the new leader; PREPARE
-#ifdef MAKO_USE_RAFT
-        // Raft: Became leader - no action needed, Raft handles internally
-        break;
-#else
-         auto& benchConfig = BenchmarkConfig::getInstance();
+        if (janus::is_using_raft()) {
+          // Raft: Became leader - no action needed, Raft handles internally
+          break;
+        }
+        // Paxos:
+        auto& benchConfig = BenchmarkConfig::getInstance();
         sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
-         // wait for Paxos logs replicated
-         auto x0 = std::chrono::high_resolution_clock::now() ;
-         WAN_WAIT_TIME;
-         auto x1 = std::chrono::high_resolution_clock::now() ;
-         printf("replicated:%d\n",
+        // wait for Paxos logs replicated
+        auto x0 = std::chrono::high_resolution_clock::now() ;
+        WAN_WAIT_TIME;
+        auto x1 = std::chrono::high_resolution_clock::now() ;
+        printf("replicated:%d\n",
             std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count());
-         break;
-#endif
+        break;
       }
       case 3: {  // COMMIT
         std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));

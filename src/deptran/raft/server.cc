@@ -495,7 +495,8 @@ void RaftServer::HeartbeatLoop() {
           newCommitIndex = lastLogIndex;
         }
         
-        if (newCommitIndex > commitIndex && (GetRaftInstance(newCommitIndex)->term == currentTerm)) {
+        auto commitInstance = GetRaftInstance(newCommitIndex);
+        if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
           Log_debug("newCommitIndex %d", newCommitIndex);
           commitIndex = newCommitIndex;
         }
@@ -555,10 +556,15 @@ void RaftServer::HeartbeatLoop() {
 #ifndef RAFT_BATCH_OPTIMIZATION
         if (it->second <= lastLogIndex) {
           auto curInstance = GetRaftInstance(it->second);
-          cmd = curInstance->log_;
-          cmdLogTerm = curInstance->term;
-          Log_debug("loc %d Sending AppendEntries for %d to loc %d cmd=%p",
-              loc_id_, it->second, it->first, cmd.get());
+          // @safe - Null check to prevent crash if instance doesn't exist
+          if (!curInstance) {
+            Log_error("[HEARTBEAT-SEND] GetRaftInstance(%d) returned NULL, skipping", it->second);
+          } else {
+            cmd = curInstance->log_;
+            cmdLogTerm = curInstance->term;
+            Log_debug("loc %d Sending AppendEntries for %d to loc %d cmd=%p",
+                loc_id_, it->second, it->first, cmd.get());
+          }
         }
 #endif
 
@@ -567,7 +573,17 @@ void RaftServer::HeartbeatLoop() {
         // [Jetpack] Start from max(it->second, min_active_slot_) since after failure, new elected leader it->second is not updated and can be 1
         for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
           auto curInstance = GetRaftInstance(idx);
+          // @safe - Null check to prevent crash if instance doesn't exist
+          if (!curInstance) {
+            Log_error("[HEARTBEAT-BATCH] GetRaftInstance(%d) returned NULL, skipping", idx);
+            continue;
+          }
           shared_ptr<TpcCommitCommand> curCmd = dynamic_pointer_cast<TpcCommitCommand>(curInstance->log_);
+          // @safe - Null check for dynamic_pointer_cast result
+          if (!curCmd) {
+            Log_error("[HEARTBEAT-BATCH] Failed to cast log at index %d to TpcCommitCommand", idx);
+            continue;
+          }
           curCmd->term = curInstance->term;
           batch_buffer_.push_back(curCmd);
         }

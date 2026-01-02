@@ -22,6 +22,11 @@
 using namespace janus;
 using namespace network_client;
 
+// ============================================================================
+// Paxos Implementation Namespace
+// ============================================================================
+namespace paxos_impl {
+
 // network client
 std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
 std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};
@@ -570,7 +575,7 @@ void sync_callbacks_for_new_leader(){
 void send_no_ops_for_mark(int epoch){
   string log = "no-ops:" + to_string(epoch);
   for(int i = 0; i < pxs_workers_g.size(); i++){
-    add_log_to_nc(log.c_str(), log.size(), i);
+    add_log_to_nc(log.c_str(), log.size(), i, 0);
   }
 }
 
@@ -1184,4 +1189,6 @@ std::vector<std::vector<int>>* nc_get_read_requests(int par_id) {
 
 std::vector<std::vector<int>>* nc_get_rmw_requests(int par_id) {
   return &nc_services[par_id]->rmw_requests;
-}; 
+};
+
+}  // namespace paxos_impl

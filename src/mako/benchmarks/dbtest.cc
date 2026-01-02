@@ -12,7 +12,8 @@ static void parse_command_line_args(int argc,
                                     int &is_replicated,
                                     string& site_name,
                                     vector<string>& paxos_config_file,
-                                    string& local_shards_str)
+                                    string& local_shards_str,
+                                    string& replication_type)
 {
   while (1) {
     static struct option long_options[] =
@@ -27,12 +28,13 @@ static void parse_command_line_args(int argc,
       {"cpu-limit"                  , required_argument , 0                          , 'C'} ,
       {"throttle-cycle"             , required_argument , 0                          , 'Y'} ,
       {"sync-dir"                   , required_argument , 0                          , 'S'} ,
+      {"replication"                , required_argument , 0                          , 'R'} ,
       {"is-micro"                   , no_argument       , &is_micro                  ,   1} ,
       {"is-replicated"              , no_argument       , &is_replicated             ,   1} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -101,6 +103,10 @@ static void parse_command_line_args(int argc,
       auto& config = BenchmarkConfig::getInstance();
       config.setNfsSyncDir(string(optarg));
       }
+      break;
+
+    case 'R':
+      replication_type = string(optarg);
       break;
 
     case '?':
@@ -296,10 +302,17 @@ main(int argc, char **argv)
   vector<string> paxos_config_file{};
   string site_name = "";  // For new config format
   string local_shards_str = "";  // For multi-shard mode: comma-separated list
+  string replication_type = "";  // paxos or raft (default: paxos)
 
   auto& benchConfig = BenchmarkConfig::getInstance();
   // Parse command line arguments
-  parse_command_line_args(argc, argv, is_micro, is_replicated, site_name, paxos_config_file, local_shards_str);
+  parse_command_line_args(argc, argv, is_micro, is_replicated, site_name, paxos_config_file, local_shards_str, replication_type);
+
+  // Set replication type before any initialization (default is paxos)
+  if (!replication_type.empty()) {
+    janus::set_replication_type_from_string(replication_type);
+    Notice("Using replication type: %s", replication_type.c_str());
+  }
 
   // Handle new configuration format if site name is provided
   if (!site_name.empty() && benchConfig.getConfig() != nullptr) {

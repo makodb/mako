@@ -662,12 +662,13 @@ list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
 # Exclude MongoDB backend (requires mongocxx library)
 list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
 
-# Choose helper source based on MAKO_USE_RAFT
-if(MAKO_USE_RAFT)
-  set(TXLOG_HELPER_SRC src/deptran/raft_main_helper.cc)
-else()
-  set(TXLOG_HELPER_SRC src/deptran/paxos_main_helper.cc)
-endif()
+# Runtime replication switching: compile BOTH Paxos and Raft helpers
+# The replication_helper.cc dispatcher routes calls based on runtime configuration
+set(TXLOG_HELPER_SRC
+    src/deptran/replication_helper.cc
+    src/deptran/paxos_main_helper.cc
+    src/deptran/raft_main_helper.cc
+)
 
 # Build libtxlog as a shared library
 add_library(txlog SHARED
@@ -767,6 +768,11 @@ endif()
 # Deptran worker files for borrow checking (critical files using rusty::Option/Arc)
 # These files had use-after-move bugs that weren't caught because borrow checking
 # was not enabled for src/deptran/
+# NOTE: The following are excluded from borrow checking:
+#   - raft_main_helper.cc: includes third-party headers (YAML, etc.) that generate
+#     1000+ false positive violations from header code.
+#   - replication_helper.cc: thin dispatcher that calls non-borrow-checked impls.
+#     Uses rusty::Cell for safe interior mutability of global state.
 set(DEPTRAN_BORROW_SRC
     "src/deptran/paxos_worker.cc"
     "src/deptran/server_worker.cc"
