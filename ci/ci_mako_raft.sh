@@ -8,6 +8,9 @@
 
 set -e  # Exit on error
 
+# Disable GDB for CI runs - GDB changes output format and breaks grep patterns
+export MAKO_NO_GDB=1
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

@@ -15,8 +15,13 @@ read_makorc_value() {
 }
 
 # GDB_ENABLED: Set from ~/.makorc (use_gdb: 1 to enable)
+# Can be overridden by MAKO_NO_GDB=1 environment variable (useful for CI)
 # Scripts can use this variable directly to conditionally run under GDB
-GDB_ENABLED=$(read_makorc_value "use_gdb" "0")
+if [ "$MAKO_NO_GDB" == "1" ]; then
+    GDB_ENABLED="0"
+else
+    GDB_ENABLED=$(read_makorc_value "use_gdb" "0")
+fi
 
 # GDB_PREFIX: If GDB is enabled, this prefix wraps commands with gdb batch mode
 # Usage: $GDB_PREFIX ./executable args > logfile 2>&1

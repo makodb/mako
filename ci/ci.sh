@@ -3,6 +3,9 @@
 
 set -e  # Exit on error
 
+# Disable GDB for CI runs - GDB changes output format and breaks grep patterns
+export MAKO_NO_GDB=1
+
 # Build directory (can be overridden via environment variable)
 BUILD_DIR=${BUILD_DIR:-build}
 

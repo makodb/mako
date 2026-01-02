@@ -23,6 +23,7 @@ jobs:
       RUN_INDEX: ${{ matrix.run_number }}     # 1, 2, or 3 (per matrix job)
       RUN_NUM: ${{ github.run_number }}       # monotonically increasing per workflow
       RUN_ID: ${{ github.run_id }}            # unique per workflow run
+      MAKO_NO_GDB: "1"                        # Disable GDB for CI (breaks output parsing)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
