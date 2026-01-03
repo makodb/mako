@@ -117,8 +117,7 @@ class Coroutine;
  *    - Weak<Coroutine>: Events hold weak refs to avoid cycles
  *
  * 4. SYNCHRONIZATION
- *    - ready_events_mutex_: Protects ready_events_ for multi-threaded Raft
- *    - Most operations are single-threaded (no locks needed)
+ *    - All reactor operations are single-threaded (no locks needed)
  *
  * SAFETY INVARIANTS:
  * - One active coroutine per reactor at any time
@@ -150,9 +149,6 @@ class Reactor {
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   mutable int server_id_{0};
 
-  // Thread-safe ready events queue for multi-threaded Raft
-  // Uses raw Event* pointers for cross-thread notification (safe: reactor owns all events)
-  mutable std::mutex ready_events_mutex_;
   /**
    * A reactor needs to keep reference to all coroutines created,
    * in case it is freed by the caller after a yield.
@@ -161,7 +157,6 @@ class Reactor {
   // Using rusty::VecDeque for @safe extract_if operations
   mutable rusty::VecDeque<std::shared_ptr<Event>> all_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> waiting_events_{};
-  mutable std::vector<Event*> ready_events_{};  // Raw pointers for thread-safe cross-thread signaling
   mutable rusty::VecDeque<std::shared_ptr<Event>> timeout_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent - polled separately
   mutable std::vector<std::shared_ptr<Event>> network_events_{};
@@ -226,17 +221,12 @@ class Reactor {
   void RegisterCoroutine(const rusty::Rc<Coroutine>& coro) const;
 
  public:
-  // @safe - Main event loop - check_timeout parameter for flexibility (Jetpack)
-  // Memory-safe: iterates over coroutines/events using shared_ptr and Rc,
-  // no raw pointer manipulation, no memory allocations that could leak.
-  // Internal operations are properly synchronized for single-threaded reactor.
+  // @safe - Main event loop
   void Loop(bool infinite = false, bool check_timeout = true) const;
-  // @unsafe - Continues execution of a paused coroutine with rusty::Rc
+  // @safe - Continues execution of a paused coroutine
   void ContinueCoro(rusty::Rc<Coroutine> coro) const;
   void Recycle(rusty::Rc<Coroutine>& coro) const;
   void DisplayWaitingEv() const;
-  // Cross-thread notification using raw pointer (safe: reactor owns all events in all_events_)
-  void ReadyEventsThreadSafePushBack(Event* ev) const;
 
   ~Reactor() {
     Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",

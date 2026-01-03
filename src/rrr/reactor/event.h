@@ -51,10 +51,7 @@ using std::list;
 
 class Reactor;
 class Event {
-  std::mutex status_mtx_; // This is used for ThreadSafeTest
  protected:
-  // Raw pointer to reactor for cross-thread access (safe: reactor lifetime = thread lifetime)
-  Reactor* current_reactor_{nullptr};
   // Self-reference for adding to queues (using weak_ptr for shared ownership)
   // Set by CreateSpEvent after construction
   std::weak_ptr<Event> self_;
@@ -96,8 +93,8 @@ class Event {
   virtual uint64_t GetCoroId();
   void RecordPlace(const char* file, int line);
 
+  // @safe - Tests if event is ready
   virtual bool Test();
-  virtual bool ThreadSafeTest();
   virtual bool IsSlow();
   virtual bool IsReady() {
     if (!test_) return false;
@@ -111,8 +108,6 @@ class Event {
   // Self-reference management (uses shared_ptr for polymorphism support)
   void set_self(std::weak_ptr<Event> self) { self_ = self; }
   std::shared_ptr<Event> get_self() const { return self_.lock(); }
-  // Get raw pointer for cross-thread signaling (safe: reactor owns all events)
-  Event* get_self_ptr() const { return const_cast<Event*>(this); }
 
   friend Reactor;
 // protected:
@@ -378,44 +373,6 @@ class SingleRPCEvent: public Event{
       // SUCCESS=0, REJECT=-10 (macros removed to avoid conflict with mako ErrorCode)
       return res_ == 0 || res_ == -10;
     }
-};
-
-class ThreadSafeIntEvent : public Event {
-  std::mutex value_mtx_;
-
- public:
-  ThreadSafeIntEvent();
-  ThreadSafeIntEvent(int tar);
-  std::atomic<int> value_{0};
-  int target_{1};
-
-
-  bool TestTrigger();
-
-  // @safe - uses std::atomic::load()
-  int get() {
-    // @unsafe - std::atomic::load
-    { return value_.load(); }
-  }
-
-  // @unsafe - Threadsafe, uses mutex and atomic
-  int Set(int n) {
-    std::lock_guard<std::mutex> lock(value_mtx_); // To protect value_
-    int t = value_;
-    value_ = n;
-//    TestTrigger();
-    ThreadSafeTest();
-    return t;
-  };
-
-  // @unsafe - uses std::atomic implicit conversion
-  virtual bool IsReady() override {
-    if (test_) {
-      return test_(value_);
-    } else {
-      return (value_ >= target_);
-    }
-  }
 };
 
 } // namespace rrr

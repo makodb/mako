@@ -278,63 +278,23 @@ void Reactor::CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events
       }));
 }
 
-/**
- * @safe - Main event loop with complex event processing
- *
- * SAFETY CONTRACT (verified by RustyCpp where possible):
- * 1. Thread Affinity: Single-threaded execution guaranteed by thread_id check at entry.
- *    The reactor is pinned to the thread that created it via thread_id_.get() verification.
- *
- * 2. Interior Mutability: Uses Cell<T> for mutable state through const reference.
- *    - looping_: Cell<bool> controls loop termination [RustyCpp: verified]
- *    - status_ fields use Cell<EventStatus> [RustyCpp: verified]
- *
- * 3. Weak Pointer Safety: All wp_coro_.upgrade() calls checked via is_none()/is_some()
- *    before dereferencing. [RustyCpp: verified Option patterns]
- *
- * 4. Container Mutation: Uses safe extract_if/retain patterns (VecDeque).
- *    - No iterator invalidation issues [RustyCpp: verified]
- *    - shared_ptr ensures no dangling references
- *
- * INVARIANTS:
- * - Only one coroutine executes at a time per reactor
- * - Events transition: INIT -> WAIT -> READY/TIMEOUT -> DONE
- * - Coroutines transition: INIT -> RUNNING <-> PAUSED -> FINISHED
- */
+// @safe - Main event loop
 void Reactor::Loop(bool infinite, bool check_timeout) const {
-  // @unsafe - verify is an external function
-  { verify(std::this_thread::get_id() == thread_id_.get()); }
+  verify(std::this_thread::get_id() == thread_id_.get());
 
-  // Cell<T> operations - RustyCpp verifies these
   looping_.set(infinite);
 
   do {
-    // Keep processing events until no new ready events are found
     bool found_ready_events = true;
     while (found_ready_events) {
       found_ready_events = false;
       rusty::VecDeque<std::shared_ptr<Event>> ready_events;
-      std::vector<Event*> cross_thread_events;
 
-      // @unsafe - std::mutex operations for cross-thread ready events
-      {
-        std::lock_guard<std::mutex> lock(ready_events_mutex_);
-        if (!ready_events_.empty()) {
-          cross_thread_events = std::move(ready_events_);
-          ready_events_.clear();
-          found_ready_events = true;
-        }
+      // Test waiting events
+      for (size_t i = 0; i < waiting_events_.len(); ++i) {
+        waiting_events_[i]->Test();
       }
-
-      // Using VecDeque::extract_if (Rust-style safe iteration with mutation)
-      // First, test all waiting events to update their status
-      // @unsafe - Event::Test is not marked @safe
-      {
-        for (size_t i = 0; i < waiting_events_.len(); ++i) {
-          waiting_events_[i]->Test();
-        }
-      }
-      // Extract READY events, remove DONE events using extract_if + retain
+      // Extract READY events using safe extract_if pattern
       auto ready_from_waiting = waiting_events_.extract_if(
         rusty::Function<bool(const std::shared_ptr<Event>&)>(
           [](const std::shared_ptr<Event>& ev) {
@@ -352,11 +312,8 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
           }));
 
       // Same pattern for composite events
-      // @unsafe - Event::Test is not marked @safe
-      {
-        for (size_t i = 0; i < composite_events_.len(); ++i) {
-          composite_events_[i]->Test();
-        }
+      for (size_t i = 0; i < composite_events_.len(); ++i) {
+        composite_events_[i]->Test();
       }
       auto ready_from_composite = composite_events_.extract_if(
         rusty::Function<bool(const std::shared_ptr<Event>&)>(
@@ -373,7 +330,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
             return ev->status_.get() != Event::DONE;
           }));
 
-      // Check timeouts - now using @safe extract_if pattern
+      // Check timeouts using safe extract_if pattern
       if (check_timeout) {
         size_t before = ready_events.len();
         CheckTimeout(ready_events);
@@ -382,90 +339,43 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
         }
       }
 
-      // Process ready events (timeout events, waiting events, etc.)
-      // @unsafe - contains Weak::upgrade, STL set lookup, ContinueCoro
-      {
-        for (size_t i = 0; i < ready_events.len(); ++i) {
-          auto& ev = ready_events[i];
-          // Cell<T> status check - RustyCpp verifies
-          if (ev->status_.get() == Event::DONE) {
-            continue;
-          }
-          // Option pattern - Weak::upgrade
-          auto option_coro = ev->wp_coro_.upgrade();
-          if (option_coro.is_none()) {
-            continue;
-          }
-          auto coro = option_coro.unwrap();
-          // BTreeSet::contains - @safe lookup
-          if (!coros_.contains(coro)) {
-            continue;
-          }
-          verify(coro->status_.get() == Coroutine::PAUSED);
-          // Cell<T> operations
-          if (ev->status_.get() == Event::READY) {
-            ev->status_.set(Event::DONE);
-          } else {
-            verify(ev->status_.get() == Event::TIMEOUT);
-          }
-          ContinueCoro(coro);
+      // Process ready events - all operations are @safe:
+      // - Weak::upgrade returns Option (safe)
+      // - BTreeSet::contains is safe
+      // - ContinueCoro is @safe with internal @unsafe
+      for (size_t i = 0; i < ready_events.len(); ++i) {
+        auto& ev = ready_events[i];
+        if (ev->status_.get() == Event::DONE) {
+          continue;
         }
+        auto option_coro = ev->wp_coro_.upgrade();
+        if (option_coro.is_none()) {
+          continue;
+        }
+        auto coro = option_coro.unwrap();
+        if (!coros_.contains(coro)) {
+          continue;
+        }
+        verify(coro->status_.get() == Coroutine::PAUSED);
+        if (ev->status_.get() == Event::READY) {
+          ev->status_.set(Event::DONE);
+        } else {
+          verify(ev->status_.get() == Event::TIMEOUT);
+        }
+        ContinueCoro(coro);
       }
 
-      // Process cross-thread events (notifications from other threads)
-      // @unsafe - raw pointers, but safe because reactor owns all events
-      {
-        for (Event* ev : cross_thread_events) {
-          if (ev->status_.get() == Event::DONE) {
-            continue;
-          }
-          // Option pattern - Weak::upgrade
-          auto option_coro = ev->wp_coro_.upgrade();
-          if (option_coro.is_none()) {
-            continue;
-          }
-          auto coro = option_coro.unwrap();
-          // BTreeSet::contains - @safe lookup
-          if (!coros_.contains(coro)) {
-            continue;
-          }
-          verify(coro->status_.get() == Coroutine::PAUSED);
-          // Cell<T> operations
-          if (ev->status_.get() == Event::READY) {
-            ev->status_.set(Event::DONE);
-          } else {
-            verify(ev->status_.get() == Event::TIMEOUT);
-          }
-          ContinueCoro(coro);
-        }
-      }
-
-      // If not in infinite mode and no events found, stop inner loop
       if (!infinite && !found_ready_events) {
         break;
       }
     }
 
-  } while (looping_.get());  // Cell<T> - RustyCpp verifies
+  } while (looping_.get());
 }
 
-/**
- * @unsafe - Continues execution of a paused coroutine
- *
- * SAFETY CONTRACT:
- * 1. Coroutine Ownership: Rc<Coroutine> ensures the coroutine lives for the call duration.
- * 2. Stack Safety: RefCell<sp_running_coro_th_> tracks the active coroutine for nested calls.
- * 3. State Machine: Verifies coroutine is not Finished before resumption.
- * 4. Cleanup: Automatically recycles finished coroutines via Recycle().
- *
- * PRECONDITIONS:
- * - coro must be in INIT or PAUSED state
- * - Called only from reactor's owning thread
- */
+// @safe - Continues execution of a paused coroutine
 void Reactor::ContinueCoro(rusty::Rc<Coroutine> coro) const {
-//  verify(!sp_running_coro_th_.is_none()); // disallow nested coros
-  // Clone to avoid moving - must preserve the old value
-  // Use RefCell for explicit interior mutability of thread-local state
+  // Save current running coroutine for nesting support
   rusty::Option<rusty::Rc<Coroutine>> old_coro;
   {
     auto guard = sp_running_coro_th_.borrow();
@@ -473,29 +383,31 @@ void Reactor::ContinueCoro(rusty::Rc<Coroutine> coro) const {
       ? rusty::Some((*guard).as_ref().unwrap().clone())
       : rusty::Option<rusty::Rc<Coroutine>>{};
   }
+
   *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
+
   {
     auto guard = sp_running_coro_th_.borrow();
     verify(!(*guard).as_ref().unwrap()->Finished());
   }
+
   n_active_coroutines_.set(n_active_coroutines_.get() + 1);
 
   if (coro->status_.get() == Coroutine::INIT) {
     coro->Run();
   } else {
-    // PAUSED or RECYCLED
     auto guard = sp_running_coro_th_.borrow();
     (*guard).as_ref().unwrap()->Continue();
   }
+
   {
     auto guard = sp_running_coro_th_.borrow();
     if ((*guard).as_ref().unwrap()->Finished()) {
       auto coro_ref = (*guard).as_ref().unwrap().clone();
-      // Need to drop guard before Recycle since Recycle may modify other state
-      // Actually, Recycle takes coro by reference and doesn't access sp_running_coro_th_
       Recycle(coro_ref);
     }
   }
+
   *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
 }
 
@@ -514,13 +426,8 @@ void Reactor::Recycle(rusty::Rc<Coroutine>& coro) const {
 }
 
 void Reactor::DisplayWaitingEv() const {
-  Log_info("waiting_events_: %zu, composite_events_: %zu, ready_events_: %zu",
-           waiting_events_.len(), composite_events_.len(), ready_events_.size());
-}
-
-void Reactor::ReadyEventsThreadSafePushBack(Event* ev) const {
-  std::lock_guard<std::mutex> lock(ready_events_mutex_);
-  ready_events_.push_back(ev);
+  Log_info("waiting_events_: %zu, composite_events_: %zu",
+           waiting_events_.len(), composite_events_.len());
 }
 
 // =============================================================================

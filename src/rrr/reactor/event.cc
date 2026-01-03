@@ -138,41 +138,28 @@ void Event::RecordPlace(const char* file, int line) {
   rcd_wait_ = true;
 }
 
+// @safe - Tests if event is ready
 bool Event::Test() {
-  verify(__debug_creator); // if this fails, the event is not created by reactor.
+  verify(__debug_creator);
   if (IsReady()) {
     if (status_.get() == INIT) {
-      // wait has not been called, do nothing until wait happens.
       status_.set(DONE);
     } else if (status_.get() == WAIT) {
       auto option_coro = wp_coro_.upgrade();
       verify(option_coro.is_some());
       verify(status_.get() != DEBUG);
       status_.set(READY);
-      // Push to ready_events_ for processing
-      auto reactor = Reactor::GetReactor();
-      if (std::this_thread::get_id() == reactor->thread_id_.get()) {
-        // Same thread - direct push using raw pointer (safe: reactor owns event)
-        reactor->ready_events_.push_back(get_self_ptr());
-      } else {
-        // Different thread - thread-safe push using raw pointer
-        reactor->ReadyEventsThreadSafePushBack(get_self_ptr());
-      }
     } else if (status_.get() == READY) {
-      // This could happen for a quorum event.
       Log_debug("event status ready, triggered?");
     } else if (status_.get() == DONE) {
       // do nothing
     } else if (status_.get() == TIMEOUT) {
       // do nothing
-      // [Jetpack] recklessly comment this: failure recovery may enconter this, reason unknow, maybe some command wait too much time?
     } else {
       verify(0);
     }
     return true;
-  }
-  else {
-    // Reset DONE status to INIT for event reuse (from Jetpack)
+  } else {
     if (status_.get() == DONE) {
       status_.set(INIT);
     }
@@ -246,71 +233,6 @@ void SharedIntEvent::Wait(function<bool(int v)> f) {
 //  ev->Wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
   ev->Wait();
-}
-
-ThreadSafeIntEvent::ThreadSafeIntEvent() {
-  // Rc gives const access, use const_cast for mutation (safe: thread-local, single owner)
-  current_reactor_ = const_cast<Reactor*>(rrr::Reactor::GetReactor().get());
-}
-
-ThreadSafeIntEvent::ThreadSafeIntEvent(int tar) :target_(tar) {
-  // Rc gives const access, use const_cast for mutation (safe: thread-local, single owner)
-  current_reactor_ = const_cast<Reactor*>(rrr::Reactor::GetReactor().get());
-}
-
-bool ThreadSafeIntEvent::TestTrigger() {
-  if (status_.get() > WAIT) {
-    Log_debug("Event already triggered!");
-    return false;
-  }
-  if (value_ >= target_) {
-    if (status_.get() == INIT) {
-      // do nothing until wait happens.
-      status_.set(DONE);
-    } else if (status_.get() == WAIT) {
-      status_.set(READY);
-    } else {
-      verify(0);
-    }
-    return true;
-  }
-  return false;
-}
-
-bool Event::ThreadSafeTest() {
-  std::lock_guard<std::mutex> lock(status_mtx_);
-  verify(__debug_creator); // if this fails, the event is not created by reactor.
-  if (IsReady()) {
-    if (status_.get() == INIT) {
-      // wait has not been called, do nothing until wait happens.
-    } else if (status_.get() == WAIT) {
-      auto option_coro = wp_coro_.upgrade();
-      verify(option_coro.is_some());
-      verify(status_.get() != DEBUG);
-      status_.set(READY);
-
-      // Thread-safe push to ready queue for cross-thread event notification
-      // Uses raw pointer (safe: reactor owns all events in all_events_)
-      verify(current_reactor_);
-      current_reactor_->ReadyEventsThreadSafePushBack(get_self_ptr());
-    } else if (status_.get() == READY) {
-      // This could happen for a quorum event.
-      Log_info("event status ready, triggered?");
-    } else if (status_.get() == DONE) {
-      // do nothing
-    } else if (status_.get() == TIMEOUT) {
-      // Jetpack behavior: ignore late triggers after timeout
-    } else {
-      verify(0);
-    }
-    return true;
-  }
-  else{
-    if(status_.get() == DONE){
-      status_.set(INIT);
-    }
-  }
-  return false;
 }
 
 } // namespace rrr
