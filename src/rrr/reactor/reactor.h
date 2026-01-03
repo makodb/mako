@@ -151,16 +151,17 @@ class Reactor {
   mutable int server_id_{0};
 
   // Thread-safe ready events queue for multi-threaded Raft
+  // Uses raw Event* pointers for cross-thread notification (safe: reactor owns all events)
   mutable std::mutex ready_events_mutex_;
   /**
    * A reactor needs to keep reference to all coroutines created,
    * in case it is freed by the caller after a yield.
    */
-  // Events managed with std::shared_ptr (polymorphism support)
+  // Events managed with std::shared_ptr<Event> for polymorphism support and mutable access
   // Using rusty::VecDeque for @safe extract_if operations
   mutable rusty::VecDeque<std::shared_ptr<Event>> all_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> waiting_events_{};
-  mutable std::vector<std::shared_ptr<Event>> ready_events_{};  // Thread-safe ready events for Raft
+  mutable std::vector<Event*> ready_events_{};  // Raw pointers for thread-safe cross-thread signaling
   mutable rusty::VecDeque<std::shared_ptr<Event>> timeout_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent - polled separately
   mutable std::vector<std::shared_ptr<Event>> network_events_{};
@@ -192,7 +193,7 @@ class Reactor {
 #define REUSING_CORO (false)
 #endif
 
-  // Checks and processes timeout events with std::shared_ptr
+  // Checks and processes timeout events with std::shared_ptr<Event>
   void CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
   /**
    * @param ev. is usually allocated on coroutine stack. memory managed by user.
@@ -231,10 +232,11 @@ class Reactor {
   // Internal operations are properly synchronized for single-threaded reactor.
   void Loop(bool infinite = false, bool check_timeout = true) const;
   // @unsafe - Continues execution of a paused coroutine with rusty::Rc
-  void ContinueCoro(rusty::Rc<Coroutine> sp_coro) const;
-  void Recycle(rusty::Rc<Coroutine>& sp_coro) const;
+  void ContinueCoro(rusty::Rc<Coroutine> coro) const;
+  void Recycle(rusty::Rc<Coroutine>& coro) const;
   void DisplayWaitingEv() const;
-  void ReadyEventsThreadSafePushBack(std::shared_ptr<Event> ev) const;
+  // Cross-thread notification using raw pointer (safe: reactor owns all events in all_events_)
+  void ReadyEventsThreadSafePushBack(Event* ev) const;
 
   ~Reactor() {
     Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
@@ -244,23 +246,23 @@ class Reactor {
   }
   friend Event;
 
-  // @unsafe - Creates std::shared_ptr event with perfect forwarding
-  // SAFETY: Uses std::shared_ptr for polymorphism support. Lifetime is safe because:
+  // @unsafe - Creates std::shared_ptr<Event> with perfect forwarding and polymorphism support
+  // SAFETY: Uses std::shared_ptr for mutable access and polymorphism. Lifetime is safe because:
   //   1. shared_ptr is stored in all_events_ list (owned by reactor)
   //   2. Reactor lives for entire program duration
   //   3. Events are never removed from all_events_ until reactor destruction
-  // Manual verification required due to template complexity and std::shared_ptr usage
+  // Cross-thread notification uses raw pointers (safe: reactor owns all events)
   template <typename Ev, typename... Args>
   static std::shared_ptr<Ev> CreateSpEvent(Args&&... args) {  // @unsafe
-    auto sp_ev = std::make_shared<Ev>(args...);
-    sp_ev->__debug_creator = 1;
-    // TODO push them into a wait queue when they actually wait.
+    auto ev = std::make_shared<Ev>(args...);
+    ev->__debug_creator = 1;
+    // Set self-reference for cross-thread signaling (uses raw pointer now)
+    ev->set_self(ev);
+    // Store in all_events_
     auto reactor = GetReactor();
-    // Rc gives const access, use const_cast for mutation (safe: thread-local, single owner)
     auto& events = const_cast<Reactor&>(*reactor).all_events_;
-    events.push_back(sp_ev);
-    //Log_info("ADDING %s %d", typeid(sp_ev).name(), events.size());
-    return sp_ev;
+    events.push_back(ev);
+    return ev;
   }
 
   // @unsafe - Creates event and returns reference to shared_ptr content
@@ -271,7 +273,8 @@ class Reactor {
   // Manual verification required: reference lifetime extends beyond function scope
   template <typename Ev, typename... Args>
   static Ev& CreateEvent(Args&&... args) {  // @unsafe
-    return *CreateSpEvent<Ev>(args...);
+    auto sp = CreateSpEvent<Ev>(args...);
+    return *sp;
   }
 };
 
@@ -388,12 +391,12 @@ private:
     void TriggerJob();
 
     // Internal implementations (single-threaded, no races)
-    void do_add_pollable(rusty::Arc<Pollable> sp_poll);
+    void do_add_pollable(rusty::Arc<Pollable> poll);
     void do_remove_pollable(int fd);
     void do_close_pollable(int fd);  // Close socket and drop Arc
     void do_update_mode(int fd, int new_mode, const Pollable* poll_ptr);
-    void do_add_job(rusty::Arc<Job> sp_job);
-    void do_remove_job(rusty::Arc<Job> sp_job);
+    void do_add_job(rusty::Arc<Job> job);
+    void do_remove_job(rusty::Arc<Job> job);
 
     // Process deferred removals
     void process_pending_removals();
@@ -468,8 +471,8 @@ public:
     // @safe - Sends update mode command via channel
     // SAFETY: Channel send is thread-safe, Pollable is only read (fd())
     void update_mode(const Pollable& poll, int new_mode) const;
-    void add(rusty::Arc<Job> sp_job) const;
-    void remove(rusty::Arc<Job> sp_job) const;
+    void add(rusty::Arc<Job> job) const;
+    void remove(rusty::Arc<Job> job) const;
 
     // For testing - NOTE: This won't work with channel design
     // since worker state is not accessible. Return 0 for now.

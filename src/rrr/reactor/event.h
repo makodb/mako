@@ -23,7 +23,6 @@
 
 // External safety annotations for std::shared_ptr and Event operations
 // @external: {
-//   std::enable_shared_from_this::shared_from_this: [unsafe, () -> std::shared_ptr<auto>]
 //   std::make_shared: [unsafe, (auto...) -> std::shared_ptr<auto>]
 //   std::shared_ptr::operator*: [unsafe, () -> auto&]
 //   std::shared_ptr::operator->: [unsafe, () -> auto*]
@@ -39,8 +38,8 @@
 // Note: SUCCESS, REPEAT, REJECT macros removed - they conflict with mako's ErrorCode enum
 // Use ErrorCode::SUCCESS, etc. instead if needed
 
-#define Wait_recordplace(sp_ev, wait_func) do { \
-  auto ref_ev = sp_ev; \
+#define Wait_recordplace(ev, wait_func) do { \
+  auto ref_ev = ev; \
   ref_ev->RecordPlace(__FILE__, __LINE__); \
   ref_ev->wait_func; \
 } while(0)
@@ -51,11 +50,14 @@ using std::vector;
 using std::list;
 
 class Reactor;
-class Event : public std::enable_shared_from_this<Event> {
+class Event {
   std::mutex status_mtx_; // This is used for ThreadSafeTest
  protected:
   // Raw pointer to reactor for cross-thread access (safe: reactor lifetime = thread lifetime)
   Reactor* current_reactor_{nullptr};
+  // Self-reference for adding to queues (using weak_ptr for shared ownership)
+  // Set by CreateSpEvent after construction
+  std::weak_ptr<Event> self_;
 //class Event {
  public:
   int __debug_creator{0};
@@ -74,14 +76,13 @@ class Event : public std::enable_shared_from_this<Event> {
   bool rcd_wait_ = false;
   std::string wait_place_{"not recorded"};
   bool in_waiting_list_{false};
-  std::list<std::shared_ptr<Event>>::iterator waiting_iter_;
 
   // An event is usually allocated on a coroutine stack, thus it cannot own a
   //   shared_ptr to the coroutine it is.
   // In this case there is no shared pointer to the event.
   // When the stack that contains the event frees, the event frees.
   // Weak reference to coroutine using rusty::rc::Weak with proper reference counting
-  rusty::rc::Weak<Coroutine> wp_coro_{}; 
+  rusty::rc::Weak<Coroutine> wp_coro_{};
 
   // @unsafe
   virtual void Wait(uint64_t timeout=0) final;
@@ -106,6 +107,12 @@ class Event : public std::enable_shared_from_this<Event> {
   // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
   // Added at END to preserve vtable layout for binary compatibility
   virtual bool IsCompositeEvent() { return false; }
+
+  // Self-reference management (uses shared_ptr for polymorphism support)
+  void set_self(std::weak_ptr<Event> self) { self_ = self; }
+  std::shared_ptr<Event> get_self() const { return self_.lock(); }
+  // Get raw pointer for cross-thread signaling (safe: reactor owns all events)
+  Event* get_self_ptr() const { return const_cast<Event*>(this); }
 
   friend Reactor;
 // protected:
@@ -247,17 +254,17 @@ class AndEvent : public Event {
 
   template<typename... Args>
   void AddEvent(std::shared_ptr<Event> x, Args... rest) {
-    events_.push_back(x);
+    events_.push_back(std::move(x));
     AddEvent(rest...);
   }
 
   template<typename... Args>
   AndEvent(std::shared_ptr<Event> first, Args... rest) {
-    AddEvent(first, rest...);
+    AddEvent(std::move(first), rest...);
   }
-  
+
   void log() {
-    for(int i = 0; i < events_.size(); i++){
+    for(size_t i = 0; i < events_.size(); i++){
       events_[i]->log();
     }
   }
@@ -286,16 +293,16 @@ class NEvent : public Event {
 
   template<typename... Args>
   void AddEvent(std::shared_ptr<Event> x, Args... rest) {
-    events_.push_back(x);
+    events_.push_back(std::move(x));
     AddEvent(rest...);
   }
 
   template<typename... Args>
   NEvent(std::shared_ptr<Event> first, Args... rest) {
-    AddEvent(first, rest...);
+    AddEvent(std::move(first), rest...);
   }
 
-  bool IsReady() {
+  bool IsReady() override {
     int count = 0;
     for(auto index = events_.begin(); index != events_.end(); index++){
       if((*index)->IsReady()){
@@ -306,8 +313,6 @@ class NEvent : public Event {
       }
     }
     return false;
-    
-    //return std::all_of(events_.begin(), events_.end(), [](shared_ptr<Event> e){return e->IsReady();});
   }
 };
 

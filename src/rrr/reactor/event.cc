@@ -13,9 +13,9 @@ namespace rrr {
 using std::function;
 
 uint64_t Event::GetCoroId(){
-  auto sp_coro_opt = Coroutine::CurrentCoroutine();
-  verify(sp_coro_opt.is_some());
-  return sp_coro_opt.unwrap()->id;
+  auto coro_opt = Coroutine::CurrentCoroutine();
+  verify(coro_opt.is_some());
+  return coro_opt.unwrap()->id;
 }
 
 bool Event::IsSlow() {
@@ -69,22 +69,22 @@ void Event::Wait(uint64_t timeout) {
     // the event may be created in a different coroutine.
     // this value is set when wait is called.
     // for now only one coroutine can wait on an event.
-    auto sp_coro_opt = Coroutine::CurrentCoroutine();
-    verify(sp_coro_opt.is_some());  // Can't wait outside a coroutine
-    auto sp_coro = sp_coro_opt.unwrap();
+    auto coro_opt = Coroutine::CurrentCoroutine();
+    verify(coro_opt.is_some());  // Can't wait outside a coroutine
+    auto coro = coro_opt.unwrap();
 
     // Rc gives const access, use const_cast for mutation (safe: thread-local)
     auto reactor_rc = Reactor::GetReactor();
     auto& reactor = const_cast<Reactor&>(*reactor_rc);
     auto& waiting_events = reactor.waiting_events_;
-    waiting_events.push_back(shared_from_this());
+    waiting_events.push_back(get_self());
 
     // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
     // Add them to a separate queue that gets scanned (much smaller than all events)
     // Regular RPC events (Raft) self-notify via Test() - zero overhead!
     if (IsCompositeEvent()) {
       auto& composite_events = Reactor::GetReactor()->composite_events_;
-      composite_events.push_back(shared_from_this());
+      composite_events.push_back(get_self());
     }
 
 #ifdef EVENT_TIMEOUT_CHECK
@@ -99,10 +99,10 @@ void Event::Wait(uint64_t timeout) {
     if (timeout > 0) {
       auto now = Time::now(true);
       wakeup_time_ = now + timeout;
-      //Log_info("WAITING: %p", shared_from_this());
+      //Log_info("WAITING: %p", get_self().get());
       // Log_info("wake up %lld, now %lld", wakeup_time_, now);
       auto& timeout_events = reactor.timeout_events_;
-      timeout_events.push_back(shared_from_this());
+      timeout_events.push_back(get_self());
     }
     // TODO optimize timeout_events, sort by wakeup time.
 //      auto it = timeout_events.end();
@@ -117,11 +117,11 @@ void Event::Wait(uint64_t timeout) {
 //      }
 //      events.insert(it, shared_from_this());
 
-    wp_coro_ = sp_coro;
+    wp_coro_ = coro;
     status_.set(WAIT);
-    auto coro_status = sp_coro->status_.get();
+    auto coro_status = coro->status_.get();
     verify(coro_status != Coroutine::FINISHED && coro_status != Coroutine::RECYCLED);
-    sp_coro->Yield();
+    coro->Yield();
 #ifdef EVENT_TIMEOUT_CHECK
     if (__debug_timeout_ && status_.get() == TIMEOUT) {
       Log_info("timeout");
@@ -149,14 +149,14 @@ bool Event::Test() {
       verify(option_coro.is_some());
       verify(status_.get() != DEBUG);
       status_.set(READY);
-      // TESTING: Push to ready_events_ since we disabled waiting_events_ scanning
+      // Push to ready_events_ for processing
       auto reactor = Reactor::GetReactor();
       if (std::this_thread::get_id() == reactor->thread_id_.get()) {
-        // Same thread - direct push
-        reactor->ready_events_.push_back(shared_from_this());
+        // Same thread - direct push using raw pointer (safe: reactor owns event)
+        reactor->ready_events_.push_back(get_self_ptr());
       } else {
-        // Different thread - thread-safe push
-        reactor->ReadyEventsThreadSafePushBack(shared_from_this());
+        // Different thread - thread-safe push using raw pointer
+        reactor->ReadyEventsThreadSafePushBack(get_self_ptr());
       }
     } else if (status_.get() == READY) {
       // This could happen for a quorum event.
@@ -209,10 +209,10 @@ bool IntEvent::TestTrigger() {
 int SharedIntEvent::Set(const int& v) {
   auto ret = value_;
   value_ = v;
-  for (auto& sp_ev : events_) {
-    if (sp_ev->status_.get() <= Event::WAIT) {
-      if (sp_ev->target_ <= v) {
-        sp_ev->Set(v);
+  for (auto& ev : events_) {
+    if (ev->status_.get() <= Event::WAIT) {
+      if (ev->target_ <= v) {
+        ev->Set(v);
       }
     }
   }
@@ -223,14 +223,14 @@ bool SharedIntEvent::WaitUntilGreaterOrEqualThan(int x, int timeout) {
   if (value_ >= x) {
     return false;
   }
-  auto sp_ev =  Reactor::CreateSpEvent<IntEvent>();
-  sp_ev->value_ = value_;
-  sp_ev->target_ = x;
-  auto it = events_.insert(events_.end(), sp_ev);
-  sp_ev->Wait(timeout);
-  // verify(sp_ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
+  auto ev =  Reactor::CreateSpEvent<IntEvent>();
+  ev->value_ = value_;
+  ev->target_ = x;
+  auto it = events_.insert(events_.end(), ev);
+  ev->Wait(timeout);
+  // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
-  bool if_timeout = (sp_ev->status_.get() == Event::TIMEOUT);
+  bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
   events_.erase(it);
   return if_timeout;
 }
@@ -239,13 +239,13 @@ void SharedIntEvent::Wait(function<bool(int v)> f) {
   if (f(value_)) {
     return;
   }
-  auto sp_ev =  Reactor::CreateSpEvent<IntEvent>();
-  sp_ev->value_ = value_;
-  sp_ev->test_ = f;
-  events_.push_back(sp_ev);
-//  sp_ev->Wait(1000*1000*1000);
-//  verify(sp_ev->status_ != Event::TIMEOUT);
-  sp_ev->Wait();
+  auto ev =  Reactor::CreateSpEvent<IntEvent>();
+  ev->value_ = value_;
+  ev->test_ = f;
+  events_.push_back(ev);
+//  ev->Wait(1000*1000*1000);
+//  verify(ev->status_ != Event::TIMEOUT);
+  ev->Wait();
 }
 
 ThreadSafeIntEvent::ThreadSafeIntEvent() {
@@ -287,15 +287,12 @@ bool Event::ThreadSafeTest() {
       auto option_coro = wp_coro_.upgrade();
       verify(option_coro.is_some());
       verify(status_.get() != DEBUG);
-//      auto sched = Reactor::GetReactor();
-//      verify(sched.get() == _dbg_p_scheduler_);
-//      verify(sched->__debug_set_all_coro_.count(sp_coro.get()) > 0);
-//      verify(sched->coros_.count(sp_coro) > 0);
       status_.set(READY);
 
       // Thread-safe push to ready queue for cross-thread event notification
+      // Uses raw pointer (safe: reactor owns all events in all_events_)
       verify(current_reactor_);
-      current_reactor_->ReadyEventsThreadSafePushBack(shared_from_this());
+      current_reactor_->ReadyEventsThreadSafePushBack(get_self_ptr());
     } else if (status_.get() == READY) {
       // This could happen for a quorum event.
       Log_info("event status ready, triggered?");
