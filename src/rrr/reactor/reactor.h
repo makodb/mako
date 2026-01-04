@@ -147,18 +147,19 @@ class Reactor {
   static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Coroutine>>> sp_running_coro_th_;
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
-  mutable int server_id_{0};
+  // Using Cell for safe interior mutability (int is trivially copyable)
+  rusty::Cell<int> server_id_{0};
 
   /**
    * A reactor needs to keep reference to all coroutines created,
    * in case it is freed by the caller after a yield.
    */
-  // Events managed with std::shared_ptr<Event> for polymorphism support and mutable access
-  // Using rusty::VecDeque for @safe extract_if operations
-  mutable rusty::VecDeque<std::shared_ptr<Event>> all_events_{};
-  mutable rusty::VecDeque<std::shared_ptr<Event>> waiting_events_{};
-  mutable rusty::VecDeque<std::shared_ptr<Event>> timeout_events_{};
-  mutable rusty::VecDeque<std::shared_ptr<Event>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent - polled separately
+  // Events managed with std::shared_ptr<Event> for polymorphism support
+  // Using RefCell<VecDeque> for safe interior mutability in const methods
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> all_events_{};
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> waiting_events_{};
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> timeout_events_{};
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent
   mutable std::vector<std::shared_ptr<Event>> network_events_{};
   mutable rusty::VecDeque<std::shared_ptr<Event>> ready_network_events_{};
   // Coroutines managed with single-threaded Rc
@@ -230,7 +231,7 @@ class Reactor {
 
   ~Reactor() {
     Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
-              all_events_.len(), coros_.len());
+              all_events_.borrow()->len(), coros_.len());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }
@@ -248,10 +249,9 @@ class Reactor {
     ev->__debug_creator = 1;
     // Set self-reference for cross-thread signaling (uses raw pointer now)
     ev->set_self(ev);
-    // Store in all_events_
+    // Store in all_events_ using RefCell borrow_mut()
     auto reactor = get_reactor();
-    auto& events = const_cast<Reactor&>(*reactor).all_events_;
-    events.push_back(ev);
+    reactor->all_events_.borrow_mut()->push_back(ev);
     return ev;
   }
 

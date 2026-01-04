@@ -73,18 +73,15 @@ void Event::wait(uint64_t timeout) {
     verify(coro_opt.is_some());  // Can't wait outside a coroutine
     auto coro = coro_opt.unwrap();
 
-    // Rc gives const access, use const_cast for mutation (safe: thread-local)
+    // Use RefCell borrow_mut() for safe interior mutability
     auto reactor_rc = Reactor::get_reactor();
-    auto& reactor = const_cast<Reactor&>(*reactor_rc);
-    auto& waiting_events = reactor.waiting_events_;
-    waiting_events.push_back(get_self());
+    reactor_rc->waiting_events_.borrow_mut()->push_back(get_self());
 
     // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
     // Add them to a separate queue that gets scanned (much smaller than all events)
     // Regular RPC events (Raft) self-notify via test() - zero overhead!
     if (is_composite_event()) {
-      auto& composite_events = Reactor::get_reactor()->composite_events_;
-      composite_events.push_back(get_self());
+      Reactor::get_reactor()->composite_events_.borrow_mut()->push_back(get_self());
     }
 
 #ifdef EVENT_TIMEOUT_CHECK
@@ -101,8 +98,7 @@ void Event::wait(uint64_t timeout) {
       wakeup_time_ = now + timeout;
       //Log_info("WAITING: %p", get_self().get());
       // Log_info("wake up %lld, now %lld", wakeup_time_, now);
-      auto& timeout_events = reactor.timeout_events_;
-      timeout_events.push_back(get_self());
+      reactor_rc->timeout_events_.borrow_mut()->push_back(get_self());
     }
     // TODO optimize timeout_events, sort by wakeup time.
 //      auto it = timeout_events.end();

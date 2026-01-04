@@ -280,7 +280,7 @@ void ServerWorker::SetupCommo() {
     rep_commo_->rep_sched_ = rep_sched_;
   }
 
-  Reactor::get_reactor()->server_id_ = site_info_->id;
+  Reactor::get_reactor()->server_id_.set(site_info_->id);
 //  svr_thread_pool_ = new rrr::ThreadPool(1);
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
     [this]() {

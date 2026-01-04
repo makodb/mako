@@ -134,7 +134,7 @@ Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file,
                  (int)n_created_coroutines_.get(),
                  (int)n_busy_coroutines_.get(),
                  (int)n_idle_coroutines_.get(),
-                 server_id_,
+                 server_id_.get(),
                  file,
                  (long long)line);
       }
@@ -235,19 +235,24 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   return coro;
 }
 
-// @unsafe - Uses mutable fields in const method (C++ mutable keyword for interior mutability)
+// @safe - Uses RefCell for safe interior mutability
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
   int64_t time_now;
-  time_now = Time::now(true);
+  // @unsafe - Time::now is external
+  { time_now = Time::now(true); }
+
+  // Borrow timeout_events_ for all operations
+  auto guard = timeout_events_.borrow_mut();
 
   // First pass: update status of timed-out events
-  for (size_t i = 0; i < timeout_events_.len(); ++i) {
-    auto& sp = timeout_events_[i];
+  for (size_t i = 0; i < guard->len(); ++i) {
+    auto& sp = (*guard)[i];
     Event& event = *sp;
     auto status = event.status_.get();
     if (status == Event::WAIT) {
       const auto& wakeup_time = event.wakeup_time_;
-      verify(wakeup_time > 0);
+      // @unsafe - verify is external
+      { verify(wakeup_time > 0); }
       if (time_now > wakeup_time) {
         if (event.is_ready()) {
           event.status_.set(Event::READY);
@@ -259,20 +264,26 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 
   // Extract events that are READY or TIMEOUT (timed out)
-  auto timed_out = timeout_events_.extract_if(
-    rusty::Function<bool(const std::shared_ptr<Event>&)>(
-      [](const std::shared_ptr<Event>& sp) {
-        auto status = sp->status_.get();
-        return status == Event::READY || status == Event::TIMEOUT;
-      }));
-  ready_events.append(std::move(timed_out));
+  // @unsafe - rusty::Function constructor
+  {
+    auto timed_out = guard->extract_if(
+      rusty::Function<bool(const std::shared_ptr<Event>&)>(
+        [](const std::shared_ptr<Event>& sp) {
+          auto status = sp->status_.get();
+          return status == Event::READY || status == Event::TIMEOUT;
+        }));
+    ready_events.append(std::move(timed_out));
+  }
 
   // Remove events that are DONE (shouldn't happen often, but clean up)
-  timeout_events_.retain(
-    rusty::Function<bool(const std::shared_ptr<Event>&)>(
-      [](const std::shared_ptr<Event>& sp) {
-        return sp->status_.get() != Event::DONE;
-      }));
+  // @unsafe - rusty::Function constructor
+  {
+    guard->retain(
+      rusty::Function<bool(const std::shared_ptr<Event>&)>(
+        [](const std::shared_ptr<Event>& sp) {
+          return sp->status_.get() != Event::DONE;
+        }));
+  }
 }
 
 // @safe - Main event loop
@@ -287,54 +298,69 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       found_ready_events = false;
       rusty::VecDeque<std::shared_ptr<Event>> ready_events;
 
-      // @unsafe - mutable field access in const method (C++ mutable), rusty::Function constructor
+      // Process waiting events using RefCell
       {
+        auto waiting_guard = waiting_events_.borrow_mut();
         // Test waiting events
-        for (size_t i = 0; i < waiting_events_.len(); ++i) {
-          waiting_events_[i]->test();
+        for (size_t i = 0; i < waiting_guard->len(); ++i) {
+          (*waiting_guard)[i]->test();
         }
-        // Extract READY events using safe extract_if pattern
-        auto ready_from_waiting = waiting_events_.extract_if(
-          rusty::Function<bool(const std::shared_ptr<Event>&)>(
-            [](const std::shared_ptr<Event>& ev) {
-              return ev->status_.get() == Event::READY;
-            }));
-        if (!ready_from_waiting.is_empty()) {
-          ready_events.append(std::move(ready_from_waiting));
-          found_ready_events = true;
+        // Extract READY events
+        // @unsafe - rusty::Function constructor
+        {
+          auto ready_from_waiting = waiting_guard->extract_if(
+            rusty::Function<bool(const std::shared_ptr<Event>&)>(
+              [](const std::shared_ptr<Event>& ev) {
+                return ev->status_.get() == Event::READY;
+              }));
+          if (!ready_from_waiting.is_empty()) {
+            ready_events.append(std::move(ready_from_waiting));
+            found_ready_events = true;
+          }
         }
         // Remove DONE events
-        waiting_events_.retain(
-          rusty::Function<bool(const std::shared_ptr<Event>&)>(
-            [](const std::shared_ptr<Event>& ev) {
-              return ev->status_.get() != Event::DONE;
-            }));
-
-        // Same pattern for composite events
-        for (size_t i = 0; i < composite_events_.len(); ++i) {
-          composite_events_[i]->test();
+        // @unsafe - rusty::Function constructor
+        {
+          waiting_guard->retain(
+            rusty::Function<bool(const std::shared_ptr<Event>&)>(
+              [](const std::shared_ptr<Event>& ev) {
+                return ev->status_.get() != Event::DONE;
+              }));
         }
-        auto ready_from_composite = composite_events_.extract_if(
-          rusty::Function<bool(const std::shared_ptr<Event>&)>(
-            [](const std::shared_ptr<Event>& ev) {
-              return ev->status_.get() == Event::READY;
-            }));
-        if (!ready_from_composite.is_empty()) {
-          ready_events.append(std::move(ready_from_composite));
-          found_ready_events = true;
-        }
-        composite_events_.retain(
-          rusty::Function<bool(const std::shared_ptr<Event>&)>(
-            [](const std::shared_ptr<Event>& ev) {
-              return ev->status_.get() != Event::DONE;
-            }));
       }
 
-      // Check timeouts using safe extract_if pattern
+      // Process composite events using RefCell
+      {
+        auto composite_guard = composite_events_.borrow_mut();
+        for (size_t i = 0; i < composite_guard->len(); ++i) {
+          (*composite_guard)[i]->test();
+        }
+        // @unsafe - rusty::Function constructor
+        {
+          auto ready_from_composite = composite_guard->extract_if(
+            rusty::Function<bool(const std::shared_ptr<Event>&)>(
+              [](const std::shared_ptr<Event>& ev) {
+                return ev->status_.get() == Event::READY;
+              }));
+          if (!ready_from_composite.is_empty()) {
+            ready_events.append(std::move(ready_from_composite));
+            found_ready_events = true;
+          }
+        }
+        // @unsafe - rusty::Function constructor
+        {
+          composite_guard->retain(
+            rusty::Function<bool(const std::shared_ptr<Event>&)>(
+              [](const std::shared_ptr<Event>& ev) {
+                return ev->status_.get() != Event::DONE;
+              }));
+        }
+      }
+
+      // Check timeouts using RefCell-based check_timeout
       if (do_check_timeout) {
         size_t before = ready_events.len();
-        // @unsafe - check_timeout uses mutable fields in const method
-        { check_timeout(ready_events); }
+        check_timeout(ready_events);
         if (ready_events.len() > before) {
           found_ready_events = true;
         }
@@ -431,7 +457,7 @@ void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
 
 void Reactor::display_waiting_ev() const {
   Log_info("waiting_events_: %zu, composite_events_: %zu",
-           waiting_events_.len(), composite_events_.len());
+           waiting_events_.borrow()->len(), composite_events_.borrow()->len());
 }
 
 // =============================================================================

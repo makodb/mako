@@ -47,8 +47,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - reactor.cc status:
         - Uses C++ `mutable` fields in const methods - this correctly requires @unsafe (not a false positive)
         - C++ mutable is NOT equivalent to Rust's safe interior mutability (Cell/RefCell)
-        - Potential false positive: Rc::clone() treated as move (bug report filed)
-        - reactor.cc methods are correctly marked @unsafe; file excluded from borrow checking until refactored 
+        - reactor.cc methods are correctly marked @unsafe; file excluded from borrow checking until refactored
+    - [ ] Refactor reactor.cc to use rusty::RefCell instead of C++ mutable [Plan: doc/reactor_refcell_refactoring_plan.md]
+      - [x] Task 1: server_id_ to Cell (~20 LOC) [DONE]
+      - [x] Task 2: Event containers to RefCell (all_events_, waiting_events_, timeout_events_, composite_events_) [DONE]
+        - Changed types from `mutable T` to `rusty::RefCell<T>` in reactor.h
+        - Updated access patterns in reactor.cc, event.cc to use borrow()/borrow_mut()
+        - Fixed destructor and create_sp_event to use RefCell pattern
+      - [ ] Task 3: Network event containers to RefCell (network_events_, ready_network_events_)
+      - [ ] Task 4: Coroutine containers to RefCell (coros_, available_coros_)
+      - [ ] Task 5: Map containers to RefCell (processors_, opened_files_)
+      - [ ] Task 6: Remove @unsafe blocks, add reactor.cc to borrow checking 
   - [x] *medium* Make rrr code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]
     - [x] reactor/reactor.h - Rename Reactor methods to snake_case (GetReactor->get_reactor, Loop->loop, CreateSpEvent->create_sp_event, etc.) [DONE]
