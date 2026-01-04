@@ -1096,9 +1096,9 @@ if(NOT TARGET rrr)
         # RPC files that pass borrow checking
         src/rrr/rpc/utils.cpp
         src/rrr/rpc/client.cpp
+        src/rrr/rpc/server.cpp
         # Files with violations that need fixing:
         # - reactor.cc: 8 violations (unsafe calls, use-after-move, mutable borrow in const)
-        # - server.cpp: 1 violation (false positive - STL list::back temp variable)
         # - threading.cpp: 2 violations (field borrow conflicts)
     )
 
