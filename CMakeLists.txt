@@ -1085,7 +1085,21 @@ if(NOT TARGET rrr)
         src/rrr/reactor/event.cc
         src/rrr/reactor/quorum_event.cc
         src/rrr/reactor/epoll_wrapper.cc
-        # reactor.cc has legitimate violations that need fixing
+        # Base files that pass borrow checking
+        src/rrr/base/logging.cpp
+        src/rrr/base/misc.cpp
+        src/rrr/base/basetypes.cpp
+        src/rrr/base/debugging.cpp
+        # Misc files that pass borrow checking
+        src/rrr/misc/alock.cpp
+        # RPC files that pass borrow checking
+        src/rrr/rpc/utils.cpp
+        # Files with violations that need fixing:
+        # - reactor.cc: 8 violations (unsafe calls, use-after-move, mutable borrow in const)
+        # - marshal.cpp: 1 violation (unsafe pointer new)
+        # - server.cpp: 1 violation (STL list::back needs @unsafe)
+        # - client.cpp: 1 violation (std::chrono needs @unsafe)
+        # - threading.cpp: 2 violations (field borrow conflicts)
     )
 
     # Add borrow checking for RRR library (only if we have files to check)

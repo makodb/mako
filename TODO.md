@@ -33,8 +33,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Waiting for fix before re-enabling borrow checking
     - [x] Re-check rusty-cpp for fix to "Cannot return 'value'" false positive (fixed 2026-01-04)
       - Commit e5b380e fixed the remaining false positives
-      - Re-enabled borrow checking for 4 reactor files: coroutine.cc, event.cc, quorum_event.cc, epoll_wrapper.cc
-      - reactor.cc has legitimate violations that need to be fixed separately 
+      - Re-enabled borrow checking for 10 RRR files:
+        - Reactor: coroutine.cc, event.cc, quorum_event.cc, epoll_wrapper.cc
+        - Base: logging.cpp, misc.cpp, basetypes.cpp, debugging.cpp
+        - Misc: alock.cpp
+        - RPC: utils.cpp
+      - Files with violations that still need fixing:
+        - reactor.cc: 8 violations (unsafe calls, use-after-move)
+        - marshal.cpp: 1 violation (unsafe pointer new)
+        - server.cpp: 1 violation (STL list::back)
+        - client.cpp: 1 violation (std::chrono)
+        - threading.cpp: 2 violations (field borrow conflicts) 
   - [x] *medium* Make rrr code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]
     - [x] reactor/reactor.h - Rename Reactor methods to snake_case (GetReactor->get_reactor, Loop->loop, CreateSpEvent->create_sp_event, etc.) [DONE]
