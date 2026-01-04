@@ -346,7 +346,7 @@ bool ClientConnection::handle_read() {
     }
   }
 
-  Reactor::GetReactor()->Loop();
+  Reactor::get_reactor()->loop();
 
   return true;
 }

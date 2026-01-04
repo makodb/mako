@@ -137,9 +137,9 @@ class Reactor {
 
   // @unsafe - Returns thread-local reactor instance with single-threaded Rc
   // SAFETY: Thread-local storage, single-threaded access only
-  static rusty::Rc<Reactor> GetReactor();
+  static rusty::Rc<Reactor> get_reactor();
   // @unsafe - Returns thread-local disk reactor instance
-  static rusty::Rc<Reactor> GetDiskReactor();
+  static rusty::Rc<Reactor> get_disk_reactor();
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
   // Thread-local current coroutine with single-threaded Rc
@@ -189,44 +189,44 @@ class Reactor {
 #endif
 
   // Checks and processes timeout events with std::shared_ptr<Event>
-  void CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
+  void check_timeout(rusty::VecDeque<std::shared_ptr<Event>>&) const;
   /**
    * @param ev. is usually allocated on coroutine stack. memory managed by user.
    */
   // @safe - Creates and runs a new coroutine with rusty::Rc ownership
   // Refactored into smaller safe helper functions for clarity and safety.
   // Jetpack: file/line parameters for debugging coroutine creation location
-  rusty::Rc<Coroutine> CreateRunCoroutine(rusty::Function<void()> func,
-                                          const char* file = "",
-                                          int64_t line = 0) const;
+  rusty::Rc<Coroutine> create_run_coroutine(rusty::Function<void()> func,
+                                            const char* file = "",
+                                            int64_t line = 0) const;
 
  private:
-  // Helper functions for CreateRunCoroutine - each is @safe with internal @unsafe blocks
+  // Helper functions for create_run_coroutine - each is @safe with internal @unsafe blocks
 
   // @safe - Gets a recycled coroutine or creates a new one
-  rusty::Rc<Coroutine> GetOrCreateCoroutine(rusty::Function<void()> func,
-                                            const char* file,
-                                            int64_t line) const;
+  rusty::Rc<Coroutine> get_or_create_coroutine(rusty::Function<void()> func,
+                                               const char* file,
+                                               int64_t line) const;
 
   // @safe - Saves current running coroutine to allow nesting
-  rusty::Option<rusty::Rc<Coroutine>> SaveRunningCoroutine() const;
+  rusty::Option<rusty::Rc<Coroutine>> save_running_coroutine() const;
 
   // @safe - Restores previously saved running coroutine
-  void RestoreRunningCoroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const;
+  void restore_running_coroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const;
 
   // @safe - Sets the current running coroutine
-  void SetRunningCoroutine(const rusty::Rc<Coroutine>& coro) const;
+  void set_running_coroutine(const rusty::Rc<Coroutine>& coro) const;
 
   // @safe - Registers coroutine in the active set
-  void RegisterCoroutine(const rusty::Rc<Coroutine>& coro) const;
+  void register_coroutine(const rusty::Rc<Coroutine>& coro) const;
 
  public:
   // @safe - Main event loop
-  void Loop(bool infinite = false, bool check_timeout = true) const;
+  void loop(bool infinite = false, bool do_check_timeout = true) const;
   // @safe - Continues execution of a paused coroutine
-  void ContinueCoro(rusty::Rc<Coroutine> coro) const;
-  void Recycle(rusty::Rc<Coroutine>& coro) const;
-  void DisplayWaitingEv() const;
+  void continue_coro(rusty::Rc<Coroutine> coro) const;
+  void recycle(rusty::Rc<Coroutine>& coro) const;
+  void display_waiting_ev() const;
 
   ~Reactor() {
     Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
@@ -243,13 +243,13 @@ class Reactor {
   //   3. Events are never removed from all_events_ until reactor destruction
   // Cross-thread notification uses raw pointers (safe: reactor owns all events)
   template <typename Ev, typename... Args>
-  static std::shared_ptr<Ev> CreateSpEvent(Args&&... args) {  // @unsafe
+  static std::shared_ptr<Ev> create_sp_event(Args&&... args) {  // @unsafe
     auto ev = std::make_shared<Ev>(args...);
     ev->__debug_creator = 1;
     // Set self-reference for cross-thread signaling (uses raw pointer now)
     ev->set_self(ev);
     // Store in all_events_
-    auto reactor = GetReactor();
+    auto reactor = get_reactor();
     auto& events = const_cast<Reactor&>(*reactor).all_events_;
     events.push_back(ev);
     return ev;
@@ -257,13 +257,13 @@ class Reactor {
 
   // @unsafe - Creates event and returns reference to shared_ptr content
   // SAFETY: Returned reference is valid because:
-  //   1. Event is created via CreateSpEvent and stored in all_events_
+  //   1. Event is created via create_sp_event and stored in all_events_
   //   2. all_events_ is never cleared during reactor lifetime
   //   3. Returned reference points to heap-allocated Event managed by shared_ptr
   // Manual verification required: reference lifetime extends beyond function scope
   template <typename Ev, typename... Args>
-  static Ev& CreateEvent(Args&&... args) {  // @unsafe
-    auto sp = CreateSpEvent<Ev>(args...);
+  static Ev& create_event(Args&&... args) {  // @unsafe
+    auto sp = create_sp_event<Ev>(args...);
     return *sp;
   }
 };
@@ -378,7 +378,7 @@ private:
     void process_commands();
 
     // Triggers ready jobs in coroutines
-    void TriggerJob();
+    void trigger_job();
 
     // Internal implementations (single-threaded, no races)
     void do_add_pollable(rusty::Arc<Pollable> poll);

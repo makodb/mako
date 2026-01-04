@@ -195,7 +195,7 @@ void JanusCommo::BroadcastCommit(
 }
 
 shared_ptr<QuorumEvent> JanusCommo::BroadcastInquireValidation(set<parid_t>& pars, txid_t txid) {
-  auto e = Reactor::CreateSpEvent<QuorumEvent>(pars.size(), pars.size());
+  auto e = Reactor::create_sp_event<QuorumEvent>(pars.size(), pars.size());
   for (auto par_id : pars) {
     auto proxy = NearestProxyForPartition(par_id).second;
     FutureAttr fuattr;

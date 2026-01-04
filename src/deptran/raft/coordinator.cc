@@ -124,7 +124,7 @@ void CoordinatorRaft::AppendEntries() {
     }
 
     while (this->svr_->commitIndex < index) {
-      Reactor::CreateSpEvent<TimeoutEvent>(1000)->wait();
+      Reactor::create_sp_event<TimeoutEvent>(1000)->wait();
       if (this->svr_->currentTerm != term) {
         Log_info("Term changed during AppendEntries: expected %lu, got %lu. Leader changed.", 
                  term, this->svr_->currentTerm);

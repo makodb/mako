@@ -74,7 +74,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
 //  RccTx* traverse_path_start_{nullptr};
 //  RccTx* traverse_path_waitingon_{nullptr};
 //  TraverseStatus traverse_path_waiting_status_{ERROR};
-//  shared_ptr<IntEvent> sp_ev_commit_{Reactor::CreateSpEvent<IntEvent>()};
+//  shared_ptr<IntEvent> sp_ev_commit_{Reactor::create_sp_event<IntEvent>()};
 //  TxnOutput *p_output_reply_ = nullptr;
 //  TxnOutput output_ = {};
 //  bool log_apply_started_{false}; // compared to ???
@@ -83,8 +83,8 @@ class RccTx: public Tx, public Vertex<RccTx> {
 //  bool waiting_all_anc_committing_{false};
 //  SharedIntEvent wait_all_anc_commit_done_{};
 //  bool __debug_local_validated_foreign_{false};
-//  shared_ptr<StatusBox> local_validated_{Reactor::CreateSpEvent<StatusBox>()};
-//  shared_ptr<StatusBox> global_validated_{Reactor::CreateSpEvent<StatusBox>()};
+//  shared_ptr<StatusBox> local_validated_{Reactor::create_sp_event<StatusBox>()};
+//  shared_ptr<StatusBox> global_validated_{Reactor::create_sp_event<StatusBox>()};
 //  vector<SimpleCommand> dreqs_ = {};
 //  // ----above variables get reset whenever current_rank_ is changed
 
@@ -111,7 +111,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
       if (value_ >= x) {
         return;
       }
-      auto sp_ev =  Reactor::CreateSpEvent<IntEvent>();
+      auto sp_ev =  Reactor::create_sp_event<IntEvent>();
       sp_ev->value_ = value_;
       sp_ev->target_ = x;
       events_.push_back(sp_ev);
@@ -133,7 +133,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
     RccTx* traverse_path_start_{nullptr};
     RccTx* traverse_path_waitingon_{nullptr};
     TraverseStatus traverse_path_waiting_status_{ERROR};
-    shared_ptr<IntEvent> sp_ev_commit_{Reactor::CreateSpEvent<IntEvent>()};
+    shared_ptr<IntEvent> sp_ev_commit_{Reactor::create_sp_event<IntEvent>()};
     TxnOutput *p_output_reply_ = nullptr;
     TxnOutput output_ = {};
     bool log_apply_started_{false}; // compared to ???
@@ -142,9 +142,9 @@ class RccTx: public Tx, public Vertex<RccTx> {
     bool waiting_all_anc_committing_{false};
     SharedIntEvent wait_all_anc_commit_done_{};
     bool __debug_local_validated_foreign_{false};
-    shared_ptr<StatusBox> local_validated_{Reactor::CreateSpEvent<StatusBox>()};
-    shared_ptr<StatusBox> global_validated_{Reactor::CreateSpEvent<StatusBox>()};
-    shared_ptr<IntEvent> fully_dispatched_{Reactor::CreateSpEvent<IntEvent>()};
+    shared_ptr<StatusBox> local_validated_{Reactor::create_sp_event<StatusBox>()};
+    shared_ptr<StatusBox> global_validated_{Reactor::create_sp_event<StatusBox>()};
+    shared_ptr<IntEvent> fully_dispatched_{Reactor::create_sp_event<IntEvent>()};
 //  bool fully_dispatched_{false};
     vector<SimpleCommand> dreqs_ = {};
     // hopefully this makes involve checks faster

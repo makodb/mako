@@ -39,7 +39,7 @@ MenciusCommo::BroadcastPrepare(parid_t par_id,
                                   ballot_t ballot) {
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<MenciusPrepareQuorumEvent>(n, n/2+1);
+  auto e = Reactor::create_sp_event<MenciusPrepareQuorumEvent>(n, n/2+1);
   auto src_coroid = e->get_coro_id();
   auto proxies = rpc_par_proxies_[par_id];
   auto leader_id = LeaderProxyForPartition(par_id).first;
@@ -76,8 +76,8 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
                                  shared_ptr<Marshallable> cmd) {
   //Log_info("invoke BroadcastSuggest, slot_id:%d", slot_id);
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<MenciusSuggestQuorumEvent>(n, n/2+1);
-//  auto e = Reactor::CreateSpEvent<MenciusSuggestQuorumEvent>(n, n);
+  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n/2+1);
+//  auto e = Reactor::create_sp_event<MenciusSuggestQuorumEvent>(n, n);
 
   auto src_coroid = e->get_coro_id();
   auto proxies = rpc_par_proxies_[par_id];

@@ -67,7 +67,7 @@ bool SchedulerClassic::DispatchPiece(Tx& tx,
     for (auto col_id : c.columns) {
       if (!Guard(tx, row, col_id)) {
         tx.inuse = false;
-//        auto reactor = Reactor::GetReactor();
+//        auto reactor = Reactor::get_reactor();
 //        auto sz = reactor->coros_.size();
 //        verify(sz > 0);
         auto id = piece_data.inn_id();

@@ -946,7 +946,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   // Create an event to track all recovery dispatches
   shared_ptr<IntEvent> recovery_event = nullptr;
   if (set_size > 0) {
-    recovery_event = Reactor::CreateSpEvent<IntEvent>(set_size);
+    recovery_event = Reactor::create_sp_event<IntEvent>(set_size);
     // Log_info("[JETPACK-RECOVERY-EVENT] Created recovery event: target=%d, initial value=%d, event_ptr=%p", 
     //          recovery_event->target_, recovery_event->value_, recovery_event.get());
   }

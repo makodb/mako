@@ -39,12 +39,12 @@ class MongodbServer : public TxLogServer {
         Log_info("%.2f After app_next_ <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 #endif
       }
-      Log_info("before Reactor::CreateSpEvent<TimeoutEvent>(5 * 1000)");
-      // auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(5 * 1000);
+      Log_info("before Reactor::create_sp_event<TimeoutEvent>(5 * 1000)");
+      // auto sp_e = Reactor::create_sp_event<TimeoutEvent>(5 * 1000);
       // sp_e->wait();
-      auto sp_e = Reactor::CreateSpEvent<NeverEvent>();
+      auto sp_e = Reactor::create_sp_event<NeverEvent>();
       sp_e->wait(5);
-      Log_info("After Reactor::CreateSpEvent<TimeoutEvent>(5 * 1000) wait");
+      Log_info("After Reactor::create_sp_event<TimeoutEvent>(5 * 1000) wait");
     }
     Log_info("Exit ExecutionHandler");
   }
@@ -69,7 +69,7 @@ class MongodbServer : public TxLogServer {
     WAN_WAIT
     verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
     shared_ptr<TxPieceData> cmd_content = *(((VecPieceData*)(dynamic_pointer_cast<TpcCommitCommand>(cmd)->cmd_.get()))->sp_vec_piece_data_->begin());
-    cmd_content->mongodb_finished = Reactor::CreateSpEvent<ThreadSafeIntEvent>();
+    cmd_content->mongodb_finished = Reactor::create_sp_event<ThreadSafeIntEvent>();
 #ifdef MONGODB_DEBUG
     Log_info("%.2f Before MongodbRequest <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 #endif

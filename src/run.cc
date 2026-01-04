@@ -29,9 +29,9 @@ void coroutine_yield() {
     x = 3;
   });
   ASSERT_EQ(x == 1);
-  Reactor::GetReactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->ContinueCoro(coro1);
   ASSERT_EQ(x == 2);
-  Reactor::GetReactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->ContinueCoro(coro1);
   ASSERT_EQ(x == 3);
 }
 shared_ptr<Coroutine> coroutine_yield_2_sub() {
@@ -73,7 +73,7 @@ void coroutine_wait_die_lock() {
   });
   ASSERT_EQ(y == 0);
   coro1->Continue();
-  Reactor::GetReactor()->Loop();
+  Reactor::get_reactor()->loop();
   ASSERT_EQ(y == 1);
 }
 

@@ -19,8 +19,8 @@ uint64_t Event::get_coro_id(){
 }
 
 bool Event::is_slow() {
-	bool result = Reactor::GetReactor()->slow_.get();
-	Reactor::GetReactor()->slow_.set(false);
+	bool result = Reactor::get_reactor()->slow_.get();
+	Reactor::get_reactor()->slow_.set(false);
 	return result;
 }
 
@@ -41,8 +41,8 @@ bool Event::is_slow() {
 //     auto sp_coro = Coroutine::CurrentCoroutine();
 // //    verify(sp_coro);
 // //    verify(_dbg_p_scheduler_ == nullptr);
-// //    _dbg_p_scheduler_ = Reactor::GetReactor().get();
-//     auto& events = Reactor::GetReactor()->waiting_events_;
+// //    _dbg_p_scheduler_ = Reactor::get_reactor().get();
+//     auto& events = Reactor::get_reactor()->waiting_events_;
 //     events.push_back(shared_from_this());
 //     wp_coro_ = sp_coro;
 //     status_ = WAIT;
@@ -74,7 +74,7 @@ void Event::wait(uint64_t timeout) {
     auto coro = coro_opt.unwrap();
 
     // Rc gives const access, use const_cast for mutation (safe: thread-local)
-    auto reactor_rc = Reactor::GetReactor();
+    auto reactor_rc = Reactor::get_reactor();
     auto& reactor = const_cast<Reactor&>(*reactor_rc);
     auto& waiting_events = reactor.waiting_events_;
     waiting_events.push_back(get_self());
@@ -83,7 +83,7 @@ void Event::wait(uint64_t timeout) {
     // Add them to a separate queue that gets scanned (much smaller than all events)
     // Regular RPC events (Raft) self-notify via test() - zero overhead!
     if (is_composite_event()) {
-      auto& composite_events = Reactor::GetReactor()->composite_events_;
+      auto& composite_events = Reactor::get_reactor()->composite_events_;
       composite_events.push_back(get_self());
     }
 
@@ -210,7 +210,7 @@ bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   if (value_ >= x) {
     return false;
   }
-  auto ev =  Reactor::CreateSpEvent<IntEvent>();
+  auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
   ev->target_ = x;
   auto it = events_.insert(events_.end(), ev);
@@ -226,7 +226,7 @@ void SharedIntEvent::wait(function<bool(int v)> f) {
   if (f(value_)) {
     return;
   }
-  auto ev =  Reactor::CreateSpEvent<IntEvent>();
+  auto ev =  Reactor::create_sp_event<IntEvent>();
   ev->value_ = value_;
   ev->test_ = f;
   events_.push_back(ev);

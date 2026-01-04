@@ -22,7 +22,7 @@ RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(
 //  verify(poll != nullptr);
 }
 
-// @safe - Calls undeclared Reactor::CreateSpEvent() variadic template functions
+// @safe - Calls undeclared Reactor::create_sp_event() variadic template functions
 shared_ptr<IntEvent>
 RaftCommo::SendAppendEntries2(siteid_t site_id,
                              parid_t par_id,
@@ -41,7 +41,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                              uint64_t* ret_last_log_index
                              ) {
   // verify(par_id == 0);                          
-  auto ret = Reactor::CreateSpEvent<IntEvent>();
+  auto ret = Reactor::create_sp_event<IntEvent>();
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -174,7 +174,7 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
   return res;
 }
 
-// @safe - Calls undeclared Reactor::CreateSpEvent()
+// @safe - Calls undeclared Reactor::create_sp_event()
 shared_ptr<RaftVoteQuorumEvent>
 RaftCommo::BroadcastVote(parid_t par_id,
                          slotid_t lst_log_idx,
@@ -182,7 +182,7 @@ RaftCommo::BroadcastVote(parid_t par_id,
                          siteid_t self_id,
                          ballot_t cur_term ) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<RaftVoteQuorumEvent>(n, n/2);
+  auto e = Reactor::create_sp_event<RaftVoteQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {

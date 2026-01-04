@@ -188,7 +188,7 @@ int SchedulerTroad::OnCommit(const txnid_t cmd_id,
   verify(!dtxn->IsAborted());
   bool weird = dtxn->HasLogApplyStarted();
   Coroutine::CreateRun([sp_tx, weird](){
-    auto sp_e = Reactor::CreateSpEvent<Event>();
+    auto sp_e = Reactor::create_sp_event<Event>();
     sp_e->test_ = [sp_tx] (int v) -> bool {
       return sp_tx->local_validated_->is_set_;
     };

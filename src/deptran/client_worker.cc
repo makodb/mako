@@ -217,21 +217,21 @@ void ClientWorker::Work() {
       }
       locid_t idx = 0;
       while (!*failover_server_quit_) {
-        auto r = Reactor::CreateSpEvent<NeverEvent>();
+        auto r = Reactor::create_sp_event<NeverEvent>();
         r->wait(run_int);
         *failover_trigger_ = true;
         while (*failover_trigger_) {
-          auto e = Reactor::CreateSpEvent<NeverEvent>();
+          auto e = Reactor::create_sp_event<NeverEvent>();
           e->wait(wait_int);
           if (*failover_server_quit_) return;
         }
         Pause(idx);
         *failover_trigger_ = true;
         Log_info("server %d paused for failover test", idx);
-        auto s = Reactor::CreateSpEvent<NeverEvent>();
+        auto s = Reactor::create_sp_event<NeverEvent>();
         s->wait(stop_int);
         while (*failover_trigger_) {
-          auto e = Reactor::CreateSpEvent<NeverEvent>();
+          auto e = Reactor::create_sp_event<NeverEvent>();
           e->wait(wait_int);
           if (*failover_server_quit_) return;
         }
@@ -273,7 +273,7 @@ void ClientWorker::Work() {
           }
           if (config_->client_max_undone_ > 0
               && n_undone_tx > config_->client_max_undone_) {
-            Reactor::CreateSpEvent<NeverEvent>()->wait(pow(10, 4));
+            Reactor::create_sp_event<NeverEvent>()->wait(pow(10, 4));
           } else {
             break;
           }
@@ -283,8 +283,8 @@ void ClientWorker::Work() {
         coo->cli_id_ = cli_id_;
         verify(!coo->sp_ev_commit_);
         verify(!coo->sp_ev_done_);
-        coo->sp_ev_commit_ = Reactor::CreateSpEvent<IntEvent>();
-        coo->sp_ev_done_ = Reactor::CreateSpEvent<IntEvent>();
+        coo->sp_ev_commit_ = Reactor::create_sp_event<IntEvent>();
+        coo->sp_ev_done_ = Reactor::create_sp_event<IntEvent>();
 
         Log_debug("Dispatching request for %d", n_tx);
         this->outbound++;
@@ -301,7 +301,7 @@ void ClientWorker::Work() {
             first = false;
           }
           Log_info("total: %d", coo->commo_->total_);
-          auto t = Reactor::CreateSpEvent<TimeoutEvent>(0.1*1000*1000);
+          auto t = Reactor::create_sp_event<TimeoutEvent>(0.1*1000*1000);
           t->wait();
         }
 #ifdef DB_CHECKSUM
@@ -321,7 +321,7 @@ void ClientWorker::Work() {
           this->outbound--;
           verify(ev->status_.get() != Event::TIMEOUT);
         } else {
-          auto sp_event = Reactor::CreateSpEvent<NeverEvent>();
+          auto sp_event = Reactor::create_sp_event<NeverEvent>();
           wait_recordplace(sp_event, wait(pow(10, 6)));
         }
         Coroutine::CreateRun([this, coo](){
@@ -432,14 +432,14 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       failover_pause_start = false;
       for (auto it = n_pause_concurrent_.begin(); it != n_pause_concurrent_.end(); it++) {
         while (!it->second) {
-          auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
+          auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
           sp_e->wait();
         }
       }
       failover_pause_start = true;
     } else {
       while (!failover_pause_start) {
-        auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
+        auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
         sp_e->wait();
       }
     }
@@ -451,7 +451,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       *failover_trigger_ = false;
     }
     while (!*failover_trigger_) {
-      auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
+      auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
       sp_e->wait();
       if (*failover_server_quit_) break;
     }
@@ -463,7 +463,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       failover_wait_leader_ = false;
     } else {
       while (failover_wait_leader_ && !*failover_server_quit_) {
-        auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(500 * 1000);
+        auto sp_e = Reactor::create_sp_event<TimeoutEvent>(500 * 1000);
         sp_e->wait();
       }
     }

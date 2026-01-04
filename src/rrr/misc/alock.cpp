@@ -28,7 +28,7 @@ uint64_t ALock::Lock(uint64_t owner,
                      type_t type,
                      uint64_t priority) {
 
-  IntEvent& proceed = Reactor::CreateEvent<IntEvent>(); // init 0, 1 as ready
+  IntEvent& proceed = Reactor::create_event<IntEvent>(); // init 0, 1 as ready
   uint64_t ret_id = 0;
   // @unsafe {
   std::function<void(uint64_t)> _yes_callback
@@ -63,7 +63,7 @@ uint64_t ALock::Lock(uint64_t owner,
                      uint64_t priority,
                      const std::function<int(void)>& wound_callback) {
 
-  IntEvent& proceed = Reactor::CreateEvent<IntEvent>();
+  IntEvent& proceed = Reactor::create_event<IntEvent>();
   uint64_t ret_id = 0;
   std::function<void(uint64_t)> _yes_callback
       = [&proceed, &ret_id](uint64_t id) {

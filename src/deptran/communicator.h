@@ -16,7 +16,7 @@ namespace janus {
 
 static void _wan_wait() {
   int num = 50;
-  Reactor::CreateSpEvent<NeverEvent>()->wait(num*1000);
+  Reactor::create_sp_event<NeverEvent>()->wait(num*1000);
 }
 
 static void _wan_wait_time(int m) {

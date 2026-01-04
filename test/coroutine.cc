@@ -84,9 +84,9 @@ TEST(CoroutineTest, yield) {
     x = 3;
   });
   ASSERT_EQ(x, 1);
-  Reactor::GetReactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->continue_coro(coro1);
   ASSERT_EQ(x, 2);
-  Reactor::GetReactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->continue_coro(coro1);
   ASSERT_EQ(x, 3);
 }
 
@@ -213,7 +213,7 @@ TEST(CoroutineTest, wait_die_lock) {
   });
   ASSERT_EQ(y, 0);
   coro1->Continue();
-  Reactor::GetReactor()->Loop();
+  Reactor::get_reactor()->loop();
   ASSERT_EQ(y, 1);
 }
 
@@ -221,24 +221,24 @@ TEST(CoroutineTest, timeout) {
   auto coro1 = Coroutine::CreateRun([](){
     auto t1 = Time::now(true);
     auto timeout = 1 * 1000000;
-    auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(timeout);
+    auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
     Log_debug("set timeout, start wait");
     sp_e->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t2, t1 + timeout);
     Log_debug("end timeout, end wait");
-    Reactor::GetReactor()->looping_.set(false);
+    Reactor::get_reactor()->looping_.set(false);
   });
-  Reactor::GetReactor()->Loop(true);
+  Reactor::get_reactor()->loop(true);
 }
 
 TEST(CoroutineTest, orevent) {
-  auto inte = Reactor::CreateSpEvent<IntEvent>();
+  auto inte = Reactor::create_sp_event<IntEvent>();
   auto coro1 = Coroutine::CreateRun([&inte](){
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
-    auto sp_e1 = Reactor::CreateSpEvent<TimeoutEvent>(timeout);
-    auto sp_e2 = Reactor::CreateSpEvent<OrEvent>(sp_e1, inte);
+    auto sp_e1 = Reactor::create_sp_event<TimeoutEvent>(timeout);
+    auto sp_e2 = Reactor::create_sp_event<OrEvent>(sp_e1, inte);
     sp_e2->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);

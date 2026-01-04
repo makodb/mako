@@ -59,15 +59,15 @@ rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
 // @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
 rusty::Rc<Coroutine>
 Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line) {
-  auto reactor_rc = Reactor::GetReactor();
-  // Rc gives const access, CreateRunCoroutine is const (safe: thread-local, single owner)
-  auto coro = reactor_rc->CreateRunCoroutine(std::move(func), file, line);
+  auto reactor_rc = Reactor::get_reactor();
+  // Rc gives const access, create_run_coroutine is const (safe: thread-local, single owner)
+  auto coro = reactor_rc->create_run_coroutine(std::move(func), file, line);
   // some events might be triggered in the last coroutine.
   return coro;
 }
 
 void Coroutine::Sleep(uint64_t microseconds) {
-  auto x = Reactor::CreateSpEvent<TimeoutEvent>(microseconds);
+  auto x = Reactor::create_sp_event<TimeoutEvent>(microseconds);
   x->wait();
 }
 
@@ -85,7 +85,7 @@ void Coroutine::Sleep(uint64_t microseconds) {
  * - Reactor's thread_id_ matches std::this_thread::get_id()
  */
 rusty::Rc<Reactor>
-Reactor::GetReactor() {
+Reactor::get_reactor() {
   if (sp_reactor_th_.is_none()) {
     Log_debug("create a coroutine scheduler");
     if (!REUSING_CORO)
@@ -97,7 +97,7 @@ Reactor::GetReactor() {
 }
 
 rusty::Rc<Reactor>
-Reactor::GetDiskReactor() {
+Reactor::get_disk_reactor() {
   if (sp_disk_reactor_th_.is_none()) {
     Log_debug("create a disk coroutine scheduler");
     sp_disk_reactor_th_ = rusty::Some(rusty::Rc<Reactor>::make());
@@ -112,7 +112,7 @@ Reactor::GetDiskReactor() {
 
 // @safe - Gets a recycled coroutine or creates a new one
 rusty::Rc<Coroutine>
-Reactor::GetOrCreateCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
+Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   // @unsafe
   {
     if (REUSING_CORO && available_coros_.size() > 0) {
@@ -145,7 +145,7 @@ Reactor::GetOrCreateCoroutine(rusty::Function<void()> func, const char* file, in
 
 // @safe - Saves current running coroutine to allow nesting
 rusty::Option<rusty::Rc<Coroutine>>
-Reactor::SaveRunningCoroutine() const {
+Reactor::save_running_coroutine() const {
   // @unsafe
   {
     auto guard = sp_running_coro_th_.borrow();
@@ -157,7 +157,7 @@ Reactor::SaveRunningCoroutine() const {
 }
 
 // @safe - Restores previously saved running coroutine
-void Reactor::RestoreRunningCoroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const {
+void Reactor::restore_running_coroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const {
   // @unsafe
   {
     *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
@@ -165,7 +165,7 @@ void Reactor::RestoreRunningCoroutine(rusty::Option<rusty::Rc<Coroutine>> old_co
 }
 
 // @safe - Sets the current running coroutine
-void Reactor::SetRunningCoroutine(const rusty::Rc<Coroutine>& coro) const {
+void Reactor::set_running_coroutine(const rusty::Rc<Coroutine>& coro) const {
   // @unsafe
   {
     *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
@@ -173,7 +173,7 @@ void Reactor::SetRunningCoroutine(const rusty::Rc<Coroutine>& coro) const {
 }
 
 // @safe - Registers coroutine in the active set
-void Reactor::RegisterCoroutine(const rusty::Rc<Coroutine>& coro) const {
+void Reactor::register_coroutine(const rusty::Rc<Coroutine>& coro) const {
   // BTreeSet::insert returns bool (true if newly inserted)
   bool inserted = coros_.insert(coro.clone());
   if (!inserted) {
@@ -196,9 +196,9 @@ void Reactor::RegisterCoroutine(const rusty::Rc<Coroutine>& coro) const {
  */
 // @safe - Creates and runs coroutine using safe helper functions
 rusty::Rc<Coroutine>
-Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
+Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   // Step 1: Get or create a coroutine
-  auto coro = GetOrCreateCoroutine(std::move(func), file, line);
+  auto coro = get_or_create_coroutine(std::move(func), file, line);
 
   // @unsafe
   {
@@ -206,13 +206,13 @@ Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int6
   }
 
   // Step 2: Save current running coroutine context (for nesting)
-  auto old_coro = SaveRunningCoroutine();
+  auto old_coro = save_running_coroutine();
 
   // Step 3: Set this as the running coroutine
-  SetRunningCoroutine(coro);
+  set_running_coroutine(coro);
 
   // Step 4: Register in the active coroutines set
-  RegisterCoroutine(coro);
+  register_coroutine(coro);
 
   // Step 5: Run the coroutine
   // @unsafe
@@ -226,18 +226,18 @@ Reactor::CreateRunCoroutine(rusty::Function<void()> func, const char* file, int6
   // Step 6: Process events
   // @unsafe
   {
-    Loop(false, true);
+    loop(false, true);
   }
 
   // Step 7: Restore previous running coroutine
-  RestoreRunningCoroutine(std::move(old_coro));
+  restore_running_coroutine(std::move(old_coro));
 
   return coro;
 }
 
 // @safe - Using VecDeque::extract_if for safe iteration with mutation
 // Extracts timed-out events and removes READY/DONE events
-void Reactor::CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
+void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
   int64_t time_now;
   // @unsafe
   { time_now = Time::now(true); }
@@ -279,7 +279,7 @@ void Reactor::CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events
 }
 
 // @safe - Main event loop
-void Reactor::Loop(bool infinite, bool check_timeout) const {
+void Reactor::loop(bool infinite, bool do_check_timeout) const {
   verify(std::this_thread::get_id() == thread_id_.get());
 
   looping_.set(infinite);
@@ -331,9 +331,9 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
           }));
 
       // Check timeouts using safe extract_if pattern
-      if (check_timeout) {
+      if (do_check_timeout) {
         size_t before = ready_events.len();
-        CheckTimeout(ready_events);
+        check_timeout(ready_events);
         if (ready_events.len() > before) {
           found_ready_events = true;
         }
@@ -342,7 +342,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
       // Process ready events - all operations are @safe:
       // - Weak::upgrade returns Option (safe)
       // - BTreeSet::contains is safe
-      // - ContinueCoro is @safe with internal @unsafe
+      // - continue_coro is @safe with internal @unsafe
       for (size_t i = 0; i < ready_events.len(); ++i) {
         auto& ev = ready_events[i];
         if (ev->status_.get() == Event::DONE) {
@@ -362,7 +362,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
         } else {
           verify(ev->status_.get() == Event::TIMEOUT);
         }
-        ContinueCoro(coro);
+        continue_coro(coro);
       }
 
       if (!infinite && !found_ready_events) {
@@ -374,7 +374,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
 }
 
 // @safe - Continues execution of a paused coroutine
-void Reactor::ContinueCoro(rusty::Rc<Coroutine> coro) const {
+void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
   // Save current running coroutine for nesting support
   rusty::Option<rusty::Rc<Coroutine>> old_coro;
   {
@@ -404,14 +404,14 @@ void Reactor::ContinueCoro(rusty::Rc<Coroutine> coro) const {
     auto guard = sp_running_coro_th_.borrow();
     if ((*guard).as_ref().unwrap()->Finished()) {
       auto coro_ref = (*guard).as_ref().unwrap().clone();
-      Recycle(coro_ref);
+      recycle(coro_ref);
     }
   }
 
   *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
 }
 
-void Reactor::Recycle(rusty::Rc<Coroutine>& coro) const {
+void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
   // This fixes the bug that coroutines are not recycling if they don't finish immediately.
   if (REUSING_CORO) {
     // Use Cell/RefCell for interior mutability (safe: single-threaded)
@@ -425,7 +425,7 @@ void Reactor::Recycle(rusty::Rc<Coroutine>& coro) const {
   coros_.remove(coro);
 }
 
-void Reactor::DisplayWaitingEv() const {
+void Reactor::display_waiting_ev() const {
   Log_info("waiting_events_: %zu, composite_events_: %zu",
            waiting_events_.len(), composite_events_.len());
 }
@@ -455,7 +455,7 @@ rusty::Rc<rusty::RefCell<PollThreadWorker>> PollThreadWorker::create(rusty::sync
 void PollThreadWorker::poll_loop() {
   Log_debug("[poll_loop] Starting poll loop");
   while (!stop_) {
-    TriggerJob();
+    trigger_job();
 
     // Wait for events (epoll_wait with short timeout)
     // Pass callback to handle mode updates from handle_write() return values
@@ -466,13 +466,13 @@ void PollThreadWorker::poll_loop() {
     // Process commands from channel (non-blocking try_recv)
     process_commands();
 
-    TriggerJob();
+    trigger_job();
 
     // Process deferred removals
     process_pending_removals();
 
-    TriggerJob();
-    Reactor::GetReactor()->Loop();
+    trigger_job();
+    Reactor::get_reactor()->loop();
 
     // Check for pending write updates (set by end_reply() during coroutine execution)
     // @unsafe - const_cast needed because Arc provides const access, but we know the
@@ -551,7 +551,7 @@ void PollThreadWorker::process_commands() {
 }
 
 // @unsafe - uses std::set operations
-void PollThreadWorker::TriggerJob() {
+void PollThreadWorker::trigger_job() {
   // Copy jobs to process (in case jobs modify the set)
   std::set<rusty::Arc<Job>> jobs_exec = jobs_;
   jobs_.clear();

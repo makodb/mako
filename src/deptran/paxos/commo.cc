@@ -19,7 +19,7 @@ MultiPaxosCommo::SendForward(parid_t par_id,
                              uint64_t follower_id,
                              uint64_t dep_id,
                              shared_ptr<Marshallable> cmd) {
-  auto e = Reactor::CreateSpEvent<PaxosPrepareQuorumEvent>(1, 1);
+  auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(1, 1);
   auto src_coroid = e->get_coro_id();
   auto leader_id = LeaderProxyForPartition(par_id).first;
   auto leader_proxy = (MultiPaxosProxy*) LeaderProxyForPartition(par_id).second;
@@ -64,7 +64,7 @@ MultiPaxosCommo::BroadcastPrepare(parid_t par_id,
                                   ballot_t ballot) {
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-  auto e = Reactor::CreateSpEvent<PaxosPrepareQuorumEvent>(n, n); //marker:ansh debug
+  auto e = Reactor::create_sp_event<PaxosPrepareQuorumEvent>(n, n); //marker:ansh debug
   // auto proxies = rpc_par_proxies_[par_id];
   // int cur_batch_idx = current_proxy_batch_idx;
   // current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;
@@ -91,8 +91,8 @@ MultiPaxosCommo::BroadcastAccept(parid_t par_id,
                                  shared_ptr<Marshallable> cmd) {
   verify(0);                               
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
-//  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, /2n/2+1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, n);
+//  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, /2n/2+1);
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, n);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
   // int cur_batch_idx = current_proxy_batch_idx;
@@ -155,7 +155,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
   // Log_info("ForwardToLearner: par_id=%d, slot=%lu, n=%d, proxies.size=%zu, batch_idx=%d",
   //          par_id, slot, n, proxies.size(), cur_batch_idx);
 
-  //auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1,1);
+  //auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(1,1);
   int sent_count = 0;
   for (int i=0;i<n+1;i++) {
     auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
@@ -225,7 +225,7 @@ MultiPaxosCommo::BroadcastBulkPrepare(parid_t par_id,
   //Log_info("BroadcastBulkPrepare: i am here");
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); // marker:debug
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); // marker:debug
   //Log_info("BroadcastBulkPrepare: i am here partition size %d", n);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
@@ -260,7 +260,7 @@ MultiPaxosCommo::BroadcastPrepare2(parid_t par_id,
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
   // //Log_info("paxos commo bulkaccept: length proxies %d", proxies.size());
@@ -295,7 +295,7 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
                                     const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k);
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
@@ -333,7 +333,7 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
   Log_info("invoke BroadcastSyncLog to prepare for the failover");
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k);
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
@@ -372,7 +372,7 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
   // not old leader, not new leader(old learner)
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n-1, n-1);
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n-1, n-1);
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
@@ -408,7 +408,7 @@ MultiPaxosCommo::BroadcastSyncCommit(parid_t par_id,
                                   const std::function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(1, 1);
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(1, 1);
   e->FeedResponse(1);
   // auto proxies = rpc_par_proxies_[par_id];
   // vector<Future*> fus;
@@ -442,7 +442,7 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
                                  const function<void(ballot_t, int)>& cb) {
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
@@ -484,7 +484,7 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
   auto proxies = rpc_par_proxies_[par_id];
   int n = Config::GetConfig()->GetPartitionSize(par_id)-1;
   int k = (n%2 == 0) ? n/2 : (n/2 + 1);
-  auto e = Reactor::CreateSpEvent<PaxosAcceptQuorumEvent>(n, k); //marker:debug
+  auto e = Reactor::create_sp_event<PaxosAcceptQuorumEvent>(n, k); //marker:debug
   vector<rusty::Arc<Future>> fus;
   int cur_batch_idx = current_proxy_batch_idx;
   current_proxy_batch_idx=(current_proxy_batch_idx+1)%proxy_batch_size;

@@ -18,7 +18,7 @@ int main() {
     }
     
     // Test basic Reactor creation
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     if (reactor != nullptr) {
         std::cout << "Reactor created successfully" << std::endl;
     }

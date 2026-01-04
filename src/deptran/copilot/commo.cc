@@ -99,7 +99,7 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
                                slotid_t slot_id,
                                ballot_t ballot) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<CopilotPrepareQuorumEvent>(n, quorumSize(n));
+  auto e = Reactor::create_sp_event<CopilotPrepareQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 
@@ -152,7 +152,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
                                   uint64_t dep,
                                   shared_ptr<Marshallable> cmd) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
+  auto e = Reactor::create_sp_event<CopilotFastAcceptQuorumEvent>(n, fastQuorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 #ifdef FULL_LOG_DEBUG
@@ -223,7 +223,7 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
                               uint64_t dep,
                               shared_ptr<Marshallable> cmd) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<CopilotAcceptQuorumEvent>(n, quorumSize(n));
+  auto e = Reactor::create_sp_event<CopilotAcceptQuorumEvent>(n, quorumSize(n));
   auto proxies = rpc_par_proxies_[par_id];
   struct DepId di;
 
@@ -273,7 +273,7 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
                                    uint64_t dep,
                                    shared_ptr<Marshallable> cmd) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<CopilotFakeQuorumEvent>(n);
+  auto e = Reactor::create_sp_event<CopilotFakeQuorumEvent>(n);
   auto proxies = rpc_par_proxies_[par_id];
   
   // WAN_WAIT;

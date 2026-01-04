@@ -126,7 +126,7 @@ TroadCommo::BroadcastPreAccept(
     vector<TxPieceData>& cmds) {
   verify(rpc_par_proxies_.find(par_id) != rpc_par_proxies_.end());
   auto n = rpc_par_proxies_[par_id].size();
-  auto ev = Reactor::CreateSpEvent<PreAcceptQuorumEvent>(n, n);
+  auto ev = Reactor::create_sp_event<PreAcceptQuorumEvent>(n, n);
   ev->partition_id_ = par_id;
 //  WAN_WAIT;
   for (auto& p : rpc_par_proxies_[par_id]) {
@@ -170,7 +170,7 @@ TroadCommo::BroadcastPreAccept(
     shared_ptr<RccGraph> sp_graph) {
   verify(rpc_par_proxies_.find(par_id) != rpc_par_proxies_.end());
   auto n = rpc_par_proxies_[par_id].size();
-  auto ev = Reactor::CreateSpEvent<PreAcceptQuorumEvent>(n, n);
+  auto ev = Reactor::create_sp_event<PreAcceptQuorumEvent>(n, n);
   ev->partition_id_ = par_id;
   bool skip_graph = IsGraphOrphan(*sp_graph, txn_id);
 //  WAN_WAIT;
@@ -247,8 +247,8 @@ shared_ptr<QuorumEvent> TroadCommo::BroadcastAccept(parid_t par_id,
                                                     parent_set_t& parents) {
   verify(rpc_par_proxies_.find(par_id) != rpc_par_proxies_.end());
   auto n = rpc_par_proxies_[par_id].size();
-  auto ev = Reactor::CreateSpEvent<QuorumEvent>(n, n/2+1);
-//  auto ev = Reactor::CreateSpEvent<QuorumEvent>(n, n/2+1);
+  auto ev = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
+//  auto ev = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
   for (auto& p : rpc_par_proxies_[par_id]) {
     auto proxy = (p.second);
     verify(proxy != nullptr);
@@ -286,7 +286,7 @@ shared_ptr<QuorumEvent> TroadCommo::BroadcastAccept(parid_t par_id,
   verify(0);
   verify(rpc_par_proxies_.find(par_id) != rpc_par_proxies_.end());
   auto n = rpc_par_proxies_[par_id].size();
-  auto ev = Reactor::CreateSpEvent<QuorumEvent>(n, n/2+1);
+  auto ev = Reactor::create_sp_event<QuorumEvent>(n, n/2+1);
   for (auto& p : rpc_par_proxies_[par_id]) {
     auto proxy = (p.second);
     verify(proxy != nullptr);
@@ -321,7 +321,7 @@ shared_ptr<QuorumEvent> TroadCommo::BroadcastAccept(parid_t par_id,
 
 shared_ptr<QuorumEvent> TroadCommo::CollectValidation(txid_t txid, set<parid_t> pars) {
   auto n = pars.size();
-  auto ev = Reactor::CreateSpEvent<QuorumEvent>(n, n);
+  auto ev = Reactor::create_sp_event<QuorumEvent>(n, n);
 
   for (auto partition_id : pars) {
     auto proxy = NearestProxyForPartition(partition_id).second;
@@ -347,7 +347,7 @@ shared_ptr<QuorumEvent> TroadCommo::CollectValidation(txid_t txid, set<parid_t> 
 
 shared_ptr<QuorumEvent> TroadCommo::BroadcastValidation(CmdData& cmd_, int result) {
   auto n = cmd_.GetPartitionIds().size();
-  auto ev = Reactor::CreateSpEvent<QuorumEvent>(n, n);
+  auto ev = Reactor::create_sp_event<QuorumEvent>(n, n);
 
   for (auto partition_id : cmd_.GetPartitionIds()) {
     for (auto& pair : rpc_par_proxies_[partition_id]) {
@@ -410,7 +410,7 @@ TroadCommo::BroadcastCommit(parid_t par_id,
 //  bool skip_graph = IsGraphOrphan(*graph, cmd_id);
   verify(rpc_par_proxies_.find(par_id) != rpc_par_proxies_.end());
   int n = rpc_par_proxies_[par_id].size();
-  auto ev = Reactor::CreateSpEvent<QuorumEvent>(n, 1);
+  auto ev = Reactor::create_sp_event<QuorumEvent>(n, 1);
   for (auto& p : rpc_par_proxies_[par_id]) {
     auto proxy = (p.second);
     verify(proxy != nullptr);

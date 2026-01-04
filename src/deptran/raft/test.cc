@@ -732,7 +732,7 @@ int RaftLabTest::testFigure8(void) {
 }
 
 void RaftLabTest::wait(uint64_t microseconds) {
-  Reactor::CreateSpEvent<TimeoutEvent>(microseconds)->wait();
+  Reactor::create_sp_event<TimeoutEvent>(microseconds)->wait();
 }
 
 #endif

@@ -30,7 +30,7 @@ Coroutine::~Coroutine() {
 void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
   boost_coro_yield_ = yield;
   verify(*func_.borrow());
-  auto reactor = Reactor::GetReactor();
+  auto reactor = Reactor::get_reactor();
 //  reactor->coros_;
   while (true) {
     auto sz = reactor->coros_.len();
@@ -43,7 +43,7 @@ void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
       Log_info("Warning: We did not deal with backlog issues");
       needs_finalize_.set(false);
     }
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
     yield();
   }
@@ -58,7 +58,7 @@ void Coroutine::Run() const {
     verify((*boost_coro_task_.borrow()).is_none());
     verify(status_.get() == INIT);
     status_.set(STARTED);
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     auto sz = reactor->coros_.len();
     verify(sz > 0);
     auto task = std::bind(&Coroutine::BoostRunWrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
@@ -79,7 +79,7 @@ void Coroutine::Yield() const {
     verify(s == STARTED || s == RESUMED || s == FINALIZING);
     status_.set(PAUSED);
     {
-      auto reactor = Reactor::GetReactor();
+      auto reactor = Reactor::get_reactor();
       reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
     }
     boost_coro_yield_.value()();

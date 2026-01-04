@@ -24,7 +24,7 @@ namespace helloworld_client {
                 defer.reply();
                 std::cout<<"receive " <<  _req.size() << " request - done"<<std::endl;
             });
-            //Reactor::GetReactor()->ContinueCoro(first_req); // continue the first request manually
+            //Reactor::get_reactor()->ContinueCoro(first_req); // continue the first request manually
         }
     }
 }

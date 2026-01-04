@@ -17,13 +17,13 @@ shared_ptr<FpgaRaftForwardQuorumEvent> FpgaRaftCommo::SendForward(parid_t par_id
                                             parid_t self_id, shared_ptr<Marshallable> cmd)
 {
     int n = Config::GetConfig()->GetPartitionSize(par_id);
-    auto e = Reactor::CreateSpEvent<FpgaRaftForwardQuorumEvent>(1,1);
+    auto e = Reactor::create_sp_event<FpgaRaftForwardQuorumEvent>(1,1);
     parid_t fid = (self_id + 1 ) % n ;
     if (fid != self_id + 1 )
     {
       // sleep for 2 seconds cos no leader
       int32_t timeout = 2*1000*1000 ;
-      auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(timeout);
+      auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
       sp_e->wait();    
     }
     auto proxies = rpc_par_proxies_[par_id];
@@ -159,7 +159,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
                                       uint64_t commitIndex,
                                       shared_ptr<Marshallable> cmd) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<FpgaRaftAppendQuorumEvent>(n, n/2 + 1);
+  auto e = Reactor::create_sp_event<FpgaRaftAppendQuorumEvent>(n, n/2 + 1);
   auto proxies = rpc_par_proxies_[par_id];
 
   unordered_set<std::string> ip_addrs {};
@@ -322,7 +322,7 @@ FpgaRaftCommo::BroadcastVote(parid_t par_id,
                                     parid_t self_id,
                                     ballot_t cur_term ) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<FpgaRaftVoteQuorumEvent>(n, n/2);
+  auto e = Reactor::create_sp_event<FpgaRaftVoteQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {
@@ -370,7 +370,7 @@ FpgaRaftCommo::BroadcastVote2FPGA(parid_t par_id,
                                     parid_t self_id,
                                     ballot_t cur_term ) {
   int n = Config::GetConfig()->GetPartitionSize(par_id);
-  auto e = Reactor::CreateSpEvent<FpgaRaftVote2FPGAQuorumEvent>(n, n/2);
+  auto e = Reactor::create_sp_event<FpgaRaftVote2FPGAQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
   for (auto& p : proxies) {

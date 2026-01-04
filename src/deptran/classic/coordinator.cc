@@ -124,7 +124,7 @@ void CoordinatorClassic::GotoNextPhase() {
 					first = false;
 				}
 				Log_info("total: %d", commo()->total_);
-				auto t = Reactor::CreateSpEvent<TimeoutEvent>(0.1*1000*1000);
+				auto t = Reactor::create_sp_event<TimeoutEvent>(0.1*1000*1000);
 				t->wait(0.1*1000*1000);
 			}*/
 			DispatchAsync(true);
@@ -462,7 +462,7 @@ void CoordinatorClassic::Prepare() {
 			Log_info("Reelection started");
 			commo()->paused = true;
 
-			commo()->qe = Reactor::CreateSpEvent<QuorumEvent>(concurrent-1, concurrent-1);
+			commo()->qe = Reactor::create_sp_event<QuorumEvent>(concurrent-1, concurrent-1);
 			commo()->qe->n_voted_yes_ = commo()->total_;
 			commo()->qe->wait();
 			commo()->qe = NULL;
@@ -618,7 +618,7 @@ void CoordinatorClassic::Commit() {
 		if(commo()->slow || prep_slow){
 			commo()->low_util = 0;
 			Log_info("Reelection started: %d/%d", commo()->total_, concurrent-1);
-			commo()->qe = Reactor::CreateSpEvent<QuorumEvent>(concurrent-1, concurrent-1);
+			commo()->qe = Reactor::create_sp_event<QuorumEvent>(concurrent-1, concurrent-1);
 
 			commo()->count_lock_.lock();
 			commo()->paused = true;
@@ -771,7 +771,7 @@ retry:
       *cur_pause = e->leader_id_;
     }
   } else if (e->No()) {
-    auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
+    auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
     sp_e->wait();
     // usleep(300 * 1000) ;  // 300 ms
     goto retry;

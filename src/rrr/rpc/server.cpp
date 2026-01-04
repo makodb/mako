@@ -44,7 +44,7 @@
 //   rusty::sync::Weak::Weak: [safe]
 //   rrr::WeakServerConnection: [safe]
 //   rrr::Coroutine::CreateRun: [safe]
-//   rrr::Reactor::GetReactor: [safe]
+//   rrr::Reactor::get_reactor: [safe]
 //   rrr::Reactor::Loop: [safe]
 // }
 
@@ -242,7 +242,7 @@ bool ServerConnection::handle_read() {
         }
     }
 
-    Reactor::GetReactor()->Loop();
+    Reactor::get_reactor()->loop();
 
     return false;
 }

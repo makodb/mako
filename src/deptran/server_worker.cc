@@ -280,7 +280,7 @@ void ServerWorker::SetupCommo() {
     rep_commo_->rep_sched_ = rep_sched_;
   }
 
-  Reactor::GetReactor()->server_id_ = site_info_->id;
+  Reactor::get_reactor()->server_id_ = site_info_->id;
 //  svr_thread_pool_ = new rrr::ThreadPool(1);
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob(
     [this]() {
@@ -297,7 +297,7 @@ void ServerWorker::SetupCommo() {
 // dead loop this thread for coroutine scheduling 
 // TODO, figure out a better approach
   if (rep_sched_->site_id_ == 0) {
-    Reactor::GetReactor()->Loop(true, true);
+    Reactor::get_reactor()->loop(true, true);
   }
 #endif
 }

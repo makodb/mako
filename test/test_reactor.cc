@@ -366,16 +366,16 @@ TEST_F(ReactorTest, ErrorHandling) {
 
 // Reactor-specific tests
 TEST_F(ReactorTest, ReactorCreation) {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     // Rc is never null by design - just verify we can get a reactor
     EXPECT_TRUE(true);
 }
 
 TEST_F(ReactorTest, EventCreation) {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
     // Use IntEvent which has the set method
-    auto& event = Reactor::CreateEvent<IntEvent>();
+    auto& event = Reactor::create_event<IntEvent>();
     EXPECT_FALSE(event.is_ready());
 
     // Trigger the event
@@ -385,11 +385,11 @@ TEST_F(ReactorTest, EventCreation) {
 }
 
 TEST_F(ReactorTest, CoroutineBasic) {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
     std::atomic<int> value{0};
     
-    reactor->CreateRunCoroutine([&value]() {
+    reactor->create_run_coroutine([&value]() {
         value = 1;
     });
     
@@ -400,11 +400,11 @@ TEST_F(ReactorTest, CoroutineBasic) {
 }
 
 TEST_F(ReactorTest, CoroutineWithYield) {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
     std::atomic<int> value{0};
     
-    auto sp_coro = reactor->CreateRunCoroutine([&value]() {
+    auto sp_coro = reactor->create_run_coroutine([&value]() {
         value = 1;
         Coroutine::CurrentCoroutine().unwrap()->Yield();
         value = 2;
@@ -415,7 +415,7 @@ TEST_F(ReactorTest, CoroutineWithYield) {
     EXPECT_FALSE(sp_coro->Finished());
     
     // Manually continue the coroutine
-    reactor->ContinueCoro(sp_coro);
+    reactor->continue_coro(sp_coro);
     
     // After continuation, value should be 2
     EXPECT_EQ(value, 2);
@@ -423,12 +423,12 @@ TEST_F(ReactorTest, CoroutineWithYield) {
 }
 
 TEST_F(ReactorTest, MultipleCoroutines) {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
     std::atomic<int> counter{0};
     
     for (int i = 0; i < 5; i++) {
-        reactor->CreateRunCoroutine([&counter]() {
+        reactor->create_run_coroutine([&counter]() {
             counter++;
         });
     }
@@ -438,10 +438,10 @@ TEST_F(ReactorTest, MultipleCoroutines) {
 }
 
 TEST_F(ReactorTest, QuorumEvent) {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
     // QuorumEvent needs total count and quorum
-    auto sp_event = Reactor::CreateSpEvent<janus::QuorumEvent>(3, 2);  // 3 total, need 2 votes
+    auto sp_event = Reactor::create_sp_event<janus::QuorumEvent>(3, 2);  // 3 total, need 2 votes
     
     EXPECT_FALSE(sp_event->is_ready());
     
