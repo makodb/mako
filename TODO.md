@@ -44,9 +44,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - client.hpp: wrapped timed_wait call in get_error_code with @unsafe block
         - server.cpp: rusty-cpp commit 75ff664 fixed the temporary variable false positive
         - threading.cpp: refactored try_one_job to copy job data before pop (eliminates borrow conflict)
-      - Files blocked by rusty-cpp false positives:
-        - reactor.cc: false positives for mutable field in const method, Rc::clone() treated as move
-        - Bug report updated: third-party/rusty-cpp/docs/bug_report_this_borrow_false_positives.md 
+      - reactor.cc status:
+        - Uses C++ `mutable` fields in const methods - this correctly requires @unsafe (not a false positive)
+        - C++ mutable is NOT equivalent to Rust's safe interior mutability (Cell/RefCell)
+        - Potential false positive: Rc::clone() treated as move (bug report filed)
+        - reactor.cc methods are correctly marked @unsafe; file excluded from borrow checking until refactored 
   - [x] *medium* Make rrr code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]
     - [x] reactor/reactor.h - Rename Reactor methods to snake_case (GetReactor->get_reactor, Loop->loop, CreateSpEvent->create_sp_event, etc.) [DONE]

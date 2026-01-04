@@ -1098,9 +1098,10 @@ if(NOT TARGET rrr)
         src/rrr/rpc/utils.cpp
         src/rrr/rpc/client.cpp
         src/rrr/rpc/server.cpp
-        # Files with violations that need fixing:
-        # - reactor.cc: false positives (mutable field in const method, Rc::clone not moving)
-        #   Bug report filed: third-party/rusty-cpp/docs/bug_report_this_borrow_false_positives.md
+        # Files excluded from borrow checking:
+        # - reactor.cc: Uses C++ mutable fields in const methods (correctly requires @unsafe)
+        #   C++ mutable is NOT safe - unlike Rust's Cell/RefCell, it has no runtime checks
+        #   Methods are marked @unsafe; file needs refactoring to use rusty:: interior mutability
     )
 
     # Add borrow checking for RRR library (only if we have files to check)
