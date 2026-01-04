@@ -1094,6 +1094,8 @@ if(NOT TARGET rrr)
         # Misc files that pass borrow checking
         src/rrr/misc/alock.cpp
         src/rrr/misc/marshal.cpp
+        # Additional base files
+        src/rrr/base/strop.cpp
         # RPC files that pass borrow checking
         src/rrr/rpc/utils.cpp
         src/rrr/rpc/client.cpp
