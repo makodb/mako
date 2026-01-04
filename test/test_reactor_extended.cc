@@ -171,9 +171,9 @@ TEST_F(ExtendedReactorTest, CoroutineYieldContinue) {
     
     auto coro = reactor->create_run_coroutine([&counter]() {
         counter = 1;
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         counter = 2;
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         counter = 3;
     });
     
@@ -185,7 +185,7 @@ TEST_F(ExtendedReactorTest, CoroutineYieldContinue) {
     reactor->continue_coro(coro);
     EXPECT_EQ(counter, 3); // After second continue
     
-    EXPECT_TRUE(coro->Finished());
+    EXPECT_TRUE(coro->finished());
 }
 
 // Test 7: Many independent events (each with single waiter)
@@ -223,17 +223,17 @@ TEST_F(ExtendedReactorTest, MultipleYields) {
     
     auto coro1 = reactor->create_run_coroutine([&execution_order]() {
         execution_order.push_back(1);
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         execution_order.push_back(3);
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         execution_order.push_back(5);
     });
     
     auto coro2 = reactor->create_run_coroutine([&execution_order]() {
         execution_order.push_back(2);
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         execution_order.push_back(4);
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         execution_order.push_back(6);
     });
     

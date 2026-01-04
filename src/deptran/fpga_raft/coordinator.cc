@@ -39,7 +39,7 @@ void CoordinatorFpgaRaft::Forward(shared_ptr<Marshallable>& cmd,
     e->wait();
     uint64_t cmt_idx = e->CommitIdx() ;
     cmt_idx_ = cmt_idx ;
-    Coroutine::CreateRun([&] () {
+    Coroutine::create_run([&] () {
       this->sch_->SpCommit(cmt_idx) ;
     }) ;
 }

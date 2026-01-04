@@ -123,7 +123,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
     view_data->SetMarshallable(std::make_shared<ViewData>());
   }
   
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -135,7 +135,7 @@ void ClassicServiceImpl::Dispatch(const i64& cmd_id,
   //   if (!sched->Dispatch(cmd_id, dep_id, sp, *output)) {
   //     *res = REJECT;
   //   }
-  //   auto coro_opt = Coroutine::CurrentCoroutine();
+  //   auto coro_opt = Coroutine::current_coroutine();
   //   if (coro_opt.is_some()) {
   //     *coro_id = coro_opt.unwrap()->id;
   //   }
@@ -165,7 +165,7 @@ void ClassicServiceImpl::FailoverPauseSocketOut(
     clt_cnt_.store(clt_set.size());
   }
 
-  Coroutine::CreateRun([&]() {
+  Coroutine::create_run([&]() {
     // TODO: yidawu need to test with multi clients in diff machines
     int wait_int = 50 * 1000; // 50ms
     while (clt_cnt_.load() == 0) {
@@ -200,7 +200,7 @@ void ClassicServiceImpl::FailoverResumeSocketOut(
     clt_cnt_.store(clt_set.size());
   }
 
-  Coroutine::CreateRun([&]() {
+  Coroutine::create_run([&]() {
     // resume() not implemented in PollThreadWorker;
     dtxn_sched_->rep_sched_->Resume();
     *res = SUCCESS;
@@ -210,7 +210,7 @@ void ClassicServiceImpl::FailoverResumeSocketOut(
 
 void ClassicServiceImpl::SimpleCmd(
     const SimpleCommand& cmd, rrr::i32* res, rrr::DeferredReply defer) {
-  Coroutine::CreateRun([res, defer = std::move(defer), this]() mutable {
+  Coroutine::create_run([res, defer = std::move(defer), this]() mutable {
     auto empty_cmd = std::make_shared<TpcEmptyCommand>();
     verify(empty_cmd->kind_ == MarshallDeputy::CMD_TPC_EMPTY);
     auto sp_m = dynamic_pointer_cast<Marshallable>(empty_cmd);
@@ -250,12 +250,12 @@ void ClassicServiceImpl::Prepare(const rrr::i64& tid,
   *slow = sched->slow_;
   *res = ret ? SUCCESS : REJECT;
   if(null_cmd) *res = REPEAT;
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
   defer.reply();
-  //auto coro = Coroutine::CreateRun(func);
+  //auto coro = Coroutine::create_run(func);
   //Log_info("coro id on service side: %d", coro->id);
 // TODO move the stat to somewhere else.
 #ifdef PIECE_COUNT
@@ -293,7 +293,7 @@ void ClassicServiceImpl::Commit(const rrr::i64& tid,
   //*profile = {0.0, 0.0, 0.0, 0.0};
   //Log_info("slow2: %d", sched->slow_);
   *slow = sched->slow_;
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -342,7 +342,7 @@ void ClassicServiceImpl::Abort(const rrr::i64& tid,
   Log_info("slow3: %d", sched->slow_);
   *slow = sched->slow_;
   *res = SUCCESS;
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -367,7 +367,7 @@ void ClassicServiceImpl::EarlyAbort(const rrr::i64& tid,
   *res = SUCCESS;
   defer.reply();
 //  };
-//  Coroutine::CreateRun(func);
+//  Coroutine::create_run(func);
 }
 
 void ClassicServiceImpl::rpc_null(rrr::DeferredReply defer) {
@@ -428,7 +428,7 @@ void ClassicServiceImpl::CarouselReadAndPrepare(const i64& cmd_id,
       // Followers try to do prepare directly.
       bool ret = sched->DoPrepare(cmd_id);
       if (!ret) {
-        Coroutine::CreateRun([res, defer = std::move(defer), cmd_id, sids, sched, this]() mutable {
+        Coroutine::create_run([res, defer = std::move(defer), cmd_id, sids, sched, this]() mutable {
           auto sp_tx = dynamic_pointer_cast<TxClassic>(sched->GetOrCreateTx(cmd_id));
           sp_tx->prepare_result->wait();
           bool ret2 = sp_tx->prepare_result->get();

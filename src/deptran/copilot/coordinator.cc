@@ -185,7 +185,7 @@ void CoordinatorCopilot::FastAccept() {
                                                 dep_,
                                                 cmd_now_);
   // sq_quorum->id_ = dep_id_;
-  // Log_debug("current coroutine's dep_id: %d", Coroutine::CurrentCoroutine()->dep_id_);
+  // Log_debug("current coroutine's dep_id: %d", Coroutine::current_coroutine()->dep_id_);
 
   sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
@@ -259,7 +259,7 @@ void CoordinatorCopilot::Accept() {
                                             dep_,
                                             cmd_now_);
   // sp_quorum->id_ = dep_id_;
-  // Log_debug("current coroutine's dep_id: %d", Coroutine::CurrentCoroutine()->dep_id_);
+  // Log_debug("current coroutine's dep_id: %d", Coroutine::current_coroutine()->dep_id_);
 
   sp_quorum->wait();
 #ifdef DO_FINALIZE

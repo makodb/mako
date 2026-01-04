@@ -27,7 +27,7 @@ Coroutine::~Coroutine() {
 //  verify(0);
 }
 
-void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
+void Coroutine::boost_run_wrapper(boost_coro_yield_t& yield) {
   boost_coro_yield_ = yield;
   verify(*func_.borrow());
   auto reactor = Reactor::get_reactor();
@@ -51,8 +51,8 @@ void Coroutine::BoostRunWrapper(boost_coro_yield_t& yield) {
 
 // @safe - Initializes and starts a coroutine
 // SAFETY: Single-threaded coroutine execution, no concurrent mutation.
-// Uses @unsafe blocks for: RefCell operations, GetReactor, STL, const_cast, std::bind, boost.
-void Coroutine::Run() const {
+// Uses @unsafe blocks for: RefCell operations, get_reactor, STL, const_cast, std::bind, boost.
+void Coroutine::run() const {
   // @unsafe
   {
     verify((*boost_coro_task_.borrow()).is_none());
@@ -61,7 +61,7 @@ void Coroutine::Run() const {
     auto reactor = Reactor::get_reactor();
     auto sz = reactor->coros_.len();
     verify(sz > 0);
-    auto task = std::bind(&Coroutine::BoostRunWrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
+    auto task = std::bind(&Coroutine::boost_run_wrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
     *boost_coro_task_.borrow_mut() = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));
 #ifdef USE_BOOST_COROUTINE1
     (*(*boost_coro_task_.borrow()).as_ref().unwrap())();
@@ -71,7 +71,7 @@ void Coroutine::Run() const {
 
 // @safe - Yields control back to the reactor
 // SAFETY: Single-threaded coroutine execution
-void Coroutine::Yield() const {
+void Coroutine::yield_() const {
   // @unsafe
   {
     verify(boost_coro_yield_);
@@ -88,7 +88,7 @@ void Coroutine::Yield() const {
 
 // @safe - Resumes a paused coroutine
 // SAFETY: Single-threaded coroutine execution
-void Coroutine::Continue() const {
+void Coroutine::continue_() const {
   // @unsafe
   {
     auto s = status_.get();
@@ -101,12 +101,12 @@ void Coroutine::Continue() const {
   // but you have to manually call the scheduler to loop.
 }
 
-bool Coroutine::Finished() const {
+bool Coroutine::finished() const {
   auto s = status_.get();
   return s == FINISHED || s == RECYCLED;
 }
 
-void Coroutine::DoFinalize() {
+void Coroutine::do_finalize() {
   // Handle finalization logic if needed
   needs_finalize_.set(false);
 }

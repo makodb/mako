@@ -54,7 +54,7 @@ class MongodbServer : public TxLogServer {
   void Setup() override {
     SimpleRWCommand::SetZeroTime();
     mongodb_ = make_shared<MongodbConnectionThreadPool>(loc_id_ == 0 ? mongodb_connection_ : 0);
-    // Coroutine::CreateRun([&]() { 
+    // Coroutine::create_run([&]() { 
     //   ExecutionHandler(this, mongodb_); 
     // });
     // execution_thread = std::thread(ExecutionHandler, this, std::ref(mongodb_));

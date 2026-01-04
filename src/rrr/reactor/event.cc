@@ -13,7 +13,7 @@ namespace rrr {
 using std::function;
 
 uint64_t Event::get_coro_id(){
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   verify(coro_opt.is_some());
   return coro_opt.unwrap()->id;
 }
@@ -38,7 +38,7 @@ bool Event::is_slow() {
 //     // the event may be created in a different coroutine.
 //     // this value is set when wait is called.
 //     // for now only one coroutine can wait on an event.
-//     auto sp_coro = Coroutine::CurrentCoroutine();
+//     auto sp_coro = Coroutine::current_coroutine();
 // //    verify(sp_coro);
 // //    verify(_dbg_p_scheduler_ == nullptr);
 // //    _dbg_p_scheduler_ = Reactor::get_reactor().get();
@@ -46,7 +46,7 @@ bool Event::is_slow() {
 //     events.push_back(shared_from_this());
 //     wp_coro_ = sp_coro;
 //     status_ = WAIT;
-//     sp_coro->Yield();
+//     sp_coro->yield_();
 //   }
 // }
 
@@ -69,7 +69,7 @@ void Event::wait(uint64_t timeout) {
     // the event may be created in a different coroutine.
     // this value is set when wait is called.
     // for now only one coroutine can wait on an event.
-    auto coro_opt = Coroutine::CurrentCoroutine();
+    auto coro_opt = Coroutine::current_coroutine();
     verify(coro_opt.is_some());  // Can't wait outside a coroutine
     auto coro = coro_opt.unwrap();
 
@@ -121,7 +121,7 @@ void Event::wait(uint64_t timeout) {
     status_.set(WAIT);
     auto coro_status = coro->status_.get();
     verify(coro_status != Coroutine::FINISHED && coro_status != Coroutine::RECYCLED);
-    coro->Yield();
+    coro->yield_();
 #ifdef EVENT_TIMEOUT_CHECK
     if (__debug_timeout_ && status_.get() == TIMEOUT) {
       Log_info("timeout");
@@ -168,7 +168,7 @@ bool Event::test() {
 }
 
 Event::Event() {
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   // It's OK if no coroutine is running - event might be created outside a coroutine
   // and Wait() called later from within one
   if (coro_opt.is_some()) {

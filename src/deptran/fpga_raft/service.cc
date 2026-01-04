@@ -103,7 +103,7 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
 	}*/
 
 
-  Coroutine::CreateRun([&] () {
+  Coroutine::create_run([&] () {
     sched_->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
@@ -128,7 +128,7 @@ void FpgaRaftServiceImpl::Decide(const uint64_t& slot,
                                    rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
 	//Log_info("Deciding with string: %s and id: %d", dep_id.str.c_str(), dep_id.id);
-  Coroutine::CreateRun([&] () {
+  Coroutine::create_run([&] () {
     sched_->OnCommit(slot,
                      ballot,
                      const_cast<MarshallDeputy&>(md_cmd).sp_data_);

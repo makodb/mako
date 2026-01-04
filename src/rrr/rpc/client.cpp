@@ -89,7 +89,7 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
   if (should_callback && attr_.callback != nullptr) {
     auto x = attr_.callback;
     // Coroutine::CreateRun is now @safe
-    Coroutine::CreateRun([x, self]() {
+    Coroutine::create_run([x, self]() {
       x(self);
     }, __FILE__, __LINE__);
   }

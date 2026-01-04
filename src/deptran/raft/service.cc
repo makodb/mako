@@ -49,7 +49,7 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         rrr::DeferredReply defer) {
   verify(svr_ != nullptr);
 
-  Coroutine::CreateRun([=, defer = std::move(defer)]() mutable {
+  Coroutine::create_run([=, defer = std::move(defer)]() mutable {
     svr_->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
@@ -80,7 +80,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerLastLogIndex,
                                              rrr::DeferredReply defer) {
   std::shared_ptr<Marshallable> cmd = nullptr;
-  Coroutine::CreateRun([=, defer = std::move(defer)]() mutable {
+  Coroutine::create_run([=, defer = std::move(defer)]() mutable {
     svr_->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,

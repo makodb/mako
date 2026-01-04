@@ -147,12 +147,12 @@ void RaftServer::Setup() {
 #ifdef RAFT_TEST_CORO
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
-    Coroutine::CreateRun([this](){
+    Coroutine::create_run([this](){
       this->HeartbeatLoop(); 
     });
     // Start election timeout loop
     if (failover_) {
-      Coroutine::CreateRun([this](){
+      Coroutine::create_run([this](){
         StartElectionTimer(); 
       });
     }
@@ -162,12 +162,12 @@ void RaftServer::Setup() {
 #ifndef RAFT_TEST_CORO
   if (heartbeat_) {
 		Log_debug("starting heartbeat loop at site %d", site_id_);
-    Coroutine::CreateRun([this](){
+    Coroutine::create_run([this](){
       this->HeartbeatLoop(); 
     });
     // Start election timeout loop
     if (failover_) {
-      Coroutine::CreateRun([this](){
+      Coroutine::create_run([this](){
         StartElectionTimer(); 
       });
     }
@@ -442,7 +442,7 @@ void RaftServer::HeartbeatLoop() {
         // std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = nullptr;
       }
-      // Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      // Coroutine::sleep(HEARTBEAT_INTERVAL);
       // Log_info("heartbeat loop at loc %d", loc_id_);
       if (!IsLeader()) {
         // Log_info("heartbeat loop at loc %d skip since not leader", loc_id_);
@@ -450,7 +450,7 @@ void RaftServer::HeartbeatLoop() {
       }
       // Log_info("[1]heartbeat loop at loc %d continue since is leader", loc_id_);
       // Log_info("time b/f sleep %" PRIu64, Time::now());
-      // Coroutine::Sleep(HEARTBEAT_INTERVAL);
+      // Coroutine::sleep(HEARTBEAT_INTERVAL);
       // Log_info("time a/f sleep %" PRIu64, Time::now());
       auto nservers = Config::GetConfig()->GetPartitionSize(partition_id);
       // Log_info("next_index_ size %d", next_index_.size());
@@ -954,12 +954,12 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 }
 
-// @safe - Calls undeclared Coroutine::CreateRun()
+// @safe - Calls undeclared Coroutine::create_run()
 void RaftServer::StartElectionTimer() {
   resetTimer("start election timer");
   last_heartbeat_time_ = Time::now();
 
-  Coroutine::CreateRun([this]() {
+  Coroutine::create_run([this]() {
     Log_debug("start timer for election") ;
 
     while(!stop_) {
@@ -967,7 +967,7 @@ void RaftServer::StartElectionTimer() {
       uint64_t election_timeout = GetElectionTimeout();
 
       // Sleep for a portion of the timeout before checking
-      Coroutine::Sleep(RandomGenerator::rand(HEARTBEAT_INTERVAL * 2, HEARTBEAT_INTERVAL * 4));
+      Coroutine::sleep(RandomGenerator::rand(HEARTBEAT_INTERVAL * 2, HEARTBEAT_INTERVAL * 4));
 
       auto time_now = Time::now();
       auto time_elapsed = time_now - last_heartbeat_time_;
@@ -989,7 +989,7 @@ void RaftServer::StartElectionTimer() {
         if (stop_) return;
         RequestVote() ;
         while(req_voting_) {
-          Coroutine::Sleep(wait_int_);
+          Coroutine::sleep(wait_int_);
           if(stop_) return ;
         }
       }
@@ -1009,13 +1009,13 @@ bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
   //   heartbeat_setup_ = true;
   //   if (heartbeat_) {
   //     Log_debug("starting heartbeat loop at site %d", site_id_);
-  //     Coroutine::CreateRun([this](){
+  //     Coroutine::create_run([this](){
   //       this->HeartbeatLoop(); 
   //     });
   //     // Start election timeout loop
   //     Log_info("!!!!!!! if (failover_)");
   //     if (failover_) {
-  //       Coroutine::CreateRun([this](){
+  //       Coroutine::create_run([this](){
   //         StartElectionTimer(); 
   //       });
   //     }
@@ -1201,7 +1201,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
                 // Wait before starting election to allow old leader's heartbeats
                 // to reach other replicas. This prevents election storms.
-                Coroutine::CreateRun([this]() {
+                Coroutine::create_run([this]() {
                     std::this_thread::sleep_for(std::chrono::milliseconds(30));
                     // CRITICAL: Check stop_ before calling RequestVote() to prevent
                     // calling through collapsed vtable after object destruction

@@ -231,7 +231,7 @@ bool ServerConnection::handle_read() {
                 size_t svc_index = it->second;
                 auto weak_this = weak_self_;
                 auto ctx = ctx_.clone();  // Clone Arc for the coroutine
-                Coroutine::CreateRun([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
+                Coroutine::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
                     // Borrow inside coroutine - guard released when lambda exits
                     // (*guard) dereferences RefMut to get Box<Service>&
                     // (*guard)-> calls Box::operator-> to get Service*

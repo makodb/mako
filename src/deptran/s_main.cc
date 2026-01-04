@@ -437,7 +437,7 @@ void server_failover_thread(bool random, bool leader, int srv_idx) {
 #ifdef FAILOVER_DEBUG
   Log_info("!!!!!!!!!!!!!!!enter server_failover_thread");
 #endif
-  Coroutine::CreateRun([&, random, leader, srv_idx]() { 
+  Coroutine::create_run([&, random, leader, srv_idx]() { 
     server_failover_co(random, leader, srv_idx) ;
   }) ;
 }
@@ -450,7 +450,7 @@ void server_failover()
     int idx = Config::GetConfig()->get_failover_srv_idx() ;
     if(failover)
     {
-      /*Coroutine::CreateRun([&, random, leader, idx]() { 
+      /*Coroutine::create_run([&, random, leader, idx]() { 
         server_failover_co(random, leader, idx) ;
       }) ;*/
       // TODO only consider the partition 0 now

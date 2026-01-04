@@ -45,7 +45,7 @@ SpinLock Reactor::trying_job_;
 // @safe - Returns current coroutine with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
 // Returns None if called outside of a coroutine context
-rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
+rusty::Option<rusty::Rc<Coroutine>> Coroutine::current_coroutine() {
   // @unsafe - RefCell::borrow, Rc::clone
   {
     auto guard = Reactor::sp_running_coro_th_.borrow();
@@ -58,7 +58,7 @@ rusty::Option<rusty::Rc<Coroutine>> Coroutine::CurrentCoroutine() {
 
 // @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
 rusty::Rc<Coroutine>
-Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line) {
+Coroutine::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
   auto reactor_rc = Reactor::get_reactor();
   // Rc gives const access, create_run_coroutine is const (safe: thread-local, single owner)
   auto coro = reactor_rc->create_run_coroutine(std::move(func), file, line);
@@ -66,7 +66,7 @@ Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t
   return coro;
 }
 
-void Coroutine::Sleep(uint64_t microseconds) {
+void Coroutine::sleep(uint64_t microseconds) {
   auto x = Reactor::create_sp_event<TimeoutEvent>(microseconds);
   x->wait();
 }
@@ -217,8 +217,8 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   // Step 5: Run the coroutine
   // @unsafe
   {
-    coro->Run();
-    if (coro->Finished()) {
+    coro->run();
+    if (coro->finished()) {
       coros_.remove(coro);
     }
   }
@@ -388,21 +388,21 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
 
   {
     auto guard = sp_running_coro_th_.borrow();
-    verify(!(*guard).as_ref().unwrap()->Finished());
+    verify(!(*guard).as_ref().unwrap()->finished());
   }
 
   n_active_coroutines_.set(n_active_coroutines_.get() + 1);
 
   if (coro->status_.get() == Coroutine::INIT) {
-    coro->Run();
+    coro->run();
   } else {
     auto guard = sp_running_coro_th_.borrow();
-    (*guard).as_ref().unwrap()->Continue();
+    (*guard).as_ref().unwrap()->continue_();
   }
 
   {
     auto guard = sp_running_coro_th_.borrow();
-    if ((*guard).as_ref().unwrap()->Finished()) {
+    if ((*guard).as_ref().unwrap()->finished()) {
       auto coro_ref = (*guard).as_ref().unwrap().clone();
       recycle(coro_ref);
     }
@@ -560,7 +560,7 @@ void PollThreadWorker::trigger_job() {
     Job* job_ptr = const_cast<Job*>(job.get());
     if (job_ptr->Ready()) {
       // Capture job by value to keep the Arc alive
-      Coroutine::CreateRun([job]() {
+      Coroutine::create_run([job]() {
         Job* job_ptr = const_cast<Job*>(job.get());
         job_ptr->Work();
       });

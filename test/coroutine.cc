@@ -70,17 +70,17 @@ using namespace rrr;
 #include "gtest/gtest.h"
 
 TEST(CoroutineTest, helloworld) {
-  Coroutine::CreateRun([] () {ASSERT_EQ(1, 1);});
-  Coroutine::CreateRun([] () {ASSERT_NE(1, 2);});
+  Coroutine::create_run([] () {ASSERT_EQ(1, 1);});
+  Coroutine::create_run([] () {ASSERT_NE(1, 2);});
 }
 
 TEST(CoroutineTest, yield) {
   int x = 0;
-  auto coro1 = Coroutine::CreateRun([&x] () {
+  auto coro1 = Coroutine::create_run([&x] () {
     x = 1;
-    Coroutine::CurrentCoroutine().unwrap()->Yield();
+    Coroutine::current_coroutine().unwrap()->yield_();
     x = 2;
-    Coroutine::CurrentCoroutine().unwrap()->Yield();
+    Coroutine::current_coroutine().unwrap()->yield_();
     x = 3;
   });
   ASSERT_EQ(x, 1);
@@ -92,16 +92,16 @@ TEST(CoroutineTest, yield) {
 
 rusty::Rc<Coroutine> xxx() {
     int x;
-    auto coro1 = Coroutine::CreateRun([&x] () {
+    auto coro1 = Coroutine::create_run([&x] () {
         x = 1;
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
     });
     return coro1;
 }
 
 TEST(CoroutineTest, destruct) {
     rusty::Rc<Coroutine> c = xxx();
-    c->Continue();
+    c->continue_();
 }
 
 // Test destroying a paused coroutine (one that has yielded but not finished)
@@ -112,19 +112,19 @@ TEST(CoroutineTest, destroy_paused_coroutine) {
     int step = 0;
 
     {
-        auto coro = Coroutine::CreateRun([&step, &destructor_called] () {
+        auto coro = Coroutine::create_run([&step, &destructor_called] () {
             std::cout << "Coroutine: Starting execution, step=" << step << std::endl;
             step = 1;
 
             std::cout << "Coroutine: About to yield (step=1)" << std::endl;
-            Coroutine::CurrentCoroutine().unwrap()->Yield();
+            Coroutine::current_coroutine().unwrap()->yield_();
 
             // This should NOT be reached if we destroy the coroutine
             std::cout << "Coroutine: Resumed after first yield, step=" << step << std::endl;
             step = 2;
 
             std::cout << "Coroutine: About to yield again (step=2)" << std::endl;
-            Coroutine::CurrentCoroutine().unwrap()->Yield();
+            Coroutine::current_coroutine().unwrap()->yield_();
 
             // This should definitely NOT be reached
             std::cout << "Coroutine: Final execution, step=" << step << std::endl;
@@ -159,13 +159,13 @@ TEST(CoroutineTest, destroy_paused_coroutine_with_cleanup) {
     int cleanup_step = 0;
 
     {
-        auto coro = Coroutine::CreateRun([&cleanup_step, heap_flag] () {
+        auto coro = Coroutine::create_run([&cleanup_step, heap_flag] () {
             std::cout << "Coroutine: Allocating local resource" << std::endl;
             int local_var = 42;
             cleanup_step = 1;
 
             std::cout << "Coroutine: local_var=" << local_var << ", yielding..." << std::endl;
-            Coroutine::CurrentCoroutine().unwrap()->Yield();
+            Coroutine::current_coroutine().unwrap()->yield_();
 
             // If this runs, it means the coroutine was properly resumed
             std::cout << "Coroutine: Resumed! Setting heap flag" << std::endl;
@@ -188,16 +188,16 @@ TEST(CoroutineTest, destroy_paused_coroutine_with_cleanup) {
 
 TEST(CoroutineTest, wait_die_lock) {
   WaitDieALock a;
-  auto coro1 = Coroutine::CreateRun([&a] () {
+  auto coro1 = Coroutine::create_run([&a] () {
     uint64_t req_id = a.Lock(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id, true);
-    Coroutine::CurrentCoroutine().unwrap()->Yield();
+    Coroutine::current_coroutine().unwrap()->yield_();
     Log_debug("aborting lock from coroutine 1.");
     a.abort(req_id);
   });
 
   int x = 0;
-  auto coro2 = Coroutine::CreateRun([&] () {
+  auto coro2 = Coroutine::create_run([&] () {
     uint64_t req_id = a.Lock(0, ALock::WLOCK, 11);
     ASSERT_EQ(req_id, false);
     x = 1;
@@ -205,20 +205,20 @@ TEST(CoroutineTest, wait_die_lock) {
   ASSERT_EQ(x, 1);
 
   int y = 0;
-  auto coro3 = Coroutine::CreateRun([&] () {
+  auto coro3 = Coroutine::create_run([&] () {
     uint64_t req_id = a.Lock(0, ALock::WLOCK, 8);
     ASSERT_GT(req_id, 0);
     Log_debug("acquired lock from coroutine 3.");
     y = 1;
   });
   ASSERT_EQ(y, 0);
-  coro1->Continue();
+  coro1->continue_();
   Reactor::get_reactor()->loop();
   ASSERT_EQ(y, 1);
 }
 
 TEST(CoroutineTest, timeout) {
-  auto coro1 = Coroutine::CreateRun([](){
+  auto coro1 = Coroutine::create_run([](){
     auto t1 = Time::now(true);
     auto timeout = 1 * 1000000;
     auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
@@ -234,7 +234,7 @@ TEST(CoroutineTest, timeout) {
 
 TEST(CoroutineTest, orevent) {
   auto inte = Reactor::create_sp_event<IntEvent>();
-  auto coro1 = Coroutine::CreateRun([&inte](){
+  auto coro1 = Coroutine::create_run([&inte](){
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
     auto sp_e1 = Reactor::create_sp_event<TimeoutEvent>(timeout);
@@ -243,7 +243,7 @@ TEST(CoroutineTest, orevent) {
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);
   });
-  auto coro2 = Coroutine::CreateRun([&inte](){
+  auto coro2 = Coroutine::create_run([&inte](){
     inte->set(1);
   });
 }

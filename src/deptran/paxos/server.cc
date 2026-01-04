@@ -35,7 +35,7 @@ void PaxosServer::OnPrepare(slotid_t slot_id,
     // TODO if accepted anything, return;
     verify(0);
   }
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }
@@ -68,7 +68,7 @@ void PaxosServer::OnAccept(const slotid_t slot_id,
     verify(0);
   }
 
-  auto coro_opt = Coroutine::CurrentCoroutine();
+  auto coro_opt = Coroutine::current_coroutine();
   if (coro_opt.is_some()) {
     *coro_id = coro_opt.unwrap()->id;
   }

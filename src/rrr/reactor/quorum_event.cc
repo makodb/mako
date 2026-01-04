@@ -20,7 +20,7 @@ void QuorumEvent::Finalize(
     function<bool(vector<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
   
   
-  Coroutine::CreateRun([timeout, finalize_func, this]() {
+  Coroutine::create_run([timeout, finalize_func, this]() {
     bool ret = false;
     
     auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)

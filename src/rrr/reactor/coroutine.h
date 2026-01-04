@@ -49,7 +49,7 @@ class Coroutine {
  public:
   // Returns current coroutine with single-threaded reference counting
   // Returns None if called outside of a coroutine context
-  static rusty::Option<rusty::Rc<Coroutine>> CurrentCoroutine();
+  static rusty::Option<rusty::Rc<Coroutine>> current_coroutine();
 
   // the argument cannot be a reference because it could be declared on stack.
   // Using rusty::Function to support move-only callables (e.g., lambdas capturing rusty::Box)
@@ -62,12 +62,12 @@ class Coroutine {
   //   SAFETY: CreateRunImpl is @unsafe due to internal raw pointer operations,
   //   but the public API is safe - callers get an Rc<Coroutine> with proper ownership.
   template <typename Func>
-  static rusty::Rc<Coroutine> CreateRun(Func&& func, const char* file = "", int64_t line = 0) {
-    // @unsafe - CreateRunImpl uses raw pointer operations internally
-    { return CreateRunImpl(rusty::Function<void()>(std::forward<Func>(func)), file, line); }
+  static rusty::Rc<Coroutine> create_run(Func&& func, const char* file = "", int64_t line = 0) {
+    // @unsafe - create_run_impl uses raw pointer operations internally
+    { return create_run_impl(rusty::Function<void()>(std::forward<Func>(func)), file, line); }
   }
 
-  static void Sleep(uint64_t microseconds);
+  static void sleep(uint64_t microseconds);
   static uint64_t global_id;
   uint64_t dep_id_{0};
   bool need_finalize_{false};
@@ -90,21 +90,21 @@ class Coroutine {
   explicit Coroutine(rusty::Function<void()> func);
   ~Coroutine();
   // @unsafe - Uses std::bind and function pointers
-  void BoostRunWrapper(boost_coro_yield_t& yield);
+  void boost_run_wrapper(boost_coro_yield_t& yield);
   // @safe - Initializes and starts a coroutine
   // Memory-safe: Uses Cell/RefCell for interior mutability, Box for ownership.
   // Internal @unsafe block wraps const_cast and boost coroutine creation.
-  void Run() const;  // Made const for Rc compatibility
+  void run() const;  // Made const for Rc compatibility
   // @safe - Yields control back to the reactor
   // Memory-safe: Uses boost::optional reference and Cell for status.
   // Internal @unsafe block wraps boost yield call.
-  void Yield() const;  // Made const for Rc compatibility
+  void yield_() const;  // Made const for Rc compatibility (underscore due to reserved word)
   // @safe - Resumes a paused coroutine
   // Memory-safe: Uses RefCell for boost_coro_task_ access.
   // Internal @unsafe block wraps boost coroutine resume.
-  void Continue() const;  // Made const for Rc compatibility
-  bool Finished() const;
-  void DoFinalize();
+  void continue_() const;  // Made const for Rc compatibility (underscore due to reserved word)
+  bool finished() const;
+  void do_finalize();
 
   // Comparison operator for std::set<rusty::Rc<Coroutine>>
   // Compares by address (pointer identity)
@@ -114,7 +114,7 @@ class Coroutine {
 
  private:
   // @unsafe - Creates and runs a new coroutine (uses raw pointer operations)
-  static rusty::Rc<Coroutine> CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t line);
+  static rusty::Rc<Coroutine> create_run_impl(rusty::Function<void()> func, const char* file, int64_t line);
 };
 
 } // namespace rrr

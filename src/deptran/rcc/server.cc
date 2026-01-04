@@ -770,7 +770,7 @@ void RccServer::Execute(RccScc& scc, int rank) {
     v_begin->subtx(rank).log_apply_started_ = true;
     if (v_begin->mocking_janus_) {
       auto x = &scc;
-      Coroutine::CreateRun([x, rank, this](){
+      Coroutine::create_run([x, rank, this](){
         for (auto& v : *x) {
           Execute(*v, rank);
         }
@@ -793,7 +793,7 @@ void RccServer::Execute(RccTx& tx, int rank) {
   if (tx.mocking_janus_) {
     if (tx.subtx(rank).Involve(partition_id_)) {
       tx.subtx(rank).commit_received_.wait_until_gte(1);
-//    Coroutine::CreateRun([sp_tx, this]() {
+//    Coroutine::create_run([sp_tx, this]() {
       verify(rank == RANK_D);
       tx.CommitValidate(rank);
 //      commo()->BroadcastValidation(sp_tx->id(), sp_tx->partition_,
@@ -838,7 +838,7 @@ void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
   verify(sp_tx->IsDecided());
   if (sp_tx->Involve(partition_id_)) {
     sp_tx->commit_received_.wait_until_gte(1);
-//    Coroutine::CreateRun([sp_tx, this]() {
+//    Coroutine::create_run([sp_tx, this]() {
 //      if (sp_tx->need_validation_) {
 //        sp_tx->CommitValidate();
 //      } else {
@@ -1176,7 +1176,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   subtx.__debug_commit_received_ = true;
   bool weird = subtx.HasLogApplyStarted();
 #ifdef DEBUG_CHECK
-  Coroutine::CreateRun([sp_tx, weird, rank](){
+  Coroutine::create_run([sp_tx, weird, rank](){
     auto sp_e = Reactor::create_sp_event<Event>();
     sp_e->test_ = [sp_tx, rank] (int v) -> bool {
       auto& subtx = sp_tx->subtx(rank);

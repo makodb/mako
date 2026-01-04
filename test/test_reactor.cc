@@ -406,20 +406,20 @@ TEST_F(ReactorTest, CoroutineWithYield) {
     
     auto sp_coro = reactor->create_run_coroutine([&value]() {
         value = 1;
-        Coroutine::CurrentCoroutine().unwrap()->Yield();
+        Coroutine::current_coroutine().unwrap()->yield_();
         value = 2;
     });
     
     // After initial run, the coroutine yields at value=1
     EXPECT_EQ(value, 1);
-    EXPECT_FALSE(sp_coro->Finished());
+    EXPECT_FALSE(sp_coro->finished());
     
     // Manually continue the coroutine
     reactor->continue_coro(sp_coro);
     
     // After continuation, value should be 2
     EXPECT_EQ(value, 2);
-    EXPECT_TRUE(sp_coro->Finished());
+    EXPECT_TRUE(sp_coro->finished());
 }
 
 TEST_F(ReactorTest, MultipleCoroutines) {

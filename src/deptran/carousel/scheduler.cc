@@ -488,7 +488,7 @@ bool SchedulerCarousel::OnPrepare(cmdid_t tx_id) {
       func();
     }  else {
       // Don't wait for the replication.
-      Coroutine::CreateRun(func);
+      Coroutine::create_run(func);
     }
     return true;    
   }

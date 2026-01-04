@@ -10,7 +10,7 @@ CopilotServiceImpl::CopilotServiceImpl(TxLogServer *sched)
 void CopilotServiceImpl::Forward(const MarshallDeputy& cmd,
                                  rrr::DeferredReply defer) {
   verify(sched_);
-  auto coro = Coroutine::CreateRun([&]() {
+  auto coro = Coroutine::create_run([&]() {
     sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
                       [defer = std::move(defer)]() mutable { defer.reply(); });
   });
@@ -53,7 +53,7 @@ void CopilotServiceImpl::FastAccept(const uint8_t& is_pilot,
   Log_info("[1+] [tx=%d] on FastAccept %.3f", dynamic_pointer_cast<TpcBatchCommand>(const_cast<MarshallDeputy&>(cmd).sp_data_)->cmds_.at(0)->tx_id_, tp.tv_sec * 1000 + tp.tv_usec / 1000.0);
 #endif
 
-  // auto coro = Coroutine::CreateRun([&]() {
+  // auto coro = Coroutine::create_run([&]() {
     sched_->OnFastAccept(is_pilot, slot,
                          ballot,
                          dep,
@@ -75,7 +75,7 @@ void CopilotServiceImpl::Accept(const uint8_t& is_pilot,
                                 rrr::DeferredReply defer) {
   verify(sched_);
 
-  // auto coro = Coroutine::CreateRun([&]() {
+  // auto coro = Coroutine::create_run([&]() {
     sched_->OnAccept(is_pilot, slot,
                      ballot,
                      dep,
@@ -92,7 +92,7 @@ void CopilotServiceImpl::Commit(const uint8_t& is_pilot,
                                 const MarshallDeputy& cmd,
                                 rrr::DeferredReply defer) {
   verify(sched_);
-  // Coroutine::CreateRun([&]() {
+  // Coroutine::create_run([&]() {
     sched_->OnCommit(is_pilot, slot, dep,
                      const_cast<MarshallDeputy&>(cmd).sp_data_);
     defer.reply();
