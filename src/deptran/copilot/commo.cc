@@ -8,13 +8,13 @@ namespace janus {
 
 void CopilotFastAcceptQuorumEvent::FeedResponse(bool y, bool ok) {
   if (y) {
-    VoteYes();
+    vote_yes();
     if (ok)
       n_fastac_ok_++;
     else
       n_fastac_reply_++;
   } else {
-    VoteNo();
+    vote_no();
   }
 }
 
@@ -34,7 +34,7 @@ bool CopilotFastAcceptQuorumEvent::FastYes() {
 }
 
 bool CopilotFastAcceptQuorumEvent::FastNo() {
-  return Yes() && !FastYes();
+  return yes() && !FastYes();
 }
 
 
@@ -71,12 +71,12 @@ bool CopilotPrepareQuorumEvent::is_ready() {
   if (committed_seen_) {
     return true;
   }
-  if (Yes()) {
+  if (yes()) {
     //      Log_info("voted: %d is equal or greater than quorum: %d",
     //                (int)n_voted_yes_, (int) quorum_);
     // ready_time = std::chrono::steady_clock::now();
     return true;
-  } else if (No()) {
+  } else if (no()) {
     return true;
   }
   //    Log_debug("voted: %d is smaller than quorum: %d",
@@ -131,13 +131,13 @@ CopilotCommo::BroadcastPrepare(parid_t par_id,
         // the prepare event will be ready in advance without waiting for a quorum.
       e->FeedResponse(ok);
 
-      e->RemoveXid(site);
+      e->remove_xid(site);
     };
 
     auto fu_result = proxy->async_Prepare(is_pilot, slot_id, ballot, di, fuattr);
     if (fu_result.is_ok()) {
       auto f = fu_result.unwrap();
-      e->AddXid(site, f->get_xid());
+      e->add_xid(site, f->get_xid());
     }
   }
 
@@ -193,7 +193,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
           e->FeedRetDep(sgst_dep);
         }
 
-        e->RemoveXid(site);
+        e->remove_xid(site);
       };
 
       verify(cmd);
@@ -207,7 +207,7 @@ CopilotCommo::BroadcastFastAccept(parid_t par_id,
       auto fu_result = proxy->async_FastAccept(is_pilot, slot_id, ballot, dep, md, di, fuattr);
       if (fu_result.is_ok()) {
         auto f = fu_result.unwrap();
-        e->AddXid(site, f->get_xid());
+        e->add_xid(site, f->get_xid());
       }
     }
   }
@@ -251,14 +251,14 @@ CopilotCommo::BroadcastAccept(parid_t par_id,
         fu->get_reply() >> b;
         e->FeedResponse(ballot == b);
 
-        e->RemoveXid(site);
+        e->remove_xid(site);
       };
 
       MarshallDeputy md(cmd);
       auto fu_result = proxy->async_Accept(is_pilot, slot_id, ballot, dep, md, di, fuattr);
       if (fu_result.is_ok()) {
         auto f = fu_result.unwrap();
-        e->AddXid(site, f->get_xid());
+        e->add_xid(site, f->get_xid());
       }
     }
   }
@@ -286,13 +286,13 @@ CopilotCommo::BroadcastCommit(parid_t par_id,
 #endif
     FutureAttr fuattr;
     fuattr.callback = [e, site](rusty::Arc<Future> fu) {
-      e->RemoveXid(site);
+      e->remove_xid(site);
     };
     MarshallDeputy md(cmd);
     auto fu_result = proxy->async_Commit(is_pilot, slot_id, dep, md, fuattr);
     if (fu_result.is_ok()) {
       auto f = fu_result.unwrap();
-      e->AddXid(site, f->get_xid());
+      e->add_xid(site, f->get_xid());
     }
   }
 

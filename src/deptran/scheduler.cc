@@ -710,7 +710,7 @@ void TxLogServer::JetpackBeginRecovery() {
   auto e = commo()->JetpackBroadcastBeginRecovery(partition_id_, site_id_, old_view_, new_view_, oepoch_);
   e->wait();
   
-  if (!e->Yes()) {
+  if (!e->yes()) {
     Log_info("[JETPACK-RECOVERY] BeginRecovery FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
     return;
   }
@@ -724,7 +724,7 @@ void TxLogServer::JetpackRecovery() {
   auto id_set_e = commo()->JetpackBroadcastPullIdSet(partition_id_, site_id_, jepoch_, oepoch_);
   id_set_e->wait();
   
-  if (!id_set_e->Yes()) {
+  if (!id_set_e->yes()) {
     Log_info("[JETPACK-RECOVERY] PullIdSet FAILED: got %d/%d responses", id_set_e->n_voted_yes_, id_set_e->n_total_);
     // Update local jepoch, oepoch from the responses
     if (id_set_e->max_jepoch_ > jepoch_) {
@@ -769,7 +769,7 @@ void TxLogServer::JetpackRecovery() {
     auto pull_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - pull_start).count();
 
-    if (!pulled_cmd_e->Yes()) {
+    if (!pulled_cmd_e->yes()) {
       Log_info("[JETPACK-RECOVERY] PullCmd batch FAILED: got %d/%d responses wait=%lldms",
                pulled_cmd_e->n_voted_yes_, pulled_cmd_e->n_total_, (long long) pull_wait_ms);
       if (pulled_cmd_e->max_jepoch_ > jepoch_) {
@@ -794,7 +794,7 @@ void TxLogServer::JetpackRecovery() {
         record_e->wait();
         auto record_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - record_start).count();
-        if (record_e->Yes()) {
+        if (record_e->yes()) {
           rid += recovered_entries.size();
           Log_info("[JETPACK-RECOVERY] RecordCmd batch SUCCESS: recorded=%zu new_rid=%d wait=%lldms",
                    recovered_entries.size(), rid, (long long) record_wait_ms);
@@ -831,7 +831,7 @@ void TxLogServer::JetpackPrepare(int default_sid, int default_set_size) {
   
   e->wait();
   
-  if (!e->Yes()) {
+  if (!e->yes()) {
     Log_info("[JETPACK-RECOVERY] Prepare FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
     // Update local epochs and ballots from failed responses
     if (e->max_jepoch_ > jepoch_) {
@@ -893,7 +893,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
                                           witness_.max_seen_ballot_, propose_sid, propose_set_size);
   e->wait();
   
-  if (!e->Yes()) {
+  if (!e->yes()) {
     Log_info("[JETPACK-RECOVERY] Accept FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
     // Update local epochs and ballots from failed responses
     if (e->max_jepoch_ > jepoch_) {
@@ -962,8 +962,8 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
       auto pull_e = commo()->JetpackBroadcastPullRecSetIns(partition_id_, site_id_, jepoch_, oepoch_, sid, rid);
       Log_info("[JETPACK-RECOVERY] Waiting for PullRecSetIns sid=%d rid=%d (site=%d)", sid, rid, site_id_);
       pull_e->wait();
-      Log_info("[JETPACK-RECOVERY] PullRecSetIns completed sid=%d rid=%d (site=%d) success=%d", sid, rid, site_id_, pull_e->Yes());
-      if (pull_e->Yes()) {
+      Log_info("[JETPACK-RECOVERY] PullRecSetIns completed sid=%d rid=%d (site=%d) success=%d", sid, rid, site_id_, pull_e->yes());
+      if (pull_e->yes()) {
         cmd = pull_e->GetRecoveredCmd();
         if (cmd) {
           rec_set_.insert(sid, rid, cmd);

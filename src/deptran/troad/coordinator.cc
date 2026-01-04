@@ -43,7 +43,7 @@ void CoordinatorTroad::PreAccept() {
   bool fast_path = true;
   for (const auto& ev: events) {
     ev->wait();
-    verify(ev->Yes()); // TODO tolerate failure recovery.
+    verify(ev->yes()); // TODO tolerate failure recovery.
     if (!FastQuorumGraphCheck(*ev)) {
       fast_path = false;
     }
@@ -96,7 +96,7 @@ void CoordinatorTroad::Accept() {
 
   for (auto ev : events) {
     ev->wait(100*1000*1000);
-    verify(ev->Yes()); // TODO handle failure recovery.
+    verify(ev->yes()); // TODO handle failure recovery.
   }
   GotoNextPhase();
 }
@@ -127,9 +127,9 @@ void CoordinatorTroad::Commit() {
     auto &ev = events[i];
     ev->wait(100 * 1000 * 1000);
     verify(ev->status_.get() != Event::TIMEOUT);
-    if (ev->No()) {
+    if (ev->no()) {
       verify(0);
-    } else if (ev->Yes()) {
+    } else if (ev->yes()) {
 
     } else {
       // TODO fixing this, bug here: server does not return within a timeout
@@ -160,9 +160,9 @@ void CoordinatorTroad::NotifyValidation() {
   ev1->wait(100*1000*1000);
   verify(ev1->status_.get() != Event::TIMEOUT);
   int res;
-  if (ev1->Yes()) {
+  if (ev1->yes()) {
     res = SUCCESS;
-  } else if (ev1->No()){
+  } else if (ev1->no()){
     verify(mocking_janus_);
     aborted_ = true;
     res = REJECT;
@@ -173,7 +173,7 @@ void CoordinatorTroad::NotifyValidation() {
   verify(par_d_ == tx_data().GetPartitionIds());
   auto ev = commo()->BroadcastValidation(*cmd_, res);
 //  ev->wait();
-//  verify(ev->Yes());
+//  verify(ev->yes());
 //  verify(phase_ % 6 == COMMIT);
 //  __debug_notifying_ = false;
   GotoNextPhase();

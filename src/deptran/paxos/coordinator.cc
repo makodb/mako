@@ -86,11 +86,11 @@ void CoordinatorMultiPaxos::Prepare() {
   auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
   Log_info("Duration of Wait() in Prepare() is: %d", duration.count());
   sp_quorum->log();
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     verify(!sp_quorum->HasAcceptedValue());
     // TODO use the previously accepted value.
 
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // TODO restart prepare?
     verify(0);
   } else {
@@ -143,9 +143,9 @@ void CoordinatorMultiPaxos::Accept() {
 #endif
   auto sp_quorum = commo()->BroadcastAccept(par_id_, slot_id_, curr_ballot_, cmd_);
   WAN_WAIT;
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     committed_ = true;
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // TODO process the case: failed to get a majority.
     verify(0);
   } else {
@@ -313,7 +313,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
     }
   });
   sp_quorum->wait();
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     //Log_info("The prepare is successfull");
     ballot_t candidate_b = 0;
     shared_ptr<Marshallable> candidate_val = nullptr;
@@ -332,7 +332,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
     }
     //Log_info("in submission ? %d", in_submission_);
     // Log_info("Should be in accept now for slot %d", cmd_temp1->slots[0]);
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // TODO restart prepare?
     // verify(0);
     //.. not a leader anymore, exit.
@@ -370,11 +370,11 @@ void BulkCoordinatorMultiPaxos::Accept() {
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt3 - endt2).count());
 
     sp_quorum->wait();
-    if (sp_quorum->Yes()) {
+    if (sp_quorum->yes()) {
 	      if(ess_cc->machine_id == 0)
 			Log_debug("Accept: slot %d  is committed, parition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
         committed_ = true;
-    } else if (sp_quorum->No()) {
+    } else if (sp_quorum->no()) {
         in_submission_ = false;
         Log_info("can't reach quorum on Accept phase");
         return;
@@ -414,9 +414,9 @@ void BulkCoordinatorMultiPaxos::Commit() {
     // Log_info("Called BroadcastBulkDecide from Commit()");
     // it's not necessary to wait for a majority of commits
   //   sp_quorum->wait();
-  //   if (sp_quorum->Yes()) {
+  //   if (sp_quorum->yes()) {
 	// //Log_info("Commit: some stuff is committed");
-  //   } else if (sp_quorum->No()) {
+  //   } else if (sp_quorum->no()) {
   //     in_submission_ = false;
   //     return;
   //   } else {

@@ -33,9 +33,9 @@ class CopilotAcceptQuorumEvent : public QuorumEvent {
 
   void FeedResponse(bool y) {
     if (y)
-      VoteYes();
+      vote_yes();
     else
-      VoteNo();
+      vote_no();
   }
 };
 
@@ -50,9 +50,9 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
 
   void FeedResponse(bool y) {
     if (y)
-      VoteYes();
+      vote_yes();
     else
-      VoteNo();
+      vote_no();
   }
 
   void FeedRetCmd(ballot_t ballot,
@@ -75,7 +75,7 @@ class CopilotFakeQuorumEvent : public QuorumEvent {
   CopilotFakeQuorumEvent(int n_total)
     : QuorumEvent(n_total, 0) {}
 
-  void FeedResponse() { VoteYes(); }
+  void FeedResponse() { vote_yes(); }
   bool is_ready() override { return true; }
 };
 

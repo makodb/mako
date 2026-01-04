@@ -46,57 +46,57 @@ class QuorumEvent : public Event {
   /**
    * Record the TXid of an issued RPC and which site it's issued to
    * in the dangling RPC list
-   * 
+   *
    * @param site site id of the RPC issuing to
    * @param xid TXid of the RPC
    */
-  void AddXid(uint16_t site, rrr::i64 xid);
+  void add_xid(uint16_t site, rrr::i64 xid);
 
   /**
    * Remove an replied RPC from the dangling RPC list
-   * 
+   *
    * @param site site id of the reply coming from
    */
-  void RemoveXid(uint16_t site);
+  void remove_xid(uint16_t site);
 
   /**
-   * call Finalize before/after Wait() to cleanup the side-effect of the quorun-event
-   * (e.g. free dangling RPCs). However, Finalize should not block execution after Wait.
-   * That is, Finalize should be a background task, with respect to the main coroutine (
-   * the coroutine where Wait() is called)
+   * call finalize before/after wait() to cleanup the side-effect of the quorum-event
+   * (e.g. free dangling RPCs). However, finalize should not block execution after wait.
+   * That is, finalize should be a background task, with respect to the main coroutine (
+   * the coroutine where wait() is called)
    * TODO: find a proper way to achieve this
    *
    * @param timeout time to wait after event-ready to do finalize
    * @param finalize_func what to do in finalization, take a list of dangling RPC
    */
-  void Finalize(uint64_t timeout, function<bool(vector<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
+  void finalize(uint64_t timeout, function<bool(vector<std::pair<uint16_t, rrr::i64> >&)> finalize_func);
 
-  virtual bool Yes() {
+  virtual bool yes() {
     return n_voted_yes_ >= quorum_;
   }
 
-  virtual bool No() {
+  virtual bool no() {
     verify(n_total_ >= quorum_);
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
   // @unsafe: calls undeclared test(), Time::now(), vector::push_back(), IntEvent::set()
-  void VoteYes();
+  void vote_yes();
 
   // @unsafe: calls undeclared test(), IntEvent::set()
-  void VoteNo();
+  void vote_no();
 
   bool is_ready() override {
     if (timeouted_) {
       // TODO add time out support
       return true;
     }
-    if (Yes()) {
+    if (yes()) {
 //      Log_info("voted: %d is equal or greater than quorum: %d",
 //                (int)n_voted_yes_, (int) quorum_);
       ready_time = std::chrono::steady_clock::now();
       return true;
-    } else if (No()) {
+    } else if (no()) {
       return true;
     }
 //    Log_debug("voted: %d is smaller than quorum: %d",
@@ -107,7 +107,7 @@ class QuorumEvent : public Event {
   // Mark as composite event - will be polled in reactor loop
   bool is_composite_event() override { return true; }
 
-  void Log();
+  void log_event();
 
 };
 

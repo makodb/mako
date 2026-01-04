@@ -20,7 +20,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]
     - [x] reactor/reactor.h - Rename Reactor methods to snake_case (GetReactor->get_reactor, Loop->loop, CreateSpEvent->create_sp_event, etc.) [DONE]
     - [x] reactor/coroutine.h - Rename Coroutine methods to snake_case (CreateRun->create_run, Yield->yield_, Continue->continue_, etc.) [DONE]
-    - [ ] reactor/quorum_event.h - Rename QuorumEvent methods to snake_case (VoteYes->vote_yes, VoteNo->vote_no, etc.)
+    - [x] reactor/quorum_event.h - Rename QuorumEvent methods to snake_case (VoteYes->vote_yes, VoteNo->vote_no, etc.) [DONE]
     - [ ] base/threading.hpp - Rename threading methods to snake_case
     - [ ] misc/marshal.hpp - Rename Marshal/Marshallable methods to snake_case
     - [ ] misc/alock.hpp - Rename ALock methods to snake_case

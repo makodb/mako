@@ -763,14 +763,14 @@ retry:
   Log_debug("start setting a new leader from %d", prev_pause_srv);
   auto e = commo()->BroadcastGetLeader(par_id, prev_pause_srv);
   e->wait();
-  if (e->Yes()) {
+  if (e->yes()) {
     // assign new leader
     Log_debug("set a new leader %d", e->leader_id_);
     commo()->SetNewLeaderProxy(par_id, e->leader_id_);
     if (prev_pause_srv != e->leader_id_) {
       *cur_pause = e->leader_id_;
     }
-  } else if (e->No()) {
+  } else if (e->no()) {
     auto sp_e = Reactor::create_sp_event<TimeoutEvent>(300 * 1000);
     sp_e->wait();
     // usleep(300 * 1000) ;  // 300 ms
@@ -784,7 +784,7 @@ void CoordinatorClassic::FailoverPauseSocketOut(parid_t par_id, locid_t loc_id) 
   Log_info("!!!!!!!!!!! CoordinatorClassic::FailoverPauseSocketOut");
   auto e = commo()->FailoverPauseSocketOut(par_id, loc_id);
   e->wait();
-  if (e->No()) {
+  if (e->no()) {
     verify(0);
   }
 };
@@ -792,7 +792,7 @@ void CoordinatorClassic::FailoverPauseSocketOut(parid_t par_id, locid_t loc_id) 
 void CoordinatorClassic::FailoverResumeSocketOut(parid_t par_id, locid_t loc_id) {
   auto e = commo()->FailoverResumeSocketOut(par_id, loc_id);
   e->wait();
-  if (e->No()) {
+  if (e->no()) {
     verify(0);
   }
 };

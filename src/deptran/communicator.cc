@@ -30,20 +30,20 @@ void RuleSpeculativeExecuteQuorumEvent::FeedResponse(bool y, value_t result, boo
     }
     if (is_leader)
       n_leader_yes_++;
-    VoteYes();
+    vote_yes();
   } else {
     if (is_leader)
       n_leader_no_++;
-    VoteNo();
+    vote_no();
   }
 }
 
-bool RuleSpeculativeExecuteQuorumEvent::Yes() {
+bool RuleSpeculativeExecuteQuorumEvent::yes() {
   // Log_info("Yes condition: n_voted_yes_(%d) >= quorum_(%d) && n_leader_yes_(%d) >= num_leader_(%d)", n_voted_yes_, quorum_, n_leader_yes_, num_leader_);
   return n_voted_yes_ >= quorum_ && n_leader_yes_ >= num_leader_;
 }
 
-bool RuleSpeculativeExecuteQuorumEvent::No() {
+bool RuleSpeculativeExecuteQuorumEvent::no() {
   // if ((n_voted_no_ > (n_total_ - quorum_)) || (n_leader_no_ > 0))
   //   Log_info("RuleSpeculativeExecuteQuorumEventNo: %d %d", n_voted_no_, n_leader_no_);
   return (n_voted_no_ > (n_total_ - quorum_)) || (n_leader_no_ > 0);
@@ -381,7 +381,7 @@ std::shared_ptr<QuorumEvent> Communicator::SendReelect(){
 				fu->get_reply() >> success;
 
 				if(success){
-					e->VoteYes();
+					e->vote_yes();
 					this->SetNewLeaderProxy(0, id);
 				}
 			};
@@ -1247,9 +1247,9 @@ shared_ptr<QuorumEvent> Communicator::FailoverPauseSocketOut(
       int res;
       fu->get_reply() >> res;
       if (res == 0)
-        e->VoteYes();
+        e->vote_yes();
       else
-        e->VoteNo();
+        e->vote_no();
     };
 #ifdef FAILOVER_DEBUG
     Log_info("!!!!!!!!!!!! Communicator::FailoverPauseSocketOut");
@@ -1284,9 +1284,9 @@ shared_ptr<QuorumEvent> Communicator::FailoverResumeSocketOut(
       int res;
       fu->get_reply() >> res;
       if (res == 0)
-        e->VoteYes();
+        e->vote_yes();
       else
-        e->VoteNo();
+        e->vote_no();
     };
 #ifdef FAILOVER_DEBUG
     Log_info("!!!!!!!!!!!! Communicator::FailoverResumeSocketOut");
@@ -1362,7 +1362,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
   for (auto& p : proxies) {
     // TODO: Local call optimization temporarily commented out
     // if (p.first == loc_id) {
-    //     e->VoteYes();
+    //     e->vote_yes();
     //     continue;
     // }
     auto proxy = (ClassicProxy*) p.second;
@@ -1372,7 +1372,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastBeginRecovery(parid_t par_
         Log_info("Get a error message in reply");
         return;
       }
-      e->VoteYes();
+      e->vote_yes();
     };
     auto fu_result = proxy->async_JetpackBeginRecovery(old_view_deputy, new_view_deputy, new_view_id, fuattr);
     if (fu_result.is_ok()) {
@@ -1525,7 +1525,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
     // if (p.first == loc_id) {
     //     // Local call - call OnJetpackRecordCmd directly
     //     dtxn_sched_->OnJetpackRecordCmd(jepoch, oepoch, sid, rid, cmd);
-    //     e->VoteYes();
+    //     e->vote_yes();
     //     continue;
     // }
     auto proxy = (ClassicProxy*) p.second;
@@ -1534,11 +1534,11 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastRecordCmd(parid_t par_id, 
       if (fu->get_error_code() != 0) {
         // Log_info("[JETPACK-DEBUG] RecordCmd error from site %d: error_code=%d",
         //          p.first, fu->get_error_code());
-        e->VoteNo();  // Vote no on error to prevent hanging
+        e->vote_no();  // Vote no on error to prevent hanging
         return;
       }
       // Log_info("[JETPACK-DEBUG] RecordCmd success from site %d", p.first);
-      e->VoteYes();
+      e->vote_yes();
     };
     // Log_info("[JETPACK-DEBUG] Sending RecordCmd to site %d", p.first);
     auto fu_result = proxy->async_JetpackRecordCmd(jepoch, oepoch, sid, rid, cmd_deputy, fuattr);
@@ -1646,7 +1646,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastCommit(parid_t par_id, loc
         Log_info("Get a error message in reply");
         return;
       }
-      e->VoteYes();
+      e->vote_yes();
     };
     auto fu_result = proxy->async_JetpackCommit(jepoch, oepoch, sid, set_size, fuattr);
     if (fu_result.is_ok()) {
@@ -1703,7 +1703,7 @@ shared_ptr<QuorumEvent> Communicator::JetpackBroadcastFinishRecovery(parid_t par
         Log_info("Get a error message in reply");
         return;
       }
-      e->VoteYes();
+      e->vote_yes();
     };
     auto fu_result = proxy->async_JetpackFinishRecovery(oepoch, fuattr);
     if (fu_result.is_ok()) {

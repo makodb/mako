@@ -815,7 +815,7 @@ bool RaftServer::RequestVote() {
   Log_info("[RAFT_ELECTION] server %d term %lu vote outcome yes=%d no=%d highest_term_seen=%ld timeout=%d",
            site_id_, term, sp_quorum->n_voted_yes_, sp_quorum->n_voted_no_, sp_quorum->Term(), sp_quorum->timeouted_);
 #endif
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     verify(currentTerm >= term);
     if (term != currentTerm) {
 #ifdef RAFT_LEADER_ELECTION_DEBUG
@@ -858,7 +858,7 @@ bool RaftServer::RequestVote() {
       setIsLeader(false) ;
     	return false;
 		}
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // become a follower
     Log_debug("site %d requestvote rejected", site_id_);
     setIsLeader(false) ;

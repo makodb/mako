@@ -452,7 +452,7 @@ TEST_F(ReactorTest, QuorumEvent) {
     // Vote again - should trigger
     sp_event->n_voted_yes_ = 2;
     EXPECT_TRUE(sp_event->is_ready());
-    EXPECT_TRUE(sp_event->Yes());
+    EXPECT_TRUE(sp_event->yes());
     EXPECT_EQ(sp_event->n_voted_yes_, 2);
 }
 

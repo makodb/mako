@@ -89,7 +89,7 @@ start_prepare:
 
   sq_quorum->wait();
 #ifdef DO_FINALIZE
-  sq_quorum->Finalize(finalize_timeout_us,
+  sq_quorum->finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
 #endif
   // sq_quorum->log();
@@ -198,7 +198,7 @@ void CoordinatorCopilot::FastAccept() {
 #endif
   fac = Time::now(true) - begin;
 #ifdef DO_FINALIZE
-  sq_quorum->Finalize(finalize_timeout_us,
+  sq_quorum->finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
 #endif
   // cout << "fac";
@@ -217,9 +217,9 @@ void CoordinatorCopilot::FastAccept() {
     static_cast<CopilotFrame*>(frame_)->n_fast_path_++;
     Log_debug("commit on fast path");
   } else {
-    if (sq_quorum->Yes()) {
+    if (sq_quorum->yes()) {
 #ifdef FULL_LOG_DEBUG
-      Log_info("cmd<%d, %d> site %d sq_quorum->Yes()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
+      Log_info("cmd<%d, %d> site %d sq_quorum->yes()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
       /**
        * go to accept phase (regular-path):
@@ -230,7 +230,7 @@ void CoordinatorCopilot::FastAccept() {
       dep_ = sq_quorum->GetFinalDep();
       static_cast<CopilotFrame*>(frame_)->n_regular_path_++;
       Log_debug("Final dep: %lu, continue on regular path", dep_);
-    } else if (sq_quorum->No()) {
+    } else if (sq_quorum->no()) {
       // TODO process the case: failed to get a majority.
       verify(0);
     } else {
@@ -263,7 +263,7 @@ void CoordinatorCopilot::Accept() {
 
   sp_quorum->wait();
 #ifdef DO_FINALIZE
-  sp_quorum->Finalize(finalize_timeout_us,
+  sp_quorum->finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
 #endif
   // cout << "ac";
@@ -271,9 +271,9 @@ void CoordinatorCopilot::Accept() {
   // if ((static_cast<CopilotFrame*>(frame_)->n_accept_ & 0x3ff) == 0)
   ac = Time::now(true) - begin;
 
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     committed_ = true;
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     /**
      * TODO: process the case: failed to get a majority.
      * An consensus instance with higher ballot is ongoing,
@@ -302,7 +302,7 @@ void CoordinatorCopilot::Commit() {
                                             cmd_now_);
   sp_quorum->wait();  // in fact this doesn't wait since it's a fake quorum event
 #ifdef DO_FINALIZE
-  sp_quorum->Finalize(finalize_timeout_us,
+  sp_quorum->finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
 #endif
   /**

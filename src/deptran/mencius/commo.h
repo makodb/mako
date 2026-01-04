@@ -20,9 +20,9 @@ class MenciusPrepareQuorumEvent: public QuorumEvent {
   }
   void FeedResponse(bool y) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
     }
   }
 
@@ -34,9 +34,9 @@ class MenciusSuggestQuorumEvent: public QuorumEvent {
   using QuorumEvent::QuorumEvent;
   void FeedResponse(bool y) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
     }
   }
 };

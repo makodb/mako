@@ -66,11 +66,11 @@ void CoordinatorMencius::Prepare() {
   auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
   Log_info("Duration of Wait() in Prepare() is: %d", duration.count());
   sp_quorum->log();
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     verify(!sp_quorum->HasSuggestedValue());
     // TODO use the previously suggested value.
 
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // TODO restart prepare?
     verify(0);
   } else {
@@ -131,9 +131,9 @@ void CoordinatorMencius::Suggest() {
   //Log_info("Duration of Wait() in Suggest() is: %d", duration.count());
   //Log_info("Duration after Ready to end of Wait() is: %d", duration_ready.count());
   sp_quorum->log();
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     committed_ = true;
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // TODO process the case: failed to get a majority.
     verify(0);
   } else {

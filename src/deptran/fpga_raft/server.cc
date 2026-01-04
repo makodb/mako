@@ -128,11 +128,11 @@ void FpgaRaftServer::RequestVote2FPGA() {
   auto sp_quorum = ((FpgaRaftCommo *)(this->commo_))->BroadcastVote2FPGA(par_id,lst_idx,lst_term,loc_id, currentTerm );
   sp_quorum->wait();
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     // become a leader
     setIsFPGALeader(true) ;
     Log_debug("vote accepted %d curterm %d", loc_id, currentTerm);
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // become a follower
     Log_debug("vote rejected %d", loc_id);
     setIsFPGALeader(false) ;
@@ -239,7 +239,7 @@ bool FpgaRaftServer::RequestVote() {
   auto sp_quorum = ((FpgaRaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, currentTerm );
   sp_quorum->wait();
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
-  if (sp_quorum->Yes()) {
+  if (sp_quorum->yes()) {
     // become a leader
     setIsLeader(true) ;
 
@@ -265,7 +265,7 @@ bool FpgaRaftServer::RequestVote() {
       setIsLeader(false) ;
     	return false;
 		}
-  } else if (sp_quorum->No()) {
+  } else if (sp_quorum->no()) {
     // become a follower
     Log_debug("vote rejected %d", loc_id);
     setIsLeader(false) ;

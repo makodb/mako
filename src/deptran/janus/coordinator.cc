@@ -187,10 +187,10 @@ void CoordinatorJanus::Commit() {
 //    auto quorum = commo()->BroadcastInquireValidation(pars, cmd_->id_);
 //    quorum->wait();
 //    int result = 0;
-//    if (quorum->Yes()) {
+//    if (quorum->yes()) {
 //      result = 1;
 //      validation_result_ = true;
-//    } else if (quorum->No()) {
+//    } else if (quorum->no()) {
 //      result = -1;
 //      validation_result_ = false;
 //    } else {

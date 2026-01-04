@@ -15,7 +15,7 @@ QuorumEvent::QuorumEvent(int n_total, int quorum)
   begin_timestamp_ = Time::now(true);
 }
 
-void QuorumEvent::Finalize(
+void QuorumEvent::finalize(
     uint64_t timeout,
     function<bool(vector<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
   
@@ -40,17 +40,17 @@ void QuorumEvent::Finalize(
   }, __FILE__, __LINE__);
 }
 
-void QuorumEvent::AddXid(uint16_t site, rrr::i64 xid) {
+void QuorumEvent::add_xid(uint16_t site, rrr::i64 xid) {
   xids_[site] = xid;
 }
 
-void QuorumEvent::RemoveXid(uint16_t site) {
+void QuorumEvent::remove_xid(uint16_t site) {
   auto it = xids_.find(site);
   if (it != xids_.end())
     xids_.erase(it);
 }
 
-void QuorumEvent::VoteYes() {
+void QuorumEvent::vote_yes() {
   n_voted_yes_++;
   test();
   vec_timestamp_.push_back(Time::now(true) - begin_timestamp_);
@@ -59,7 +59,7 @@ void QuorumEvent::VoteYes() {
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
-void QuorumEvent::VoteNo() {
+void QuorumEvent::vote_no() {
   n_voted_no_++;
   test();
 
@@ -67,7 +67,7 @@ void QuorumEvent::VoteNo() {
     finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
-void QuorumEvent::Log() {
+void QuorumEvent::log_event() {
   for (auto t : vec_timestamp_)
     std::cout << " " << t;
   std::cout << std::endl;

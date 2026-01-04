@@ -101,18 +101,18 @@ class GetLeaderQuorumEvent : public QuorumEvent {
   void FeedResponse(bool y, locid_t leader_id) {
     if (y) {
       leader_id_ = leader_id;
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
     }
   }
 
-  bool No() override { return n_voted_no_ == n_total_; }
+  bool no() override { return n_voted_no_ == n_total_; }
 
   bool is_ready() override {
-    if (Yes()) {
+    if (yes()) {
       return true;
-    } else if (No()) {
+    } else if (no()) {
       return true;
     }
 
@@ -134,8 +134,8 @@ class RuleSpeculativeExecuteQuorumEvent: public QuorumEvent {
       num_leader_ = num_leader;
   }
   void FeedResponse(bool y, value_t result, bool is_leader);
-  bool Yes() override;
-  bool No() override;
+  bool yes() override;
+  bool no() override;
   value_t GetResult();
 };
 
@@ -148,14 +148,14 @@ class JetpackPullIdSetQuorumEvent: public QuorumEvent {
   
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& id_set) {
     if (y) {
-      VoteYes();
+      vote_yes();
       // If ok=true, jepoch and oepoch are not larger than local, so we can update id_sets
       auto vec_rec_data = std::dynamic_pointer_cast<VecRecData>(id_set.sp_data_);
       if (vec_rec_data) {
         id_sets_.push_back(vec_rec_data);
       }
     } else {
-      VoteNo();
+      vote_no();
       // If ok=false, we need to find max jepoch and oepoch for updating local values
       if (jepoch > max_jepoch_) {
         max_jepoch_ = jepoch;
@@ -200,7 +200,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
 
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& batch_md) {
     if (y) {
-      VoteYes();
+      vote_yes();
       auto batch = std::dynamic_pointer_cast<KeyCmdBatchData>(batch_md.sp_data_);
       if (batch) {
         for (size_t i = 0; i < batch->Size(); i++) {
@@ -222,7 +222,7 @@ class JetpackPullCmdQuorumEvent: public QuorumEvent {
         }
       }
     } else {
-      VoteNo();
+      vote_no();
       if (jepoch > max_jepoch_) {
         max_jepoch_ = jepoch;
       }
@@ -274,7 +274,7 @@ class JetpackPrepareQuorumEvent: public QuorumEvent {
   
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, ballot_t accepted_ballot, int sid, int set_size, ballot_t max_seen_ballot) {
     if (y) {
-      VoteYes();
+      vote_yes();
       // Track the highest accepted ballot and its value
       if (accepted_ballot > max_accepted_ballot_) {
         max_accepted_ballot_ = accepted_ballot;
@@ -283,7 +283,7 @@ class JetpackPrepareQuorumEvent: public QuorumEvent {
         has_accepted_value_ = true;
       }
     } else {
-      VoteNo();
+      vote_no();
       // Track max epochs and max_seen_ballot for local update
       if (jepoch > max_jepoch_) {
         max_jepoch_ = jepoch;
@@ -319,9 +319,9 @@ class JetpackAcceptQuorumEvent: public QuorumEvent {
   
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, ballot_t max_seen_ballot) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
       // Track max epochs and max_seen_ballot for local update
       if (jepoch > max_jepoch_) {
         max_jepoch_ = jepoch;
@@ -345,13 +345,13 @@ class JetpackPullRecSetInsQuorumEvent: public QuorumEvent {
   
   void FeedResponse(bool y, epoch_t jepoch, epoch_t oepoch, const MarshallDeputy& cmd) {
     if (y) {
-      VoteYes();
+      vote_yes();
       // Store the recovered command if we get one
       if (!recovered_cmd_ && cmd.sp_data_) {
         recovered_cmd_ = cmd.sp_data_;
       }
     } else {
-      VoteNo();
+      vote_no();
       // Track max epochs for local update
       if (jepoch > max_jepoch_) {
         max_jepoch_ = jepoch;

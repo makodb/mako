@@ -20,10 +20,10 @@ class RaftVoteQuorumEvent: public QuorumEvent {
   void FeedResponse(bool y, ballot_t term) {
     if (y) {
       // @unsafe
-      { VoteYes(); }  // 1 unsafe line: calls @unsafe parent method
+      { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
     } else {
       // @unsafe
-      { VoteNo(); }   // 1 unsafe line: calls @unsafe parent method
+      { vote_no(); }   // 1 unsafe line: calls @unsafe parent method
       if(term > highest_term_)
       {
         highest_term_ = term ;

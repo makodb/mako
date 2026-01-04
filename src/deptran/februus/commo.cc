@@ -22,7 +22,7 @@ void CommoFebruus::BroadcastPreAccept(QuorumEvent& e,
       uint64_t timestamp;
       fu->get_reply() >> res >> timestamp;
       e.vec_timestamp_.push_back(timestamp);
-      e.VoteYes();
+      e.vote_yes();
     };
     verify(tx_id > 0);
     auto fu_result = proxy->async_PreAcceptFebruus(tx_id, fuattr);
@@ -48,7 +48,7 @@ void CommoFebruus::BroadcastAccept(QuorumEvent& e,
       }
       int32_t res;
       fu->get_reply() >> res;
-      e.VoteYes();
+      e.vote_yes();
     };
     verify(tx_id > 0);
     auto fu_result = proxy->async_AcceptFebruus(tx_id, ballot, timestamp, fuattr);

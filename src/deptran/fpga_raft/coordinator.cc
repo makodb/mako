@@ -156,14 +156,14 @@ void CoordinatorFpgaRaft::AppendEntries() {
 		}
 
 		//Log_info("slow?: %d", slow_);
-    if (sp_quorum->Yes()) {
+    if (sp_quorum->yes()) {
         minIndex = sp_quorum->minIndex;
 				//Log_info("%d vs %d", minIndex, this->sch_->commitIndex);
         verify(minIndex >= this->sch_->commitIndex) ;
         committed_ = true;
         Log_debug("fpga-raft append commited loc:%d minindex:%d", loc_id_, minIndex ) ;
     }
-    else if (sp_quorum->No()) {
+    else if (sp_quorum->no()) {
         verify(0);
         // TODO should become a follower if the term is smaller
         //if(!IsLeader())

@@ -16,7 +16,7 @@ class FpgaRaftForwardQuorumEvent: public QuorumEvent {
     return cmt_idx_ ;
   }
   void FeedResponse(uint64_t cmt_idx) {
-    VoteYes();
+    vote_yes();
     cmt_idx_ = cmt_idx ;
   }
 };
@@ -31,9 +31,9 @@ class FpgaRaftPrepareQuorumEvent: public QuorumEvent {
   }
   void FeedResponse(bool y) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
     }
   }
 };
@@ -46,9 +46,9 @@ class FpgaRaftVoteQuorumEvent: public QuorumEvent {
   }
   void FeedResponse(bool y, ballot_t term) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
       if(term > highest_term_)
       {
         highest_term_ = term ;
@@ -69,9 +69,9 @@ class FpgaRaftVote2FPGAQuorumEvent: public QuorumEvent {
   }
   void FeedResponse(bool y, ballot_t term) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
       if(term > highest_term_)
       {
         highest_term_ = term ;
@@ -89,9 +89,9 @@ class FpgaRaftAcceptQuorumEvent: public QuorumEvent {
   using QuorumEvent::QuorumEvent;
   void FeedResponse(bool y) {
     if (y) {
-      VoteYes();
+      vote_yes();
     } else {
-      VoteNo();
+      vote_no();
     }
     /*Log_debug("multi-paxos comm accept event, "
               "yes vote: %d, no vote: %d",
@@ -109,9 +109,9 @@ class FpgaRaftAppendQuorumEvent: public QuorumEvent {
                 minIndex = index;
             else
                 minIndex = std::min(minIndex, index);
-            VoteYes();
+            vote_yes();
         } else {
-            VoteNo();
+            vote_no();
         }
         /*Log_debug("fpga-raft comm accept event, "
                   "yes vote: %d, no vote: %d, min index: %d",
