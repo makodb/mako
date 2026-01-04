@@ -78,7 +78,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
   - [ ] *medium* Make rrr code rusty-cpp safe. Expected results: only system calls and some really low-level code like memcpy are left in unsafe blocks, rest of the code are converted to rusty safe. During the process, there could be bug in rusty-cpp that causes issues. In this case, create a bug report in the rusty-cpp's docs' foder and add an entry to its TODO.md doc. git commit and push the report/todoenry to remote so that someone else will fix it. Monitor changes on the rusty-cpp by doing git pull in it every minute. Try again once it is updated. [Plan: doc/rrr_safety_conversion_plan.md]
     - [ ] Phase 1: Small utility files
       - [x] base/strop.cpp (92 lines) - Add safety annotations [DONE - 16 RRR files now under borrow checking]
-      - [ ] base/unittest.cpp (144 lines) - Add safety annotations (may exclude from borrow checking)
+      - [x] base/unittest.cpp (144 lines) - Add safety annotations [DONE - 17 RRR files now under borrow checking]
       - [ ] misc/rand.cpp (147 lines) - Add safety annotations
       - [ ] misc/recorder.cpp (175 lines) - Add safety annotations
     - [ ] Phase 2: Message queue (mq) files
