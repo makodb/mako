@@ -8,11 +8,12 @@ on:
 # Cancel superseded runs when you push new commits to the same PR/branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build-and-test:
     runs-on: self-hosted
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 1
