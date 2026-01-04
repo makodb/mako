@@ -33,16 +33,18 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Waiting for fix before re-enabling borrow checking
     - [x] Re-check rusty-cpp for fix to "Cannot return 'value'" false positive (fixed 2026-01-04)
       - Commit e5b380e fixed the remaining false positives
-      - Re-enabled borrow checking for 10 RRR files:
+      - Re-enabled borrow checking for 12 RRR files:
         - Reactor: coroutine.cc, event.cc, quorum_event.cc, epoll_wrapper.cc
         - Base: logging.cpp, misc.cpp, basetypes.cpp, debugging.cpp
-        - Misc: alock.cpp
-        - RPC: utils.cpp
+        - Misc: alock.cpp, marshal.cpp
+        - RPC: utils.cpp, client.cpp
+      - Fixed violations:
+        - marshal.cpp: marked bypass_copying as @unsafe (uses new)
+        - client.cpp: marked timed_wait as @unsafe (uses std::chrono)
+        - client.hpp: wrapped timed_wait call in get_error_code with @unsafe block
       - Files with violations that still need fixing:
         - reactor.cc: 8 violations (unsafe calls, use-after-move)
-        - marshal.cpp: 1 violation (unsafe pointer new)
-        - server.cpp: 1 violation (STL list::back)
-        - client.cpp: 1 violation (std::chrono)
+        - server.cpp: 1 violation (false positive - STL list::back temp variable)
         - threading.cpp: 2 violations (field borrow conflicts) 
   - [x] *medium* Make rrr code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]

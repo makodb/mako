@@ -208,6 +208,7 @@ size_t Marshal::write(const void* p, size_t n) {
     return n;
 }
 
+// @unsafe - Uses new for raw heap allocation
 size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
   //Log_info("bypassing copying %d", sz);
   assert(data.entity_size() == sz);

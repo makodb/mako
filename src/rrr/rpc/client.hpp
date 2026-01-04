@@ -185,12 +185,13 @@ public:
         return reply_.borrow_mut();
     }
 
-    // @safe - Calls safe wait()/timed_wait() methods
+    // @safe - Calls wait methods, uses @unsafe for timed_wait which uses std::chrono
     i32 get_error_code() const {
         if (timeout_ > 0) {
             double x = timeout_;
             x = x / 1000000;
-            timed_wait(x);
+            // @unsafe
+            { timed_wait(x); }
         } else {
             wait();
         }

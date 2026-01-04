@@ -51,7 +51,7 @@ void Future::wait() const {
   }).unwrap();
 }
 
-// @safe - Uses rusty::Mutex and rusty::Condvar together
+// @unsafe - Uses std::chrono which is not borrow-checked
 void Future::timed_wait(double sec) const {
   auto guard = state_.lock().unwrap();
   auto duration = std::chrono::duration<double>(sec);

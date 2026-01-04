@@ -1092,13 +1092,13 @@ if(NOT TARGET rrr)
         src/rrr/base/debugging.cpp
         # Misc files that pass borrow checking
         src/rrr/misc/alock.cpp
+        src/rrr/misc/marshal.cpp
         # RPC files that pass borrow checking
         src/rrr/rpc/utils.cpp
+        src/rrr/rpc/client.cpp
         # Files with violations that need fixing:
         # - reactor.cc: 8 violations (unsafe calls, use-after-move, mutable borrow in const)
-        # - marshal.cpp: 1 violation (unsafe pointer new)
-        # - server.cpp: 1 violation (STL list::back needs @unsafe)
-        # - client.cpp: 1 violation (std::chrono needs @unsafe)
+        # - server.cpp: 1 violation (false positive - STL list::back temp variable)
         # - threading.cpp: 2 violations (field borrow conflicts)
     )
 
