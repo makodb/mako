@@ -210,7 +210,7 @@ size_t Marshal::write(const void* p, size_t n) {
 
 size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
   //Log_info("bypassing copying %d", sz);
-  assert(data.EntitySize() == sz);
+  assert(data.entity_size() == sz);
   assert(tail_ == nullptr || tail_->next == nullptr);
 
   if(head_ == nullptr){
@@ -486,17 +486,17 @@ Marshal::bookmark Marshal::set_bookmark(size_t n) {
 
 std::mutex md_mutex_g;
 std::mutex mdi_mutex_g;
-// Note: mc_ removed - now using Construct On First Use idiom in GetInitializers()
+// Note: mc_ removed - now using Construct On First Use idiom in get_initializers()
 // @safe - Thread-local factory registry copy
 // SAFETY: Each thread has its own copy, no locking needed for access
 thread_local MarshallDeputy::MarContainer mc_th_;
 thread_local bool mc_th_initialized_ = false;
 
 // @unsafe - Registers initializer with mutex locking and map insertion
-int MarshallDeputy::RegInitializer(int32_t cmd_type,
+int MarshallDeputy::reg_initializer(int32_t cmd_type,
                                    function<Marshallable*()> init) {
   md_mutex_g.lock();
-  auto& container = GetInitializers();
+  auto& container = get_initializers();
   auto pair = container.insert(std::make_pair(cmd_type, init));
   verify(pair.second);
   md_mutex_g.unlock();
@@ -505,10 +505,10 @@ int MarshallDeputy::RegInitializer(int32_t cmd_type,
 
 // @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
 function<Marshallable*()>
-MarshallDeputy::GetInitializer(int32_t type) {
+MarshallDeputy::get_initializer(int32_t type) {
   if (!mc_th_initialized_) {
     md_mutex_g.lock();
-    auto& global_container = GetInitializers();
+    auto& global_container = get_initializers();
     // Copy the container into thread-local storage
     mc_th_ = global_container;
     mc_th_initialized_ = true;
@@ -524,28 +524,28 @@ MarshallDeputy::GetInitializer(int32_t type) {
 // SAFETY: Protected by mutex, initializes on first access
 // Uses Construct On First Use idiom to avoid static initialization order fiasco
 MarshallDeputy::MarContainer&
-MarshallDeputy::GetInitializers() {
+MarshallDeputy::get_initializers() {
   // Note: Caller must hold md_mutex_g
   // Local static is guaranteed to be initialized on first access
   static MarshallDeputy::MarContainer mc_;
   return mc_;
 }
 
-Marshal &Marshallable::FromMarshal(Marshal &m) {
+Marshal &Marshallable::from_marshal(Marshal &m) {
   verify(0);
   return m;
 }
 
-// @unsafe - Calls std::shared_ptr::get and GetInitializer
+// @unsafe - Calls std::shared_ptr::get and get_initializer
 // @lifetime: (&'a mut) -> &'a mut
-Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
+Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   verify(sp_data_ == nullptr);
   switch (kind_) {
     case UNKNOWN:
       verify(0);
       break;
     default:
-      auto func = GetInitializer(kind_);
+      auto func = get_initializer(kind_);
       verify(func);
       // Call initializer function which returns raw Marshallable*
       Marshallable* raw_ptr = func();
@@ -558,14 +558,14 @@ Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
   // Use get() to get pointer access
   Marshallable* mut_data = sp_data_.get();
   verify(mut_data);  // Should succeed - we just created it
-  mut_data->FromMarshal(m);
+  mut_data->from_marshal(m);
   verify(sp_data_->kind_);
   verify(kind_);
   verify(sp_data_->kind_ == kind_);
   return m;
 }
 
-Marshal &Marshallable::ToMarshal(Marshal &m) const {
+Marshal &Marshallable::to_marshal(Marshal &m) const {
   verify(0);
   return m;
 }

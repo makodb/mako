@@ -34,7 +34,7 @@ bool TxCarousel::WriteColumn(Row *row,
   return true;
 }
 
-Marshal& TpcPrepareCarouselCommand::ToMarshal(Marshal& m) const {
+Marshal& TpcPrepareCarouselCommand::to_marshal(Marshal& m) const {
   m << tx_id_;
   m << ret_;
   m << pending_write_row_map_;
@@ -44,7 +44,7 @@ Marshal& TpcPrepareCarouselCommand::ToMarshal(Marshal& m) const {
   return m;
 }
 
-Marshal& TpcPrepareCarouselCommand::FromMarshal(Marshal& m) {
+Marshal& TpcPrepareCarouselCommand::from_marshal(Marshal& m) {
   m >> tx_id_;
   m >> ret_;
   m >> pending_write_row_map_;

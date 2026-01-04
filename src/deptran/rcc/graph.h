@@ -963,7 +963,7 @@ class Graph : public Marshallable {
     }
   }
 
-  Marshal &ToMarshal(Marshal &m) const override {
+  Marshal &to_marshal(Marshal &m) const override {
     verify(managing_memory_);
     uint64_t n = size();
     verify(n >= 0 && n < 10000);
@@ -988,7 +988,7 @@ class Graph : public Marshallable {
     return m;
   }
 
-  Marshal &FromMarshal(Marshal &m) override {
+  Marshal &from_marshal(Marshal &m) override {
     verify(managing_memory_);
     verify(size() == 0);
     uint64_t n;

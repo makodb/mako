@@ -47,7 +47,7 @@ class CmdData : public rrr::Marshallable {
 
   CmdData() : rrr::Marshallable(rrr::MarshallDeputy::CONTAINER_CMD) {}
   virtual ~CmdData() {};
-  virtual rrr::Marshal& ToMarshal(rrr::Marshal&) const override;
-  virtual rrr::Marshal& FromMarshal(rrr::Marshal&) override;
+  virtual rrr::Marshal& to_marshal(rrr::Marshal&) const override;
+  virtual rrr::Marshal& from_marshal(rrr::Marshal&) override;
 };
 } // namespace janus

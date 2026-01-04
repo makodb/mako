@@ -161,7 +161,7 @@ class VecPieceData : public Marshallable {
 
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
     verify(sp_vec_piece_data_);
     m << (int32_t) sp_vec_piece_data_->size();
     for (auto sp : *sp_vec_piece_data_) {
@@ -173,7 +173,7 @@ class VecPieceData : public Marshallable {
     return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     verify(!sp_vec_piece_data_);
     sp_vec_piece_data_ = std::make_shared<vector<shared_ptr<TxPieceData>>>();
     int32_t sz;
@@ -198,7 +198,7 @@ class VecRecData : public Marshallable {
 
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
     verify(key_data_);
     m << (int32_t) key_data_->size();
     for (const key_t& k: *key_data_) {
@@ -208,7 +208,7 @@ class VecRecData : public Marshallable {
     return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     verify(!key_data_);
     key_data_ = std::make_shared<vector<key_t>>();
     int32_t sz;
@@ -238,7 +238,7 @@ class ViewData : public Marshallable {
   const View& GetView() const { return view_; }
   View& GetView() { return view_; }
   
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
     m << view_.n_;
     m << view_.view_id_;
     m << view_.timestamp_;
@@ -250,7 +250,7 @@ class ViewData : public Marshallable {
     return m;
   }
   
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     m >> view_.n_;
     m >> view_.view_id_;
     m >> view_.timestamp_;
@@ -303,20 +303,20 @@ class KeyCmdBatchData : public Marshallable {
     return commands_[idx];
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
     verify(keys_.size() == commands_.size());
     int32_t sz = commands_.size();
     m << sz;
     for (int32_t i = 0; i < sz; i++) {
       m << keys_[i];
       MarshallDeputy deputy;
-      deputy.SetMarshallable(commands_[i]);
+      deputy.set_marshallable(commands_[i]);
       m << deputy;
     }
     return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     int32_t sz = 0;
     m >> sz;
     keys_.resize(sz);
@@ -434,8 +434,8 @@ class TxData: public CmdData {
   vector<SimpleCommand> GetCmdsByPartition(parid_t par_id);
   vector<SimpleCommand> GetCmdsByPartitionAndRank(parid_t par_id, rank_t rank);
 
-  Marshal& ToMarshal(Marshal& m) const override;
-  Marshal& FromMarshal(Marshal& m) override;
+  Marshal& to_marshal(Marshal& m) const override;
+  Marshal& from_marshal(Marshal& m) override;
 
   inline bool can_retry() {
     return (max_try_ == 0 || n_try_ < max_try_);

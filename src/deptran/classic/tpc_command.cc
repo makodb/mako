@@ -5,37 +5,37 @@
 using namespace janus;
 
 static int volatile x1 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_TPC_PREPARE,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_PREPARE,
                                      [] () -> Marshallable* {
                                        return new TpcPrepareCommand();
                                      });
 
 static int volatile x2 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_TPC_COMMIT,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_COMMIT,
                                      [] () -> Marshallable* {
                                        return new TpcCommitCommand();
                                      });
 
 static int volatile x3 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_TPC_EMPTY,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_EMPTY,
                                      [] () -> Marshallable* {
                                        return new TpcEmptyCommand;
                                      });
 
 static int volatile x4 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_NOOP,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_NOOP,
                                      [] () -> Marshallable* {
                                        return new TpcNoopCommand;
                                      });
 
 static int volatile x5 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_TPC_BATCH,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_TPC_BATCH,
                                       [] () -> Marshallable* {
                                        return new TpcBatchCommand;
                                      });
 
 
-Marshal& TpcPrepareCommand::ToMarshal(Marshal& m) const {
+Marshal& TpcPrepareCommand::to_marshal(Marshal& m) const {
   m << tx_id_;
   m << ret_;
 //  m << (int32_t) cmd_.size();
@@ -48,7 +48,7 @@ Marshal& TpcPrepareCommand::ToMarshal(Marshal& m) const {
   return m;
 }
 
-Marshal& TpcPrepareCommand::FromMarshal(Marshal& m) {
+Marshal& TpcPrepareCommand::from_marshal(Marshal& m) {
   m >> tx_id_;
   m >> ret_;
 //  int32_t sz;
@@ -72,7 +72,7 @@ Marshal& TpcPrepareCommand::FromMarshal(Marshal& m) {
   return m;
 }
 
-Marshal& TpcCommitCommand::ToMarshal(Marshal& m) const {
+Marshal& TpcCommitCommand::to_marshal(Marshal& m) const {
   m << tx_id_;
   m << ret_;
   m << term;  // Marshal the term field
@@ -88,7 +88,7 @@ Marshal& TpcCommitCommand::ToMarshal(Marshal& m) const {
   return m;
 }
 
-Marshal& TpcCommitCommand::FromMarshal(Marshal& m) {
+Marshal& TpcCommitCommand::from_marshal(Marshal& m) {
   m >> tx_id_;
   m >> ret_;
   m >> term;  // Unmarshal the term field
@@ -109,36 +109,36 @@ Marshal& TpcCommitCommand::FromMarshal(Marshal& m) {
   return m;
 }
 
-Marshal& TpcEmptyCommand::ToMarshal(Marshal& m) const {
+Marshal& TpcEmptyCommand::to_marshal(Marshal& m) const {
   return m;
 }
 
-Marshal& TpcEmptyCommand::FromMarshal(Marshal& m) {
+Marshal& TpcEmptyCommand::from_marshal(Marshal& m) {
   return m;
 }
 
-Marshal& TpcNoopCommand::ToMarshal(Marshal& m) const {
+Marshal& TpcNoopCommand::to_marshal(Marshal& m) const {
   return m;
 }
 
-Marshal& TpcNoopCommand::FromMarshal(Marshal& m) {
+Marshal& TpcNoopCommand::from_marshal(Marshal& m) {
   return m;
 }
 
-Marshal& TpcBatchCommand::ToMarshal(Marshal& m) const {
+Marshal& TpcBatchCommand::to_marshal(Marshal& m) const {
   verify(size_ == cmds_.size());
   m << size_;
   for (auto it = cmds_.begin(); it != cmds_.end(); ++it) {
-    (*it)->ToMarshal(m);
+    (*it)->to_marshal(m);
   }
   return m;
 }
 
-Marshal& TpcBatchCommand::FromMarshal(Marshal& m) {
+Marshal& TpcBatchCommand::from_marshal(Marshal& m) {
   m >> size_;
   for (uint32_t i = 0; i < size_; i++) {
     cmds_.emplace_back(std::make_shared<TpcCommitCommand>());
-    cmds_[i]->FromMarshal(m);
+    cmds_[i]->from_marshal(m);
   }
   return m;
 }

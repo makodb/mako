@@ -19,8 +19,8 @@ class SimpleRWCommand: public rrr::Marshallable {
   SimpleRWCommand(shared_ptr<rrr::Marshallable> cmd);
   std::string cmd_to_string();
   bool same_as(SimpleRWCommand &other);
-  rrr::Marshal& ToMarshal(rrr::Marshal& m) const override;
-  rrr::Marshal& FromMarshal(rrr::Marshal& m) override;
+  rrr::Marshal& to_marshal(rrr::Marshal& m) const override;
+  rrr::Marshal& from_marshal(rrr::Marshal& m) override;
   bool IsRead();
   bool IsWrite();
   bool IsRecoveryCommand();

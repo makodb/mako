@@ -57,22 +57,22 @@ class Marshallable {
   };
   // @safe
   // @lifetime: (&'a, &'b mut) -> &'b mut
-  virtual Marshal& ToMarshal(Marshal& m) const;
+  virtual Marshal& to_marshal(Marshal& m) const;
   // @safe
   // @lifetime: (&'a mut, &'b mut) -> &'b mut
-  virtual Marshal& FromMarshal(Marshal& m);
-  virtual size_t EntitySize() const {
+  virtual Marshal& from_marshal(Marshal& m);
+  virtual size_t entity_size() const {
     verify(0);
     return 0;
   }
   // @unsafe
-  virtual size_t WriteToFd(int fd, size_t written_to_socket) const {
+  virtual size_t write_to_fd(int fd, size_t written_to_socket) const {
     verify(0);
     return 0;
   }
 
   // virtual size_t need_to_write(){
-  //   return EntitySize() ; - written_to_socket;
+  //   return entity_size() ; - written_to_socket;
   // }
 
   // virtual void reset_write_offsets(){
@@ -91,10 +91,10 @@ class MarshallDeputy {
     // @safe - Returns reference to global factory registry
     // SAFETY: Protected by mutex, returns reference to static container
     // @lifetime: () -> &'static
-    static MarContainer& GetInitializers();
+    static MarContainer& get_initializers();
     // @unsafe - Registers initializer with mutex locking
-    static int RegInitializer(int32_t, std::function<Marshallable*()>);
-    static std::function<Marshallable*()> GetInitializer(int32_t);
+    static int reg_initializer(int32_t, std::function<Marshallable*()>);
+    static std::function<Marshallable*()> get_initializer(int32_t);
 
   public:
     bool bypass_to_socket_ = false;
@@ -164,17 +164,17 @@ class MarshallDeputy {
     //   sp_data_->reset_write_offsets();
     // }
 
-    rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
+    rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
     // @unsafe - Setter accepts shared_ptr<Marshallable> with polymorphism support
     // SAFETY: Validates nullptr before setting, updates kind_ atomically, calls std::shared_ptr::operator=
-    void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
+    void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
       verify(sp_data_ == nullptr);
       sp_data_ = m;
       kind_ = m->kind_;
     }
 
-    virtual size_t EntitySize() const {
-      return sizeof(int32_t) + sp_data_->EntitySize();
+    virtual size_t entity_size() const {
+      return sizeof(int32_t) + sp_data_->entity_size();
     }
 
     // @unsafe
@@ -191,11 +191,11 @@ class MarshallDeputy {
 
     // virtual size_t need_to_write(){
     //   // for marshalldeputy we only write headers. The rest is handled by Marshallable
-    //   return EntitySize() - written_to_socket;
+    //   return entity_size() - written_to_socket;
     // }
 
     // @unsafe
-    virtual size_t WriteToFd(int fd, int written_to_socket) {
+    virtual size_t write_to_fd(int fd, int written_to_socket) {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
@@ -208,15 +208,15 @@ class MarshallDeputy {
         // @unsafe {
         // Safety check: sp_data_ must not be null when writing
         if (sp_data_ == nullptr) {
-          Log_error("MarshallDeputy::WriteToFd called with null sp_data_ (kind=%d)", kind_);
+          Log_error("MarshallDeputy::write_to_fd called with null sp_data_ (kind=%d)", kind_);
           return 0;
         }
-        sz = sp_data_->WriteToFd(fd, written_to_socket - sizeof(kind_));
+        sz = sp_data_->write_to_fd(fd, written_to_socket - sizeof(kind_));
         // }
 	      //std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
         written_to_socket += sz;
-        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, EntitySize());
+        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, entity_size());
         //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
@@ -420,7 +420,7 @@ private:
             Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
             return -1;
           }
-          cnt = data->marshallable_entity.WriteToFd(fd, data->written_to_socket);
+          cnt = data->marshallable_entity.write_to_fd(fd, data->written_to_socket);
           data->written_to_socket += cnt;
           //Log_info("wrote %d bytes of ghost %d", cnt, fd);
         }
@@ -1126,7 +1126,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
 // @lifetime: (&'a, MarshallDeputy&) -> &'a
 inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
   m >> rhs.kind_;
-  rhs.CreateActualObjectFrom(m);
+  rhs.create_actual_object_from(m);
   return m;
 }
 
@@ -1137,12 +1137,12 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) 
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
   verify(rhs.sp_data_ != nullptr);
   if(rhs.bypass_to_socket_){
-    m.bypass_copying(rhs, rhs.EntitySize());
+    m.bypass_copying(rhs, rhs.entity_size());
   }else{
-    //Log_info("size is %d", rhs.EntitySize());
+    //Log_info("size is %d", rhs.entity_size());
     m << rhs.kind_;
     verify(rhs.sp_data_ != nullptr); // must be non-empty
-    rhs.sp_data_->ToMarshal(m);
+    rhs.sp_data_->to_marshal(m);
   }
   return m;
 }

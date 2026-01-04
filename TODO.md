@@ -21,8 +21,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] reactor/reactor.h - Rename Reactor methods to snake_case (GetReactor->get_reactor, Loop->loop, CreateSpEvent->create_sp_event, etc.) [DONE]
     - [x] reactor/coroutine.h - Rename Coroutine methods to snake_case (CreateRun->create_run, Yield->yield_, Continue->continue_, etc.) [DONE]
     - [x] reactor/quorum_event.h - Rename QuorumEvent methods to snake_case (VoteYes->vote_yes, VoteNo->vote_no, etc.) [DONE]
-    - [ ] base/threading.hpp - Rename threading methods to snake_case
-    - [ ] misc/marshal.hpp - Rename Marshal/Marshallable methods to snake_case
+    - [x] base/threading.hpp - Already follows snake_case convention [DONE]
+    - [x] misc/marshal.hpp - Rename Marshal/Marshallable methods to snake_case (ToMarshal->to_marshal, EntitySize->entity_size, etc.) [DONE]
     - [ ] misc/alock.hpp - Rename ALock methods to snake_case
     - [ ] rpc/*.hpp - Rename RPC-related methods to snake_case
     - [ ] Update all call sites throughout codebase for each renamed method

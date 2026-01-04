@@ -474,7 +474,7 @@ public:
 
     // @safe
     // @lifetime: (&'a, &'b mut) -> &'b mut
-    Marshal& ToMarshal(Marshal& m) const override {
+    Marshal& to_marshal(Marshal& m) const override {
         // @unsafe - operator<<
         { m << id << name << data; }
         return m;
@@ -482,13 +482,13 @@ public:
 
     // @safe
     // @lifetime: (&'a mut, &'b mut) -> &'b mut
-    Marshal& FromMarshal(Marshal& m) override {
+    Marshal& from_marshal(Marshal& m) override {
         // @unsafe - operator>>
         { m >> id >> name >> data; }
         return m;
     }
 
-    size_t EntitySize() const override {
+    size_t entity_size() const override {
         return sizeof(id) + sizeof(v64) + name.size() +
                sizeof(v64) + data.size() * sizeof(double);
     }

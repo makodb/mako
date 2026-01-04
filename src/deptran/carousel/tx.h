@@ -50,8 +50,8 @@ class TpcPrepareCarouselCommand : public Marshallable {
   unordered_map<uint64_t, int> pending_write_row_map_;
   unordered_map<uint64_t, int> pending_read_row_map_;
   shared_ptr<Marshallable> cmd_{nullptr};
-  Marshal& ToMarshal(Marshal&) const override;
-  Marshal& FromMarshal(Marshal&) override;
+  Marshal& to_marshal(Marshal&) const override;
+  Marshal& from_marshal(Marshal&) override;
 };
 
 } // namespace janus

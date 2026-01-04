@@ -8,25 +8,25 @@
 namespace janus {
 
 static int volatile x1 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_VEC_PIECE,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_VEC_PIECE,
                                    [] () -> Marshallable* {
                                      return new VecPieceData();
                                    });
 
 static int volatile x2 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_REC_VEC,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_REC_VEC,
                                    [] () -> Marshallable* {
                                      return new VecRecData;
                                    });
 
 static int volatile x3 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_VIEW_DATA,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_VIEW_DATA,
                                    [] () -> Marshallable* {
                                      return new ViewData;
                                    });
 
 static int volatile x4 =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_KEY_CMD_BATCH,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_KEY_CMD_BATCH,
                                    [] () -> Marshallable* {
                                      return new KeyCmdBatchData;
                                    });
@@ -124,7 +124,7 @@ Marshal& operator << (Marshal& m, const TxReply& reply) {
   m << has_view_data;
   if (has_view_data) {
     MarshallDeputy view_md;
-    view_md.SetMarshallable(reply.sp_view_data_);
+    view_md.set_marshallable(reply.sp_view_data_);
     m << view_md;
   }
   
@@ -393,7 +393,7 @@ void TxRequest::get_log(i64 tid, std::string &log) {
   }
 }
 
-Marshal& TxData::ToMarshal(Marshal& m) const {
+Marshal& TxData::to_marshal(Marshal& m) const {
   m << ws_;
   m << ws_init_;
   m << inputs_;
@@ -414,7 +414,7 @@ Marshal& TxData::ToMarshal(Marshal& m) const {
   return m;
 }
 
-Marshal& TxData::FromMarshal(Marshal& m) {
+Marshal& TxData::from_marshal(Marshal& m) {
   m >> ws_;
   m >> ws_init_;
   m >> inputs_;

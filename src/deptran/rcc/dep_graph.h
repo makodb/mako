@@ -18,8 +18,8 @@ typedef vector<RccTx*> RccScc;
 class EmptyGraph : public Marshallable {
  public:
   EmptyGraph() : Marshallable(MarshallDeputy::EMPTY_GRAPH) {};
-  virtual Marshal& ToMarshal(Marshal& m) const {return m;};
-  virtual Marshal& FromMarshal(Marshal& m) {return m;};
+  virtual Marshal& to_marshal(Marshal& m) const {return m;};
+  virtual Marshal& from_marshal(Marshal& m) {return m;};
 };
 
 class RccServer;
@@ -71,8 +71,8 @@ class RccGraph : public Graph<RccTx> {
   bool HasICycle(const RccScc& scc);
 
 
-//  Marshal& ToMarshal(Marshal& m) const override;
-//  Marshal& FromMarshal(Marshal& m) override;
+//  Marshal& to_marshal(Marshal& m) const override;
+//  Marshal& from_marshal(Marshal& m) override;
 
 };
 } // namespace janus

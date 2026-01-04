@@ -116,7 +116,7 @@ void MultiPaxosServiceImpl::BulkPrepare2(const MarshallDeputy& md_cmd,
                                        MarshallDeputy* ret,
                                        rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  ret->SetMarshallable(std::make_shared<BulkPaxosCmd>());
+  ret->set_marshallable(std::make_shared<BulkPaxosCmd>());
   auto p = dynamic_pointer_cast<BulkPaxosCmd>(ret->sp_data_);
   //Log_info("The marshallable flag is %d", p->bypass_to_socket_);
   Coroutine::create_run([&] () {
@@ -165,7 +165,7 @@ void MultiPaxosServiceImpl::SyncLog(const MarshallDeputy& md_cmd,
                                      MarshallDeputy* ret,
                                      rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  ret->SetMarshallable(std::make_shared<SyncLogResponse>());
+  ret->set_marshallable(std::make_shared<SyncLogResponse>());
   auto response = dynamic_pointer_cast<SyncLogResponse>(ret->sp_data_);
   Coroutine::create_run([&] () {
     sched_->OnSyncLog(const_cast<MarshallDeputy&>(md_cmd).sp_data_,

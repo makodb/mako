@@ -6,12 +6,12 @@
 namespace janus {
 
 static int volatile gx =
-  MarshallDeputy::RegInitializer(MarshallDeputy::RCC_GRAPH,
+  MarshallDeputy::reg_initializer(MarshallDeputy::RCC_GRAPH,
                                    []() -> Marshallable* {
                                      return new RccGraph();
                                    });
 static int volatile gxx =
-  MarshallDeputy::RegInitializer(MarshallDeputy::EMPTY_GRAPH,
+  MarshallDeputy::reg_initializer(MarshallDeputy::EMPTY_GRAPH,
                                    []() -> Marshallable* {
                                      return new EmptyGraph();
                                    });

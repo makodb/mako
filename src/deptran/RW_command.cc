@@ -8,7 +8,7 @@
 namespace janus {
 
 static int volatile x =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CMD_KV,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CMD_KV,
                                      [] () -> Marshallable* {
                                        return new SimpleRWCommand;
                                      });
@@ -116,14 +116,14 @@ bool SimpleRWCommand::same_as(SimpleRWCommand &other) {
 }
 
 
-Marshal& SimpleRWCommand::ToMarshal(Marshal& m) const {
+Marshal& SimpleRWCommand::to_marshal(Marshal& m) const {
   m << type_;
   m << key_;
   m << value_;
   return m;
 }
 
-Marshal& SimpleRWCommand::FromMarshal(Marshal& m) {
+Marshal& SimpleRWCommand::from_marshal(Marshal& m) {
   m >> type_;
   m >> key_;
   m >> value_;

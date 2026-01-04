@@ -1258,8 +1258,8 @@ void TxLogServer::OnJetpackPullIdSet(const epoch_t& jepoch,
 #endif
   
   // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
+  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
@@ -1297,8 +1297,8 @@ void TxLogServer::OnJetpackPullCmd(const epoch_t& jepoch,
     return;
   }
   
-  reply_old_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
+  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     rep_sched_->jetpack_status_ = TxLogServer::JetpackStatus::RECOVERY;
@@ -1357,8 +1357,8 @@ void TxLogServer::OnJetpackPrepare(const epoch_t& jepoch,
                                    int32_t* replied_sid, 
                                    int32_t* replied_set_size) {
   // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
+  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
   if (max_seen_ballot > rep_sched_->witness_.max_seen_ballot_) {
     rep_sched_->witness_.max_seen_ballot_ = max_seen_ballot;
@@ -1390,8 +1390,8 @@ void TxLogServer::OnJetpackAccept(const epoch_t& jepoch,
                                   MarshallDeputy* reply_new_view,
                                   ballot_t* reply_max_seen_ballot) {
   // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
+  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
   if (max_seen_ballot > rep_sched_->witness_.max_seen_ballot_) {
     rep_sched_->witness_.max_seen_ballot_ = max_seen_ballot;
@@ -1433,8 +1433,8 @@ void TxLogServer::OnJetpackPullRecSetIns(const epoch_t& jepoch,
                                          MarshallDeputy* reply_new_view,
                                          shared_ptr<Marshallable> cmd) {
   // Initialize MarshallDeputy objects with ViewData objects
-  reply_old_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
-  reply_new_view->SetMarshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
+  reply_old_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->old_view_));
+  reply_new_view->set_marshallable(std::make_shared<ViewData>(rep_sched_->new_view_));
   
   if (jepoch >= rep_sched_->jepoch_ && oepoch >= rep_sched_->oepoch_) {
     *ok = 1;

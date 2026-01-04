@@ -18,50 +18,50 @@ std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
 shared_ptr<ElectionState> es_pw = ElectionState::instance();
 
 static int volatile xx =
-    MarshallDeputy::RegInitializer(MarshallDeputy::CONTAINER_CMD,
+    MarshallDeputy::reg_initializer(MarshallDeputy::CONTAINER_CMD,
                                    []() -> Marshallable* {
                                      return new LogEntry();
                                    });
 static int volatile xxx =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_BLK_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_BLK_PXS,
                                      []() -> Marshallable* {
                                        return new BulkPaxosCmd();
                                      });
 static int volatile x4 =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_BLK_PREP_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_BLK_PREP_PXS,
                                      []() -> Marshallable* {
                                        return new BulkPrepareLog();
                                      });
 static int volatile x5 =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_HRTBT_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_HRTBT_PXS,
                                      []() -> Marshallable* {
                                        return new HeartBeatLog();
                                      });
 
 static int volatile x6 =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SYNCREQ_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCREQ_PXS,
                                      []() -> Marshallable* {
                                        return new SyncLogRequest();
                                      });
 
 static int volatile x7 =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SYNCRESP_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCRESP_PXS,
                                      []() -> Marshallable* {
                                        return new SyncLogResponse();
                                      });
 static int volatile x8 =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_SYNCNOOP_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCNOOP_PXS,
                                      []() -> Marshallable* {
                                        return new SyncNoOpRequest();
                                      });
 static int volatile x9 =
-      MarshallDeputy::RegInitializer(MarshallDeputy::CMD_PREP_PXS,
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_PREP_PXS,
                                      []() -> Marshallable* {
                                        return new PaxosPrepCmd();
                                      });
 
 static int shared_ptr_apprch = 1;
-Marshal& LogEntry::ToMarshal(Marshal& m) const {
+Marshal& LogEntry::to_marshal(Marshal& m) const {
   m << length;
   //Log_info("The legnth of the log is %d", length);
   if(shared_ptr_apprch){
@@ -75,7 +75,7 @@ Marshal& LogEntry::ToMarshal(Marshal& m) const {
   return m;
 };
 
-Marshal& LogEntry::FromMarshal(Marshal& m) {
+Marshal& LogEntry::from_marshal(Marshal& m) {
   //return m;
   m >> length;
   if(false && shared_ptr_apprch){
@@ -83,7 +83,7 @@ Marshal& LogEntry::FromMarshal(Marshal& m) {
 	  m >> str;
 	  // marker:ansh check here
 	  //std::cout << str << " " << length << std::endl;
-	  Log_info("FromMarshal %d", length);
+	  Log_info("from_marshal %d", length);
 	  operation_test = shared_ptr<char>(new char[length+1]);
 	  operation_test.get()[length] = '\0';
 	  memcpy(operation_test.get(), str.c_str(), str.length());

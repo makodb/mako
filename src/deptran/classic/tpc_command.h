@@ -15,8 +15,8 @@ class TpcPrepareCommand : public Marshallable {
   int32_t ret_ = -1;
   shared_ptr<Marshallable> cmd_{nullptr};
 
-  Marshal& ToMarshal(Marshal&) const override;
-  Marshal& FromMarshal(Marshal&) override;
+  Marshal& to_marshal(Marshal&) const override;
+  Marshal& from_marshal(Marshal&) override;
 };
 
 class TpcCommitCommand : public Marshallable {
@@ -30,8 +30,8 @@ class TpcCommitCommand : public Marshallable {
   // Optional view data for WRONG_LEADER responses
   std::shared_ptr<ViewData> sp_view_data_ = nullptr;
   
-  virtual Marshal& ToMarshal(Marshal&) const override;
-  virtual Marshal& FromMarshal(Marshal&) override;
+  virtual Marshal& to_marshal(Marshal&) const override;
+  virtual Marshal& from_marshal(Marshal&) override;
 };
 
 class TpcEmptyCommand : public Marshallable {
@@ -40,8 +40,8 @@ class TpcEmptyCommand : public Marshallable {
 
  public:
   TpcEmptyCommand() : Marshallable(MarshallDeputy::CMD_TPC_EMPTY) {}
-  Marshal& ToMarshal(Marshal&) const override;
-  Marshal& FromMarshal(Marshal&) override;
+  Marshal& to_marshal(Marshal&) const override;
+  Marshal& from_marshal(Marshal&) override;
   void Wait() { event->wait(); };
   void Done() { event->set(1); };
 };
@@ -50,8 +50,8 @@ class TpcNoopCommand : public Marshallable {
   public:
   TpcNoopCommand() : Marshallable(MarshallDeputy::CMD_NOOP) {}
 
-  Marshal& ToMarshal(Marshal&) const override;
-  Marshal& FromMarshal(Marshal&) override;
+  Marshal& to_marshal(Marshal&) const override;
+  Marshal& from_marshal(Marshal&) override;
 };
 
 class TpcBatchCommand : public Marshallable {
@@ -66,8 +66,8 @@ public:
   void ClearCmd();
   inline size_t Size() const { return cmds_.size(); }
   
-  Marshal& ToMarshal(Marshal&) const override;
-  Marshal& FromMarshal(Marshal&) override;
+  Marshal& to_marshal(Marshal&) const override;
+  Marshal& from_marshal(Marshal&) override;
 };
 
 } // namespace janus

@@ -156,7 +156,7 @@ class BulkPrepareLog : public Marshallable {
 
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
       m << (int32_t) min_prepared_slots.size();
       for(auto i : min_prepared_slots){
           m << i;
@@ -166,7 +166,7 @@ class BulkPrepareLog : public Marshallable {
       return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     int32_t sz;
     m >> sz;
     for(int i = 0; i < sz; i++){
@@ -191,7 +191,7 @@ class PaxosPrepCmd : public Marshallable {
 
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
       m << (int32_t) slots.size();
       for(auto i : slots){
           m << i;
@@ -204,7 +204,7 @@ class PaxosPrepCmd : public Marshallable {
       return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     int32_t sz;
     m >> sz;
     for(int i = 0; i < sz; i++){
@@ -233,13 +233,13 @@ class HeartBeatLog : public Marshallable {
 
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
       m << leader_id;
       m << epoch;
       return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     m >> leader_id;
     m >> epoch;
     return m;
@@ -256,7 +256,7 @@ class SyncLogRequest : public Marshallable {
 
     }
 
-    Marshal& ToMarshal(Marshal& m) const override {
+    Marshal& to_marshal(Marshal& m) const override {
       m << leader_id;
       m << epoch;
       m << (int32_t)sync_commit_slot.size();
@@ -266,7 +266,7 @@ class SyncLogRequest : public Marshallable {
       return m;
     }
 
-    Marshal& FromMarshal(Marshal& m) override {
+    Marshal& from_marshal(Marshal& m) override {
       m >> leader_id;
       m >> epoch;
       int32_t sz;
@@ -288,7 +288,7 @@ class SyncLogResponse : public Marshallable {
 
     }
 
-    Marshal& ToMarshal(Marshal& m) const override {
+    Marshal& to_marshal(Marshal& m) const override {
       m << (int32_t)sync_data.size();
       for(int i = 0; i < sync_data.size(); i++){
         m << *sync_data[i];
@@ -303,7 +303,7 @@ class SyncLogResponse : public Marshallable {
       return m;
     }
 
-    Marshal& FromMarshal(Marshal& m) override {
+    Marshal& from_marshal(Marshal& m) override {
       int32_t sz;
       m >> sz;
       for(int i = 0; i < sz; i++){
@@ -337,7 +337,7 @@ class SyncNoOpRequest : public Marshallable{
 
   }
 
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
     m << leader_id;
     m << epoch;
     m << (int32_t)sync_slots.size();
@@ -347,7 +347,7 @@ class SyncNoOpRequest : public Marshallable{
     return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
     m >> leader_id;
     m >> epoch;
     int32_t sz;
@@ -380,9 +380,9 @@ public:
     //free(operation_test.get());
   }
 
-  virtual Marshal& ToMarshal(Marshal&) const override;
-  virtual Marshal& FromMarshal(Marshal&) override;
-  size_t EntitySize() const override {
+  virtual Marshal& to_marshal(Marshal&) const override;
+  virtual Marshal& from_marshal(Marshal&) override;
+  size_t entity_size() const override {
     return sizeof(int) + length_as_v64() + length;
   }
 
@@ -393,7 +393,7 @@ public:
     return bsize;
   }
 
-  size_t WriteToFd(int fd, size_t written_to_socket) const override {
+  size_t write_to_fd(int fd, size_t written_to_socket) const override {
     size_t sz = 0, prev = written_to_socket;
     //Log_info("stepping here, writing length");
     if(written_to_socket < sizeof(int)){
@@ -422,8 +422,8 @@ public:
       assert(sz >= 0);
       if(written_to_socket < sizeof(int) + to_write + length)return written_to_socket - prev;
     }
-    //Log_info("stepping here, written data entirely %lld, %lld", written_to_socket, EntitySize());
-    assert(written_to_socket == EntitySize());
+    //Log_info("stepping here, written data entirely %lld, %lld", written_to_socket, entity_size());
+    assert(written_to_socket == entity_size());
     assert(written_to_socket - prev >= 0);
     return written_to_socket - prev;
   }
@@ -463,7 +463,7 @@ public:
       ballots.clear();
       cmds.clear();
   }
-  Marshal& ToMarshal(Marshal& m) const override {
+  Marshal& to_marshal(Marshal& m) const override {
       m << (int32_t) leader_id;
       m << (int32_t) slots.size();
       for(auto i : slots){
@@ -481,7 +481,7 @@ public:
       return m;
   }
 
-  Marshal& FromMarshal(Marshal& m) override {
+  Marshal& from_marshal(Marshal& m) override {
       //return m;
       int32_t szs, szb, szc;
       m >> leader_id;
@@ -509,13 +509,13 @@ public:
       return m;
   }
 
-  size_t EntitySize() const override {
+  size_t entity_size() const override {
     size_t sz = 0;
     sz += 4*sizeof(int32_t);
     for(int i = 0; i < slots.size(); i++){
       sz += sizeof(slotid_t);
       sz += sizeof(ballot_t);
-      sz += cmds[i].get()->EntitySize();
+      sz += cmds[i].get()->entity_size();
     }
     return sz;
   }
@@ -547,7 +547,7 @@ public:
     return total_sz;
   }
 
-  size_t WriteToFd(int fd, size_t written_to_socket) const override {
+  size_t write_to_fd(int fd, size_t written_to_socket) const override {
     size_t to_write = serialize_slots_ballots(), sz = 0, prev = written_to_socket;
     //Log_info("written here %d %d", to_write, written_to_socket);
     if(written_to_socket < to_write){
@@ -560,21 +560,21 @@ public:
     }
     //Log_info("written here %d", written_to_socket);
     for (auto cmdsp : cmds) {
-      to_write += cmdsp.get()->EntitySize();
+      to_write += cmdsp.get()->entity_size();
       if(written_to_socket >= to_write)continue;
-      sz = cmdsp.get()->WriteToFd(fd, written_to_socket - (to_write - cmdsp.get()->EntitySize()));
+      sz = cmdsp.get()->write_to_fd(fd, written_to_socket - (to_write - cmdsp.get()->entity_size()));
       //std::cout << "should have written bytes "<< sz << std::endl;
       if(sz > 0){
         written_to_socket += sz;
       }
       verify(sz >= 0);
-      //Log_info("written here %d %d", written_to_socket, EntitySize());
+      //Log_info("written here %d %d", written_to_socket, entity_size());
       verify(written_to_socket - prev >= 0);
       if(written_to_socket < to_write)return written_to_socket - prev;
     }
     //free(serialized_slots);
-    //Log_info("written to socket %d  and size is %d", written_to_socket, EntitySize());
-    verify(written_to_socket == EntitySize());
+    //Log_info("written to socket %d  and size is %d", written_to_socket, entity_size());
+    verify(written_to_socket == entity_size());
     return written_to_socket - prev;
   }
 
