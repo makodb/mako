@@ -12,6 +12,6 @@
 #include "utils/mlock.h"
 #include "utils/hostname.h"
 
-#include "mq/rpc.h"
+// NOTE: mq/ folder removed as dead code (used legacy APR, was not compiled)
 
 #endif // RRR_H_

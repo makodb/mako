@@ -81,12 +81,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] base/unittest.cpp (144 lines) - Add safety annotations [DONE - 17 RRR files now under borrow checking]
       - [x] misc/rand.cpp (147 lines) - Add safety annotations [DONE - 18 RRR files now under borrow checking]
       - [x] misc/recorder.cpp (175 lines) - Add safety annotations [DONE - 19 RRR files now under borrow checking]
-    - [ ] Phase 2: Message queue (mq) files
-      - [ ] mq/buf.cpp (143 lines) - Add safety annotations
-      - [ ] mq/client.cpp (229 lines) - Add safety annotations
-      - [ ] mq/polling.cpp (240 lines) - Add safety annotations
-      - [ ] mq/rpc.cpp (124 lines) - Add safety annotations
-      - [ ] mq/server.cpp (342 lines) - Add safety annotations
+    - [x] Phase 2: Message queue (mq) files [REMOVED - dead code using legacy APR, was not compiled]
     - [ ] Phase 3: Remote logging (rlog) files
       - [ ] rlog/log_server.cpp (80 lines) - Add safety annotations
       - [ ] rlog/log_service_impl.cpp (97 lines) - Add safety annotations
