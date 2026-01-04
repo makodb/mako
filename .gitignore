@@ -1,6 +1,7 @@
 .waf*
 /build
 /build_docker
+/target-docker
 .lock-waf*
 *.pyc
 .cproject

@@ -71,7 +71,14 @@ set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
 # RUST
-set(RUST_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target/release")
+# Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
+if(DEFINED ENV{CARGO_TARGET_DIR})
+    set(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}")
+    message(STATUS "Using CARGO_TARGET_DIR for rust-lib: ${RUST_LIB_TARGET_BASE}")
+else()
+    set(RUST_LIB_TARGET_BASE "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/target")
+endif()
+set(RUST_LIB_DIR "${RUST_LIB_TARGET_BASE}/release")
 set(RUST_LIB_NAME "rust_redis")
 set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
 

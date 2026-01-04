@@ -11,6 +11,10 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace
+    environment:
+      # Use separate Cargo target directory to avoid conflicts with host builds
+      # This location is shared by all Rust dependencies (rusty-cpp, rust-lib, etc.)
+      - CARGO_TARGET_DIR=/workspace/target-docker
     command: /bin/bash -c "cd /workspace && rm -rf build && mkdir -p build && cd build && cmake .. && make -j $(nproc) dbtest"
     
   ubuntu22-dev:
@@ -20,6 +24,10 @@ services:
     volumes:
       - .:/workspace
     working_dir: /workspace
+    environment:
+      # Use separate Cargo target directory to avoid conflicts with host builds
+      # This location is shared by all Rust dependencies (rusty-cpp, rust-lib, etc.)
+      - CARGO_TARGET_DIR=/workspace/target-docker
     stdin_open: true
     tty: true
     command: /bin/bash
