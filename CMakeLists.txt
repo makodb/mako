@@ -1090,6 +1090,7 @@ if(NOT TARGET rrr)
         src/rrr/base/misc.cpp
         src/rrr/base/basetypes.cpp
         src/rrr/base/debugging.cpp
+        src/rrr/base/threading.cpp
         # Misc files that pass borrow checking
         src/rrr/misc/alock.cpp
         src/rrr/misc/marshal.cpp
@@ -1098,8 +1099,8 @@ if(NOT TARGET rrr)
         src/rrr/rpc/client.cpp
         src/rrr/rpc/server.cpp
         # Files with violations that need fixing:
-        # - reactor.cc: 8 violations (unsafe calls, use-after-move, mutable borrow in const)
-        # - threading.cpp: 2 violations (field borrow conflicts)
+        # - reactor.cc: false positives (mutable field in const method, Rc::clone not moving)
+        #   Bug report filed: third-party/rusty-cpp/docs/bug_report_this_borrow_false_positives.md
     )
 
     # Add borrow checking for RRR library (only if we have files to check)

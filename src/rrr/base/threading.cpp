@@ -209,44 +209,59 @@ RunLater::~RunLater() {
     Pthread_cond_destroy(&cv_);
 }
 
+// @safe - Copy job data before pop to avoid borrow conflict
 void RunLater::try_one_job() {
-    Pthread_mutex_lock(&m_);
+    // @unsafe - pthread mutex operations
+    { Pthread_mutex_lock(&m_); }
     if (!jobs_.empty()) {
-        auto& j = jobs_.top();
+        // Copy job data before potentially modifying container
+        auto job_time = jobs_.top().first;
+        auto job_func = jobs_.top().second;
+
         struct timeval now;
-        gettimeofday(&now, nullptr);
+        // @unsafe - gettimeofday uses address-of
+        { gettimeofday(&now, nullptr); }
         double now_f = now.tv_sec + now.tv_usec / 1000.0 / 1000.0;
-        double wait = j.first - now_f;
+        double wait = job_time - now_f;
         if (wait < 0.0) {
-            if (j.second == nullptr) {
+            // Pop now that we've copied the data
+            // @unsafe - STL container method
+            { jobs_.pop(); }
+            if (job_func == nullptr) {
                 // death pill
-                jobs_.pop();
-                Pthread_mutex_unlock(&m_);
+                // @unsafe
+                { Pthread_mutex_unlock(&m_); }
                 return;
             } else {
-                (*j.second)();
-                delete j.second;
-                jobs_.pop();
+                // @unsafe - function pointer dereference and delete
+                {
+                    (*job_func)();
+                    delete job_func;
+                }
             }
         } else {
-            // wait for the time to execute a job
-            struct timespec abstime;
-            int wait_sec = (int) wait;
-            int wait_nsec = (int) ((wait - wait_sec) * 1000.0 * 1000.0 * 1000.0);
-            abstime.tv_sec = now.tv_sec;
-            abstime.tv_nsec = now.tv_usec * 1000 + wait_nsec;
-            if (abstime.tv_nsec > 1000 * 1000 * 1000) {
-                abstime.tv_sec += 1;
-                abstime.tv_nsec -= 1000 * 1000 * 1000;
+            // @unsafe - wait for the time to execute a job (C-style casts, pthread calls)
+            {
+                struct timespec abstime;
+                int wait_sec = (int) wait;
+                int wait_nsec = (int) ((wait - wait_sec) * 1000.0 * 1000.0 * 1000.0);
+                abstime.tv_sec = now.tv_sec;
+                abstime.tv_nsec = now.tv_usec * 1000 + wait_nsec;
+                if (abstime.tv_nsec > 1000 * 1000 * 1000) {
+                    abstime.tv_sec += 1;
+                    abstime.tv_nsec -= 1000 * 1000 * 1000;
+                }
+                int ret = pthread_cond_timedwait(&cv_, &m_, &abstime);
+                verify(ret == ETIMEDOUT || ret == 0);
             }
-            int ret = pthread_cond_timedwait(&cv_, &m_, &abstime);
-            verify(ret == ETIMEDOUT || ret == 0);
         }
     } else {
         // wait for inserting a new job
-        Pthread_cond_wait(&cv_, &m_);
+        // @unsafe
+        { Pthread_cond_wait(&cv_, &m_); }
     }
-    Pthread_mutex_unlock(&m_);
+    // @unsafe
+    { Pthread_mutex_unlock(&m_); }
 }
 
 void RunLater::run_later_loop() {

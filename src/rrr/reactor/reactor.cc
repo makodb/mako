@@ -235,12 +235,10 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   return coro;
 }
 
-// @safe - Using VecDeque::extract_if for safe iteration with mutation
-// Extracts timed-out events and removes READY/DONE events
+// @unsafe - Uses mutable fields in const method (C++ mutable keyword for interior mutability)
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
   int64_t time_now;
-  // @unsafe
-  { time_now = Time::now(true); }
+  time_now = Time::now(true);
 
   // First pass: update status of timed-out events
   for (size_t i = 0; i < timeout_events_.len(); ++i) {
@@ -249,8 +247,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
     auto status = event.status_.get();
     if (status == Event::WAIT) {
       const auto& wakeup_time = event.wakeup_time_;
-      // @unsafe - verify is external
-      { verify(wakeup_time > 0); }
+      verify(wakeup_time > 0);
       if (time_now > wakeup_time) {
         if (event.is_ready()) {
           event.status_.set(Event::READY);
@@ -290,79 +287,83 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
       found_ready_events = false;
       rusty::VecDeque<std::shared_ptr<Event>> ready_events;
 
-      // Test waiting events
-      for (size_t i = 0; i < waiting_events_.len(); ++i) {
-        waiting_events_[i]->test();
-      }
-      // Extract READY events using safe extract_if pattern
-      auto ready_from_waiting = waiting_events_.extract_if(
-        rusty::Function<bool(const std::shared_ptr<Event>&)>(
-          [](const std::shared_ptr<Event>& ev) {
-            return ev->status_.get() == Event::READY;
-          }));
-      if (!ready_from_waiting.is_empty()) {
-        ready_events.append(std::move(ready_from_waiting));
-        found_ready_events = true;
-      }
-      // Remove DONE events
-      waiting_events_.retain(
-        rusty::Function<bool(const std::shared_ptr<Event>&)>(
-          [](const std::shared_ptr<Event>& ev) {
-            return ev->status_.get() != Event::DONE;
-          }));
+      // @unsafe - mutable field access in const method (C++ mutable), rusty::Function constructor
+      {
+        // Test waiting events
+        for (size_t i = 0; i < waiting_events_.len(); ++i) {
+          waiting_events_[i]->test();
+        }
+        // Extract READY events using safe extract_if pattern
+        auto ready_from_waiting = waiting_events_.extract_if(
+          rusty::Function<bool(const std::shared_ptr<Event>&)>(
+            [](const std::shared_ptr<Event>& ev) {
+              return ev->status_.get() == Event::READY;
+            }));
+        if (!ready_from_waiting.is_empty()) {
+          ready_events.append(std::move(ready_from_waiting));
+          found_ready_events = true;
+        }
+        // Remove DONE events
+        waiting_events_.retain(
+          rusty::Function<bool(const std::shared_ptr<Event>&)>(
+            [](const std::shared_ptr<Event>& ev) {
+              return ev->status_.get() != Event::DONE;
+            }));
 
-      // Same pattern for composite events
-      for (size_t i = 0; i < composite_events_.len(); ++i) {
-        composite_events_[i]->test();
+        // Same pattern for composite events
+        for (size_t i = 0; i < composite_events_.len(); ++i) {
+          composite_events_[i]->test();
+        }
+        auto ready_from_composite = composite_events_.extract_if(
+          rusty::Function<bool(const std::shared_ptr<Event>&)>(
+            [](const std::shared_ptr<Event>& ev) {
+              return ev->status_.get() == Event::READY;
+            }));
+        if (!ready_from_composite.is_empty()) {
+          ready_events.append(std::move(ready_from_composite));
+          found_ready_events = true;
+        }
+        composite_events_.retain(
+          rusty::Function<bool(const std::shared_ptr<Event>&)>(
+            [](const std::shared_ptr<Event>& ev) {
+              return ev->status_.get() != Event::DONE;
+            }));
       }
-      auto ready_from_composite = composite_events_.extract_if(
-        rusty::Function<bool(const std::shared_ptr<Event>&)>(
-          [](const std::shared_ptr<Event>& ev) {
-            return ev->status_.get() == Event::READY;
-          }));
-      if (!ready_from_composite.is_empty()) {
-        ready_events.append(std::move(ready_from_composite));
-        found_ready_events = true;
-      }
-      composite_events_.retain(
-        rusty::Function<bool(const std::shared_ptr<Event>&)>(
-          [](const std::shared_ptr<Event>& ev) {
-            return ev->status_.get() != Event::DONE;
-          }));
 
       // Check timeouts using safe extract_if pattern
       if (do_check_timeout) {
         size_t before = ready_events.len();
-        check_timeout(ready_events);
+        // @unsafe - check_timeout uses mutable fields in const method
+        { check_timeout(ready_events); }
         if (ready_events.len() > before) {
           found_ready_events = true;
         }
       }
 
-      // Process ready events - all operations are @safe:
-      // - Weak::upgrade returns Option (safe)
-      // - BTreeSet::contains is safe
-      // - continue_coro is @safe with internal @unsafe
-      for (size_t i = 0; i < ready_events.len(); ++i) {
-        auto& ev = ready_events[i];
-        if (ev->status_.get() == Event::DONE) {
-          continue;
+      // Process ready events
+      // @unsafe - Weak::upgrade, continue_coro with potential use-after-move patterns
+      {
+        for (size_t i = 0; i < ready_events.len(); ++i) {
+          auto& ev = ready_events[i];
+          if (ev->status_.get() == Event::DONE) {
+            continue;
+          }
+          auto option_coro = ev->wp_coro_.upgrade();
+          if (option_coro.is_none()) {
+            continue;
+          }
+          auto coro = option_coro.unwrap();
+          if (!coros_.contains(coro)) {
+            continue;
+          }
+          verify(coro->status_.get() == Coroutine::PAUSED);
+          if (ev->status_.get() == Event::READY) {
+            ev->status_.set(Event::DONE);
+          } else {
+            verify(ev->status_.get() == Event::TIMEOUT);
+          }
+          continue_coro(coro);
         }
-        auto option_coro = ev->wp_coro_.upgrade();
-        if (option_coro.is_none()) {
-          continue;
-        }
-        auto coro = option_coro.unwrap();
-        if (!coros_.contains(coro)) {
-          continue;
-        }
-        verify(coro->status_.get() == Coroutine::PAUSED);
-        if (ev->status_.get() == Event::READY) {
-          ev->status_.set(Event::DONE);
-        } else {
-          verify(ev->status_.get() == Event::TIMEOUT);
-        }
-        continue_coro(coro);
       }
 
       if (!infinite && !found_ready_events) {
@@ -386,6 +387,7 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
 
   *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
 
+  // @unsafe - Coroutine::finished() is not marked @safe
   {
     auto guard = sp_running_coro_th_.borrow();
     verify(!(*guard).as_ref().unwrap()->finished());
@@ -400,6 +402,7 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
     (*guard).as_ref().unwrap()->continue_();
   }
 
+  // @unsafe - Coroutine::finished() is not marked @safe
   {
     auto guard = sp_running_coro_th_.borrow();
     if ((*guard).as_ref().unwrap()->finished()) {
@@ -411,6 +414,7 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
   *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
 }
 
+// @unsafe - Uses mutable fields in const method, checker false positive on Rc::clone() not being a move
 void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
   // This fixes the bug that coroutines are not recycling if they don't finish immediately.
   if (REUSING_CORO) {
