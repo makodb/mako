@@ -24,7 +24,7 @@ namespace rrr {
 
 
 // @unsafe - Creates std::function objects from lambdas
-uint64_t ALock::Lock(uint64_t owner,
+uint64_t ALock::lock_sync(uint64_t owner,
                      type_t type,
                      uint64_t priority) {
 
@@ -58,7 +58,7 @@ uint64_t ALock::Lock(uint64_t owner,
 }
 
 // Overload with wound_callback for jetpack compatibility
-uint64_t ALock::Lock(uint64_t owner,
+uint64_t ALock::lock_sync(uint64_t owner,
                      type_t type,
                      uint64_t priority,
                      const std::function<int(void)>& wound_callback) {
@@ -85,7 +85,7 @@ uint64_t ALock::Lock(uint64_t owner,
   return ret_id;
 }
 
-void ALock::DisableWound(uint64_t lock_req_id) {
+void ALock::disable_wound(uint64_t lock_req_id) {
   // TODO
 }
 

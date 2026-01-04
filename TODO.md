@@ -23,7 +23,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] reactor/quorum_event.h - Rename QuorumEvent methods to snake_case (VoteYes->vote_yes, VoteNo->vote_no, etc.) [DONE]
     - [x] base/threading.hpp - Already follows snake_case convention [DONE]
     - [x] misc/marshal.hpp - Rename Marshal/Marshallable methods to snake_case (ToMarshal->to_marshal, EntitySize->entity_size, etc.) [DONE]
-    - [ ] misc/alock.hpp - Rename ALock methods to snake_case
+    - [x] misc/alock.hpp - Rename ALock methods to snake_case (Lock->lock_sync, DisableWound->disable_wound) [DONE]
     - [ ] rpc/*.hpp - Rename RPC-related methods to snake_case
     - [ ] Update all call sites throughout codebase for each renamed method
   - [ ] *medium* Make rrr code rusty-cpp safe. Expected results: only system calls and some really low-level code like memcpy are left in unsafe blocks, rest of the code are converted to rusty safe. During the process, there could be bug in rusty-cpp that causes issues. In this case, create a bug report in the rusty-cpp's docs' foder and add an entry to its TODO.md doc. git commit and push the report/todoenry to remote so that someone else will fix it. Monitor changes on the rusty-cpp by doing git pull in it every minute. Try again once it is updated. 

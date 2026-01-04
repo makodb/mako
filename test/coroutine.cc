@@ -189,7 +189,7 @@ TEST(CoroutineTest, destroy_paused_coroutine_with_cleanup) {
 TEST(CoroutineTest, wait_die_lock) {
   WaitDieALock a;
   auto coro1 = Coroutine::create_run([&a] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 10);
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id, true);
     Coroutine::current_coroutine().unwrap()->yield_();
     Log_debug("aborting lock from coroutine 1.");
@@ -198,7 +198,7 @@ TEST(CoroutineTest, wait_die_lock) {
 
   int x = 0;
   auto coro2 = Coroutine::create_run([&] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 11);
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
     ASSERT_EQ(req_id, false);
     x = 1;
   });
@@ -206,7 +206,7 @@ TEST(CoroutineTest, wait_die_lock) {
 
   int y = 0;
   auto coro3 = Coroutine::create_run([&] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 8);
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);
     ASSERT_GT(req_id, 0);
     Log_debug("acquired lock from coroutine 3.");
     y = 1;

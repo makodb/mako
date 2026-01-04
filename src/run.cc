@@ -49,7 +49,7 @@ void coroutine_yield_2() {
 void coroutine_wait_die_lock() {
   WaitDieALock a;
   auto coro1 = Coroutine::CreateRun([&a] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 10);
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id == true);
     Coroutine::CurrentCoroutine()->Yield();
     Log_info("aborting lock from coroutine 1.");
@@ -58,7 +58,7 @@ void coroutine_wait_die_lock() {
 
   int x = 0;
   auto coro2 = Coroutine::CreateRun([&] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 11);
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
     ASSERT_EQ(req_id == false);
     x = 1;
   });
@@ -66,7 +66,7 @@ void coroutine_wait_die_lock() {
 
   int y = 0;
   auto coro3 = Coroutine::CreateRun([&] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 8);  // yield
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);  // yield
     ASSERT_EQ(req_id > 0);
     Log_info("acquired lock from coroutine 3.");
     y = 1;

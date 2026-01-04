@@ -90,17 +90,17 @@ class ALock {
    *
    * @return 0 for failed, >0 for a lock id.
    */
-  virtual uint64_t Lock(uint64_t owner = 0,
+  virtual uint64_t lock_sync(uint64_t owner = 0,
                         type_t type = WLOCK,
                         uint64_t priority = 0);
 
   // Overload with wound_callback for jetpack compatibility
-  virtual uint64_t Lock(uint64_t owner,
+  virtual uint64_t lock_sync(uint64_t owner,
                         type_t type,
                         uint64_t priority,
                         const std::function<int(void)>& wound_callback);
 
-  virtual void DisableWound(uint64_t req_id);
+  virtual void disable_wound(uint64_t req_id);
   virtual void abort(uint64_t id) = 0;
   virtual ~ALock() { }
 };

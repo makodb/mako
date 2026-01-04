@@ -56,7 +56,7 @@ bool Scheduler2pl::Guard(Tx &tx_box, Row *row, int col_idx, bool write) {
     return false;
   }
   sp_tx->_debug_n_lock_requested_++;
-  uint64_t lock_req_id = lock->Lock(0, ALock::WLOCK, tx_box.tid_, [sp_tx]()->int{
+  uint64_t lock_req_id = lock->lock_sync(0, ALock::WLOCK, tx_box.tid_, [sp_tx]()->int{
     if (sp_tx->woundable_) {
       sp_tx->wounded_ = true;
       return 0;
