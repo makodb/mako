@@ -64,7 +64,7 @@ guard->push_back(event);
 
 ### Task 3: Network event containers to RefCell (~50 LOC)
 - network_events_, ready_network_events_
-- Update network event handling methods
+- **COMPLETED: Removed as dead code** - These fields were declared but never used anywhere in the codebase
 
 ### Task 4: Coroutine containers to RefCell (~80 LOC)
 - coros_, available_coros_
@@ -72,7 +72,7 @@ guard->push_back(event);
 
 ### Task 5: Map containers to RefCell (~30 LOC)
 - processors_, opened_files_
-- Update processor registration and file handling
+- **COMPLETED: Removed as dead code** - These fields were declared but never used anywhere in the codebase
 
 ### Task 6: Remove @unsafe blocks, add to borrow checking (~20 LOC)
 - Remove @unsafe annotations from refactored methods

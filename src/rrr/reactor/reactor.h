@@ -160,14 +160,13 @@ class Reactor {
   rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> waiting_events_{};
   rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> timeout_events_{};
   rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent
-  mutable std::vector<std::shared_ptr<Event>> network_events_{};
-  mutable rusty::VecDeque<std::shared_ptr<Event>> ready_network_events_{};
+  // Note: network_events_ and ready_network_events_ were removed as dead code (never used)
   // Coroutines managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
-  mutable rusty::BTreeSet<rusty::Rc<Coroutine>> coros_{};
-  mutable std::vector<rusty::Rc<Coroutine>> available_coros_{};
-  mutable std::unordered_map<uint64_t, std::function<void(Event&)>> processors_{};
-  mutable std::unordered_map<std::string, FILE*> opened_files_{};
+  // Using RefCell for safe interior mutability in const methods
+  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Coroutine>>> coros_{};
+  rusty::RefCell<std::vector<rusty::Rc<Coroutine>>> available_coros_{};
+  // Note: processors_ and opened_files_ were removed as dead code (never used)
   static thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> clients_;
   static thread_local std::unordered_set<std::string> dangling_ips_;
   // Interior mutability using Cell<T> for safe const method access
@@ -231,7 +230,7 @@ class Reactor {
 
   ~Reactor() {
     Log_debug("[Reactor::~Reactor] Starting destruction, all_events_.len()=%zu, coros_.len()=%zu",
-              all_events_.borrow()->len(), coros_.len());
+              all_events_.borrow()->len(), coros_.borrow()->len());
     // Note: destructor body runs BEFORE member variables are destroyed
     Log_debug("[Reactor::~Reactor] Destructor body complete, about to destroy member variables");
   }

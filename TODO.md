@@ -54,9 +54,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Changed types from `mutable T` to `rusty::RefCell<T>` in reactor.h
         - Updated access patterns in reactor.cc, event.cc to use borrow()/borrow_mut()
         - Fixed destructor and create_sp_event to use RefCell pattern
-      - [ ] Task 3: Network event containers to RefCell (network_events_, ready_network_events_)
-      - [ ] Task 4: Coroutine containers to RefCell (coros_, available_coros_)
-      - [ ] Task 5: Map containers to RefCell (processors_, opened_files_)
+      - [x] Task 3: Network event containers to RefCell (network_events_, ready_network_events_) [DONE]
+        - Removed as dead code - these fields were declared but never used anywhere
+      - [x] Task 4: Coroutine containers to RefCell (coros_, available_coros_) [DONE]
+        - Changed types to RefCell<T> in reactor.h
+        - Updated reactor.cc, coroutine.cc to use borrow()/borrow_mut()
+      - [x] Task 5: Map containers to RefCell (processors_, opened_files_) [DONE]
+        - Removed as dead code - these fields were declared but never used anywhere
       - [ ] Task 6: Remove @unsafe blocks, add reactor.cc to borrow checking 
   - [x] *medium* Make rrr code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]

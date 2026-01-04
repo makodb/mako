@@ -31,9 +31,8 @@ void Coroutine::boost_run_wrapper(boost_coro_yield_t& yield) {
   boost_coro_yield_ = yield;
   verify(*func_.borrow());
   auto reactor = Reactor::get_reactor();
-//  reactor->coros_;
   while (true) {
-    auto sz = reactor->coros_.len();
+    auto sz = reactor->coros_.borrow()->len();
     verify(sz > 0);
     verify(*func_.borrow());
     (*func_.borrow_mut())();  // borrow_mut needed because operator() is non-const
@@ -59,7 +58,7 @@ void Coroutine::run() const {
     verify(status_.get() == INIT);
     status_.set(STARTED);
     auto reactor = Reactor::get_reactor();
-    auto sz = reactor->coros_.len();
+    auto sz = reactor->coros_.borrow()->len();
     verify(sz > 0);
     auto task = std::bind(&Coroutine::boost_run_wrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
     *boost_coro_task_.borrow_mut() = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));

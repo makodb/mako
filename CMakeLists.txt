@@ -1077,14 +1077,14 @@ if(NOT TARGET rrr)
     #   - src/rrr/misc/rand.cpp (no safety annotations)
     #   - src/rrr/misc/recorder.cpp (no safety annotations)
     #   - src/rrr/base/unittest.cpp (no safety annotations)
-    #   - src/rrr/reactor/reactor.cc (legitimate violations - unsafe calls, use-after-move)
     #   - Other *.cpp/*.cc files (need safety annotations or have violations)
     set(RRR_BORROW_SRC
-        # Reactor files that pass borrow checking (as of rusty-cpp commit e5b380e)
+        # Reactor files that pass borrow checking
         src/rrr/reactor/coroutine.cc
         src/rrr/reactor/event.cc
         src/rrr/reactor/quorum_event.cc
         src/rrr/reactor/epoll_wrapper.cc
+        src/rrr/reactor/reactor.cc  # Uses RefCell for safe interior mutability (refactored from mutable)
         # Base files that pass borrow checking
         src/rrr/base/logging.cpp
         src/rrr/base/misc.cpp
@@ -1098,10 +1098,6 @@ if(NOT TARGET rrr)
         src/rrr/rpc/utils.cpp
         src/rrr/rpc/client.cpp
         src/rrr/rpc/server.cpp
-        # Files excluded from borrow checking:
-        # - reactor.cc: Uses C++ mutable fields in const methods (correctly requires @unsafe)
-        #   C++ mutable is NOT safe - unlike Rust's Cell/RefCell, it has no runtime checks
-        #   Methods are marked @unsafe; file needs refactoring to use rusty:: interior mutability
     )
 
     # Add borrow checking for RRR library (only if we have files to check)

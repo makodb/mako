@@ -115,10 +115,11 @@ rusty::Rc<Coroutine>
 Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   // @unsafe
   {
-    if (REUSING_CORO && available_coros_.size() > 0) {
+    auto available_guard = available_coros_.borrow_mut();
+    if (REUSING_CORO && available_guard->size() > 0) {
       n_idle_coroutines_.set(n_idle_coroutines_.get() - 1);
-      auto coro = available_coros_.back().clone();
-      available_coros_.pop_back();
+      auto coro = available_guard->back().clone();
+      available_guard->pop_back();
       // Use Cell/RefCell for interior mutability (safe: single-threaded)
       const auto& coro_ref = *coro;
       const_cast<Coroutine&>(coro_ref).id = Coroutine::global_id++;  // id is not Cell yet
@@ -175,15 +176,16 @@ void Reactor::set_running_coroutine(const rusty::Rc<Coroutine>& coro) const {
 // @safe - Registers coroutine in the active set
 void Reactor::register_coroutine(const rusty::Rc<Coroutine>& coro) const {
   // BTreeSet::insert returns bool (true if newly inserted)
-  bool inserted = coros_.insert(coro.clone());
+  auto coros_guard = coros_.borrow_mut();
+  bool inserted = coros_guard->insert(coro.clone());
   if (!inserted) {
     Log_error("[DEBUG] RegisterCoroutine: Failed to insert coroutine into coros_ set!");
-    Log_error("[DEBUG] coros_ len: %zu, REUSING_CORO: %d", coros_.len(), REUSING_CORO);
+    Log_error("[DEBUG] coros_ len: %zu, REUSING_CORO: %d", coros_guard->len(), REUSING_CORO);
   }
   // @unsafe
   { verify(inserted); }
   // @unsafe
-  { verify(coros_.len() > 0); }
+  { verify(coros_guard->len() > 0); }
 }
 
 // =============================================================================
@@ -219,7 +221,7 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   {
     coro->run();
     if (coro->finished()) {
-      coros_.remove(coro);
+      coros_.borrow_mut()->remove(coro);
     }
   }
 
@@ -379,7 +381,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
             continue;
           }
           auto coro = option_coro.unwrap();
-          if (!coros_.contains(coro)) {
+          if (!coros_.borrow()->contains(coro)) {
             continue;
           }
           verify(coro->status_.get() == Coroutine::PAUSED);
@@ -440,7 +442,7 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
   *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
 }
 
-// @unsafe - Uses mutable fields in const method, checker false positive on Rc::clone() not being a move
+// @safe - Recycles coroutine for reuse, uses RefCell for safe interior mutability
 void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
   // This fixes the bug that coroutines are not recycling if they don't finish immediately.
   if (REUSING_CORO) {
@@ -449,10 +451,11 @@ void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
     coro_ref.status_.set(Coroutine::RECYCLED);
     *coro_ref.func_.borrow_mut() = {};
     n_idle_coroutines_.set(n_idle_coroutines_.get() + 1);
-    available_coros_.push_back(coro.clone());
+    available_coros_.borrow_mut()->push_back(coro.clone());
   }
   n_busy_coroutines_.set(n_busy_coroutines_.get() - 1);
-  coros_.remove(coro);
+  // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, coro is still valid
+  { coros_.borrow_mut()->remove(coro); }
 }
 
 void Reactor::display_waiting_ev() const {
