@@ -1098,6 +1098,7 @@ if(NOT TARGET rrr)
         src/rrr/base/strop.cpp
         src/rrr/base/unittest.cpp
         src/rrr/misc/rand.cpp
+        src/rrr/misc/recorder.cpp
         # RPC files that pass borrow checking
         src/rrr/rpc/utils.cpp
         src/rrr/rpc/client.cpp

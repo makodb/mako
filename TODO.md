@@ -76,11 +76,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] rpc/*.hpp - Already follows snake_case convention [DONE]
     - [x] Update all call sites throughout codebase for each renamed method [DONE: call sites updated in each task above]
   - [ ] *medium* Make rrr code rusty-cpp safe. Expected results: only system calls and some really low-level code like memcpy are left in unsafe blocks, rest of the code are converted to rusty safe. During the process, there could be bug in rusty-cpp that causes issues. In this case, create a bug report in the rusty-cpp's docs' foder and add an entry to its TODO.md doc. git commit and push the report/todoenry to remote so that someone else will fix it. Monitor changes on the rusty-cpp by doing git pull in it every minute. Try again once it is updated. [Plan: doc/rrr_safety_conversion_plan.md]
-    - [ ] Phase 1: Small utility files
+    - [x] Phase 1: Small utility files [DONE]
       - [x] base/strop.cpp (92 lines) - Add safety annotations [DONE - 16 RRR files now under borrow checking]
       - [x] base/unittest.cpp (144 lines) - Add safety annotations [DONE - 17 RRR files now under borrow checking]
       - [x] misc/rand.cpp (147 lines) - Add safety annotations [DONE - 18 RRR files now under borrow checking]
-      - [ ] misc/recorder.cpp (175 lines) - Add safety annotations
+      - [x] misc/recorder.cpp (175 lines) - Add safety annotations [DONE - 19 RRR files now under borrow checking]
     - [ ] Phase 2: Message queue (mq) files
       - [ ] mq/buf.cpp (143 lines) - Add safety annotations
       - [ ] mq/client.cpp (229 lines) - Add safety annotations
