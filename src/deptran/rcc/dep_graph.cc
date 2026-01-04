@@ -55,7 +55,7 @@ void RccGraph::SelectGraphCmtUkn(RccTx& dtxn,
     new_v->AddParentEdge(new_parent_v, 0);
   }
 #ifdef DEBUG_CODE
-  if (new_v->Get().status() >= TXN_CMT) {
+  if (new_v->get().status() >= TXN_CMT) {
     auto& p1 = new_v->GetParentSet();
     auto& p2 = vertex->GetParentSet();
     verify(p1 == p2);
@@ -83,7 +83,7 @@ void RccGraph::SelectGraph(set<shared_ptr<RccTx>> vertexes,
       new_v->AddParentEdge(new_parent_v, weight);
     }
 #ifdef DEBUG_CODE
-    if (v->Get().status() >= TXN_CMT) {
+    if (v->get().status() >= TXN_CMT) {
       auto& p1 = v->GetParentSet();
       auto& p2 = v->GetParentSet();
       verify(p1 == p2);
@@ -95,7 +95,7 @@ void RccGraph::SelectGraph(set<shared_ptr<RccTx>> vertexes,
   for (auto& pair : new_graph->vertex_index_) {
     RccVertex* rhs_v = pair.second;
     RccVertex* source = FindV(rhs_v->id());
-    if (vertexes.count(source) > 0 && source->Get().status() >= TXN_CMT) {
+    if (vertexes.count(source) > 0 && source->get().status() >= TXN_CMT) {
       RccVertex* target = new_graph->FindV(source->id());
       verify(target == rhs_v);
       verify(target);
@@ -186,7 +186,7 @@ uint64_t RccGraph::MinItfrGraph(RccTx& tx,
   for (auto& pair : new_graph->vertex_index_) {
     RccVertex* rhs_v = pair.second;
     RccVertex* source = FindV(rhs_v->id());
-    if (rhs_v->Get().status() >= TXN_CMT) {
+    if (rhs_v->get().status() >= TXN_CMT) {
       RccVertex* target = new_graph->FindV(source->id());
       verify(target == rhs_v);
       verify(target);
@@ -340,7 +340,7 @@ shared_ptr<RccTx> RccGraph::AggregateVertex(shared_ptr<RccTx> rhs_dtxn) {
   lhs_dtxn->partition_.insert(rhs_dtxn->partition_.begin(),
                               rhs_dtxn->partition_.end());
   // TODO add rank support here.
-  lhs_dtxn->status_.Set(lhs_dtxn->status_.value_ |= rhs_dtxn->status_.value_);
+  lhs_dtxn->status_.set(lhs_dtxn->status_.value_ |= rhs_dtxn->status_.value_);
   lhs_dtxn->__DebugCheckParents();
   rhs_dtxn->__DebugCheckParents();
   return lhs_dtxn;
@@ -354,9 +354,9 @@ shared_ptr<RccTx> RccGraph::AggregateVertex(shared_ptr<RccTx> rhs_dtxn) {
 //  std::sort(scc.begin(), scc.end());
 //  std::sort(scc2.begin(), scc2.end());
 //  verify(scc == scc2);
-//  verify(vertex->Get().status() >= TXN_CMT);
+//  verify(vertex->get().status() >= TXN_CMT);
 //  for (RccVertex* v : scc) {
-//    verify(v->Get().status() >= TXN_CMT);
+//    verify(v->get().status() >= TXN_CMT);
 //    verify(AllAncCmt(v));
 //  }
 //#endif
@@ -421,7 +421,7 @@ map<txnid_t, shared_ptr<RccTx>> RccGraph::Aggregate(epoch_t epoch,
     RccVertex* v = pair.second;
     verify(v->parents_.size() == v->incoming_.size());
     auto sz = v->parents_.size();
-    if (v->Get().status() >= TXN_CMT)
+    if (v->get().status() >= TXN_CMT)
       RccSched::__DebugCheckParentSetSize(txnid, sz);
   }
 
@@ -431,16 +431,16 @@ map<txnid_t, shared_ptr<RccTx>> RccGraph::Aggregate(epoch_t epoch,
     auto lhs_v = FindV(txnid);
     verify(lhs_v != nullptr);
     // TODO, check the Sccs are the same.
-    if (rhs_v->Get().status() >= TXN_DCD) {
-      verify(lhs_v->Get().status() >= TXN_DCD);
+    if (rhs_v->get().status() >= TXN_DCD) {
+      verify(lhs_v->get().status() >= TXN_DCD);
       if (!AllAncCmt(rhs_v))
         continue;
       RccScc& rhs_scc = graph.FindSCC(rhs_v);
       for (RccVertex* rhs_vv : rhs_scc) {
-        verify(rhs_vv->Get().status() >= TXN_DCD);
+        verify(rhs_vv->get().status() >= TXN_DCD);
         RccVertex* lhs_vv = FindV(rhs_vv->id());
         verify(lhs_vv != nullptr);
-        verify(lhs_vv->Get().status() >= TXN_DCD);
+        verify(lhs_vv->get().status() >= TXN_DCD);
         verify(lhs_vv->GetParentSet() == rhs_vv->GetParentSet());
       }
       if (!AllAncCmt(lhs_v)) {
@@ -448,10 +448,10 @@ map<txnid_t, shared_ptr<RccTx>> RccGraph::Aggregate(epoch_t epoch,
       }
       RccScc& lhs_scc = FindSCC(lhs_v);
       for (RccVertex* lhs_vv : rhs_scc) {
-        verify(lhs_vv->Get().status() >= TXN_DCD);
+        verify(lhs_vv->get().status() >= TXN_DCD);
         RccVertex* rhs_vv = graph.FindV(lhs_v->id());
         verify(rhs_vv != nullptr);
-        verify(rhs_vv->Get().status() >= TXN_DCD);
+        verify(rhs_vv->get().status() >= TXN_DCD);
         verify(rhs_vv->GetParentSet() == rhs_vv->GetParentSet());
       }
 
@@ -461,7 +461,7 @@ map<txnid_t, shared_ptr<RccTx>> RccGraph::Aggregate(epoch_t epoch,
         // TODO
         for (auto& vv : rhs_scc) {
           auto vvv = FindV(vv->id());
-          verify(vvv->Get().status() >= TXN_DCD);
+          verify(vvv->get().status() >= TXN_DCD);
         }
         verify(0);
       }
@@ -478,10 +478,10 @@ map<txnid_t, shared_ptr<RccTx>> RccGraph::Aggregate(epoch_t epoch,
       }
     }
 
-    if (lhs_v->Get().status() >= TXN_DCD && AllAncCmt(lhs_v)) {
+    if (lhs_v->get().status() >= TXN_DCD && AllAncCmt(lhs_v)) {
       RccScc& scc = FindSCC(lhs_v);
       for (auto vv : scc) {
-        auto s = vv->Get().status();
+        auto s = vv->get().status();
         verify(s >= TXN_DCD);
       }
     }

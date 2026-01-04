@@ -183,7 +183,7 @@ void CoordinatorRule::BroadcastRuleSpeculativeExecute(int phase) {
     e = ((CommunicatorRule *)commo())->BroadcastRuleSpeculativeExecute(sp_vec_piece);
     // e = commo()->BroadcastRuleSpeculativeExecute(sp_vec_piece);
   }
-  e->Wait();
+  e->wait();
 #ifdef MONGODB_DEBUG
   Log_info("%.2f BroadcastRuleSpeculativeExecute after wait <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(sp_vpd_).first, SimpleRWCommand::GetCmdID(sp_vpd_).second);
 #endif

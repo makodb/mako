@@ -77,7 +77,7 @@ slotid_t CopilotServer::GetMaxCommittedSlot(uint8_t is_copilot) {
 
 bool CopilotServer::WaitMaxCommittedGT(uint8_t is_pilot, slotid_t slot, int timeout) {
   auto &event = log_infos_[is_pilot].max_cmit_evt;
-  event.WaitUntilGreaterOrEqualThan(slot, timeout);
+  event.wait_until_gte(slot, timeout);
   return (event.value_ >= slot);
 }
 
@@ -105,7 +105,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
       Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
        ins->status = Status::EXECUTED;
        if (ins->cmit_evt.value_ < 1)
-         ins->cmit_evt.Set(1);
+         ins->cmit_evt.set(1);
        updateMaxCmtdSlot(log_infos_[ins->is_pilot], ins->slot_id);
        updateMaxExecSlot(ins);
       return true;
@@ -117,7 +117,7 @@ bool CopilotServer::EliminateNullDep(shared_ptr<CopilotData> &ins) {
     Log_debug("server %d: eliminate %s entry %ld status %x", id_, toString(ins->is_pilot), ins->slot_id, ins->status);
      ins->status = Status::EXECUTED;
      if (ins->cmit_evt.value_ < 1)
-         ins->cmit_evt.Set(1);
+         ins->cmit_evt.set(1);
      updateMaxCmtdSlot(log_infos_[ins->is_pilot], ins->slot_id);
    	updateMaxExecSlot(ins);
     return true;
@@ -160,7 +160,7 @@ void CopilotServer::WaitForPingPong() {
   while (WillWait(time_to_wait)) {
     // Log_info("server %d blocked", id_);
     // Log_info("%dus to wait", time_to_wait);
-    if (pingpong_event_.WaitUntilGreaterOrEqualThan(1, time_to_wait)) {
+    if (pingpong_event_.wait_until_gte(1, time_to_wait)) {
       n_timeout++;
       // Log_info("server %d ping pong timeout %lld", id_, n_timeout);
       break;
@@ -168,7 +168,7 @@ void CopilotServer::WaitForPingPong() {
   }
   last_ready_time_ = Time::now(true);
   pingpong_ok_ = false;
-  pingpong_event_.Set(0);  // must set it to 0 to make event into unready state, otherwise WaitUntil.. won't wait.
+  pingpong_event_.set(0);  // must set it to 0 to make event into unready state, otherwise WaitUntil.. won't wait.
 }
 
 bool CopilotServer::WillWait(int &time_to_wait) const {
@@ -354,7 +354,7 @@ void CopilotServer::OnFastAccept(const uint8_t& is_pilot,
   // Print("loc_id_ = " + std::to_string(loc_id_) + " After OnFastAccept is_pilot=" + std::to_string(is_pilot) +
   //       " cmd<" + std::to_string(parsed_cmd.cmd_id_.first) + ", " + std::to_string(parsed_cmd.cmd_id_.second) + "> suggest_dep=" + std::to_string(dep));
   if (cb) {
-    pingpong_event_.Set(1);
+    pingpong_event_.set(1);
     pingpong_ok_ = true;
     WAN_WAIT;
     cb();
@@ -432,7 +432,7 @@ void CopilotServer::OnCommit(const uint8_t& is_pilot,
   ins->cmd = cmd;
   ins->status = Status::COMMITED;
 #ifdef WAIT_AT_UNCOMMIT
-  ins->cmit_evt.Set(1);
+  ins->cmit_evt.set(1);
 #endif
 
   auto& log_info = log_infos_[is_pilot];
@@ -596,7 +596,7 @@ void CopilotServer::updateMaxCmtdSlot(CopilotLogInfo& log_info, slotid_t slot) {
       break;
   }
   log_info.max_committed_slot = i - 1;
-  log_info.max_cmit_evt.Set(log_info.max_committed_slot);
+  log_info.max_cmit_evt.set(log_info.max_committed_slot);
 }
 
 void CopilotServer::removeCmd(CopilotLogInfo& log_info, slotid_t slot) {
@@ -668,7 +668,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
     }
 
     if (GET_STATUS(w->status) < Status::COMMITED)
-      w->cmit_evt.WaitUntilGreaterOrEqualThan(1);
+      w->cmit_evt.wait_until_gte(1);
     
     // if (w->status >= Status::COMMITED)
     //   log_infos_[p].max_dep = std::max(log_infos_[p].max_dep, w->dep_id);
@@ -701,7 +701,7 @@ bool CopilotServer::executeCmds(shared_ptr<CopilotData>& ins) {
          continue;
       
       // case 2: cycle doesn't exist or d is on the higher priority, must wait after d commits
-      d->cmit_evt.WaitUntilGreaterOrEqualThan(1);
+      d->cmit_evt.wait_until_gte(1);
       if (GET_STATUS(d->status) >= Status::EXECUTED)
         // case 2.1: d already executed else where
         continue;
@@ -871,13 +871,13 @@ void CopilotServer::waitAllPredCommit(shared_ptr<CopilotData>& ins) {
 
     if (pre_ins && !isExecuted(pre_ins) && !visited[pre_ins]) {
       if (pre_ins->status < COMMITED)
-        pre_ins->cmit_evt.WaitUntilGreaterOrEqualThan(1);
+        pre_ins->cmit_evt.wait_until_gte(1);
       stack.push(pre_ins);
     }
 
     if (dep_ins && !isExecuted(dep_ins) && !visited[dep_ins]) {
       if (dep_ins->status < COMMITED)
-        dep_ins->cmit_evt.WaitUntilGreaterOrEqualThan(1);
+        dep_ins->cmit_evt.wait_until_gte(1);
       stack.push(dep_ins);
     }
   }
@@ -897,13 +897,13 @@ void CopilotServer::waitPredCmds(shared_ptr<CopilotData>& w, shared_ptr<visited_
 
   if (pre_ins && pre_ins->status < EXECUTED && (m->find(pre_ins) == m->end())) {
     if (pre_ins->status < COMMITED)
-      pre_ins->cmit_evt.WaitUntilGreaterOrEqualThan(1);
+      pre_ins->cmit_evt.wait_until_gte(1);
     waitPredCmds(pre_ins, m);
   }
 
   if (dep_ins && dep_ins->status < EXECUTED && (m->find(dep_ins) == m->end())) {
     if (dep_ins->status < COMMITED)
-      dep_ins->cmit_evt.WaitUntilGreaterOrEqualThan(1);
+      dep_ins->cmit_evt.wait_until_gte(1);
     waitPredCmds(dep_ins, m);
   }
 }

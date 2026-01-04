@@ -374,13 +374,13 @@ TEST_F(ReactorTest, ReactorCreation) {
 TEST_F(ReactorTest, EventCreation) {
     auto reactor = Reactor::GetReactor();
     
-    // Use IntEvent which has the Set method
+    // Use IntEvent which has the set method
     auto& event = Reactor::CreateEvent<IntEvent>();
-    EXPECT_FALSE(event.IsReady());
-    
+    EXPECT_FALSE(event.is_ready());
+
     // Trigger the event
-    event.Set(1);
-    EXPECT_TRUE(event.IsReady());
+    event.set(1);
+    EXPECT_TRUE(event.is_ready());
     EXPECT_EQ(event.value_, 1);
 }
 
@@ -443,15 +443,15 @@ TEST_F(ReactorTest, QuorumEvent) {
     // QuorumEvent needs total count and quorum
     auto sp_event = Reactor::CreateSpEvent<janus::QuorumEvent>(3, 2);  // 3 total, need 2 votes
     
-    EXPECT_FALSE(sp_event->IsReady());
+    EXPECT_FALSE(sp_event->is_ready());
     
     // Vote once
     sp_event->n_voted_yes_ = 1;
-    EXPECT_FALSE(sp_event->IsReady());
+    EXPECT_FALSE(sp_event->is_ready());
     
     // Vote again - should trigger
     sp_event->n_voted_yes_ = 2;
-    EXPECT_TRUE(sp_event->IsReady());
+    EXPECT_TRUE(sp_event->is_ready());
     EXPECT_TRUE(sp_event->Yes());
     EXPECT_EQ(sp_event->n_voted_yes_, 2);
 }

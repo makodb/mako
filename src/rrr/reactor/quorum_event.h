@@ -80,13 +80,13 @@ class QuorumEvent : public Event {
     return n_voted_no_ > (n_total_ - quorum_);
   }
 
-  // @unsafe: calls undeclared Test(), Time::now(), vector::push_back(), IntEvent::Set()
+  // @unsafe: calls undeclared test(), Time::now(), vector::push_back(), IntEvent::set()
   void VoteYes();
 
-  // @unsafe: calls undeclared Test(), IntEvent::Set()
+  // @unsafe: calls undeclared test(), IntEvent::set()
   void VoteNo();
 
-  bool IsReady() override {
+  bool is_ready() override {
     if (timeouted_) {
       // TODO add time out support
       return true;
@@ -105,7 +105,7 @@ class QuorumEvent : public Event {
   }
 
   // Mark as composite event - will be polled in reactor loop
-  bool IsCompositeEvent() override { return true; }
+  bool is_composite_event() override { return true; }
 
   void Log();
 

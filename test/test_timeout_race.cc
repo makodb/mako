@@ -35,13 +35,13 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         // Create a coroutine that will handle both setting and waiting
         auto setter_coro = reactor->CreateRunCoroutine([sp_event]() {
             // Just set the event immediately
-            sp_event->Set(1);
+            sp_event->set(1);
         });
         
         // Create the waiter coroutine
         reactor->CreateRunCoroutine([sp_event, &completed, &final_status]() {
             // Event should already be set, so this should complete immediately
-            sp_event->Wait(100000);
+            sp_event->wait(100000);
             completed = true;
             final_status = static_cast<int>(sp_event->status_.get());
         });
@@ -61,7 +61,7 @@ TEST_F(TimeoutRaceTest, ReadyVsTimeoutTiming) {
         
         reactor->CreateRunCoroutine([sp_event, &completed, &final_status]() {
             // Wait with very short timeout
-            sp_event->Wait(1000); // 1ms
+            sp_event->wait(1000); // 1ms
             completed = true;
             final_status = static_cast<int>(sp_event->status_.get());
         });
@@ -85,7 +85,7 @@ TEST_F(TimeoutRaceTest, DoubleListBehavior) {
     std::atomic<bool> completed{false};
     
     reactor->CreateRunCoroutine([sp_event, &completed]() {
-        sp_event->Wait(50000); // 50ms timeout
+        sp_event->wait(50000); // 50ms timeout
         completed = true;
     });
     
@@ -125,12 +125,12 @@ TEST_F(TimeoutRaceTest, StaggeredTimeouts) {
                 auto reactor = Reactor::GetReactor();
                 reactor->CreateRunCoroutine([sp_event]() {
                     Coroutine::CurrentCoroutine().unwrap()->Yield();
-                    sp_event->Set(1);
+                    sp_event->set(1);
                 });
             }
             
             // Wait with varying timeouts
-            sp_event->Wait((10 + i * 5) * 1000);
+            sp_event->wait((10 + i * 5) * 1000);
             
             if (sp_event->status_.get() == Event::TIMEOUT) {
                 timeout_count++;
@@ -166,7 +166,7 @@ TEST_F(TimeoutRaceTest, TimeoutEventCleanup) {
         events.push_back(sp_event);
         
         reactor->CreateRunCoroutine([sp_event, &completed_count]() {
-            sp_event->Wait(10000); // 10ms timeout
+            sp_event->wait(10000); // 10ms timeout
             completed_count++;
         });
     }
@@ -198,11 +198,11 @@ TEST_F(TimeoutRaceTest, RapidTimeoutChanges) {
             // Randomly decide to set ready or let timeout
             if (iter % 3 == 0) {
                 // Set it ready immediately (same coroutine)
-                sp_event->Set(1);
+                sp_event->set(1);
             }
             
             // Very short timeout
-            sp_event->Wait(1000); // 1ms
+            sp_event->wait(1000); // 1ms
             
             if (sp_event->status_.get() == Event::TIMEOUT) {
                 timeout_count++;
@@ -234,7 +234,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     
     // First coroutine waits with timeout
     reactor->CreateRunCoroutine([sp_event, &first_done]() {
-        sp_event->Wait(5000); // 5ms timeout
+        sp_event->wait(5000); // 5ms timeout
         first_done = true;
         EXPECT_EQ(sp_event->status_.get(), Event::TIMEOUT);
     });
@@ -256,7 +256,7 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
             // The event system doesn't support reusing events after they're done/timeout
         } else {
             // This shouldn't happen, but if it does, try to wait
-            sp_event->Wait(5000);
+            sp_event->wait(5000);
             second_done = true;
         }
 

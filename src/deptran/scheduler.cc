@@ -276,13 +276,13 @@ void TxLogServer::Execute(Tx &txn_box,
     for (auto &pair : txn_box.paused_pieces_) {
       auto &up_pause = pair.second;
       verify(up_pause);
-      up_pause->Set(1);
+      up_pause->set(1);
     }
     txn_box.paused_pieces_.clear();
   } else {
     auto &up_pause = txn_box.paused_pieces_[inn_id];
     verify(up_pause);
-    up_pause->Set(1);
+    up_pause->set(1);
     txn_box.paused_pieces_.erase(inn_id);
   }
 }
@@ -708,7 +708,7 @@ void TxLogServer::JetpackBeginRecovery() {
   
   // Wait for majority to receive BeginRecovery
   auto e = commo()->JetpackBroadcastBeginRecovery(partition_id_, site_id_, old_view_, new_view_, oepoch_);
-  e->Wait();
+  e->wait();
   
   if (!e->Yes()) {
     Log_info("[JETPACK-RECOVERY] BeginRecovery FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
@@ -722,7 +722,7 @@ void TxLogServer::JetpackRecovery() {
   
   // Step 1: Broadcast PullIdSet and collect f+1 PullIdSetAck replies
   auto id_set_e = commo()->JetpackBroadcastPullIdSet(partition_id_, site_id_, jepoch_, oepoch_);
-  id_set_e->Wait();
+  id_set_e->wait();
   
   if (!id_set_e->Yes()) {
     Log_info("[JETPACK-RECOVERY] PullIdSet FAILED: got %d/%d responses", id_set_e->n_voted_yes_, id_set_e->n_total_);
@@ -765,7 +765,7 @@ void TxLogServer::JetpackRecovery() {
 
     auto pull_start = std::chrono::steady_clock::now();
     auto pulled_cmd_e = commo()->JetpackBroadcastPullCmd(partition_id_, site_id_, batch_keys, jepoch_, oepoch_);
-    pulled_cmd_e->Wait();
+    pulled_cmd_e->wait();
     auto pull_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - pull_start).count();
 
@@ -791,7 +791,7 @@ void TxLogServer::JetpackRecovery() {
       auto record_start = std::chrono::steady_clock::now();
       auto record_e = commo()->JetpackBroadcastRecordCmd(partition_id_, site_id_, jepoch_, oepoch_, sid, rid, recovered_entries);
       if (record_e) {
-        record_e->Wait();
+        record_e->wait();
         auto record_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - record_start).count();
         if (record_e->Yes()) {
@@ -829,7 +829,7 @@ void TxLogServer::JetpackPrepare(int default_sid, int default_set_size) {
   
   auto e = commo()->JetpackBroadcastPrepare(partition_id_, site_id_, jepoch_, oepoch_, witness_.max_seen_ballot_);
   
-  e->Wait();
+  e->wait();
   
   if (!e->Yes()) {
     Log_info("[JETPACK-RECOVERY] Prepare FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
@@ -891,7 +891,7 @@ void TxLogServer::JetpackAccept(int propose_sid, int propose_set_size) {
   
   auto e = commo()->JetpackBroadcastAccept(partition_id_, site_id_, jepoch_, oepoch_, 
                                           witness_.max_seen_ballot_, propose_sid, propose_set_size);
-  e->Wait();
+  e->wait();
   
   if (!e->Yes()) {
     Log_info("[JETPACK-RECOVERY] Accept FAILED: got %d/%d responses", e->n_voted_yes_, e->n_total_);
@@ -932,7 +932,7 @@ void TxLogServer::JetpackCommit(int commit_sid, int commit_set_size) {
   
   // Commit cannot fail - it's just notification after successful Accept
   auto e = commo()->JetpackBroadcastCommit(partition_id_, site_id_, jepoch_, oepoch_, commit_sid, commit_set_size);
-  e->Wait(); // Wait for at least 1 response (quorum size can be 1)
+  e->wait(); // Wait for at least 1 response (quorum size can be 1)
   
 #ifdef JETPACK_RECOVERY_DEBUG
   Log_info("[JETPACK-RECOVERY] Commit sent for sid=%d, set_size=%d, proceeding to resubmit", commit_sid, commit_set_size);
@@ -961,7 +961,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
       // Pull missing command from other replicas
       auto pull_e = commo()->JetpackBroadcastPullRecSetIns(partition_id_, site_id_, jepoch_, oepoch_, sid, rid);
       Log_info("[JETPACK-RECOVERY] Waiting for PullRecSetIns sid=%d rid=%d (site=%d)", sid, rid, site_id_);
-      pull_e->Wait();
+      pull_e->wait();
       Log_info("[JETPACK-RECOVERY] PullRecSetIns completed sid=%d rid=%d (site=%d) success=%d", sid, rid, site_id_, pull_e->Yes());
       if (pull_e->Yes()) {
         cmd = pull_e->GetRecoveredCmd();
@@ -1007,7 +1007,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
     // Log_info("[JETPACK-RECOVERY-EVENT] Starting Wait(): current value=%d, target=%d", 
     //          recovery_event->value_, recovery_event->target_);
     auto start_time = std::chrono::steady_clock::now();
-    recovery_event->Wait();
+    recovery_event->wait();
     auto end_time = std::chrono::steady_clock::now();
     auto wait_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
     Log_info("[JETPACK-RECOVERY-EVENT] Wait() completed after %ldms. Final value=%d, target=%d", 
@@ -1019,7 +1019,7 @@ void TxLogServer::JetpackResubmit(int sid, int set_size) {
   
   // Finally, broadcast FinishRecovery to update jepoch and make fast path available
   auto e = commo()->JetpackBroadcastFinishRecovery(partition_id_, site_id_, oepoch_);
-  e->Wait();
+  e->wait();
   
   Log_info("[JETPACK-RECOVERY] FinishRecovery broadcast completed, fast path restored");
 }
@@ -1114,11 +1114,11 @@ void TxLogServer::DispatchRecoveredCommand(shared_ptr<Marshallable> cmd, shared_
           // Log_info("[JETPACK-RECOVERY-EVENT] About to increment recovery_event: current value=%d, target=%d, partition=%d, res=%d", 
           //          old_value, recovery_event->target_, par_id, res);
           // Log_info("[JETPACK-RECOVERY-EVENT] This increment is happening in BroadcastDispatch callback (dispatch ACK received)");
-          recovery_event->Set(old_value + 1);
-          if (recovery_event->value_ % 100 == 0 || recovery_event->IsReady())
+          recovery_event->set(old_value + 1);
+          if (recovery_event->value_ % 100 == 0 || recovery_event->is_ready())
             Log_info("[JETPACK-RECOVERY-EVENT] After increment: new value=%d, target=%d. Event ready=%s", 
                     recovery_event->value_, recovery_event->target_, 
-                    recovery_event->IsReady() ? "YES" : "NO");
+                    recovery_event->is_ready() ? "YES" : "NO");
         }
       };
       

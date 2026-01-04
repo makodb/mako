@@ -72,7 +72,7 @@ int SchedulerNoneCopilot::OnCommit(cmdid_t tx_id,
 			auto sp_m = dynamic_pointer_cast<Marshallable>(batch_cmd);
 			coo->Submit(sp_m);
 		}
-		sp_tx->commit_result->Wait();
+		sp_tx->commit_result->wait();
 #ifdef COPILOT_TIME_DEBUG
 	struct timeval tp;
     gettimeofday(&tp, NULL);

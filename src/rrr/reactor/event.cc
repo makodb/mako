@@ -12,13 +12,13 @@
 namespace rrr {
 using std::function;
 
-uint64_t Event::GetCoroId(){
+uint64_t Event::get_coro_id(){
   auto coro_opt = Coroutine::CurrentCoroutine();
   verify(coro_opt.is_some());
   return coro_opt.unwrap()->id;
 }
 
-bool Event::IsSlow() {
+bool Event::is_slow() {
 	bool result = Reactor::GetReactor()->slow_.get();
 	Reactor::GetReactor()->slow_.set(false);
 	return result;
@@ -50,13 +50,13 @@ bool Event::IsSlow() {
 //   }
 // }
 
-void Event::Wait(uint64_t timeout) {
+void Event::wait(uint64_t timeout) {
 //  verify(__debug_creator); // if this fails, the event is not created by reactor.
   verify(Reactor::sp_reactor_th_.is_some());
   verify(Reactor::sp_reactor_th_.as_ref().unwrap()->thread_id_.get() == std::this_thread::get_id());
   if (status_.get() == DONE) return; // TODO: yidawu add for the second use the event.
   // verify(status_.get() == INIT);
-  if (IsReady()) {
+  if (is_ready()) {
     status_.set(DONE); // no need to wait.
     return;
   } else {
@@ -81,8 +81,8 @@ void Event::Wait(uint64_t timeout) {
 
     // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
     // Add them to a separate queue that gets scanned (much smaller than all events)
-    // Regular RPC events (Raft) self-notify via Test() - zero overhead!
-    if (IsCompositeEvent()) {
+    // Regular RPC events (Raft) self-notify via test() - zero overhead!
+    if (is_composite_event()) {
       auto& composite_events = Reactor::GetReactor()->composite_events_;
       composite_events.push_back(get_self());
     }
@@ -131,7 +131,7 @@ void Event::Wait(uint64_t timeout) {
   }
 }
 
-void Event::RecordPlace(const char* file, int line) {
+void Event::record_place(const char* file, int line) {
   char buff[200];
   sprintf(buff, "%s:%d", file, line);
   wait_place_ += std::string(buff);
@@ -139,9 +139,9 @@ void Event::RecordPlace(const char* file, int line) {
 }
 
 // @safe - Tests if event is ready
-bool Event::Test() {
+bool Event::test() {
   verify(__debug_creator);
-  if (IsReady()) {
+  if (is_ready()) {
     if (status_.get() == INIT) {
       status_.set(DONE);
     } else if (status_.get() == WAIT) {
@@ -177,7 +177,7 @@ Event::Event() {
   // Otherwise wp_coro_ stays as default empty weak pointer
 }
 
-bool IntEvent::TestTrigger() {
+bool IntEvent::test_trigger() {
   verify(status_.get() <= WAIT);
   if (value_ == target_) {
     if (status_.get() == INIT) {
@@ -193,20 +193,20 @@ bool IntEvent::TestTrigger() {
   return false;
 }
 
-int SharedIntEvent::Set(const int& v) {
+int SharedIntEvent::set(const int& v) {
   auto ret = value_;
   value_ = v;
   for (auto& ev : events_) {
     if (ev->status_.get() <= Event::WAIT) {
       if (ev->target_ <= v) {
-        ev->Set(v);
+        ev->set(v);
       }
     }
   }
   return ret;
 }
 
-bool SharedIntEvent::WaitUntilGreaterOrEqualThan(int x, int timeout) {
+bool SharedIntEvent::wait_until_gte(int x, int timeout) {
   if (value_ >= x) {
     return false;
   }
@@ -214,7 +214,7 @@ bool SharedIntEvent::WaitUntilGreaterOrEqualThan(int x, int timeout) {
   ev->value_ = value_;
   ev->target_ = x;
   auto it = events_.insert(events_.end(), ev);
-  ev->Wait(timeout);
+  ev->wait(timeout);
   // verify(ev->status_.get() != Event::TIMEOUT);  // why can't it be timeout?
   // remove the event from event vector after it entering a terminate state (READY or TIMEOUT)
   bool if_timeout = (ev->status_.get() == Event::TIMEOUT);
@@ -222,7 +222,7 @@ bool SharedIntEvent::WaitUntilGreaterOrEqualThan(int x, int timeout) {
   return if_timeout;
 }
 
-void SharedIntEvent::Wait(function<bool(int v)> f) {
+void SharedIntEvent::wait(function<bool(int v)> f) {
   if (f(value_)) {
     return;
   }
@@ -230,9 +230,9 @@ void SharedIntEvent::Wait(function<bool(int v)> f) {
   ev->value_ = value_;
   ev->test_ = f;
   events_.push_back(ev);
-//  ev->Wait(1000*1000*1000);
+//  ev->wait(1000*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
-  ev->Wait();
+  ev->wait();
 }
 
 } // namespace rrr

@@ -90,15 +90,15 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
     }
 //    MarshallDeputy md;
     fu->get_reply() >> *ret;
-    ev->Set(1);
+    ev->set(1);
   };
   fuattr.callback = cb;
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
   auto fu_result = proxy->async_RccInquire(tid, rank, fuattr);
   // Arc auto-released
-//  ev->Wait(60*1000*1000);
+//  ev->wait(60*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
-  ev->Wait();
+  ev->wait();
   return ret;
 }
 

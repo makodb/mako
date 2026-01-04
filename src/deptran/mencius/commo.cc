@@ -40,7 +40,7 @@ MenciusCommo::BroadcastPrepare(parid_t par_id,
   verify(0);
   int n = Config::GetConfig()->GetPartitionSize(par_id);
   auto e = Reactor::CreateSpEvent<MenciusPrepareQuorumEvent>(n, n/2+1);
-  auto src_coroid = e->GetCoroId();
+  auto src_coroid = e->get_coro_id();
   auto proxies = rpc_par_proxies_[par_id];
   auto leader_id = LeaderProxyForPartition(par_id).first;
 
@@ -79,7 +79,7 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
   auto e = Reactor::CreateSpEvent<MenciusSuggestQuorumEvent>(n, n/2+1);
 //  auto e = Reactor::CreateSpEvent<MenciusSuggestQuorumEvent>(n, n);
 
-  auto src_coroid = e->GetCoroId();
+  auto src_coroid = e->get_coro_id();
   auto proxies = rpc_par_proxies_[par_id];
   auto leader_id = LeaderProxyForPartition(par_id, (slot_id-1)%n).first;
   vector<rusty::Arc<Future>> fus;

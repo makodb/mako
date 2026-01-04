@@ -57,7 +57,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
     n_pending_rpc_[0]--;
     verify(n_pending_rpc_[0] >= 0);
-    dispatch_quota.Set(dispatch_quota.value_ + 1);
+    dispatch_quota.set(dispatch_quota.value_ + 1);
     
     // Handle WRONG_LEADER response with view data
     if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
@@ -85,7 +85,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   di.id = cmd_id;
   di.str = __func__;
 
-  dispatch_quota.WaitUntilGreaterOrEqualThan(0);
+  dispatch_quota.wait_until_gte(0);
 
   bool send = false;
 
@@ -95,7 +95,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
         pair_proxies[0].second->async_Dispatch(cmd_id, di, md, fuattr);
     Future::safe_release(future);
     n_pending_rpc_[0]++;
-    dispatch_quota.Set(dispatch_quota.value_ - 1);
+    dispatch_quota.set(dispatch_quota.value_ - 1);
     send = true;
   }
 
@@ -112,7 +112,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     fu->get_reply() >> ret >> outputs >> coro_id >> view_md;
     n_pending_rpc_[1]--;
     verify(n_pending_rpc_[1] >= 0);
-    dispatch_quota.Set(dispatch_quota.value_ + 1);
+    dispatch_quota.set(dispatch_quota.value_ + 1);
     
     // Handle WRONG_LEADER response with view data
     if (ret == WRONG_LEADER && view_md.sp_data_ != nullptr) {
@@ -129,7 +129,7 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
     Future::safe_release(
         pair_proxies[1].second->async_Dispatch(cmd_id, di, md, fu2));
     n_pending_rpc_[1]++;
-    dispatch_quota.Set(dispatch_quota.value_ - 1);
+    dispatch_quota.set(dispatch_quota.value_ - 1);
     send = true;
   }
 

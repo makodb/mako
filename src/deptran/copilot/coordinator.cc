@@ -87,7 +87,7 @@ start_prepare:
       par_id_, indicator[is_pilot_], slot_id_, new_ballot);
   // sq_quorum->id_ = dep_id_;
 
-  sq_quorum->Wait();
+  sq_quorum->wait();
 #ifdef DO_FINALIZE
   sq_quorum->Finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
@@ -187,9 +187,9 @@ void CoordinatorCopilot::FastAccept() {
   // sq_quorum->id_ = dep_id_;
   // Log_debug("current coroutine's dep_id: %d", Coroutine::CurrentCoroutine()->dep_id_);
 
-  sq_quorum->Wait();
+  sq_quorum->wait();
 #ifdef FULL_LOG_DEBUG
-  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->Wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
+  Log_info("cmd<%d, %d> site %d Finish commo()->BroadcastFastAccept->wait()", SimpleRWCommand::GetCmdID(cmd_now_).first, SimpleRWCommand::GetCmdID(cmd_now_).second, loc_id_);
 #endif
 #ifdef COPILOT_TIME_DEBUG
   struct timeval tp;
@@ -261,7 +261,7 @@ void CoordinatorCopilot::Accept() {
   // sp_quorum->id_ = dep_id_;
   // Log_debug("current coroutine's dep_id: %d", Coroutine::CurrentCoroutine()->dep_id_);
 
-  sp_quorum->Wait();
+  sp_quorum->wait();
 #ifdef DO_FINALIZE
   sp_quorum->Finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));
@@ -300,7 +300,7 @@ void CoordinatorCopilot::Commit() {
                                             is_pilot_, slot_id_,
                                             dep_,
                                             cmd_now_);
-  sp_quorum->Wait();  // in fact this doesn't wait since it's a fake quorum event
+  sp_quorum->wait();  // in fact this doesn't wait since it's a fake quorum event
 #ifdef DO_FINALIZE
   sp_quorum->Finalize(finalize_timeout_us,
                       std::bind(FreeDangling, commo(), std::placeholders::_1));

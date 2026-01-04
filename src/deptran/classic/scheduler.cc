@@ -137,7 +137,7 @@ bool SchedulerClassic::Dispatch(cmdid_t cmd_id,
 	Log_info("time of dispatch2: %d", end.tv_nsec-begin.tv_nsec);*/
   // TODO reimplement this.
   if (tx->fully_dispatched_->value_ == 0) {
-    tx->fully_dispatched_->Set(1);
+    tx->fully_dispatched_->set(1);
   }
   return ret;
 }
@@ -179,10 +179,10 @@ bool SchedulerClassic::OnPrepare(cmdid_t tx_id,
 		Log_info("time of prepare on server: %d", end.tv_nsec-begin.tv_nsec);*/
     //Log_info("The locale id: %d", coo->loc_id_);
     coo->Submit(sp_m);
-    sp_tx->prepare_result->Wait();
+    sp_tx->prepare_result->wait();
 		slow_ = coo->slow_;
 //    Log_debug("finished prepare command replication");
-    return sp_tx->prepare_result->Get();
+    return sp_tx->prepare_result->get();
   } else if (Config::GetConfig()->do_logging()) {
     string log;
     this->get_prepare_log(tx_id, sids, &log);
@@ -205,9 +205,9 @@ int SchedulerClassic::PrepareReplicated(TpcPrepareCommand& prepare_cmd) {
     return 0;
   }
   // else: is the leader.
-  sp_tx->prepare_result->Set(DoPrepare(sp_tx->tid_));
+  sp_tx->prepare_result->set(DoPrepare(sp_tx->tid_));
   Log_debug("prepare request replicated and executed for %" PRIx64 ", result: %x, sid: %x",
-      sp_tx->tid_, sp_tx->prepare_result->Get(), (int)this->site_id_);
+      sp_tx->tid_, sp_tx->prepare_result->get(), (int)this->site_id_);
   Log_debug("triggering prepare replication callback %" PRIx64, sp_tx->tid_);
   return 0;
 }
@@ -256,7 +256,7 @@ int SchedulerClassic::OnCommit(txnid_t tx_id,
 
     coo->Submit(sp_m);
     
-    sp_tx->commit_result->Wait();
+    sp_tx->commit_result->wait();
 
     // Check if Submit failed due to WRONG_LEADER
     if (cmd->ret_ == WRONG_LEADER)
@@ -308,14 +308,14 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
    * In Copilot, the same cmd commits twice, one in pilot log, another
    * in copilot log. Must omit the second attempt to commit
    */
-  if (sp_tx->commit_result->IsReady())
+  if (sp_tx->commit_result->is_ready())
     return 0;
   int commit_or_abort = tpc_commit_cmd.ret_;
   if (!sp_tx->cmd_)
     sp_tx->cmd_ = tpc_commit_cmd.cmd_;
   if (!sp_tx->is_leader_hint_) {
     if (commit_or_abort == REJECT) {
-      sp_tx->commit_result->Set(1);
+      sp_tx->commit_result->set(1);
       return 0;
     } else {
       verify(sp_tx->cmd_);
@@ -351,13 +351,13 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
   }
   // if (sp_tx->is_leader_hint_) {
   //   // mostly for debug
-  //   sp_tx->commit_result->Set(1);
+  //   sp_tx->commit_result->set(1);
   // }
 #ifdef LATENCY_LOG_DEBUG
-  // Log_info("!!!!!!!!! Before sp_tx->commit_result->Set(1);");
+  // Log_info("!!!!!!!!! Before sp_tx->commit_result->set(1);");
 #endif
-  sp_tx->commit_result->Set(1);
-  sp_tx->ev_execute_ready_->Set(1);
+  sp_tx->commit_result->set(1);
+  sp_tx->ev_execute_ready_->set(1);
   return 0;
 }
 
@@ -368,7 +368,7 @@ bool SchedulerClassic::CheckCommitted(Marshallable& tpc_commit_cmd) {
   auto sp_tx = dynamic_pointer_cast<TxClassic>(GetTx(tx_id));
   if (!sp_tx)  // it's too old that it's already deleted
     return true;
-  return (sp_tx->commit_result->IsReady());
+  return (sp_tx->commit_result->is_ready());
 }
 
 int SchedulerClassic::Next(int slot, shared_ptr<Marshallable> cmd) {

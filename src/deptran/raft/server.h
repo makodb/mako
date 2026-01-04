@@ -325,7 +325,7 @@ class RaftServer : public TxLogServer {
 
         struct timespec begin, end;
         //clock_gettime(CLOCK_MONOTONIC, &begin);
-        // de->Wait();
+        // de->wait();
         //clock_gettime(CLOCK_MONOTONIC, &end);
         //Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
       }
@@ -335,7 +335,7 @@ class RaftServer : public TxLogServer {
 			// auto de = IO::write(filename, &value, sizeof(int), 1);
 			struct timespec begin, end;
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
-      // de->Wait();
+      // de->wait();
 			//clock_gettime(CLOCK_MONOTONIC, &end);
 			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
     }

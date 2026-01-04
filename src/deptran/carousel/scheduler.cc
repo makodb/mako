@@ -29,7 +29,7 @@ int SchedulerCarousel::OnDecide(txid_t tx_id,
   auto sp_m = dynamic_pointer_cast<Marshallable>(cmd);
   CreateRepCoord(0)->Submit(sp_m);
   auto tx = dynamic_pointer_cast<TxCarousel>(GetTx(tx_id));
-  tx->commit_result->Wait();
+  tx->commit_result->wait();
   callback();
   return 0;
 }
@@ -84,7 +84,7 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
   // my understanding was that this is a wait-die locking for 2PC-prepare.
   // but to be safe, let us follow the stock protocol.
   // validate read versions
-  tx->fully_dispatched_->Wait();
+  tx->fully_dispatched_->wait();
   if (tx->aborted_in_dispatch_) {
     GeneralPrint("DoPrepare failed aborted_in_dispatch_", tx_id, nullptr, nullptr);
     return false;
@@ -406,9 +406,9 @@ int SchedulerCarousel::PrepareReplicated(Marshallable& cmd) {
   if (!sp_tx->cmd_) {
     sp_tx->cmd_ = prepare_cmd.cmd_;
   }
-  sp_tx->prepare_result->Set(DoPrepare(sp_tx->tid_));
+  sp_tx->prepare_result->set(DoPrepare(sp_tx->tid_));
   Log_debug("prepare request replicated and executed for %" PRIx64 ", result: %x, sid: %x",
-      sp_tx->tid_, sp_tx->prepare_result->Get(), (int)this->site_id_);
+      sp_tx->tid_, sp_tx->prepare_result->get(), (int)this->site_id_);
   Log_debug("triggering prepare replication callback %" PRIx64, sp_tx->tid_);
   return 0;
 }
@@ -423,12 +423,12 @@ int SchedulerCarousel::PrepareCarouselReplicated(Marshallable& cmd) {
   }
   
   if (sp_tx->is_leader_hint_) {
-    sp_tx->prepare_result->Set(true);
+    sp_tx->prepare_result->set(true);
   } else {
-    sp_tx->prepare_result->Set(DoPrepareResult(sp_tx->tid_, prepare_cmd));
+    sp_tx->prepare_result->set(DoPrepareResult(sp_tx->tid_, prepare_cmd));
   }
   Log_debug("prepare request replicated and executed for %" PRIx64 ", result: %x, sid: %x",
-      sp_tx->tid_, sp_tx->prepare_result->Get(), (int)this->site_id_);
+      sp_tx->tid_, sp_tx->prepare_result->get(), (int)this->site_id_);
   Log_debug("triggering prepare replication callback %" PRIx64, sp_tx->tid_);
   return 0;
 }
@@ -448,8 +448,8 @@ int SchedulerCarousel::CommitReplicated(Marshallable& cmd) {
     } else {
       verify(0);
     }
-    sp_tx->commit_result->Set(1);
-    sp_tx->ev_execute_ready_->Set(1);
+    sp_tx->commit_result->set(1);
+    sp_tx->ev_execute_ready_->set(1);
     return 0;
 }
 
@@ -468,8 +468,8 @@ bool SchedulerCarousel::OnPrepare(cmdid_t tx_id) {
     auto sp_m = dynamic_pointer_cast<Marshallable>(sp_prepare_cmd);
     sp_tx->is_leader_hint_ = true;
     CreateRepCoord(0)->Submit(sp_m);
-    sp_tx->prepare_result->Wait();
-    return sp_tx->prepare_result->Get();
+    sp_tx->prepare_result->wait();
+    return sp_tx->prepare_result->get();
   }*/
   
   if (DoPrepare(tx_id, sp_prepare_crs_cmd.get())) {
@@ -481,8 +481,8 @@ bool SchedulerCarousel::OnPrepare(cmdid_t tx_id) {
       auto sp_m = dynamic_pointer_cast<Marshallable>(sp_prepare_crs_cmd);
       sp_tx->is_leader_hint_ = true;
       CreateRepCoord(0)->Submit(sp_m);
-      sp_tx->prepare_result->Wait();
-      verify(sp_tx->prepare_result->Get());
+      sp_tx->prepare_result->wait();
+      verify(sp_tx->prepare_result->get());
     };
     if (using_basic_) {
       func();

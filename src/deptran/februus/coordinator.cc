@@ -21,7 +21,7 @@ bool CoordinatorFebruus::PreAccept() {
                                 par_id, tx_data().id_);
   }
   for (auto& pair: map_up_quorum_event) {
-    pair.second->Wait();
+    pair.second->wait();
   }
   Log_debug("handle pre-accept ack tx id: %" PRIx64, tx_data().id_);
   fast_path_ = true;
@@ -58,7 +58,7 @@ bool CoordinatorFebruus::Accept() {
                              tx_data().timestamp_);
   }
   for (auto& pair: map_up_quorum_event) {
-    pair.second->Wait();
+    pair.second->wait();
   }
   Log_debug("handle accept ack tx id: %" PRIx64, tx_data().id_);
   fast_path_ = true;

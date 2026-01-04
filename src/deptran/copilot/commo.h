@@ -62,7 +62,7 @@ class CopilotPrepareQuorumEvent : public QuorumEvent {
                   enum Status status);
   size_t GetCount(enum Status status);
   vector<CopilotData>& GetCmds(enum Status status);
-  bool IsReady() override;
+  bool is_ready() override;
   void Show();
 };
 
@@ -76,7 +76,7 @@ class CopilotFakeQuorumEvent : public QuorumEvent {
     : QuorumEvent(n_total, 0) {}
 
   void FeedResponse() { VoteYes(); }
-  bool IsReady() override { return true; }
+  bool is_ready() override { return true; }
 };
 
 class CopilotCommo : public Communicator {

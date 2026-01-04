@@ -170,12 +170,12 @@ void ClassicServiceImpl::FailoverPauseSocketOut(
     int wait_int = 50 * 1000; // 50ms
     while (clt_cnt_.load() == 0) {
       auto e = Reactor::CreateSpEvent<NeverEvent>();
-      e->Wait(wait_int);
+      e->wait(wait_int);
     }
     clt_cnt_--;
     while (clt_cnt_.load() != 0) {
       auto e = Reactor::CreateSpEvent<NeverEvent>();
-      e->Wait(wait_int);
+      e->wait(wait_int);
     }
     dtxn_sched_->rep_sched_->Pause();
     // pause() not implemented in PollThreadWorker;
@@ -430,8 +430,8 @@ void ClassicServiceImpl::CarouselReadAndPrepare(const i64& cmd_id,
       if (!ret) {
         Coroutine::CreateRun([res, defer = std::move(defer), cmd_id, sids, sched, this]() mutable {
           auto sp_tx = dynamic_pointer_cast<TxClassic>(sched->GetOrCreateTx(cmd_id));
-          sp_tx->prepare_result->Wait();
-          bool ret2 = sp_tx->prepare_result->Get();
+          sp_tx->prepare_result->wait();
+          bool ret2 = sp_tx->prepare_result->get();
           *res = ret2 ? SUCCESS : REJECT;
           defer.reply();
         });

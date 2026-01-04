@@ -185,7 +185,7 @@ void CoordinatorJanus::Commit() {
 //  if (txn->need_validation_) {
 //    auto pars = cmd_->GetPartitionIds();
 //    auto quorum = commo()->BroadcastInquireValidation(pars, cmd_->id_);
-//    quorum->Wait();
+//    quorum->wait();
 //    int result = 0;
 //    if (quorum->Yes()) {
 //      result = 1;

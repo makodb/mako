@@ -28,7 +28,7 @@ void QuorumEvent::Finalize(
     for (auto &it : xids_)
       dangling_rpc.push_back(it);  // fetch out dangling rpc info before it's freed (see comment A)
 
-    final_ev->Wait(timeout);
+    final_ev->wait(timeout);
     /* A: by the time this fires, the quorum event could have been freed. Thus,
      avoid accesing the quorum event object or its members after this line */
 
@@ -52,19 +52,19 @@ void QuorumEvent::RemoveXid(uint16_t site) {
 
 void QuorumEvent::VoteYes() {
   n_voted_yes_++;
-  Test();
+  test();
   vec_timestamp_.push_back(Time::now(true) - begin_timestamp_);
 
   if (finalize_event_->status_.get() != Event::TIMEOUT)
-    finalize_event_->Set(n_voted_yes_ + n_voted_no_);
+    finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
 void QuorumEvent::VoteNo() {
   n_voted_no_++;
-  Test();
+  test();
 
   if (finalize_event_->status_.get() != Event::TIMEOUT)
-    finalize_event_->Set(n_voted_yes_ + n_voted_no_);
+    finalize_event_->set(n_voted_yes_ + n_voted_no_);
 }
 
 void QuorumEvent::Log() {

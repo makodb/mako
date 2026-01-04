@@ -19,11 +19,11 @@ class RccTx: public Tx, public Vertex<RccTx> {
    public:
     int& Get() {
       verify(is_set_);
-      return BoxEvent<int>::Get();
+      return BoxEvent<int>::get();
     }
     void Set(const int& x) {
 //      verify(x != REJECT);
-      BoxEvent<int>::Set(x);
+      BoxEvent<int>::set(x);
     }
   };
   bool mocking_janus_{false};
@@ -94,19 +94,19 @@ class RccTx: public Tx, public Vertex<RccTx> {
     int value_{};
 //  vector<shared_ptr<IntEvent>> events_{};
     vector<shared_ptr<IntEvent>> events_{}; // waiting for commits
-    void Set(const int& v) {
+    void set(const int& v) {
       value_ = v;
       if (v >= TXN_CMT) {
         for (auto& sp_ev: events_) {
           verify(sp_ev->target_ == TXN_CMT);
-          sp_ev->Set(v);
+          sp_ev->set(v);
         }
         events_.clear();
       }
       return;
     }
 
-    void WaitUntilGreaterOrEqualThan(int x) {
+    void wait_until_gte(int x) {
       verify(x == TXN_CMT);
       if (value_ >= x) {
         return;
@@ -115,9 +115,9 @@ class RccTx: public Tx, public Vertex<RccTx> {
       sp_ev->value_ = value_;
       sp_ev->target_ = x;
       events_.push_back(sp_ev);
-//  sp_ev->Wait(1000*1000*1000);
+//  sp_ev->wait(1000*1000*1000);
 //  verify(sp_ev->status_ != Event::TIMEOUT);
-      sp_ev->Wait();
+      sp_ev->wait();
     }
   };
 
@@ -163,7 +163,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
 
     virtual bool UpdateStatus(int s) {
       if (status_.value_ < s) {
-        status_.Set(status_.value_ | s);
+        status_.set(status_.value_ | s);
         if (status_.value_ >= TXN_CMT) {
 //          __DebugCheckParents();
         }
@@ -209,7 +209,7 @@ class RccTx: public Tx, public Vertex<RccTx> {
 #ifdef DEBUG_CODE
         verify((status_ | status) >= status_);
 #endif
-        status_.Set(status_.value_ |= status);
+        status_.set(status_.value_ |= status);
 
       }
     }

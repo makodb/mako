@@ -418,7 +418,7 @@ int RaftLabTest::testConcurrentStarts(void) {
     }
     // wait for all indices to commit
     for (auto index : indices) {
-      int cmd = config_->Wait(index, NSERVERS, term);
+      int cmd = config_->wait(index, NSERVERS, term);
       if (cmd < 0) {
         AssertWaitNoError(cmd, index);
         goto skip; // on timeout and term changes, try again
@@ -540,7 +540,7 @@ int RaftLabTest::testCount(void) {
       Assert2(index == (startindex + i), "Start() failed");
     }
     for (int i = 1; i <= iters; i++) {
-      auto r = config_->Wait(startindex + i, NSERVERS, startterm);
+      auto r = config_->wait(startindex + i, NSERVERS, startterm);
       AssertWaitNoError(r, startindex + i);
       if (r < 0) {
         // timeout or term change: start over
@@ -643,7 +643,7 @@ int RaftLabTest::testFigure8(void) {
     if (!ok) {
       continue; // term moved on too quickly: start over
     }
-    auto r = config_->Wait(index1, NSERVERS, term1);
+    auto r = config_->wait(index1, NSERVERS, term1);
     AssertWaitNoError(r, index1);
     AssertWaitNoTimeout(r, index1, NSERVERS);
     index_ = index1;
@@ -732,7 +732,7 @@ int RaftLabTest::testFigure8(void) {
 }
 
 void RaftLabTest::wait(uint64_t microseconds) {
-  Reactor::CreateSpEvent<TimeoutEvent>(microseconds)->Wait();
+  Reactor::CreateSpEvent<TimeoutEvent>(microseconds)->wait();
 }
 
 #endif

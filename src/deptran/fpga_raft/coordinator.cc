@@ -36,7 +36,7 @@ void CoordinatorFpgaRaft::Forward(shared_ptr<Marshallable>& cmd,
     //for(int i = 0; i < 100; i++) Log_info("inside forward");
 		verify(0) ; // TODO delete it
     auto e = commo()->SendForward(par_id_, loc_id_, cmd);
-    e->Wait();
+    e->wait();
     uint64_t cmt_idx = e->CommitIdx() ;
     cmt_idx_ = cmt_idx ;
     Coroutine::CreateRun([&] () {
@@ -111,13 +111,13 @@ void CoordinatorFpgaRaft::AppendEntries() {
 
 		struct timespec start_;
 		clock_gettime(CLOCK_MONOTONIC, &start_);
-    sp_quorum->Wait();
+    sp_quorum->wait();
 		struct timespec end_;
 		clock_gettime(CLOCK_MONOTONIC, &end_);
 
 		// quorum_events_.push_back(sp_quorum);
 		// Log_info("time of Wait(): %d", (end_.tv_sec-start_.tv_sec)*1000000000 + end_.tv_nsec-start_.tv_nsec);
-		slow_ = sp_quorum->IsSlow();
+		slow_ = sp_quorum->is_slow();
 		
 		long leader_time;
 		std::vector<long> follower_times {};

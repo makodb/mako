@@ -57,7 +57,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
         return;
       }
       fu->get_reply() >> *ret_status >> *ret_term >> *ret_last_log_index;
-      ret->Set(1);
+      ret->set(1);
     };
 
     if (cmd == nullptr) {

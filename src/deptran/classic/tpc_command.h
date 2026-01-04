@@ -42,8 +42,8 @@ class TpcEmptyCommand : public Marshallable {
   TpcEmptyCommand() : Marshallable(MarshallDeputy::CMD_TPC_EMPTY) {}
   Marshal& ToMarshal(Marshal&) const override;
   Marshal& FromMarshal(Marshal&) override;
-  void Wait() { event->Wait(); };
-  void Done() { event->Set(1); };
+  void Wait() { event->wait(); };
+  void Done() { event->set(1); };
 };
 
 class TpcNoopCommand : public Marshallable {

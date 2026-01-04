@@ -24,7 +24,7 @@ shared_ptr<FpgaRaftForwardQuorumEvent> FpgaRaftCommo::SendForward(parid_t par_id
       // sleep for 2 seconds cos no leader
       int32_t timeout = 2*1000*1000 ;
       auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(timeout);
-      sp_e->Wait();    
+      sp_e->wait();    
     }
     auto proxies = rpc_par_proxies_[par_id];
     WAN_WAIT;
@@ -216,7 +216,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
 			struct timespec end;
 			//clock_gettime(CLOCK_MONOTONIC, &begin);
 			this->outbound--;
-			//Log_info("reply from server: %s and is_ready: %d", ip.c_str(), e->IsReady());
+			//Log_info("reply from server: %s and is_ready: %d", ip.c_str(), e->is_ready());
 			clock_gettime(CLOCK_MONOTONIC, &end);
 			//Log_info("time of reply on server %d: %ld", follower_id, (end.tv_sec - begin.tv_sec)*1000000000 + end.tv_nsec - begin.tv_nsec);
 			
@@ -240,7 +240,7 @@ FpgaRaftCommo::BroadcastAppendEntries(parid_t par_id,
                                         fuattr);
     Future::safe_release(f);
   }
-  verify(!e->IsReady());
+  verify(!e->is_ready());
   return e;
 }
 

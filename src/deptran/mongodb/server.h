@@ -41,9 +41,9 @@ class MongodbServer : public TxLogServer {
       }
       Log_info("before Reactor::CreateSpEvent<TimeoutEvent>(5 * 1000)");
       // auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(5 * 1000);
-      // sp_e->Wait();
+      // sp_e->wait();
       auto sp_e = Reactor::CreateSpEvent<NeverEvent>();
-      sp_e->Wait(5);
+      sp_e->wait(5);
       Log_info("After Reactor::CreateSpEvent<TimeoutEvent>(5 * 1000) wait");
     }
     Log_info("Exit ExecutionHandler");
@@ -75,15 +75,15 @@ class MongodbServer : public TxLogServer {
 #endif
     mongodb_->MongodbRequest(cmd);
 #ifdef MONGODB_DEBUG
-    Log_info("%.2f Before cmd_content->mongodb_finished->Wait() <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
+    Log_info("%.2f Before cmd_content->mongodb_finished->wait() <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 #endif
-//     cmd_content->mongodb_finished->Set(1);
+//     cmd_content->mongodb_finished->set(1);
 // #ifdef MONGODB_DEBUG
 //     Log_info("%.2f xxxxx <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 // #endif
-    cmd_content->mongodb_finished->Wait();
+    cmd_content->mongodb_finished->wait();
 #ifdef MONGODB_DEBUG
-    Log_info("%.2f After cmd_content->mongodb_finished->Wait() <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
+    Log_info("%.2f After cmd_content->mongodb_finished->wait() <%d, %d>", SimpleRWCommand::GetMsTimeElaps(), SimpleRWCommand::GetCmdID(cmd).first, SimpleRWCommand::GetCmdID(cmd).second);
 #endif
     WAN_WAIT
 #ifdef MONGODB_DEBUG

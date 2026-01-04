@@ -354,7 +354,7 @@ int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
   });
   Log_info("BulkPrepare: waiting for response");
   WAN_WAIT;
-  sp_quorum->Wait();
+  sp_quorum->wait();
   if (sp_quorum->Yes()) {
     Log_info("SendBulkPrepare: Leader election successfull");
     return -1;
@@ -376,7 +376,7 @@ int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
     if(!resp_type)
       received_epoch = ballot;
   });
-  sp_quorum->Wait();
+  sp_quorum->wait();
   if (sp_quorum->Yes()) {
     return -1;
   }
@@ -408,7 +408,7 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
       }
     }
   });
-  sp_quorum->Wait();
+  sp_quorum->wait();
   done = true;
   if (sp_quorum->Yes()) {
     map<pair<int,slotid_t>, shared_ptr<MarshallDeputy>> commited_slots;
@@ -464,10 +464,10 @@ int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
           }
       });
       events.push_back(sp_quorum);
-      //sp_quorum->Wait();
+      //sp_quorum->wait();
     }
     for(int i = 0; i < events.size(); i++){
-      events[i]->Wait();
+      events[i]->wait();
     }
     return -1;
   }
@@ -496,7 +496,7 @@ int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
     }
   });
   WAN_WAIT;
-  sp_quorum->Wait();
+  sp_quorum->wait();
   done = true;
   if(sp_quorum->Yes()){
     return -1;

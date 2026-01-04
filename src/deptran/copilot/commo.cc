@@ -63,7 +63,7 @@ vector<CopilotData>& CopilotPrepareQuorumEvent::GetCmds(enum Status status) {
   return ret_cmds_by_status_[status];
 }
 
-bool CopilotPrepareQuorumEvent::IsReady() {
+bool CopilotPrepareQuorumEvent::is_ready() {
   if (timeouted_) {
     // TODO add time out support
     return true;

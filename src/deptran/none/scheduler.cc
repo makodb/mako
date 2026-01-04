@@ -13,7 +13,7 @@ int32_t SchedulerNone::Dispatch(cmdid_t cmd_id, shared_ptr<Marshallable> cmd,
 	di.str = "dep";
 	di.id = 0;
 	SchedulerClassic::Dispatch(cmd_id, di, cmd, ret_output);
-	sp_tx->fully_dispatched_->Wait();
+	sp_tx->fully_dispatched_->wait();
 
 	int ret = OnCommit(cmd_id, di, SUCCESS);  // it waits for the command to be executed
 	// if (ret == WRONG_LEADER) {

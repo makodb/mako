@@ -38,9 +38,9 @@
 // Note: SUCCESS, REPEAT, REJECT macros removed - they conflict with mako's ErrorCode enum
 // Use ErrorCode::SUCCESS, etc. instead if needed
 
-#define Wait_recordplace(ev, wait_func) do { \
+#define wait_recordplace(ev, wait_func) do { \
   auto ref_ev = ev; \
-  ref_ev->RecordPlace(__FILE__, __LINE__); \
+  ref_ev->record_place(__FILE__, __LINE__); \
   ref_ev->wait_func; \
 } while(0)
 
@@ -82,28 +82,28 @@ class Event {
   rusty::rc::Weak<Coroutine> wp_coro_{};
 
   // @unsafe
-  virtual void Wait(uint64_t timeout=0) final;
+  virtual void wait(uint64_t timeout=0) final;
 
-  void Wait(function<bool(int)> f) {
+  void wait(function<bool(int)> f) {
     test_ = f;
-    Wait();
+    wait();
   }
 
   virtual void log(){return;}
-  virtual uint64_t GetCoroId();
-  void RecordPlace(const char* file, int line);
+  virtual uint64_t get_coro_id();
+  void record_place(const char* file, int line);
 
   // @safe - Tests if event is ready
-  virtual bool Test();
-  virtual bool IsSlow();
-  virtual bool IsReady() {
+  virtual bool test();
+  virtual bool is_slow();
+  virtual bool is_ready() {
     if (!test_) return false;
     return test_(0);
   }
 
   // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
   // Added at END to preserve vtable layout for binary compatibility
-  virtual bool IsCompositeEvent() { return false; }
+  virtual bool is_composite_event() { return false; }
 
   // Self-reference management (uses shared_ptr for polymorphism support)
   void set_self(std::weak_ptr<Event> self) { self_ = self; }
@@ -119,19 +119,19 @@ class BoxEvent : public Event {
  public:
   Type content_{};
   bool is_set_{false};
-  Type& Get() {
+  Type& get() {
     return content_;
   }
-  void Set(const Type& c) {
+  void set(const Type& c) {
     is_set_ = true;
     content_ = c;
-    Test();
+    test();
   }
-  void Clear() {
+  void clear() {
     is_set_ = false;
     content_ = {};
   }
-  virtual bool IsReady() override {
+  virtual bool is_ready() override {
     return is_set_;
   }
 };
@@ -145,22 +145,22 @@ class IntEvent : public Event {
   int target_{1};
 
 
-  bool TestTrigger();
+  bool test_trigger();
 
   int get() {
     return value_;
   }
 
   // @unsafe
-  int Set(int n) {
+  int set(int n) {
     int t = value_;
     value_ = n;
-    // TestTrigger();
-    Test();
+    // test_trigger();
+    test();
     return t;
   };
 
-  bool IsReady() override {
+  bool is_ready() override {
     if (test_) {
       return test_(value_);
     } else {
@@ -174,16 +174,16 @@ class SharedIntEvent {
   int value_{};
   vector<std::shared_ptr<IntEvent>> events_;
   // Declaration only - definition in event.cc
-  int Set(const int& v);
+  int set(const int& v);
 
-  void Wait(function<bool(int)> f);
-  bool WaitUntilGreaterOrEqualThan(int x, int timeout=0);
+  void wait(function<bool(int)> f);
+  bool wait_until_gte(int x, int timeout=0);
 };
 
 
 class NeverEvent: public Event {
  public:
-  bool IsReady() override {
+  bool is_ready() override {
     return false;
   }
 };
@@ -195,14 +195,14 @@ class TimeoutEvent : public Event {
   TimeoutEvent(uint64_t wait_us)
       : wakeup_time_{Time::now(true) + wait_us}, wait_us_(wait_us) {}
 
-  bool IsReady() override {
+  bool is_ready() override {
 //    Log_debug("test timeout");
     return (Time::now(true) > wakeup_time_);
   }
 
   // @unsafe
-  void Wait() {
-    Event::Wait(wait_us_);
+  void wait() {
+    Event::wait(wait_us_);
   }
 };
 
@@ -210,27 +210,27 @@ class OrEvent : public Event {
  public:
   vector<std::shared_ptr<Event>> events_;
 
-  void AddEvent() {
+  void add_event() {
     // empty func for recursive variadic parameters
   }
 
   template<typename X, typename... Args>
-  void AddEvent(X& x, Args&... rest) {
+  void add_event(X& x, Args&... rest) {
     events_.push_back(x);
-    AddEvent(rest...);
+    add_event(rest...);
   }
 
   template<typename... Args>
   OrEvent(Args&&... args) {
-    AddEvent(args...);
+    add_event(args...);
   }
 
-  bool IsReady() override {
-    return std::any_of(events_.begin(), events_.end(), [](const std::shared_ptr<Event>& e){return e->IsReady();});
+  bool is_ready() override {
+    return std::any_of(events_.begin(), events_.end(), [](const std::shared_ptr<Event>& e){return e->is_ready();});
   }
 
   // Mark as composite event - will be polled in reactor loop
-  bool IsCompositeEvent() override { return true; }
+  bool is_composite_event() override { return true; }
 };
 
 class AndEvent : public Event {
@@ -243,19 +243,19 @@ class AndEvent : public Event {
   // Constructor for vector of events
   explicit AndEvent(const vector<std::shared_ptr<Event>>& evs) : events_(evs) {}
 
-  void AddEvent() {
+  void add_event() {
     // empty func for recursive variadic parameters
   }
 
   template<typename... Args>
-  void AddEvent(std::shared_ptr<Event> x, Args... rest) {
+  void add_event(std::shared_ptr<Event> x, Args... rest) {
     events_.push_back(std::move(x));
-    AddEvent(rest...);
+    add_event(rest...);
   }
 
   template<typename... Args>
   AndEvent(std::shared_ptr<Event> first, Args... rest) {
-    AddEvent(std::move(first), rest...);
+    add_event(std::move(first), rest...);
   }
 
   void log() {
@@ -264,17 +264,17 @@ class AndEvent : public Event {
     }
   }
 
-  bool IsReady() override {
+  bool is_ready() override {
     // All events must be ready (or DONE) for AndEvent to be ready
     // Include null check for safety
     return std::all_of(events_.begin(), events_.end(),
                        [](const std::shared_ptr<Event>& e) {
-                         return e && (e->IsReady() || e->status_.get() == Event::DONE);
+                         return e && (e->is_ready() || e->status_.get() == Event::DONE);
                        });
   }
 
   // Mark as composite event - will be polled in reactor loop
-  bool IsCompositeEvent() override { return true; }
+  bool is_composite_event() override { return true; }
 };
 
 class NEvent : public Event {
@@ -282,25 +282,25 @@ class NEvent : public Event {
   vector<std::shared_ptr<Event>> events_;
   int number;
 
-  void AddEvent() {
+  void add_event() {
     // empty func for recursive variadic parameters
   }
 
   template<typename... Args>
-  void AddEvent(std::shared_ptr<Event> x, Args... rest) {
+  void add_event(std::shared_ptr<Event> x, Args... rest) {
     events_.push_back(std::move(x));
-    AddEvent(rest...);
+    add_event(rest...);
   }
 
   template<typename... Args>
   NEvent(std::shared_ptr<Event> first, Args... rest) {
-    AddEvent(std::move(first), rest...);
+    add_event(std::move(first), rest...);
   }
 
-  bool IsReady() override {
+  bool is_ready() override {
     int count = 0;
     for(auto index = events_.begin(); index != events_.end(); index++){
-      if((*index)->IsReady()){
+      if((*index)->is_ready()){
         count++;
         if(count == number){
           return true;
@@ -320,10 +320,10 @@ class DispatchEvent: public Event{
     bool more = false;
 
     DispatchEvent() : Event(){
-    
+
     }
 
-    bool IsReady() override{
+    bool is_ready() override{
       if(n_dispatch_ == n_dispatch_ack_){
         if(aborted_){
           return true;
@@ -369,7 +369,7 @@ class SingleRPCEvent: public Event{
       of << "}\n";
       of.close();
     }
-    bool IsReady() override{
+    bool is_ready() override{
       // SUCCESS=0, REJECT=-10 (macros removed to avoid conflict with mako ErrorCode)
       return res_ == 0 || res_ == -10;
     }

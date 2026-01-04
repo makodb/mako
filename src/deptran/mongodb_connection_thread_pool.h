@@ -75,11 +75,11 @@ class MongodbConnectionThreadPool {
       // finished_queue_.push(cmd);
       shared_ptr<TxPieceData> cmd_content = *(((VecPieceData*)(dynamic_pointer_cast<TpcCommitCommand>(cmd)->cmd_.get()))->sp_vec_piece_data_->begin());
 #ifdef MONGODB_DEBUG
-      Log_info("Before cmd_content->mongodb_finished->Set(1);");
+      Log_info("Before cmd_content->mongodb_finished->set(1);");
 #endif
-      cmd_content->mongodb_finished->Set(1);
+      cmd_content->mongodb_finished->set(1);
 #ifdef MONGODB_DEBUG
-      Log_info("After cmd_content->mongodb_finished->Set(1);");
+      Log_info("After cmd_content->mongodb_finished->set(1);");
 #endif
     }
   }

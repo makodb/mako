@@ -42,7 +42,7 @@ void CoordinatorTroad::PreAccept() {
   }
   bool fast_path = true;
   for (const auto& ev: events) {
-    ev->Wait();
+    ev->wait();
     verify(ev->Yes()); // TODO tolerate failure recovery.
     if (!FastQuorumGraphCheck(*ev)) {
       fast_path = false;
@@ -95,7 +95,7 @@ void CoordinatorTroad::Accept() {
   }
 
   for (auto ev : events) {
-    ev->Wait(100*1000*1000);
+    ev->wait(100*1000*1000);
     verify(ev->Yes()); // TODO handle failure recovery.
   }
   GotoNextPhase();
@@ -104,7 +104,7 @@ void CoordinatorTroad::Accept() {
 void CoordinatorTroad::Commit() {
   if (rank_ == RANK_I) {
     verify(!mocking_janus_);
-    sp_ev_commit_->Set(1);
+    sp_ev_commit_->set(1);
     ReportCommit();
   }
   std::lock_guard<std::recursive_mutex> guard(mtx_);
@@ -125,7 +125,7 @@ void CoordinatorTroad::Commit() {
   aborted_ = false;
   for (auto i = 0 ; i < events.size(); i++) {
     auto &ev = events[i];
-    ev->Wait(100 * 1000 * 1000);
+    ev->wait(100 * 1000 * 1000);
     verify(ev->status_.get() != Event::TIMEOUT);
     if (ev->No()) {
       verify(0);
@@ -157,7 +157,7 @@ void CoordinatorTroad::NotifyValidation() {
   verify(rank_ == RANK_D);
   auto& partitions = GetTxPartitions(*cmd_, rank_);
   auto ev1 = commo()->CollectValidation(cmd_->id_, partitions);
-  ev1->Wait(100*1000*1000);
+  ev1->wait(100*1000*1000);
   verify(ev1->status_.get() != Event::TIMEOUT);
   int res;
   if (ev1->Yes()) {
@@ -172,7 +172,7 @@ void CoordinatorTroad::NotifyValidation() {
   committed_ = !aborted_;
   verify(par_d_ == tx_data().GetPartitionIds());
   auto ev = commo()->BroadcastValidation(*cmd_, res);
-//  ev->Wait();
+//  ev->wait();
 //  verify(ev->Yes());
 //  verify(phase_ % 6 == COMMIT);
 //  __debug_notifying_ = false;

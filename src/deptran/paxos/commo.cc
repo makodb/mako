@@ -20,7 +20,7 @@ MultiPaxosCommo::SendForward(parid_t par_id,
                              uint64_t dep_id,
                              shared_ptr<Marshallable> cmd) {
   auto e = Reactor::CreateSpEvent<PaxosPrepareQuorumEvent>(1, 1);
-  auto src_coroid = e->GetCoroId();
+  auto src_coroid = e->get_coro_id();
   auto leader_id = LeaderProxyForPartition(par_id).first;
   auto leader_proxy = (MultiPaxosProxy*) LeaderProxyForPartition(par_id).second;
 
@@ -192,7 +192,7 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
     //  proxy->ForwardToLearnerServer(par_id, slot, ballot, md, slotr, ballotr);
     //  cb(*slotr, *ballotr);
   }
-  //e->Wait();
+  //e->wait();
 }
 
 void MultiPaxosCommo::BroadcastDecide(const parid_t par_id,

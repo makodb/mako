@@ -32,7 +32,7 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
     RccVertex* v = pair.second;
     verify(v->parents_.size() == v->incoming_.size());
     auto sz = v->parents_.size();
-    if (v->Get().status() >= TXN_CMT)
+    if (v->get().status() >= TXN_CMT)
       RccSched::__DebugCheckParentSetSize(txnid, sz);
   }
 
@@ -42,16 +42,16 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
     auto lhs_v = FindV(txnid);
     verify(lhs_v != nullptr);
     // TODO, check the Sccs are the same.
-    if (rhs_v->Get().status() >= TXN_DCD) {
-      verify(lhs_v->Get().status() >= TXN_DCD);
+    if (rhs_v->get().status() >= TXN_DCD) {
+      verify(lhs_v->get().status() >= TXN_DCD);
       if (!AllAncCmt(rhs_v))
         continue;
       RccScc& rhs_scc = graph.FindSCC(rhs_v);
       for (RccVertex* rhs_vv : rhs_scc) {
-        verify(rhs_vv->Get().status() >= TXN_DCD);
+        verify(rhs_vv->get().status() >= TXN_DCD);
         RccVertex* lhs_vv = FindV(rhs_vv->id());
         verify(lhs_vv != nullptr);
-        verify(lhs_vv->Get().status() >= TXN_DCD);
+        verify(lhs_vv->get().status() >= TXN_DCD);
         verify(lhs_vv->GetParentSet() == rhs_vv->GetParentSet());
       }
       if (!AllAncCmt(lhs_v)) {
@@ -59,10 +59,10 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
       }
       RccScc& lhs_scc = FindSCC(lhs_v);
       for (RccVertex* lhs_vv : rhs_scc) {
-        verify(lhs_vv->Get().status() >= TXN_DCD);
+        verify(lhs_vv->get().status() >= TXN_DCD);
         RccVertex* rhs_vv = graph.FindV(lhs_v->id());
         verify(rhs_vv != nullptr);
-        verify(rhs_vv->Get().status() >= TXN_DCD);
+        verify(rhs_vv->get().status() >= TXN_DCD);
         verify(rhs_vv->GetParentSet() == rhs_vv->GetParentSet());
       }
 
@@ -72,7 +72,7 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
         // TODO
         for (auto& vv : rhs_scc) {
           auto vvv = FindV(vv->id());
-          verify(vvv->Get().status() >= TXN_DCD);
+          verify(vvv->get().status() >= TXN_DCD);
         }
         verify(0);
       }
@@ -89,10 +89,10 @@ map<txnid_t, shared_ptr<RccTx>> SchedulerJanus::Aggregate(RccGraph &graph) {
       }
     }
 
-    if (lhs_v->Get().status() >= TXN_DCD && AllAncCmt(lhs_v)) {
+    if (lhs_v->get().status() >= TXN_DCD && AllAncCmt(lhs_v)) {
       RccScc& scc = FindSCC(lhs_v);
       for (auto vv : scc) {
-        auto s = vv->Get().status();
+        auto s = vv->get().status();
         verify(s >= TXN_DCD);
       }
     }
@@ -146,7 +146,7 @@ int SchedulerJanus::OnPreAccept(const txid_t txn_id,
       }
     }
     verify(!subtx.fully_dispatched_->value_);
-    subtx.fully_dispatched_->Set(1);
+    subtx.fully_dispatched_->set(1);
     MinItfrGraph(*dtxn, res_graph, false, 1);
     ret = SUCCESS;
   }
@@ -210,7 +210,7 @@ void SchedulerJanus::OnAccept(const txnid_t txn_id,
 //        Execute(scc);
 //      }
 //    }
-//    dtxn->sp_ev_commit_->Wait();
+//    dtxn->sp_ev_commit_->wait();
 //    ret = dtxn->committed_ ? SUCCESS : REJECT;
 //  }
 //  return ret;

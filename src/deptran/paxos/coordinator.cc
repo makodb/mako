@@ -80,7 +80,7 @@ void CoordinatorMultiPaxos::Prepare() {
   auto sp_quorum = commo()->BroadcastPrepare(par_id_, slot_id_, curr_ballot_);
   auto start = chrono::steady_clock::now();
   Log_info("Time before Wait() is: %d", chrono::duration_cast<chrono::milliseconds>(start.time_since_epoch()).count());
-  sp_quorum->Wait();
+  sp_quorum->wait();
   auto end = chrono::steady_clock::now();
 
   auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
@@ -312,7 +312,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
       //  this->vec_md.push_back(make_pair(bt, cmd_));
     }
   });
-  sp_quorum->Wait();
+  sp_quorum->wait();
   if (sp_quorum->Yes()) {
     //Log_info("The prepare is successfull");
     ballot_t candidate_b = 0;
@@ -363,13 +363,13 @@ void BulkCoordinatorMultiPaxos::Accept() {
   // auto strt = std::chrono::high_resolution_clock::now();
   WAN_WAIT;
   // auto endt2 = std::chrono::high_resolution_clock::now();
-  sp_quorum->Wait();
+  sp_quorum->wait();
   // auto endt3 = std::chrono::high_resolution_clock::now();
   // Log_info("Wan_wait: %d, %d", 
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt2 - strt).count(),
   //         std::chrono::duration_cast<std::chrono::milliseconds>(endt3 - endt2).count());
 
-    sp_quorum->Wait();
+    sp_quorum->wait();
     if (sp_quorum->Yes()) {
 	      if(ess_cc->machine_id == 0)
 			Log_debug("Accept: slot %d  is committed, parition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
@@ -413,7 +413,7 @@ void BulkCoordinatorMultiPaxos::Commit() {
     });
     // Log_info("Called BroadcastBulkDecide from Commit()");
     // it's not necessary to wait for a majority of commits
-  //   sp_quorum->Wait();
+  //   sp_quorum->wait();
   //   if (sp_quorum->Yes()) {
 	// //Log_info("Commit: some stuff is committed");
   //   } else if (sp_quorum->No()) {

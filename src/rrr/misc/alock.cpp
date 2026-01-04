@@ -35,15 +35,15 @@ uint64_t ALock::Lock(uint64_t owner,
       = [&proceed, &ret_id](uint64_t id) {
         ret_id = id;
         verify(id > 0);
-        proceed.Set(1);
+        proceed.set(1);
       };
   std::function<void()> _no_callback
       = [&]() {
-        proceed.Set(1);
+        proceed.set(1);
       };
   std::function<int()> _wound_callback
       = [&]() {
-//        proceed.Set(1); // TODO why this caused problem???
+//        proceed.set(1); // TODO why this caused problem???
         return 0;
       };
   // }
@@ -53,7 +53,7 @@ uint64_t ALock::Lock(uint64_t owner,
         type,
         priority,
         _wound_callback);
-  proceed.Wait();
+  proceed.wait();
   return ret_id;
 }
 
@@ -69,11 +69,11 @@ uint64_t ALock::Lock(uint64_t owner,
       = [&proceed, &ret_id](uint64_t id) {
         ret_id = id;
         verify(id > 0);
-        proceed.Set(1);
+        proceed.set(1);
       };
   std::function<void()> _no_callback
       = [&]() {
-        proceed.Set(1);
+        proceed.set(1);
       };
   vlock(owner,
         _yes_callback,
@@ -81,7 +81,7 @@ uint64_t ALock::Lock(uint64_t owner,
         type,
         priority,
         wound_callback);
-  proceed.Wait();
+  proceed.wait();
   return ret_id;
 }
 

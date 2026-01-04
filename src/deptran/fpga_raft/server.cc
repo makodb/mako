@@ -126,7 +126,7 @@ void FpgaRaftServer::RequestVote2FPGA() {
   }
   
   auto sp_quorum = ((FpgaRaftCommo *)(this->commo_))->BroadcastVote2FPGA(par_id,lst_idx,lst_term,loc_id, currentTerm );
-  sp_quorum->Wait();
+  sp_quorum->wait();
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
   if (sp_quorum->Yes()) {
     // become a leader
@@ -237,7 +237,7 @@ bool FpgaRaftServer::RequestVote() {
   }
   
   auto sp_quorum = ((FpgaRaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, currentTerm );
-  sp_quorum->Wait();
+  sp_quorum->wait();
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
   if (sp_quorum->Yes()) {
     // become a leader
@@ -358,7 +358,7 @@ void FpgaRaftServer::StartTimer()
                     /*while(req_voting_)
                     {
                       auto sp_e1 = Reactor::CreateSpEvent<TimeoutEvent>(wait_int_);
-                      sp_e1->Wait(wait_int_) ;
+                      sp_e1->wait(wait_int_) ;
                       if(stop_) return ;
                     }*/
                     Log_debug("start a new timer") ;
@@ -366,7 +366,7 @@ void FpgaRaftServer::StartTimer()
                     duration = randDuration() ;
                 }
                 auto sp_e2 = Reactor::CreateSpEvent<TimeoutEvent>(wait_int_);
-                sp_e2->Wait() ;
+                sp_e2->wait() ;
             } 
         });
       init_ = true ;
@@ -456,11 +456,11 @@ void FpgaRaftServer::StartTimer()
 							std::copy(kv_vector.begin(), kv_vector.end(), key_values);
 
 							// auto de = IO::write(filename, key_values, sizeof(struct KeyValue), kv_vector.size());
-							// de->Wait();
+							// de->wait();
             } else {
 							int value = -1;
 							// auto de = IO::write(filename, &value, sizeof(int), 1);
-              // de->Wait();
+              // de->wait();
             }
         }
         else {

@@ -60,7 +60,7 @@ void CoordinatorMencius::Prepare() {
   auto sp_quorum = commo()->BroadcastPrepare(par_id_, slot_id_, curr_ballot_);
   auto start = chrono::steady_clock::now();
   Log_info("Time before Wait() is: %d", chrono::duration_cast<chrono::milliseconds>(start.time_since_epoch()).count());
-  sp_quorum->Wait();
+  sp_quorum->wait();
   auto end = chrono::steady_clock::now();
 
   auto duration = chrono::duration_cast<chrono::milliseconds>(end-start);
@@ -124,7 +124,7 @@ void CoordinatorMencius::Suggest() {
 	//Log_info("current coroutine's dep_id: %d", Coroutine::CurrentCoroutine()->dep_id_);
   //Log_info("Suggest(): dep_id:%d, slot_id:%d, site: %d", dep_id_, slot_id_, frame_->site_info_->id);
 
-  sp_quorum->Wait();
+  sp_quorum->wait();
   // auto end = chrono::system_clock::now();
   // auto duration = chrono::duration_cast<chrono::microseconds>(end-start);
   //auto duration_ready = chrono::duration_cast<chrono::microseconds>(end-sp_quorum->ready_time);

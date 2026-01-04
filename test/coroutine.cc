@@ -223,7 +223,7 @@ TEST(CoroutineTest, timeout) {
     auto timeout = 1 * 1000000;
     auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(timeout);
     Log_debug("set timeout, start wait");
-    sp_e->Wait();
+    sp_e->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t2, t1 + timeout);
     Log_debug("end timeout, end wait");
@@ -239,12 +239,12 @@ TEST(CoroutineTest, orevent) {
     auto timeout = 10 * 1000000;
     auto sp_e1 = Reactor::CreateSpEvent<TimeoutEvent>(timeout);
     auto sp_e2 = Reactor::CreateSpEvent<OrEvent>(sp_e1, inte);
-    sp_e2->Wait();
+    sp_e2->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);
   });
   auto coro2 = Coroutine::CreateRun([&inte](){
-    inte->Set(1);
+    inte->set(1);
   });
 }
 

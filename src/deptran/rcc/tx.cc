@@ -173,19 +173,19 @@ void RccTx::CommitValidate(rank_t rank) {
       verify(col_id < row->prepared_rver_.size());
       verify(col_id < row->prepared_wver_.size());
       if (ver_read < ver_now) {
-        subtx(rank).local_validated_->Set(REJECT);
+        subtx(rank).local_validated_->set(REJECT);
         return;
       }
     }
   }
-  subtx(rank).local_validated_->Set(SUCCESS);
+  subtx(rank).local_validated_->set(SUCCESS);
 }
 
 void RccTx::CommitExecute(int rank) {
   phase_ = PHASE_RCC_COMMIT;
   committed_ = true;
   verify(rank == RANK_D || rank == RANK_I);
-//  if (global_validated_->Get() == REJECT) {
+//  if (global_validated_->get() == REJECT) {
 //    return;
 //  }
 //  verify(!subtx(rank).dreqs_.empty());

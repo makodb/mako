@@ -68,7 +68,7 @@ Coroutine::CreateRunImpl(rusty::Function<void()> func, const char* file, int64_t
 
 void Coroutine::Sleep(uint64_t microseconds) {
   auto x = Reactor::CreateSpEvent<TimeoutEvent>(microseconds);
-  x->Wait();
+  x->wait();
 }
 
 /**
@@ -252,7 +252,7 @@ void Reactor::CheckTimeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events
       // @unsafe - verify is external
       { verify(wakeup_time > 0); }
       if (time_now > wakeup_time) {
-        if (event.IsReady()) {
+        if (event.is_ready()) {
           event.status_.set(Event::READY);
         } else {
           event.status_.set(Event::TIMEOUT);
@@ -292,7 +292,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
 
       // Test waiting events
       for (size_t i = 0; i < waiting_events_.len(); ++i) {
-        waiting_events_[i]->Test();
+        waiting_events_[i]->test();
       }
       // Extract READY events using safe extract_if pattern
       auto ready_from_waiting = waiting_events_.extract_if(
@@ -313,7 +313,7 @@ void Reactor::Loop(bool infinite, bool check_timeout) const {
 
       // Same pattern for composite events
       for (size_t i = 0; i < composite_events_.len(); ++i) {
-        composite_events_[i]->Test();
+        composite_events_[i]->test();
       }
       auto ready_from_composite = composite_events_.extract_if(
         rusty::Function<bool(const std::shared_ptr<Event>&)>(

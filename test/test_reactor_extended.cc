@@ -36,12 +36,12 @@ TEST_F(ExtendedReactorTest, EventTimeout) {
     // Create an event that will timeout (TimeoutEvent takes microseconds)
     auto sp_event = Reactor::CreateSpEvent<TimeoutEvent>(100000); // 100ms = 100,000 microseconds
     
-    EXPECT_FALSE(sp_event->IsReady());
+    EXPECT_FALSE(sp_event->is_ready());
     
     // Run coroutine that waits for event with timeout
     std::atomic<bool> completed{false};
     reactor->CreateRunCoroutine([sp_event, &completed]() {
-        sp_event->Wait(); // Timeout already specified in constructor (100ms)
+        sp_event->wait(); // Timeout already specified in constructor (100ms)
         completed = true;
     });
     
@@ -60,11 +60,11 @@ TEST_F(ExtendedReactorTest, SingleCoroutineEvent) {
     std::atomic<int> completed_count{0};
     
     // Set the event BEFORE creating the coroutine (use default target=1)
-    sp_event->Set(1);
+    sp_event->set(1);
     
     // Create single coroutine - it should see event is already ready
     reactor->CreateRunCoroutine([sp_event, &completed_count]() {
-        sp_event->Wait();  // Should return immediately since event is ready
+        sp_event->wait();  // Should return immediately since event is ready
         completed_count++;
     });
     
@@ -130,24 +130,24 @@ TEST_F(ExtendedReactorTest, EventChain) {
     
     // Create a chain of dependent coroutines
     reactor->CreateRunCoroutine([sp_event1, sp_event2, &result]() {
-        sp_event1->Wait();
+        sp_event1->wait();
         result += sp_event1->value_;
-        sp_event2->Set(sp_event1->value_ * 2);
+        sp_event2->set(sp_event1->value_ * 2);
     });
     
     reactor->CreateRunCoroutine([sp_event2, sp_event3, &result]() {
-        sp_event2->Wait();
+        sp_event2->wait();
         result += sp_event2->value_;
-        sp_event3->Set(sp_event2->value_ * 2);
+        sp_event3->set(sp_event2->value_ * 2);
     });
     
     reactor->CreateRunCoroutine([sp_event3, &result]() {
-        sp_event3->Wait();
+        sp_event3->wait();
         result += sp_event3->value_;
     });
     
     // Start the chain
-    sp_event1->Set(10);
+    sp_event1->set(10);
     
     // Process events - with our fix, one Loop() should process the whole chain!
     reactor->Loop(false);
@@ -199,7 +199,7 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     // Create and trigger all events first (all use default target=1)
     for (int i = 0; i < num_events; i++) {
         auto event = Reactor::CreateSpEvent<IntEvent>();
-        event->Set(1);  // Set to target value
+        event->set(1);  // Set to target value
         events.push_back(event);
     }
     
@@ -207,7 +207,7 @@ TEST_F(ExtendedReactorTest, ManyIndependentEvents) {
     for (int i = 0; i < num_events; i++) {
         auto event = events[i];
         reactor->CreateRunCoroutine([event, &processed_count]() {
-            event->Wait();  // Should be immediate
+            event->wait();  // Should be immediate
             processed_count++;
         });
     }
@@ -292,13 +292,13 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
             events.push_back(event);
             
             reactor->CreateRunCoroutine([event]() {
-                event->Wait();
+                event->wait();
             });
         }
         
         // Trigger all
         for (auto& event : events) {
-            event->Set(1);
+            event->set(1);
         }
         
         // Process
@@ -321,13 +321,13 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto event2 = Reactor::CreateSpEvent<IntEvent>();
     
     // Trigger one event before creating OrEvent
-    event1->Set(1);
+    event1->set(1);
     
     auto sp_or_event = Reactor::CreateSpEvent<OrEvent>(event1, event2);
     
     std::atomic<bool> or_triggered{false};
     reactor->CreateRunCoroutine([sp_or_event, &or_triggered]() {
-        sp_or_event->Wait();  // Should be immediate since event1 is ready
+        sp_or_event->wait();  // Should be immediate since event1 is ready
         or_triggered = true;
     });
     
@@ -338,13 +338,13 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto event4 = Reactor::CreateSpEvent<IntEvent>();
     
     // Trigger second event (use default target=1)
-    event4->Set(1);
+    event4->set(1);
     
     auto sp_or_event2 = Reactor::CreateSpEvent<OrEvent>(event3, event4);
     
     std::atomic<bool> or_triggered2{false};
     reactor->CreateRunCoroutine([sp_or_event2, &or_triggered2]() {
-        sp_or_event2->Wait();  // Should be immediate since event4 is ready
+        sp_or_event2->wait();  // Should be immediate since event4 is ready
         or_triggered2 = true;
     });
     

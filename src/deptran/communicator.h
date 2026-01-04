@@ -16,7 +16,7 @@ namespace janus {
 
 static void _wan_wait() {
   int num = 50;
-  Reactor::CreateSpEvent<NeverEvent>()->Wait(num*1000);
+  Reactor::CreateSpEvent<NeverEvent>()->wait(num*1000);
 }
 
 static void _wan_wait_time(int m) {
@@ -74,8 +74,8 @@ class PaxosPrepareQuorumEvent: public QuorumEvent {
     } else {
       n_voted_no_++;
     }
-    // Self-notification: call Test() to push to ready queue when quorum reached
-    Test();
+    // Self-notification: call test() to push to ready queue when quorum reached
+    test();
   }
 
 
@@ -90,8 +90,8 @@ class PaxosAcceptQuorumEvent: public QuorumEvent {
     } else {
       n_voted_no_++;
     }
-    // Self-notification: call Test() to push to ready queue when quorum reached
-    Test();
+    // Self-notification: call test() to push to ready queue when quorum reached
+    test();
   }
 };
 
@@ -109,7 +109,7 @@ class GetLeaderQuorumEvent : public QuorumEvent {
 
   bool No() override { return n_voted_no_ == n_total_; }
 
-  bool IsReady() override {
+  bool is_ready() override {
     if (Yes()) {
       return true;
     } else if (No()) {

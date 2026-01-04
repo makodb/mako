@@ -68,8 +68,8 @@ int RccServer::OnDispatch(const vector<SimpleCommand>& cmd,
 //#endif
 #ifdef DEBUG_CODE
   if (sz > 0) {
-    RccDTxn& info1 = dep_graph_->vertex_index_.at(cmd[0].root_id_)->Get();
-    RccDTxn& info2 = graph->vertex_index_.at(cmd[0].root_id_)->Get();
+    RccDTxn& info1 = dep_graph_->vertex_index_.at(cmd[0].root_id_)->get();
+    RccDTxn& info2 = graph->vertex_index_.at(cmd[0].root_id_)->get();
     verify(info1.partition_.find(cmd[0].partition_id_)
                != info1.partition_.end());
     verify(info2.partition_.find(cmd[0].partition_id_)
@@ -99,7 +99,7 @@ void RccServer::OnInquire(txnid_t tx_id, int rank, map<txid_t, parent_set_t>* re
   auto& subtx = sp_tx->subtx(rank);
   verify (subtx.Involve(TxLogServer::partition_id_));
   //register an event, triggered when the status >= COMMITTING;
-  subtx.status_.WaitUntilGreaterOrEqualThan(TXN_CMT);
+  subtx.status_.wait_until_gte(TXN_CMT);
   if (subtx.IsDecided()) {
     verify(!sp_tx->scchelper(rank).scc_->empty());
     for (auto v : *sp_tx->scchelper(rank).scc_) {
@@ -137,7 +137,7 @@ void RccServer::__DebugExamineFridge() {
   int in_wait_anc_cmt = 0;
   int64_t id = 0;
   for (RccVertex* v : fridge_) {
-    RccDTxn& tinfo = v->Get();
+    RccDTxn& tinfo = v->get();
     if (tinfo.status() >= TXN_CMT) {
       verify(tinfo.graphs_for_inquire_.size() == 0);
     }
@@ -240,7 +240,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
     return;
   }
   if (vertex->subtx(rank).waiting_all_anc_committing_) {
-    vertex->subtx(rank).wait_all_anc_commit_done_.WaitUntilGreaterOrEqualThan(1);
+    vertex->subtx(rank).wait_all_anc_commit_done_.wait_until_gte(1);
   }
 
 
@@ -254,16 +254,16 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 //      skip_search = false;
 //      continue;
 //    }
-//    parent->status_.WaitUntilGreaterOrEqualThan(TXN_CMT);
+//    parent->status_.wait_until_gte(TXN_CMT);
 //    if (parent->waiting_all_anc_committing_) {
-//      parent->wait_all_anc_commit_done_.WaitUntilGreaterOrEqualThan(1);
+//      parent->wait_all_anc_commit_done_.wait_until_gte(1);
 //    } else {
 //      skip_search = false;
 //    }
 //  }
 //  if (skip_search) {
 //    vertex->all_anc_cmt_hint = true;
-//    vertex->wait_all_anc_commit_done_.Set(1);
+//    vertex->wait_all_anc_commit_done_.set(1);
 //    return;
 //  }
 
@@ -272,9 +272,9 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 //    vertex->waiting_all_anc_committing_ = true;
 //    for (auto& pair : vertex->parents_) {
 //      auto parent = FindOrCreateParentVPtr(*vertex, pair.first, pair.second);
-//      parent->wait_all_anc_commit_done_.WaitUntilGreaterOrEqualThan(1);
+//      parent->wait_all_anc_commit_done_.wait_until_gte(1);
 //    }
-//    vertex->wait_all_anc_commit_done_.Set(1);
+//    vertex->wait_all_anc_commit_done_.set(1);
 //    vertex->all_anc_cmt_hint = true;
 //    return;
 //  }
@@ -295,7 +295,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 //     already on a search path
 //    verify(vertex->waiting_on_ != nullptr);
 //    verify(*vertex->waiting_on_ != nullptr);
-//    vertex->wait_all_anc_commit_done_.WaitUntilGreaterOrEqualThan(1);
+//    vertex->wait_all_anc_commit_done_.wait_until_gte(1);
 //    return;
 //  }
 //  RccTx** waitingon = new (RccTx*); // TODO memory leak, fix later
@@ -358,8 +358,8 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 #endif
             vertex->subtx(rank).traverse_path_waitingon_ = &parent;
             vertex->subtx(rank).traverse_path_waiting_status_ = RccTx::WAITING_NO_DEADLOCK;
-            parent.subtx(rank).log_apply_finished_.WaitUntilGreaterOrEqualThan(1);
-//            parent.status_.WaitUntilGreaterOrEqualThan(TXN_CMT);
+            parent.subtx(rank).log_apply_finished_.wait_until_gte(1);
+//            parent.status_.wait_until_gte(TXN_CMT);
             self.subtx(rank).traverse_path_start_ = vertex;
             vertex->subtx(rank).traverse_path_waitingon_ = nullptr ;
             vertex->subtx(rank).traverse_path_waiting_status_ = RccTx::TRAVERSING;
@@ -396,7 +396,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 //#endif
 //              vertex->traverse_path_waiting_status_ = RccTx::WAITING_POSSIBLE_DEADLOCK;
 //              vertex->traverse_path_waitingon_ = &parent;
-//              parent.wait_all_anc_commit_done_.WaitUntilGreaterOrEqualThan(1);
+//              parent.wait_all_anc_commit_done_.wait_until_gte(1);
 //              self.traverse_path_start_ = vertex;
 //              vertex->traverse_path_waiting_status_ = RccTx::TRAVERSING;
 //              vertex->traverse_path_waitingon_ = nullptr;
@@ -437,7 +437,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 ////              xxxxxyyyyy = &parent;
 ////#endif
 ////              self.traverse_path_start_->traverse_path_waitingon_ = &parent;
-////              parent.wait_all_anc_commit_done_.WaitUntilGreaterOrEqualThan(1);
+////              parent.wait_all_anc_commit_done_.wait_until_gte(1);
 ////              vertex->traverse_path_waitingon_ = nullptr;
 ////              self.traverse_path_start_ = vertex;
 ////#ifdef DEBUG_CHECK
@@ -501,7 +501,7 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
 #endif
           vertex->subtx(rank).traverse_path_waitingon_ = &parent;
           vertex->subtx(rank).traverse_path_waiting_status_ = RccTx::WAITING_NO_DEADLOCK;
-          parent.subtx(rank).status_.WaitUntilGreaterOrEqualThan(TXN_CMT);
+          parent.subtx(rank).status_.wait_until_gte(TXN_CMT);
           vertex->subtx(rank).traverse_path_waitingon_ = nullptr;
           vertex->subtx(rank).traverse_path_waiting_status_ = RccTx::TRAVERSING;
           self.subtx(rank).traverse_path_start_ = vertex;
@@ -523,10 +523,10 @@ void RccServer::WaitUntilAllPredecessorsAtLeastCommitting(RccTx* vertex, int ran
       };
   std::function<void(RccTx&)> func_end = [rank] (RccTx& v) -> void {
     v.subtx(rank).all_anc_cmt_hint = true;
-    v.subtx(rank).wait_all_anc_commit_done_.Set(1);
+    v.subtx(rank).wait_all_anc_commit_done_.set(1);
   };
   TraversePredNonRecursive(*vertex, rank, func, func_end);
-  vertex->subtx(rank).wait_all_anc_commit_done_.Set(1);
+  vertex->subtx(rank).wait_all_anc_commit_done_.set(1);
 #ifdef DEBUG_CHECK
 //  xxxxx = 3;
 //  auto func2 =
@@ -695,7 +695,7 @@ void RccServer::WaitNonSccParentsExecuted(const janus::RccScc& scc1, int rank){
       auto& parent = *FindOrCreateParentVPtr(*v, pair.first, pair.second);
       if (parent.subtx(rank).Involve(partition_id_)) {
         if (parent.scchelper(rank).scc_ != scc1[0]->scchelper(rank).scc_) {
-          parent.subtx(rank).log_apply_finished_.WaitUntilGreaterOrEqualThan(1);
+          parent.subtx(rank).log_apply_finished_.wait_until_gte(1);
         }
       }
     }
@@ -726,7 +726,7 @@ void RccServer::WaitUntilAllPredSccExecuted(const RccScc& scc) {
           verify(tx.status() >= TXN_CMT);
           return RccGraph::SearchHint::Skip;
         }
-        tx.log_apply_finished_.WaitUntilGreaterOrEqualThan(1);
+        tx.log_apply_finished_.wait_until_gte(1);
         return RccGraph::SearchHint::Skip;
         verify(0);
       };
@@ -765,7 +765,7 @@ void RccServer::Execute(RccScc& scc, int rank) {
   auto& v_begin = *scc.begin();
   auto& v_end = scc.back();
   if (v_begin->subtx(rank).log_apply_started_) {
-    v_end->subtx(rank).log_apply_finished_.WaitUntilGreaterOrEqualThan(1);
+    v_end->subtx(rank).log_apply_finished_.wait_until_gte(1);
   } else {
     v_begin->subtx(rank).log_apply_started_ = true;
     if (v_begin->mocking_janus_) {
@@ -792,44 +792,44 @@ void RccServer::Execute(RccTx& tx, int rank) {
 
   if (tx.mocking_janus_) {
     if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.WaitUntilGreaterOrEqualThan(1);
+      tx.subtx(rank).commit_received_.wait_until_gte(1);
 //    Coroutine::CreateRun([sp_tx, this]() {
       verify(rank == RANK_D);
       tx.CommitValidate(rank);
 //      commo()->BroadcastValidation(sp_tx->id(), sp_tx->partition_,
 //          sp_tx->local_validation_result_);
-      tx.subtx(rank).sp_ev_commit_->Set(1);
+      tx.subtx(rank).sp_ev_commit_->set(1);
       // TODO recover this?
-//      tx.subtx(rank).global_validated_->Wait(40*1000*1000);
+//      tx.subtx(rank).global_validated_->wait(40*1000*1000);
 //      verify(tx.subtx(rank).global_validated_->status_ != Event::TIMEOUT);
       tx.CommitExecute(rank);
 //    });
     } else {
       // a tmp solution
       tx.subtx(rank).__debug_local_validated_foreign_ = true;
-      tx.subtx(rank).local_validated_->Set(SUCCESS);
+      tx.subtx(rank).local_validated_->set(SUCCESS);
     }
   } else {
     if (tx.subtx(rank).Involve(partition_id_)) {
-      tx.subtx(rank).commit_received_.WaitUntilGreaterOrEqualThan(1);
-      tx.subtx(rank).local_validated_->Set(SUCCESS);
-      tx.subtx(rank).sp_ev_commit_->Set(1);
+      tx.subtx(rank).commit_received_.wait_until_gte(1);
+      tx.subtx(rank).local_validated_->set(SUCCESS);
+      tx.subtx(rank).sp_ev_commit_->set(1);
       tx.CommitExecute(rank);
     } else {
       // a tmp solution
       tx.subtx(rank).__debug_local_validated_foreign_ = true;
-      tx.subtx(rank).local_validated_->Set(SUCCESS);
+      tx.subtx(rank).local_validated_->set(SUCCESS);
     }
   }
 //  tx.phase_ = PHASE_RCC_COMMIT;
-  tx.subtx(rank).log_apply_finished_.Set(1);
+  tx.subtx(rank).log_apply_finished_.set(1);
 }
 
 void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
   verify(0);
 /*
   if (sp_tx->log_apply_started_) {
-    sp_tx->log_apply_finished_.WaitUntilGreaterOrEqualThan(1);
+    sp_tx->log_apply_finished_.wait_until_gte(1);
     return;
   }
   verify(sp_tx->all_anc_cmt_hint);
@@ -837,29 +837,29 @@ void RccServer::Execute(shared_ptr<RccTx>& sp_tx) {
   Log_debug("executing dtxn id %" PRIx64, sp_tx->id());
   verify(sp_tx->IsDecided());
   if (sp_tx->Involve(partition_id_)) {
-    sp_tx->commit_received_.WaitUntilGreaterOrEqualThan(1);
+    sp_tx->commit_received_.wait_until_gte(1);
 //    Coroutine::CreateRun([sp_tx, this]() {
 //      if (sp_tx->need_validation_) {
 //        sp_tx->CommitValidate();
 //      } else {
-        sp_tx->local_validated_->Set(SUCCESS);
+        sp_tx->local_validated_->set(SUCCESS);
 //      }
 //      commo()->BroadcastValidation(sp_tx->id(), sp_tx->partition_,
 //          sp_tx->local_validation_result_);
-      sp_tx->sp_ev_commit_->Set(1);
+      sp_tx->sp_ev_commit_->set(1);
       // TODO recover this?
-//      sp_tx->global_validated_->Wait();
+//      sp_tx->global_validated_->wait();
 //      verify(sp_tx->global_validated_->status_ != Event::TIMEOUT);
       sp_tx->CommitExecute();
-//      sp_tx->local_validated_->Get();
+//      sp_tx->local_validated_->get();
 //    });
   } else {
     // a tmp solution
     sp_tx->__debug_local_validated_foreign_ = true;
-    sp_tx->local_validated_->Set(SUCCESS);
+    sp_tx->local_validated_->set(SUCCESS);
   }
   sp_tx->phase_ = PHASE_RCC_COMMIT;
-  sp_tx->log_apply_finished_.Set(1);
+  sp_tx->log_apply_finished_.set(1);
   */
 }
 
@@ -907,13 +907,13 @@ int RccServer::OnInquireValidation(txid_t tx_id, int rank) {
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(tx_id, rank));
   int ret = 0;
   verify(dtxn->subtx(rank).__debug_commit_received_);
-  dtxn->subtx(rank).local_validated_->Wait(60*1000*1000);
+  dtxn->subtx(rank).local_validated_->wait(60*1000*1000);
   if (dtxn->subtx(rank).local_validated_->status_.get() == Event::TIMEOUT) {
     verify(dtxn->subtx(rank).status()>=TXN_CMT);
     verify(0);
     ret = -1; //TODO come back and remove this after the correctness checker.
   } else {
-    ret = dtxn->subtx(rank).local_validated_->Get();
+    ret = dtxn->subtx(rank).local_validated_->get();
     verify(ret == SUCCESS || ret == REJECT);
   }
   return ret;
@@ -923,7 +923,7 @@ void RccServer::OnNotifyGlobalValidation(txid_t tx_id, int rank, int validation_
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(rank == RANK_D);
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(tx_id, rank));
-  dtxn->subtx(rank).global_validated_->Set(validation_result);
+  dtxn->subtx(rank).global_validated_->set(validation_result);
 }
 
 int RccServer::OnCommit(const txnid_t cmd_id,
@@ -940,12 +940,12 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   int ret = SUCCESS;
   // union the graph into dep graph
   auto dtxn = dynamic_pointer_cast<RccTx>(GetOrCreateTx(cmd_id));
-  dtxn->fully_dispatched_->Set(1); // TODO make this and janus the same.
+  dtxn->fully_dispatched_->set(1); // TODO make this and janus the same.
   verify(dtxn->p_output_reply_ == nullptr);
   dtxn->p_output_reply_ = output;
   verify(!dtxn->IsAborted());
   if (dtxn->HasLogApplyStarted()) {
-    verify(dtxn->local_validated_->Get() != 0);
+    verify(dtxn->local_validated_->get() != 0);
     ret = SUCCESS; // TODO no return output?
   } else {
 //    Log_info("on commit: %llx par: %d", cmd_id, (int)partition_id_);
@@ -967,7 +967,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
         Execute(scc);
       }
     }
-    dtxn->sp_ev_commit_->Wait();
+    dtxn->sp_ev_commit_->wait();
     ret = dtxn->committed_ ? SUCCESS : REJECT;
   }
   return ret;
@@ -1003,7 +1003,7 @@ map<txnid_t, shared_ptr<RccTx>> RccServer::Aggregate(RccGraph &graph) {
     RccVertex* v = pair.second;
     verify(v->parents_.size() == v->incoming_.size());
     auto sz = v->parents_.size();
-    if (v->Get().status() >= TXN_CMT)
+    if (v->get().status() >= TXN_CMT)
       RccSched::__DebugCheckParentSetSize(txnid, sz);
   }
 
@@ -1013,16 +1013,16 @@ map<txnid_t, shared_ptr<RccTx>> RccServer::Aggregate(RccGraph &graph) {
     auto lhs_v = FindV(txnid);
     verify(lhs_v != nullptr);
     // TODO, check the Sccs are the same.
-    if (rhs_v->Get().status() >= TXN_DCD) {
-      verify(lhs_v->Get().status() >= TXN_DCD);
+    if (rhs_v->get().status() >= TXN_DCD) {
+      verify(lhs_v->get().status() >= TXN_DCD);
       if (!AllAncCmt(rhs_v))
         continue;
       RccScc& rhs_scc = graph.FindSCC(rhs_v);
       for (RccVertex* rhs_vv : rhs_scc) {
-        verify(rhs_vv->Get().status() >= TXN_DCD);
+        verify(rhs_vv->get().status() >= TXN_DCD);
         RccVertex* lhs_vv = FindV(rhs_vv->id());
         verify(lhs_vv != nullptr);
-        verify(lhs_vv->Get().status() >= TXN_DCD);
+        verify(lhs_vv->get().status() >= TXN_DCD);
         verify(lhs_vv->GetParentSet() == rhs_vv->GetParentSet());
       }
       if (!AllAncCmt(lhs_v)) {
@@ -1030,10 +1030,10 @@ map<txnid_t, shared_ptr<RccTx>> RccServer::Aggregate(RccGraph &graph) {
       }
       RccScc& lhs_scc = FindSCC(lhs_v);
       for (RccVertex* lhs_vv : rhs_scc) {
-        verify(lhs_vv->Get().status() >= TXN_DCD);
+        verify(lhs_vv->get().status() >= TXN_DCD);
         RccVertex* rhs_vv = graph.FindV(lhs_v->id());
         verify(rhs_vv != nullptr);
-        verify(rhs_vv->Get().status() >= TXN_DCD);
+        verify(rhs_vv->get().status() >= TXN_DCD);
         verify(rhs_vv->GetParentSet() == rhs_vv->GetParentSet());
       }
 
@@ -1043,7 +1043,7 @@ map<txnid_t, shared_ptr<RccTx>> RccServer::Aggregate(RccGraph &graph) {
         // TODO
         for (auto& vv : rhs_scc) {
           auto vvv = FindV(vv->id());
-          verify(vvv->Get().status() >= TXN_DCD);
+          verify(vvv->get().status() >= TXN_DCD);
         }
         verify(0);
       }
@@ -1060,10 +1060,10 @@ map<txnid_t, shared_ptr<RccTx>> RccServer::Aggregate(RccGraph &graph) {
       }
     }
 
-    if (lhs_v->Get().status() >= TXN_DCD && AllAncCmt(lhs_v)) {
+    if (lhs_v->get().status() >= TXN_DCD && AllAncCmt(lhs_v)) {
       RccScc& scc = FindSCC(lhs_v);
       for (auto vv : scc) {
-        auto s = vv->Get().status();
+        auto s = vv->get().status();
         verify(s >= TXN_DCD);
       }
     }
@@ -1116,7 +1116,7 @@ int RccServer::OnPreAccept(txnid_t txn_id,
     }
   }
   verify(!dtxn->subtx(rank).fully_dispatched_->value_);
-  dtxn->subtx(rank).fully_dispatched_->Set(1);
+  dtxn->subtx(rank).fully_dispatched_->set(1);
   res_parents = parents;
   return SUCCESS;
 }
@@ -1182,7 +1182,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
       auto& subtx = sp_tx->subtx(rank);
       return subtx.local_validated_->is_set_;
     };
-    sp_e->Wait(60 * 1000 * 1000);
+    sp_e->wait(60 * 1000 * 1000);
     if (sp_e->status_.get() == Event::TIMEOUT) {
       verify(!weird);
       verify(0);
@@ -1215,7 +1215,7 @@ int RccServer::OnCommit(const txnid_t cmd_id,
   verify(subtx.commit_received_.value_ == 0);
   verify(!subtx.__debug_local_validated_foreign_);
   verify(!subtx.local_validated_->is_set_);
-  subtx.commit_received_.Set(1);
+  subtx.commit_received_.set(1);
   UpgradeStatus(*sp_tx, rank, TXN_CMT);
   sp_tx->__DebugCheckParents(rank);
   WaitUntilAllPredecessorsAtLeastCommitting(sp_tx.get(), rank);
@@ -1232,14 +1232,14 @@ int RccServer::OnCommit(const txnid_t cmd_id,
 //  if (FullyDispatched(scc, rank) && !IsExecuted(scc, rank)) {
 //  if (!IsExecuted(scc, rank)) {
   Execute(scc, rank);
-//  subtx.local_validated_->Wait();
+//  subtx.local_validated_->wait();
 //  }
   // TODO verify by a wait time.
-//    dtxn->sp_ev_commit_->Wait(1*1000*1000);
-//    dtxn->sp_ev_commit_->Wait();
+//    dtxn->sp_ev_commit_->wait(1*1000*1000);
+//    dtxn->sp_ev_commit_->wait();
 //    verify(dtxn->sp_ev_commit_->status_ != Event::TIMEOUT);
 //    ret = dtxn->local_validation_result_ > 0 ? SUCCESS : REJECT;
-//  return subtx.local_validated_->Get();
+//  return subtx.local_validated_->get();
   return 0;
 }
 

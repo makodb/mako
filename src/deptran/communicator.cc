@@ -557,7 +557,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
 	e->value_ = 0;
 	e->target_ = total;
   std::unordered_set<int> leaders{};
-  auto src_coroid = e->GetCoroId();
+  auto src_coroid = e->get_coro_id();
   coo->coro_id_ = src_coroid;
   Log_info("The size of cmds_by_par is %d", cmds_by_par.size());
 
@@ -595,7 +595,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
           e->value_++;
           if(phase != coo->phase_){
 						verify(0);
-	    			e->Test();
+	    			e->test();
 	  			}
           else{
             // Handle WRONG_LEADER response with view data
@@ -607,7 +607,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               coo->aborted_ = true;
               txn->commit_.store(false);
               e->value_ = e->target_;
-              e->Test();
+              e->test();
               return;
             }
             
@@ -616,7 +616,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
               txn->commit_.store(false);
 
 							e->value_ = e->target_;
-							e->Test();
+							e->test();
 							return;
             }
             coo->n_dispatch_ack_ += outputs.size();
@@ -633,7 +633,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
             }
               //e->add_dep(coo->cli_id_, src_coroid, leader_id, coro_id);
             coo->ids_.push_back(leader_id);
-            e->Test();
+            e->test();
 	  			}
       };
     
@@ -715,8 +715,8 @@ Communicator::SendPrepare(Coordinator* coo,
     auto proxies = rpc_par_proxies_[partition_id];
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::CreateSpEvent<QuorumEvent>(n_total, 1);
-    e->AddEvent(qe);
-    auto src_coroid = qe->GetCoroId();
+    e->add_event(qe);
+    auto src_coroid = qe->get_coro_id();
       
     qe->id_ = Communicator::global_id;
     qe->par_id_ = quorum_id++;
@@ -744,7 +744,7 @@ Communicator::SendPrepare(Coordinator* coo,
         coo->aborted_ = true;
       }
       qe->n_voted_yes_++;
-      e->Test();
+      e->test();
     };
     
     ClassicProxy* proxy = LeaderProxyForPartition(partition_id).second;
@@ -827,9 +827,9 @@ Communicator::SendCommit(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::CreateSpEvent<QuorumEvent>(n_total, 1);
     qe->id_ = Communicator::global_id;
-    auto src_coroid = qe->GetCoroId();
+    auto src_coroid = qe->get_coro_id();
 
-    e->AddEvent(qe);
+    e->add_event(qe);
 
     coo->n_finish_req_++;
     FutureAttr fuattr;
@@ -894,7 +894,7 @@ Communicator::SendCommit(Coordinator* coo,
 
       if(coo->phase_ != phase) return;
       qe->n_voted_yes_++;
-      e->Test();
+      e->test();
     };
 
 		DepId di;
@@ -956,9 +956,9 @@ Communicator::SendAbort(Coordinator* coo,
     if(follower_forwarding) n_total = 3;
     auto qe = Reactor::CreateSpEvent<QuorumEvent>(n_total, 1);
     qe->id_ = Communicator::global_id;
-    auto src_coroid = qe->GetCoroId();
+    auto src_coroid = qe->get_coro_id();
 
-    e->AddEvent(qe);
+    e->add_event(qe);
 
     coo->n_finish_req_++;
     FutureAttr fuattr;
@@ -1026,7 +1026,7 @@ Communicator::SendAbort(Coordinator* coo,
 
       if(coo->phase_ != phase) return;
       qe->n_voted_yes_++;
-      e->Test();
+      e->test();
     };
 
     DepId di;
@@ -1176,7 +1176,7 @@ Communicator::BroadcastMessage(shardid_t shard_id,
       }
       auto marshal = fu->get_reply();
       marshal >> msg_ev->msg_;
-      msg_ev->Set(1);
+      msg_ev->set(1);
     };
     // TODO: Actually send the RPC (currently this function is not implemented)
   }

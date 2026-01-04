@@ -119,13 +119,13 @@ void CoordinatorClassic::GotoNextPhase() {
 					commo()->total_++;
 					commo()->qe->n_voted_yes_++;
 					commo()->count_lock_.unlock();
-					Log_info("is it ready: %d", commo()->qe->IsReady());
-					commo()->qe->Test();
+					Log_info("is it ready: %d", commo()->qe->is_ready());
+					commo()->qe->test();
 					first = false;
 				}
 				Log_info("total: %d", commo()->total_);
 				auto t = Reactor::CreateSpEvent<TimeoutEvent>(0.1*1000*1000);
-				t->Wait(0.1*1000*1000);
+				t->wait(0.1*1000*1000);
 			}*/
 			DispatchAsync(true);
       break;
@@ -306,7 +306,7 @@ void CoordinatorClassic::DispatchAsync(bool last) {
   sp_int_event = commo()->BroadcastDispatch(cmds_by_par, this, txn);
   phase_t phase = phase_;
 	
-  sp_int_event->Wait();
+  sp_int_event->wait();
   
 	debug_cnt--;
 
@@ -430,7 +430,7 @@ void CoordinatorClassic::Prepare() {
                                           cmd_->id_,
                                           sids);
 
-	quorum_event->Wait();
+	quorum_event->wait();
 	//Log_info("slow inside Prepare is: %d", commo()->slow);
   Log_info("DONE send prepare tid: %ld",
             cmd_->id_);
@@ -464,11 +464,11 @@ void CoordinatorClassic::Prepare() {
 
 			commo()->qe = Reactor::CreateSpEvent<QuorumEvent>(concurrent-1, concurrent-1);
 			commo()->qe->n_voted_yes_ = commo()->total_;
-			commo()->qe->Wait();
+			commo()->qe->wait();
 			commo()->qe = NULL;
 
 			sp_quorum_event = commo()->SendReelect();
-			sp_quorum_event->Wait();
+			sp_quorum_event->wait();
 			commo()->paused = false;
 			commo()->slow = false;
 			Log_info("Reelection finished");
@@ -541,7 +541,7 @@ void CoordinatorClassic::Commit() {
 		
 		Log_info("send commit tid: %ld",
             cmd_->id_);
-		quorum_event->Wait();
+		quorum_event->wait();
 		Log_info("DONE send commit tid: %ld",
             cmd_->id_);
     quorum_event->log();
@@ -581,7 +581,7 @@ void CoordinatorClassic::Commit() {
                                            tx_data().id_);
 		Log_info("send abort tid: %ld",
             cmd_->id_);
-    quorum_event->Wait();
+    quorum_event->wait();
 		Log_info("DONE send abort tid: %ld",
             cmd_->id_);
     quorum_event->log();
@@ -625,12 +625,12 @@ void CoordinatorClassic::Commit() {
 			commo()->qe->n_voted_yes_ = commo()->total_;
 			commo()->count_lock_.unlock();
 			
-			commo()->qe->Wait();
+			commo()->qe->wait();
 			commo()->qe = NULL;
 
 			for (int i = 0; i < 100; i++) Log_info("Reelection: done waiting for commits");
 			sp_quorum_event = commo()->SendReelect();
-			sp_quorum_event->Wait();
+			sp_quorum_event->wait();
 			commo()->paused = false;
 			commo()->slow = false;
 			Log_info("Reelection finished");
@@ -762,7 +762,7 @@ void CoordinatorClassic::SetNewLeader(parid_t par_id, volatile locid_t* cur_paus
 retry:
   Log_debug("start setting a new leader from %d", prev_pause_srv);
   auto e = commo()->BroadcastGetLeader(par_id, prev_pause_srv);
-  e->Wait();
+  e->wait();
   if (e->Yes()) {
     // assign new leader
     Log_debug("set a new leader %d", e->leader_id_);
@@ -772,7 +772,7 @@ retry:
     }
   } else if (e->No()) {
     auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
-    sp_e->Wait();
+    sp_e->wait();
     // usleep(300 * 1000) ;  // 300 ms
     goto retry;
   } else {
@@ -783,7 +783,7 @@ retry:
 void CoordinatorClassic::FailoverPauseSocketOut(parid_t par_id, locid_t loc_id) {
   Log_info("!!!!!!!!!!! CoordinatorClassic::FailoverPauseSocketOut");
   auto e = commo()->FailoverPauseSocketOut(par_id, loc_id);
-  e->Wait();
+  e->wait();
   if (e->No()) {
     verify(0);
   }
@@ -791,7 +791,7 @@ void CoordinatorClassic::FailoverPauseSocketOut(parid_t par_id, locid_t loc_id) 
 
 void CoordinatorClassic::FailoverResumeSocketOut(parid_t par_id, locid_t loc_id) {
   auto e = commo()->FailoverResumeSocketOut(par_id, loc_id);
-  e->Wait();
+  e->wait();
   if (e->No()) {
     verify(0);
   }

@@ -120,11 +120,11 @@ void CoordinatorRaft::AppendEntries() {
     // @unsafe
     {
       if (svr_->ready_for_replication_ != nullptr)
-        svr_->ready_for_replication_->Set(1);
+        svr_->ready_for_replication_->set(1);
     }
 
     while (this->svr_->commitIndex < index) {
-      Reactor::CreateSpEvent<TimeoutEvent>(1000)->Wait();
+      Reactor::CreateSpEvent<TimeoutEvent>(1000)->wait();
       if (this->svr_->currentTerm != term) {
         Log_info("Term changed during AppendEntries: expected %lu, got %lu. Leader changed.", 
                  term, this->svr_->currentTerm);

@@ -175,7 +175,7 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
     Future::safe_release(future);
   }
 
-  e->Wait();
+  e->wait();
 
   return e;
 }

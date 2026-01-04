@@ -435,9 +435,9 @@ void RaftServer::HeartbeatLoop() {
         // std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         // if (ready_for_replication_ == nullptr)
           ready_for_replication_ = Reactor::CreateSpEvent<IntEvent>();
-        ready_for_replication_->Set(0);
+        ready_for_replication_->set(0);
       }
-      ready_for_replication_->Wait(HEARTBEAT_INTERVAL);
+      ready_for_replication_->wait(HEARTBEAT_INTERVAL);
       {
         // std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = nullptr;
@@ -615,7 +615,7 @@ void RaftServer::HeartbeatLoop() {
                                               &ret_status,
                                               &ret_term,
                                               &ret_last_log_index);
-        r->Wait(500000); // bound wait to avoid leader stall on slow/lost followers
+        r->wait(500000); // bound wait to avoid leader stall on slow/lost followers
         if (r->status_.get() == Event::TIMEOUT) {
           continue;
         }
@@ -743,7 +743,7 @@ RaftServer::~RaftServer() {
 
     // Wake up the HeartbeatLoop if it's sleeping so it can see looping_=false
     if (ready_for_replication_) {
-      ready_for_replication_->Set(1);
+      ready_for_replication_->set(1);
     }
   }
 
@@ -809,7 +809,7 @@ bool RaftServer::RequestVote() {
            site_id_, loc_id, prev_term, term, lst_idx, lst_term, prev_vote_for);
 #endif
   auto sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
-  sp_quorum->Wait(1000000);
+  sp_quorum->wait(1000000);
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_ELECTION] server %d term %lu vote outcome yes=%d no=%d highest_term_seen=%ld timeout=%d",
@@ -1165,11 +1165,11 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           std::copy(kv_vector.begin(), kv_vector.end(), key_values);
 
           // auto de = IO::write(filename, key_values, sizeof(struct KeyValue), kv_vector.size());
-          // de->Wait();
+          // de->wait();
         } else {
           int value = -1;
           // auto de = IO::write(filename, &value, sizeof(int), 1);
-          // de->Wait();
+          // de->wait();
         }
       }
 #endif

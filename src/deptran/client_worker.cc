@@ -218,21 +218,21 @@ void ClientWorker::Work() {
       locid_t idx = 0;
       while (!*failover_server_quit_) {
         auto r = Reactor::CreateSpEvent<NeverEvent>();
-        r->Wait(run_int);
+        r->wait(run_int);
         *failover_trigger_ = true;
         while (*failover_trigger_) {
           auto e = Reactor::CreateSpEvent<NeverEvent>();
-          e->Wait(wait_int);
+          e->wait(wait_int);
           if (*failover_server_quit_) return;
         }
         Pause(idx);
         *failover_trigger_ = true;
         Log_info("server %d paused for failover test", idx);
         auto s = Reactor::CreateSpEvent<NeverEvent>();
-        s->Wait(stop_int);
+        s->wait(stop_int);
         while (*failover_trigger_) {
           auto e = Reactor::CreateSpEvent<NeverEvent>();
-          e->Wait(wait_int);
+          e->wait(wait_int);
           if (*failover_server_quit_) return;
         }
         Resume(idx);
@@ -273,7 +273,7 @@ void ClientWorker::Work() {
           }
           if (config_->client_max_undone_ > 0
               && n_undone_tx > config_->client_max_undone_) {
-            Reactor::CreateSpEvent<NeverEvent>()->Wait(pow(10, 4));
+            Reactor::CreateSpEvent<NeverEvent>()->wait(pow(10, 4));
           } else {
             break;
           }
@@ -296,13 +296,13 @@ void ClientWorker::Work() {
             coo->commo_->total_ = this->outbound;
             coo->commo_->qe->n_voted_yes_ = this->outbound;
             coo->commo_->count_lock_.unlock();
-            Log_info("is it ready: %d", coo->commo_->qe->IsReady());
-            coo->commo_->qe->Test();
+            Log_info("is it ready: %d", coo->commo_->qe->is_ready());
+            coo->commo_->qe->test();
             first = false;
           }
           Log_info("total: %d", coo->commo_->total_);
           auto t = Reactor::CreateSpEvent<TimeoutEvent>(0.1*1000*1000);
-          t->Wait();
+          t->wait();
         }
 #ifdef DB_CHECKSUM
         if (cur_time > end_time)
@@ -317,17 +317,17 @@ void ClientWorker::Work() {
           sprintf(txid, "%" PRIx64 "|", coo->ongoing_tx_id_);
           ev->wait_place_ = std::string(txid);
 #endif
-          Wait_recordplace(ev, Wait(600*1000*1000));
+          wait_recordplace(ev, wait(600*1000*1000));
           this->outbound--;
           verify(ev->status_.get() != Event::TIMEOUT);
         } else {
           auto sp_event = Reactor::CreateSpEvent<NeverEvent>();
-          Wait_recordplace(sp_event, Wait(pow(10, 6)));
+          wait_recordplace(sp_event, wait(pow(10, 6)));
         }
         Coroutine::CreateRun([this, coo](){
           verify(coo->_inuse_);
           auto ev = coo->sp_ev_done_;
-          Wait_recordplace(ev, Wait());
+          wait_recordplace(ev, wait());
           verify(coo->coo_id_ > 0);
           verify(coo->_inuse_);
           verify(coo->coo_id_ > 0);
@@ -335,7 +335,7 @@ void ClientWorker::Work() {
           if (coo->committed_) {
             success++;
           }
-          sp_n_tx_done_.Set(sp_n_tx_done_.value_+1);
+          sp_n_tx_done_.set(sp_n_tx_done_.value_+1);
           num_try.fetch_add(coo->n_retry_);
           coo->sp_ev_done_.reset();
           coo->sp_ev_commit_.reset();
@@ -344,7 +344,7 @@ void ClientWorker::Work() {
           n_pause_concurrent_[coo->coo_id_] = true;
         }, __FILE__, __LINE__);
       }
-      n_ceased_client_.Set(n_ceased_client_.value_+1);
+      n_ceased_client_.set(n_ceased_client_.value_+1);
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);
     poll_thread_worker_.as_ref().unwrap()->add(arc_job_base);
@@ -353,10 +353,10 @@ void ClientWorker::Work() {
   // Jetpack: Wait for completion job
   auto finish_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this](){
     Log_info("wait for all virtual clients to stop issuing new requests.");
-    n_ceased_client_.WaitUntilGreaterOrEqualThan(n_concurrent_,
+    n_ceased_client_.wait_until_gte(n_concurrent_,
                                                  (duration+500)*1000000);
     Log_info("wait for all outstanding requests to finish.");
-    sp_n_tx_done_.WaitUntilGreaterOrEqualThan(n_tx_issued_);
+    sp_n_tx_done_.wait_until_gte(n_tx_issued_);
     *failover_server_quit_ = true;
     all_done_ = 1;
   }));
@@ -433,14 +433,14 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
       for (auto it = n_pause_concurrent_.begin(); it != n_pause_concurrent_.end(); it++) {
         while (!it->second) {
           auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
-          sp_e->Wait();
+          sp_e->wait();
         }
       }
       failover_pause_start = true;
     } else {
       while (!failover_pause_start) {
         auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
-        sp_e->Wait();
+        sp_e->wait();
       }
     }
 
@@ -452,7 +452,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
     }
     while (!*failover_trigger_) {
       auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(300 * 1000);
-      sp_e->Wait();
+      sp_e->wait();
       if (*failover_server_quit_) break;
     }
     if (coo->offset_ == 0) {
@@ -464,7 +464,7 @@ void ClientWorker::FailoverPreprocess(Coordinator* coo) {
     } else {
       while (failover_wait_leader_ && !*failover_server_quit_) {
         auto sp_e = Reactor::CreateSpEvent<TimeoutEvent>(500 * 1000);
-        sp_e->Wait();
+        sp_e->wait();
       }
     }
     n_pause_concurrent_[coo->coo_id_] = false;
@@ -502,10 +502,10 @@ void ClientWorker::DispatchRequest(Coordinator* coo, bool void_request) {
         }
       }
 
-      coo->sp_ev_commit_->Set(1);
+      coo->sp_ev_commit_->set(1);
       auto status = coo->sp_ev_done_->status_.get();
       verify(status == Event::WAIT || status == Event::INIT);
-      coo->sp_ev_done_->Set(1);
+      coo->sp_ev_done_->set(1);
       delete req;
     };
     coo->DoTxAsync(*req);
