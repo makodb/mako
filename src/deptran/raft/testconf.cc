@@ -1,5 +1,9 @@
 #include "testconf.h"
 #include "../../rrr/misc/marshal.hpp"
+#include "../config.h"
+#include "frame.h"
+#include "raft_persistence.h"
+#include <cstring>
 
 namespace janus {
 
@@ -514,6 +518,159 @@ void RaftTestConfig::slow(siteid_t svr, uint32_t msec) {
 
 RaftServer *RaftTestConfig::GetServer(siteid_t svr) {
   return RaftTestConfig::replicas[svr]->svr_.get();
+}
+
+void RaftTestConfig::Kill(siteid_t svr) {
+  std::lock_guard<std::recursive_mutex> lk(connection_m_);
+  std::lock_guard<std::mutex> lk2(disconnect_mtx_);
+
+  Log_info("[RAFT-TEST] Killing server %d", svr);
+
+  auto it = replicas.find(svr);
+  if (it == replicas.end()) {
+    Log_error("[RAFT-TEST] Server %d not found in replicas", svr);
+    return;
+  }
+
+  // Mark as disconnected
+  disconnected_[svr] = true;
+
+  // Disconnect to save RPC proxies before deletion
+  RaftFrame* frame = it->second;
+  if (frame && frame->svr_) {
+    frame->svr_->Disconnect(true);
+  }
+
+  // Sleep briefly to allow pending operations to complete
+  usleep(100000); // 100ms
+
+  // Delete the frame (this will cascade delete svr_ and commo_)
+  delete frame;
+
+  // Remove from replicas map
+  replicas.erase(it);
+
+  // Clear committed commands for this server
+  committed_cmds[svr].clear();
+  committed_cmds[svr].push_back(-1); // Re-initialize with sentinel
+
+  // Reset RPC count
+  rpc_count_last[svr] = 0;
+
+  Log_info("[RAFT-TEST] Server %d killed successfully", svr);
+}
+
+void RaftTestConfig::Restart(siteid_t svr) {
+  std::lock_guard<std::recursive_mutex> lk(connection_m_);
+  std::lock_guard<std::mutex> lk2(disconnect_mtx_);
+
+  Log_info("[RAFT-TEST] Restarting server %d", svr);
+
+  // Check if server is already running
+  if (replicas.find(svr) != replicas.end()) {
+    Log_error("[RAFT-TEST] Server %d is already running, cannot restart", svr);
+    return;
+  }
+
+  // Get the config to find site info
+  auto config = Config::GetConfig();
+  verify(config != nullptr);
+
+  // Find the site info for this server ID
+  Config::SiteInfo* site_info = nullptr;
+  for (auto& site : config->sites_) {
+    if (site.id == svr) {
+      site_info = &site;
+      break;
+    }
+  }
+
+  if (!site_info) {
+    Log_error("[RAFT-TEST] Could not find site info for server %d", svr);
+    return;
+  }
+
+  // Create new RaftFrame
+  RaftFrame* frame = new RaftFrame(MODE_RAFT);
+  frame->site_info_ = site_info;
+
+  // Create new RaftServer (persistence will be loaded when EnsureSetup is called)
+  frame->svr_ = std::make_unique<RaftServer>(frame);
+  frame->svr_->site_id_ = svr;
+  frame->svr_->partition_id_ = site_info->partition_id_;
+  frame->svr_->loc_id_ = site_info->locale_id;
+  frame->svr_->rep_frame_ = frame;
+
+  // Create new RaftCommo (pass None explicitly)
+  frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
+  frame->commo_->loc_id_ = site_info->locale_id;
+
+  // Set commo_ in server before initializing
+  frame->svr_->commo_ = frame->commo_.get();
+
+  // Manually initialize persistence and load state (without starting coroutines)
+  const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
+  bool should_enable = (persistence_flag &&
+                       (strcmp(persistence_flag, "1") == 0 ||
+                        strcmp(persistence_flag, "true") == 0));
+
+  if (should_enable) {
+    Log_info("[RAFT-TEST-RESTART] Loading persistence for site %d", svr);
+
+    frame->svr_->persistence_ = std::make_unique<RaftPersistence>();
+    std::string base_path = "/tmp";
+    if (frame->svr_->persistence_->Init(svr, site_info->partition_id_, base_path)) {
+      frame->svr_->persistence_enabled_ = true;
+
+      uint64_t loaded_term = 0;
+      uint32_t loaded_vote_for = INVALID_SITEID;
+      frame->svr_->persistence_->LoadTerm(loaded_term);
+      frame->svr_->persistence_->LoadVotedFor(loaded_vote_for);
+
+      frame->svr_->currentTerm = loaded_term;
+      frame->svr_->vote_for_ = loaded_vote_for;
+
+      // Load logs
+      std::map<slotid_t, std::shared_ptr<RaftData>> loaded_logs;
+      if (frame->svr_->persistence_->LoadAllLogs(loaded_logs)) {
+        for (const auto& pair : loaded_logs) {
+          frame->svr_->raft_logs_[pair.first] = pair.second;
+          if (pair.first > frame->svr_->lastLogIndex) {
+            frame->svr_->lastLogIndex = pair.first;
+          }
+        }
+      }
+
+      Log_info("[RAFT-TEST-RESTART] Loaded: term=%lu vote=%u lastLogIndex=%lu",
+               frame->svr_->currentTerm, frame->svr_->vote_for_, frame->svr_->lastLogIndex);
+    }
+  }
+
+  // Re-register learner action BEFORE adding to replicas map
+  commit_callbacks[svr] =
+      [svr](int slot, std::shared_ptr<Marshallable> cmd) -> int {
+        verify(cmd);
+        verify(cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT);
+        auto commit_cmd = std::dynamic_pointer_cast<TpcCommitCommand>(cmd);
+        verify(commit_cmd != nullptr);
+        Log_debug("server %d committed value %d at slot %d",
+                  svr, commit_cmd->tx_id_, slot);
+        RaftTestConfig::committed_cmds[svr].push_back(commit_cmd->tx_id_);
+        return 0;
+      };
+  frame->svr_->RegLearnerAction(commit_callbacks[svr]);
+
+  // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
+  replicas[svr] = frame;
+
+  // Mark as connected in test config (don't call Reconnect, proxies will be restored on demand)
+  disconnected_[svr] = false;
+
+  // Reset RPC count
+  rpc_count_last[svr] = 0;
+
+  Log_info("[RAFT-TEST] Server %d restarted successfully (term=%lu, lastLogIndex=%lu)",
+           svr, frame->svr_->currentTerm, frame->svr_->lastLogIndex);
 }
 
 siteid_t RaftTestConfig::mapServerId(siteid_t server_id) const {

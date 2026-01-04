@@ -124,6 +124,12 @@ class RaftTestConfig {
   // Reconnects disconnected server
   void Reconnect(siteid_t svr);
 
+  // Kills server (destroys it completely, clearing all in-memory state)
+  void Kill(siteid_t svr);
+
+  // Restarts server (creates new instance, loads state from disk)
+  void Restart(siteid_t svr);
+
   // Returns number of disconnected servers
   int NDisconnected(void);
 

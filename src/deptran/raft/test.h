@@ -20,6 +20,7 @@ class RaftLabTest {
 
  private:
 
+  int testPersistence(void);
   int testInitialElection(void);
   int testReElection(void);
 
