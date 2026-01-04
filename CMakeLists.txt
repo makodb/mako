@@ -1097,6 +1097,7 @@ if(NOT TARGET rrr)
         # Additional base files
         src/rrr/base/strop.cpp
         src/rrr/base/unittest.cpp
+        src/rrr/misc/rand.cpp
         # RPC files that pass borrow checking
         src/rrr/rpc/utils.cpp
         src/rrr/rpc/client.cpp

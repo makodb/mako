@@ -79,7 +79,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [ ] Phase 1: Small utility files
       - [x] base/strop.cpp (92 lines) - Add safety annotations [DONE - 16 RRR files now under borrow checking]
       - [x] base/unittest.cpp (144 lines) - Add safety annotations [DONE - 17 RRR files now under borrow checking]
-      - [ ] misc/rand.cpp (147 lines) - Add safety annotations
+      - [x] misc/rand.cpp (147 lines) - Add safety annotations [DONE - 18 RRR files now under borrow checking]
       - [ ] misc/recorder.cpp (175 lines) - Add safety annotations
     - [ ] Phase 2: Message queue (mq) files
       - [ ] mq/buf.cpp (143 lines) - Add safety annotations
