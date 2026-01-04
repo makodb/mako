@@ -1077,10 +1077,15 @@ if(NOT TARGET rrr)
     #   - src/rrr/misc/rand.cpp (no safety annotations)
     #   - src/rrr/misc/recorder.cpp (no safety annotations)
     #   - src/rrr/base/unittest.cpp (no safety annotations)
-    #   - src/rrr/reactor/epoll_wrapper.cc (no safety annotations)
-    #   - All other *.cpp/*.cc files (false positives from stricter checking)
+    #   - src/rrr/reactor/reactor.cc (legitimate violations - unsafe calls, use-after-move)
+    #   - Other *.cpp/*.cc files (need safety annotations or have violations)
     set(RRR_BORROW_SRC
-        # Currently empty - add files as they pass borrow checking
+        # Reactor files that pass borrow checking (as of rusty-cpp commit e5b380e)
+        src/rrr/reactor/coroutine.cc
+        src/rrr/reactor/event.cc
+        src/rrr/reactor/quorum_event.cc
+        src/rrr/reactor/epoll_wrapper.cc
+        # reactor.cc has legitimate violations that need fixing
     )
 
     # Add borrow checking for RRR library (only if we have files to check)
