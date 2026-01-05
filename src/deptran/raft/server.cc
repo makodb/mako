@@ -766,12 +766,15 @@ void RaftServer::HeartbeatLoop() {
         std::vector<uint64_t> matchedIndices{};
         for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
           matchedIndices.push_back(it->second);
+          Log_info("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
         }
+        Log_info("[COMMIT-CALC] nservers=%lu, matchedIndices.size()=%zu", nservers, matchedIndices.size());
         verify(matchedIndices.size() == nservers - 1);
         std::sort(matchedIndices.begin(), matchedIndices.end());
         // new commitIndex is the (N/2 + 1)th largest index
         // only update commitIndex if the entry at new index was replicated in the current term
         uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
+        Log_info("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
         
         // Debug logging for commitIndex calculation
         if (newCommitIndex > lastLogIndex) {

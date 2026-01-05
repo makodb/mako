@@ -216,7 +216,7 @@ int RaftTestConfig::Wait(uint64_t index, int n, uint64_t term) {
 }
 
 uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
-  // Log_info("DoAgreement: Starting agreement for command %d, expecting %d servers, retry=%s", cmd, n, retry ? "true" : "false");
+  Log_info("DoAgreement: Starting agreement for command %d, expecting %d servers, retry=%s", cmd, n, retry ? "true" : "false");
   auto start = chrono::steady_clock::now();
   while ((chrono::steady_clock::now() - start) < chrono::seconds{10}) {
     // Coroutine::sleep(50000);
@@ -233,9 +233,9 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
         // Log_info("DoAgreement: Skipping disconnected server %d for command %d", svr, cmd);
         continue;
       }
-      // Log_info("DoAgreement: Attempting Start() on server %d for command %d", svr, cmd);
+      Log_info("DoAgreement: Attempting Start() on server %d for command %d", svr, cmd);
       if (Start(svr, cmd, &index, &term)) {
-        // Log_info("DoAgreement: SUCCESS - found leader %d for command %d, index=%ld, term=%ld", svr, cmd, index, term);
+        Log_info("DoAgreement: SUCCESS - found leader %d for command %d, index=%ld, term=%ld", svr, cmd, index, term);
         ldr = svr;
         break;
       } else {
@@ -250,7 +250,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
       int iteration = 0;
       while ((chrono::steady_clock::now() - start2) < chrono::seconds{10}) {
         nc = NCommitted(index);
-        // Log_info("DoAgreement: Iteration %d - NCommitted(%ld) returned %d for command %d", iteration++, index, nc, cmd);
+        Log_info("DoAgreement: Iteration %d - NCommitted(%ld) returned %d for command %d", iteration++, index, nc, cmd);
         if (nc < 0) {
           // Log_info("DoAgreement: ERROR - NCommitted returned %d (values differ) for command %d at index %ld", nc, cmd, index);
           break;
