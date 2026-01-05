@@ -656,7 +656,6 @@ void RaftTestConfig::Restart(siteid_t svr) {
   // Start the heartbeat loop and election timer manually since we're skipping Setup()
 #ifdef RAFT_TEST_CORO
   if (frame->svr_->heartbeat_) {
-    Log_debug("[RAFT-TEST-RESTART] Starting heartbeat loop for site %d", svr);
     Coroutine::CreateRun([frame](){
       frame->svr_->HeartbeatLoop();
     });
