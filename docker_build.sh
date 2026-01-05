@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Script to build and test Mako in Ubuntu 22.04 container
+# Script to build and test Mako in Ubuntu 24.04 container
 
 set -e
 
@@ -13,7 +13,14 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo -e "${GREEN}=== Mako Ubuntu 22.04 Docker Build Script ===${NC}"
+# Docker image and container names
+IMAGE_NAME="mako-build:ubuntu24"
+CONTAINER_NAME="mako-dev"
+
+# Environment variables for Docker runs
+DOCKER_ENV="-e CARGO_TARGET_DIR=/workspace/target-docker"
+
+echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
 
 # Parse command line arguments
@@ -23,13 +30,13 @@ JOBS=${2:-32}
 case "$ACTION" in
     build-image)
         echo -e "${YELLOW}Building Docker image...${NC}"
-        docker build -f Dockerfile.ubuntu22 -t mako-build:ubuntu22 .
+        docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
         echo -e "${GREEN}Docker image built successfully!${NC}"
         ;;
-        
+
     build)
         echo -e "${YELLOW}Building Mako in container...${NC}"
-        docker run --rm -v "$(pwd):/workspace" mako-build:ubuntu22 \
+        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" ${IMAGE_NAME} \
             bash -c "cd /workspace && \
                      rm -rf build_docker && \
                      mkdir -p build_docker && \
@@ -38,15 +45,15 @@ case "$ACTION" in
                      make -j${JOBS} dbtest"
         echo -e "${GREEN}Build completed successfully!${NC}"
         ;;
-        
+
     shell)
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
-        docker run --rm -it -v "$(pwd):/workspace" janus-build:ubuntu22 /bin/bash
+        docker run --rm -it ${DOCKER_ENV} -v "$(pwd):/workspace" ${IMAGE_NAME} /bin/bash
         ;;
-        
+
     test)
         echo -e "${YELLOW}Running build test in container...${NC}"
-        docker run --rm -v "$(pwd):/workspace" -w /workspace janus-ci:ubuntu22 \
+        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j${JOBS} && \
                      echo 'SUCCESS: build completed' && \
                      ls -la build_docker/dbtest"
@@ -57,7 +64,7 @@ case "$ACTION" in
         # Run a specific CI test or all tests
         CI_TEST=${2:-all}
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container...${NC}"
-        docker run --rm -v "$(pwd):/workspace" -w /workspace janus-ci:ubuntu22 \
+        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j32 && BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
@@ -81,48 +88,48 @@ case "$ACTION" in
         fi
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
-        docker run --rm -v "$(pwd):/workspace" -w /workspace janus-ci:ubuntu22 \
+        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
 
     clean)
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
-        docker run --rm -v "$(pwd):/workspace" mako-build:ubuntu22 \
-            bash -c "cd /workspace && rm -rf build_docker"
+        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" ${IMAGE_NAME} \
+            bash -c "cd /workspace && rm -rf build_docker target-docker"
         echo -e "${GREEN}Clean completed!${NC}"
         ;;
-        
+
     compose-up)
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
-        docker-compose up -d ubuntu22-dev
-        echo -e "${GREEN}Container started. Connect with: docker exec -it mako-ubuntu22-dev /bin/bash${NC}"
+        docker compose up -d dev
+        echo -e "${GREEN}Container started. Connect with: docker exec -it ${CONTAINER_NAME} /bin/bash${NC}"
         ;;
-        
+
     compose-down)
         echo -e "${YELLOW}Stopping services...${NC}"
-        docker-compose down
+        docker compose down
         echo -e "${GREEN}Services stopped!${NC}"
         ;;
 
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
-        docker run -it -v "$(pwd):/workspace" --name mako-dev mako-build:ubuntu22 /bin/bash
+        docker run -it ${DOCKER_ENV} -v "$(pwd):/workspace" --name ${CONTAINER_NAME} ${IMAGE_NAME} /bin/bash
         echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
         ;;
 
     enter)
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
-        if ! docker ps -a --format '{{.Names}}' | grep -q '^mako-dev$'; then
-            echo -e "${RED}Error: Container 'mako-dev' does not exist.${NC}"
+        if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            echo -e "${RED}Error: Container '${CONTAINER_NAME}' does not exist.${NC}"
             echo -e "${YELLOW}Create it first with: $0 create${NC}"
             exit 1
         fi
-        if ! docker ps --format '{{.Names}}' | grep -q '^mako-dev$'; then
+        if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
-            docker start mako-dev
+            docker start ${CONTAINER_NAME}
         fi
-        docker exec -it mako-dev /bin/bash
+        docker exec -it ${CONTAINER_NAME} /bin/bash
         ;;
 
     *)
@@ -132,8 +139,8 @@ case "$ACTION" in
         echo "  build-image  - Build the Docker image"
         echo "  build        - Build dbtest in container (default)"
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
-        echo "  create       - Create persistent dev container named 'mako-dev'"
-        echo "  enter        - Enter existing 'mako-dev' container (auto-starts if stopped)"
+        echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
+        echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"
         echo "  test         - Run quick build test"
         echo "  ci [test]    - Build and run CI test (default: all)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
