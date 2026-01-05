@@ -216,14 +216,12 @@ void apply_callbacks_for_partition(uint32_t par_id) {
   auto leader_it = leader_replay_cb.find(par_id);
   if (leader_it != leader_replay_cb.end()) {
     worker->register_leader_callback_par_id_return(leader_it->second);
-    Log_info("[RAFT-APPLY-CB] Registered leader callback for partition %u", par_id);
   }
 
   // Register follower callback if available
   auto follower_it = follower_replay_cb.find(par_id);
   if (follower_it != follower_replay_cb.end()) {
     worker->register_follower_callback_par_id_return(follower_it->second);
-    Log_info("[RAFT-APPLY-CB] Registered follower callback for partition %u", par_id);
   }
 }
 
@@ -733,9 +731,6 @@ namespace janus {
 // helper and invokes the registered callback if present. No ownership transfer.
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader) {
   raft_impl::handle_leader_change_impl(partition_id);
-  Log_info("[RAFT-LEADER-CHANGE] par_id=%u is_leader=%s",
-           partition_id,
-           is_leader ? "true" : "false");
 
   // Call the callback for BOTH gaining and losing leadership
   // @safe - leader_callback_ is a std::function, invoking is safe

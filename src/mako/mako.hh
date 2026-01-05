@@ -619,6 +619,10 @@ static void setup_leader_election_callbacks()
     switch (control) {
 #if defined(FAIL_NEW_VERSION) && !defined(MAKO_USE_RAFT)
       case 0: {
+        if (janus::is_using_raft()) {
+          // Raft: Leader stepped down - no action needed, Raft handles internally
+          break;
+        }
         std::cout<<"Implement a new fail recovery!"<<std::endl;
         sync_util::sync_logger::exchange_running = false;
         auto& benchConfig = BenchmarkConfig::getInstance();
@@ -627,6 +631,10 @@ static void setup_leader_election_callbacks()
         break;
       }
       case 2: {
+        if (janus::is_using_raft()) {
+          // Raft: Became leader - no action needed, Raft handles internally
+          break;
+        }
         // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
         // Single timestamp system: collect all shard watermarks and use maximum
         uint32_t max_watermark = 0;

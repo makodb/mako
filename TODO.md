@@ -82,4 +82,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] misc/rand.cpp (147 lines) - Add safety annotations [DONE - 18 RRR files now under borrow checking]
       - [x] misc/recorder.cpp (175 lines) - Add safety annotations [DONE - 19 RRR files now under borrow checking]
     - [x] Phase 2: Message queue (mq) files [REMOVED - dead code using legacy APR, was not compiled]
-    - [x] Phase 3: Remote logging (rlog) files [REMOVED - dead code, not compiled or referenced] 
+    - [x] Phase 3: Remote logging (rlog) files [REMOVED - dead code, not compiled or referenced]
+  - [x] *high* Fix 2-shard replication test failures (shard2ReplicationRaft) [DONE 2026-01-04]
+    - Root cause: In mako.hh setup_leader_election_callbacks(), the FAIL_NEW_VERSION code path
+      (lines 620-660) was calling client_control() during Raft leader elections without checking
+      is_using_raft(). This caused cross-shard RPC calls to fail when the target shard wasn't ready.
+    - Fix: Added is_using_raft() checks to case 0 and case 2 in the FAIL_NEW_VERSION block to skip
+      client_control() calls when using Raft (Raft handles leader changes internally).
+    - Result: shard2ReplicationRaft now passes (8370 ops/sec, 1.5% abort ratio) 
