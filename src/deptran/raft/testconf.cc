@@ -619,7 +619,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
     frame->svr_->persistence_ = std::make_unique<RaftPersistence>();
     std::string base_path = "/tmp";
-    if (frame->svr_->persistence_->Init(svr, site_info->partition_id_, base_path)) {
+    if ((frame->svr_->persistence_->Init)(svr, site_info->partition_id_, base_path)) {
       frame->svr_->persistence_enabled_ = true;
 
       uint64_t loaded_term = 0;
@@ -645,6 +645,29 @@ void RaftTestConfig::Restart(siteid_t svr) {
                frame->svr_->currentTerm, frame->svr_->vote_for_, frame->svr_->lastLogIndex);
     }
   }
+
+  // Record startup timestamp for grace period logic (same as Setup())
+  frame->svr_->startup_timestamp_ = Time::now();
+
+  // CRITICAL: Mark Setup() as already done to prevent EnsureSetup() from calling it again
+  // This prevents double-initialization of persistence which would reset the loaded state
+  frame->svr_->heartbeat_setup_ = true;
+
+  // Start the heartbeat loop and election timer manually since we're skipping Setup()
+#ifdef RAFT_TEST_CORO
+  if (frame->svr_->heartbeat_) {
+    Log_debug("[RAFT-TEST-RESTART] Starting heartbeat loop for site %d", svr);
+    Coroutine::CreateRun([frame](){
+      frame->svr_->HeartbeatLoop();
+    });
+    // Start election timeout loop (same as Setup())
+    if (frame->svr_->failover_) {
+      Coroutine::CreateRun([frame](){
+        frame->svr_->StartElectionTimer();
+      });
+    }
+  }
+#endif
 
   // Re-register learner action BEFORE adding to replicas map
   commit_callbacks[svr] =

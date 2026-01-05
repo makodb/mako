@@ -46,6 +46,7 @@ struct KeyValue {
 
 
 class RaftServer : public TxLogServer {
+  friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
  private:
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
