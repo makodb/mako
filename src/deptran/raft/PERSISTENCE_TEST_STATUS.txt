@@ -1,0 +1,110 @@
+RAFT PERSISTENCE TEST (TEST 0) - STATUS AND NOTES
+==================================================
+
+Date: 2026-01-05
+Branch: zeyu-raft-disk
+
+CURRENT STATUS
+--------------
+Test 0 (Persistence across server kill and restart) is FAILING.
+Tests 1-9 all PASS with the current code.
+
+To run test 0:
+  MAKO_RAFT_PERSISTENCE=1 ./build/deptran_server -f config/raft_lab_test.yml
+
+To run tests 1-9 (all pass):
+  Edit test.cc to comment out testPersistence() and uncomment tests 1-9.
+
+
+BUG FIX INCLUDED IN THIS COMMIT
+-------------------------------
+Fixed: Heartbeat not updating match_index_ (server.cc around line 480)
+
+Problem: In HeartbeatLoop case 3A (heartbeat accepted), the code wasn't
+updating match_index_ from the follower's reported lastLogIndex. This caused
+the commit index calculation to use stale match_index=0 values, preventing
+entries from being committed after a new leader was elected.
+
+Fix: Added match_index update in case 3A:
+  if (ret_last_log_index > match_index) {
+    match_index = ret_last_log_index;
+    if (match_index > lastLogIndex) {
+      match_index = lastLogIndex;
+    }
+  }
+
+
+REMAINING ISSUE: KILL/RESTART RPC SERVICE
+-----------------------------------------
+Test 0 fails because after Kill()/Restart(), the restarted server doesn't
+respond to RPCs correctly.
+
+Root Cause:
+- RaftServiceImpl is created once during server startup with a pointer (svr_)
+  to the RaftServer
+- When Kill() is called, the RaftServer is deleted, but RaftServiceImpl remains
+  (it's part of the RPC server infrastructure that keeps listening)
+- When Restart() creates a new RaftServer, the RaftServiceImpl still has the
+  old (now dangling) svr_ pointer
+- RPCs to the restarted server go to the old RaftServiceImpl which has a
+  dangling pointer, causing crashes or incorrect behavior
+
+Attempted Solutions (reverted as too hacky):
+1. Dynamic server lookup callback - Added a static callback to RaftServiceImpl
+   that looks up the current server from the test config's replicas map
+2. Graceful nullptr handling - Made handlers return failure instead of crashing
+   when server is nullptr
+
+Why reverted:
+- Added test-framework-specific code into production RPC service code
+- Hacky workarounds (magic number checks like svr_->site_id_ < 100)
+- Initialization timing issues with site_id_ not being set when constructor runs
+- Masking real bugs by silently returning failure values
+
+Proper Solution (not yet implemented):
+The test framework's Kill/Restart design needs to be fixed at the architectural
+level. Options include:
+1. Kill() should also destroy/recreate the RPC service, not just the RaftServer
+2. Use a test-specific service wrapper that handles server replacement
+3. Mock the RPC layer in tests
+4. Have RaftServiceImpl hold a reference/pointer that can be updated, managed
+   by the test framework rather than through static callbacks
+
+
+FILES INVOLVED
+--------------
+- src/deptran/raft/server.cc     - Contains the heartbeat match_index fix
+- src/deptran/raft/service.h     - RPC service (reverted to original)
+- src/deptran/raft/service.cc    - RPC handlers (reverted to original)
+- src/deptran/raft/testconf.cc   - Test framework Kill/Restart logic
+- src/deptran/raft/test.cc       - Test definitions
+
+
+TEST 0 BEHAVIOR
+---------------
+What works:
+- Initial election succeeds
+- Initial entries commit with 5 servers
+- Kill() successfully stops a server
+- Entries commit with 4 servers (killed server excluded)
+- Restart() loads persisted state correctly (term, vote, logs)
+
+What fails:
+- After Restart(), the restarted server doesn't respond to AppendEntries RPCs
+- Leader's match_index for the restarted server stays at 0
+- Final agreement with all 5 servers never completes
+
+
+DEBUGGING COMMANDS
+------------------
+Run with persistence enabled:
+  rm -rf /tmp/raft_*_partition_* && MAKO_RAFT_PERSISTENCE=1 timeout 180 ./build/deptran_server -f config/raft_lab_test.yml
+
+Check persistence files:
+  ls -la /tmp/raft_*_partition_*/
+
+View test progress:
+  ... 2>&1 | grep -E "(TEST|PASSED|FAILED|NCommitted)"
+
+View match_index calculations:
+  ... 2>&1 | grep -E "COMMIT-CALC"

@@ -79,6 +79,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerCurrentTerm,
                                              uint64_t *followerLastLogIndex,
                                              rrr::DeferredReply defer) {
+  verify(svr_ != nullptr);
   std::shared_ptr<Marshallable> cmd = nullptr;
   Coroutine::create_run([=, defer = std::move(defer)]() mutable {
     svr_->OnAppendEntries(slot,
