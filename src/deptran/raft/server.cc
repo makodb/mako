@@ -848,16 +848,18 @@ void RaftServer::HeartbeatLoop() {
         }
 
 #ifndef RAFT_BATCH_OPTIMIZATION
+        Log_info("[APPEND_CHECK] site=%d follower=%d next_index=%lu lastLogIndex=%lu condition=%s",
+                 site_id_, site_id, it->second, lastLogIndex, (it->second <= lastLogIndex) ? "TRUE" : "FALSE");
         if (it->second <= lastLogIndex) {
           auto curInstance = GetRaftInstance(it->second);
           // @safe - Null check to prevent crash if instance doesn't exist
           if (!curInstance) {
-            Log_error("[HEARTBEAT-SEND] GetRaftInstance(%d) returned NULL, skipping", it->second);
+            Log_error("[HEARTBEAT-SEND] GetRaftInstance(%lu) returned NULL, skipping", it->second);
           } else {
             cmd = curInstance->log_;
             cmdLogTerm = curInstance->term;
-            Log_debug("loc %d Sending AppendEntries for %d to loc %d cmd=%p",
-                loc_id_, it->second, it->first, cmd.get());
+            Log_info("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
+                site_id_, it->second, site_id, cmd.get());
           }
         }
 #endif
@@ -865,6 +867,8 @@ void RaftServer::HeartbeatLoop() {
 #ifdef RAFT_BATCH_OPTIMIZATION
         vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
         // [Jetpack] Start from max(it->second, min_active_slot_) since after failure, new elected leader it->second is not updated and can be 1
+        Log_info("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
+                 site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
         for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
           auto curInstance = GetRaftInstance(idx);
           // @safe - Null check to prevent crash if instance doesn't exist
@@ -875,17 +879,22 @@ void RaftServer::HeartbeatLoop() {
           shared_ptr<TpcCommitCommand> curCmd = dynamic_pointer_cast<TpcCommitCommand>(curInstance->log_);
           // @safe - Null check for dynamic_pointer_cast result
           if (!curCmd) {
-            Log_error("[HEARTBEAT-BATCH] Failed to cast log at index %d to TpcCommitCommand", idx);
-            continue;
+            Log_info("[BATCH_SKIP] site=%d idx=%d: log entry is not TpcCommitCommand (kind=%d), using raw log",
+                     site_id_, idx, curInstance->log_ ? curInstance->log_->kind_ : -1);
+            // For non-TpcCommitCommand entries, send them individually using the non-batch path
+            cmd = curInstance->log_;
+            break;
           }
           curCmd->term = curInstance->term;
           batch_buffer_.push_back(curCmd);
         }
         // Log_info("batch size: %d", batch_buffer_.size());
-        shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
-        batch_cmd->AddCmds(batch_buffer_);
         if (batch_buffer_.size() > 0) {
+          shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
+          batch_cmd->AddCmds(batch_buffer_);
           cmd = dynamic_pointer_cast<Marshallable>(batch_cmd);
+          Log_info("[BATCH_SEND] site=%d sending batch of %zu entries to follower %d",
+                   site_id_, batch_buffer_.size(), site_id);
         }
 #endif
 
@@ -970,6 +979,17 @@ void RaftServer::HeartbeatLoop() {
             // follower could have log entries after the prevLogIndex the AppendEntries was sent for.
             // neither party can detect if the entries are incorrect or not yet
             verify(ret_last_log_index >= next_index - 1);
+            // BUGFIX: Update match_index from follower's reported lastLogIndex
+            // This is critical for commit index calculation when a new leader is elected.
+            // Without this, match_index stays at 0 and entries never get committed.
+            if (ret_last_log_index > match_index) {
+              match_index = ret_last_log_index;
+              // Safety check: ensure match_index doesn't exceed leader's lastLogIndex
+              if (match_index > lastLogIndex) {
+                match_index = lastLogIndex;
+              }
+              Log_debug("heartbeat updated match_index for site %d: match_index=%lu", site_id, match_index);
+            }
             if (ret_last_log_index >= next_index) {
               if (next_index <= lastLogIndex) {
                 next_index++;

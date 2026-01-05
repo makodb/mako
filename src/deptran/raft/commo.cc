@@ -51,12 +51,14 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
 		auto follower_id = p.first;
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [ret,ret_status,ret_term,ret_last_log_index](rusty::Arc<Future> fu) {
+    fuattr.callback = [ret,ret_status,ret_term,ret_last_log_index,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
+        Log_info("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
       fu->get_reply() >> *ret_status >> *ret_term >> *ret_last_log_index;
+      Log_info("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu",
+               site_id, *ret_status, *ret_term, *ret_last_log_index);
       ret->set(1);
     };
 
