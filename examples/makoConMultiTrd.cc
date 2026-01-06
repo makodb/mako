@@ -249,6 +249,13 @@ void RustWrapper::cleanup_thread_info() {
 // ============================================================================
 
 extern "C" {
+    // Called by Rust when each worker thread starts
+    // In this multi-threaded architecture, Rust only has 1 thread for networking
+    // so this is just a placeholder
+    void cpp_worker_thread_init(size_t thread_id) {
+        std::cout << "[cpp] Rust worker thread " << thread_id << " initialized" << std::endl;
+    }
+
     bool cpp_execute_request_sync(uint32_t op,
                              const uint8_t* key_ptr, size_t key_len,
                              const uint8_t* val_ptr, size_t val_len,

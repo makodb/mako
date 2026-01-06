@@ -157,6 +157,14 @@ void RustWrapper::cleanup_thread_info() {
 }
 
 extern "C" {
+    // Called by Rust when each worker thread starts
+    void cpp_worker_thread_init(size_t thread_id) {
+        if (g_rust_wrapper_instance) {
+            g_rust_wrapper_instance->ensure_thread_info();
+            std::cout << "[cpp] Worker thread " << thread_id << " initialized" << std::endl;
+        }
+    }
+
     bool cpp_execute_request_sync(uint32_t op,
                              const uint8_t* key_ptr, size_t key_len,
                              const uint8_t* val_ptr, size_t val_len,

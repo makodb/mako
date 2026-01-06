@@ -51,7 +51,8 @@ public:
     abstract_ordered_index *customerTable;
     abstract_db *db;
     static void cleanup_thread_info();
-    
+    void ensure_thread_info();  // Called by cpp_worker_thread_init
+
 private:
     static thread_local str_arena* tl_arena;
     static thread_local std::string tl_txn_obj_buf;
@@ -60,7 +61,6 @@ private:
     std::atomic<bool> running_;
     std::atomic<bool> initialized_;
     static thread_local bool ti_initialized;
-    void ensure_thread_info();
     static thread_local std::string tl_key_buf;
     static thread_local std::string tl_val_buf;
 };
@@ -68,6 +68,9 @@ private:
 extern RustWrapper* g_rust_wrapper_instance;
 
 extern "C" {
+    // Called by Rust when each worker thread starts
+    void cpp_worker_thread_init(size_t thread_id);
+
     bool cpp_execute_request_sync(uint32_t op,
                              const uint8_t* key_ptr, size_t key_len,
                              const uint8_t* val_ptr, size_t val_len,
