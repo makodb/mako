@@ -10,6 +10,9 @@
 #include "../rcc_rpc.h"
 #include "server.h"
 #include "macros.h"
+#include <atomic>
+#include <mutex>
+#include <map>
 
 class SimpleCommand;
 namespace janus {
@@ -20,8 +23,21 @@ class RaftServer;
 // @safe
 class RaftServiceImpl : public RaftService {
  public:
-  RaftServer* svr_;
+  // Static registry to find services by site_id (for Kill/Restart support)
+  static std::map<siteid_t, RaftServiceImpl*> service_registry_;
+  static std::mutex registry_mutex_;
+
+  // Atomic pointer - allows lock-free reads on RPC hot path
+  std::atomic<RaftServer*> svr_;
+  siteid_t site_id_;
+
   RaftServiceImpl(TxLogServer* sched);
+
+  // Called by test framework during Kill/Restart to update server pointer
+  static void UpdateServer(siteid_t site_id, RaftServer* new_svr);
+
+  // Called by RPC handlers - lock-free atomic read
+  RaftServer* GetServer();
 
   RpcHandler(Vote, 6,
              const uint64_t&, lst_log_idx,

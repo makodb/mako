@@ -49,8 +49,8 @@
 
 #define RpcHandler(name, ...) \
   void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) override { \
-    verify(svr_ != nullptr); \
-    if (svr_->IsDisconnected()) { \
+    RaftServer* _svr = GetServer(); \
+    if (_svr == nullptr || _svr->IsDisconnected()) { \
       OnDisconnected##name(_PARAMS(__VA_ARGS__)); \
       defer.reply(); \
     }  else { \

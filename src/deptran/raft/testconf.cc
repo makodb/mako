@@ -3,6 +3,7 @@
 #include "../config.h"
 #include "frame.h"
 #include "raft_persistence.h"
+#include "service.h"
 #include <cstring>
 
 namespace janus {
@@ -535,6 +536,10 @@ void RaftTestConfig::Kill(siteid_t svr) {
   // Mark as disconnected
   disconnected_[svr] = true;
 
+  // Clear atomic pointer in RaftServiceImpl BEFORE deleting frame
+  // This ensures in-flight RPCs get nullptr and return failure gracefully
+  RaftServiceImpl::UpdateServer(svr, nullptr);
+
   // Disconnect to save RPC proxies before deletion
   RaftFrame* frame = it->second;
   if (frame && frame->svr_) {
@@ -681,6 +686,10 @@ void RaftTestConfig::Restart(siteid_t svr) {
         return 0;
       };
   frame->svr_->RegLearnerAction(commit_callbacks[svr]);
+
+  // Update atomic pointer in RaftServiceImpl to point to the new server
+  // This allows the existing RPC service to forward requests to the new server
+  RaftServiceImpl::UpdateServer(svr, frame->svr_.get());
 
   // Add back to replicas map - EnsureSetup() will be called lazily on first RPC to start coroutines
   replicas[svr] = frame;

@@ -11,12 +11,43 @@
 
 namespace janus {
 
+// Static member definitions for service registry
+std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
+std::mutex RaftServiceImpl::registry_mutex_;
+
 // @safe
-RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
-    : svr_((RaftServer*)sched) {
-	struct timespec curr_time;
-	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
-	srand(curr_time.tv_nsec);
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched) {
+  RaftServer* svr = (RaftServer*)sched;
+  svr_.store(svr, std::memory_order_release);
+  site_id_ = svr->site_id_;
+
+  // Register this service instance in the static registry
+  {
+    std::lock_guard<std::mutex> lock(registry_mutex_);
+    service_registry_[site_id_] = this;
+    Log_info("[RAFT-SERVICE] Registered RaftServiceImpl for site %d", site_id_);
+  }
+
+  struct timespec curr_time;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
+  srand(curr_time.tv_nsec);
+}
+
+// Called by test framework during Kill/Restart to update server pointer
+void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  auto it = service_registry_.find(site_id);
+  if (it != service_registry_.end()) {
+    it->second->svr_.store(new_svr, std::memory_order_release);
+    Log_info("[RAFT-SERVICE] UpdateServer: site %d -> %p", site_id, new_svr);
+  } else {
+    Log_warn("[RAFT-SERVICE] UpdateServer: site %d not found in registry", site_id);
+  }
+}
+
+// Called by RPC handlers - lock-free atomic read
+RaftServer* RaftServiceImpl::GetServer() {
+  return svr_.load(std::memory_order_acquire);
 }
 
 // @safe - Refactored to use lambda instead of std::bind to avoid pointer operations
@@ -27,8 +58,15 @@ void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                                     ballot_t* reply_term,
                                     bool_t *vote_granted,
                                     rrr::DeferredReply defer) {
-  verify(svr_ != nullptr);
-  svr_->OnRequestVote(lst_log_idx,lst_log_term, can_id, can_term,
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *reply_term = 0;
+    *vote_granted = false;
+    defer.reply();
+    return;
+  }
+  svr->OnRequestVote(lst_log_idx, lst_log_term, can_id, can_term,
                     reply_term, vote_granted,
                     [defer = std::move(defer)]() mutable { defer.reply(); });
 }
@@ -47,10 +85,18 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         uint64_t *followerCurrentTerm,
                                         uint64_t *followerLastLogIndex,
                                         rrr::DeferredReply defer) {
-  verify(svr_ != nullptr);
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *followerAppendOK = 0;
+    *followerCurrentTerm = 0;
+    *followerLastLogIndex = 0;
+    defer.reply();
+    return;
+  }
 
   Coroutine::create_run([=, defer = std::move(defer)]() mutable {
-    svr_->OnAppendEntries(slot,
+    svr->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
                             leaderSiteId,
@@ -79,10 +125,18 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerCurrentTerm,
                                              uint64_t *followerLastLogIndex,
                                              rrr::DeferredReply defer) {
-  verify(svr_ != nullptr);
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *followerAppendOK = 0;
+    *followerCurrentTerm = 0;
+    *followerLastLogIndex = 0;
+    defer.reply();
+    return;
+  }
   std::shared_ptr<Marshallable> cmd = nullptr;
   Coroutine::create_run([=, defer = std::move(defer)]() mutable {
-    svr_->OnAppendEntries(slot,
+    svr->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
                             leaderSiteId,
@@ -105,8 +159,15 @@ void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
                                         uint64_t* followerTerm,
                                         bool_t* success,
                                         rrr::DeferredReply defer) {
-  verify(svr_ != nullptr);
-  svr_->OnTimeoutNow(leaderTerm, leaderSiteId, followerTerm, success,
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *followerTerm = 0;
+    *success = false;
+    defer.reply();
+    return;
+  }
+  svr->OnTimeoutNow(leaderTerm, leaderSiteId, followerTerm, success,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
