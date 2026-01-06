@@ -5,15 +5,21 @@
 // - mako::DB interface for database operations
 // - Rust library for Redis protocol handling (SO_REUSEPORT thread-per-core)
 // - 100% synchronous blocking I/O
+// - Transaction support via MULTI/EXEC
+//
+// All operations (single GET/SET or batched MULTI/EXEC) go through execute_transaction()
+// which wraps them in a single database transaction.
 //
 
 #include <iostream>
 #include <chrono>
 #include <thread>
 #include <atomic>
+#include <vector>
 #include <mako.hh>
 #include "db.hh"
 #include <examples/common.h>
+#include "lib/transaction_ffi.h"
 
 // Global database instance (used by FFI callbacks)
 static mako::DB* g_mako_db = nullptr;
@@ -25,18 +31,6 @@ thread_local std::string tl_txn_buf;
 thread_local std::string tl_key_buf;
 thread_local std::string tl_val_buf;
 thread_local bool tl_initialized = false;
-
-// OpCode enum is already defined in rust_wrapper.h (included via mako.hh)
-// rust_init() is also declared in rust_wrapper.h
-
-// Result struct for operations (local to this file)
-struct RequestResult {
-    std::string value;
-    bool success;
-
-    RequestResult(const std::string& val, bool succ) : value(val), success(succ) {}
-    RequestResult(bool succ) : value(""), success(succ) {}
-};
 
 // Initialize thread-local state for database operations
 void ensure_thread_info() {
@@ -54,93 +48,6 @@ void ensure_thread_info() {
     }
 }
 
-// Execute a database request (Get or Set)
-RequestResult execute_request(OpCode op,
-                              const uint8_t* key_ptr, size_t key_len,
-                              const uint8_t* val_ptr, size_t val_len) {
-    std::string result;
-    bool success = true;
-
-    try {
-        if (op == OpCode::Get) {
-            // Begin transaction
-            void *txn = g_mako_db->BeginTransaction();
-
-            // Build key with prefix
-            tl_key_buf.clear();
-            tl_key_buf.reserve(sizeof("table_key_") - 1 + key_len);
-            tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
-            tl_key_buf.append(reinterpret_cast<const char*>(key_ptr), key_len);
-
-            tl_val_buf.clear();
-            try {
-                mako::Status s = g_table->Get(txn, tl_key_buf, tl_val_buf);
-                if (s.ok()) {
-                    g_mako_db->Commit(txn);
-                    result = tl_val_buf;
-                } else {
-                    g_mako_db->Rollback(txn);
-                    success = s.IsNotFound();  // NotFound is not an error for GET
-                    result = "";
-                }
-            } catch (abstract_db::abstract_abort_exception &ex) {
-                g_mako_db->Rollback(txn);
-                success = false;
-                result = "ERROR: Transaction aborted";
-            } catch (...) {
-                g_mako_db->Rollback(txn);
-                success = false;
-                result = "ERROR: Exception";
-            }
-        } else if (op == OpCode::Set) {
-            // Begin transaction
-            void *txn = g_mako_db->BeginTransaction();
-
-            // Build key with prefix
-            tl_key_buf.clear();
-            tl_key_buf.reserve(sizeof("table_key_") - 1 + key_len);
-            tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
-            tl_key_buf.append(reinterpret_cast<const char*>(key_ptr), key_len);
-
-            // Build value with encoding (using mako::Encode)
-            tl_val_buf.clear();
-            if (val_ptr && val_len) {
-                std::string raw_val(reinterpret_cast<const char*>(val_ptr), val_len);
-                tl_val_buf = mako::Encode(raw_val);
-            } else {
-                tl_val_buf = mako::Encode("");
-            }
-
-            try {
-                mako::Status s = g_table->Put(txn, tl_key_buf, tl_val_buf);
-                if (s.ok()) {
-                    g_mako_db->Commit(txn);
-                    result = "OK";
-                } else {
-                    g_mako_db->Rollback(txn);
-                    success = false;
-                    result = "ERROR: " + s.ToString();
-                }
-            } catch (abstract_db::abstract_abort_exception &ex) {
-                g_mako_db->Rollback(txn);
-                success = false;
-                result = "ERROR: Transaction aborted";
-            } catch (...) {
-                g_mako_db->Rollback(txn);
-                success = false;
-                result = "ERROR: Exception";
-            }
-        } else {
-            result = "ERROR: Invalid operation";
-            success = false;
-        }
-    } catch (...) {
-        success = false;
-        result = "ERROR: Unexpected exception";
-    }
-    return RequestResult(result, success);
-}
-
 // Cleanup thread-local state
 void cleanup_thread_info() {
     if (tl_arena) {
@@ -153,6 +60,139 @@ void cleanup_thread_info() {
     tl_initialized = false;
 }
 
+// Execute a batch of operations as a single database transaction
+// This is the ONLY entry point for all database operations (single or batched)
+bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
+    ensure_thread_info();
+
+    if (!request || !response || request->num_ops == 0) {
+        if (response) {
+            response->transaction_success = false;
+            response->num_results = 0;
+            response->results = nullptr;
+        }
+        return false;
+    }
+
+    // Allocate results array
+    response->num_results = request->num_ops;
+    response->results = static_cast<TxnOpResult*>(
+        std::calloc(request->num_ops, sizeof(TxnOpResult)));
+    if (!response->results) {
+        response->transaction_success = false;
+        response->num_results = 0;
+        return false;
+    }
+
+    // Reset arena for this transaction
+    if (tl_arena) {
+        tl_arena->reset();
+    }
+
+    // Begin a single database transaction for all operations
+    // NOTE: mbta_wrapper::new_txn() always returns NULL - it uses thread-local TThread::txn state
+    // The actual transaction is started via Sto::start_transaction() internally
+    // DO NOT check for NULL - that's expected behavior!
+    void* txn = g_mako_db->BeginTransaction();
+
+    bool all_success = true;
+
+    try {
+        // Execute each operation within the transaction
+        for (size_t i = 0; i < request->num_ops; i++) {
+            const TxnOperation& op = request->ops[i];
+            TxnOpResult& result = response->results[i];
+            result.success = false;
+            result.data_ptr = nullptr;
+            result.data_len = 0;
+
+            // Build key with prefix
+            tl_key_buf.clear();
+            tl_key_buf.reserve(sizeof("table_key_") - 1 + op.key_len);
+            tl_key_buf.append("table_key_", sizeof("table_key_") - 1);
+            tl_key_buf.append(reinterpret_cast<const char*>(op.key_ptr), op.key_len);
+
+            if (op.op == TXN_OP_GET) {
+                // GET operation
+                tl_val_buf.clear();
+                mako::Status s = g_table->Get(txn, tl_key_buf, tl_val_buf);
+                if (s.ok()) {
+                    result.success = true;
+                    if (!tl_val_buf.empty()) {
+                        result.data_len = tl_val_buf.size();
+                        result.data_ptr = static_cast<uint8_t*>(std::malloc(result.data_len));
+                        if (result.data_ptr) {
+                            std::memcpy(result.data_ptr, tl_val_buf.data(), result.data_len);
+                        }
+                    }
+                } else if (s.IsNotFound()) {
+                    // Key not found is success with empty result
+                    result.success = true;
+                } else {
+                    all_success = false;
+                }
+            } else if (op.op == TXN_OP_SET) {
+                // SET operation - build value with encoding
+                tl_val_buf.clear();
+                if (op.val_ptr && op.val_len > 0) {
+                    std::string raw_val(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                    tl_val_buf = mako::Encode(raw_val);
+                } else {
+                    tl_val_buf = mako::Encode("");
+                }
+
+                mako::Status s = g_table->Put(txn, tl_key_buf, tl_val_buf);
+                result.success = s.ok();
+                if (!s.ok()) {
+                    all_success = false;
+                }
+            } else {
+                // Unknown operation
+                all_success = false;
+            }
+        }
+
+        // Commit or rollback based on success
+        if (all_success) {
+            g_mako_db->Commit(txn);
+            response->transaction_success = true;
+        } else {
+            g_mako_db->Rollback(txn);
+            response->transaction_success = false;
+        }
+
+    } catch (abstract_db::abstract_abort_exception& ex) {
+        g_mako_db->Rollback(txn);
+        response->transaction_success = false;
+        // Mark all results as failed on abort
+        for (size_t i = 0; i < response->num_results; i++) {
+            response->results[i].success = false;
+        }
+    } catch (...) {
+        g_mako_db->Rollback(txn);
+        response->transaction_success = false;
+        for (size_t i = 0; i < response->num_results; i++) {
+            response->results[i].success = false;
+        }
+    }
+
+    return true;
+}
+
+// Free transaction response resources
+void free_transaction_response(TxnResponse* response) {
+    if (response && response->results) {
+        for (size_t i = 0; i < response->num_results; i++) {
+            if (response->results[i].data_ptr) {
+                std::free(response->results[i].data_ptr);
+            }
+        }
+        std::free(response->results);
+        response->results = nullptr;
+        response->num_results = 0;
+    }
+}
+
 // FFI exports - called by Rust
 extern "C" {
     // Called by Rust when each worker thread starts
@@ -161,71 +201,20 @@ extern "C" {
         std::cout << "[cpp] Worker thread " << thread_id << " initialized" << std::endl;
     }
 
-    // Execute a GET/SET request synchronously
-    bool cpp_execute_request_sync(uint32_t op,
-                                  const uint8_t* key_ptr, size_t key_len,
-                                  const uint8_t* val_ptr, size_t val_len,
-                                  uint8_t** out_ptr, size_t* out_len) {
-        if (!g_mako_db || !key_ptr || !out_ptr || !out_len) {
-            if (out_ptr) *out_ptr = nullptr;
-            if (out_len) *out_len = 0;
-            return false;
-        }
-
-        OpCode opcode;
-        switch (op) {
-            case 1: opcode = OpCode::Get; break;
-            case 2: opcode = OpCode::Set; break;
-            default:
-                *out_ptr = nullptr;
-                *out_len = 0;
-                return false;
-        }
-
-        RequestResult kv = execute_request(opcode, key_ptr, key_len, val_ptr, val_len);
-
-        if (!kv.success) {
-            *out_ptr = nullptr;
-            *out_len = 0;
-            return false;
-        }
-
-        if (opcode == OpCode::Get) {
-            if (!kv.value.empty()) {
-                size_t n = kv.value.size();
-                auto* buf = static_cast<uint8_t*>(std::malloc(n));
-                if (!buf) {
-                    *out_ptr = nullptr;
-                    *out_len = 0;
-                    return false;
-                }
-                std::memcpy(buf, kv.value.data(), n);
-                *out_ptr = buf;
-                *out_len = n;
-            } else {
-                // GET miss - return empty but success
-                *out_ptr = nullptr;
-                *out_len = 0;
-            }
-        } else {
-            // SET - no payload
-            *out_ptr = nullptr;
-            *out_len = 0;
-        }
-
-        return true;
-    }
-
-    // Free buffer returned by cpp_execute_request_sync
-    void cpp_free_buf(uint8_t* ptr, size_t len) {
-        if (ptr) {
-            std::free(ptr);
-        }
-    }
-
     // Cleanup thread-local state
     void cpp_cleanup_thread_info() {
         cleanup_thread_info();
+    }
+
+    // Execute a batch of operations as a single database transaction
+    // This is used for both single operations (GET/SET) and batched MULTI/EXEC
+    bool cpp_execute_transaction(const TxnRequest* request, TxnResponse* response) {
+        return execute_transaction(request, response);
+    }
+
+    // Free transaction response resources
+    void cpp_free_transaction_response(TxnResponse* response) {
+        free_transaction_response(response);
     }
 }
 
