@@ -692,6 +692,21 @@ void RaftServer::applyLogs() {
 // shared_ptr<Marshallable> by value (moves), which compounds the issue.
 // Potential fixes: (1) Change SendAppendEntries2 to take const shared_ptr&,
 // (2) Investigate checker's loop-local variable handling.
+// ============================================================================
+// PARALLEL HEARTBEAT FIX
+// ============================================================================
+// This struct holds context for each pending AppendEntries RPC.
+// Used to send RPCs in parallel and process responses without blocking.
+struct PendingAppendEntries {
+  siteid_t follower_id;
+  shared_ptr<IntEvent> event;
+  uint64_t ret_status;
+  uint64_t ret_term;
+  uint64_t ret_last_log_index;
+  shared_ptr<Marshallable> cmd;  // nullptr for heartbeat
+  uint64_t sent_term;  // term when RPC was sent
+};
+
 void RaftServer::HeartbeatLoop() {
   auto hb_timer = new Timer();
   hb_timer->start();
@@ -736,102 +751,76 @@ void RaftServer::HeartbeatLoop() {
         // Log_info("heartbeat loop at loc %d skip since not leader", loc_id_);
         continue;
       }
-      // Log_info("[1]heartbeat loop at loc %d continue since is leader", loc_id_);
-      // Log_info("time b/f sleep %" PRIu64, Time::now());
-      // Coroutine::sleep(HEARTBEAT_INTERVAL);
-      // Log_info("time a/f sleep %" PRIu64, Time::now());
+
       auto nservers = Config::GetConfig()->GetPartitionSize(partition_id);
-      // Log_info("next_index_ size %d", next_index_.size());
+
+      // ========================================================================
+      // PHASE 0: Calculate commit index ONCE per heartbeat round (not per-follower)
+      // ========================================================================
+      mtx_.lock();
+      std::vector<uint64_t> matchedIndices{};
+      for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
+        matchedIndices.push_back(it->second);
+        Log_info("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
+      }
+      Log_info("[COMMIT-CALC] nservers=%lu, matchedIndices.size()=%zu", nservers, matchedIndices.size());
+      verify(matchedIndices.size() == nservers - 1);
+      std::sort(matchedIndices.begin(), matchedIndices.end());
+      uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
+      Log_info("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
+
+      if (newCommitIndex > lastLogIndex) {
+        newCommitIndex = lastLogIndex;
+      }
+
+      if (newCommitIndex > commitIndex && (GetRaftInstance(newCommitIndex)->term == currentTerm)) {
+        Log_debug("newCommitIndex %d", newCommitIndex);
+        commitIndex = newCommitIndex;
+        PersistCommitIndex(commitIndex, "HeartbeatLoop: leader commit");
+      }
+      if (commitIndex > executeIndex)
+        applyLogs();
+      term = currentTerm;
+      uint64_t current_commit_index = commitIndex;
+      uint64_t current_last_log_index = lastLogIndex;
+      mtx_.unlock();
+
+      // ========================================================================
+      // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
+      // ========================================================================
+      // Use unique_ptr to ensure stable memory addresses for the callback pointers.
+      // The async RPC callback writes to ret_status/ret_term/ret_last_log_index,
+      // so these must remain at fixed addresses until the RPC completes.
+      std::vector<std::unique_ptr<PendingAppendEntries>> pending_rpcs;
+
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
         if (site_id == site_id_) {
           continue;
         }
         if (!IsLeader()) {
-          // Log_info("sleep 1");
-          // Log_info("wake 1");
-          continue;
-        }
-        // Log_info("[2]heartbeat loop at loc %d continue since is leader", loc_id_);
-        static uint64_t ttt = 0;
-        uint64_t t2 = Time::now();
-        if (ttt+1000000 < t2) {
-          ttt = t2;
-          Log_debug("heartbeat from site: %d", site_id);
-          // Log_info("site %d in heartbeat_loop, not leader", site_id_);
+          break;  // Stop sending if we lost leadership
         }
 
-        mtx_.lock();
-        // update commitIndex first
-        std::vector<uint64_t> matchedIndices{};
-        for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
-          matchedIndices.push_back(it->second);
-          Log_info("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
-        }
-        Log_info("[COMMIT-CALC] nservers=%lu, matchedIndices.size()=%zu", nservers, matchedIndices.size());
-        verify(matchedIndices.size() == nservers - 1);
-        std::sort(matchedIndices.begin(), matchedIndices.end());
-        // new commitIndex is the (N/2 + 1)th largest index
-        // only update commitIndex if the entry at new index was replicated in the current term
-        uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
-        Log_info("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
-        
-        // Debug logging for commitIndex calculation
-        if (newCommitIndex > lastLogIndex) {
-          if (!IsLeader()) {
-            mtx_.unlock();
-            continue;
-          }
-          // Fix: cap newCommitIndex to lastLogIndex
-          newCommitIndex = lastLogIndex;
-        }
-        
-        auto commitInstance = GetRaftInstance(newCommitIndex);
-        if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
-          Log_debug("newCommitIndex %d", newCommitIndex);
-          commitIndex = newCommitIndex;
-
-          // Persist commit index (can be async, not critical for safety)
-          PersistCommitIndex(commitIndex, "HeartbeatLoop: leader commit");
-        }
-        // leader apply logs applicable
-        if (commitIndex > executeIndex)
-          applyLogs();
-        // Log_info("[3]heartbeat loop at loc %d continue since is leader", loc_id_);
-        term = currentTerm;
-        mtx_.unlock();
-
-      // send 1 AppendEntries to each follower that needs one
-        // auto site_id = it->first;
-        // if (site_id == site_id_) {
-        //   continue;
-        // }
         mtx_.lock();
         uint64_t prevLogIndex = it->second - 1;
         if (prevLogIndex > lastLogIndex) {
           Log_info("[APPEND_ENTRIES] ERROR: prevLogIndex (%ld) > lastLogIndex (%ld), fixing next_index", prevLogIndex, lastLogIndex);
-          // Fix the next_index to be valid
           it->second = lastLogIndex + 1;
           prevLogIndex = it->second - 1;
         }
-        
-        // Additional safety check: if prevLogIndex is still invalid, skip this follower
+
         if (prevLogIndex > lastLogIndex) {
-          Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower %d: prevLogIndex (%ld) > lastLogIndex (%ld), skipping", 
+          Log_info("[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower %d: prevLogIndex (%ld) > lastLogIndex (%ld), skipping",
                    site_id, prevLogIndex, lastLogIndex);
-          // Reset the next_index to start from the beginning to allow the follower to catch up
           it->second = 1;
           mtx_.unlock();
           continue;
         }
-        
+
         verify(prevLogIndex <= lastLogIndex);
-        // if (prevLogIndex == lastLogIndex && !doHeartbeat) {
-        //   continue;
-        // }
         auto instance = GetRaftInstance(prevLogIndex);
 
-        // CRITICAL: Defensive null check
         if (!instance) {
           Log_error("[HEARTBEAT-SEND] [CRITICAL] GetRaftInstance(%lu) returned NULL! Skipping follower %d",
                     prevLogIndex, site_id);
@@ -842,14 +831,10 @@ void RaftServer::HeartbeatLoop() {
         uint64_t prevLogTerm = instance->term;
         shared_ptr<Marshallable> cmd = nullptr;
         uint64_t cmdLogTerm = 0;
-        if (cmd) {
-          Log_info("[APPEND_ENTRIES] Leader %d: sending NEW log entry to follower %d, prevLogIndex=%ld, prevLogTerm=%ld, lastLogIndex=%ld",
-                   site_id_, site_id, prevLogIndex, prevLogTerm, lastLogIndex);
-        }
 
 #ifndef RAFT_BATCH_OPTIMIZATION
-        Log_info("[APPEND_CHECK] site=%d follower=%d next_index=%lu lastLogIndex=%lu condition=%s",
-                 site_id_, site_id, it->second, lastLogIndex, (it->second <= lastLogIndex) ? "TRUE" : "FALSE");
+        Log_info("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
+                 site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
         if (it->second <= lastLogIndex) {
           auto curInstance = GetRaftInstance(it->second);
           // @safe - Null check to prevent crash if instance doesn't exist
@@ -866,7 +851,6 @@ void RaftServer::HeartbeatLoop() {
 
 #ifdef RAFT_BATCH_OPTIMIZATION
         vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
-        // [Jetpack] Start from max(it->second, min_active_slot_) since after failure, new elected leader it->second is not updated and can be 1
         Log_info("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
                  site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
         for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
@@ -881,14 +865,12 @@ void RaftServer::HeartbeatLoop() {
           if (!curCmd) {
             Log_info("[BATCH_SKIP] site=%d idx=%d: log entry is not TpcCommitCommand (kind=%d), using raw log",
                      site_id_, idx, curInstance->log_ ? curInstance->log_->kind_ : -1);
-            // For non-TpcCommitCommand entries, send them individually using the non-batch path
             cmd = curInstance->log_;
             break;
           }
           curCmd->term = curInstance->term;
           batch_buffer_.push_back(curCmd);
         }
-        // Log_info("batch size: %d", batch_buffer_.size());
         if (batch_buffer_.size() > 0) {
           shared_ptr<TpcBatchCommand> batch_cmd = std::make_shared<TpcBatchCommand>();
           batch_cmd->AddCmds(batch_buffer_);
@@ -897,136 +879,165 @@ void RaftServer::HeartbeatLoop() {
                    site_id_, batch_buffer_.size(), site_id);
         }
 #endif
-
-        uint64_t ret_status = false;
-        uint64_t ret_term = 0;
-        uint64_t ret_last_log_index = 0;
         mtx_.unlock();
-        // @unsafe - output parameters passed by pointer
-        auto r = commo()->SendAppendEntries2(site_id,
+
+        // Create pending RPC context on heap for stable address
+        auto pending = std::make_unique<PendingAppendEntries>();
+        pending->follower_id = site_id;
+        pending->ret_status = false;
+        pending->ret_term = 0;
+        pending->ret_last_log_index = 0;
+        pending->cmd = cmd;
+        pending->sent_term = term;
+
+        // Send RPC (non-blocking - just initiates the async call)
+        // Pointers to pending->ret_* are stable because pending is heap-allocated
+        pending->event = commo()->SendAppendEntries2(site_id,
                                               partition_id,
                                               -1,
                                               -1,
                                               IsLeader(),
-                                              site_id_,  // leader's site_id
+                                              site_id_,
                                               term,
                                               prevLogIndex,
                                               prevLogTerm,
-                                              commitIndex,
+                                              current_commit_index,
                                               cmd,
-                                              cmdLogTerm, // deprecated in batched version cmdLogTerm
-                                              &ret_status,
-                                              &ret_term,
-                                              &ret_last_log_index);
-        r->wait(500000); // bound wait to avoid leader stall on slow/lost followers
-        if (r->status_.get() == Event::TIMEOUT) {
-          continue;
+                                              cmdLogTerm,
+                                              &pending->ret_status,
+                                              &pending->ret_term,
+                                              &pending->ret_last_log_index);
+
+        pending_rpcs.push_back(std::move(pending));
+      }
+
+      // ========================================================================
+      // PHASE 2: Wait for responses with SHORT timeout and process them
+      // ========================================================================
+      // Use a shorter per-RPC timeout (100ms) since we're processing in parallel.
+      // Total round time is bounded by the slowest responder, not sum of all.
+      const uint64_t PER_RPC_TIMEOUT = 100000;  // 100ms per RPC
+
+      for (auto& pending_ptr : pending_rpcs) {
+        if (!IsLeader()) {
+          break;  // Stop processing if we lost leadership
+        }
+
+        auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
+
+        pending.event->wait(PER_RPC_TIMEOUT);
+
+        if (pending.event->status_.get() == Event::TIMEOUT) {
+          Log_debug("[PARALLEL-HB] Timeout waiting for follower %d", pending.follower_id);
+          continue;  // Skip this follower, try again next round
         }
 
         mtx_.lock();
-        auto& next_index = next_index_[site_id];
-        auto& match_index = match_index_[site_id];
-        if (ret_status == false & ret_term == 0 && ret_last_log_index == 0) {
-          // do nothing
-        } else if (currentTerm > term) {
-          // continue; do nothing
-        } else if (ret_status == 0 && ret_term > term) {
+        auto& next_index = next_index_[pending.follower_id];
+        auto& match_index = match_index_[pending.follower_id];
+
+        if (pending.ret_status == false && pending.ret_term == 0 && pending.ret_last_log_index == 0) {
+          // RPC failed or no response - do nothing
+        } else if (currentTerm > pending.sent_term) {
+          // Stale response from old term - ignore
+        } else if (pending.ret_status == 0 && pending.ret_term > pending.sent_term) {
           // case 1: AppendEntries rejected because leader's term is expired
-          if (currentTerm == term) {
+          if (currentTerm == pending.sent_term) {
             Log_info("[STEPDOWN] Site %d: Stepping down due to higher term from follower %d (my_term=%lu, follower_term=%lu)",
-                     site_id_, site_id, term, ret_term);
+                     site_id_, pending.follower_id, pending.sent_term, pending.ret_term);
             setIsLeader(false);
-            currentTerm = ret_term;
-
-            // CRITICAL SAFETY: Unlock and skip this iteration to prevent stale heartbeats
-            // The next iteration will check IsLeader() and skip sending, giving the
-            // new leader time to establish itself without interference from stale AppendEntries
+            currentTerm = pending.ret_term;
             mtx_.unlock();
-            continue;  // Skip rest of this follower, move to next iteration
+            break;  // Stop processing - we're no longer leader
           }
-        } else if (ret_status == 0) {
-          // case 2: AppendEntries rejected because log doesn't contain an
-          // entry at prevLogIndex whose term matches prevLogTerm
-
-          // OPTIMIZED LOG RECONCILIATION: Use follower's reported last_log_index
-          // to jump directly instead of one-at-a-time backoff
-          if (ret_last_log_index > 0 && ret_last_log_index < next_index - 1) {
-            // Follower reported their actual last index - jump directly there
+        } else if (pending.ret_status == 0) {
+          // case 2: AppendEntries rejected - log inconsistency
+          if (pending.ret_last_log_index > 0 && pending.ret_last_log_index < next_index - 1) {
             uint64_t old_next = next_index;
-            next_index = ret_last_log_index + 1;
+            next_index = pending.ret_last_log_index + 1;
             Log_info("[LOG-RECONCILE] Site %d: Fast backoff for follower %d: next_index %lu -> %lu (gap: %lu, follower reported last: %lu)",
-                     site_id_, site_id, old_next, next_index, old_next - next_index, ret_last_log_index);
+                     site_id_, pending.follower_id, old_next, next_index, old_next - next_index, pending.ret_last_log_index);
           } else if (next_index > 10) {
-            // Exponential backoff: cut the gap in half to converge quickly
             uint64_t old_next = next_index;
             next_index = next_index / 2;
             Log_info("[LOG-RECONCILE] Site %d: Exponential backoff for follower %d: next_index %lu -> %lu (halved)",
-                     site_id_, site_id, old_next, next_index);
+                     site_id_, pending.follower_id, old_next, next_index);
           } else if (next_index > 1) {
-            // Close to the beginning, fall back to one-at-a-time
             next_index--;
             Log_debug("[LOG-RECONCILE] Site %d: Linear backoff for follower %d: next_index %lu -> %lu",
-                      site_id_, site_id, next_index + 1, next_index);
+                      site_id_, pending.follower_id, next_index + 1, next_index);
           } else {
             next_index = 1;
           }
         } else {
           // case 3: AppendEntries accepted
-          verify(ret_status == true);
-          if (cmd == nullptr) {
+          verify(pending.ret_status == true);
+          if (pending.cmd == nullptr) {
             Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
-            verify(ret_term == term);
-            // follower could have log entries after the prevLogIndex the AppendEntries was sent for.
-            // neither party can detect if the entries are incorrect or not yet
-            verify(ret_last_log_index >= next_index - 1);
-            // BUGFIX: Update match_index from follower's reported lastLogIndex
-            // This is critical for commit index calculation when a new leader is elected.
-            // Without this, match_index stays at 0 and entries never get committed.
-            if (ret_last_log_index > match_index) {
-              match_index = ret_last_log_index;
-              // Safety check: ensure match_index doesn't exceed leader's lastLogIndex
+            if (pending.ret_last_log_index > match_index) {
+              match_index = pending.ret_last_log_index;
               if (match_index > lastLogIndex) {
                 match_index = lastLogIndex;
               }
-              Log_debug("heartbeat updated match_index for site %d: match_index=%lu", site_id, match_index);
+              Log_debug("heartbeat updated match_index for site %d: match_index=%lu", pending.follower_id, match_index);
             }
-            if (ret_last_log_index >= next_index) {
+            if (pending.ret_last_log_index >= next_index) {
               if (next_index <= lastLogIndex) {
                 next_index++;
-                Log_debug("empty heartbeat incrementing next_index for site: %d, next_index: %d", site_id, next_index);
+                Log_debug("empty heartbeat incrementing next_index for site: %d, next_index: %d", pending.follower_id, next_index);
               }
             }
           } else {
             Log_debug("case 3B: AppendEntries accepted for non-empty msg");
-            // follower could have log entries after the prevLogIndex the AppendEntries was sent for.
-            // neither party can detect if the entries are incorrect or not yet
-            if (ret_last_log_index < next_index) { // [Jetpack] I don't know why but it will happen when Jetpack + Raft failure recovery at high throughput
-              // Follower is behind; back up and retry from its last log index
-              next_index = ret_last_log_index + 1;
-              match_index = ret_last_log_index;
+            if (pending.ret_last_log_index < next_index) {
+              next_index = pending.ret_last_log_index + 1;
+              match_index = pending.ret_last_log_index;
               mtx_.unlock();
               continue;
             }
-            Log_debug("loc %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld", 
-                site_id, ret_last_log_index, next_index, match_index);
+            Log_debug("loc %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
+                pending.follower_id, pending.ret_last_log_index, next_index, match_index);
 #ifndef RAFT_BATCH_OPTIMIZATION
             match_index = next_index;
             next_index++;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
-            // For batch optimization, match_index should be updated to the last index in the batch
-            // which is ret_last_log_index, not next_index
-            match_index = ret_last_log_index;
-            next_index = ret_last_log_index + 1;
+            match_index = pending.ret_last_log_index;
+            next_index = pending.ret_last_log_index + 1;
 #endif
-            // Safety check: ensure match_index doesn't exceed leader's lastLogIndex
             if (match_index > lastLogIndex) {
               match_index = lastLogIndex;
             }
             Log_debug("leader site %d receiving site %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
-                site_id_, site_id, ret_last_log_index, next_index, match_index);
+                site_id_, pending.follower_id, pending.ret_last_log_index, next_index, match_index);
           }
         }
+        mtx_.unlock();
+      }
+
+      // ========================================================================
+      // PHASE 3: Recalculate commit index after all responses processed
+      // ========================================================================
+      // This ensures commits happen promptly after replication, matching the
+      // original behavior where commit index was recalculated after each response.
+      if (IsLeader()) {
+        mtx_.lock();
+        std::vector<uint64_t> finalMatchedIndices{};
+        for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
+          finalMatchedIndices.push_back(it->second);
+        }
+        std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
+        uint64_t finalCommitIndex = finalMatchedIndices[(nservers - 1) / 2];
+        if (finalCommitIndex > lastLogIndex) {
+          finalCommitIndex = lastLogIndex;
+        }
+        if (finalCommitIndex > commitIndex && (GetRaftInstance(finalCommitIndex)->term == currentTerm)) {
+          Log_debug("[PHASE3-COMMIT] Advancing commitIndex %lu -> %lu", commitIndex, finalCommitIndex);
+          commitIndex = finalCommitIndex;
+          PersistCommitIndex(commitIndex, "HeartbeatLoop: post-response commit");
+        }
+        if (commitIndex > executeIndex)
+          applyLogs();
         mtx_.unlock();
       }
     }

@@ -13,8 +13,8 @@ int RaftLabTest::Run(void) {
   config_->SetLearnerAction();
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
-  if (testPersistence()
-      // || testInitialElection()
+  if (testPersistence() 
+      // ||testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
       // || TEST_EXPAND(testFailAgree())
