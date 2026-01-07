@@ -800,13 +800,19 @@ endif()
 #   - replication_helper.cc: thin dispatcher that calls non-borrow-checked impls.
 #     Uses rusty::Cell for safe interior mutability of global state.
 #
-# Deptran borrow checking - Cell/Condvar const propagation fixed!
-# Remaining violations (from included headers, not our code):
-#   - "Cannot modify field 'm_pNode' in const method" - yaml-cpp YAML::Node
-#   - "Cannot move out of 'rhs'" - STL iterator patterns
-#   - "Cannot call method on 'this.epochs_': field is mutably borrowed" - epoch tracking
-# These need investigation in rusty-cpp to handle third-party header patterns.
-set(DEPTRAN_BORROW_SRC "")
+# Deptran borrow checking - all files pass after rusty-cpp fixes:
+# - Cell/Condvar const propagation fixed (skips @safe callees with internal @unsafe)
+# - Unannotated third-party headers skipped (yaml-cpp, STL, etc.)
+set(DEPTRAN_BORROW_SRC
+    src/deptran/communicator.cc
+    src/deptran/workload.cc
+    src/deptran/server_worker.cc
+    src/deptran/client_worker.cc
+    src/deptran/paxos_worker.cc
+    src/deptran/stats_registry.cc
+    src/deptran/executor.cc
+    src/deptran/empty.cc
+)
 
 if(DEPTRAN_BORROW_SRC)
     add_library(deptran_borrow OBJECT ${DEPTRAN_BORROW_SRC})
