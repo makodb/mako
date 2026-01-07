@@ -800,14 +800,12 @@ endif()
 #   - replication_helper.cc: thin dispatcher that calls non-borrow-checked impls.
 #     Uses rusty::Cell for safe interior mutability of global state.
 #
-# Deptran borrow checking - blocked by rusty-cpp const propagation bug:
-# - Fixed Condvar const propagation by adding @unsafe blocks (condvar.hpp)
-# - Fixed UnsafeCell::get() to be marked @unsafe (unsafe_cell.hpp)
-# - BUG: Calling Cell::set() still triggers const propagation violation even though
-#   Cell::set() already has an internal @unsafe block. The checker should recognize
-#   that safe functions with internal @unsafe blocks don't require @unsafe at call sites.
-# - Other violations: yaml-cpp header, iterator patterns, concurrent borrow issues
-# Re-enable when rusty-cpp const propagation bug is fixed.
+# Deptran borrow checking - Cell/Condvar const propagation fixed!
+# Remaining violations (from included headers, not our code):
+#   - "Cannot modify field 'm_pNode' in const method" - yaml-cpp YAML::Node
+#   - "Cannot move out of 'rhs'" - STL iterator patterns
+#   - "Cannot call method on 'this.epochs_': field is mutably borrowed" - epoch tracking
+# These need investigation in rusty-cpp to handle third-party header patterns.
 set(DEPTRAN_BORROW_SRC "")
 
 if(DEPTRAN_BORROW_SRC)
