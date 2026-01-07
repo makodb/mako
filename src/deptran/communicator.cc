@@ -61,10 +61,13 @@ uint64_t Communicator::global_id = 0;
 Communicator::Communicator(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   Log_info("setup paxos communicator");
   vector<string> addrs;
-  if (poll_thread_worker.is_none())
+  if (poll_thread_worker.is_none()) {
     rpc_poll_ = rusty::Some(PollThread::create());
-  else
+    owns_poll_thread_ = true;  // We created this poll thread, we own it
+  } else {
     rpc_poll_ = rusty::Some(poll_thread_worker.as_ref().unwrap().clone());
+    owns_poll_thread_ = false;  // Passed in, don't shutdown on destruction
+  }
   auto config = Config::GetConfig();
   // create more client per server
   int proxy_batch_size = 1 ;
@@ -143,9 +146,14 @@ Communicator::~Communicator() {
   }
   rpc_clients_.clear();
 
-  // Shutdown PollThread if we own it
-  if (rpc_poll_.is_some()) {
+  // Only shutdown PollThread if we created it (owns_poll_thread_ == true)
+  // If it was passed in (shared with RPC server), we must NOT shutdown it
+  // or the server will stop accepting new connections
+  if (rpc_poll_.is_some() && owns_poll_thread_) {
+    Log_info("[COMMUNICATOR] Shutting down owned poll thread");
     rpc_poll_.as_ref().unwrap()->shutdown();
+  } else if (rpc_poll_.is_some()) {
+    Log_info("[COMMUNICATOR] Not shutting down shared poll thread (owns_poll_thread_=false)");
   }
 }
 
