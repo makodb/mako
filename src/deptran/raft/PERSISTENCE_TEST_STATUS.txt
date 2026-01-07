@@ -55,13 +55,33 @@ FIX 2 (NOT YET IMPLEMENTED):
 - Need to add registry or lookup mechanism since svr_workers_g is static in s_main.cc
 
 
+KNOWN ISSUE: NOTIFYRESTART IS FIRE-AND-FORGET
+----------------------------------------------
+Current NotifyRestart mechanism is imperfect:
+- Restarted server sends NotifyRestart ONCE to all peers
+- If a peer is also down at that moment, it never receives the notification
+- When that peer comes back up, it still has stale connection to the first server
+
+Example scenario:
+1. Server A and Server B are both killed
+2. Server A restarts, sends NotifyRestart to all (B is down, doesn't receive)
+3. Server B restarts, sends NotifyRestart to all (A receives, reconnects to B)
+4. But A never told B to reconnect, so B still has stale connection to A
+
+FIX 3 (NOT YET IMPLEMENTED):
+- Track which peers have acknowledged NotifyRestart
+- Periodically retry NotifyRestart to unacknowledged peers
+- Use large retry interval (e.g., 5-10 seconds) to minimize CPU overhead
+- Stop retrying once acknowledged or after max attempts
+
+
 PREVIOUS FIXES INCLUDED
 -----------------------
 1. Heartbeat match_index fix (server.cc ~line 480): HeartbeatLoop case 3A now
    updates match_index_ from follower's lastLogIndex
 
 2. NotifyRestart mechanism: After Restart(), server broadcasts to all peers
-   telling them to reconnect their client connections
+   telling them to reconnect their client connections (fire-and-forget)
 
 3. Atomic server pointer in RaftServiceImpl: UpdateServer() allows updating
    the server pointer after restart, handlers return (0,0,0) if nullptr
