@@ -800,16 +800,14 @@ endif()
 #   - replication_helper.cc: thin dispatcher that calls non-borrow-checked impls.
 #     Uses rusty::Cell for safe interior mutability of global state.
 #
-# set(DEPTRAN_BORROW_SRC
-#     "src/deptran/paxos_worker.cc"
-#     "src/deptran/server_worker.cc"
-#     "src/deptran/client_worker.cc"
-#     "src/deptran/communicator.cc"
-#     "src/deptran/paxos_main_helper.cc"
-#     "src/deptran/service.cc"
-#     "src/deptran/frame.cc"
-#     "src/deptran/coordinator.cc"
-# )
+# Deptran borrow checking - blocked by rusty-cpp const propagation bug:
+# - Fixed Condvar const propagation by adding @unsafe blocks (condvar.hpp)
+# - Fixed UnsafeCell::get() to be marked @unsafe (unsafe_cell.hpp)
+# - BUG: Calling Cell::set() still triggers const propagation violation even though
+#   Cell::set() already has an internal @unsafe block. The checker should recognize
+#   that safe functions with internal @unsafe blocks don't require @unsafe at call sites.
+# - Other violations: yaml-cpp header, iterator patterns, concurrent borrow issues
+# Re-enable when rusty-cpp const propagation bug is fixed.
 set(DEPTRAN_BORROW_SRC "")
 
 if(DEPTRAN_BORROW_SRC)
