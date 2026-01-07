@@ -464,6 +464,7 @@ class Communicator {
    */
   bool EnsureClientConnected(siteid_t site_id);
 
+  bool ReconnectToSite(siteid_t site_id, parid_t par_id);
   void Pause();
   void Resume();
   void ConnectClientLeaders();

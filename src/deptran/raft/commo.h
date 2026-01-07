@@ -122,6 +122,18 @@ friend class RaftProxy;
                       uint64_t leader_term,
                       siteid_t leader_site_id,
                       std::function<void(bool success, uint64_t follower_term)> callback);
+
+  /**
+   * SendNotifyRestart - Broadcast restart notification to all peers
+   *
+   * Called after a server restarts to tell all other servers to reconnect
+   * their client connections to this server.
+   *
+   * @param self_id - The site ID of the restarted server (self)
+   * @param par_id - Partition ID
+   */
+  // @safe
+  void SendNotifyRestart(siteid_t self_id, parid_t par_id);
 };
 
 } // namespace janus

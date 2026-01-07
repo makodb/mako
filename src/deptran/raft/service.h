@@ -94,6 +94,12 @@ class RaftServiceImpl : public RaftService {
     *success = false;
   }
 
+  RpcHandler(NotifyRestart, 2,
+             const siteid_t&, restartedSiteId,
+             bool_t*, acknowledged) {
+    *acknowledged = false;
+  }
+
 };
 
 } // namespace janus

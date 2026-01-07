@@ -4,6 +4,7 @@
 #include "frame.h"
 #include "raft_persistence.h"
 #include "service.h"
+#include "commo.h"
 #include <cstring>
 
 namespace janus {
@@ -699,6 +700,16 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
   // Reset RPC count
   rpc_count_last[svr] = 0;
+
+  // Notify all other servers to reconnect their client connections to this server
+  // This is needed because after Kill/Restart, other servers' TCP connections to us are stale
+  if (frame->commo_ != nullptr) {
+    Log_info("[RAFT-TEST] Sending NotifyRestart from site %d to all peers", svr);
+    auto commo = dynamic_cast<RaftCommo*>(frame->commo_.get());
+    if (commo != nullptr) {
+      commo->SendNotifyRestart(svr, frame->svr_->partition_id_);
+    }
+  }
 
   Log_info("[RAFT-TEST] Server %d restarted successfully (term=%lu, lastLogIndex=%lu)",
            svr, frame->svr_->currentTerm, frame->svr_->lastLogIndex);

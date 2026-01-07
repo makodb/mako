@@ -14,7 +14,7 @@ int RaftLabTest::Run(void) {
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
   if (testPersistence() 
-      // ||testInitialElection()
+      // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
       // || TEST_EXPAND(testFailAgree())
@@ -135,6 +135,8 @@ int RaftLabTest::testPersistence(void) {
 
   // Give it time to catch up
   Coroutine::Sleep(ELECTIONTIMEOUT);
+
+  Log_info("TEST 0: After Sleep for ELECTIONTIMEOUT");
 
   // Verify the restarted server recovered its state
   victim_server = config_->GetServer(victim);

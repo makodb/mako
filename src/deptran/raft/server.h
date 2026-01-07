@@ -154,11 +154,6 @@ class RaftServer : public TxLogServer {
 	void Setup();
 	void HeartbeatLoop() ;
 
-  // @unsafe - Returns raw pointer cast
-  RaftCommo* commo() {
-    return (RaftCommo*) commo_;
-  }
-
   // @unsafe
   void doVote(const slotid_t& lst_log_idx,
               const ballot_t& lst_log_term,
@@ -301,6 +296,11 @@ class RaftServer : public TxLogServer {
    */
   uint64_t GetElectionTimeout();
  public:
+  // @unsafe - Returns raw pointer cast
+  RaftCommo* commo() {
+    return (RaftCommo*) commo_;
+  }
+
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;
   slotid_t max_committed_slot_ = 0;

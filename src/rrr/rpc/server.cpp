@@ -148,7 +148,9 @@ int ServerConnection::run_async(const std::function<void()>& f) {
 // @safe - Reads requests from socket and dispatches to handlers
 // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers.
 bool ServerConnection::handle_read() {
+    Log_info("[RPC-DISPATCH] handle_read() called on fd=%d (addr=%s)", socket_, ctx_->addr.c_str());
     if (status_ == CLOSED) {
+        Log_info("[RPC-DISPATCH] fd=%d status is CLOSED, returning", socket_);
         return false;
     }
 
@@ -159,7 +161,9 @@ bool ServerConnection::handle_read() {
     // causing hangs when multiple requests arrive together.
 
     size_t bytes_read = in_.read_from_fd(socket_);
+    Log_info("[RPC-DISPATCH] fd=%d read %zu bytes, buffer size=%zu", socket_, bytes_read, in_.content_size());
     if (bytes_read == 0 && in_.content_size() < sizeof(i32)) {
+        Log_info("[RPC-DISPATCH] fd=%d no data available, returning", socket_);
         return false;
     }
 
@@ -206,6 +210,7 @@ bool ServerConnection::handle_read() {
         } else {
             i32 rpc_id;
             req->m >> rpc_id;
+            Log_info("[RPC-DISPATCH] fd=%d received rpc_id=%#x", socket_, rpc_id);
 
 #ifdef RPC_STATISTICS
             stat_server_rpc_counting(rpc_id);
@@ -230,20 +235,26 @@ bool ServerConnection::handle_read() {
             } else {
                 // Service found - dispatch via virtual method using RefCell
                 size_t svc_index = it->second;
+                Log_info("[RPC-DISPATCH] fd=%d rpc_id=%#x found at svc_index=%zu, creating coroutine", socket_, rpc_id, svc_index);
                 auto weak_this = weak_self_;
                 auto ctx = ctx_.clone();  // Clone Arc for the coroutine
-                Coroutine::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
+                int fd_for_log = socket_;  // Capture for logging inside lambda
+                Coroutine::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this, fd_for_log]() mutable {
                     // Borrow inside coroutine - guard released when lambda exits
                     // (*guard) dereferences RefMut to get Box<Service>&
                     // (*guard)-> calls Box::operator-> to get Service*
+                    Log_info("[RPC-DISPATCH] Coroutine executing for fd=%d rpc_id=%#x svc_index=%zu", fd_for_log, rpc_id, svc_index);
                     auto guard = ctx->services[svc_index].borrow_mut();
                     (*guard)->__dispatch__(rpc_id, std::move(req), weak_this);
+                    Log_info("[RPC-DISPATCH] __dispatch__ returned for fd=%d rpc_id=%#x", fd_for_log, rpc_id);
                 }, __FILE__, __LINE__);
             }
         }
     }
 
+    Log_info("[RPC-DISPATCH] fd=%d calling Reactor::loop()", socket_);
     Reactor::get_reactor()->loop();
+    Log_info("[RPC-DISPATCH] fd=%d Reactor::loop() returned", socket_);
 
     return false;
 }
@@ -373,7 +384,8 @@ bool ServerListener::handle_read() {
 #endif
     }
     if (clnt_socket >= 0) {
-      Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
+      // Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
+      Log_info("[NEW-CONN] server@%s accpeted new client, fd=%d", this->addr_.c_str(), clnt_socket);
       // @unsafe - set_nonblocking
       { verify(set_nonblocking(clnt_socket, true) == 0); }
 

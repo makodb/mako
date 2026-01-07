@@ -48,12 +48,14 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
   for (auto& p : proxies) {
     if (p.first != site_id)
         continue;
+    Log_info("[RPC-SEND] Sending AppendEntries to site %d via proxy %p", site_id, p.second);
 		auto follower_id = p.first;
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [ret,ret_status,ret_term,ret_last_log_index,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
-        Log_info("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
+        // Don't reconnect here - rely on NotifyRestart mechanism instead
+        Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
       fu->get_reply() >> *ret_status >> *ret_term >> *ret_last_log_index;
@@ -123,9 +125,10 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
 		auto follower_id = p.first;
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [res, cmd](rusty::Arc<Future> fu) {
+    fuattr.callback = [res, cmd, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
+        // Don't reconnect here - rely on NotifyRestart mechanism instead
+        Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
       // std::lock_guard<std::recursive_mutex> lk(res->mtx);
@@ -194,9 +197,10 @@ RaftCommo::BroadcastVote(parid_t par_id,
     }
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [e](rusty::Arc<Future> fu) {
+    fuattr.callback = [e,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
-        Log_info("Get a error message in reply");
+        // Don't reconnect here - rely on NotifyRestart mechanism instead
+        Log_debug("[VOTE_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
       ballot_t term = 0;
@@ -243,11 +247,11 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
 
-    fuattr.callback = [callback](rusty::Arc<Future> fu) {
+    fuattr.callback = [callback,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // RPC failed (network error, timeout, etc.)
-        Log_warn("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - network error (code=%d)",
-                 fu->get_error_code());
+        // Don't reconnect here - rely on NotifyRestart mechanism instead
+        Log_debug("[TIMEOUT-NOW-RPC] Failed to send TimeoutNow - network error (code=%d)", fu->get_error_code());
         if (callback) {
           callback(false, 0);
         }
@@ -283,6 +287,51 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
            site_id);
   if (callback) {
     callback(false, 0);
+  }
+}
+
+// ============================================================================
+// NotifyRestart RPC - Reconnection Protocol
+// ============================================================================
+
+/**
+ * SendNotifyRestart - Broadcast restart notification to all peers
+ *
+ * Called after a server restarts to tell all other servers to reconnect
+ * their client connections to this server.
+ */
+// @safe
+void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
+  auto proxies = rpc_par_proxies_[par_id];
+
+  Log_info("[NOTIFY-RESTART] Broadcasting restart notification from site %d to %zu peers",
+           self_id, proxies.size());
+
+  for (auto& p : proxies) {
+    auto site_id = p.first;
+    if (site_id == self_id) {
+      continue;  // Don't notify self
+    }
+
+    auto proxy = (RaftProxy*) p.second;
+    FutureAttr fuattr;
+
+    fuattr.callback = [site_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_warn("[NOTIFY-RESTART] Failed to notify site %d - error code %d",
+                 site_id, fu->get_error_code());
+        return;
+      }
+
+      bool_t acknowledged = false;
+      fu->get_reply() >> acknowledged;
+
+      Log_info("[NOTIFY-RESTART] Site %d acknowledged restart: %s",
+               site_id, acknowledged ? "yes" : "no");
+    };
+
+    Log_info("[NOTIFY-RESTART] Sending NotifyRestart to site %d", site_id);
+    Call_Async(proxy, NotifyRestart, self_id, fuattr);
   }
 }
 

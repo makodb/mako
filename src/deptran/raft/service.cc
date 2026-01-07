@@ -125,6 +125,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerCurrentTerm,
                                              uint64_t *followerLastLogIndex,
                                              rrr::DeferredReply defer) {
+  Log_info("RaftServiceImpl: HandleEmptyAppendEntries answering leader %d", leaderSiteId);
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
     // Server is killed, return failure
@@ -169,6 +170,34 @@ void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
   }
   svr->OnTimeoutNow(leaderTerm, leaderSiteId, followerTerm, success,
                      [defer = std::move(defer)]() mutable { defer.reply(); });
+}
+
+// @safe
+void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
+                                          bool_t* acknowledged,
+                                          rrr::DeferredReply defer) {
+  Log_info("[NOTIFY-RESTART] Received restart notification from site %d", restartedSiteId);
+
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *acknowledged = false;
+    defer.reply();
+    return;
+  }
+
+  // Reconnect our client connection to the restarted site
+  auto commo = svr->commo();
+  if (commo != nullptr) {
+    bool success = commo->ReconnectToSite(restartedSiteId, svr->partition_id_);
+    *acknowledged = success;
+    Log_info("[NOTIFY-RESTART] Reconnected to site %d: %s", restartedSiteId, success ? "success" : "failed");
+  } else {
+    *acknowledged = false;
+    Log_warn("[NOTIFY-RESTART] commo is null, cannot reconnect to site %d", restartedSiteId);
+  }
+
+  defer.reply();
 }
 
 } // namespace janus;

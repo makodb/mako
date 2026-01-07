@@ -372,6 +372,72 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
   return std::make_pair(FAILURE, nullptr);
 }
 
+bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
+  Log_info("[RECONNECT] Attempting to reconnect to site %d for partition %d", site_id, par_id);
+
+  auto config = Config::GetConfig();
+  Config::SiteInfo* site_info = nullptr;
+
+  // Find the site info
+  for (auto& site : config->sites_) {
+    if (site.id == site_id) {
+      site_info = &site;
+      break;
+    }
+  }
+
+  if (!site_info) {
+    Log_error("[RECONNECT] Could not find site info for site %d", site_id);
+    return false;
+  }
+
+  // Close old connection if exists
+  auto old_client_it = rpc_clients_.find(site_id);
+  if (old_client_it != rpc_clients_.end()) {
+    Log_info("[RECONNECT] Closing old connection to site %d", site_id);
+    old_client_it->second->close();
+    rpc_clients_.erase(old_client_it);
+  }
+
+  // Delete old proxy if exists
+  auto old_proxy_it = rpc_proxies_.find(site_id);
+  ClassicProxy* old_proxy = nullptr;
+  if (old_proxy_it != rpc_proxies_.end()) {
+    old_proxy = old_proxy_it->second;
+    rpc_proxies_.erase(old_proxy_it);
+  }
+
+  // Create new connection
+  auto result = ConnectToSite(*site_info, std::chrono::milliseconds(CONNECT_TIMEOUT_MS));
+  if (result.first != SUCCESS) {
+    Log_error("[RECONNECT] Failed to reconnect to site %d", site_id);
+    return false;
+  }
+
+  ClassicProxy* new_proxy = result.second;
+  Log_info("[RECONNECT] Successfully reconnected to site %d, new proxy=%p", site_id, new_proxy);
+
+  // Update rpc_par_proxies_ with new proxy
+  auto par_it = rpc_par_proxies_.find(par_id);
+  if (par_it != rpc_par_proxies_.end()) {
+    for (auto& pair : par_it->second) {
+      if (pair.first == site_id) {
+        Log_info("[RECONNECT] Updating proxy in rpc_par_proxies_ for site %d: old=%p new=%p",
+                 site_id, pair.second, new_proxy);
+        pair.second = new_proxy;
+        break;
+      }
+    }
+  }
+
+  // Clean up old proxy after updating references
+  if (old_proxy) {
+    delete old_proxy;
+  }
+
+  return true;
+}
+
 std::pair<siteid_t, ClassicProxy*>
 Communicator::NearestProxyForPartition(parid_t par_id) const {
   // TODO Fix me.

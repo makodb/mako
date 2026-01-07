@@ -163,6 +163,11 @@ abstract service Raft {
                    uint64_t followerTerm,
                    bool_t success);
 
+  // NotifyRestart - Sent by a server after it restarts to tell other servers
+  // to reconnect their client connections to it
+  defer NotifyRestart(siteid_t restartedSiteId |
+                      bool_t acknowledged);
+
 }
 
 abstract service Copilot {
