@@ -11,6 +11,7 @@
 #include <mako.hh>
 #include <examples/common.h>
 #include "lib/rust_wrapper.h"
+#include "lib/transaction_ffi.h"
 #include "../src/mako/spinbarrier.h"
 // #include "examples/test_verification.h"
 
@@ -256,78 +257,92 @@ extern "C" {
         std::cout << "[cpp] Rust worker thread " << thread_id << " initialized" << std::endl;
     }
 
-    bool cpp_execute_request_sync(uint32_t op,
-                             const uint8_t* key_ptr, size_t key_len,
-                             const uint8_t* val_ptr, size_t val_len,
-                             uint8_t** out_ptr, size_t* out_len) {
-        if (!g_work_queue || !key_ptr || !out_ptr || !out_len) {
-            if (out_ptr) *out_ptr = nullptr;
-            if (out_len) *out_len = 0;
+    // Transaction API - required by new Rust FFI interface
+    bool cpp_execute_transaction(const TxnRequest* request, TxnResponse* response) {
+        if (!g_work_queue || !request || !response) {
             return false;
         }
 
-        // Validate op code
-        if (op != 1 && op != 2) {
-            *out_ptr = nullptr;
-            *out_len = 0;
-            return false;
-        }
-
-        // Create work item
-        auto item = std::make_unique<WorkItem>(
-            static_cast<WorkType>(op),
-            key_ptr, key_len,
-            val_ptr, val_len
+        // Allocate results array
+        response->num_results = request->num_ops;
+        response->results = static_cast<TxnOpResult*>(
+            std::calloc(request->num_ops, sizeof(TxnOpResult))
         );
-        
-        // Get future before moving item
-        auto future = item->promise.get_future();
-        
-        // Enqueue work
-        g_work_queue->enqueue(std::move(item));
-        
-        // Wait for result
-        auto [result_vec, success] = future.get();
-        
-        if (!success) {
-            *out_ptr = nullptr;
-            *out_len = 0;
+        if (!response->results) {
+            response->transaction_success = false;
             return false;
         }
 
-        // For GET operations, return the value
-        if (op == 1) { // GET
-            if (!result_vec.empty()) {
-                size_t n = result_vec.size();
-                auto* buf = static_cast<uint8_t*>(std::malloc(n));
-                if (!buf) {
-                    *out_ptr = nullptr;
-                    *out_len = 0;
-                    return false;
-                }
-                std::memcpy(buf, result_vec.data(), n);
-                *out_ptr = buf;
-                *out_len = n;
-            } else {
-                // GET miss
-                *out_ptr = nullptr;
-                *out_len = 0;
+        // Process each operation sequentially (within a transaction context)
+        bool all_success = true;
+        for (size_t i = 0; i < request->num_ops; ++i) {
+            const TxnOperation& txn_op = request->ops[i];
+
+            // Validate operation
+            if (txn_op.op != 1 && txn_op.op != 2) {
+                response->results[i].success = false;
+                all_success = false;
+                continue;
             }
-        } else {
-            // SET → no payload
-            *out_ptr = nullptr;
-            *out_len = 0;
+
+            // Create work item
+            auto item = std::make_unique<WorkItem>(
+                static_cast<WorkType>(txn_op.op),
+                txn_op.key_ptr, txn_op.key_len,
+                txn_op.val_ptr, txn_op.val_len
+            );
+
+            // Get future before moving item
+            auto future = item->promise.get_future();
+
+            // Enqueue work
+            g_work_queue->enqueue(std::move(item));
+
+            // Wait for result
+            auto [result_vec, success] = future.get();
+
+            response->results[i].success = success;
+
+            if (success && txn_op.op == 1) { // GET
+                if (!result_vec.empty()) {
+                    size_t n = result_vec.size();
+                    auto* buf = static_cast<uint8_t*>(std::malloc(n));
+                    if (buf) {
+                        std::memcpy(buf, result_vec.data(), n);
+                        response->results[i].data_ptr = buf;
+                        response->results[i].data_len = n;
+                    } else {
+                        response->results[i].success = false;
+                        all_success = false;
+                    }
+                }
+            }
+
+            if (!success) {
+                all_success = false;
+            }
         }
 
+        response->transaction_success = all_success;
         return true;
     }
-    
-    void cpp_free_buf(uint8_t* ptr, size_t len) {
-        if (ptr) {
-            std::free(ptr);
+
+    void cpp_free_transaction_response(TxnResponse* response) {
+        if (!response || !response->results) {
+            return;
         }
+
+        for (size_t i = 0; i < response->num_results; ++i) {
+            if (response->results[i].data_ptr) {
+                std::free(response->results[i].data_ptr);
+            }
+        }
+
+        std::free(response->results);
+        response->results = nullptr;
+        response->num_results = 0;
     }
-    
+
     void cpp_cleanup_thread_info() {
         RustWrapper::cleanup_thread_info();
     }
