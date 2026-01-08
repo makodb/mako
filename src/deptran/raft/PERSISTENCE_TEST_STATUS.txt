@@ -100,7 +100,7 @@ Architecture after Fix 2:
     Inbound RPCs  --> Original Poll Thread --> NEW RaftServer (site 0)
     Outbound RPCs --> Original Poll Thread --/   (SAME thread! No race!)
 
-Verification (from trace_0108.txt):
+Verification (from trace_with_RPC_DISPATCH.txt):
   Before restart: [FIX2-OUTBOUND] HeartbeatLoop started site=0 thread=139662802810432
   After restart:  [FIX2-OUTBOUND] HeartbeatLoop started site=0 thread=139662802810432
   Same thread ID = Fix 2 working correctly!
