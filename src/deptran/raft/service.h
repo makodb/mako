@@ -31,10 +31,17 @@ class RaftServiceImpl : public RaftService {
   std::atomic<RaftServer*> svr_;
   siteid_t site_id_;
 
-  RaftServiceImpl(TxLogServer* sched);
+  // Store the poll thread for Fix 2: allows Restart() to reuse the original
+  // poll thread, ensuring inbound and outbound RPCs use the same thread
+  rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_;
+
+  RaftServiceImpl(TxLogServer* sched, rusty::Arc<rrr::PollThread> poll_thread);
 
   // Called by test framework during Kill/Restart to update server pointer
   static void UpdateServer(siteid_t site_id, RaftServer* new_svr);
+
+  // Called by test framework during Restart to get the original poll thread
+  static rusty::Option<rusty::Arc<rrr::PollThread>> GetPollThread(siteid_t site_id);
 
   // Called by RPC handlers - lock-free atomic read
   RaftServer* GetServer();

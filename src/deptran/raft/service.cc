@@ -16,7 +16,8 @@ std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;
 std::mutex RaftServiceImpl::registry_mutex_;
 
 // @safe
-RaftServiceImpl::RaftServiceImpl(TxLogServer *sched) {
+RaftServiceImpl::RaftServiceImpl(TxLogServer *sched, rusty::Arc<rrr::PollThread> poll_thread)
+    : poll_thread_(rusty::Some(std::move(poll_thread))) {
   RaftServer* svr = (RaftServer*)sched;
   svr_.store(svr, std::memory_order_release);
   site_id_ = svr->site_id_;
@@ -25,7 +26,6 @@ RaftServiceImpl::RaftServiceImpl(TxLogServer *sched) {
   {
     std::lock_guard<std::mutex> lock(registry_mutex_);
     service_registry_[site_id_] = this;
-    Log_info("[RAFT-SERVICE] Registered RaftServiceImpl for site %d", site_id_);
   }
 
   struct timespec curr_time;
@@ -48,6 +48,18 @@ void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
 // Called by RPC handlers - lock-free atomic read
 RaftServer* RaftServiceImpl::GetServer() {
   return svr_.load(std::memory_order_acquire);
+}
+
+// Called by test framework during Restart to get the original poll thread
+// Returns a clone of the Arc so the original is preserved
+rusty::Option<rusty::Arc<rrr::PollThread>> RaftServiceImpl::GetPollThread(siteid_t site_id) {
+  std::lock_guard<std::mutex> lock(registry_mutex_);
+  auto it = service_registry_.find(site_id);
+  if (it != service_registry_.end() && it->second->poll_thread_.is_some()) {
+    // Clone the Arc to share ownership
+    return rusty::Some(it->second->poll_thread_.as_ref().unwrap().clone());
+  }
+  return rusty::None;
 }
 
 // @safe - Refactored to use lambda instead of std::bind to avoid pointer operations

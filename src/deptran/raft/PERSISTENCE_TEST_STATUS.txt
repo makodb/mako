@@ -1,71 +1,109 @@
 RAFT PERSISTENCE TEST (TEST 0) - STATUS AND NOTES
 ==================================================
 
-Date: 2026-01-07
+Date: 2026-01-08
 Branch: zeyu-raft-disk
 
 CURRENT STATUS
 --------------
 Test 0 (Persistence across server kill and restart) is PROGRESSING.
 
-Latest trace (trace_0107.txt @ 21:10) shows:
-- Kill() works: "[COMMUNICATOR] Not shutting down shared poll thread (owns_poll_thread_=false)"
-- Restart() works: Server 3 reloads persisted state (term=1, vote=2, lastLogIndex=3)
-- NotifyRestart works: All peers acknowledge and reconnect to restarted server
-- AppendEntries works: "[APPEND_RPC] Success response from site 3: status=1, term=1, lastLogIndex=5"
-- match_index includes site 3: "[COMMIT-CALC] match_index_[3] = 5"
-- Clean shutdown: All 5 servers shutdown normally
+Latest trace (trace_0108.txt @ 16:46) shows:
+- Kill() works correctly (doesn't destroy shared poll thread)
+- Restart() correctly loads persisted state from disk
+- Fix 2 verified: Same thread ID before/after restart (139662802810432)
+- State recovered correctly: term=1, lastLogIndex=5
+- Test progresses to agreement 106 (significant progress from previous failures)
 
-FIX 1 IMPLEMENTED: owns_poll_thread_ FLAG
-------------------------------------------
+IMPLEMENTED FIXES
+=================
+
+FIX 1: owns_poll_thread_ FLAG (Implemented 2026-01-06)
+------------------------------------------------------
 Problem: When Kill() destroys the old RaftFrame/Communicator, the destructor was
 calling shutdown() on the poll thread. But this poll thread is SHARED with the
 RPC server (for accepting inbound connections). Shutting it down kills the
 server's ability to accept new connections.
 
-Fix: Added owns_poll_thread_ flag to Communicator:
+Solution: Added owns_poll_thread_ flag to Communicator:
 - Set to TRUE when Communicator creates its own poll thread (rusty::None passed in)
 - Set to FALSE when poll thread is passed in (shared with RPC server)
 - Destructor only calls shutdown() if owns_poll_thread_ == true
 
 Files changed:
-- src/deptran/communicator.h: Added owns_poll_thread_ field
-- src/deptran/communicator.cc: Set flag in constructor, check in destructor
+- src/deptran/communicator.h:378 - Added owns_poll_thread_ field
+- src/deptran/communicator.cc:64-69 - Set flag in constructor, check in destructor
 
 
-KNOWN ISSUE: INBOUND/OUTBOUND POLL THREAD MISMATCH (CRITICAL)
--------------------------------------------------------------
-After Restart(), the architecture is:
-- Inbound RPCs (RPC server): Uses ORIGINAL poll thread (from ServerWorker)
-- Outbound RPCs (new Commo): Uses NEW poll thread (created with rusty::None)
+FIX 2: POLL THREAD REUSE AFTER RESTART (Implemented 2026-01-08)
+----------------------------------------------------------------
+Problem: After Restart(), there was a critical thread-safety issue:
+- Inbound RPCs (via RPC server): Used ORIGINAL poll thread (from ServerWorker)
+- Outbound RPCs (new Commo): Used NEW poll thread (created with rusty::None)
+- RaftServer was accessed by TWO threads simultaneously
+- This caused race conditions since RaftServer has no mutexes on most fields
 
-This APPEARS to work but is actually UNSAFE due to race conditions.
+The problem had TWO parts:
 
-Shared Memory (RaftServer) accessed by both threads:
-- currentTerm, vote_for_, state_ (leader/follower/candidate)
-- raft_logs_ (log entries)
-- commitIndex, lastLogIndex, match_index_, next_index_
+PART 1: The new Commo was creating its own poll thread instead of reusing
+the original one. This was fixed by storing the poll thread in RaftServiceImpl
+(which survives Kill) and retrieving it during Restart.
 
-Access Patterns:
-- Inbound (Poll Thread A): HandleAppendEntries() modifies currentTerm, raft_logs_, commitIndex
-- Outbound (Poll Thread B): HeartbeatLoop() reads currentTerm, match_index_; callbacks modify match_index_
+PART 2: Even with the correct poll thread, HeartbeatLoop and ElectionTimer
+coroutines were being scheduled on the WRONG thread. The code was using
+Coroutine::CreateRun() which schedules on the CURRENT reactor (site 0's test
+thread), not on the server's poll thread.
 
-Why this is UNSAFE:
-- Original design assumed ONE poll thread = all coroutines run cooperatively (no preemption)
-- With TWO poll threads running simultaneously, we have TRUE CONCURRENT ACCESS
-- RaftServer was NOT designed for multi-threaded access (no mutexes on most fields)
-- Potential race conditions:
-  1. Thread A modifying currentTerm while Thread B reads it
-  2. Thread A appending to raft_logs_ while Thread B iterates it
-  3. Both threads modifying match_index_ simultaneously
+Solution (Part 1 - Poll Thread Storage):
+1. RaftServiceImpl now stores the poll thread during construction:
+   - service.h: Added poll_thread_ field (rusty::Option<rusty::Arc<rrr::PollThread>>)
+   - service.cc: Constructor accepts and stores poll thread
+   - service.cc: Added GetPollThread(site_id) static method to retrieve it
 
-Current "working" behavior is LUCK - we haven't hit a race condition yet in simple tests.
+2. Frame::CreateRpcServices passes poll thread to RaftServiceImpl:
+   - frame.cc: Changed to pass poll_thread_worker.clone() to constructor
 
-FIX 2 (NOT YET IMPLEMENTED - ESSENTIAL FOR CORRECTNESS):
-- Pass server's poll thread to new commo in Restart()
-- Requires accessing ServerWorker's svr_poll_thread_worker_ from testconf.cc
-- Need to add registry or lookup mechanism since svr_workers_g is static in s_main.cc
-- This restores single-threaded cooperative coroutine model = no races
+3. testconf.cc::Restart() retrieves the original poll thread:
+   - Calls RaftServiceImpl::GetPollThread(svr) to get the stored poll thread
+   - Passes it to new RaftCommo instead of rusty::None
+
+Solution (Part 2 - Correct Coroutine Scheduling):
+The old code in Restart() was:
+  Coroutine::CreateRun([frame](){ frame->svr_->HeartbeatLoop(); });
+
+This schedules on the CURRENT reactor (test thread), not the server's poll thread.
+
+Fixed by using poll_thread->add() to schedule on the correct thread:
+  auto& poll_thread = frame->commo_->rpc_poll_.as_ref().unwrap();
+  auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+    Coroutine::CreateRun([frame]() { frame->svr_->HeartbeatLoop(); });
+  }));
+  poll_thread->add(rusty::Arc<Job>(hb_job));
+
+Files changed:
+- src/deptran/raft/service.h:34-44 - Added poll_thread_ field and GetPollThread()
+- src/deptran/raft/service.cc:19-63 - Constructor stores poll thread, GetPollThread impl
+- src/deptran/raft/frame.cc:200-202 - Pass poll thread to RaftServiceImpl
+- src/deptran/raft/testconf.cc:610-696 - Retrieve poll thread and schedule on correct thread
+
+Architecture after Fix 2:
+  Before restart:
+    Inbound RPCs  --> Original Poll Thread --> RaftServer (site 0)
+    Outbound RPCs --> Original Poll Thread --/
+
+  After Kill:
+    Inbound RPCs  --> Original Poll Thread --> nullptr (atomic)
+    RaftFrame/Server/Commo: DELETED
+    RaftServiceImpl: SURVIVES (owned by RPC server, stores poll thread)
+
+  After Restart:
+    Inbound RPCs  --> Original Poll Thread --> NEW RaftServer (site 0)
+    Outbound RPCs --> Original Poll Thread --/   (SAME thread! No race!)
+
+Verification (from trace_0108.txt):
+  Before restart: [FIX2-OUTBOUND] HeartbeatLoop started site=0 thread=139662802810432
+  After restart:  [FIX2-OUTBOUND] HeartbeatLoop started site=0 thread=139662802810432
+  Same thread ID = Fix 2 working correctly!
 
 
 KNOWN ISSUE: NOTIFYRESTART IS FIRE-AND-FORGET
@@ -88,6 +126,20 @@ FIX 3 (NOT YET IMPLEMENTED):
 - Stop retrying once acknowledged or after max attempts
 
 
+REMAINING ISSUE: TEST FAILS AT AGREEMENT 106
+---------------------------------------------
+After all fixes, Test 0 now fails at agreement 106:
+  "TEST 0 Failed: failed to reach agreement for command 106 among 5 servers"
+
+This is significant progress (previously failed much earlier), but indicates
+there may be additional issues to investigate:
+- Possible: NotifyRestart fire-and-forget issue causing stale connections
+- Possible: Other timing/race condition issues
+- Possible: Log replication after restart not catching up correctly
+
+Further investigation needed.
+
+
 PREVIOUS FIXES INCLUDED
 -----------------------
 1. Heartbeat match_index fix (server.cc ~line 480): HeartbeatLoop case 3A now
@@ -102,8 +154,14 @@ PREVIOUS FIXES INCLUDED
 
 DEBUGGING COMMANDS
 ------------------
+Build:
+  make raft-test -j32
+
 Run with persistence enabled:
   rm -rf /tmp/raft_*_partition_* && MAKO_RAFT_PERSISTENCE=1 timeout 180 ./build/deptran_server -f config/raft_lab_test.yml
+
+View test progress:
+  ... 2>&1 | grep -E "TEST 0|Passed|Failed"
 
 View poll thread behavior:
   ... 2>&1 | grep -E "COMMUNICATOR|owns_poll"
@@ -111,5 +169,5 @@ View poll thread behavior:
 View NotifyRestart flow:
   ... 2>&1 | grep -E "NOTIFY-RESTART"
 
-View AppendEntries after restart:
-  ... 2>&1 | grep -E "APPEND_RPC.*site 3"
+View Restart details:
+  ... 2>&1 | grep -E "RAFT-RESTART"

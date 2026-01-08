@@ -197,7 +197,9 @@ RaftFrame::CreateRpcServices(uint32_t site_id,
   auto config = Config::GetConfig();
   auto result = std::vector<rusty::Box<Service>>();
   switch (config->replica_proto_) {
-    case MODE_RAFT:result.push_back(rusty::make_box<RaftServiceImpl>(rep_sched));
+    // Fix 2: Pass poll_thread_worker to RaftServiceImpl so it can be
+    // retrieved during Restart() to ensure inbound/outbound use same thread
+    case MODE_RAFT:result.push_back(rusty::make_box<RaftServiceImpl>(rep_sched, poll_thread_worker.clone()));
     default:break;
   }
   return result;

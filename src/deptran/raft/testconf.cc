@@ -607,8 +607,16 @@ void RaftTestConfig::Restart(siteid_t svr) {
   frame->svr_->loc_id_ = site_info->locale_id;
   frame->svr_->rep_frame_ = frame;
 
-  // Create new RaftCommo (pass None explicitly)
-  frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
+  // Fix 2: Get the ORIGINAL poll thread from RaftServiceImpl (survives Kill)
+  // This ensures inbound RPCs (via RPC server) and outbound RPCs (via Commo)
+  // use the SAME poll thread, eliminating race conditions on RaftServer state
+  auto poll_thread = RaftServiceImpl::GetPollThread(svr);
+  if (poll_thread.is_some()) {
+    frame->commo_ = std::make_unique<RaftCommo>(std::move(poll_thread));
+  } else {
+    Log_warn("[RAFT-RESTART] site %d: poll thread not found, creating new one", svr);
+    frame->commo_ = std::make_unique<RaftCommo>(rusty::None);
+  }
   frame->commo_->loc_id_ = site_info->locale_id;
 
   // Set commo_ in server before initializing
@@ -660,17 +668,31 @@ void RaftTestConfig::Restart(siteid_t svr) {
   frame->svr_->heartbeat_setup_ = true;
 
   // Start the heartbeat loop and election timer manually since we're skipping Setup()
+  // CRITICAL (Fix 2 part 2): Must add coroutines to the CORRECT poll thread!
+  // Using Coroutine::CreateRun would schedule on the current reactor (site 0's test thread),
+  // not on this server's poll thread. We must use poll_thread->add() instead.
 #ifdef RAFT_TEST_CORO
-  if (frame->svr_->heartbeat_) {
-    Coroutine::CreateRun([frame](){
-      frame->svr_->HeartbeatLoop();
-    });
-    // Start election timeout loop (same as Setup())
-    if (frame->svr_->failover_) {
-      Coroutine::CreateRun([frame](){
-        frame->svr_->StartElectionTimer();
+  if (frame->svr_->heartbeat_ && frame->commo_->rpc_poll_.is_some()) {
+    auto& poll_thread = frame->commo_->rpc_poll_.as_ref().unwrap();
+
+    // Add HeartbeatLoop as a job to the correct poll thread
+    auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+      Coroutine::CreateRun([frame]() {
+        frame->svr_->HeartbeatLoop();
       });
+    }));
+    poll_thread->add(rusty::Arc<Job>(hb_job));
+
+    // Add election timer as a job to the correct poll thread
+    if (frame->svr_->failover_) {
+      auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
+        Coroutine::CreateRun([frame]() {
+          frame->svr_->StartElectionTimer();
+        });
+      }));
+      poll_thread->add(rusty::Arc<Job>(election_job));
     }
+
   }
 #endif
 
