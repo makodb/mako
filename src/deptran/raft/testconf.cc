@@ -140,27 +140,20 @@ uint64_t RaftTestConfig::OneTerm(void) {
 
 int RaftTestConfig::NCommitted(uint64_t index) {
   int cmd,n = 0;
-  // Log_info("NCommitted: Checking how many servers committed index %ld", index);
   for (auto& pair : replicas) {
     auto svr = pair.first;
-    // Log_info("NCommitted: Server %d has committed_cmds size %ld", svr, committed_cmds[svr].size());
     if (committed_cmds[svr].size() > index) {
       auto curcmd = committed_cmds[svr][index];
-      // Log_info("NCommitted: Server %d committed command %d at index %ld", svr, curcmd, index);
       if (n == 0) {
         cmd = curcmd;
       } else {
         if (curcmd != cmd) {
-          // Log_info("NCommitted: ERROR - Server %d committed %d but expected %d at index %ld", svr, curcmd, cmd, index);
           return -1;
         }
       }
       n++;
-    } else {
-      // Log_info("NCommitted: Server %d has not committed index %ld (log size: %ld)", svr, index, committed_cmds[svr].size());
     }
   }
-  // Log_info("NCommitted: %d servers committed index %ld with command %d", n, index, cmd);
   return n;
 }
 

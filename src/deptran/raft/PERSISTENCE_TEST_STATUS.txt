@@ -6,14 +6,18 @@ Branch: zeyu-raft-disk
 
 CURRENT STATUS
 --------------
-Test 0 (Persistence across server kill and restart) is PROGRESSING.
+Test 0 (Persistence across server kill and restart) is PASSING.
 
-Latest trace (trace_0108.txt @ 16:46) shows:
+Tested 6 consecutive runs - all passed.
+
+Latest trace (trace_0108.txt @ 18:45) shows:
 - Kill() works correctly (doesn't destroy shared poll thread)
-- Restart() correctly loads persisted state from disk
-- Fix 2 verified: Same thread ID before/after restart (139662802810432)
-- State recovered correctly: term=1, lastLogIndex=5
-- Test progresses to agreement 106 (significant progress from previous failures)
+- Restart() correctly loads persisted state AND logs from disk
+- Fix 2 verified: Same thread ID before/after restart
+- Fix 3 verified: Logs loaded with correct Marshallable kind (kind=5 = CMD_TPC_COMMIT)
+- Restarted servers catch up missing logs from leader
+- Leader election works correctly after leader kill
+- All 5 servers participate in final commits
 
 IMPLEMENTED FIXES
 =================
@@ -106,6 +110,55 @@ Verification (from trace_with_RPC_DISPATCH.txt):
   Same thread ID = Fix 2 working correctly!
 
 
+FIX 3: LOG_ FIELD PERSISTENCE (Implemented 2026-01-08)
+------------------------------------------------------
+Problem: After restart, servers were skipping log application with error:
+  "[APPLY-LOGS] site=4 SKIP index=1 (no instance or log)"
+
+Root cause: The RaftData serialization in raft_persistence.cc was only persisting
+primitive fields (term, ballot, slot_id, etc.) but NOT the log_ field
+(shared_ptr<Marshallable>). The comment in the code said:
+  "// Marshallable pointers left as nullptr for now"
+
+This meant restarted servers had log entries with nullptr commands, so they
+couldn't apply the logs even though the metadata was correctly restored.
+
+Solution: Modified SerializeRaftData and DeserializeRaftData to handle the log_
+field using the MarshallDeputy pattern:
+
+SerializeRaftData:
+1. Use rrr::Marshal for serialization (instead of raw memcpy)
+2. Write primitive fields
+3. Write has_log flag (uint8_t) indicating if log_ is present
+4. If present, wrap log_ in MarshallDeputy and serialize it
+   - MarshallDeputy writes kind_ (type ID) then calls ToMarshal()
+
+DeserializeRaftData:
+1. Use rrr::Marshal for deserialization
+2. Read primitive fields
+3. Read has_log flag
+4. If present, create MarshallDeputy and deserialize
+   - MarshallDeputy reads kind_, uses factory to create correct type, calls FromMarshal()
+5. Assign md.sp_data_ to entry.log_
+
+Files changed:
+- src/deptran/raft/raft_persistence.cc:154-213 - Rewrote Serialize/Deserialize functions
+
+Verification (from trace_0108.txt @ 18:45):
+  [PERSIST-LOAD] slot=1 loaded log_ kind=5
+  [PERSIST-LOAD] slot=2 loaded log_ kind=5
+  [PERSIST-LOAD] slot=3 loaded log_ kind=5
+  (kind=5 = CMD_TPC_COMMIT, the correct Marshallable type)
+
+  After loading, server 4 successfully applies all logs:
+  [APPLY-LOGS] site=4 commitIndex=5 executeIndex=0
+  [APPLY-LOGS] site=4 applying index=1
+  [APPLY-LOGS] site=4 applying index=2
+  [APPLY-LOGS] site=4 applying index=3
+  [APPLY-LOGS] site=4 applying index=4
+  [APPLY-LOGS] site=4 applying index=5
+
+
 KNOWN ISSUE: NOTIFYRESTART IS FIRE-AND-FORGET
 ----------------------------------------------
 Current NotifyRestart mechanism is imperfect:
@@ -119,25 +172,13 @@ Example scenario:
 3. Server B restarts, sends NotifyRestart to all (A receives, reconnects to B)
 4. But A never told B to reconnect, so B still has stale connection to A
 
-FIX 3 (NOT YET IMPLEMENTED):
+Potential future fix:
 - Track which peers have acknowledged NotifyRestart
 - Periodically retry NotifyRestart to unacknowledged peers
 - Use large retry interval (e.g., 5-10 seconds) to minimize CPU overhead
 - Stop retrying once acknowledged or after max attempts
 
-
-REMAINING ISSUE: TEST FAILS AT AGREEMENT 106
----------------------------------------------
-After all fixes, Test 0 now fails at agreement 106:
-  "TEST 0 Failed: failed to reach agreement for command 106 among 5 servers"
-
-This is significant progress (previously failed much earlier), but indicates
-there may be additional issues to investigate:
-- Possible: NotifyRestart fire-and-forget issue causing stale connections
-- Possible: Other timing/race condition issues
-- Possible: Log replication after restart not catching up correctly
-
-Further investigation needed.
+Note: This issue doesn't affect Test 0 because only one server is killed at a time.
 
 
 PREVIOUS FIXES INCLUDED
@@ -162,6 +203,9 @@ Run with persistence enabled:
 
 View test progress:
   ... 2>&1 | grep -E "TEST 0|Passed|Failed"
+
+View log persistence:
+  ... 2>&1 | grep -E "PERSIST-LOAD|APPLY-LOGS"
 
 View poll thread behavior:
   ... 2>&1 | grep -E "COMMUNICATOR|owns_poll"

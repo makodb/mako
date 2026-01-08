@@ -152,71 +152,63 @@ std::string RaftPersistence::GenerateLogKey(slotid_t slot_id) {
 }
 
 bool RaftPersistence::SerializeRaftData(const RaftData& entry, std::string& value) {
-    // For now, serialize just the primitive fields
-    // Marshallable pointers are more complex and can be added later
-    size_t size = sizeof(entry.max_ballot_seen_) +
-                  sizeof(entry.max_ballot_accepted_) +
-                  sizeof(entry.term) +
-                  sizeof(entry.prevTerm) +
-                  sizeof(entry.slot_id) +
-                  sizeof(entry.ballot);
+    // Use Marshal to serialize everything including the Marshallable log_
+    rrr::Marshal m;
 
-    value.resize(size);
-    char* ptr = &value[0];
+    // Serialize primitive fields
+    m << entry.max_ballot_seen_;
+    m << entry.max_ballot_accepted_;
+    m << entry.term;
+    m << entry.prevTerm;
+    m << entry.slot_id;
+    m << entry.ballot;
 
-    memcpy(ptr, &entry.max_ballot_seen_, sizeof(entry.max_ballot_seen_));
-    ptr += sizeof(entry.max_ballot_seen_);
+    // Serialize log_ field (shared_ptr<Marshallable>)
+    // First write a flag indicating whether log_ is present
+    uint8_t has_log = (entry.log_ != nullptr) ? 1 : 0;
+    m << has_log;
 
-    memcpy(ptr, &entry.max_ballot_accepted_, sizeof(entry.max_ballot_accepted_));
-    ptr += sizeof(entry.max_ballot_accepted_);
+    if (has_log) {
+        // Use MarshallDeputy to serialize the Marshallable
+        rrr::MarshallDeputy md(entry.log_);
+        m << md;
+    }
 
-    memcpy(ptr, &entry.term, sizeof(entry.term));
-    ptr += sizeof(entry.term);
-
-    memcpy(ptr, &entry.prevTerm, sizeof(entry.prevTerm));
-    ptr += sizeof(entry.prevTerm);
-
-    memcpy(ptr, &entry.slot_id, sizeof(entry.slot_id));
-    ptr += sizeof(entry.slot_id);
-
-    memcpy(ptr, &entry.ballot, sizeof(entry.ballot));
+    // Extract the serialized data from Marshal into the string
+    size_t content_size = m.content_size();
+    value.resize(content_size);
+    m.read(&value[0], content_size);
 
     return true;
 }
 
 bool RaftPersistence::DeserializeRaftData(const std::string& value, RaftData& entry) {
-    size_t expected_size = sizeof(entry.max_ballot_seen_) +
-                           sizeof(entry.max_ballot_accepted_) +
-                           sizeof(entry.term) +
-                           sizeof(entry.prevTerm) +
-                           sizeof(entry.slot_id) +
-                           sizeof(entry.ballot);
+    // Use Marshal to deserialize everything including the Marshallable log_
+    rrr::Marshal m;
+    m.write(value.data(), value.size());
 
-    if (value.size() < expected_size) {
-        Log_error("Invalid RaftData size: %zu (expected at least %zu)", value.size(), expected_size);
-        return false;
+    // Deserialize primitive fields
+    m >> entry.max_ballot_seen_;
+    m >> entry.max_ballot_accepted_;
+    m >> entry.term;
+    m >> entry.prevTerm;
+    m >> entry.slot_id;
+    m >> entry.ballot;
+
+    // Deserialize log_ field (shared_ptr<Marshallable>)
+    uint8_t has_log;
+    m >> has_log;
+
+    if (has_log) {
+        // Use MarshallDeputy to deserialize the Marshallable
+        rrr::MarshallDeputy md;
+        m >> md;
+        entry.log_ = md.sp_data_;
+        Log_info("[PERSIST-LOAD] slot=%ld loaded log_ kind=%d", entry.slot_id, md.kind_);
+    } else {
+        entry.log_ = nullptr;
     }
 
-    const char* ptr = value.data();
-
-    memcpy(&entry.max_ballot_seen_, ptr, sizeof(entry.max_ballot_seen_));
-    ptr += sizeof(entry.max_ballot_seen_);
-
-    memcpy(&entry.max_ballot_accepted_, ptr, sizeof(entry.max_ballot_accepted_));
-    ptr += sizeof(entry.max_ballot_accepted_);
-
-    memcpy(&entry.term, ptr, sizeof(entry.term));
-    ptr += sizeof(entry.term);
-
-    memcpy(&entry.prevTerm, ptr, sizeof(entry.prevTerm));
-    ptr += sizeof(entry.prevTerm);
-
-    memcpy(&entry.slot_id, ptr, sizeof(entry.slot_id));
-    ptr += sizeof(entry.slot_id);
-
-    memcpy(&entry.ballot, ptr, sizeof(entry.ballot));
-
-    // Marshallable pointers left as nullptr for now
     return true;
 }
 

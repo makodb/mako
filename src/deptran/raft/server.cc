@@ -638,6 +638,10 @@ void RaftServer::setIsLeader(bool isLeader) {
 
 // @safe
 void RaftServer::applyLogs() {
+  // Log commit state for debugging
+  Log_info("[APPLY-LOGS] site=%d commitIndex=%ld executeIndex=%ld",
+           site_id_, commitIndex, executeIndex);
+
   // Only mark pending if there's actually new work to apply
   if (executeIndex < commitIndex) {
     apply_pending_.store(true, std::memory_order_release);
@@ -661,9 +665,11 @@ void RaftServer::applyLogs() {
       auto next_instance = GetRaftInstance(id);
       if (next_instance && next_instance->log_) {
         RuleWitnessGC(next_instance->log_);
+        Log_info("[APPLY-LOGS] site=%d applying index=%ld", site_id_, id);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;
       } else {
+        Log_info("[APPLY-LOGS] site=%d SKIP index=%ld (no instance or log)", site_id_, id);
         break;
       }
     }
