@@ -33,26 +33,39 @@ Files changed:
 - src/deptran/communicator.cc: Set flag in constructor, check in destructor
 
 
-KNOWN ISSUE: INBOUND/OUTBOUND POLL THREAD MISMATCH
---------------------------------------------------
+KNOWN ISSUE: INBOUND/OUTBOUND POLL THREAD MISMATCH (CRITICAL)
+-------------------------------------------------------------
 After Restart(), the architecture is:
 - Inbound RPCs (RPC server): Uses ORIGINAL poll thread (from ServerWorker)
 - Outbound RPCs (new Commo): Uses NEW poll thread (created with rusty::None)
 
-This APPEARS to work because:
-- RPC server's poll thread is still alive (Fix 1 prevents shutdown)
-- New commo's poll thread handles outbound connections
-- Both work independently
+This APPEARS to work but is actually UNSAFE due to race conditions.
 
-But this is ARCHITECTURALLY INCORRECT because:
-- Original design shares one poll thread between inbound and outbound
-- May cause coordination/timing issues in complex scenarios
-- May cause issues with event ordering or resource management
+Shared Memory (RaftServer) accessed by both threads:
+- currentTerm, vote_for_, state_ (leader/follower/candidate)
+- raft_logs_ (log entries)
+- commitIndex, lastLogIndex, match_index_, next_index_
 
-FIX 2 (NOT YET IMPLEMENTED):
+Access Patterns:
+- Inbound (Poll Thread A): HandleAppendEntries() modifies currentTerm, raft_logs_, commitIndex
+- Outbound (Poll Thread B): HeartbeatLoop() reads currentTerm, match_index_; callbacks modify match_index_
+
+Why this is UNSAFE:
+- Original design assumed ONE poll thread = all coroutines run cooperatively (no preemption)
+- With TWO poll threads running simultaneously, we have TRUE CONCURRENT ACCESS
+- RaftServer was NOT designed for multi-threaded access (no mutexes on most fields)
+- Potential race conditions:
+  1. Thread A modifying currentTerm while Thread B reads it
+  2. Thread A appending to raft_logs_ while Thread B iterates it
+  3. Both threads modifying match_index_ simultaneously
+
+Current "working" behavior is LUCK - we haven't hit a race condition yet in simple tests.
+
+FIX 2 (NOT YET IMPLEMENTED - ESSENTIAL FOR CORRECTNESS):
 - Pass server's poll thread to new commo in Restart()
 - Requires accessing ServerWorker's svr_poll_thread_worker_ from testconf.cc
 - Need to add registry or lookup mechanism since svr_workers_g is static in s_main.cc
+- This restores single-threaded cooperative coroutine model = no races
 
 
 KNOWN ISSUE: NOTIFYRESTART IS FIRE-AND-FORGET
