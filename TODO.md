@@ -208,12 +208,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - `FutureGroup` for tracking multiple async operations
         - ~100-150 LOC
     - [ ] **Phase 6: Error Handling Improvements**
-      - [ ] *high* 6.1 Structured Error Types [Plan: doc/rpc/phase6_error_types.md]
-        - Create `src/rrr/rpc/errors.hpp`
-        - `RpcErrorCategory`: NONE, CONNECTION, PROTOCOL, APPLICATION, TIMEOUT, INTERNAL
-        - `RpcError` enum with detailed codes
-        - `RpcException` class with category, code, message
-        - ~150-200 LOC
+      - [x] *high* 6.1 Structured Error Types [Plan: doc/rpc/phase6_error_types.md] [DONE]
+        - Created `src/rrr/rpc/errors.hpp` (~230 LOC)
+        - RpcErrorCategory: NONE, CONNECTION, PROTOCOL, APPLICATION, TIMEOUT, INTERNAL
+        - RpcError enum with 25+ detailed error codes
+        - RpcException class with category, code, message, retryable checks
+        - Helper functions: is_connection_error(), is_timeout_error(), is_retryable_error()
       - [ ] *medium* 6.2 Error Callbacks and Hooks [deps: 6.1] [Plan: doc/rpc/phase6_callbacks.md]
         - `ConnectionCallbacks`: on_connected, on_disconnected, on_error, on_reconnecting, on_reconnected
         - Multiple callbacks per event
