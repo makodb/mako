@@ -89,4 +89,205 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       is_using_raft(). This caused cross-shard RPC calls to fail when the target shard wasn't ready.
     - Fix: Added is_using_raft() checks to case 0 and case 2 in the FAIL_NEW_VERSION block to skip
       client_control() calls when using Raft (Raft handles leader changes internally).
-    - Result: shard2ReplicationRaft now passes (8370 ops/sec, 1.5% abort ratio) 
+    - Result: shard2ReplicationRaft now passes (8370 ops/sec, 1.5% abort ratio)
+  - [ ] *high* RPC Reliability Enhancement: Crash handling, reconnection, and fault tolerance
+    - **Goal**: Enhance `src/rrr/rpc/` to support server/client crash handling, automatic reconnection, and improved reliability
+    - **Scope**: rrr/rpc module only (TCP-based RPC). eRPC (RDMA backend) is out of scope - it has its own reliability mechanisms.
+    - **Current State Analysis**:
+      - No automatic reconnection - client must manually call `connect()` after failure
+      - No message durability - in-flight messages lost on disconnect
+      - No crash recovery - no way to detect if request was processed before crash
+      - No health monitoring - no heartbeat mechanism to detect stale connections
+      - Limited error semantics - errors don't distinguish network issues from server unavailability
+    - **Implementation Plan**: See `doc/rpc_reliability_plan.md`
+    - [ ] **Phase 1: Connection State Management**
+      - [ ] *high* 1.1 Implement Connection State Machine [Plan: doc/rpc/phase1_connection_state.md]
+        - Create `src/rrr/rpc/connection_state.hpp`
+        - Define `ConnectionState` enum: `NEW`, `CONNECTING`, `CONNECTED`, `DISCONNECTING`, `DISCONNECTED`, `FAILED`
+        - Create `ConnectionStateMachine` class with state transitions, callbacks, thread-safe access via `rusty::Cell<ConnectionState>`
+        - Integrate with `ClientConnection` to track connection lifecycle
+        - ~150-200 LOC
+      - [ ] *high* 1.2 Add Reconnection Policy Configuration [Plan: doc/rpc/phase1_reconnect_policy.md]
+        - Create `src/rrr/rpc/reconnect_policy.hpp`
+        - `ReconnectPolicy` struct: auto_reconnect, max_retries, initial_delay, max_delay, backoff_multiplier, jitter_enabled
+        - Exponential backoff calculator with jitter
+        - Policy presets: AGGRESSIVE, CONSERVATIVE, NO_RETRY
+        - ~100-150 LOC
+      - [ ] *medium* 1.3 Implement Automatic Reconnection Logic [deps: 1.1, 1.2] [Plan: doc/rpc/phase1_auto_reconnect.md]
+        - Add `ReconnectManager` class to `src/rrr/rpc/client.hpp`
+        - Track retry count and next retry time
+        - Modify `ClientConnection` to detect connection loss and trigger reconnection
+        - Add `reconnect()` method with async completion callback
+        - ~200-300 LOC
+      - [ ] *medium* 1.4 Circuit Breaker Pattern [deps: 1.1] [Plan: doc/rpc/phase1_circuit_breaker.md]
+        - Create `src/rrr/rpc/circuit_breaker.hpp`
+        - Three states: CLOSED, OPEN, HALF_OPEN
+        - Config: failure_threshold, success_threshold, timeout
+        - Fail-fast when OPEN, probe in HALF_OPEN
+        - ~150-200 LOC
+    - [ ] **Phase 2: Message Durability and Request Management**
+      - [ ] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md]
+        - Create `src/rrr/rpc/request_queue.hpp`
+        - In-memory queue with configurable size limit
+        - Store metadata: xid, rpc_id, timestamp, retry_count, payload
+        - Overflow strategies: DROP_OLDEST, DROP_NEWEST, BLOCK
+        - Request expiration by TTL
+        - ~200-250 LOC
+      - [ ] *medium* 2.2 Request Buffering During Disconnection [deps: 1.3, 2.1] [Plan: doc/rpc/phase2_request_buffering.md]
+        - Modify `ClientConnection::request()` to queue if disconnected
+        - Add `pending_queue_` for requests waiting on reconnection
+        - Implement queue replay after successful reconnection
+        - Configurable behavior: QUEUE, FAIL_FAST, BLOCK
+        - ~150-200 LOC
+      - [ ] *low* 2.3 Idempotency Support [deps: 2.2] [Plan: doc/rpc/phase2_idempotency.md]
+        - Create `src/rrr/rpc/idempotency.hpp`
+        - Client: Generate unique idempotency keys, include in request header
+        - Server: `IdempotencyCache` to store recent responses, return cached for duplicates
+        - Configurable TTL and size
+        - ~200-250 LOC
+      - [ ] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2, 2.3] [Plan: doc/rpc/phase2_timeout_retry.md]
+        - Enhance `Future::timed_wait()` with automatic retry
+        - `RequestOptions`: timeout, max_retries, idempotent flag, key
+        - Distinguish timeout types: CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT
+        - ~150-200 LOC
+    - [ ] **Phase 3: Health Monitoring**
+      - [ ] *high* 3.1 Heartbeat/Keep-Alive Mechanism [deps: 1.3] [Plan: doc/rpc/phase3_heartbeat.md]
+        - Create `src/rrr/rpc/heartbeat.hpp`
+        - `HeartbeatManager`: periodic ping/pong, configurable interval (default 10s)
+        - Define `__heartbeat__` special RPC
+        - Trigger reconnection on heartbeat timeout
+        - ~150-200 LOC
+      - [ ] *low* 3.2 Connection Health Metrics [Plan: doc/rpc/phase3_metrics.md]
+        - Create `src/rrr/rpc/connection_metrics.hpp`
+        - `ConnectionMetrics`: requests_sent/completed/failed, bytes, reconnect_count, avg_latency
+        - Track per connection, expose via accessors
+        - ~100-150 LOC
+      - [ ] *medium* 3.3 Proactive Connection Validation [deps: 3.1] [Plan: doc/rpc/phase3_validation.md]
+        - Add `validate_connection()` method
+        - Use TCP keepalive: TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
+        - Detect half-open connections
+        - Idle timeout for unused connections
+        - ~100-150 LOC
+    - [ ] **Phase 4: Server-Side Crash Handling**
+      - [ ] *medium* 4.1 Graceful Server Shutdown [Plan: doc/rpc/phase4_graceful_shutdown.md]
+        - Enhance `Server::stop()`: stop accepting, notify clients, wait for in-flight, close, release
+        - Add shutdown hooks for cleanup callbacks
+        - Implement `Server::drain()`
+        - ~150-200 LOC
+      - [ ] *medium* 4.2 Server Restart Detection [deps: 4.1] [Plan: doc/rpc/phase4_restart_detection.md]
+        - Add server instance ID (UUID on startup)
+        - Include in connection handshake
+        - Client detects restart by ID change
+        - Emit `on_server_restart(old_id, new_id)` event
+        - ~100-150 LOC
+      - [ ] *low* 4.3 Request Completion Tracking [deps: 2.3, 4.2] [Plan: doc/rpc/phase4_completion_tracking.md]
+        - Server maintains completion log of recent request XIDs
+        - Client can query if request completed on reconnection
+        - Integrate with idempotency cache
+        - ~150-200 LOC
+    - [ ] **Phase 5: Client Pool Enhancements**
+      - [ ] *medium* 5.1 Enhanced ClientPool with Health Awareness [deps: 1.1, 3.2] [Plan: doc/rpc/phase5_health_pool.md]
+        - Track connection health per pooled client
+        - Remove unhealthy connections automatically
+        - Rebalance across healthy endpoints
+        - Pool config: min/max connections, idle_timeout, health_check_enabled
+        - ~200-250 LOC
+      - [ ] *low* 5.2 Load Balancing Strategies [deps: 3.2, 5.1] [Plan: doc/rpc/phase5_load_balancing.md]
+        - Create `src/rrr/rpc/load_balancer.hpp`
+        - Strategies: ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY, RANDOM
+        - Health-aware routing
+        - ~150-200 LOC
+      - [ ] *low* 5.3 Bulk Reconnection Support [deps: 1.3, 5.1] [Plan: doc/rpc/phase5_bulk_reconnect.md]
+        - Add `ClientPool::reconnect_all()`
+        - Parallel reconnection with rate limiting
+        - `FutureGroup` for tracking multiple async operations
+        - ~100-150 LOC
+    - [ ] **Phase 6: Error Handling Improvements**
+      - [ ] *high* 6.1 Structured Error Types [Plan: doc/rpc/phase6_error_types.md]
+        - Create `src/rrr/rpc/errors.hpp`
+        - `RpcErrorCategory`: NONE, CONNECTION, PROTOCOL, APPLICATION, TIMEOUT, INTERNAL
+        - `RpcError` enum with detailed codes
+        - `RpcException` class with category, code, message
+        - ~150-200 LOC
+      - [ ] *medium* 6.2 Error Callbacks and Hooks [deps: 6.1] [Plan: doc/rpc/phase6_callbacks.md]
+        - `ConnectionCallbacks`: on_connected, on_disconnected, on_error, on_reconnecting, on_reconnected
+        - Multiple callbacks per event
+        - Sync and async callback support
+        - ~100-150 LOC
+    - [ ] **Phase 7: Testing** [Implementation order: parallel with each phase]
+      - [ ] *high* 7.1 Unit Tests
+        - [ ] 7.1.1 Connection State Machine Tests (`test/rpc/connection_state_test.cpp`)
+          - State transitions (valid and invalid), callbacks, thread-safe access
+        - [ ] 7.1.2 Reconnection Policy Tests (`test/rpc/reconnect_policy_test.cpp`)
+          - Exponential backoff, jitter, max delay/retries, presets
+        - [ ] 7.1.3 Circuit Breaker Tests (`test/rpc/circuit_breaker_test.cpp`)
+          - State transitions, concurrent access, fail-fast behavior
+        - [ ] 7.1.4 Request Queue Tests (`test/rpc/request_queue_test.cpp`)
+          - Enqueue/dequeue, size limits, overflow strategies, TTL expiration
+        - [ ] 7.1.5 Idempotency Cache Tests (`test/rpc/idempotency_test.cpp`)
+          - Cache hit/miss, TTL, size limit, concurrent duplicates
+        - [ ] 7.1.6 Heartbeat Tests (`test/rpc/heartbeat_test.cpp`)
+          - Ping/pong exchange, interval timing, timeout detection
+        - [ ] 7.1.7 Error Handling Tests (`test/rpc/errors_test.cpp`)
+          - Error categories, codes, exceptions, callbacks
+      - [ ] *high* 7.2 Integration Tests
+        - [ ] 7.2.1 Basic Crash Recovery Tests (`test/rpc/crash_recovery_test.cpp`)
+          - Server crash during idle, during request, with pending requests
+          - Server restart, client crash cleanup
+        - [ ] 7.2.2 Reconnection Behavior Tests (`test/rpc/reconnection_test.cpp`)
+          - Automatic reconnection, exponential backoff, max retries
+          - Queued requests, callbacks, parallel reconnection
+        - [ ] 7.2.3 Request Handling Under Failure Tests (`test/rpc/request_failure_test.cpp`)
+          - Request during disconnection, timeout, retry, deduplication, cancellation
+        - [ ] 7.2.4 Health Monitoring Tests (`test/rpc/health_monitoring_test.cpp`)
+          - Heartbeat keep-alive, dead connection detection, metrics, idle timeout
+        - [ ] 7.2.5 ClientPool Tests (`test/rpc/client_pool_test.cpp`)
+          - Pool size limits, health-aware routing, load balancing, bulk reconnection
+      - [ ] *medium* 7.3 Stress Tests
+        - [ ] 7.3.1 High-Load Crash Recovery (`test/rpc/stress_crash_test.cpp`)
+          - Server crash under load (1000+ pending requests)
+          - Rapid server restarts, client storm after recovery
+          - Memory stability, 24-hour long-running test
+        - [ ] 7.3.2 Network Partition Simulation (`test/rpc/partition_test.cpp`)
+          - Temporary partition, long partition, partial partition
+          - Asymmetric partition, flaky network
+      - [ ] *low* 7.4 Chaos Engineering Tests
+        - [ ] 7.4.1 Chaos Test Framework (`test/rpc/chaos_framework.hpp`)
+          - ChaosController, FailureTypes, Verifier
+          - CI pipeline integration
+        - [ ] 7.4.2 Chaos Scenarios (`test/rpc/chaos_scenarios_test.cpp`)
+          - Random server kills, latency injection, packet loss, connection reset
+          - Combined chaos, recovery verification
+    - [ ] **Phase 8: Documentation**
+      - [ ] *medium* 8.1 API Documentation
+        - Document all new public classes and methods
+        - Usage examples for common scenarios
+        - Configuration options and defaults
+        - Troubleshooting guide
+      - [ ] *medium* 8.2 Architecture Documentation
+        - Update `doc/transport_backends.md` with reliability features
+        - Create `doc/rpc_reliability.md`: overview, state diagrams, config guide, best practices
+      - [ ] *low* 8.3 Migration Guide
+        - Breaking API changes (if any)
+        - Migration examples
+        - New dependencies
+    - **Implementation Order** (based on dependencies):
+      ```
+      Phase 1: 1.1, 1.2 (parallel) → 1.3, 1.4
+      Phase 2: 2.1 → 2.2 → 2.3 → 2.4
+      Phase 3: 3.2 (parallel) → 3.1 → 3.3
+      Phase 4: 4.1 → 4.2 → 4.3
+      Phase 5: 5.1 → 5.2, 5.3 (parallel)
+      Phase 6: 6.1 → 6.2
+      Phase 7: Parallel with each phase
+      Phase 8: Parallel with implementation
+      ```
+    - **RustyCpp Compliance**: All new code must use rusty types (Box, Arc, Cell, Option) and include @safe/@unsafe annotations
+    - **Success Criteria**:
+      1. Clients automatically reconnect after server crash
+      2. In-flight requests are either completed or properly failed (no data loss)
+      3. System remains responsive during failures (graceful degradation)
+      4. All failures and recovery events are logged/metricated (observable)
+      5. All behaviors can be tuned via configuration (configurable)
+      6. All test suites pass, including chaos tests (tested)
+      7. Complete API and architecture documentation (documented) 
