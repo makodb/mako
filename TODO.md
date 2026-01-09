@@ -101,12 +101,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Limited error semantics - errors don't distinguish network issues from server unavailability
     - **Implementation Plan**: See `doc/rpc_reliability_plan.md`
     - [ ] **Phase 1: Connection State Management**
-      - [ ] *high* 1.1 Implement Connection State Machine [Plan: doc/rpc/phase1_connection_state.md]
-        - Create `src/rrr/rpc/connection_state.hpp`
-        - Define `ConnectionState` enum: `NEW`, `CONNECTING`, `CONNECTED`, `DISCONNECTING`, `DISCONNECTED`, `FAILED`
-        - Create `ConnectionStateMachine` class with state transitions, callbacks, thread-safe access via `rusty::Cell<ConnectionState>`
-        - Integrate with `ClientConnection` to track connection lifecycle
-        - ~150-200 LOC
+      - [x] *high* 1.1 Implement Connection State Machine [Plan: doc/rpc/phase1_connection_state.md] [DONE]
+        - Created `src/rrr/rpc/connection_state.hpp` with ConnectionState enum and ConnectionStateMachine class
+        - ConnectionState enum: NEW, CONNECTING, CONNECTED, DISCONNECTING, DISCONNECTED, FAILED
+        - ConnectionStateMachine: state transitions with validation, callbacks, thread-safe via rusty::Cell
+        - Integrated with ClientConnection: replaced old status_ enum with state_machine_
+        - Updated connect(), close(), handle_error() to use proper state transitions
+        - Fixed pre-existing AddrInfo::release() raw pointer violation in utils.hpp
+        - ~170 LOC (connection_state.hpp) + ~50 LOC integration changes
       - [ ] *high* 1.2 Add Reconnection Policy Configuration [Plan: doc/rpc/phase1_reconnect_policy.md]
         - Create `src/rrr/rpc/reconnect_policy.hpp`
         - `ReconnectPolicy` struct: auto_reconnect, max_retries, initial_delay, max_delay, backoff_multiplier, jitter_enabled

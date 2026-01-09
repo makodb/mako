@@ -11,6 +11,7 @@
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
+#include "connection_state.hpp"
 
 namespace rrr {
 
@@ -293,9 +294,8 @@ class ClientConnection: public Pollable {
     // Map of pending futures awaiting responses (protected by SpinMutex)
     SpinMutex<std::unordered_map<i64, rusty::Arc<Future>>> pending_fu_{std::unordered_map<i64, rusty::Arc<Future>>()};
 
-    enum {
-        NEW, CONNECTED, CLOSED
-    } status_;
+    // Connection state machine for lifecycle management
+    ConnectionStateMachine state_machine_;
 
     // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
@@ -334,9 +334,14 @@ public:
     // @safe - Initializes connection (only stores references)
     ClientConnection(rusty::Arc<PollThread> poll_thread_worker);
 
-    // @safe - Simple status check
+    // @safe - Simple status check using state machine
     bool connected() const {
-        return status_ == CONNECTED;
+        return state_machine_.is_connected();
+    }
+
+    // @safe - Get current connection state
+    ConnectionState connection_state() const {
+        return state_machine_.state();
     }
 
     /**
@@ -365,14 +370,14 @@ public:
     // - Marshal operator<< (serialization)
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
-        if (status_ != CONNECTED) {
+        if (!state_machine_.is_connected()) {
             return FutureResult::Err(ENOTCONN);
         }
 
         auto guard = out_.lock().unwrap();
 
         // Double-check connection status after acquiring lock
-        if (status_ != CONNECTED) {
+        if (!state_machine_.is_connected()) {
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -384,7 +389,7 @@ public:
         }
 
         // Check if connection closed while we were setting up
-        if (status_ != CONNECTED) {
+        if (!state_machine_.is_connected()) {
             {
                 auto pending_guard = pending_fu_.lock().unwrap();
                 auto it = pending_guard->find(fu->xid_);
@@ -481,7 +486,7 @@ public:
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
     bool is_closed() const override {
-        return status_ == CLOSED;
+        return state_machine_.is_terminal();
     }
 
     // @safe - Jetpack: handle_free for explicit future cleanup

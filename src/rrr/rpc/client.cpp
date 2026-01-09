@@ -100,10 +100,11 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 // ============================================================================
 
 // @safe - Initializes connection (only stores references)
+// State machine defaults to NEW state
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
       socket_(-1),
-      status_(NEW) {
+      state_machine_() {
 }
 
 // @safe - Simple destructor
@@ -130,13 +131,19 @@ void ClientConnection::invalidate_pending_futures() {
 
 // @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
-  if (status_ == CONNECTED) {
+  if (state_machine_.is_connected()) {
+    // Transition to DISCONNECTING state
+    state_machine_.transition_to(ConnectionState::DISCONNECTING);
     // @unsafe - system call
     {
       ::close(socket_);
     }
+    // Transition to DISCONNECTED state
+    state_machine_.transition_to(ConnectionState::DISCONNECTED);
+  } else if (!state_machine_.is_terminal()) {
+    // If not connected and not already terminal, force to DISCONNECTED
+    state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
-  status_ = CLOSED;
   invalidate_pending_futures();
 }
 
@@ -154,11 +161,19 @@ void ClientConnection::handle_free(i64 xid) const {
 // @unsafe - Establishes TCP/IPC connection to server
 // Contains syscalls, raw pointers, and other unsafe operations
 int ClientConnection::connect(const char* addr) {
-  verify(status_ != CONNECTED);
+  verify(!state_machine_.is_connected());
+
+  // Transition to CONNECTING state
+  if (!state_machine_.transition_to(ConnectionState::CONNECTING)) {
+    Log_error("rrr::ClientConnection: cannot connect from state %s",
+              connection_state_to_string(state_machine_.state()));
+    return EINVAL;
+  }
   string addr_str(addr);
   size_t idx = addr_str.find(":");
   if (idx == string::npos) {
     Log_error("rrr::ClientConnection: bad connect address: %s", addr);
+    state_machine_.transition_to(ConnectionState::FAILED);
     return EINVAL;
   }
   // @unsafe { - string operations
@@ -233,6 +248,7 @@ int ClientConnection::connect(const char* addr) {
 
   if (rp == nullptr) {
     // failed to connect
+    state_machine_.transition_to(ConnectionState::FAILED);
     return ENOTCONN;
   }
 #endif
@@ -244,7 +260,8 @@ int ClientConnection::connect(const char* addr) {
 
   Log_debug("rrr::ClientConnection: connected to %s", addr);
 
-  status_ = CONNECTED;
+  // Transition to CONNECTED state
+  state_machine_.transition_to(ConnectionState::CONNECTED);
 
   // Register with poll thread using weak_self_
   // @unsafe { - Weak::upgrade and PollThread::add
@@ -260,15 +277,17 @@ int ClientConnection::connect(const char* addr) {
   return 0;
 }
 
-// @safe - Simple error handler
+// @safe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
+  // Force transition to FAILED state (from any state)
+  state_machine_.force_state(ConnectionState::FAILED);
   // @unsafe - calls close() which does system calls
   { close(); }
 }
 
 // @safe - Writes buffered data to socket, protected by SpinMutex
 int ClientConnection::handle_write() {
-  if (status_ != CONNECTED) {
+  if (!state_machine_.is_connected()) {
     return PollMode::NO_CHANGE;
   }
   // Jetpack: respect pause state
@@ -287,7 +306,7 @@ int ClientConnection::handle_write() {
 
 // @safe - Reads and processes RPC responses
 bool ClientConnection::handle_read() {
-  if (status_ != CONNECTED) {
+  if (!state_machine_.is_connected()) {
     return false;
   }
 
@@ -297,7 +316,7 @@ bool ClientConnection::handle_read() {
   }
 
   // Process all available packets
-  while (status_ == CONNECTED) {
+  while (state_machine_.is_connected()) {
     i32 packet_size;
     int n_peek = in_.peek(packet_size);
 

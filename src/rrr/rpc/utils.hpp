@@ -76,10 +76,14 @@ public:
     explicit operator bool() const { return info_ != nullptr; }
 
     // Release ownership (for storing in member variable)
+    // @unsafe - Returns raw pointer
     struct addrinfo* release() {
-        auto* p = info_;
-        info_ = nullptr;
-        return p;
+        // @unsafe - raw pointer operations
+        {
+            auto* p = info_;
+            info_ = nullptr;
+            return p;
+        }
     }
 
     // Reset and free current, optionally take new pointer
