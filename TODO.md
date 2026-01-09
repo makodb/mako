@@ -122,12 +122,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Uses state machine to validate reconnection allowed (FAILED/DISCONNECTED states)
         - Callback support for async completion notification
         - ~100 LOC in headers + ~60 LOC in implementation
-      - [ ] *medium* 1.4 Circuit Breaker Pattern [deps: 1.1] [Plan: doc/rpc/phase1_circuit_breaker.md]
-        - Create `src/rrr/rpc/circuit_breaker.hpp`
-        - Three states: CLOSED, OPEN, HALF_OPEN
-        - Config: failure_threshold, success_threshold, timeout
-        - Fail-fast when OPEN, probe in HALF_OPEN
-        - ~150-200 LOC
+      - [x] *medium* 1.4 Circuit Breaker Pattern [deps: 1.1] [Plan: doc/rpc/phase1_circuit_breaker.md] [DONE]
+        - Created `src/rrr/rpc/circuit_breaker.hpp` (~280 LOC)
+        - CircuitState enum: CLOSED, OPEN, HALF_OPEN
+        - CircuitBreakerConfig with presets: sensitive(), relaxed(), disabled()
+        - CircuitBreaker class with allow_request(), record_success/failure()
+        - Timeout-based transition from OPEN to HALF_OPEN for probing
+        - Thread-safe via rusty::Cell for all mutable state
     - [ ] **Phase 2: Message Durability and Request Management**
       - [ ] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md]
         - Create `src/rrr/rpc/request_queue.hpp`
