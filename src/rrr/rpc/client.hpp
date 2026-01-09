@@ -12,6 +12,7 @@
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 #include "connection_state.hpp"
+#include "reconnect_policy.hpp"
 
 namespace rrr {
 
@@ -297,6 +298,11 @@ class ClientConnection: public Pollable {
     // Connection state machine for lifecycle management
     ConnectionStateMachine state_machine_;
 
+    // Reconnection policy and state
+    ReconnectPolicy reconnect_policy_;
+    rusty::Cell<bool> reconnecting_{false};
+    std::string reconnect_address_;  // Address to reconnect to
+
     // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
     // Cell provides interior mutability for safe access through const methods
@@ -351,6 +357,37 @@ public:
     // @unsafe - Establishes TCP connection
     // SAFETY: Proper socket creation and error handling
     int connect(const char* addr);
+
+    /**
+     * Set the reconnection policy for this connection.
+     * The policy controls automatic reconnection behavior after failures.
+     */
+    // @safe - Sets reconnection policy (wraps operator= in @unsafe block)
+    void set_reconnect_policy(const ReconnectPolicy& policy) {
+        // @unsafe - struct assignment operator not annotated
+        { reconnect_policy_ = policy; }
+    }
+
+    // @safe - Get the current reconnection policy
+    // @lifetime: (&'a) -> &'a
+    const ReconnectPolicy& reconnect_policy() const {
+        return reconnect_policy_;
+    }
+
+    // @safe - Check if a reconnection attempt is in progress
+    bool is_reconnecting() const {
+        return reconnecting_.get();
+    }
+
+    /**
+     * Attempt to reconnect to the last connected address.
+     * Can only be called when connection is in FAILED or DISCONNECTED state.
+     *
+     * @param on_complete Optional callback called with success/failure result
+     * @return 0 on success (reconnection started), error code on failure
+     */
+    // @unsafe - Attempts reconnection (calls connect which has socket operations)
+    int reconnect(std::function<void(bool)> on_complete = nullptr);
 
     /**
      * Send an RPC request with a lambda for writing arguments.
@@ -609,6 +646,36 @@ public:
     void set_valid(bool valid) const;
     // @unsafe - Establishes TCP connection (contains const_cast and unsafe connect)
     int connect(const char* addr, bool client = true) const;
+
+    /**
+     * Set the reconnection policy for this client.
+     * The policy controls automatic reconnection behavior after failures.
+     */
+    // @safe - Sets reconnection policy
+    void set_reconnect_policy(const ReconnectPolicy& policy) const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // const_cast needed since ClientConnection::set_reconnect_policy is not const
+            auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
+            conn.set_reconnect_policy(policy);
+        }
+    }
+
+    // @safe - Check if reconnection is in progress
+    bool is_reconnecting() const {
+        auto guard = connection_.borrow();
+        return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
+    }
+
+    /**
+     * Attempt to reconnect to the last connected address.
+     * Can only be called when connection is in FAILED or DISCONNECTED state.
+     *
+     * @param on_complete Optional callback called with success/failure result
+     * @return 0 on success (reconnection started), error code on failure
+     */
+    // @unsafe - Attempts reconnection (calls connect which has socket operations)
+    int reconnect(std::function<void(bool)> on_complete = nullptr) const;
 
     // @safe - Pauses the connection
     void pause() const;

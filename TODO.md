@@ -115,12 +115,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Policy presets: AGGRESSIVE (fast retries), CONSERVATIVE (slower), NO_RETRY
         - ReconnectCalculator class with exponential backoff and jitter
         - Thread-safe via rusty::Cell for retry_count_
-      - [ ] *medium* 1.3 Implement Automatic Reconnection Logic [deps: 1.1, 1.2] [Plan: doc/rpc/phase1_auto_reconnect.md]
-        - Add `ReconnectManager` class to `src/rrr/rpc/client.hpp`
-        - Track retry count and next retry time
-        - Modify `ClientConnection` to detect connection loss and trigger reconnection
-        - Add `reconnect()` method with async completion callback
-        - ~200-300 LOC
+      - [x] *medium* 1.3 Implement Automatic Reconnection Logic [deps: 1.1, 1.2] [Plan: doc/rpc/phase1_auto_reconnect.md] [DONE]
+        - Added reconnect() method to ClientConnection and Client classes
+        - Added set_reconnect_policy() and reconnect_policy() methods
+        - Stores reconnect_address_ for future reconnection attempts
+        - Uses state machine to validate reconnection allowed (FAILED/DISCONNECTED states)
+        - Callback support for async completion notification
+        - ~100 LOC in headers + ~60 LOC in implementation
       - [ ] *medium* 1.4 Circuit Breaker Pattern [deps: 1.1] [Plan: doc/rpc/phase1_circuit_breaker.md]
         - Create `src/rrr/rpc/circuit_breaker.hpp`
         - Three states: CLOSED, OPEN, HALF_OPEN

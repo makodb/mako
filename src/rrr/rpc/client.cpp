@@ -274,7 +274,50 @@ int ClientConnection::connect(const char* addr) {
     return EINVAL;
   }
 
+  // Store address for potential reconnection
+  reconnect_address_ = addr;
+
   return 0;
+}
+
+// @unsafe - Attempts to reconnect to the last connected address
+int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
+  // Check if we have an address to reconnect to
+  if (reconnect_address_.empty()) {
+    Log_error("rrr::ClientConnection: no address to reconnect to");
+    if (on_complete) on_complete(false);
+    return EINVAL;
+  }
+
+  // Can only reconnect from FAILED or DISCONNECTED state
+  if (!state_machine_.can_connect()) {
+    Log_error("rrr::ClientConnection: cannot reconnect from state %s",
+              connection_state_to_string(state_machine_.state()));
+    if (on_complete) on_complete(false);
+    return EINVAL;
+  }
+
+  // Mark as reconnecting
+  reconnecting_.set(true);
+
+  // Reset socket for reconnection
+  socket_ = -1;
+
+  // Attempt to connect
+  int result = connect(reconnect_address_.c_str());
+
+  reconnecting_.set(false);
+
+  if (result == 0) {
+    Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
+    if (on_complete) on_complete(true);
+  } else {
+    Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
+              reconnect_address_.c_str(), result);
+    if (on_complete) on_complete(false);
+  }
+
+  return result;
 }
 
 // @safe - Error handler - transitions to FAILED state
@@ -472,6 +515,24 @@ int Client::connect(const char* addr, bool client) const {
   }
 
   return result;
+}
+
+// @unsafe - Attempts to reconnect to the last connected address
+int Client::reconnect(std::function<void(bool)> on_complete) const {
+  auto guard = connection_.borrow();
+  if (guard->is_none()) {
+    Log_error("rrr::Client: no connection to reconnect");
+    if (on_complete) on_complete(false);
+    return ENOTCONN;
+  }
+
+  // Need to get mutable access to the connection for reconnect
+  auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
+
+  // @unsafe - reconnect does socket operations
+  {
+    return conn.reconnect(on_complete);
+  }
 }
 
 
