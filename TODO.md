@@ -155,12 +155,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Distinguish timeout types: CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT
         - ~150-200 LOC
     - [ ] **Phase 3: Health Monitoring**
-      - [ ] *high* 3.1 Heartbeat/Keep-Alive Mechanism [deps: 1.3] [Plan: doc/rpc/phase3_heartbeat.md]
-        - Create `src/rrr/rpc/heartbeat.hpp`
-        - `HeartbeatManager`: periodic ping/pong, configurable interval (default 10s)
-        - Define `__heartbeat__` special RPC
-        - Trigger reconnection on heartbeat timeout
-        - ~150-200 LOC
+      - [x] *high* 3.1 Heartbeat/Keep-Alive Mechanism [deps: 1.3] [Plan: doc/rpc/phase3_heartbeat.md] [DONE]
+        - Created `src/rrr/rpc/heartbeat.hpp` (~240 LOC)
+        - HeartbeatConfig with presets: aggressive(), relaxed(), disabled()
+        - HeartbeatManager class for tracking heartbeat state
+        - Caller-driven design: should_send_heartbeat(), on_heartbeat_sent(), on_pong_received()
+        - Timeout detection with callback support: check_timeout(), set_on_timeout()
+        - Thread-safe via rusty::Cell for all mutable state
       - [ ] *low* 3.2 Connection Health Metrics [Plan: doc/rpc/phase3_metrics.md]
         - Create `src/rrr/rpc/connection_metrics.hpp`
         - `ConnectionMetrics`: requests_sent/completed/failed, bytes, reconnect_count, avg_latency
