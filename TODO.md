@@ -4,17 +4,21 @@ This comment block is the prompt content in case you forget.
 
 Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until interrupted. Don’t ask me for advice, just pick the best option you think that is honest, complete, and not corner-cutting: 
 
-1. Pick the top undone task with highest priority (high-medium-low), choose its first leaf task.  If there are no undone TODO items left, sleep a minute and git pull and restart step 1 (so this step is a dead loop until you find a todo item).
+1. Check if there are any repeated task that needs to be run again. If yes this is the task we need to do, otherwise, pick the top undone task with highest priority (high-medium-low), choose its first leaf task.  If there are no undone TODO items left, sleep a minute and git pull and restart step 1 (so this step is a dead loop until you find a todo item).
 2. Analyze the task, check if this can be done with not too many LOC (i.e., smaller than 500 lines code give or take). If not, try to analyze this task and break it down into several smaller tasks, expanding it in the TODO.md. The breakdown can be nested and hierarchical. Try to make each leaf task small enough (<500 lines LOC). You can document your analysis in the doc folder for future reference. 
 3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. Avoid using std types, using rusty alternatives if they exists (e.g., don't use unique_ptr, use rusty::Box).
 4. Make sure to add comprehensive test for the task executed. Run the whole ci test  to make sure no regression happens (remember to use make clean && make -j32 because rusty-cpp requires make clean before build). If tests fail, fix them using the best, honest, complete approach, run test suites again to verify fixes work. Do not cheat such as disabling the borrow checker. Repeat this step until no tests fail. 
-5. Prepare for git commit, remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder.
+5. Prepare for git commit, remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder. we can keep the plan files in docs/dev/ folder. Mark the task as done (or last done for repeated task) in the TODO.md with a timestamp [yy:mm:dd, hh:mm]  
 6. Git commit the changes. First do git pull --rebase, and fix conflicts if any. Remember to update submodule. If remote has any updates (merged through rebase), then run full ci tests again to make sure everything pass. If not pass, investigate and fix, repeat until pass all ci tests. Then do git push (if remote rejected because updates during we doing this step, restart this step).
 7. Go back to step 1. (The TODO.md file is possibly updated, so make sure you read the updated TODO.)
 
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - repeated task
+    - [ ] for every hour, check https://github.com/makodb/mako/commits/mako-dev/ , look for if there are any failing ci (usually shows as 0/3, 1/3, 2/3, etc), fetch its log. and try to investigate what causes the failure, and propose fix. 
+    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled.
+  - [ ] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh rrrTests, investigate and try to fix. Also investigate why our local test run does not catch this.
   - [x] *high* build seems failing with most recent updates from rusty-cpp. make sure borrow-check is enabled for all files that have a safety annotation. investigate and fix the build failure. [DONE]
     - Investigation: Recent rusty-cpp updates (commit 86aa04a "Enforce borrow rules uniformly for pointers and references") introduced stricter checking that generates false positives:
       - "Cannot return 'value' because it has been moved"
@@ -175,11 +179,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Idle timeout for unused connections
         - ~100-150 LOC
     - [ ] **Phase 4: Server-Side Crash Handling**
-      - [ ] *medium* 4.1 Graceful Server Shutdown [Plan: doc/rpc/phase4_graceful_shutdown.md]
-        - Enhance `Server::stop()`: stop accepting, notify clients, wait for in-flight, close, release
-        - Add shutdown hooks for cleanup callbacks
-        - Implement `Server::drain()`
-        - ~150-200 LOC
+      - [x] *medium* 4.1 Graceful Server Shutdown [Plan: doc/rpc/phase4_graceful_shutdown.md] [DONE 2026-01-09]
+        - Added ShutdownPhase enum (RUNNING, STOP_ACCEPTING, DRAINING, CLOSING, STOPPED)
+        - Added shutdown hooks with thread-safe registration
+        - Added request tracking (increment_pending/decrement_pending)
+        - Implemented stop_accepting(), drain(timeout), graceful_shutdown()
+        - 17 unit tests in test/rpc_graceful_shutdown_test.cc
+        - ~230 LOC
       - [ ] *medium* 4.2 Server Restart Detection [deps: 4.1] [Plan: doc/rpc/phase4_restart_detection.md]
         - Add server instance ID (UUID on startup)
         - Include in connection handshake

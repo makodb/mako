@@ -90,6 +90,33 @@ class ServerConnection;
 struct RpcServiceContext;
 
 /**
+ * Server shutdown phases for graceful shutdown support.
+ * Progression: RUNNING -> STOP_ACCEPTING -> DRAINING -> CLOSING -> STOPPED
+ */
+enum class ShutdownPhase {
+    RUNNING,         // Normal operation
+    STOP_ACCEPTING,  // Not accepting new connections
+    DRAINING,        // Waiting for in-flight requests to complete
+    CLOSING,         // Closing all connections
+    STOPPED          // Fully stopped
+};
+
+// @safe - Convert ShutdownPhase to string for logging
+inline const char* shutdown_phase_to_string(ShutdownPhase phase) {
+    switch (phase) {
+        case ShutdownPhase::RUNNING: return "RUNNING";
+        case ShutdownPhase::STOP_ACCEPTING: return "STOP_ACCEPTING";
+        case ShutdownPhase::DRAINING: return "DRAINING";
+        case ShutdownPhase::CLOSING: return "CLOSING";
+        case ShutdownPhase::STOPPED: return "STOPPED";
+        default: return "UNKNOWN";
+    }
+}
+
+// Shutdown hook callback type
+using ShutdownHook = std::function<void()>;
+
+/**
  * The raw packet sent from client will be like this:
  * <size> <xid> <rpc_id> <arg1> <arg2> ... <argN>
  * NOTE: size does not include the size itself (<xid>..<argN>).
@@ -463,6 +490,11 @@ class Server: public NoCopy {
     rusty::Mutex<ShutdownState> shutdown_state_{ShutdownState{}};
     rusty::Condvar shutdown_cond_;
 
+    // Graceful shutdown support
+    rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
+    SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
+    std::atomic<int> pending_requests_{0};
+
 public:
     // @safe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
@@ -526,6 +558,75 @@ public:
 
     // @safe - Blocks until shutdown is signaled
     void wait_for_shutdown();
+
+    // === Graceful Shutdown API ===
+
+    /**
+     * Add a shutdown hook to be called during graceful shutdown.
+     * Hooks are called in order of registration during the CLOSING phase.
+     * @param hook Callback function to execute during shutdown
+     */
+    // @safe - Thread-safe hook registration
+    void add_shutdown_hook(ShutdownHook hook);
+
+    /**
+     * Stop accepting new connections but keep existing ones active.
+     * Transitions to STOP_ACCEPTING phase.
+     */
+    // @safe - Stops server listener
+    void stop_accepting();
+
+    /**
+     * Wait for all in-flight requests to complete.
+     * Transitions to DRAINING phase and waits until pending_requests_ reaches 0.
+     * @param timeout_ms Maximum time to wait in milliseconds (default: 30 seconds)
+     * @return true if all requests completed, false if timeout
+     */
+    // @safe - Waits for requests with timeout
+    bool drain(uint64_t timeout_ms = 30000);
+
+    /**
+     * Perform graceful shutdown:
+     * 1. Stop accepting new connections
+     * 2. Drain existing requests (with timeout)
+     * 3. Execute shutdown hooks
+     * 4. Close all connections
+     * @param drain_timeout_ms Timeout for drain phase (default: 30 seconds)
+     */
+    // @safe - Full graceful shutdown sequence
+    void graceful_shutdown(uint64_t drain_timeout_ms = 30000);
+
+    /**
+     * Get current shutdown phase.
+     */
+    // @safe - Phase getter
+    ShutdownPhase phase() const {
+        return shutdown_phase_.get();
+    }
+
+    /**
+     * Get count of pending (in-flight) requests.
+     */
+    // @safe - Pending request count
+    int pending_request_count() const {
+        return pending_requests_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * Increment pending request count. Called when starting to process a request.
+     */
+    // @safe - Atomic increment
+    void increment_pending() {
+        pending_requests_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    /**
+     * Decrement pending request count. Called when request completes.
+     */
+    // @safe - Atomic decrement
+    void decrement_pending() {
+        pending_requests_.fetch_sub(1, std::memory_order_relaxed);
+    }
 
     // @safe - Iterate over all registered services
     // Useful for cleanup operations like flushing recorders at shutdown.

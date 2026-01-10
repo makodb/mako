@@ -557,4 +557,110 @@ void Server::wait_for_shutdown() {
     Log_debug("Server::wait_for_shutdown - done");
 }
 
+// === Graceful Shutdown Implementation ===
+
+// @safe - Thread-safe hook registration
+void Server::add_shutdown_hook(ShutdownHook hook) {
+    auto guard = shutdown_hooks_.lock().unwrap();
+    guard->push_back(std::move(hook));
+}
+
+// @safe - Stops server listener from accepting new connections
+void Server::stop_accepting() {
+    if (shutdown_phase_.get() != ShutdownPhase::RUNNING) {
+        Log_debug("Server::stop_accepting: already in phase %s",
+                  shutdown_phase_to_string(shutdown_phase_.get()));
+        return;
+    }
+
+    Log_info("Server::stop_accepting: transitioning to STOP_ACCEPTING");
+    shutdown_phase_.set(ShutdownPhase::STOP_ACCEPTING);
+
+    // Close the server listener to stop accepting new connections
+    if (server_listener_.is_some()) {
+        auto& listener = server_listener_.as_ref().unwrap();
+        poll_thread_.as_ref().unwrap()->request_close(listener->fd());
+        Log_info("Server::stop_accepting: listener closed, no longer accepting connections");
+    }
+}
+
+// @safe - Waits for in-flight requests to complete with timeout
+bool Server::drain(uint64_t timeout_ms) {
+    auto current_phase = shutdown_phase_.get();
+    if (current_phase != ShutdownPhase::RUNNING &&
+        current_phase != ShutdownPhase::STOP_ACCEPTING) {
+        Log_debug("Server::drain: already in phase %s",
+                  shutdown_phase_to_string(current_phase));
+        return pending_requests_.load(std::memory_order_relaxed) == 0;
+    }
+
+    Log_info("Server::drain: transitioning to DRAINING, pending=%d",
+             pending_requests_.load(std::memory_order_relaxed));
+    shutdown_phase_.set(ShutdownPhase::DRAINING);
+
+    // Wait for pending requests with timeout
+    // @unsafe - uses std::chrono
+    {
+        auto start = std::chrono::steady_clock::now();
+        auto timeout = std::chrono::milliseconds(timeout_ms);
+
+        while (pending_requests_.load(std::memory_order_relaxed) > 0) {
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed >= timeout) {
+                Log_warn("Server::drain: timeout after %lu ms, pending=%d",
+                         timeout_ms, pending_requests_.load(std::memory_order_relaxed));
+                return false;
+            }
+
+            // Brief sleep to avoid busy-waiting
+            // @unsafe - usleep syscall
+            usleep(1000);  // 1ms
+        }
+    }
+
+    Log_info("Server::drain: completed, all requests drained");
+    return true;
+}
+
+// @safe - Full graceful shutdown sequence
+void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
+    Log_info("Server::graceful_shutdown: starting graceful shutdown");
+
+    // Phase 1: Stop accepting new connections
+    stop_accepting();
+
+    // Phase 2: Drain existing requests
+    bool drained = drain(drain_timeout_ms);
+    if (!drained) {
+        Log_warn("Server::graceful_shutdown: drain timed out, proceeding with shutdown");
+    }
+
+    // Phase 3: Execute shutdown hooks
+    Log_info("Server::graceful_shutdown: transitioning to CLOSING, executing hooks");
+    shutdown_phase_.set(ShutdownPhase::CLOSING);
+
+    {
+        auto guard = shutdown_hooks_.lock().unwrap();
+        for (auto& hook : *guard) {
+            // @unsafe - callback execution
+            {
+                try {
+                    hook();
+                } catch (const std::exception& e) {
+                    Log_error("Server::graceful_shutdown: hook threw exception: %s", e.what());
+                } catch (...) {
+                    Log_error("Server::graceful_shutdown: hook threw unknown exception");
+                }
+            }
+        }
+    }
+
+    // Phase 4: Close all connections (destructor handles this)
+    // Signal shutdown to any waiting threads
+    do_shutdown();
+
+    Log_info("Server::graceful_shutdown: transitioning to STOPPED");
+    shutdown_phase_.set(ShutdownPhase::STOPPED);
+}
+
 } // namespace rrr

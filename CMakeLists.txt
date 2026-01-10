@@ -1509,6 +1509,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_combined_reliability ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_combined_reliability COMMAND test_rpc_combined_reliability)
 
+    # Graceful Shutdown Tests (Phase 4.1)
+    add_executable(test_rpc_graceful_shutdown test/rpc_graceful_shutdown_test.cc)
+    target_include_directories(test_rpc_graceful_shutdown PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_graceful_shutdown PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_graceful_shutdown ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_graceful_shutdown COMMAND test_rpc_graceful_shutdown)
+
     # Transaction Timeout Tests
     add_executable(test_txn_timeout test/deptran/txn_timeout_test.cc)
     target_include_directories(test_txn_timeout PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
