@@ -18,6 +18,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
   - repeated task
     - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-10, 03:15 - fixed borrow violations in client.cpp, server.cpp, reactor.cc, threading.cpp]
+  - [ ] *medium* currently when we build the project from scratch, the build of the rusty-cpp submodule seems to be single threaded, make it parallel build (32 thread) to speed up.
   - [x] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh rrrTests [DONE 2026-01-09]
     - Root cause 1: `Client::close()` was clearing connection to None, losing address for reconnect
       - Fix: Modified `Client::close()` to call `conn.close()` but NOT clear to None
