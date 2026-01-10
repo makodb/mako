@@ -2,6 +2,7 @@
 #include <sstream>
 #include <memory>
 #include <cerrno>
+#include <random>
 
 #include <sys/select.h>
 #include <sys/un.h>
@@ -302,6 +303,26 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
         poll_thread_ = rusty::Some(PollThread::create());
     } else {
         poll_thread_ = std::move(poll_thread_worker);
+    }
+
+    // Generate unique instance ID for restart detection
+    // Combines timestamp, random component, and process ID for uniqueness
+    // @unsafe - std::random_device may use system entropy sources
+    {
+        auto now = std::chrono::steady_clock::now().time_since_epoch();
+        uint64_t time_component = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+
+        std::random_device rd;
+        uint64_t random_component = static_cast<uint64_t>(rd()) << 32 |
+                                    static_cast<uint64_t>(rd());
+
+        uint64_t pid_component = static_cast<uint64_t>(getpid()) << 48;
+
+        // Mix components with XOR for final ID
+        instance_id_ = time_component ^ random_component ^ pid_component;
+
+        Log_debug("Server: generated instance_id=%lu", instance_id_);
     }
 }
 

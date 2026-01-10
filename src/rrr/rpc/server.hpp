@@ -495,6 +495,10 @@ class Server: public NoCopy {
     SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
     std::atomic<int> pending_requests_{0};
 
+    // Server restart detection: unique instance ID generated on startup
+    // Used by clients to detect server restarts (ID changes after restart)
+    uint64_t instance_id_;
+
 public:
     // @safe - Creates server with optional PollThread
     // SAFETY: Shared ownership of PollThread via Arc<Mutex<>>
@@ -626,6 +630,16 @@ public:
     // @safe - Atomic decrement
     void decrement_pending() {
         pending_requests_.fetch_sub(1, std::memory_order_relaxed);
+    }
+
+    /**
+     * Get the server's unique instance ID.
+     * This ID is generated on server startup and can be used by clients
+     * to detect server restarts (the ID changes after restart).
+     */
+    // @safe - Simple getter
+    uint64_t instance_id() const {
+        return instance_id_;
     }
 
     // @safe - Iterate over all registered services

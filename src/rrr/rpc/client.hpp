@@ -353,6 +353,14 @@ class ClientConnection: public Pollable {
     mutable BufferingConfig buffering_config_;  // mutable for const set_buffering_config()
     mutable RequestQueue pending_queue_;  // mutable for const request() access
 
+    // Server restart detection: tracks server instance ID
+    // 0 means no ID received yet (initial state)
+    rusty::Cell<uint64_t> server_instance_id_{0};
+
+    // Callback invoked when server restart is detected (ID changes)
+    // Parameters: (old_id, new_id)
+    mutable std::function<void(uint64_t, uint64_t)> on_server_restart_;
+
     // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
     // Cell provides interior mutability for safe access through const methods
@@ -464,6 +472,55 @@ public:
     void clear_pending_requests(int error_code = ECONNABORTED) const {
         // @unsafe { RequestQueue::clear_all }
         pending_queue_.clear_all(error_code);
+    }
+
+    // === Server Restart Detection API ===
+
+    /**
+     * Get the last known server instance ID.
+     * Returns 0 if no ID has been set yet (initial state).
+     */
+    // @safe - Simple getter using Cell
+    uint64_t server_instance_id() const {
+        return server_instance_id_.get();
+    }
+
+    /**
+     * Set the callback to be invoked when server restart is detected.
+     * The callback receives (old_id, new_id) when the server's instance ID changes.
+     *
+     * @param callback Function to call on restart detection
+     */
+    // @unsafe - std::function assignment through const (interior mutability via mutable)
+    void set_on_server_restart(std::function<void(uint64_t, uint64_t)> callback) const {
+        on_server_restart_ = std::move(callback);
+    }
+
+    /**
+     * Check and update the server instance ID.
+     * If the new ID differs from the stored ID (and stored ID was non-zero),
+     * the on_server_restart callback is invoked.
+     *
+     * @param new_id The new server instance ID
+     * @return true if server restart was detected, false otherwise
+     */
+    // @unsafe - Updates Cell and may call callback (std::function operations)
+    bool check_server_instance(uint64_t new_id) const {
+        uint64_t old_id = server_instance_id_.get();
+
+        // Always update the stored ID
+        server_instance_id_.set(new_id);
+
+        // Detect restart: old ID was set (non-zero) and differs from new ID
+        if (old_id != 0 && old_id != new_id) {
+            Log_info("Server restart detected: old_id=%lu new_id=%lu", old_id, new_id);
+            // @unsafe { std::function::operator bool and callback execution }
+            if (on_server_restart_) {
+                on_server_restart_(old_id, new_id);
+            }
+            return true;
+        }
+        return false;
     }
 
 private:
@@ -955,6 +1012,52 @@ public:
             return rusty::Some(guard->as_ref().unwrap().clone());
         }
         return rusty::None;
+    }
+
+    // === Server Restart Detection API ===
+
+    /**
+     * Get the last known server instance ID.
+     * Returns 0 if no ID has been set yet or no connection exists.
+     */
+    // @safe - Delegates to ClientConnection
+    uint64_t server_instance_id() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->server_instance_id();
+        }
+        return 0;
+    }
+
+    /**
+     * Set the callback to be invoked when server restart is detected.
+     * The callback receives (old_id, new_id) when the server's instance ID changes.
+     *
+     * @param callback Function to call on restart detection
+     */
+    // @unsafe - Delegates to @unsafe ClientConnection::set_on_server_restart
+    void set_on_server_restart(std::function<void(uint64_t, uint64_t)> callback) const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            guard->as_ref().unwrap()->set_on_server_restart(std::move(callback));
+        }
+    }
+
+    /**
+     * Check and update the server instance ID.
+     * If the new ID differs from the stored ID (and stored ID was non-zero),
+     * the on_server_restart callback is invoked.
+     *
+     * @param new_id The new server instance ID
+     * @return true if server restart was detected, false otherwise
+     */
+    // @unsafe - Delegates to @unsafe ClientConnection::check_server_instance
+    bool check_server_instance(uint64_t new_id) const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->check_server_instance(new_id);
+        }
+        return false;
     }
 
     // @safe - Jetpack: handle_free for explicit future cleanup

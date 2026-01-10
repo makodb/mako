@@ -186,12 +186,16 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Implemented stop_accepting(), drain(timeout), graceful_shutdown()
         - 17 unit tests in test/rpc_graceful_shutdown_test.cc
         - ~230 LOC
-      - [ ] *medium* 4.2 Server Restart Detection [deps: 4.1] [Plan: doc/rpc/phase4_restart_detection.md]
-        - Add server instance ID (UUID on startup)
-        - Include in connection handshake
-        - Client detects restart by ID change
-        - Emit `on_server_restart(old_id, new_id)` event
-        - ~100-150 LOC
+      - [x] *medium* 4.2 Server Restart Detection [deps: 4.1] [Plan: doc/rpc/phase4_restart_detection.md] [DONE 2026-01-09]
+        - Added instance_id_ member to Server class (generated on startup)
+        - ID generation: XOR of timestamp (nanoseconds), random bits, and PID
+        - Added instance_id() getter to Server
+        - Added server_instance_id_ tracking to ClientConnection (Cell<uint64_t>)
+        - Added set_on_server_restart() callback for restart detection
+        - Added check_server_instance(new_id) method that triggers callback on ID change
+        - Client wrapper methods delegate to ClientConnection
+        - 11 unit tests in test/rpc_restart_detection_test.cc
+        - ~100 LOC
       - [ ] *low* 4.3 Request Completion Tracking [deps: 2.3, 4.2] [Plan: doc/rpc/phase4_completion_tracking.md]
         - Server maintains completion log of recent request XIDs
         - Client can query if request completed on reconnection

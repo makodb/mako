@@ -1516,6 +1516,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_graceful_shutdown ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_graceful_shutdown COMMAND test_rpc_graceful_shutdown)
 
+    # Server Restart Detection Tests (Phase 4.2)
+    add_executable(test_rpc_restart_detection test/rpc_restart_detection_test.cc)
+    target_include_directories(test_rpc_restart_detection PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_restart_detection PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_restart_detection ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_restart_detection COMMAND test_rpc_restart_detection)
+
     # Transaction Timeout Tests
     add_executable(test_txn_timeout test/deptran/txn_timeout_test.cc)
     target_include_directories(test_txn_timeout PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
