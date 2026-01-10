@@ -1,4 +1,7 @@
 #include "test.h"
+#include <set>
+#include <cstdlib>
+#include <ctime>
 
 namespace janus {
 
@@ -13,7 +16,10 @@ int RaftLabTest::Run(void) {
   config_->SetLearnerAction();
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
-  if (testPersistence() 
+  if (// testPersistence()
+      // || testTwoFollowerPersistence()
+      // || testLeaderFollowerPersistence()
+      testComprehensiveCrashRecovery()
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -90,59 +96,59 @@ void RaftLabTest::Cleanup(void) {
       }
 
 int RaftLabTest::testPersistence(void) {
-  Init2(0, "Persistence across server kill and restart");
+  Init2(12, "Persistence across server kill and restart (single)");
 
-  Log_info("TEST 0: Waiting for initial election");
+  Log_info("TEST 12: Waiting for initial election");
   Coroutine::Sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 0: Leader elected: %d", leader);
+  Log_info("TEST 12: Leader elected: %d", leader);
 
   // Commit some entries
-  Log_info("TEST 0: Committing initial entries");
+  Log_info("TEST 12: Committing initial entries");
   DoAgreeAndAssertIndex(101, NSERVERS, index_++);
   DoAgreeAndAssertIndex(102, NSERVERS, index_++);
   DoAgreeAndAssertIndex(103, NSERVERS, index_++);
-  Log_info("TEST 0: Committed 3 entries");
+  Log_info("TEST 12: Committed 3 entries");
 
   // Pick a follower to kill and restart
   siteid_t victim = config_->getNextServerId(leader, 1);
-  Log_info("TEST 0: Killing follower %d", victim);
+  Log_info("TEST 12: Killing follower %d", victim);
 
   // Get state before killing
   auto victim_server = config_->GetServer(victim);
   uint64_t term_before = victim_server->currentTerm;
   uint64_t last_log_before = victim_server->lastLogIndex;
-  Log_info("TEST 0: Before kill - term=%lu, lastLogIndex=%lu", term_before, last_log_before);
+  Log_info("TEST 12: Before kill - term=%lu, lastLogIndex=%lu", term_before, last_log_before);
 
   // Kill the server
   config_->Kill(victim);
-  Log_info("TEST 0: Server %d killed", victim);
+  Log_info("TEST 12: Server %d killed", victim);
 
   // Sleep to ensure it's really gone
   Coroutine::Sleep(ELECTIONTIMEOUT / 2);
 
   // Commit more entries with remaining servers
-  Log_info("TEST 0: Committing entries with %d servers", NSERVERS - 1);
+  Log_info("TEST 12: Committing entries with %d servers", NSERVERS - 1);
   DoAgreeAndAssertIndex(104, NSERVERS - 1, index_++);
   DoAgreeAndAssertIndex(105, NSERVERS - 1, index_++);
-  Log_info("TEST 0: Committed 2 more entries");
+  Log_info("TEST 12: Committed 2 more entries");
 
   // Restart the killed server
-  Log_info("TEST 0: Restarting server %d", victim);
+  Log_info("TEST 12: Restarting server %d", victim);
   config_->Restart(victim);
-  Log_info("TEST 0: Server %d restarted", victim);
+  Log_info("TEST 12: Server %d restarted", victim);
 
   // Give it time to catch up
   Coroutine::Sleep(ELECTIONTIMEOUT);
 
-  Log_info("TEST 0: After Sleep for ELECTIONTIMEOUT");
+  Log_info("TEST 12: After Sleep for ELECTIONTIMEOUT");
 
   // Verify the restarted server recovered its state
   victim_server = config_->GetServer(victim);
   uint64_t term_after = victim_server->currentTerm;
   uint64_t last_log_after = victim_server->lastLogIndex;
-  Log_info("TEST 0: After restart - term=%lu, lastLogIndex=%lu", term_after, last_log_after);
+  Log_info("TEST 12: After restart - term=%lu, lastLogIndex=%lu", term_after, last_log_after);
 
   // Term should be at least what it was before (may be higher if elections occurred)
   Assert2(term_after >= term_before,
@@ -154,43 +160,43 @@ int RaftLabTest::testPersistence(void) {
           "lastLogIndex decreased after restart: was %lu, now %lu",
           last_log_before, last_log_after);
 
-  Log_info("TEST 0: State recovered correctly");
+  Log_info("TEST 12: State recovered correctly");
 
   // Commit with all servers to verify restarted server works
-  Log_info("TEST 0: Committing with all %d servers", NSERVERS);
+  Log_info("TEST 12: Committing with all %d servers", NSERVERS);
   DoAgreeAndAssertWaitSuccess(106, NSERVERS);
-  Log_info("TEST 0: Final commit successful");
+  Log_info("TEST 12: Final commit successful");
 
   // Now test killing and restarting the leader
   leader = config_->OneLeader();
   AssertOneLeader(leader);
-  Log_info("TEST 0: Testing leader kill - current leader is %d", leader);
+  Log_info("TEST 12: Testing leader kill - current leader is %d", leader);
 
   // Get leader state before killing
   auto leader_server = config_->GetServer(leader);
   term_before = leader_server->currentTerm;
   last_log_before = leader_server->lastLogIndex;
-  Log_info("TEST 0: Leader before kill - term=%lu, lastLogIndex=%lu", term_before, last_log_before);
+  Log_info("TEST 12: Leader before kill - term=%lu, lastLogIndex=%lu", term_before, last_log_before);
 
   // Kill the leader
   config_->Kill(leader);
-  Log_info("TEST 0: Leader %d killed", leader);
+  Log_info("TEST 12: Leader %d killed", leader);
 
   // Wait for new leader election
   Coroutine::Sleep(ELECTIONTIMEOUT);
   int new_leader = config_->OneLeader();
   AssertOneLeader(new_leader);
   AssertReElection(new_leader, leader);
-  Log_info("TEST 0: New leader elected: %d", new_leader);
+  Log_info("TEST 12: New leader elected: %d", new_leader);
 
   // Commit entries with new leader
   DoAgreeAndAssertIndex(107, NSERVERS - 1, index_++);
-  Log_info("TEST 0: Committed entry with new leader");
+  Log_info("TEST 12: Committed entry with new leader");
 
   // Restart the old leader
-  Log_info("TEST 0: Restarting old leader %d", leader);
+  Log_info("TEST 12: Restarting old leader %d", leader);
   config_->Restart(leader);
-  Log_info("TEST 0: Old leader %d restarted", leader);
+  Log_info("TEST 12: Old leader %d restarted", leader);
 
   // Give it time to catch up
   Coroutine::Sleep(ELECTIONTIMEOUT);
@@ -199,23 +205,412 @@ int RaftLabTest::testPersistence(void) {
   leader_server = config_->GetServer(leader);
   term_after = leader_server->currentTerm;
   last_log_after = leader_server->lastLogIndex;
-  Log_info("TEST 0: Old leader after restart - term=%lu, lastLogIndex=%lu", term_after, last_log_after);
+  Log_info("TEST 12: Old leader after restart - term=%lu, lastLogIndex=%lu", term_after, last_log_after);
 
   Assert2(term_after >= term_before,
           "old leader term decreased after restart: was %lu, now %lu",
           term_before, term_after);
 
   // Final commit with all servers
-  Log_info("TEST 0: Final commit with all servers");
+  Log_info("TEST 12: Final commit with all servers");
   DoAgreeAndAssertWaitSuccess(108, NSERVERS);
-  Log_info("TEST 0: All servers working correctly");
+  Log_info("TEST 12: All servers working correctly");
+
+  Passed2();
+}
+
+int RaftLabTest::testTwoFollowerPersistence(void) {
+  Init2(13, "Persistence across two follower kill and restart");
+
+  Log_info("TEST 13: Waiting for initial election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 13: Leader elected: %d", leader);
+
+  // Commit some entries
+  Log_info("TEST 13: Committing initial entries");
+  DoAgreeAndAssertIndex(1301, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1302, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1303, NSERVERS, index_++);
+  Log_info("TEST 13: Committed 3 entries");
+
+  // Pick two followers to kill
+  siteid_t victim1 = config_->getNextServerId(leader, 1);
+  siteid_t victim2 = config_->getNextServerId(leader, 2);
+  Log_info("TEST 13: Killing two followers: %d and %d", victim1, victim2);
+
+  // Get state before killing
+  auto victim1_server = config_->GetServer(victim1);
+  auto victim2_server = config_->GetServer(victim2);
+  uint64_t term_before1 = victim1_server->currentTerm;
+  uint64_t term_before2 = victim2_server->currentTerm;
+  uint64_t last_log_before1 = victim1_server->lastLogIndex;
+  uint64_t last_log_before2 = victim2_server->lastLogIndex;
+  Log_info("TEST 13: Victim1 before kill - term=%lu, lastLogIndex=%lu", term_before1, last_log_before1);
+  Log_info("TEST 13: Victim2 before kill - term=%lu, lastLogIndex=%lu", term_before2, last_log_before2);
+
+  // Kill both servers
+  config_->Kill(victim1);
+  Log_info("TEST 13: Server %d killed", victim1);
+  config_->Kill(victim2);
+  Log_info("TEST 13: Server %d killed", victim2);
+
+  // Sleep to ensure they're really gone
+  Coroutine::Sleep(ELECTIONTIMEOUT / 2);
+
+  // We still have quorum (3 out of 5), commit more entries
+  Log_info("TEST 13: Committing entries with %d servers", NSERVERS - 2);
+  DoAgreeAndAssertIndex(1304, NSERVERS - 2, index_++);
+  DoAgreeAndAssertIndex(1305, NSERVERS - 2, index_++);
+  Log_info("TEST 13: Committed 2 more entries with reduced cluster");
+
+  // Restart victim1 first
+  Log_info("TEST 13: Restarting server %d", victim1);
+  config_->Restart(victim1);
+  Log_info("TEST 13: Server %d restarted", victim1);
+
+  // Give it time to catch up
+  Coroutine::Sleep(ELECTIONTIMEOUT / 2);
+
+  // Restart victim2
+  Log_info("TEST 13: Restarting server %d", victim2);
+  config_->Restart(victim2);
+  Log_info("TEST 13: Server %d restarted", victim2);
+
+  // Give both time to catch up
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+
+  Log_info("TEST 13: Both servers restarted, verifying state");
+
+  // Verify both restarted servers recovered their state
+  victim1_server = config_->GetServer(victim1);
+  victim2_server = config_->GetServer(victim2);
+  uint64_t term_after1 = victim1_server->currentTerm;
+  uint64_t term_after2 = victim2_server->currentTerm;
+  uint64_t last_log_after1 = victim1_server->lastLogIndex;
+  uint64_t last_log_after2 = victim2_server->lastLogIndex;
+  Log_info("TEST 13: Victim1 after restart - term=%lu, lastLogIndex=%lu", term_after1, last_log_after1);
+  Log_info("TEST 13: Victim2 after restart - term=%lu, lastLogIndex=%lu", term_after2, last_log_after2);
+
+  // Term should be at least what it was before
+  Assert2(term_after1 >= term_before1,
+          "victim1 term decreased after restart: was %lu, now %lu",
+          term_before1, term_after1);
+  Assert2(term_after2 >= term_before2,
+          "victim2 term decreased after restart: was %lu, now %lu",
+          term_before2, term_after2);
+
+  // Last log index should be at least what it was before
+  Assert2(last_log_after1 >= last_log_before1,
+          "victim1 lastLogIndex decreased after restart: was %lu, now %lu",
+          last_log_before1, last_log_after1);
+  Assert2(last_log_after2 >= last_log_before2,
+          "victim2 lastLogIndex decreased after restart: was %lu, now %lu",
+          last_log_before2, last_log_after2);
+
+  Log_info("TEST 13: State recovered correctly for both servers");
+
+  // Commit with all servers to verify both restarted servers work
+  Log_info("TEST 13: Committing with all %d servers", NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1306, NSERVERS);
+  Log_info("TEST 13: Final commit successful with all servers");
+
+  // Verify leader is still stable
+  int final_leader = config_->OneLeader();
+  AssertOneLeader(final_leader);
+  Log_info("TEST 13: Leader after all restarts: %d", final_leader);
+
+  Passed2();
+}
+
+int RaftLabTest::testLeaderFollowerPersistence(void) {
+  Init2(14, "Persistence across leader + follower kill and restart");
+
+  Log_info("TEST 14: Waiting for initial election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 14: Leader elected: %d", leader);
+
+  // Commit some entries
+  Log_info("TEST 14: Committing initial entries");
+  DoAgreeAndAssertIndex(1401, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1402, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1403, NSERVERS, index_++);
+  Log_info("TEST 14: Committed 3 entries");
+
+  // Pick one follower to kill along with the leader
+  siteid_t victim_follower = config_->getNextServerId(leader, 1);
+  siteid_t victim_leader = leader;
+  Log_info("TEST 14: Killing leader %d and follower %d", victim_leader, victim_follower);
+
+  // Get state before killing
+  auto leader_server = config_->GetServer(victim_leader);
+  auto follower_server = config_->GetServer(victim_follower);
+  uint64_t term_before_leader = leader_server->currentTerm;
+  uint64_t term_before_follower = follower_server->currentTerm;
+  uint64_t last_log_before_leader = leader_server->lastLogIndex;
+  uint64_t last_log_before_follower = follower_server->lastLogIndex;
+  Log_info("TEST 14: Leader before kill - term=%lu, lastLogIndex=%lu", term_before_leader, last_log_before_leader);
+  Log_info("TEST 14: Follower before kill - term=%lu, lastLogIndex=%lu", term_before_follower, last_log_before_follower);
+
+  // Kill both servers (leader first, then follower)
+  config_->Kill(victim_leader);
+  Log_info("TEST 14: Leader %d killed", victim_leader);
+  config_->Kill(victim_follower);
+  Log_info("TEST 14: Follower %d killed", victim_follower);
+
+  // Wait for new leader election among remaining 3 servers
+  Log_info("TEST 14: Waiting for new leader election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+
+  int new_leader = config_->OneLeader();
+  AssertOneLeader(new_leader);
+  Assert2(new_leader != victim_leader, "new leader should not be the killed leader");
+  Assert2(new_leader != victim_follower, "new leader should not be the killed follower");
+  Log_info("TEST 14: New leader elected: %d", new_leader);
+
+  // We still have quorum (3 out of 5), commit more entries
+  Log_info("TEST 14: Committing entries with %d servers", NSERVERS - 2);
+  DoAgreeAndAssertIndex(1404, NSERVERS - 2, index_++);
+  DoAgreeAndAssertIndex(1405, NSERVERS - 2, index_++);
+  Log_info("TEST 14: Committed 2 more entries with reduced cluster");
+
+  // Restart the follower first
+  Log_info("TEST 14: Restarting follower %d", victim_follower);
+  config_->Restart(victim_follower);
+  Log_info("TEST 14: Follower %d restarted", victim_follower);
+
+  // Give it time to catch up
+  Coroutine::Sleep(ELECTIONTIMEOUT / 2);
+
+  // Restart the old leader
+  Log_info("TEST 14: Restarting old leader %d", victim_leader);
+  config_->Restart(victim_leader);
+  Log_info("TEST 14: Old leader %d restarted", victim_leader);
+
+  // Give both time to catch up
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+
+  Log_info("TEST 14: Both servers restarted, verifying state");
+
+  // Verify both restarted servers recovered their state
+  leader_server = config_->GetServer(victim_leader);
+  follower_server = config_->GetServer(victim_follower);
+  uint64_t term_after_leader = leader_server->currentTerm;
+  uint64_t term_after_follower = follower_server->currentTerm;
+  uint64_t last_log_after_leader = leader_server->lastLogIndex;
+  uint64_t last_log_after_follower = follower_server->lastLogIndex;
+  Log_info("TEST 14: Old leader after restart - term=%lu, lastLogIndex=%lu", term_after_leader, last_log_after_leader);
+  Log_info("TEST 14: Follower after restart - term=%lu, lastLogIndex=%lu", term_after_follower, last_log_after_follower);
+
+  // Term should be at least what it was before (may be higher due to new election)
+  Assert2(term_after_leader >= term_before_leader,
+          "old leader term decreased after restart: was %lu, now %lu",
+          term_before_leader, term_after_leader);
+  Assert2(term_after_follower >= term_before_follower,
+          "follower term decreased after restart: was %lu, now %lu",
+          term_before_follower, term_after_follower);
+
+  // Last log index should be at least what it was before
+  Assert2(last_log_after_leader >= last_log_before_leader,
+          "old leader lastLogIndex decreased after restart: was %lu, now %lu",
+          last_log_before_leader, last_log_after_leader);
+  Assert2(last_log_after_follower >= last_log_before_follower,
+          "follower lastLogIndex decreased after restart: was %lu, now %lu",
+          last_log_before_follower, last_log_after_follower);
+
+  Log_info("TEST 14: State recovered correctly for both servers");
+
+  // Commit with all servers to verify both restarted servers work
+  Log_info("TEST 14: Committing with all %d servers", NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1406, NSERVERS);
+  Log_info("TEST 14: Final commit successful with all servers");
+
+  // Verify we have a stable leader
+  int final_leader = config_->OneLeader();
+  AssertOneLeader(final_leader);
+  Log_info("TEST 14: Leader after all restarts: %d", final_leader);
+
+  Passed2();
+}
+
+int RaftLabTest::testComprehensiveCrashRecovery(void) {
+  Init2(15, "Comprehensive crash-recovery with random server selection");
+
+  Log_info("TEST 15: Waiting for initial election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 15: Initial leader elected: %d", leader);
+
+  // Commit initial entries
+  Log_info("TEST 15: Committing initial entries");
+  DoAgreeAndAssertIndex(1501, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1502, NSERVERS, index_++);
+  Log_info("TEST 15: Initial entries committed");
+
+  // Random number generator
+  std::srand(std::time(nullptr));
+
+  // Helper to get a random server from a set
+  auto pickRandom = [](const std::set<siteid_t>& servers) -> siteid_t {
+    if (servers.empty()) return -1;
+    int idx = std::rand() % servers.size();
+    auto it = servers.begin();
+    std::advance(it, idx);
+    return *it;
+  };
+
+  // Track which servers are currently alive
+  std::set<siteid_t> alive_servers;
+  std::set<siteid_t> dead_servers;
+  for (int i = 0; i < NSERVERS; i++) {
+    alive_servers.insert(config_->getServerIdByIndex(i));
+  }
+
+  const int NUM_ROUNDS = 5;
+  int cmd_base = 1510;
+
+  for (int round = 1; round <= NUM_ROUNDS; round++) {
+    Log_info("TEST 15: ===== ROUND %d =====", round);
+
+    // Phase 1: Kill 2 random servers (maintain quorum with 3 remaining)
+    Log_info("TEST 15: Phase 1 - Killing 2 random servers");
+
+    siteid_t victim1 = pickRandom(alive_servers);
+    alive_servers.erase(victim1);
+    dead_servers.insert(victim1);
+
+    siteid_t victim2 = pickRandom(alive_servers);
+    alive_servers.erase(victim2);
+    dead_servers.insert(victim2);
+
+    Log_info("TEST 15: Round %d - Killing servers %d and %d", round, victim1, victim2);
+    config_->Kill(victim1);
+    config_->Kill(victim2);
+
+    // Wait for potential leader election if we killed the leader
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+
+    // Verify we still have a leader among surviving servers
+    leader = config_->OneLeader();
+    AssertOneLeader(leader);
+    Assert2(alive_servers.count(leader) > 0, "Leader %d should be among alive servers", leader);
+    Log_info("TEST 15: Round %d - Leader after kills: %d", round, leader);
+
+    // Commit with 3 servers (quorum)
+    Log_info("TEST 15: Round %d - Committing with %zu alive servers", round, alive_servers.size());
+    DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
+
+    // Phase 2: Restart one of the dead servers
+    Log_info("TEST 15: Phase 2 - Restarting one dead server");
+
+    siteid_t restart1 = pickRandom(dead_servers);
+    dead_servers.erase(restart1);
+    alive_servers.insert(restart1);
+
+    Log_info("TEST 15: Round %d - Restarting server %d", round, restart1);
+    config_->Restart(restart1);
+
+    // Wait for it to catch up
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+
+    // Verify leader and commit
+    leader = config_->OneLeader();
+    AssertOneLeader(leader);
+    Log_info("TEST 15: Round %d - Leader after restart1: %d", round, leader);
+
+    DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
+
+    // Phase 3: Kill another random alive server (back to 3 alive)
+    Log_info("TEST 15: Phase 3 - Killing another random server");
+
+    // Make sure we don't kill the current leader to make it more interesting sometimes
+    // But we allow it with 50% probability to test leader crash recovery
+    siteid_t victim3;
+    if (std::rand() % 2 == 0 && alive_servers.size() > 1) {
+      // Try to kill a non-leader
+      std::set<siteid_t> non_leaders = alive_servers;
+      non_leaders.erase(leader);
+      if (!non_leaders.empty()) {
+        victim3 = pickRandom(non_leaders);
+      } else {
+        victim3 = pickRandom(alive_servers);
+      }
+    } else {
+      victim3 = pickRandom(alive_servers);
+    }
+
+    alive_servers.erase(victim3);
+    dead_servers.insert(victim3);
+
+    Log_info("TEST 15: Round %d - Killing server %d (was leader: %s)",
+             round, victim3, victim3 == leader ? "yes" : "no");
+    config_->Kill(victim3);
+
+    // Wait for potential leader election
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+
+    leader = config_->OneLeader();
+    AssertOneLeader(leader);
+    Log_info("TEST 15: Round %d - Leader after kill3: %d", round, leader);
+
+    // Commit with remaining servers
+    DoAgreeAndAssertIndex(cmd_base++, (int)alive_servers.size(), index_++);
+
+    // Phase 4: Restart all dead servers
+    Log_info("TEST 15: Phase 4 - Restarting all dead servers");
+
+    std::vector<siteid_t> to_restart(dead_servers.begin(), dead_servers.end());
+    for (siteid_t svr : to_restart) {
+      Log_info("TEST 15: Round %d - Restarting server %d", round, svr);
+      config_->Restart(svr);
+      dead_servers.erase(svr);
+      alive_servers.insert(svr);
+
+      // Small delay between restarts
+      Coroutine::Sleep(ELECTIONTIMEOUT / 2);
+    }
+
+    // Wait for all servers to catch up
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+
+    // Verify all servers are working
+    leader = config_->OneLeader();
+    AssertOneLeader(leader);
+    Log_info("TEST 15: Round %d - Leader after all restarts: %d", round, leader);
+
+    Assert2(alive_servers.size() == NSERVERS,
+            "Expected %d alive servers, got %zu", NSERVERS, alive_servers.size());
+    Assert2(dead_servers.empty(),
+            "Expected 0 dead servers, got %zu", dead_servers.size());
+
+    // Final commit with all servers
+    Log_info("TEST 15: Round %d - Final commit with all %d servers", round, NSERVERS);
+    DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
+
+    Log_info("TEST 15: ===== ROUND %d COMPLETE =====", round);
+  }
+
+  // Final verification
+  Log_info("TEST 15: Final verification after %d rounds", NUM_ROUNDS);
+
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  // One more commit to verify everything works
+  DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
+
+  Log_info("TEST 15: All %d rounds completed successfully!", NUM_ROUNDS);
 
   Passed2();
 }
 
 int RaftLabTest::testInitialElection(void) {
   Init2(1, "Initial election");
-  
+
   // Start election timers by calling Start() on each server
   // This triggers the election timer to start on each server
   // for (int i = 0; i < NSERVERS; i++) {

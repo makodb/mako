@@ -1,0 +1,226 @@
+NOTIFY-RESTART MECHANISM DOCUMENTATION
+======================================
+
+Last Updated: 2026-01-10
+Branch: zeyu-raft-disk
+
+
+OVERVIEW
+--------
+The NotifyRestart mechanism allows a restarted Raft server to notify its peers
+that they should reconnect their outbound TCP connections. This is necessary
+because when a server is killed and restarted:
+- The server's RPC SERVER continues running (owned by ServerWorker, survives Kill)
+- The server's RPC CLIENT connections are destroyed (owned by Communicator, deleted on Kill)
+- Other servers still have TCP connections to the OLD address/socket
+
+Without NotifyRestart, other servers would continue using stale connections,
+causing RPC failures until those connections time out (which can take minutes).
+
+
+FAIL-STOP MODEL ASSUMPTION
+--------------------------
+This mechanism assumes the FAIL-STOP model:
+
+1. CRASH FAILURES ONLY
+   - Servers can only fail by crashing (stopping completely)
+   - No Byzantine failures (no malicious or arbitrary behavior)
+   - No partial failures (server is either fully up or fully down)
+
+2. DETECTION IS ASYMMETRIC
+   - We CAN confirm a server is DOWN: If it responds with "I'm down" (acknowledged=false),
+     we KNOW it's down (its RaftServer pointer is nullptr)
+   - We CANNOT confirm a server is ALIVE: Timeout could mean network partition OR crash
+   - This is consistent with FLP impossibility - we can't distinguish slow from dead
+
+3. RECOVERY ASSUMPTION
+   - A crashed server will eventually restart
+   - When it restarts, it creates FRESH outbound connections (new Communicator)
+   - The restarted server will send NotifyRestart to all peers
+
+
+STATUS TRACKING DESIGN
+----------------------
+Each RaftCommo maintains a status map for NotifyRestart:
+
+  std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
+
+Where NotifyRestartStatus is:
+  - ACKNOWLEDGED: Peer received notification and reconnected to us
+  - DOWN: Peer responded "I'm down" (svr_ == nullptr), no retry needed
+  - PENDING: Need to send/retry NotifyRestart (not yet responded or timed out)
+
+Status Update Rules:
+  - RPC succeeds, acknowledged=true  -> ACKNOWLEDGED (done!)
+  - RPC succeeds, acknowledged=false -> DOWN (peer will reconnect when it restarts)
+  - RPC fails (timeout/error)        -> PENDING (should retry)
+
+
+WHY THIS WORKS FOR MULTI-SERVER RESTARTS
+----------------------------------------
+Consider servers A, B, C, D, E where A and B are killed:
+
+Time 0: A and B are killed
+Time 1: A restarts
+        - A creates NEW Communicator with FRESH connections to all peers
+        - A sends NotifyRestart to {B, C, D, E}
+        - C, D, E receive and reconnect to A (status: ACKNOWLEDGED)
+        - B is down, RPC fails or returns acknowledged=false (status: DOWN or PENDING)
+
+Time 2: B restarts
+        - B creates NEW Communicator with FRESH connections to all peers
+        - B's connection to A is FRESH (not stale!)
+        - B sends NotifyRestart to {A, C, D, E}
+        - A, C, D, E receive and reconnect to B
+
+Result: All connections are fresh because:
+  - When a server restarts, it creates NEW outbound connections
+  - NotifyRestart tells OTHER servers to refresh THEIR connections to us
+  - The symmetry is: restarted server has fresh outbound, peers refresh their outbound
+
+Key insight: If server B is DOWN when A sends NotifyRestart:
+  - A's status for B is either DOWN (if B responded) or PENDING (if timeout)
+  - Either way, when B restarts, B creates fresh connection to A
+  - B also sends NotifyRestart to A, so A refreshes connection to B
+  - No stale connections remain!
+
+
+ARCHITECTURE
+------------
+Components involved:
+1. RaftCommo (commo.cc/h) - Broadcasts NotifyRestart RPC, tracks status
+2. RaftServiceImpl (service.cc/h) - Handles incoming NotifyRestart RPC
+3. Communicator (communicator.cc/h) - Performs actual TCP reconnection
+4. testconf.cc - Invokes SendNotifyRestart after Restart()
+
+
+DETAILED FLOW
+-------------
+
+STEP 1: Server Restart (testconf.cc)
+  After a server is restarted (frame, server, commo all recreated), the test
+  framework calls SendNotifyRestart:
+
+    if (frame->commo_ != nullptr) {
+      auto commo = dynamic_cast<RaftCommo*>(frame->commo_.get());
+      commo->SendNotifyRestart(svr, frame->svr_->partition_id_);
+    }
+
+
+STEP 2: Broadcast to All Peers (commo.cc)
+  SendNotifyRestart initializes status map and sends to all peers:
+
+    void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
+      // Initialize all peers as PENDING
+      for (auto& p : proxies) {
+        if (p.first != self_id) {
+          notify_restart_status_[p.first] = NotifyRestartStatus::PENDING;
+        }
+      }
+
+      // Send to each peer
+      for (auto& p : proxies) {
+        if (p.first == self_id) continue;
+        auto proxy = (RaftProxy*) p.second;
+
+        fuattr.callback = [this, site_id](Future fu) {
+          if (fu->get_error_code() != 0) {
+            // Timeout/error - stays PENDING for retry
+            return;
+          }
+          bool_t acknowledged;
+          fu->get_reply() >> acknowledged;
+          if (acknowledged) {
+            notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
+          } else {
+            notify_restart_status_[site_id] = NotifyRestartStatus::DOWN;
+          }
+        };
+
+        Call_Async(proxy, NotifyRestart, self_id, fuattr);
+      }
+    }
+
+
+STEP 3: Peer Receives Notification (service.cc)
+  HandleNotifyRestart returns acknowledged=false if server is down:
+
+    void RaftServiceImpl::HandleNotifyRestart(siteid_t restartedSiteId, ...) {
+      RaftServer* svr = GetServer();  // Atomic load
+      if (svr == nullptr) {
+        // We're down - tell caller not to retry
+        *acknowledged = false;
+        defer.reply();
+        return;
+      }
+
+      // We're up - reconnect to the restarted server
+      auto commo = svr->commo();
+      bool success = commo->ReconnectToSite(restartedSiteId, svr->partition_id_);
+      *acknowledged = success;
+      defer.reply();
+    }
+
+
+STEP 4: TCP Reconnection (communicator.cc)
+  ReconnectToSite performs the actual reconnection:
+
+    bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
+      // 1. Find site info from config
+      // 2. Close old connection if exists
+      // 3. Create new TCP connection with ConnectToSite()
+      // 4. Update proxy pointer in rpc_par_proxies_
+      return success;
+    }
+
+
+STEP 5: Retry Pending (commo.cc) - Optional
+  RetryPendingNotifyRestart can be called to retry PENDING peers:
+
+    void RaftCommo::RetryPendingNotifyRestart() {
+      for (auto& pair : notify_restart_status_) {
+        if (pair.second == NotifyRestartStatus::PENDING) {
+          // Retry sending NotifyRestart to this peer
+        }
+      }
+    }
+
+
+DATA STRUCTURES
+---------------
+No persistent storage - this mechanism is entirely in-memory.
+
+Key structures:
+- notify_restart_status_: Map<site_id, NotifyRestartStatus>
+  - Tracks status of each peer for NotifyRestart
+  - ACKNOWLEDGED, DOWN, or PENDING
+
+- rpc_par_proxies_: Map<par_id, Vector<(site_id, ClassicProxy*)>>
+  - Stores RPC proxies for outbound calls
+  - Updated by ReconnectToSite when reconnecting
+
+- rpc_clients_: Map<site_id, Arc<Client>>
+  - Stores TCP client connections
+  - Closed and recreated by ReconnectToSite
+
+
+RELATED FILES
+-------------
+- src/deptran/raft/commo.cc - SendNotifyRestart(), RetryPendingNotifyRestart()
+- src/deptran/raft/commo.h - NotifyRestartStatus enum, RaftCommo class
+- src/deptran/raft/service.cc - HandleNotifyRestart()
+- src/deptran/raft/service.h - NotifyRestart RPC handler macro
+- src/deptran/communicator.cc - ReconnectToSite()
+- src/deptran/communicator.h - ReconnectToSite() declaration
+- src/deptran/raft/testconf.cc - Invocation in Restart()
+
+
+TEST COVERAGE
+-------------
+- Test 12: Single server kill/restart (follower, then leader)
+- Test 13: Two followers kill/restart
+- Test 14: Leader + follower kill/restart
+- Test 15: Comprehensive random crash-recovery (5 rounds, random server selection)
+
+All tests verify that after kill/restart cycles, servers can still reach
+consensus and commit entries, demonstrating the NotifyRestart mechanism works.

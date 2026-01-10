@@ -475,7 +475,14 @@ void RaftServer::Disconnect(const bool disconnect) {
   }
   RaftCommo *c = (RaftCommo*) commo();
   if (disconnect) {
-    verify(_proxies[partition_id_][loc_id_].size() == 0);
+    // Clear any stale proxy data from previous Kill/Restart cycle
+    // This can happen when a server is killed, restarted (with new proxies),
+    // and then killed again - the old _proxies data was never cleared
+    if (_proxies[partition_id_][loc_id_].size() > 0) {
+      Log_info("[DISCONNECT] Clearing stale proxy data for partition %d, site %d (had %zu entries)",
+               partition_id_, loc_id_, _proxies[partition_id_][loc_id_].size());
+      _proxies[partition_id_][loc_id_].clear();
+    }
     verify(c->rpc_par_proxies_.size() > 0);
     auto sz = c->rpc_par_proxies_.size();
     _proxies[partition_id_][loc_id_].insert(c->rpc_par_proxies_.begin(), c->rpc_par_proxies_.end());

@@ -21,6 +21,9 @@ class RaftLabTest {
  private:
 
   int testPersistence(void);
+  int testTwoFollowerPersistence(void);
+  int testLeaderFollowerPersistence(void);
+  int testComprehensiveCrashRecovery(void);
   int testInitialElection(void);
   int testReElection(void);
 

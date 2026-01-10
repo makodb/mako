@@ -299,13 +299,33 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
  *
  * Called after a server restarts to tell all other servers to reconnect
  * their client connections to this server.
+ *
+ * Status update logic:
+ * - acknowledged=true  → ACKNOWLEDGED (peer reconnected to us)
+ * - acknowledged=false → DOWN (peer is down, will reconnect when it restarts)
+ * - error/timeout      → PENDING (should retry)
  */
 // @safe
 void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
   auto proxies = rpc_par_proxies_[par_id];
 
+  // Store self info for retry mechanism
+  self_site_id_ = self_id;
+  self_par_id_ = par_id;
+
   Log_info("[NOTIFY-RESTART] Broadcasting restart notification from site %d to %zu peers",
            self_id, proxies.size());
+
+  // Initialize all peers as PENDING
+  {
+    std::lock_guard<std::mutex> lock(notify_restart_mtx_);
+    notify_restart_status_.clear();
+    for (auto& p : proxies) {
+      if (p.first != self_id) {
+        notify_restart_status_[p.first] = NotifyRestartStatus::PENDING;
+      }
+    }
+  }
 
   for (auto& p : proxies) {
     auto site_id = p.first;
@@ -316,9 +336,82 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
 
-    fuattr.callback = [site_id](rusty::Arc<Future> fu) {
+    // Capture 'this' to update status map
+    fuattr.callback = [this, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
-        Log_warn("[NOTIFY-RESTART] Failed to notify site %d - error code %d",
+        // Error/timeout - keep PENDING for retry
+        Log_warn("[NOTIFY-RESTART] Failed to notify site %d - error code %d (will retry)",
+                 site_id, fu->get_error_code());
+        // Status remains PENDING (already set)
+        return;
+      }
+
+      bool_t acknowledged = false;
+      fu->get_reply() >> acknowledged;
+
+      {
+        std::lock_guard<std::mutex> lock(notify_restart_mtx_);
+        if (acknowledged) {
+          // Peer reconnected to us
+          notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
+          Log_info("[NOTIFY-RESTART] Site %d ACKNOWLEDGED - reconnected to us", site_id);
+        } else {
+          // Peer responded "I'm down" - no retry needed
+          notify_restart_status_[site_id] = NotifyRestartStatus::DOWN;
+          Log_info("[NOTIFY-RESTART] Site %d is DOWN - will reconnect when it restarts", site_id);
+        }
+      }
+    };
+
+    Log_info("[NOTIFY-RESTART] Sending NotifyRestart to site %d", site_id);
+    Call_Async(proxy, NotifyRestart, self_id, fuattr);
+  }
+}
+
+/**
+ * RetryPendingNotifyRestart - Retry NotifyRestart for peers still in PENDING state
+ */
+void RaftCommo::RetryPendingNotifyRestart() {
+  std::vector<siteid_t> pending_sites;
+
+  // Get list of pending sites
+  {
+    std::lock_guard<std::mutex> lock(notify_restart_mtx_);
+    for (auto& pair : notify_restart_status_) {
+      if (pair.second == NotifyRestartStatus::PENDING) {
+        pending_sites.push_back(pair.first);
+      }
+    }
+  }
+
+  if (pending_sites.empty()) {
+    Log_debug("[NOTIFY-RESTART] No pending sites to retry");
+    return;
+  }
+
+  Log_info("[NOTIFY-RESTART] Retrying NotifyRestart for %zu pending sites", pending_sites.size());
+
+  auto proxies = rpc_par_proxies_[self_par_id_];
+
+  for (siteid_t site_id : pending_sites) {
+    // Find proxy for this site
+    RaftProxy* proxy = nullptr;
+    for (auto& p : proxies) {
+      if (p.first == site_id) {
+        proxy = (RaftProxy*) p.second;
+        break;
+      }
+    }
+
+    if (proxy == nullptr) {
+      Log_warn("[NOTIFY-RESTART] No proxy found for site %d", site_id);
+      continue;
+    }
+
+    FutureAttr fuattr;
+    fuattr.callback = [this, site_id](rusty::Arc<Future> fu) {
+      if (fu->get_error_code() != 0) {
+        Log_warn("[NOTIFY-RESTART] Retry failed for site %d - error code %d (will retry again)",
                  site_id, fu->get_error_code());
         return;
       }
@@ -326,13 +419,46 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
       bool_t acknowledged = false;
       fu->get_reply() >> acknowledged;
 
-      Log_info("[NOTIFY-RESTART] Site %d acknowledged restart: %s",
-               site_id, acknowledged ? "yes" : "no");
+      {
+        std::lock_guard<std::mutex> lock(notify_restart_mtx_);
+        if (acknowledged) {
+          notify_restart_status_[site_id] = NotifyRestartStatus::ACKNOWLEDGED;
+          Log_info("[NOTIFY-RESTART] Retry: Site %d ACKNOWLEDGED", site_id);
+        } else {
+          notify_restart_status_[site_id] = NotifyRestartStatus::DOWN;
+          Log_info("[NOTIFY-RESTART] Retry: Site %d is DOWN", site_id);
+        }
+      }
     };
 
-    Log_info("[NOTIFY-RESTART] Sending NotifyRestart to site %d", site_id);
-    Call_Async(proxy, NotifyRestart, self_id, fuattr);
+    Log_info("[NOTIFY-RESTART] Retrying NotifyRestart to site %d", site_id);
+    Call_Async(proxy, NotifyRestart, self_site_id_, fuattr);
   }
+}
+
+/**
+ * GetNotifyRestartStatus - Get the current status for a peer
+ */
+NotifyRestartStatus RaftCommo::GetNotifyRestartStatus(siteid_t site_id) {
+  std::lock_guard<std::mutex> lock(notify_restart_mtx_);
+  auto it = notify_restart_status_.find(site_id);
+  if (it == notify_restart_status_.end()) {
+    return NotifyRestartStatus::PENDING;
+  }
+  return it->second;
+}
+
+/**
+ * HasPendingNotifyRestart - Check if any peers still need notification
+ */
+bool RaftCommo::HasPendingNotifyRestart() {
+  std::lock_guard<std::mutex> lock(notify_restart_mtx_);
+  for (auto& pair : notify_restart_status_) {
+    if (pair.second == NotifyRestartStatus::PENDING) {
+      return true;
+    }
+  }
+  return false;
 }
 
 } // namespace janus

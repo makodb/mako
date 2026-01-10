@@ -3,10 +3,26 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../communicator.h"
+#include <map>
+#include <mutex>
 
 namespace janus {
 
 class TxData;
+
+/**
+ * NotifyRestartStatus - Status of NotifyRestart RPC for each peer
+ *
+ * Used to track which peers have acknowledged our restart notification.
+ * - ACKNOWLEDGED: Peer received notification and reconnected to us
+ * - DOWN: Peer responded with "I'm down" (svr_ == nullptr), no retry needed
+ * - PENDING: Should send/retry NotifyRestart (not yet acknowledged or timed out)
+ */
+enum class NotifyRestartStatus {
+  ACKNOWLEDGED,  // Peer reconnected to us
+  DOWN,          // Peer told us it's down (no retry needed, will reconnect when it restarts)
+  PENDING        // Need to send/retry NotifyRestart
+};
 
 class RaftVoteQuorumEvent: public QuorumEvent {
  public:
@@ -51,12 +67,19 @@ class SendAppendEntriesResults {
 class RaftCommo : public Communicator {
 
 friend class RaftProxy;
+ private:
+  // NotifyRestart status tracking for each peer
+  std::map<siteid_t, NotifyRestartStatus> notify_restart_status_;
+  std::mutex notify_restart_mtx_;
+  siteid_t self_site_id_ = 0;  // Our own site ID (set when SendNotifyRestart is called)
+  parid_t self_par_id_ = 0;    // Our partition ID
+
  public:
 #ifdef RAFT_TEST_CORO
   std::recursive_mutex rpc_mtx_ = {};
   uint64_t rpc_count_ = 0;
 #endif
-	
+
   RaftCommo() = delete;
   // @safe
   RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
@@ -127,13 +150,38 @@ friend class RaftProxy;
    * SendNotifyRestart - Broadcast restart notification to all peers
    *
    * Called after a server restarts to tell all other servers to reconnect
-   * their client connections to this server.
+   * their client connections to this server. Initializes status tracking map
+   * with all peers as PENDING.
    *
    * @param self_id - The site ID of the restarted server (self)
    * @param par_id - Partition ID
    */
   // @safe
   void SendNotifyRestart(siteid_t self_id, parid_t par_id);
+
+  /**
+   * RetryPendingNotifyRestart - Retry NotifyRestart for peers still in PENDING state
+   *
+   * Called periodically to retry notifications to peers that haven't responded.
+   * Peers in DOWN state are skipped (they will reconnect when they restart).
+   * Peers in ACKNOWLEDGED state are skipped (already done).
+   */
+  void RetryPendingNotifyRestart();
+
+  /**
+   * GetNotifyRestartStatus - Get the current status for a peer
+   *
+   * @param site_id - The site ID to query
+   * @return The NotifyRestartStatus for that peer, or PENDING if not found
+   */
+  NotifyRestartStatus GetNotifyRestartStatus(siteid_t site_id);
+
+  /**
+   * HasPendingNotifyRestart - Check if any peers still need notification
+   *
+   * @return true if any peer is still in PENDING state
+   */
+  bool HasPendingNotifyRestart();
 };
 
 } // namespace janus
