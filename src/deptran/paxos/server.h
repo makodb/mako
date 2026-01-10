@@ -4,6 +4,7 @@
 #include "../constants.h"
 #include "../scheduler.h"
 #include "../paxos_worker.h"
+#include "rrr/rpc/log_storage.hpp"
 
 namespace janus {
 class Command;
@@ -44,6 +45,34 @@ class PaxosServer : public TxLogServer {
   int n_accept_ = 0;
   int n_commit_ = 0;
   bool in_applying_logs_{false};
+
+  // ========================================================================
+  // LOG PERSISTENCE (Phase 1.4)
+  // ========================================================================
+  std::shared_ptr<rrr::LogStorage> log_storage_;
+
+  // Metadata keys for persistence
+  static constexpr const char* META_EPOCH = "cur_epoch";
+  static constexpr const char* META_MAX_COMMITTED = "max_committed_slot";
+  static constexpr const char* META_MAX_EXECUTED = "max_executed_slot";
+
+ private:
+  // @unsafe - Uses LogStorage which has non-borrow-checked operations
+  void PersistEpoch();
+  // @unsafe - Uses LogStorage which has non-borrow-checked operations
+  void PersistMaxCommitted();
+  // @unsafe - Uses LogStorage which has non-borrow-checked operations
+  void PersistLogEntry(slotid_t slot_id, const PaxosData& data);
+  // @unsafe - Uses LogStorage which has non-borrow-checked operations
+  void PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>>& entries);
+
+ public:
+  // @unsafe - Uses LogStorage which has non-borrow-checked operations
+  void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) { log_storage_ = std::move(storage); }
+  // @safe - Read-only access
+  std::shared_ptr<rrr::LogStorage> GetLogStorage() const { return log_storage_; }
+  // @unsafe - Uses LogStorage which has non-borrow-checked operations
+  bool RecoverFromStorage();
 
 #ifdef CHECK_KEY_DISTRIBUTION
   KeyDistribution key_distribution_;
