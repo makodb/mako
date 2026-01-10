@@ -310,13 +310,19 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - Asymmetric partition, flaky network, split brain simulation
           - Reconnection during partition, metrics during partition
         - NOTE: Stress tests labeled "stress" and excluded from default CI (run with: ctest -L stress)
-      - [ ] *low* 7.4 Chaos Engineering Tests
-        - [ ] 7.4.1 Chaos Test Framework (`test/rpc/chaos_framework.hpp`)
-          - ChaosController, FailureTypes, Verifier
-          - CI pipeline integration
-        - [ ] 7.4.2 Chaos Scenarios (`test/rpc/chaos_scenarios_test.cpp`)
-          - Random server kills, latency injection, packet loss, connection reset
-          - Combined chaos, recovery verification
+      - [x] *low* 7.4 Chaos Engineering Tests [DONE 2026-01-10]
+        - [x] 7.4.1 Chaos Test Framework (`test/rpc/chaos_framework.hpp`)
+          - ChaosConfig: failure_rate, check_interval, duration, latency settings
+          - FailureType enum: SERVER_KILL, LATENCY_INJECTION, CONNECTION_RESET, PACKET_LOSS, COMBINED
+          - ChaosStats/ChaosStatsSnapshot: thread-safe statistics with copyable snapshot
+          - ChaosController: failure injection with callbacks for server kill/restart/connection reset
+          - ChaosVerifier: connectivity and request verification with timeout
+          - ChaosScenario: pre-defined scenarios (random_server_kills, latency_spikes, connection_churn, combined_chaos)
+        - [x] 7.4.2 Chaos Scenarios (`test/rpc_chaos_test.cc`)
+          - 26 tests total: 21 unit tests + 5 integration tests
+          - Config, Stats, Controller, Verifier, Scenario, FailureType unit tests
+          - Integration: RandomServerKills, ConnectionChurn, LatencySpikes, CombinedChaos, RecoveryVerification
+          - Tests labeled "chaos" (run with: ctest -L chaos)
     - [ ] **Phase 8: Documentation**
       - [x] *medium* 8.1 API Documentation [DONE 2026-01-10]
         - Created `doc/rpc_api.md`: complete API reference for all reliability classes

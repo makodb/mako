@@ -1257,6 +1257,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_completion_tracker ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_completion_tracker COMMAND test_completion_tracker)
 
+    # Chaos Engineering Tests
+    add_executable(rpc_chaos_test test/rpc_chaos_test.cc test/benchmark_service.cc)
+    target_include_directories(rpc_chaos_test PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(rpc_chaos_test PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(rpc_chaos_test ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME rpc_chaos_test COMMAND rpc_chaos_test)
+    set_tests_properties(rpc_chaos_test PROPERTIES LABELS "chaos")
+
     # Atomic Lock Tests - Commented out due to crashes
     # add_executable(test_alock test/test_alock.cc)
     # target_include_directories(test_alock PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
