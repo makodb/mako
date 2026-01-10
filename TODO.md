@@ -220,21 +220,21 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Sync and async callback support
         - ~100-150 LOC
     - [ ] **Phase 7: Testing** [Implementation order: parallel with each phase]
-      - [ ] *high* 7.1 Unit Tests
-        - [ ] 7.1.1 Connection State Machine Tests (`test/rpc/connection_state_test.cpp`)
-          - State transitions (valid and invalid), callbacks, thread-safe access
-        - [ ] 7.1.2 Reconnection Policy Tests (`test/rpc/reconnect_policy_test.cpp`)
-          - Exponential backoff, jitter, max delay/retries, presets
-        - [ ] 7.1.3 Circuit Breaker Tests (`test/rpc/circuit_breaker_test.cpp`)
-          - State transitions, concurrent access, fail-fast behavior
-        - [ ] 7.1.4 Request Queue Tests (`test/rpc/request_queue_test.cpp`)
+      - [x] *high* 7.1 Unit Tests [DONE]
+        - [x] 7.1.1 Connection State Machine Tests (`test/rpc_connection_state_test.cc`)
+          - 30 tests: State transitions (valid and invalid), callbacks, thread-safe access
+        - [x] 7.1.2 Reconnection Policy Tests (`test/rpc_reconnect_policy_test.cc`)
+          - 19 tests: Exponential backoff, jitter, max delay/retries, presets, peek delay
+        - [x] 7.1.3 Circuit Breaker Tests (`test/rpc_circuit_breaker_test.cc`)
+          - 21 tests: State transitions, concurrent access, fail-fast behavior, success threshold
+        - [ ] 7.1.4 Request Queue Tests (skipped - component not implemented)
           - Enqueue/dequeue, size limits, overflow strategies, TTL expiration
-        - [ ] 7.1.5 Idempotency Cache Tests (`test/rpc/idempotency_test.cpp`)
+        - [ ] 7.1.5 Idempotency Cache Tests (skipped - component not implemented)
           - Cache hit/miss, TTL, size limit, concurrent duplicates
-        - [ ] 7.1.6 Heartbeat Tests (`test/rpc/heartbeat_test.cpp`)
-          - Ping/pong exchange, interval timing, timeout detection
-        - [ ] 7.1.7 Error Handling Tests (`test/rpc/errors_test.cpp`)
-          - Error categories, codes, exceptions, callbacks
+        - [x] 7.1.6 Heartbeat Tests (`test/rpc_heartbeat_test.cc`)
+          - 20 tests: Ping/pong exchange, interval timing, timeout detection
+        - [x] 7.1.7 Error Handling Tests (`test/rpc_errors_test.cc`)
+          - 28 tests: Error categories, codes, exceptions, helper functions
       - [ ] *high* 7.2 Integration Tests
         - [ ] 7.2.1 Basic Crash Recovery Tests (`test/rpc/crash_recovery_test.cpp`)
           - Server crash during idle, during request, with pending requests

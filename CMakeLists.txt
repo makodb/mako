@@ -1411,6 +1411,45 @@ if(BUILD_TESTS)
     add_test(NAME test_erpc_integration COMMAND test_erpc_integration)
     set_tests_properties(test_erpc_integration PROPERTIES TIMEOUT 120)
 
+    # ============================================================================
+    # RPC Reliability Unit Tests (Phase 7.1)
+    # ============================================================================
+
+    # Connection State Machine Tests
+    add_executable(test_rpc_connection_state test/rpc_connection_state_test.cc)
+    target_include_directories(test_rpc_connection_state PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_connection_state PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_connection_state ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_connection_state COMMAND test_rpc_connection_state)
+
+    # Reconnection Policy Tests
+    add_executable(test_rpc_reconnect_policy test/rpc_reconnect_policy_test.cc)
+    target_include_directories(test_rpc_reconnect_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_reconnect_policy PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_reconnect_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_reconnect_policy COMMAND test_rpc_reconnect_policy)
+
+    # Circuit Breaker Tests
+    add_executable(test_rpc_circuit_breaker test/rpc_circuit_breaker_test.cc)
+    target_include_directories(test_rpc_circuit_breaker PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_circuit_breaker PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_circuit_breaker ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_circuit_breaker COMMAND test_rpc_circuit_breaker)
+
+    # Heartbeat Tests
+    add_executable(test_rpc_heartbeat test/rpc_heartbeat_test.cc)
+    target_include_directories(test_rpc_heartbeat PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_heartbeat PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_heartbeat ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_heartbeat COMMAND test_rpc_heartbeat)
+
+    # Error Handling Tests
+    add_executable(test_rpc_errors test/rpc_errors_test.cc)
+    target_include_directories(test_rpc_errors PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_errors PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_errors ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_errors COMMAND test_rpc_errors)
+
     # Integration tests from CI
     add_test(NAME simpleTransaction COMMAND simpleTransaction)
 
