@@ -24,8 +24,13 @@
 namespace rrr {
 
 // Type aliases matching existing codebase
+// Use preprocessor guards to avoid conflict with macro definitions in constants.h
+#ifndef slotid_t
 using slotid_t = uint64_t;
+#endif
+#ifndef ballot_t
 using ballot_t = uint64_t;
+#endif
 
 /**
  * Unified log entry structure for Raft and Paxos consensus protocols.

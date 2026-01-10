@@ -6,6 +6,7 @@
 #include "../classic/tpc_command.h"
 #include "commo.h"
 #include <rusty/box.hpp>
+#include "rpc/log_storage.hpp"
 
 namespace janus {
 class Command;
@@ -44,6 +45,33 @@ struct KeyValue {
 
 class RaftServer : public TxLogServer {
  private:
+  // ============================================================================
+  // LOG PERSISTENCE (Phase 1.3)
+  // ============================================================================
+  std::shared_ptr<rrr::LogStorage> log_storage_;  // Optional persistent storage
+
+  // Metadata keys for consensus state
+  static constexpr const char* META_TERM = "currentTerm";
+  static constexpr const char* META_VOTE_FOR = "vote_for";
+  static constexpr const char* META_COMMIT_INDEX = "commitIndex";
+
+  // @unsafe - Persists term and vote_for to storage
+  void PersistTermAndVote();
+
+  // @unsafe - Persists vote_for only to storage
+  void PersistVote();
+
+  // @unsafe - Persists commitIndex to storage
+  void PersistCommitIndex();
+
+  // @unsafe - Persists a single log entry
+  void PersistLogEntry(slotid_t slot_id, const RaftData& data);
+
+  // @unsafe - Persists multiple log entries
+  void PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
+
+  // ============================================================================
+
   std::map<siteid_t, uint64_t> match_index_{};
   std::map<siteid_t, uint64_t> next_index_{};
   std::vector<std::thread> timer_threads_ = {};
@@ -149,6 +177,7 @@ class RaftServer : public TxLogServer {
           currentTerm = can_term ;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
+          PersistTermAndVote();  // Persist term/vote change
       }
 
       if(vote)
@@ -158,6 +187,7 @@ class RaftServer : public TxLogServer {
 #ifdef RAFT_LEADER_ELECTION_DEBUG
           Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
 #endif
+          PersistVote();  // Persist vote change
           //reset timeout
           resetTimer("granted vote");
       }
@@ -340,9 +370,13 @@ class RaftServer : public TxLogServer {
 			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
     }
 #endif
+
+    // Persist the log entry
+    PersistLogEntry(lastLogIndex, *instance);
+
     *term = currentTerm ;
   }
-  
+
   // @safe
   shared_ptr<RaftData> GetInstance(slotid_t id) {
     verify(id >= min_active_slot_ || lastLogIndex == 0);
@@ -377,6 +411,40 @@ class RaftServer : public TxLogServer {
 
   RaftServer(Frame *frame) ;
   ~RaftServer() ;
+
+  // ============================================================================
+  // LOG PERSISTENCE PUBLIC API (Phase 1.3)
+  // ============================================================================
+
+  /**
+   * Set the log storage backend for persistence.
+   * Should be called before starting the server.
+   * @param storage Shared pointer to LogStorage implementation
+   */
+  // @safe - Simple setter
+  void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) {
+    log_storage_ = std::move(storage);
+  }
+
+  /**
+   * Get the current log storage backend.
+   * @return Shared pointer to LogStorage, or nullptr if not set
+   */
+  // @safe - Simple getter
+  std::shared_ptr<rrr::LogStorage> GetLogStorage() const {
+    return log_storage_;
+  }
+
+  /**
+   * Recover state from persistent storage.
+   * Restores currentTerm, vote_for_, commitIndex, and log entries.
+   * Should be called during initialization if storage is available.
+   * @return true if recovery succeeded or storage is not set, false on error
+   */
+  // @unsafe - Uses LogStorage operations
+  bool RecoverFromStorage();
+
+  // ============================================================================
 
   // @unsafe - Calls undeclared doVote() and uses std::function callback
   void OnRequestVote(const slotid_t& lst_log_idx,

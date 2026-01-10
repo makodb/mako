@@ -28,6 +28,130 @@
 
 namespace janus {
 
+// ============================================================================
+// LOG PERSISTENCE IMPLEMENTATION (Phase 1.3)
+// ============================================================================
+
+// @unsafe - Uses LogStorage API
+void RaftServer::PersistTermAndVote() {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return;
+  }
+
+  log_storage_->set_metadata(META_TERM, std::to_string(currentTerm));  // @unsafe
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));  // @unsafe
+  log_storage_->sync();  // @unsafe - Durability guarantee
+}
+
+// @unsafe - Uses LogStorage API
+void RaftServer::PersistVote() {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return;
+  }
+
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));  // @unsafe
+  log_storage_->sync();  // @unsafe
+}
+
+// @unsafe - Uses LogStorage API
+void RaftServer::PersistCommitIndex() {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return;
+  }
+
+  log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));  // @unsafe
+  // Note: Don't sync for commitIndex - it can be recovered from logs
+}
+
+// @unsafe - Uses LogStorage API
+void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return;
+  }
+
+  rrr::LogEntry entry(slot_id, data.term);
+  entry.command = data.log_;
+  entry.max_ballot_seen = data.max_ballot_seen_;
+  entry.max_ballot_accepted = data.max_ballot_accepted_;
+  entry.committed = (slot_id <= commitIndex);
+
+  log_storage_->put(entry);  // @unsafe
+  log_storage_->sync();  // @unsafe
+}
+
+// @unsafe - Uses LogStorage API
+void RaftServer::PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries) {
+  if (!log_storage_ || !log_storage_->is_open() || entries.empty()) {
+    return;
+  }
+
+  std::vector<rrr::LogEntry> log_entries;
+  log_entries.reserve(entries.size());
+
+  for (const auto& [slot_id, data] : entries) {
+    rrr::LogEntry entry(slot_id, data->term);
+    entry.command = data->log_;
+    entry.max_ballot_seen = data->max_ballot_seen_;
+    entry.max_ballot_accepted = data->max_ballot_accepted_;
+    entry.committed = (slot_id <= commitIndex);
+    log_entries.push_back(entry);
+  }
+
+  log_storage_->put_batch(log_entries);  // @unsafe
+  log_storage_->sync();  // @unsafe
+}
+
+// @unsafe - Uses LogStorage API
+bool RaftServer::RecoverFromStorage() {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return true;  // No storage configured, nothing to recover
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Recover currentTerm
+  auto term_opt = log_storage_->get_metadata(META_TERM);  // @unsafe
+  if (term_opt.is_some()) {
+    currentTerm = std::stoull(term_opt.unwrap());
+  }
+
+  // Recover vote_for
+  auto vote_opt = log_storage_->get_metadata(META_VOTE_FOR);  // @unsafe
+  if (vote_opt.is_some()) {
+    int64_t vote_val = std::stoll(vote_opt.unwrap());
+    vote_for_ = static_cast<siteid_t>(vote_val);
+  }
+
+  // Recover commitIndex
+  auto commit_opt = log_storage_->get_metadata(META_COMMIT_INDEX);  // @unsafe
+  if (commit_opt.is_some()) {
+    commitIndex = std::stoull(commit_opt.unwrap());
+  }
+
+  // Recover lastLogIndex
+  lastLogIndex = log_storage_->get_last_index();  // @unsafe
+
+  // Recover log entries
+  if (lastLogIndex > 0) {
+    auto entries = log_storage_->get_range(1, lastLogIndex + 1);  // @unsafe
+    for (const auto& entry : entries) {
+      auto data = std::make_shared<RaftData>();
+      data->term = entry.term;
+      data->log_ = entry.command;
+      data->max_ballot_seen_ = entry.max_ballot_seen;
+      data->max_ballot_accepted_ = entry.max_ballot_accepted;
+      raft_logs_[entry.slot_id] = data;
+    }
+  }
+
+  Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu commitIndex=%lu entries=%zu",
+           site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex, raft_logs_.size());
+
+  return true;
+}
+
+// ============================================================================
+
 // @safe
 void RaftServer::LogTermChange(const char* reason,
                                uint64_t old_term,
@@ -792,6 +916,7 @@ bool RaftServer::RequestVote() {
     currentTerm++ ;
     vote_for_ = site_id_;  // Vote for ourselves when starting election
     LogTermChange("starting election", prev_local_term, currentTerm);
+    PersistTermAndVote();  // Persist term increment and self-vote
     lstoff = lastLogIndex - snapidx_ ;
     if (lstoff == 0) {
       lst_idx = snapidx_;
@@ -1079,6 +1204,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server %d, set to be follower", loc_id_ ) ;
           setIsLeader(false) ;
+          PersistTermAndVote();  // Persist term/vote change
       }
   }
 
@@ -1101,23 +1227,29 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         auto instance = GetRaftInstance(lastLogIndex);
         instance->log_ = cmd;
         instance->term = leaderNextLogTerm;
-        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted log entry at index %ld, term=%ld, lastLogIndex now=%ld", 
+        // Persist the log entry
+        PersistLogEntry(lastLogIndex, *instance);
+        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted log entry at index %ld, term=%ld, lastLogIndex now=%ld",
         //          this->loc_id_, lastLogIndex, leaderNextLogTerm, lastLogIndex);
         // // Log the command that was accepted
         // auto cmd_accepted = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted command %d at index %ld", 
+        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted command %d at index %ld",
         //          this->loc_id_, cmd_accepted ? cmd_accepted->tx_id_ : -1, lastLogIndex);
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
         auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
         int cnt = 0;
+        std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>> entries_to_persist;
         for (shared_ptr<TpcCommitCommand>& c: cmds->cmds_) {
           cnt++;
           lastLogIndex = leaderPrevLogIndex + cnt;
           auto instance = GetRaftInstance(lastLogIndex);
           instance->log_ = c;
           instance->term = dynamic_pointer_cast<TpcCommitCommand>(c)->term;
+          entries_to_persist.emplace_back(lastLogIndex, instance);
         }
+        // Persist all entries in batch
+        PersistLogEntries(entries_to_persist);
 #endif
       }
 
@@ -1127,6 +1259,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
         need_apply = true;
+        PersistCommitIndex();  // Persist commitIndex update
       }
 
       *followerAppendOK = 1;

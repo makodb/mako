@@ -394,7 +394,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Created `src/rrr/rpc/rocksdb_log_storage.hpp`: RocksDBLogStorage implementation (~350 LOC)
         - Created `test/rpc_rocksdb_log_storage_test.cc`: 35 unit tests (persistence, thread safety)
         - Plan: `doc/dev/phase1_2_rocksdb_log_backend.md`
-      - [ ] 1.3 Raft Integration - Modify RaftServer to use LogStorage, persist term/vote/log/commit
+      - [x] 1.3 Raft Integration - Modify RaftServer to use LogStorage, persist term/vote/log/commit [DONE 2026-01-10, 06:00]
+        - Modified `src/deptran/raft/server.h`: Added log_storage_ member, persistence helpers, SetLogStorage(), RecoverFromStorage()
+        - Modified `src/deptran/raft/server.cc`: Implemented persistence helpers, integrated calls
+        - Persistence points: doVote(), OnAppendEntries(), SetLocalAppend(), RequestVote()
+        - Plan: `doc/dev/phase1_3_raft_integration.md`
       - [ ] 1.4 Paxos Integration - Modify PaxosServer to use LogStorage, persist ballots/entries
     - [ ] **Phase 2: State Recovery on Startup** (~350 LOC)
       - [ ] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence
