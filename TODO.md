@@ -108,7 +108,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Fix: Added is_using_raft() checks to case 0 and case 2 in the FAIL_NEW_VERSION block to skip
       client_control() calls when using Raft (Raft handles leader changes internally).
     - Result: shard2ReplicationRaft now passes (8370 ops/sec, 1.5% abort ratio)
-  - [ ] *high* RPC Reliability Enhancement: Crash handling, reconnection, and fault tolerance
+  - [x] *high* RPC Reliability Enhancement: Crash handling, reconnection, and fault tolerance [DONE 2026-01-10]
     - **Goal**: Enhance `src/rrr/rpc/` to support server/client crash handling, automatic reconnection, and improved reliability
     - **Scope**: rrr/rpc module only (TCP-based RPC). eRPC (RDMA backend) is out of scope - it has its own reliability mechanisms.
     - **Current State Analysis**:
@@ -118,7 +118,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - No health monitoring - no heartbeat mechanism to detect stale connections
       - Limited error semantics - errors don't distinguish network issues from server unavailability
     - **Implementation Plan**: See `doc/rpc_reliability_plan.md`
-    - [ ] **Phase 1: Connection State Management**
+    - [x] **Phase 1: Connection State Management** [DONE]
       - [x] *high* 1.1 Implement Connection State Machine [Plan: doc/rpc/phase1_connection_state.md] [DONE]
         - Created `src/rrr/rpc/connection_state.hpp` with ConnectionState enum and ConnectionStateMachine class
         - ConnectionState enum: NEW, CONNECTING, CONNECTED, DISCONNECTING, DISCONNECTED, FAILED
@@ -147,7 +147,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - CircuitBreaker class with allow_request(), record_success/failure()
         - Timeout-based transition from OPEN to HALF_OPEN for probing
         - Thread-safe via rusty::Cell for all mutable state
-    - [ ] **Phase 2: Message Durability and Request Management**
+    - [x] **Phase 2: Message Durability and Request Management** [DONE]
       - [x] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md] [DONE]
         - Created `src/rrr/rpc/request_queue.hpp` (~280 LOC)
         - QueuedRequest struct with xid, rpc_id, timestamp, retry_count, payload, callback, ttl_ms
@@ -182,7 +182,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Added Future members: options_, timeout_type_, retry_count_ with getters/setters
         - Added request_with_options() to ClientConnection and Client
         - 30 unit tests in test/rpc_timeout_retry_test.cc
-    - [ ] **Phase 3: Health Monitoring**
+    - [x] **Phase 3: Health Monitoring** [DONE]
       - [x] *high* 3.1 Heartbeat/Keep-Alive Mechanism [deps: 1.3] [Plan: doc/rpc/phase3_heartbeat.md] [DONE]
         - Created `src/rrr/rpc/heartbeat.hpp` (~240 LOC)
         - HeartbeatConfig with presets: aggressive(), relaxed(), disabled()
@@ -207,7 +207,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Client wrapper methods with pending config storage for pre-connect configuration
         - 15 unit tests in test/rpc_validation_test.cc
         - ~120 LOC
-    - [ ] **Phase 4: Server-Side Crash Handling**
+    - [x] **Phase 4: Server-Side Crash Handling** [DONE]
       - [x] *medium* 4.1 Graceful Server Shutdown [Plan: doc/rpc/phase4_graceful_shutdown.md] [DONE 2026-01-09]
         - Added ShutdownPhase enum (RUNNING, STOP_ACCEPTING, DRAINING, CLOSING, STOPPED)
         - Added shutdown hooks with thread-safe registration
@@ -235,7 +235,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - CompletionQueryResult: status enum with helpers (not_found, completed, expired)
         - CompletionStatus: NOT_FOUND, COMPLETED, COMPLETED_WITH_ERROR, EXPIRED
         - Created test/test_completion_tracker.cc with 27 tests (all passing)
-    - [ ] **Phase 5: Client Pool Enhancements**
+    - [x] **Phase 5: Client Pool Enhancements** [DONE]
       - [x] *medium* 5.1 Enhanced ClientPool with Health Awareness [deps: 1.1, 3.2] [Plan: doc/rpc/phase5_health_pool.md] [DONE 2026-01-10]
         - Track connection health per pooled client
         - Remove unhealthy connections automatically
@@ -260,7 +260,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Added `BulkReconnectResult` with total/succeeded/failed/skipped counts
         - Parallel reconnection in batches with rate limiting and delays
         - ~110 LOC
-    - [ ] **Phase 6: Error Handling Improvements**
+    - [x] **Phase 6: Error Handling Improvements** [DONE]
       - [x] *high* 6.1 Structured Error Types [Plan: doc/rpc/phase6_error_types.md] [DONE]
         - Created `src/rrr/rpc/errors.hpp` (~230 LOC)
         - RpcErrorCategory: NONE, CONNECTION, PROTOCOL, APPLICATION, TIMEOUT, INTERNAL
@@ -274,7 +274,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Multiple callbacks per event with exception safety
         - Uses std::mutex for thread-safe concurrent access
         - Unit tests: 24 tests in `test/rpc_callbacks_test.cc`
-    - [ ] **Phase 7: Testing** [Implementation order: parallel with each phase]
+    - [x] **Phase 7: Testing** [Implementation order: parallel with each phase] [DONE]
       - [x] *high* 7.1 Unit Tests [DONE]
         - [x] 7.1.1 Connection State Machine Tests (`test/rpc_connection_state_test.cc`)
           - 30 tests: State transitions (valid and invalid), callbacks, thread-safe access
@@ -284,8 +284,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - 21 tests: State transitions, concurrent access, fail-fast behavior, success threshold
         - [x] 7.1.4 Request Queue Tests (`test/rpc_request_queue_test.cc`)
           - 28 tests: Basic operations, size limits, overflow strategies, TTL expiration, thread safety
-        - [ ] 7.1.5 Idempotency Cache Tests (skipped - component not implemented)
-          - Cache hit/miss, TTL, size limit, concurrent duplicates
+        - [x] 7.1.5 Idempotency Cache Tests (`test/test_idempotency.cc`)
+          - 32 tests: Key, Generator, Config, CachedResponse, Cache operations, TTL, eviction
         - [x] 7.1.6 Heartbeat Tests (`test/rpc_heartbeat_test.cc`)
           - 20 tests: Ping/pong exchange, interval timing, timeout detection
         - [x] 7.1.7 Error Handling Tests (`test/rpc_errors_test.cc`)
@@ -323,7 +323,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - Config, Stats, Controller, Verifier, Scenario, FailureType unit tests
           - Integration: RandomServerKills, ConnectionChurn, LatencySpikes, CombinedChaos, RecoveryVerification
           - Tests labeled "chaos" (run with: ctest -L chaos)
-    - [ ] **Phase 8: Documentation**
+    - [x] **Phase 8: Documentation** [DONE]
       - [x] *medium* 8.1 API Documentation [DONE 2026-01-10]
         - Created `doc/rpc_api.md`: complete API reference for all reliability classes
         - Documented: ConnectionState, ReconnectPolicy, CircuitBreaker, RequestQueue,
