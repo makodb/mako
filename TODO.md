@@ -292,4 +292,197 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       4. All failures and recovery events are logged/metricated (observable)
       5. All behaviors can be tuned via configuration (configurable)
       6. All test suites pass, including chaos tests (tested)
-      7. Complete API and architecture documentation (documented) 
+      7. Complete API and architecture documentation (documented)
+  - [ ] *high* Transaction Timeout and Shard Failure Handling
+    - **Goal**: Add timeout to transaction requests so they complete with "error" state if shards fail, allowing system to continue running
+    - **Scope**: Coordinator-level timeout handling in `src/deptran/classic/coordinator.cc`
+    - **Approach**: Minimal changes - use existing `Event::wait(timeout)` infrastructure, commit reachable shards, don't block on unreachable ones
+    - **Implementation Plan**: See `doc/txn_timeout_plan.md`
+    - **Current State Analysis**:
+      - `Event::wait(uint64_t timeout)` already supports timeout (timeout in microseconds)
+      - `Event::TIMEOUT` status exists and is handled by reactor
+      - `QuorumEvent` has `timeouted_` flag but unused
+      - Coordinator calls `wait()` without timeout at lines 309, 433, 544, 584 - blocks indefinitely
+      - No transaction-level timeout configuration exists
+    - [ ] **Task 1: Add Transaction Timeout Configuration** [~50 LOC]
+      - [ ] *high* 1.1 Add timeout config to `src/deptran/config.h`
+        - Add `txn_timeout_us_` field (default: 30 seconds = 30,000,000 microseconds)
+        - Add getter `get_txn_timeout()` method
+        - Add YAML config support for `txn_timeout_ms`
+      - [ ] *high* 1.2 Add timeout to Coordinator base class
+        - Add `txn_timeout_` member to `Coordinator` class in `src/deptran/coordinator.h`
+        - Initialize from config in constructor
+    - [ ] **Task 2: Add Timeout to Coordinator Wait Calls** [~100 LOC]
+      - [ ] *high* 2.1 Modify `CoordinatorClassic::DispatchAsync()` (line 309)
+        - Change `sp_int_event->wait()` to `sp_int_event->wait(txn_timeout_)`
+        - Check event status after wait - if `TIMEOUT`, set `aborted_ = true`
+        - Log timeout event
+      - [ ] *high* 2.2 Modify `CoordinatorClassic::Prepare()` (line 433)
+        - Change `quorum_event->wait()` to `quorum_event->wait(txn_timeout_)`
+        - On timeout: mark transaction as failed, skip waiting for unreachable shards
+        - Set `timeouted_ = true` on QuorumEvent
+      - [ ] *high* 2.3 Modify `CoordinatorClassic::Commit()` (line 544)
+        - Change `quorum_event->wait()` to `quorum_event->wait(txn_timeout_)`
+        - On timeout: commit to reachable shards only (best-effort)
+        - Log which shards were unreachable
+      - [ ] *medium* 2.4 Modify `CoordinatorClassic::Abort()` (line 584)
+        - Change `quorum_event->wait()` to `quorum_event->wait(txn_timeout_)`
+        - On timeout: abort on reachable shards only
+    - [ ] **Task 3: Add Timeout Status to Transaction Reply** [~50 LOC]
+      - [ ] *medium* 3.1 Add `TIMEOUT` to reply result codes
+        - Check `src/deptran/constants.h` or similar for result codes
+        - Add `TIMEOUT` or `SHARD_FAILURE` result code
+      - [ ] *medium* 3.2 Update `TxReply` to include timeout info
+        - Add `timed_out_shards_` field to track which shards didn't respond
+        - Set in coordinator when timeout occurs
+    - [ ] **Task 4: Add Shard Failure Simulation to Multi-Shard Single-Process Framework** [~150 LOC]
+      - [ ] *high* 4.1 Create shard failure control interface
+        - Add `ShardFailureController` class in `src/mako/benchmarks/shard_failure_controller.h`
+        - Methods: `fail_shard(int shard_idx)`, `recover_shard(int shard_idx)`, `is_shard_failed(int shard_idx)`
+        - Use `rusty::Cell<bool>` for thread-safe failure flags per shard
+      - [ ] *high* 4.2 Integrate failure controller with RPC layer
+        - Modify `src/deptran/communicator.cc` to check failure controller before sending
+        - If target shard is "failed", don't send RPC (or send and don't wait for response)
+        - Alternative: Make failed shard's scheduler drop/delay requests
+      - [ ] *medium* 4.3 Add runtime control for failure simulation
+        - Add command-line flag or signal handler to trigger shard failure
+        - Example: `--fail-shard-after <seconds>:<shard_idx>`
+        - Or: Signal USR1 to fail shard 0, USR2 to fail shard 1
+    - [ ] **Task 5: Write Tests Using Multi-Shard Single-Process Framework** [~300 LOC]
+      - [ ] *high* 5.1 Basic timeout test (`test/deptran/txn_timeout_test.cpp`)
+        - Start 2-shard single-process mode
+        - Run transactions normally, verify completion
+        - Fail shard 1 using ShardFailureController
+        - Run cross-shard transactions, verify they timeout and return error
+        - Verify single-shard transactions to shard 0 still work
+      - [ ] *high* 5.2 Partial commit test
+        - Start transaction spanning shards 0 and 1
+        - Fail shard 1 after dispatch but before commit
+        - Verify transaction completes with error status
+        - Verify shard 0 state is consistent (committed or aborted, not hung)
+      - [ ] *medium* 5.3 Recovery test
+        - Fail shard 1, run some transactions (should timeout)
+        - Recover shard 1 using `recover_shard(1)`
+        - Verify transactions resume normal operation
+      - [ ] *medium* 5.4 Add to CI
+        - Add `shardFailureTimeout` test to `ci/ci.sh`
+        - Create test script `examples/test_shard_failure_timeout.sh`
+    - **Key Files to Modify**:
+      | File | Changes |
+      |------|---------|
+      | `src/deptran/config.h` | Add `txn_timeout_us_` config |
+      | `src/deptran/coordinator.h` | Add timeout member |
+      | `src/deptran/classic/coordinator.cc` | Add timeout to wait() calls (lines 309, 433, 544, 584) |
+      | `src/rrr/reactor/quorum_event.h` | Use `timeouted_` flag properly |
+      | `src/mako/benchmarks/shard_failure_controller.h` | New file for failure simulation |
+      | `src/deptran/communicator.cc` | Check failure controller before RPC |
+    - **Implementation Notes**:
+      - Event timeout is in **microseconds** (not milliseconds)
+      - `Event::wait(30000000)` = 30 second timeout
+      - After `wait()` returns, check `event->status_.get() == Event::TIMEOUT`
+      - For QuorumEvent, also check `timeouted_` flag or `!yes()` after timeout
+      - No consistency guarantees for timed-out transactions (as specified)
+    - **Success Criteria**:
+      1. Transactions timeout after configured duration when shard is unreachable
+      2. System continues running (doesn't block/hang) after shard failure
+      3. Single-shard transactions to healthy shards continue working
+      4. Timeout is configurable via config file
+      5. Tests pass in multi-shard single-process mode
+  - [ ] *high* Shard Crash and Reboot Recovery (Simple Mode)
+    - **Goal**: Support shard servers crashing and rebooting while system continues operating
+    - **Scope**: rrr/rpc module only (eRPC out of scope). No replication, no RocksDB recovery - shard reboots to empty state.
+    - **Implementation Plan**: See `doc/shard_crash_reboot_plan.md`
+    - **Current State Analysis**:
+      - **What works**:
+        - Connection state machine (`connection_state.hpp` - transitions to FAILED)
+        - Reconnection infrastructure exists (`reconnect_policy.hpp` - exponential backoff)
+      - **What's missing/incomplete**:
+        - No automatic RPC retry after connection failure (error returned immediately)
+        - No connection pool rebuild after failures
+        - Clients don't automatically reconnect when server comes back
+        - In-flight transactions on crashed server not handled gracefully
+    - [ ] **Task 1: Investigate Current Crash Behavior** [Research]
+      - [ ] *high* 1.1 Test current crash behavior manually
+        - Start 2-shard system (no replication, single-process mode)
+        - Simulate shard crash using ShardFailureController
+        - Observe: What error do clients see? Do they retry?
+        - Document actual behavior vs expected behavior
+      - [ ] *high* 1.2 Identify specific failure points
+        - What error code is returned (ENOTCONN, ETIMEDOUT)?
+        - Does coordinator handle the error or hang?
+        - What happens when shard comes back?
+    - [ ] **Task 2: Enable Client Reconnection on Server Restart** [~100 LOC]
+      - [ ] *high* 2.1 Implement automatic reconnection in Client class
+        - When `handle_error()` detects disconnection, schedule reconnection
+        - Use existing `ReconnectPolicy` for exponential backoff
+        - Add `auto_reconnect_` flag to Client (default: true)
+        - Reconnection should be non-blocking (background)
+      - [ ] *high* 2.2 Implement connection pool recovery
+        - `ClientPool` should detect failed connections
+        - Remove failed connections from pool
+        - Create new connections on next request
+        - Don't block on reconnection - return error and let caller retry
+    - [ ] **Task 3: Add Coordinator-Level Retry Logic** [~100 LOC]
+      - [ ] *high* 3.1 Retry on connection failure in Communicator
+        - When RPC fails with ENOTCONN, wait briefly and retry
+        - Max retries configurable (default: 3)
+        - Exponential backoff between retries
+      - [ ] *medium* 3.2 Graceful handling of shard unavailability
+        - If shard is down after retries, mark transaction as failed
+        - Return appropriate error to client
+        - Don't hang waiting for unreachable shard
+    - [ ] **Task 4: Write Tests Using Multi-Shard Single-Process Framework** [~200 LOC]
+      - [ ] *high* 4.1 Basic crash/reconnect test (`test/deptran/shard_crash_test.cpp`)
+        - Use 2-shard single-process mode
+        - Run normal transactions, verify success
+        - Fail shard 1 using ShardFailureController
+        - Verify transactions to shard 1 fail with error (not hang)
+        - Recover shard 1
+        - Verify client reconnects and transactions resume
+      - [ ] *high* 4.2 Create test script `examples/test_shard_crash_recovery.sh`
+        - Start 2-shard single-process mode
+        - Run benchmark, establish baseline throughput
+        - Fail shard 1 for 10 seconds
+        - Verify shard 0 transactions continue
+        - Recover shard 1
+        - Verify full throughput resumes
+      - [ ] *medium* 4.3 Add to CI
+        - Add `shardCrashRecovery` case to `ci/ci.sh`
+        - Success criteria:
+          - Transactions to healthy shard continue during failure
+          - Cross-shard transactions fail gracefully (timeout, not hang)
+          - System resumes normal operation after recovery
+    - **Key Files**:
+      | File | Purpose |
+      |------|---------|
+      | `src/rrr/rpc/client.hpp` | Add auto-reconnect on disconnect |
+      | `src/rrr/rpc/client.cpp` | Implement reconnection logic |
+      | `src/deptran/communicator.cc` | Add RPC retry on ENOTCONN |
+      | `src/mako/benchmarks/shard_failure_controller.h` | Failure simulation (from timeout task) |
+      | `examples/test_shard_crash_recovery.sh` | New test script |
+    - **Crash/Reboot Flow** (Simple, No Replication):
+      ```
+      Normal Operation:
+        Client → Coordinator → RPC → Shard
+
+      Shard Crash:
+        1. Shard process dies or is marked failed
+        2. TCP connections break (RST) or RPCs timeout
+        3. Clients see ENOTCONN/timeout
+        4. [NEW] Coordinator retries with backoff
+        5. After max retries, transaction fails with error
+        6. Single-shard transactions to other shards continue
+
+      Shard Reboot (to empty state):
+        1. Shard restarts fresh (no state recovery)
+        2. Server starts listening on same port
+        3. [NEW] Client detects server is back (next RPC succeeds)
+        4. [NEW] Connection pool creates new connection
+        5. Transactions resume (shard has empty state)
+      ```
+    - **Success Criteria**:
+      1. Transactions to crashed shard fail gracefully (timeout with error, not hang)
+      2. Transactions to healthy shards continue during failure
+      3. Clients automatically reconnect when shard comes back
+      4. System resumes normal operation after shard recovery
+      5. Tests pass in multi-shard single-process mode 
