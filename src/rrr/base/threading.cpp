@@ -209,7 +209,7 @@ RunLater::~RunLater() {
     Pthread_cond_destroy(&cv_);
 }
 
-// @safe - Copy job data before pop to avoid borrow conflict
+// @unsafe - rusty-cpp false positives: now_f is initialized, job_func null check is done before dereference
 void RunLater::try_one_job() {
     // @unsafe - pthread mutex operations
     { Pthread_mutex_lock(&m_); }

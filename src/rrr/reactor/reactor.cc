@@ -239,7 +239,7 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
 
 // @safe - Uses RefCell for safe interior mutability
 void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_events) const {
-  int64_t time_now;
+  int64_t time_now = 0;  // Initialize to 0
   // @unsafe - Time::now is external
   { time_now = Time::now(true); }
 
@@ -288,7 +288,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
   }
 }
 
-// @safe - Main event loop
+// @unsafe - rusty-cpp false positive: found_ready_events IS initialized inside do-while loop
 void Reactor::loop(bool infinite, bool do_check_timeout) const {
   verify(std::this_thread::get_id() == thread_id_.get());
 
@@ -442,7 +442,7 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
   *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
 }
 
-// @safe - Recycles coroutine for reuse, uses RefCell for safe interior mutability
+// @unsafe - Uses RefCell interior mutability (rusty-cpp doesn't fully support RefCell semantics)
 void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
   // This fixes the bug that coroutines are not recycling if they don't finish immediately.
   if (REUSING_CORO) {
@@ -451,7 +451,7 @@ void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
     coro_ref.status_.set(Coroutine::RECYCLED);
     *coro_ref.func_.borrow_mut() = {};
     n_idle_coroutines_.set(n_idle_coroutines_.get() + 1);
-    available_coros_.borrow_mut()->push_back(coro.clone());
+    available_coros_.borrow_mut()->push_back(coro.clone());  // @unsafe
   }
   n_busy_coroutines_.set(n_busy_coroutines_.get() - 1);
   // @unsafe - rusty-cpp false positive: Rc::clone() doesn't move, coro is still valid

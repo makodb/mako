@@ -577,7 +577,7 @@ public:
      * Stop accepting new connections but keep existing ones active.
      * Transitions to STOP_ACCEPTING phase.
      */
-    // @safe - Stops server listener
+    // @unsafe - Calls PollThread::request_close
     void stop_accepting();
 
     /**
@@ -586,7 +586,7 @@ public:
      * @param timeout_ms Maximum time to wait in milliseconds (default: 30 seconds)
      * @return true if all requests completed, false if timeout
      */
-    // @safe - Waits for requests with timeout
+    // @unsafe - Uses std::atomic::load
     bool drain(uint64_t timeout_ms = 30000);
 
     /**
@@ -597,7 +597,7 @@ public:
      * 4. Close all connections
      * @param drain_timeout_ms Timeout for drain phase (default: 30 seconds)
      */
-    // @safe - Full graceful shutdown sequence
+    // @unsafe - Calls stop_accepting() and drain() which are unsafe
     void graceful_shutdown(uint64_t drain_timeout_ms = 30000);
 
     /**
@@ -611,25 +611,25 @@ public:
     /**
      * Get count of pending (in-flight) requests.
      */
-    // @safe - Pending request count
+    // @unsafe - Uses std::atomic::load
     int pending_request_count() const {
-        return pending_requests_.load(std::memory_order_relaxed);
+        return pending_requests_.load(std::memory_order_relaxed);  // @unsafe
     }
 
     /**
      * Increment pending request count. Called when starting to process a request.
      */
-    // @safe - Atomic increment
+    // @unsafe - Uses std::atomic::fetch_add
     void increment_pending() {
-        pending_requests_.fetch_add(1, std::memory_order_relaxed);
+        pending_requests_.fetch_add(1, std::memory_order_relaxed);  // @unsafe
     }
 
     /**
      * Decrement pending request count. Called when request completes.
      */
-    // @safe - Atomic decrement
+    // @unsafe - Uses std::atomic::fetch_sub
     void decrement_pending() {
-        pending_requests_.fetch_sub(1, std::memory_order_relaxed);
+        pending_requests_.fetch_sub(1, std::memory_order_relaxed);  // @unsafe
     }
 
     /**

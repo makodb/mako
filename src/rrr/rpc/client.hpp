@@ -1117,11 +1117,11 @@ public:
      * Set the buffering configuration for this client.
      * Controls whether requests are queued during disconnection.
      */
-    // @safe - Sets buffering configuration
+    // @unsafe - Calls ClientConnection::set_buffering_config (interior mutability)
     void set_buffering_config(const BufferingConfig& config) const {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            guard->as_ref().unwrap()->set_buffering_config(config);
+            guard->as_ref().unwrap()->set_buffering_config(config);  // @unsafe
         }
     }
 

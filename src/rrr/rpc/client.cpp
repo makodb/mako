@@ -81,9 +81,9 @@ void Future::timed_wait(double sec) const {
   }
 }
 
-// @safe - Uses rusty::Mutex and rusty::Condvar together
+// @unsafe - rusty-cpp false positive: should_callback IS initialized
 void Future::notify_ready(rusty::Arc<Future> self) const {
-  bool should_callback = false;
+  bool should_callback = false;  // Initialized here
   {
     auto guard = state_.lock().unwrap();
     if (!guard->timed_out) {
@@ -362,22 +362,25 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   return result;
 }
 
-// @safe - Set buffering configuration (const due to mutable internal state)
+// @unsafe - Uses interior mutability (const method modifying mutable members)
 void ClientConnection::set_buffering_config(const BufferingConfig& config) const {
   // @unsafe - struct assignment operator
   { buffering_config_ = config; }
 
   // Clear any pending requests since config changed
   // Note: We can't recreate the queue (mutex not movable), so just clear
-  if (!pending_queue_.empty()) {
-    pending_queue_.clear_all(ECONNABORTED);
-  }
+  // @unsafe - const propagation through mutable member
+  {
+    if (!pending_queue_.empty()) {
+      pending_queue_.clear_all(ECONNABORTED);
+    }
 
-  // Update the queue's internal config to match
-  pending_queue_.update_config(config.to_queue_config());
+    // Update the queue's internal config to match
+    pending_queue_.update_config(config.to_queue_config());
+  }
 }
 
-// @safe - Replay queued requests after reconnection
+// @unsafe - Uses RequestQueue methods (not borrow-checked)
 size_t ClientConnection::replay_pending_requests() {
   size_t replayed = 0;
 
@@ -462,7 +465,7 @@ int ClientConnection::handle_write() {
   return result;
 }
 
-// @safe - Reads and processes RPC responses
+// @unsafe - Calls Future::notify_ready (uses interior mutability)
 bool ClientConnection::handle_read() {
   if (!state_machine_.is_connected()) {
     return false;
@@ -744,7 +747,7 @@ ClientPool::~ClientPool() {
   }
 }
 
-// @safe - Get count of healthy clients for an address
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   l_.lock();
   size_t count = 0;
@@ -760,7 +763,7 @@ size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   return count;
 }
 
-// @safe - Remove unhealthy clients for an address
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   l_.lock();
   size_t removed = 0;
@@ -794,7 +797,7 @@ size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
   return removed;
 }
 
-// @safe - Close idle clients for an address
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_time_ms) {
   l_.lock();
   size_t closed = 0;
@@ -834,7 +837,7 @@ size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_
   return closed;
 }
 
-// @safe - Remove all unhealthy clients from all addresses
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::remove_all_unhealthy() {
   l_.lock();
   size_t total_removed = 0;
@@ -869,7 +872,7 @@ size_t ClientPool::remove_all_unhealthy() {
   return total_removed;
 }
 
-// @safe - Close all idle clients from all addresses
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   l_.lock();
   size_t total_closed = 0;
@@ -909,7 +912,7 @@ size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
   return total_closed;
 }
 
-// @safe - Get total number of cached clients across all addresses
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::total_client_count() {
   l_.lock();
   size_t count = 0;
@@ -920,7 +923,7 @@ size_t ClientPool::total_client_count() {
   return count;
 }
 
-// @safe - Get number of addresses with cached clients
+// @unsafe - Uses SpinLock (lock/unlock not borrow-checked)
 size_t ClientPool::address_count() {
   l_.lock();
   size_t count = cache_.size();

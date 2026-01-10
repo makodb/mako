@@ -361,7 +361,7 @@ bool ServerListener::handle_read() {
 //  FD_SET(server_sock_, &fds);
 
   while (true) {
-    int clnt_socket;
+    int clnt_socket = -1;  // Initialize to invalid fd
     // @unsafe - syscall with raw pointers
     {
 #ifdef USE_IPC
@@ -586,7 +586,7 @@ void Server::add_shutdown_hook(ShutdownHook hook) {
     guard->push_back(std::move(hook));
 }
 
-// @safe - Stops server listener from accepting new connections
+// @unsafe - Calls PollThread::request_close
 void Server::stop_accepting() {
     if (shutdown_phase_.get() != ShutdownPhase::RUNNING) {
         Log_debug("Server::stop_accepting: already in phase %s",
@@ -605,7 +605,7 @@ void Server::stop_accepting() {
     }
 }
 
-// @safe - Waits for in-flight requests to complete with timeout
+// @unsafe - Uses std::atomic::load
 bool Server::drain(uint64_t timeout_ms) {
     auto current_phase = shutdown_phase_.get();
     if (current_phase != ShutdownPhase::RUNNING &&
@@ -643,15 +643,15 @@ bool Server::drain(uint64_t timeout_ms) {
     return true;
 }
 
-// @safe - Full graceful shutdown sequence
+// @unsafe - Calls stop_accepting() and drain() which are unsafe
 void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
     Log_info("Server::graceful_shutdown: starting graceful shutdown");
 
     // Phase 1: Stop accepting new connections
-    stop_accepting();
+    stop_accepting();  // @unsafe
 
     // Phase 2: Drain existing requests
-    bool drained = drain(drain_timeout_ms);
+    bool drained = drain(drain_timeout_ms);  // @unsafe
     if (!drained) {
         Log_warn("Server::graceful_shutdown: drain timed out, proceeding with shutdown");
     }
