@@ -332,10 +332,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] *medium* 8.2 Architecture Documentation [DONE 2026-01-10]
         - Updated `doc/transport_backends.md` with reliability features section
         - Created `doc/rpc_reliability.md`: comprehensive guide covering all reliability features
-      - [ ] *low* 8.3 Migration Guide
-        - Breaking API changes (if any)
-        - Migration examples
-        - New dependencies
+      - [x] *low* 8.3 Migration Guide [DONE 2026-01-10]
+        - Created `doc/rpc_migration_guide.md`
+        - Documented: No breaking changes (all additive)
+        - New dependencies: rusty-cpp (Cell, Arc, Mutex, Box, Option)
+        - New headers: 12 new headers for reliability features
+        - Migration examples: 8 incremental adoption scenarios
+        - Performance considerations, troubleshooting guide
     - **Implementation Order** (based on dependencies):
       ```
       Phase 1: 1.1, 1.2 (parallel) → 1.3, 1.4
