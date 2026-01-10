@@ -6,7 +6,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 1. Check if there are any repeated task that needs to be run again. If yes this is the task we need to do, otherwise, pick the top undone task with highest priority (high-medium-low), choose its first leaf task.  If there are no undone TODO items left, sleep a minute and git pull and restart step 1 (so this step is a dead loop until you find a todo item).
 2. Analyze the task, check if this can be done with not too many LOC (i.e., smaller than 500 lines code give or take). If not, try to analyze this task and break it down into several smaller tasks, expanding it in the TODO.md. The breakdown can be nested and hierarchical. Try to make each leaf task small enough (<500 lines LOC). You can document your analysis in the doc folder for future reference. 
-3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. Avoid using std types, using rusty alternatives if they exists (e.g., don't use unique_ptr, use rusty::Box).
+3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. Avoid using std types, using rusty alternatives if they exists (e.g., don't use unique_ptr, use rusty::Box; don't use std thread, use rusty thread).
 4. Make sure to add comprehensive test for the task executed. Run the whole ci test  to make sure no regression happens (remember to use make clean && make -j32 because rusty-cpp requires make clean before build). If tests fail, fix them using the best, honest, complete approach, run test suites again to verify fixes work. Do not cheat such as disabling the borrow checker. Repeat this step until no tests fail. 
 5. Prepare for git commit, remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder. we can keep the plan files in docs/dev/ folder. Mark the task as done (or last done for repeated task) in the TODO.md with a timestamp [yy:mm:dd, hh:mm]  
 6. Git commit the changes. First do git pull --rebase, and fix conflicts if any. Remember to update submodule. If remote has any updates (merged through rebase), then run full ci tests again to make sure everything pass. If not pass, investigate and fix, repeat until pass all ci tests. Then do git push (if remote rejected because updates during we doing this step, restart this step).
@@ -181,12 +181,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - `ConnectionMetrics`: requests_sent/completed/failed, bytes, reconnect_count, avg_latency
         - Track per connection, expose via accessors
         - ~100-150 LOC
-      - [ ] *medium* 3.3 Proactive Connection Validation [deps: 3.1] [Plan: doc/rpc/phase3_validation.md]
-        - Add `validate_connection()` method
-        - Use TCP keepalive: TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
-        - Detect half-open connections
-        - Idle timeout for unused connections
-        - ~100-150 LOC
+      - [x] *medium* 3.3 Proactive Connection Validation [deps: 3.1] [Plan: doc/rpc/phase3_validation.md] [DONE 2026-01-09]
+        - Added `KeepaliveConfig` struct with aggressive/relaxed/disabled presets
+        - Implemented `apply_keepalive_options()` in ClientConnection (uses setsockopt for SO_KEEPALIVE, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT)
+        - Added `last_activity_time_` tracking (updated on read/write)
+        - Added `is_idle(uint64_t idle_ms)` method for idle detection
+        - Added `validate_connection()` method (checks state, socket validity, getsockopt SO_ERROR)
+        - Client wrapper methods with pending config storage for pre-connect configuration
+        - 15 unit tests in test/rpc_validation_test.cc
+        - ~120 LOC
     - [ ] **Phase 4: Server-Side Crash Handling**
       - [x] *medium* 4.1 Graceful Server Shutdown [Plan: doc/rpc/phase4_graceful_shutdown.md] [DONE 2026-01-09]
         - Added ShutdownPhase enum (RUNNING, STOP_ACCEPTING, DRAINING, CLOSING, STOPPED)

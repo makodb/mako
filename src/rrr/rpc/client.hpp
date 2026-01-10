@@ -143,6 +143,58 @@ struct BufferingConfig {
     }
 };
 
+/**
+ * TCP Keepalive configuration for connection health monitoring.
+ *
+ * Configures OS-level TCP keepalive probes to detect dead connections.
+ * When enabled, the OS will send keepalive probes after the connection
+ * has been idle for `idle_sec` seconds, then at `interval_sec` intervals.
+ * If `count` probes go unanswered, the connection is considered dead.
+ */
+// @unsafe - POD config struct (default constructor not annotated)
+struct KeepaliveConfig {
+    bool enabled = true;       // Enable TCP keepalive probes
+    int idle_sec = 60;         // TCP_KEEPIDLE: seconds before first probe
+    int interval_sec = 10;     // TCP_KEEPINTVL: seconds between probes
+    int count = 5;             // TCP_KEEPCNT: max unanswered probes before dropping
+
+    // Fast detection preset: 10s idle, 2s interval, 3 probes = 16s to detect failure
+    // @unsafe - Returns struct by value (constructor not annotated)
+    static KeepaliveConfig aggressive() {
+        // @unsafe { struct construction }
+        KeepaliveConfig config;
+        config.enabled = true;
+        config.idle_sec = 10;
+        config.interval_sec = 2;
+        config.count = 3;
+        return config;
+    }
+
+    // Standard preset: 60s idle, 10s interval, 5 probes = 110s to detect failure
+    // @unsafe - Returns struct by value (constructor not annotated)
+    static KeepaliveConfig relaxed() {
+        // @unsafe { struct construction }
+        KeepaliveConfig config;
+        config.enabled = true;
+        config.idle_sec = 60;
+        config.interval_sec = 10;
+        config.count = 5;
+        return config;
+    }
+
+    // Disabled preset
+    // @unsafe - Returns struct by value (constructor not annotated)
+    static KeepaliveConfig disabled() {
+        // @unsafe { struct construction }
+        KeepaliveConfig config;
+        config.enabled = false;
+        config.idle_sec = 0;
+        config.interval_sec = 0;
+        config.count = 0;
+        return config;
+    }
+};
+
 class Future;
 // @unsafe - Forward declarations
 class Client;
@@ -361,6 +413,13 @@ class ClientConnection: public Pollable {
     // Parameters: (old_id, new_id)
     mutable std::function<void(uint64_t, uint64_t)> on_server_restart_;
 
+    // TCP Keepalive configuration for connection health monitoring
+    KeepaliveConfig keepalive_config_;
+
+    // Last activity timestamp for idle detection (milliseconds since epoch)
+    // Updated on send/receive operations
+    rusty::Cell<uint64_t> last_activity_time_{0};
+
     // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
     // Cell provides interior mutability for safe access through const methods
@@ -523,10 +582,88 @@ public:
         return false;
     }
 
+    // === Connection Validation API ===
+
+    /**
+     * Configure TCP keepalive for the connection.
+     * Should be called before connect() or after reconnection.
+     *
+     * @param config The keepalive configuration to apply
+     */
+    // @unsafe - Struct assignment operator not annotated
+    void set_keepalive(const KeepaliveConfig& config) {
+        // @unsafe { struct assignment }
+        keepalive_config_ = config;
+    }
+
+    /**
+     * Get the current keepalive configuration.
+     */
+    // @safe - Simple getter
+    // @lifetime: (&'a) -> &'a
+    const KeepaliveConfig& keepalive_config() const {
+        return keepalive_config_;
+    }
+
+    /**
+     * Update the last activity timestamp.
+     * Called on send/receive operations to track connection activity.
+     */
+    // @unsafe - Uses std::chrono which is not annotated
+    void update_last_activity() const {
+        // @unsafe { std::chrono operations }
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        last_activity_time_.set(static_cast<uint64_t>(ms));
+    }
+
+    /**
+     * Get the last activity timestamp (milliseconds since epoch).
+     */
+    // @safe - Simple getter using Cell
+    uint64_t last_activity_time() const {
+        return last_activity_time_.get();
+    }
+
+    /**
+     * Check if the connection is idle (no activity for idle_ms milliseconds).
+     *
+     * @param idle_ms Idle threshold in milliseconds
+     * @return true if idle for longer than threshold, false otherwise
+     */
+    // @unsafe - Uses std::chrono which is not annotated
+    bool is_idle(uint64_t idle_ms) const {
+        // @unsafe { std::chrono operations }
+        auto now = std::chrono::steady_clock::now();
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        auto last = last_activity_time_.get();
+        if (last == 0) return false;  // No activity recorded yet
+        return (static_cast<uint64_t>(now_ms) - last) > idle_ms;
+    }
+
+    /**
+     * Validate the connection is still alive and healthy.
+     *
+     * Checks:
+     * 1. Connection state is CONNECTED
+     * 2. Socket is valid (fd >= 0)
+     * 3. Socket has no pending errors (getsockopt SO_ERROR)
+     *
+     * @return true if connection is healthy, false if it needs reconnection
+     */
+    // @unsafe - Uses getsockopt system call
+    bool validate_connection() const;
+
 private:
     // @safe - Replay queued requests after reconnection
     // Returns number of requests replayed
     size_t replay_pending_requests();
+
+    // @unsafe - Apply keepalive options to socket
+    // Called after socket creation in connect()
+    void apply_keepalive_options();
 
 public:
 
@@ -796,6 +933,9 @@ class Client {
     rusty::Cell<uint64_t> timeout_{0};
     rusty::Cell<i32> rpc_id_{0};
 
+    // Pending keepalive config (applied when connection is created)
+    mutable KeepaliveConfig pending_keepalive_config_;
+
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
     // These are accessed through getters/setters for thread-safety
@@ -1056,6 +1196,76 @@ public:
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->check_server_instance(new_id);
+        }
+        return false;
+    }
+
+    // === Connection Validation API ===
+
+    /**
+     * Configure TCP keepalive for the connection.
+     * If called before connect(), the config is stored and applied when connection is created.
+     * If called after connect(), the config is applied immediately to the existing connection.
+     *
+     * @param config The keepalive configuration to apply
+     */
+    // @unsafe - Delegates to ClientConnection (const_cast)
+    void set_keepalive(const KeepaliveConfig& config) const {
+        // Always store locally (for use in connect() if called before connection exists)
+        // @unsafe { struct assignment }
+        pending_keepalive_config_ = config;
+
+        // If connection exists, also apply immediately
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { const_cast and delegation }
+            const_cast<ClientConnection&>(*guard->as_ref().unwrap()).set_keepalive(config);
+        }
+    }
+
+    /**
+     * Get the current keepalive configuration.
+     * Returns the connection's config if connected, or the pending config otherwise.
+     */
+    // @unsafe - Delegates to ClientConnection (struct copy)
+    KeepaliveConfig keepalive_config() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { struct copy }
+            return guard->as_ref().unwrap()->keepalive_config();
+        }
+        // Return pending config if no connection exists
+        // @unsafe { struct copy }
+        return pending_keepalive_config_;
+    }
+
+    /**
+     * Check if the connection is idle.
+     *
+     * @param idle_ms Idle threshold in milliseconds
+     * @return true if idle for longer than threshold, false if not idle or no connection
+     */
+    // @unsafe - Delegates to @unsafe ClientConnection::is_idle
+    bool is_idle(uint64_t idle_ms) const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { delegation to @unsafe is_idle }
+            return guard->as_ref().unwrap()->is_idle(idle_ms);
+        }
+        return false;
+    }
+
+    /**
+     * Validate the connection is still alive and healthy.
+     *
+     * @return true if connection is healthy, false if it needs reconnection or doesn't exist
+     */
+    // @unsafe - Delegates to ClientConnection::validate_connection
+    bool validate_connection() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { delegation to @unsafe validate_connection }
+            return guard->as_ref().unwrap()->validate_connection();
         }
         return false;
     }

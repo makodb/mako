@@ -259,6 +259,13 @@ int ClientConnection::connect(const char* addr) {
     verify(set_nonblocking(socket_, true) == 0);
   }
 
+  // Apply TCP keepalive options after socket is connected
+  // @unsafe { setsockopt system calls }
+  apply_keepalive_options();
+
+  // Initialize last activity time
+  update_last_activity();
+
   Log_debug("rrr::ClientConnection: connected to %s", addr);
 
   // Transition to CONNECTED state
@@ -409,7 +416,15 @@ int ClientConnection::handle_write() {
 
   int result = PollMode::NO_CHANGE;
   auto guard = out_.lock().unwrap();
+  size_t before_size = guard->content_size();
   guard->write_to_fd(socket_);
+  size_t after_size = guard->content_size();
+
+  // Update activity timestamp if we wrote any data
+  if (after_size < before_size) {
+    update_last_activity();
+  }
+
   if (guard->empty()) {
     // Return READ-only mode - PollThreadWorker will update epoll
     result = PollMode::READ;
@@ -428,6 +443,9 @@ bool ClientConnection::handle_read() {
   if (bytes_read == 0) {
     return false;
   }
+
+  // Update activity timestamp on successful read
+  update_last_activity();
 
   // Process all available packets
   while (state_machine_.is_connected()) {
@@ -575,6 +593,10 @@ int Client::connect(const char* addr, bool client) const {
   }
   mut_conn.is_client_mode_ = client;
   is_client_mode_.set(client);
+
+  // Apply pending keepalive config before connecting
+  // @unsafe { struct assignment }
+  mut_conn.set_keepalive(pending_keepalive_config_);
 
   // Call connect through mutable reference
   int result = 0;
@@ -728,6 +750,86 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   }
   l_.unlock();
   return sp_cl;
+}
+
+// @unsafe - Apply TCP keepalive options to socket
+void ClientConnection::apply_keepalive_options() {
+  if (socket_ < 0) {
+    return;
+  }
+
+  if (!keepalive_config_.enabled) {
+    // Disable keepalive
+    int no = 0;
+    // @unsafe { setsockopt system call }
+    setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &no, sizeof(no));
+    return;
+  }
+
+  // Enable keepalive
+  int yes = 1;
+  // @unsafe { setsockopt system calls }
+  if (setsockopt(socket_, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes)) != 0) {
+    Log_warn("Failed to enable SO_KEEPALIVE: %s", strerror(errno));
+    return;
+  }
+
+#ifdef __linux__
+  // Linux-specific TCP keepalive parameters
+  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPIDLE,
+                 &keepalive_config_.idle_sec, sizeof(int)) != 0) {
+    Log_warn("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
+  }
+  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPINTVL,
+                 &keepalive_config_.interval_sec, sizeof(int)) != 0) {
+    Log_warn("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
+  }
+  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPCNT,
+                 &keepalive_config_.count, sizeof(int)) != 0) {
+    Log_warn("Failed to set TCP_KEEPCNT: %s", strerror(errno));
+  }
+#elif defined(__APPLE__)
+  // macOS uses TCP_KEEPALIVE for idle time (equivalent to TCP_KEEPIDLE)
+  if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPALIVE,
+                 &keepalive_config_.idle_sec, sizeof(int)) != 0) {
+    Log_warn("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
+  }
+  // macOS doesn't have TCP_KEEPINTVL or TCP_KEEPCNT via setsockopt
+#endif
+
+  Log_debug("TCP keepalive configured: idle=%ds, interval=%ds, count=%d",
+            keepalive_config_.idle_sec, keepalive_config_.interval_sec,
+            keepalive_config_.count);
+}
+
+// @unsafe - Validate connection is alive using getsockopt
+bool ClientConnection::validate_connection() const {
+  // Check 1: State machine says CONNECTED
+  if (!state_machine_.is_connected()) {
+    return false;
+  }
+
+  // Check 2: Socket is valid
+  if (socket_ < 0) {
+    return false;
+  }
+
+  // Check 3: No pending socket error (getsockopt SO_ERROR)
+  int error = 0;
+  socklen_t len = sizeof(error);
+  // @unsafe { getsockopt system call }
+  if (getsockopt(socket_, SOL_SOCKET, SO_ERROR, &error, &len) != 0) {
+    // getsockopt itself failed
+    Log_warn("getsockopt(SO_ERROR) failed: %s", strerror(errno));
+    return false;
+  }
+
+  if (error != 0) {
+    Log_warn("Socket has pending error: %s", strerror(error));
+    return false;
+  }
+
+  return true;
 }
 
 } // namespace rrr
