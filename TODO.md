@@ -214,11 +214,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - RpcError enum with 25+ detailed error codes
         - RpcException class with category, code, message, retryable checks
         - Helper functions: is_connection_error(), is_timeout_error(), is_retryable_error()
-      - [ ] *medium* 6.2 Error Callbacks and Hooks [deps: 6.1] [Plan: doc/rpc/phase6_callbacks.md]
+      - [x] *medium* 6.2 Error Callbacks and Hooks [deps: 6.1] [Plan: doc/rpc/phase6_callbacks.md] [DONE]
+        - Created `src/rrr/rpc/callbacks.hpp` (~240 LOC)
+        - CallbackManager class with thread-safe registration and invocation
         - `ConnectionCallbacks`: on_connected, on_disconnected, on_error, on_reconnecting, on_reconnected
-        - Multiple callbacks per event
-        - Sync and async callback support
-        - ~100-150 LOC
+        - Multiple callbacks per event with exception safety
+        - Uses std::mutex for thread-safe concurrent access
+        - Unit tests: 24 tests in `test/rpc_callbacks_test.cc`
     - [ ] **Phase 7: Testing** [Implementation order: parallel with each phase]
       - [x] *high* 7.1 Unit Tests [DONE]
         - [x] 7.1.1 Connection State Machine Tests (`test/rpc_connection_state_test.cc`)

@@ -1450,6 +1450,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_errors ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_errors COMMAND test_rpc_errors)
 
+    # Callback System Tests (Phase 6.2)
+    add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
+    target_include_directories(test_rpc_callbacks PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_callbacks PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_callbacks ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_callbacks COMMAND test_rpc_callbacks)
+
     # ============================================================================
     # RPC Reliability Integration Tests (Phase 7.2)
     # ============================================================================
