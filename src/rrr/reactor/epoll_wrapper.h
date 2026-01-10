@@ -151,7 +151,17 @@ class Epoll {
     if (poll_mode & PollMode::WRITE) {
         ev.events |= EPOLLOUT;
     }
-    verify(epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev) == 0);
+
+    // Try to add the fd to epoll
+    // If it already exists (fd reuse after reconnection), remove first then add
+    int result = epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev);
+    if (result != 0 && errno == EEXIST) {
+        // fd already registered (possible due to fd reuse after close+reconnect)
+        // Remove it first, then add again
+        (void)epoll_ctl(poll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+        result = epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev);
+    }
+    verify(result == 0);
 #endif
     return 0;
   }

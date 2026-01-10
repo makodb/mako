@@ -394,10 +394,12 @@ TEST_F(CombinedReliabilityTest, ErrorCategoriesWithCircuitBreaker) {
     CircuitBreaker cb(cb_config);
 
     // Simulate different error types and their effect on circuit
+    // Note: Only CONNECTION (100-199) and TIMEOUT (400-499) errors trigger record_failure
+    // SERVICE_UNAVAILABLE is an APPLICATION error (301), not connection/timeout
     std::vector<RpcError> errors = {
-        RpcError::NOT_CONNECTED,
-        RpcError::REQUEST_TIMEOUT,
-        RpcError::SERVICE_UNAVAILABLE
+        RpcError::NOT_CONNECTED,      // 100 - CONNECTION
+        RpcError::REQUEST_TIMEOUT,    // 401 - TIMEOUT
+        RpcError::CONNECTION_RESET    // 102 - CONNECTION
     };
 
     for (const auto& error : errors) {

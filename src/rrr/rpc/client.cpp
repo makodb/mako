@@ -372,6 +372,9 @@ size_t ClientConnection::replay_pending_requests() {
     if (req.payload && req.payload->content_size() > 0) {
       auto guard = out_.lock().unwrap();
       guard->read_from_marshal(*req.payload, req.payload->content_size());
+      // Reset write_cnt_ so that subsequent set_bookmark() calls work
+      // The replayed payload already contains the packet size
+      guard->get_and_reset_write_cnt();
       replayed++;
     }
   }
@@ -511,17 +514,21 @@ void Client::set_valid(bool valid) const {
 }
 
 // @safe - Closes socket via request_close() for thread-safe cleanup
+// Note: Does NOT clear the connection object so reconnect() can work.
+// The connection object retains the address for reconnection.
 void Client::close() const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
-    auto& conn = *guard->as_ref().unwrap();
+    auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
     if (conn.connected()) {
       // Request poll thread to close the connection
       // @unsafe - PollThread::request_close
       { poll_thread_worker_->request_close(conn.fd()); }
     }
-    // Clear connection to prevent further use
-    *guard = rusty::None;
+    // Call ClientConnection::close() to update state machine
+    // This transitions to DISCONNECTED state but keeps the object
+    conn.close();
+    // Don't clear connection to None - we need it for reconnect()
   }
 }
 
