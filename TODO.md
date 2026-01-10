@@ -390,7 +390,10 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Created `src/rrr/rpc/memory_log_storage.hpp`: InMemoryLogStorage implementation
         - Created `test/rpc_log_storage_test.cc`: 35 unit tests (all passing)
         - Plan: `doc/dev/phase1_1_log_persistence_interface.md`
-      - [ ] 1.2 RocksDB Log Backend - Implement `RocksDBLogStorage` with batch writes
+      - [x] 1.2 RocksDB Log Backend - Implement `RocksDBLogStorage` with batch writes [DONE 2026-01-10, 05:00]
+        - Created `src/rrr/rpc/rocksdb_log_storage.hpp`: RocksDBLogStorage implementation (~350 LOC)
+        - Created `test/rpc_rocksdb_log_storage_test.cc`: 35 unit tests (persistence, thread safety)
+        - Plan: `doc/dev/phase1_2_rocksdb_log_backend.md`
       - [ ] 1.3 Raft Integration - Modify RaftServer to use LogStorage, persist term/vote/log/commit
       - [ ] 1.4 Paxos Integration - Modify PaxosServer to use LogStorage, persist ballots/entries
     - [ ] **Phase 2: State Recovery on Startup** (~350 LOC)
