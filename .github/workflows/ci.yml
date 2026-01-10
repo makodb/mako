@@ -5,10 +5,10 @@ on:
     branches: [ mako-dev, mako-weihai ]
   workflow_dispatch:
 
-# Cancel superseded runs when you push new commits to the same PR/branch
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+# comment out so we run test for every commit, otherwise new commit will cancel old (pending test) commit.
+#concurrency:
+#  group: ${{ github.workflow }}-${{ github.ref }}
+#  cancel-in-progress: false
 
 jobs:
   build-and-test:
