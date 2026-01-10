@@ -202,6 +202,70 @@ struct KeepaliveConfig {
     }
 };
 
+/**
+ * ClientPool configuration for health-aware connection pooling.
+ *
+ * Controls connection limits, health checking, and idle timeout behavior.
+ */
+// @safe - POD config struct for pool settings
+struct PoolConfig {
+    int min_connections = 1;             // Minimum connections per address
+    int max_connections = 4;             // Maximum connections per address
+    uint64_t idle_timeout_ms = 300000;   // 5 minutes default (0 = no timeout)
+    bool health_check_enabled = true;    // Enable health-based removal
+    uint64_t unhealthy_threshold_percent = 50;  // Remove if success rate < this %
+    uint64_t min_requests_for_health = 10;      // Min requests before health check
+
+    // @safe - Default constructor
+    PoolConfig() = default;
+
+    // @safe - Copy constructor
+    PoolConfig(const PoolConfig&) = default;
+
+    // @safe - Copy assignment
+    PoolConfig& operator=(const PoolConfig&) = default;
+
+    // Default preset: balanced settings
+    // @safe - POD struct copy is memory-safe
+    static PoolConfig defaults() {
+        return PoolConfig();
+    }
+
+    // Aggressive preset: more connections, shorter timeout, stricter health
+    // @safe - POD struct copy is memory-safe
+    static PoolConfig aggressive() {
+        PoolConfig config;
+        config.min_connections = 2;
+        config.max_connections = 8;
+        config.idle_timeout_ms = 60000;  // 1 minute
+        config.health_check_enabled = true;
+        config.unhealthy_threshold_percent = 70;  // Stricter
+        config.min_requests_for_health = 5;
+        return config;
+    }
+
+    // Conservative preset: fewer connections, longer timeout, lenient health
+    // @safe - POD struct copy is memory-safe
+    static PoolConfig conservative() {
+        PoolConfig config;
+        config.min_connections = 1;
+        config.max_connections = 2;
+        config.idle_timeout_ms = 600000;  // 10 minutes
+        config.health_check_enabled = true;
+        config.unhealthy_threshold_percent = 30;  // More lenient
+        config.min_requests_for_health = 20;
+        return config;
+    }
+
+    // Disabled health checking preset
+    // @safe - POD struct copy is memory-safe
+    static PoolConfig no_health_check() {
+        PoolConfig config;
+        config.health_check_enabled = false;
+        return config;
+    }
+};
+
 class Future;
 // @unsafe - Forward declarations
 class Client;
@@ -459,6 +523,14 @@ public:
     // @safe - Closes connection and cleans up
     // SAFETY: Thread-safe cleanup sequence
     void close() override;
+
+    /**
+     * Mark connection as closing without closing the socket.
+     * Used by Client::close() to update state before poll thread closes socket.
+     * This avoids race conditions with pending CmdAddPollable commands.
+     */
+    // @safe - Just updates state machine
+    void mark_closing();
 
     // Public destructor for Arc compatibility
     // @safe - Simple destructor
@@ -1326,19 +1398,67 @@ class ClientPool {
     // @safe - Uses rusty::Arc<Client> for thread-safe reference counting
     // SAFETY: Arc provides thread-safe reference counting with polymorphism support
     std::map<std::string, std::vector<rusty::Arc<Client>>> cache_;
-    int parallel_connections_;
+
+    // Pool configuration (Cell for interior mutability)
+    rusty::Cell<PoolConfig> config_;
+
+    // Helper: Check if a client is considered healthy
+    // @safe - Uses metrics to determine health
+    bool is_client_healthy(const rusty::Arc<Client>& client) const;
 
 public:
-    // @safe - Creates pool with optional PollThread
-    ClientPool(rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker = rusty::None, int parallel_connections = 1);
+    // @safe - Creates pool with optional PollThread and config
+    ClientPool(rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker = rusty::None,
+               const PoolConfig& config = PoolConfig::defaults());
     // @safe - Closes all cached connections
     ~ClientPool();
+
+    // === Configuration ===
+
+    // @safe - Set pool configuration
+    void set_pool_config(const PoolConfig& config);
+
+    // @safe - Get current pool configuration
+    PoolConfig pool_config() const;
+
+    // === Client Access ===
 
     // return cached client connection
     // on error, return None
     // @unsafe - Gets or creates client connection
     // SAFETY: Contains raw pointer dereference
     rusty::Option<rusty::Arc<rrr::Client>> get_client(const std::string& addr);
+
+    // === Health Management ===
+
+    // @safe - Get count of healthy clients for an address
+    size_t get_healthy_client_count(const std::string& addr);
+
+    // @safe - Remove unhealthy clients for an address
+    // Returns number of clients removed
+    size_t remove_unhealthy_clients(const std::string& addr);
+
+    // @safe - Close idle clients for an address
+    // Returns number of clients closed
+    // @param current_time_ms Current time in milliseconds (e.g., from steady_clock)
+    size_t close_idle_clients(const std::string& addr, uint64_t current_time_ms);
+
+    // === Pool-wide Operations ===
+
+    // @safe - Remove all unhealthy clients from all addresses
+    // Returns total number of clients removed
+    size_t remove_all_unhealthy();
+
+    // @safe - Close all idle clients from all addresses
+    // Returns total number of clients closed
+    // @param current_time_ms Current time in milliseconds
+    size_t close_all_idle(uint64_t current_time_ms);
+
+    // @safe - Get total number of cached clients across all addresses
+    size_t total_client_count();
+
+    // @safe - Get number of addresses with cached clients
+    size_t address_count();
 
 };
 

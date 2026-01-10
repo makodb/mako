@@ -1537,6 +1537,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_metrics ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_metrics COMMAND test_rpc_metrics)
 
+    # ClientPool Health-Aware Tests (Phase 5.1)
+    add_executable(test_rpc_client_pool test/rpc_client_pool_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_client_pool PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_client_pool PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_client_pool ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_client_pool COMMAND test_rpc_client_pool)
+
     # Transaction Timeout Tests
     add_executable(test_txn_timeout test/deptran/txn_timeout_test.cc)
     target_include_directories(test_txn_timeout PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

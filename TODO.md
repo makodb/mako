@@ -8,7 +8,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 2. Analyze the task, check if this can be done with not too many LOC (i.e., smaller than 500 lines code give or take). If not, try to analyze this task and break it down into several smaller tasks, expanding it in the TODO.md. The breakdown can be nested and hierarchical. Try to make each leaf task small enough (<500 lines LOC). You can document your analysis in the doc folder for future reference. 
 3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. Avoid using std types, using rusty alternatives if they exists (e.g., don't use unique_ptr, use rusty::Box; don't use std thread, use rusty thread).
 4. Make sure to add comprehensive test for the task executed. Run the whole ci test  to make sure no regression happens (remember to use make clean && make -j32 because rusty-cpp requires make clean before build). If tests fail, fix them using the best, honest, complete approach, run test suites again to verify fixes work. Do not cheat such as disabling the borrow checker. Repeat this step until no tests fail. 
-5. Prepare for git commit, remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder. we can keep the plan files in docs/dev/ folder. Mark the task as done (or last done for repeated task) in the TODO.md with a timestamp [yy:mm:dd, hh:mm]  
+5. Prepare for git commit, first check if you wrote any rusty unsafe code, if yes, then revert the changes and go back to Step 3 to redo task. Remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder. we can keep the plan files in docs/dev/ folder. Mark the task as done (or last done for repeated task) in the TODO.md with a timestamp [yy:mm:dd, hh:mm]  
 6. Git commit the changes. First do git pull --rebase, and fix conflicts if any. Remember to update submodule. If remote has any updates (merged through rebase), then run full ci tests again to make sure everything pass. If not pass, investigate and fix, repeat until pass all ci tests. Then do git push (if remote rejected because updates during we doing this step, restart this step).
 7. Go back to step 1. (The TODO.md file is possibly updated, so make sure you read the updated TODO.)
 
@@ -16,7 +16,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/commits/mako-dev/ , look for if there are any failing ci (usually shows as 0/3, 1/3, 2/3, etc), fetch its log. and try to investigate what causes the failure, and propose fix. 
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled.
   - [x] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh rrrTests [DONE 2026-01-09]
     - Root cause 1: `Client::close()` was clearing connection to None, losing address for reconnect
@@ -28,6 +28,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Root cause 4: `ErrorCategoriesWithCircuitBreaker` test used wrong error types
       - Fix: Changed `SERVICE_UNAVAILABLE` (APPLICATION error) to `CONNECTION_RESET` (CONNECTION error)
     - All 42 rrrTests now pass consistently
+  - [ ] *high* bug. the rrrTests ci still fails on ci server, please investigate and fix. verify fix by running it 10 times. 
   - [x] *high* build seems failing with most recent updates from rusty-cpp. make sure borrow-check is enabled for all files that have a safety annotation. investigate and fix the build failure. [DONE]
     - Investigation: Recent rusty-cpp updates (commit 86aa04a "Enforce borrow rules uniformly for pointers and references") introduced stricter checking that generates false positives:
       - "Cannot return 'value' because it has been moved"
@@ -217,12 +218,16 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Integrate with idempotency cache
         - ~150-200 LOC
     - [ ] **Phase 5: Client Pool Enhancements**
-      - [ ] *medium* 5.1 Enhanced ClientPool with Health Awareness [deps: 1.1, 3.2] [Plan: doc/rpc/phase5_health_pool.md]
+      - [x] *medium* 5.1 Enhanced ClientPool with Health Awareness [deps: 1.1, 3.2] [Plan: doc/rpc/phase5_health_pool.md] [DONE 2026-01-10]
         - Track connection health per pooled client
         - Remove unhealthy connections automatically
         - Rebalance across healthy endpoints
         - Pool config: min/max connections, idle_timeout, health_check_enabled
-        - ~200-250 LOC
+        - Added PoolConfig struct with presets: defaults(), aggressive(), conservative(), no_health_check()
+        - Added health management methods: get_healthy_client_count(), remove_unhealthy_clients(), close_idle_clients()
+        - Fixed race condition: Client::close() now defers socket close to poll thread via mark_closing()
+        - Created test/rpc_client_pool_test.cc with 20 tests (all passing)
+        - ~250 LOC
       - [ ] *low* 5.2 Load Balancing Strategies [deps: 3.2, 5.1] [Plan: doc/rpc/phase5_load_balancing.md]
         - Create `src/rrr/rpc/load_balancer.hpp`
         - Strategies: ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY, RANDOM

@@ -157,6 +157,19 @@ void ClientConnection::close() {
   invalidate_pending_futures();
 }
 
+// @safe - Mark connection as closing without closing socket
+// Used by Client::close() to update state before poll thread closes socket
+void ClientConnection::mark_closing() {
+  if (state_machine_.is_connected()) {
+    // Just transition state - don't close socket
+    state_machine_.transition_to(ConnectionState::DISCONNECTING);
+    state_machine_.transition_to(ConnectionState::DISCONNECTED);
+  } else if (!state_machine_.is_terminal()) {
+    state_machine_.force_state(ConnectionState::DISCONNECTED);
+  }
+  invalidate_pending_futures();
+}
+
 // @safe - Jetpack: handle_free for explicit future cleanup
 void ClientConnection::handle_free(i64 xid) const {
   auto guard = pending_fu_.lock().unwrap();
@@ -560,18 +573,21 @@ void Client::set_valid(bool valid) const {
 // @safe - Closes socket via request_close() for thread-safe cleanup
 // Note: Does NOT clear the connection object so reconnect() can work.
 // The connection object retains the address for reconnection.
+// IMPORTANT: Does NOT call conn.close() directly! The socket close must happen
+// in the poll thread to avoid race conditions with pending CmdAddPollable commands.
 void Client::close() const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
     auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
     if (conn.connected()) {
       // Request poll thread to close the connection
+      // The poll thread will call ClientConnection::close() via do_close_pollable()
       // @unsafe - PollThread::request_close
       { poll_thread_worker_->request_close(conn.fd()); }
+      // Just update state machine - don't close socket here
+      // The actual socket close happens in the poll thread
+      conn.mark_closing();
     }
-    // Call ClientConnection::close() to update state machine
-    // This transitions to DISCONNECTED state but keeps the object
-    conn.close();
     // Don't clear connection to None - we need it for reconnect()
   }
 }
@@ -664,15 +680,54 @@ int Client::reconnect(std::function<void(bool)> on_complete) const {
 
 // @safe - Constructs pool with PollThread ownership
 ClientPool::ClientPool(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =? */,
-                       int parallel_connections /* =? */)
-    : parallel_connections_(parallel_connections) {
+                       const PoolConfig& config /* =? */)
+    : config_(config) {
 
-  verify(parallel_connections_ > 0);
+  verify(config.min_connections > 0);
+  verify(config.max_connections >= config.min_connections);
   if (poll_thread_worker.is_none()) {
     poll_thread_worker_ = rusty::Some(PollThread::create());
   } else {
     poll_thread_worker_ = std::move(poll_thread_worker);
   }
+}
+
+// @safe - Set pool configuration
+void ClientPool::set_pool_config(const PoolConfig& config) {
+  config_.set(config);
+}
+
+// @safe - Get current pool configuration
+PoolConfig ClientPool::pool_config() const {
+  return config_.get();
+}
+
+// @safe - Check if a client is considered healthy
+bool ClientPool::is_client_healthy(const rusty::Arc<Client>& client) const {
+  auto cfg = config_.get();
+
+  // If health checking is disabled, all clients are considered healthy
+  if (!cfg.health_check_enabled) {
+    return true;
+  }
+
+  // Must be connected to be healthy
+  if (!client->connected()) {
+    return false;
+  }
+
+  // Check metrics-based health
+  const auto& metrics = client->metrics();
+  auto requests_sent = metrics.requests_sent();
+
+  // Not enough data to judge health
+  if (requests_sent < cfg.min_requests_for_health) {
+    return true;  // Assume healthy until proven otherwise
+  }
+
+  // Check success rate
+  auto success_rate = metrics.success_rate_percent();
+  return success_rate >= cfg.unhealthy_threshold_percent;
 }
 
 // @safe - Destroys pool and all cached connections
@@ -689,23 +744,211 @@ ClientPool::~ClientPool() {
   }
 }
 
-// @unsafe - Gets cached or creates new client connections
-// Now includes health checking and automatic reconnection for failed connections
-rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
-  rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
+// @safe - Get count of healthy clients for an address
+size_t ClientPool::get_healthy_client_count(const std::string& addr) {
   l_.lock();
+  size_t count = 0;
+  auto it = cache_.find(addr);
+  if (it != cache_.end()) {
+    for (const auto& client : it->second) {
+      if (is_client_healthy(client)) {
+        count++;
+      }
+    }
+  }
+  l_.unlock();
+  return count;
+}
+
+// @safe - Remove unhealthy clients for an address
+size_t ClientPool::remove_unhealthy_clients(const std::string& addr) {
+  l_.lock();
+  size_t removed = 0;
+  auto it = cache_.find(addr);
+  if (it != cache_.end()) {
+    auto& clients = it->second;
+    auto cfg = config_.get();
+
+    // Remove unhealthy clients, but keep at least min_connections
+    auto new_end = std::remove_if(clients.begin(), clients.end(),
+      [this, &removed, &clients, &cfg](const rusty::Arc<Client>& client) {
+        // Keep if we're at minimum connections
+        if (clients.size() - removed <= static_cast<size_t>(cfg.min_connections)) {
+          return false;
+        }
+        if (!is_client_healthy(client)) {
+          client->close();
+          removed++;
+          return true;
+        }
+        return false;
+      });
+    clients.erase(new_end, clients.end());
+
+    // Remove empty entries from cache
+    if (clients.empty()) {
+      cache_.erase(it);
+    }
+  }
+  l_.unlock();
+  return removed;
+}
+
+// @safe - Close idle clients for an address
+size_t ClientPool::close_idle_clients(const std::string& addr, uint64_t current_time_ms) {
+  l_.lock();
+  size_t closed = 0;
+  auto cfg = config_.get();
+
+  // If idle timeout is 0, no timeout
+  if (cfg.idle_timeout_ms == 0) {
+    l_.unlock();
+    return 0;
+  }
+
   auto it = cache_.find(addr);
   if (it != cache_.end()) {
     auto& clients = it->second;
 
+    auto new_end = std::remove_if(clients.begin(), clients.end(),
+      [this, &closed, &clients, &cfg, current_time_ms](const rusty::Arc<Client>& client) {
+        // Keep if we're at minimum connections
+        if (clients.size() - closed <= static_cast<size_t>(cfg.min_connections)) {
+          return false;
+        }
+        // Check if idle
+        if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
+          client->close();
+          closed++;
+          return true;
+        }
+        return false;
+      });
+    clients.erase(new_end, clients.end());
+
+    if (clients.empty()) {
+      cache_.erase(it);
+    }
+  }
+  l_.unlock();
+  return closed;
+}
+
+// @safe - Remove all unhealthy clients from all addresses
+size_t ClientPool::remove_all_unhealthy() {
+  l_.lock();
+  size_t total_removed = 0;
+  auto cfg = config_.get();
+
+  for (auto it = cache_.begin(); it != cache_.end(); ) {
+    auto& clients = it->second;
+    size_t removed = 0;
+
+    auto new_end = std::remove_if(clients.begin(), clients.end(),
+      [this, &removed, &clients, &cfg](const rusty::Arc<Client>& client) {
+        if (clients.size() - removed <= static_cast<size_t>(cfg.min_connections)) {
+          return false;
+        }
+        if (!is_client_healthy(client)) {
+          client->close();
+          removed++;
+          return true;
+        }
+        return false;
+      });
+    clients.erase(new_end, clients.end());
+    total_removed += removed;
+
+    if (clients.empty()) {
+      it = cache_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  l_.unlock();
+  return total_removed;
+}
+
+// @safe - Close all idle clients from all addresses
+size_t ClientPool::close_all_idle(uint64_t current_time_ms) {
+  l_.lock();
+  size_t total_closed = 0;
+  auto cfg = config_.get();
+
+  if (cfg.idle_timeout_ms == 0) {
+    l_.unlock();
+    return 0;
+  }
+
+  for (auto it = cache_.begin(); it != cache_.end(); ) {
+    auto& clients = it->second;
+    size_t closed = 0;
+
+    auto new_end = std::remove_if(clients.begin(), clients.end(),
+      [this, &closed, &clients, &cfg, current_time_ms](const rusty::Arc<Client>& client) {
+        if (clients.size() - closed <= static_cast<size_t>(cfg.min_connections)) {
+          return false;
+        }
+        if (client->is_idle(cfg.idle_timeout_ms, current_time_ms)) {
+          client->close();
+          closed++;
+          return true;
+        }
+        return false;
+      });
+    clients.erase(new_end, clients.end());
+    total_closed += closed;
+
+    if (clients.empty()) {
+      it = cache_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  l_.unlock();
+  return total_closed;
+}
+
+// @safe - Get total number of cached clients across all addresses
+size_t ClientPool::total_client_count() {
+  l_.lock();
+  size_t count = 0;
+  for (const auto& it : cache_) {
+    count += it.second.size();
+  }
+  l_.unlock();
+  return count;
+}
+
+// @safe - Get number of addresses with cached clients
+size_t ClientPool::address_count() {
+  l_.lock();
+  size_t count = cache_.size();
+  l_.unlock();
+  return count;
+}
+
+// @unsafe - Gets cached or creates new client connections
+// Now includes health checking and automatic reconnection for failed connections
+rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
+  rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
+  auto cfg = config_.get();
+  int num_connections = cfg.min_connections;
+
+  l_.lock();
+  auto it = cache_.find(addr);
+  if (it != cache_.end()) {
+    auto& clients = it->second;
+    int client_count = static_cast<int>(clients.size());
+
     // Try to find a healthy client, reconnecting failed ones
-    int start_idx = rand_() % parallel_connections_;
-    for (int i = 0; i < parallel_connections_; i++) {
-      int idx = (start_idx + i) % parallel_connections_;
+    int start_idx = rand_() % client_count;
+    for (int i = 0; i < client_count; i++) {
+      int idx = (start_idx + i) % client_count;
       auto& client = clients[idx];
 
-      // Check if client is connected
-      if (client->connected()) {
+      // Check if client is connected and healthy
+      if (client->connected() && is_client_healthy(client)) {
         sp_cl = rusty::Some(client.clone());
         break;
       }
@@ -734,9 +977,9 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       }
       clients.clear();
 
-      // Create new connections
+      // Create new connections (use min_connections)
       bool ok = true;
-      for (int i = 0; i < parallel_connections_; i++) {
+      for (int i = 0; i < num_connections; i++) {
         auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
         client->set_client_mode(true);
         if (client->connect(addr.c_str()) != 0) {
@@ -748,7 +991,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       }
 
       if (ok && !clients.empty()) {
-        sp_cl = rusty::Some(clients[rand_() % parallel_connections_].clone());
+        sp_cl = rusty::Some(clients[rand_() % clients.size()].clone());
       } else {
         // Remove from cache if we can't connect
         cache_.erase(it);
@@ -758,7 +1001,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
     // No cached connections - create new ones
     std::vector<rusty::Arc<Client>> parallel_clients;
     bool ok = true;
-    for (int i = 0; i < parallel_connections_; i++) {
+    for (int i = 0; i < num_connections; i++) {
       auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
       client->set_client_mode(true);  // Jetpack: mark as client
       if (client->connect(addr.c_str()) != 0) {
@@ -768,7 +1011,7 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
       parallel_clients.push_back(client);
     }
     if (ok) {
-      sp_cl = rusty::Some(parallel_clients[rand_() % parallel_connections_].clone());
+      sp_cl = rusty::Some(parallel_clients[rand_() % parallel_clients.size()].clone());
       cache_[addr] = std::move(parallel_clients);
     }
     // If not ok, parallel_clients automatically cleaned up by Arc
