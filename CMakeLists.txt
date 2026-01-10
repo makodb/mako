@@ -1464,6 +1464,12 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_request_queue ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_request_queue COMMAND test_rpc_request_queue)
 
+    add_executable(test_rpc_request_buffering test/rpc_request_buffering_test.cc)
+    target_include_directories(test_rpc_request_buffering PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_request_buffering PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_request_buffering ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_request_buffering COMMAND test_rpc_request_buffering)
+
     # ============================================================================
     # RPC Reliability Integration Tests (Phase 7.2)
     # ============================================================================

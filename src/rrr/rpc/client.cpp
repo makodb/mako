@@ -104,7 +104,8 @@ void Future::notify_ready(rusty::Arc<Future> self) const {
 ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
       socket_(-1),
-      state_machine_() {
+      state_machine_(),
+      pending_queue_(buffering_config_.to_queue_config()) {
 }
 
 // @safe - Simple destructor
@@ -310,6 +311,13 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
 
   if (result == 0) {
     Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
+
+    // Replay any queued requests
+    size_t replayed = replay_pending_requests();
+    if (replayed > 0) {
+      Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
+    }
+
     if (on_complete) on_complete(true);
   } else {
     Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
@@ -318,6 +326,66 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   }
 
   return result;
+}
+
+// @safe - Set buffering configuration (const due to mutable internal state)
+void ClientConnection::set_buffering_config(const BufferingConfig& config) const {
+  // @unsafe - struct assignment operator
+  { buffering_config_ = config; }
+
+  // Clear any pending requests since config changed
+  // Note: We can't recreate the queue (mutex not movable), so just clear
+  if (!pending_queue_.empty()) {
+    pending_queue_.clear_all(ECONNABORTED);
+  }
+
+  // Update the queue's internal config to match
+  pending_queue_.update_config(config.to_queue_config());
+}
+
+// @safe - Replay queued requests after reconnection
+size_t ClientConnection::replay_pending_requests() {
+  size_t replayed = 0;
+
+  while (true) {
+    auto req_opt = pending_queue_.dequeue();
+    if (req_opt.is_none()) break;
+
+    auto req = req_opt.unwrap();
+
+    // Check if expired
+    if (req.is_expired()) {
+      if (req.callback) req.callback(-2);  // Expired error code
+      continue;
+    }
+
+    // Check if still connected
+    if (!state_machine_.is_connected()) {
+      // Connection lost during replay, re-queue
+      // Note: This could lead to infinite loop if connection keeps failing
+      // The TTL will eventually expire stale requests
+      pending_queue_.enqueue(std::move(req));
+      break;
+    }
+
+    // Copy payload to output buffer
+    if (req.payload && req.payload->content_size() > 0) {
+      auto guard = out_.lock().unwrap();
+      guard->read_from_marshal(*req.payload, req.payload->content_size());
+      replayed++;
+    }
+  }
+
+  // Trigger write if we replayed any requests
+  if (replayed > 0) {
+    if (PollThreadWorker::is_on_poll_thread()) {
+      pending_write_update_.set(true);
+    } else {
+      poll_thread_worker_->update_mode(*this, PollMode::READ | PollMode::WRITE);
+    }
+  }
+
+  return replayed;
 }
 
 // @safe - Error handler - transitions to FAILED state

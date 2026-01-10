@@ -31,7 +31,7 @@ struct QueuedRequest {
     std::function<void(int)> callback; // Completion callback (error_code)
     uint32_t ttl_ms;                   // TTL in milliseconds
 
-    // @safe - Default constructor
+    // @unsafe - Constructor uses std::chrono
     QueuedRequest()
         : xid(0)
         , rpc_id(0)
@@ -41,16 +41,18 @@ struct QueuedRequest {
         , ttl_ms(30000)
     {}
 
-    // @safe - Check if request has expired
+    // @unsafe - Uses std::chrono
     bool is_expired() const {
+        // @unsafe { std::chrono operations }
         auto now = std::chrono::steady_clock::now();
         auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             now - timestamp).count();
         return static_cast<uint32_t>(elapsed_ms) > ttl_ms;
     }
 
-    // @safe - Get age in milliseconds
+    // @unsafe - Uses std::chrono
     uint32_t age_ms() const {
+        // @unsafe { std::chrono operations }
         auto now = std::chrono::steady_clock::now();
         return static_cast<uint32_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -67,29 +69,33 @@ struct RequestQueueConfig {
     OverflowStrategy overflow_strategy = OverflowStrategy::DROP_OLDEST;
     bool enabled = true;
 
-    // @safe - Default config
+    // @unsafe - Returns struct by value
     static RequestQueueConfig defaults() {
+        // @unsafe { struct construction }
         return RequestQueueConfig{};
     }
 
-    // @safe - Small queue for testing
+    // @unsafe - Returns struct by value
     static RequestQueueConfig small() {
+        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.max_size = 10;
         config.default_ttl_ms = 5000;
         return config;
     }
 
-    // @safe - Large queue for high-traffic
+    // @unsafe - Returns struct by value
     static RequestQueueConfig large() {
+        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.max_size = 10000;
         config.default_ttl_ms = 60000;
         return config;
     }
 
-    // @safe - Disabled queue (fail fast on disconnect)
+    // @unsafe - Returns struct by value
     static RequestQueueConfig disabled() {
+        // @unsafe { struct construction }
         RequestQueueConfig config;
         config.enabled = false;
         config.max_size = 0;
@@ -128,21 +134,21 @@ private:
     mutable std::mutex mutex_;
 
 public:
-    // @safe - Constructor with config
+    // @unsafe - Constructor uses defaults() which returns struct
     explicit RequestQueue(RequestQueueConfig config = RequestQueueConfig::defaults())
         : config_(config)
     {}
 
     // === Enqueue/Dequeue Operations ===
 
-    // @safe - Enqueue a request
+    // @unsafe - Uses std::list and std::mutex
     // Returns true if queued, false if rejected
     bool enqueue(QueuedRequest request) {
         if (!config_.enabled) {
             return false;
         }
 
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list operations }
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (queue_.size() >= config_.max_size) {
@@ -182,13 +188,14 @@ public:
             request.ttl_ms = config_.default_ttl_ms;
         }
 
+        // @unsafe { std::list push_back }
         queue_.push_back(std::move(request));
         return true;
     }
 
-    // @safe - Dequeue the next request
+    // @unsafe - Uses std::list and std::mutex
     rusty::Option<QueuedRequest> dequeue() {
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list operations }
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (queue_.empty()) {
@@ -200,24 +207,25 @@ public:
         return rusty::Some(std::move(request));
     }
 
-    // @safe - Peek at next request without removing
+    // @unsafe - Uses std::list and std::mutex
     // Note: Returns pointer that should be used immediately while lock is held
     // For thread-safety, prefer dequeue() instead
     bool peek(QueuedRequest& out) const {
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list operations }
         std::lock_guard<std::mutex> lock(mutex_);
 
         if (queue_.empty()) {
             return false;
         }
 
+        // @unsafe { struct assignment }
         out = queue_.front();
         return true;
     }
 
     // === Expiration ===
 
-    // @safe - Remove expired requests, invoke callbacks, return count removed
+    // @unsafe - Uses std::list and std::mutex
     size_t expire_stale() {
         std::vector<std::function<void(int)>> callbacks_to_invoke;
         size_t removed = 0;
@@ -255,30 +263,30 @@ public:
 
     // === Size and State ===
 
-    // @safe - Get current queue size
+    // @unsafe - Uses std::list and std::mutex
     size_t size() const {
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list::size }
         std::lock_guard<std::mutex> lock(mutex_);
         return queue_.size();
     }
 
-    // @safe - Check if queue is empty
+    // @unsafe - Uses std::list and std::mutex
     bool empty() const {
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list::empty }
         std::lock_guard<std::mutex> lock(mutex_);
         return queue_.empty();
     }
 
-    // @safe - Check if queue is full
+    // @unsafe - Uses std::list and std::mutex
     bool full() const {
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list::size }
         std::lock_guard<std::mutex> lock(mutex_);
         return queue_.size() >= config_.max_size;
     }
 
-    // @safe - Get remaining capacity
+    // @unsafe - Uses std::list and std::mutex
     size_t remaining_capacity() const {
-        // @unsafe { std::mutex lock }
+        // @unsafe { std::mutex lock, std::list::size }
         std::lock_guard<std::mutex> lock(mutex_);
         return config_.max_size > queue_.size() ?
                config_.max_size - queue_.size() : 0;
@@ -286,12 +294,12 @@ public:
 
     // === Clear and Reset ===
 
-    // @safe - Clear all requests, invoke callbacks with error code
+    // @unsafe - Uses std::list and std::mutex
     void clear_all(int error_code = -3) {
         std::vector<std::function<void(int)>> callbacks_to_invoke;
 
         {
-            // @unsafe { std::mutex lock }
+            // @unsafe { std::mutex lock, std::list operations }
             std::lock_guard<std::mutex> lock(mutex_);
 
             for (auto& req : queue_) {
@@ -314,6 +322,7 @@ public:
     // === Configuration ===
 
     // @safe - Get configuration (read-only)
+    // @lifetime: (&'a) -> &'a
     const RequestQueueConfig& config() const {
         return config_;
     }
@@ -326,6 +335,14 @@ public:
     // @safe - Get maximum queue size
     size_t max_size() const {
         return config_.max_size;
+    }
+
+    // @unsafe - Update configuration (clears queue if not empty)
+    void update_config(const RequestQueueConfig& config) {
+        // @unsafe { std::mutex lock, config assignment }
+        std::lock_guard<std::mutex> lock(mutex_);
+        config_ = config;
+        // Note: Caller should clear queue before calling if needed
     }
 };
 

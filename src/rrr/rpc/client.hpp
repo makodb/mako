@@ -13,6 +13,7 @@
 #include "reactor/reactor.h"
 #include "connection_state.hpp"
 #include "reconnect_policy.hpp"
+#include "request_queue.hpp"
 
 namespace rrr {
 
@@ -96,6 +97,51 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 // are now annotated @safe in-place in marshal.hpp
 
 namespace rrr {
+
+/**
+ * Behavior when a request is made while disconnected.
+ */
+enum class DisconnectBehavior {
+    QUEUE,      // Queue requests for later replay (default)
+    FAIL_FAST   // Immediately fail with ENOTCONN
+};
+
+/**
+ * Configuration for request buffering during disconnection.
+ */
+struct BufferingConfig {
+    DisconnectBehavior behavior = DisconnectBehavior::QUEUE;
+    size_t max_pending = 1000;           // Max queued requests
+    uint32_t default_ttl_ms = 30000;     // 30 second TTL
+    OverflowStrategy overflow = OverflowStrategy::DROP_OLDEST;
+    bool enabled = true;
+
+    // @unsafe - Returns struct by value
+    static BufferingConfig defaults() {
+        // @unsafe { struct construction }
+        return BufferingConfig{};
+    }
+
+    // @unsafe - Returns struct by value
+    static BufferingConfig disabled() {
+        // @unsafe { struct construction }
+        BufferingConfig config;
+        config.enabled = false;
+        config.behavior = DisconnectBehavior::FAIL_FAST;
+        return config;
+    }
+
+    // @unsafe - Returns struct by value
+    RequestQueueConfig to_queue_config() const {
+        // @unsafe { struct construction }
+        RequestQueueConfig qc;
+        qc.max_size = max_pending;
+        qc.default_ttl_ms = default_ttl_ms;
+        qc.overflow_strategy = overflow;
+        qc.enabled = enabled;
+        return qc;
+    }
+};
 
 class Future;
 // @unsafe - Forward declarations
@@ -303,6 +349,10 @@ class ClientConnection: public Pollable {
     rusty::Cell<bool> reconnecting_{false};
     std::string reconnect_address_;  // Address to reconnect to
 
+    // Request buffering during disconnection
+    mutable BufferingConfig buffering_config_;  // mutable for const set_buffering_config()
+    mutable RequestQueue pending_queue_;  // mutable for const request() access
+
     // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
     // Cell provides interior mutability for safe access through const methods
@@ -390,15 +440,53 @@ public:
     int reconnect(std::function<void(bool)> on_complete = nullptr);
 
     /**
+     * Set the buffering configuration for this connection.
+     * Controls whether requests are queued during disconnection.
+     * Note: const because internal state is mutable.
+     */
+    // @safe - Sets buffering configuration
+    void set_buffering_config(const BufferingConfig& config) const;
+
+    // @safe - Get the current buffering configuration
+    // @lifetime: (&'a) -> &'a
+    const BufferingConfig& buffering_config() const {
+        return buffering_config_;
+    }
+
+    // @unsafe - Uses RequestQueue which uses std::list
+    size_t pending_request_count() const {
+        // @unsafe { RequestQueue::size }
+        return pending_queue_.size();
+    }
+
+    // @unsafe - Uses RequestQueue which uses std::list
+    // Note: const because pending_queue_ is mutable
+    void clear_pending_requests(int error_code = ECONNABORTED) const {
+        // @unsafe { RequestQueue::clear_all }
+        pending_queue_.clear_all(error_code);
+    }
+
+private:
+    // @safe - Replay queued requests after reconnection
+    // Returns number of requests replayed
+    size_t replay_pending_requests();
+
+public:
+
+    /**
      * Send an RPC request with a lambda for writing arguments.
      * Thread-safe: lock is acquired and released within this single call.
      *
      * The request packet format is: <size> <xid> <rpc_id> <arg1> <arg2> ... <argN>
      * NOTE: size does not include the size itself (<xid>..<argN>).
      *
+     * If disconnected and buffering is enabled (QUEUE behavior), the request
+     * is queued for replay after reconnection. The returned Future will be
+     * completed when the request is eventually sent and a response received.
+     *
      * Returns Result<Arc<Future>, i32>:
-     *   - Ok(Arc<Future>) on success
-     *   - Err(error_code) on failure (e.g., ENOTCONN if not connected)
+     *   - Ok(Arc<Future>) on success (or queued for later)
+     *   - Err(error_code) on failure (e.g., ENOTCONN if not connected and buffering disabled)
      */
     // @unsafe - Thread-safe RPC request with lambda for marshaling
     // Contains multiple operations requiring unsafe context:
@@ -407,7 +495,14 @@ public:
     // - Marshal operator<< (serialization)
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
+        // Check connection status - if not connected, handle buffering
         if (!state_machine_.is_connected()) {
+            // Check if buffering is enabled with QUEUE behavior
+            if (buffering_config_.enabled &&
+                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
+                // Queue the request for later replay
+                return queue_request(rpc_id, attr, std::forward<F>(write_fn));
+            }
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -415,6 +510,11 @@ public:
 
         // Double-check connection status after acquiring lock
         if (!state_machine_.is_connected()) {
+            // Check if buffering is enabled with QUEUE behavior
+            if (buffering_config_.enabled &&
+                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
+                return queue_request(rpc_id, attr, std::forward<F>(write_fn));
+            }
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -433,6 +533,11 @@ public:
                 if (it != pending_guard->end()) {
                     pending_guard->erase(it);
                 }
+            }
+            // Check if buffering is enabled with QUEUE behavior
+            if (buffering_config_.enabled &&
+                buffering_config_.behavior == DisconnectBehavior::QUEUE) {
+                return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
             return FutureResult::Err(ENOTCONN);
         }
@@ -463,6 +568,68 @@ public:
 
         return FutureResult::Ok(fu);
     }
+
+private:
+    // @unsafe - Queue request for later replay (called when disconnected)
+    // Uses Counter::next, Marshal operators, and RequestQueue
+    template<typename F>
+    FutureResult queue_request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
+        // @unsafe { Counter::next }
+        auto fu = Future::create(xid_counter_.next(), attr);
+
+        // Create queued request with serialized payload
+        QueuedRequest queued;
+        queued.xid = fu->xid_;
+        queued.rpc_id = rpc_id;
+        queued.ttl_ms = buffering_config_.default_ttl_ms;
+        queued.payload = std::make_shared<Marshal>();
+
+        // Serialize request to payload (including size placeholder)
+        Marshal::bookmark bmark = queued.payload->set_bookmark(sizeof(i32));
+        // @unsafe { Marshal operators }
+        *queued.payload << v64(queued.xid);
+        *queued.payload << rpc_id;
+        write_fn(*queued.payload);  // User writes arguments
+
+        // Fill in packet size (not counting the size field itself)
+        i32 request_size = queued.payload->get_and_reset_write_cnt();
+        queued.payload->write_bookmark(bmark, request_size);
+
+        // Store future in pending map (for response handling)
+        {
+            auto pending_guard = pending_fu_.lock().unwrap();
+            pending_guard->insert_or_assign(fu->xid_, fu);
+        }
+
+        // Set callback to notify future on queue failure (e.g., overflow, expiry)
+        auto weak_fu = fu;  // Copy Arc for callback
+        queued.callback = [this, weak_fu](int err) {
+            if (err < 0) {
+                // Remove from pending map
+                {
+                    auto pending_guard = pending_fu_.lock().unwrap();
+                    auto it = pending_guard->find(weak_fu->xid_);
+                    if (it != pending_guard->end()) {
+                        pending_guard->erase(it);
+                    }
+                }
+                // Notify future with error
+                weak_fu->error_code_.set(err);
+                weak_fu->notify_ready(weak_fu);
+            }
+        };
+
+        // Try to enqueue
+        if (!pending_queue_.enqueue(std::move(queued))) {
+            // Queue rejected (full with FAIL_FAST strategy, etc.)
+            // The callback was already invoked by enqueue()
+            return FutureResult::Err(EAGAIN);
+        }
+
+        return FutureResult::Ok(fu);
+    }
+
+public:
 
     // @unsafe - Convenience overload without callback (calls @unsafe request)
     template<typename F>
@@ -658,6 +825,37 @@ public:
             // const_cast needed since ClientConnection::set_reconnect_policy is not const
             auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
             conn.set_reconnect_policy(policy);
+        }
+    }
+
+    /**
+     * Set the buffering configuration for this client.
+     * Controls whether requests are queued during disconnection.
+     */
+    // @safe - Sets buffering configuration
+    void set_buffering_config(const BufferingConfig& config) const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            guard->as_ref().unwrap()->set_buffering_config(config);
+        }
+    }
+
+    // @unsafe - Uses RequestQueue which uses std::list
+    size_t pending_request_count() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { ClientConnection::pending_request_count }
+            return guard->as_ref().unwrap()->pending_request_count();
+        }
+        return 0;
+    }
+
+    // @unsafe - Uses RequestQueue which uses std::list
+    void clear_pending_requests(int error_code = ECONNABORTED) const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { ClientConnection::clear_pending_requests }
+            guard->as_ref().unwrap()->clear_pending_requests(error_code);
         }
     }
 

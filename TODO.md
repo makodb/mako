@@ -137,12 +137,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Overflow strategies: DROP_OLDEST, DROP_NEWEST, FAIL_FAST
         - Thread-safe via std::mutex, uses std::list for Marshal compatibility
         - Unit tests: 28 tests in `test/rpc_request_queue_test.cc`
-      - [ ] *medium* 2.2 Request Buffering During Disconnection [deps: 1.3, 2.1] [Plan: doc/rpc/phase2_request_buffering.md]
-        - Modify `ClientConnection::request()` to queue if disconnected
-        - Add `pending_queue_` for requests waiting on reconnection
-        - Implement queue replay after successful reconnection
-        - Configurable behavior: QUEUE, FAIL_FAST, BLOCK
-        - ~150-200 LOC
+      - [x] *medium* 2.2 Request Buffering During Disconnection [deps: 1.3, 2.1] [Plan: doc/rpc/phase2_request_buffering.md] [DONE]
+        - Modified `ClientConnection::request()` to queue if disconnected
+        - Added DisconnectBehavior enum: QUEUE, FAIL_FAST
+        - Added BufferingConfig for configuration
+        - Integrated with RequestQueue from Phase 2.1
+        - Implemented queue replay in `replay_pending_requests()` called after reconnection
+        - Unit tests: 17 tests in `test/rpc_request_buffering_test.cc`
       - [ ] *low* 2.3 Idempotency Support [deps: 2.2] [Plan: doc/rpc/phase2_idempotency.md]
         - Create `src/rrr/rpc/idempotency.hpp`
         - Client: Generate unique idempotency keys, include in request header
