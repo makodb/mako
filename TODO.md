@@ -385,7 +385,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Scope**: Raft and Paxos replication with persistent log, snapshots, and automatic recovery
     - **Dependencies**: RPC Reliability Enhancement (complete), Transaction Timeout (complete)
     - [ ] **Phase 1: Persistent Log Storage** (~400 LOC)
-      - [ ] 1.1 Log Persistence Interface - Abstract `LogStorage` interface with append/read/truncate
+      - [x] 1.1 Log Persistence Interface - Abstract `LogStorage` interface with append/read/truncate [DONE 2026-01-10, 04:30]
+        - Created `src/rrr/rpc/log_storage.hpp`: LogEntry struct + LogStorage abstract interface
+        - Created `src/rrr/rpc/memory_log_storage.hpp`: InMemoryLogStorage implementation
+        - Created `test/rpc_log_storage_test.cc`: 35 unit tests (all passing)
+        - Plan: `doc/dev/phase1_1_log_persistence_interface.md`
       - [ ] 1.2 RocksDB Log Backend - Implement `RocksDBLogStorage` with batch writes
       - [ ] 1.3 Raft Integration - Modify RaftServer to use LogStorage, persist term/vote/log/commit
       - [ ] 1.4 Paxos Integration - Modify PaxosServer to use LogStorage, persist ballots/entries
