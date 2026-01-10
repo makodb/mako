@@ -636,13 +636,72 @@ ClientPool::~ClientPool() {
 }
 
 // @unsafe - Gets cached or creates new client connections
+// Now includes health checking and automatic reconnection for failed connections
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
   l_.lock();
   auto it = cache_.find(addr);
   if (it != cache_.end()) {
-    sp_cl = rusty::Some(it->second[rand_() % parallel_connections_].clone());
+    auto& clients = it->second;
+
+    // Try to find a healthy client, reconnecting failed ones
+    int start_idx = rand_() % parallel_connections_;
+    for (int i = 0; i < parallel_connections_; i++) {
+      int idx = (start_idx + i) % parallel_connections_;
+      auto& client = clients[idx];
+
+      // Check if client is connected
+      if (client->connected()) {
+        sp_cl = rusty::Some(client.clone());
+        break;
+      }
+
+      // Try to reconnect failed/disconnected clients
+      auto state = client->connection_state();
+      if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
+        Log_info("ClientPool: client to %s in state %s, attempting reconnect",
+                 addr.c_str(), connection_state_to_string(state));
+        if (client->try_reconnect_if_needed()) {
+          Log_info("ClientPool: reconnected to %s successfully", addr.c_str());
+          sp_cl = rusty::Some(client.clone());
+          break;
+        } else {
+          Log_warn("ClientPool: reconnect to %s failed", addr.c_str());
+        }
+      }
+    }
+
+    // If no healthy client found after trying reconnects, recreate all connections
+    if (sp_cl.is_none()) {
+      Log_info("ClientPool: all clients to %s failed, recreating connections", addr.c_str());
+      // Close old connections
+      for (auto& client : clients) {
+        client->close();
+      }
+      clients.clear();
+
+      // Create new connections
+      bool ok = true;
+      for (int i = 0; i < parallel_connections_; i++) {
+        auto client = Client::create(this->poll_thread_worker_.as_ref().unwrap().clone());
+        client->set_client_mode(true);
+        if (client->connect(addr.c_str()) != 0) {
+          Log_warn("ClientPool: failed to create new connection to %s", addr.c_str());
+          ok = false;
+          break;
+        }
+        clients.push_back(client);
+      }
+
+      if (ok && !clients.empty()) {
+        sp_cl = rusty::Some(clients[rand_() % parallel_connections_].clone());
+      } else {
+        // Remove from cache if we can't connect
+        cache_.erase(it);
+      }
+    }
   } else {
+    // No cached connections - create new ones
     std::vector<rusty::Arc<Client>> parallel_clients;
     bool ok = true;
     for (int i = 0; i < parallel_connections_; i++) {

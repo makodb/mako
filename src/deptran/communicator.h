@@ -454,6 +454,16 @@ class Communicator {
                                               std::chrono::milliseconds timeout_ms);
   ClientSiteProxyPair ConnectToClientSite(Config::SiteInfo &site,
                                           std::chrono::milliseconds timeout);
+
+  /**
+   * Ensure the client connection to a site is healthy.
+   * If the connection is in FAILED or DISCONNECTED state, attempts reconnection.
+   *
+   * @param site_id The site ID to check
+   * @return true if connection is now available, false otherwise
+   */
+  bool EnsureClientConnected(siteid_t site_id);
+
   void Pause();
   void Resume();
   void ConnectClientLeaders();

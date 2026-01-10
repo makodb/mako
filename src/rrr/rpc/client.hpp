@@ -915,6 +915,38 @@ public:
         return guard->is_some() && guard->as_ref().unwrap()->connected();
     }
 
+    // @safe - Returns current connection state
+    ConnectionState connection_state() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->connection_state();
+        }
+        return ConnectionState::NEW;
+    }
+
+    /**
+     * Try to reconnect if the connection is in a failed state.
+     * Returns true if connection is now available (either was already connected
+     * or reconnection succeeded), false if reconnection failed or not possible.
+     *
+     * This is a convenience method that checks the connection state and
+     * attempts reconnection only if needed.
+     */
+    // @unsafe - May call reconnect which does socket operations
+    bool try_reconnect_if_needed() const {
+        auto state = connection_state();
+        if (state == ConnectionState::CONNECTED) {
+            return true;  // Already connected
+        }
+        if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
+            // Try to reconnect
+            int result = reconnect();
+            return result == 0;
+        }
+        // CONNECTING or other states - can't help
+        return false;
+    }
+
     // @safe - Returns a clone of the connection Option
     // Returns None if not connected, Some(Arc<ClientConnection>) if connected
     rusty::Option<rusty::Arc<ClientConnection>> connection() const {

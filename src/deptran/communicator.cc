@@ -149,6 +149,42 @@ Communicator::~Communicator() {
   }
 }
 
+bool Communicator::EnsureClientConnected(siteid_t site_id) {
+  auto it = rpc_clients_.find(site_id);
+  if (it == rpc_clients_.end()) {
+    Log_error("Communicator: no client for site %ld", site_id);
+    return false;
+  }
+
+  auto& client = it->second;
+
+  // Check if already connected
+  if (client->connected()) {
+    return true;
+  }
+
+  // Try to reconnect if in FAILED or DISCONNECTED state
+  auto state = client->connection_state();
+  if (state == rrr::ConnectionState::FAILED ||
+      state == rrr::ConnectionState::DISCONNECTED) {
+    Log_info("Communicator: site %ld in state %s, attempting reconnect",
+             site_id, rrr::connection_state_to_string(state));
+
+    if (client->try_reconnect_if_needed()) {
+      Log_info("Communicator: reconnected to site %ld successfully", site_id);
+      return true;
+    } else {
+      Log_warn("Communicator: reconnect to site %ld failed", site_id);
+      return false;
+    }
+  }
+
+  // CONNECTING or other transient state - can't help immediately
+  Log_debug("Communicator: site %ld in transient state %s",
+            site_id, rrr::connection_state_to_string(state));
+  return false;
+}
+
 std::pair<siteid_t, ClassicProxy*>
 Communicator::RandomProxyForPartition(parid_t par_id) const {
   auto it = rpc_par_proxies_.find(par_id);
