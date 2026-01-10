@@ -305,9 +305,9 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Usage examples for common scenarios
         - Configuration options and defaults
         - Troubleshooting guide
-      - [ ] *medium* 8.2 Architecture Documentation
-        - Update `doc/transport_backends.md` with reliability features
-        - Create `doc/rpc_reliability.md`: overview, state diagrams, config guide, best practices
+      - [x] *medium* 8.2 Architecture Documentation [DONE 2026-01-10]
+        - Updated `doc/transport_backends.md` with reliability features section
+        - Created `doc/rpc_reliability.md`: comprehensive guide covering all reliability features
       - [ ] *low* 8.3 Migration Guide
         - Breaking API changes (if any)
         - Migration examples
