@@ -6,7 +6,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 1. Pick the top undone task with highest priority (high-medium-low), choose its first leaf task.  If there are no undone TODO items left, sleep a minute and git pull and restart step 1 (so this step is a dead loop until you find a todo item).
 2. Analyze the task, check if this can be done with not too many LOC (i.e., smaller than 500 lines code give or take). If not, try to analyze this task and break it down into several smaller tasks, expanding it in the TODO.md. The breakdown can be nested and hierarchical. Try to make each leaf task small enough (<500 lines LOC). You can document your analysis in the doc folder for future reference. 
-3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. 
+3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. Avoid using std types, using rusty alternatives if they exists (e.g., don't use unique_ptr, use rusty::Box).
 4. Make sure to add comprehensive test for the task executed. Run the whole ci test  to make sure no regression happens (remember to use make clean && make -j32 because rusty-cpp requires make clean before build). If tests fail, fix them using the best, honest, complete approach, run test suites again to verify fixes work. Do not cheat such as disabling the borrow checker. Repeat this step until no tests fail. 
 5. Prepare for git commit, remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder.
 6. Git commit the changes. First do git pull --rebase, and fix conflicts if any. Remember to update submodule. If remote has any updates (merged through rebase), then run full ci tests again to make sure everything pass. If not pass, investigate and fix, repeat until pass all ci tests. Then do git push (if remote rejected because updates during we doing this step, restart this step).
@@ -130,13 +130,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Timeout-based transition from OPEN to HALF_OPEN for probing
         - Thread-safe via rusty::Cell for all mutable state
     - [ ] **Phase 2: Message Durability and Request Management**
-      - [ ] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md]
-        - Create `src/rrr/rpc/request_queue.hpp`
-        - In-memory queue with configurable size limit
-        - Store metadata: xid, rpc_id, timestamp, retry_count, payload
-        - Overflow strategies: DROP_OLDEST, DROP_NEWEST, BLOCK
-        - Request expiration by TTL
-        - ~200-250 LOC
+      - [x] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md] [DONE]
+        - Created `src/rrr/rpc/request_queue.hpp` (~280 LOC)
+        - QueuedRequest struct with xid, rpc_id, timestamp, retry_count, payload, callback, ttl_ms
+        - RequestQueueConfig with presets: defaults(), small(), large(), disabled()
+        - Overflow strategies: DROP_OLDEST, DROP_NEWEST, FAIL_FAST
+        - Thread-safe via std::mutex, uses std::list for Marshal compatibility
+        - Unit tests: 28 tests in `test/rpc_request_queue_test.cc`
       - [ ] *medium* 2.2 Request Buffering During Disconnection [deps: 1.3, 2.1] [Plan: doc/rpc/phase2_request_buffering.md]
         - Modify `ClientConnection::request()` to queue if disconnected
         - Add `pending_queue_` for requests waiting on reconnection
@@ -229,8 +229,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - 19 tests: Exponential backoff, jitter, max delay/retries, presets, peek delay
         - [x] 7.1.3 Circuit Breaker Tests (`test/rpc_circuit_breaker_test.cc`)
           - 21 tests: State transitions, concurrent access, fail-fast behavior, success threshold
-        - [ ] 7.1.4 Request Queue Tests (skipped - component not implemented)
-          - Enqueue/dequeue, size limits, overflow strategies, TTL expiration
+        - [x] 7.1.4 Request Queue Tests (`test/rpc_request_queue_test.cc`)
+          - 28 tests: Basic operations, size limits, overflow strategies, TTL expiration, thread safety
         - [ ] 7.1.5 Idempotency Cache Tests (skipped - component not implemented)
           - Cache hit/miss, TTL, size limit, concurrent duplicates
         - [x] 7.1.6 Heartbeat Tests (`test/rpc_heartbeat_test.cc`)
