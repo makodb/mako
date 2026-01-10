@@ -1316,6 +1316,14 @@ void RaftServer::StartElectionTimer() {
       // Sleep for a portion of the timeout before checking
       Coroutine::sleep(RandomGenerator::rand(HEARTBEAT_INTERVAL * 2, HEARTBEAT_INTERVAL * 4));
 
+      // Retry NotifyRestart for any PENDING peers
+      // This handles the case where a peer was partitioned when we restarted
+      auto c = commo();
+      if (c != nullptr && c->HasPendingNotifyRestart()) {
+        Log_debug("[NOTIFY-RESTART-RETRY] Site %d: retrying for pending peers", site_id_);
+        c->RetryPendingNotifyRestart();
+      }
+
       auto time_now = Time::now();
       auto time_elapsed = time_now - last_heartbeat_time_;
 

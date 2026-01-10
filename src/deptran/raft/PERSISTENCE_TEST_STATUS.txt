@@ -6,7 +6,7 @@ Branch: zeyu-raft-disk
 
 CURRENT STATUS
 --------------
-All persistence and crash-recovery tests PASSING (Tests 12-15).
+All persistence, crash-recovery, and partition+restart tests PASSING (Tests 12-18).
 
 LATEST IMPLEMENTATION (2026-01-10)
 ----------------------------------
@@ -28,13 +28,30 @@ LATEST IMPLEMENTATION (2026-01-10)
 
    See NOTIFY_RESTART_MECHANISM.txt for full documentation.
 
-2. CRASH-RECOVERY TEST SUITE (Tests 12-15)
+2. NOTIFYRESTART AUTOMATIC RETRY (2026-01-10)
+   Added retry mechanism for PENDING peers in RaftServer::StartElectionTimer():
+   - Checks for PENDING peers every 200-400ms
+   - Retries NotifyRestart RPC until ACKNOWLEDGED or DOWN
+   - Handles partition+restart scenario where partitioned server misses NotifyRestart
+
+   Implementation in server.cc:
+     auto c = commo();
+     if (c != nullptr && c->HasPendingNotifyRestart()) {
+       c->RetryPendingNotifyRestart();
+     }
+
+3. CRASH-RECOVERY TEST SUITE (Tests 12-15)
    - Test 12: Single server kill/restart (1 follower, then 1 leader)
    - Test 13: Two followers kill/restart simultaneously
    - Test 14: Leader + follower kill/restart simultaneously
    - Test 15: Comprehensive random crash-recovery (5 rounds)
 
-3. TEST 15 DETAILS - COMPREHENSIVE CRASH-RECOVERY
+4. PARTITION + RESTART TEST SUITE (Tests 16-18)
+   - Test 16: One partitioned + one killed/restarted
+   - Test 17: Two sequentially partitioned + one killed/restarted
+   - Test 18: Multiple restarts while one partitioned
+
+5. TEST 15 DETAILS - COMPREHENSIVE CRASH-RECOVERY
    Each of 5 rounds performs:
    - Phase 1: Kill 2 random servers, commit with remaining 3 (quorum)
    - Phase 2: Restart 1 dead server, verify catch-up, commit
@@ -44,7 +61,7 @@ LATEST IMPLEMENTATION (2026-01-10)
    Random server selection ensures leaders and followers are both tested.
    Test passes consistently (ran 6+ times successfully).
 
-4. KNOWN IMPERFECTION
+6. KNOWN IMPERFECTION
    Test 15 occasionally produces a core dump AFTER the test passes, during
    shutdown. This is caused by async RPC callbacks capturing 'this' pointer
    (RaftCommo) which may be destroyed before callbacks complete. This is a
@@ -52,12 +69,18 @@ LATEST IMPLEMENTATION (2026-01-10)
 
 FUTURE WORK
 -----------
-1. Network Partition + Crash Test:
-   - Combine network partitions (Disconnect/Reconnect) with Kill/Restart
-   - Test scenarios like: partition A from cluster, kill B, heal partition, restart B
-   - Verify consistency under combined failure modes
+1. Network Partition + Crash Tests: COMPLETED (Tests 16-18)
+   - Test 16: One partitioned + one killed/restarted
+   - Test 17: Two sequentially partitioned + one killed/restarted
+   - Test 18: Multiple restarts while one partitioned
+   - All tests pass consistently
 
-2. Fix shutdown core dump (low priority - cosmetic only)
+2. Potential Additional Tests (pending advisor review):
+   - Partitioned server becomes leader after reconnecting
+   - Leader killed while partitioned servers exist
+   - Rapid partition/heal cycles (tight timing)
+
+3. Fix shutdown core dump (low priority - cosmetic only)
 
 
 TEST RESULTS SUMMARY
@@ -73,6 +96,11 @@ TEST RESULTS SUMMARY
    - Test 13: Ran 6+ times: ALL PASSED
    - Test 14: Ran 6+ times: ALL PASSED
    - Test 15: Ran 6+ times: ALL PASSED (with cosmetic core dump at shutdown)
+
+3. Partition + Restart Tests (Tests 16-18):
+   - Test 16: One partitioned + one killed/restarted: PASSED consistently
+   - Test 17: Two sequentially partitioned + one killed/restarted: PASSED consistently
+   - Test 18: Multiple restarts while one partitioned: PASSED consistently
 
 Latest trace (trace_0108.txt @ 18:45) shows:
 - Kill() works correctly (doesn't destroy shared poll thread)
@@ -224,22 +252,28 @@ Verification (from trace_0108.txt @ 18:45):
   [APPLY-LOGS] site=4 applying index=5
 
 
-KNOWN ISSUE: NOTIFYRESTART IS FIRE-AND-FORGET
-----------------------------------------------
-Current NotifyRestart mechanism is imperfect:
-- Restarted server sends NotifyRestart ONCE to all peers
-- If a peer is also down at that moment, it never receives the notification
-- When that peer comes back up, it still has stale connection to the first server
+KNOWN ISSUE: NOTIFYRESTART WAS FIRE-AND-FORGET (NOW FIXED)
+----------------------------------------------------------
+Previous issue (now resolved):
+- Restarted server sent NotifyRestart ONCE to all peers
+- If a peer was partitioned, it never received the notification
+- When partition healed, peer had stale connection to restarted server
 
-Example scenario:
-1. Server A and Server B are both killed
-2. Server A restarts, sends NotifyRestart to all (B is down, doesn't receive)
-3. Server B restarts, sends NotifyRestart to all (A receives, reconnects to B)
-4. But A never told B to reconnect, so B still has stale connection to A
+SOLUTION IMPLEMENTED (2026-01-10):
+Added automatic retry mechanism in RaftServer::StartElectionTimer():
+- Election timer loop checks for PENDING peers every 200-400ms
+- Calls commo()->RetryPendingNotifyRestart() if any PENDING peers exist
+- Retries until peer responds (ACKNOWLEDGED) or is confirmed down (DOWN)
 
-This issue doesn't affect current tests (Test 0-9) because only one server
-is killed at a time. However, it must be addressed before implementing the
-future robustness tests described above.
+This handles the partition+restart scenario:
+1. Server A is partitioned
+2. Server B restarts, sends NotifyRestart (A is PENDING)
+3. B's election timer retries every 200-400ms
+4. A's partition heals
+5. A receives NotifyRestart, reconnects to B
+6. Stale connection fixed!
+
+Tests 16-18 verify this mechanism works correctly.
 
 
 PREVIOUS FIXES INCLUDED

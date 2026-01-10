@@ -19,16 +19,19 @@ int RaftLabTest::Run(void) {
   if (// testPersistence()
       // || testTwoFollowerPersistence()
       // || testLeaderFollowerPersistence()
-      testComprehensiveCrashRecovery()
-      // testInitialElection()
-      // || TEST_EXPAND(testReElection())
-      // || TEST_EXPAND(testBasicAgree())
-      // || TEST_EXPAND(testFailAgree())
-      // || TEST_EXPAND(testFailNoAgree())
-      // || TEST_EXPAND(testRejoin())
-      // || TEST_EXPAND(testConcurrentStarts())
-      // || TEST_EXPAND(testBackup())
-      // || TEST_EXPAND(testCount())
+      // testComprehensiveCrashRecovery()
+      // testPartitionPlusRestart()
+      // testSequentialPartitionsPlusRestart()
+      // testMultipleRestartsPlusPartition()
+      testInitialElection()
+      || TEST_EXPAND(testReElection())
+      || TEST_EXPAND(testBasicAgree())
+      || TEST_EXPAND(testFailAgree())
+      || TEST_EXPAND(testFailNoAgree())
+      || TEST_EXPAND(testRejoin())
+      || TEST_EXPAND(testConcurrentStarts())
+      || TEST_EXPAND(testBackup())
+      || TEST_EXPAND(testCount())
       // || TEST_EXPAND(testUnreliableAgree())
       // || TEST_EXPAND(testFigure8())
     ) {
@@ -604,6 +607,433 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
   DoAgreeAndAssertWaitSuccess(cmd_base++, NSERVERS);
 
   Log_info("TEST 15: All %d rounds completed successfully!", NUM_ROUNDS);
+
+  Passed2();
+}
+
+int RaftLabTest::testPartitionPlusRestart(void) {
+  Init2(16, "Partition plus restart - one server partitioned, another killed/restarted");
+
+  Log_info("TEST 16: Waiting for initial election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 16: Initial leader elected: %d", leader);
+
+  // Commit initial entries to ensure cluster is stable
+  Log_info("TEST 16: Committing initial entries");
+  DoAgreeAndAssertIndex(1601, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1602, NSERVERS, index_++);
+  Log_info("TEST 16: Initial entries committed");
+
+  // Pick two different non-leader servers
+  // Server A will be partitioned, Server B will be killed/restarted
+  siteid_t partitioned_server = 0;
+  siteid_t killed_server = 0;
+  bool found_partitioned = false;
+  bool found_killed = false;
+
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != (siteid_t)leader) {
+      if (!found_partitioned) {
+        partitioned_server = svr;
+        found_partitioned = true;
+      } else if (!found_killed) {
+        killed_server = svr;
+        found_killed = true;
+        break;
+      }
+    }
+  }
+
+  Assert2(found_partitioned, "Could not find server to partition");
+  Assert2(found_killed, "Could not find server to kill");
+  Assert2(partitioned_server != killed_server, "Partitioned and killed server must be different");
+
+  Log_info("TEST 16: Will partition server %d and kill/restart server %d",
+           partitioned_server, killed_server);
+
+  // Step 1: Partition server A
+  Log_info("TEST 16: Step 1 - Partitioning server %d", partitioned_server);
+  config_->Disconnect(partitioned_server);
+
+  // Step 2: Kill server B
+  Log_info("TEST 16: Step 2 - Killing server %d", killed_server);
+  config_->Kill(killed_server);
+
+  // Wait for potential leader re-election (if we killed/partitioned the leader)
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+
+  // Verify cluster still works with 3 servers (quorum)
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 16: Leader after partition+kill: %d", leader);
+
+  // Commit with 3 servers
+  Log_info("TEST 16: Committing with 3 servers");
+  DoAgreeAndAssertIndex(1603, 3, index_++);
+
+  // Step 3: Restart server B (while A is still partitioned)
+  Log_info("TEST 16: Step 3 - Restarting server %d (while %d is still partitioned)",
+           killed_server, partitioned_server);
+  config_->Restart(killed_server);
+
+  // Wait for server B to catch up
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+
+  // Verify cluster works with 4 servers
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 16: Leader after restart: %d", leader);
+
+  // Commit with 4 servers
+  Log_info("TEST 16: Committing with 4 servers");
+  DoAgreeAndAssertIndex(1604, 4, index_++);
+
+  // Step 4: Heal partition (reconnect server A)
+  // This is the critical test: A was partitioned when B restarted
+  // A's connection to B should be stale, but B's retry mechanism should fix it
+  Log_info("TEST 16: Step 4 - Healing partition (reconnecting server %d)", partitioned_server);
+  config_->Reconnect(partitioned_server);
+
+  // Wait for server A to catch up and for NotifyRestart retry to work
+  Log_info("TEST 16: Waiting for partition to heal and connections to refresh...");
+  Coroutine::Sleep(ELECTIONTIMEOUT * 2);
+
+  // Verify all 5 servers are working
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 16: Leader after partition heal: %d", leader);
+
+  // Step 5: Final commit with all 5 servers
+  // This verifies that A can communicate with B (the restarted server)
+  Log_info("TEST 16: Step 5 - Final commit with all %d servers", NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1605, NSERVERS);
+
+  // Additional verification: commit a few more entries
+  Log_info("TEST 16: Additional commits to verify stability");
+  DoAgreeAndAssertWaitSuccess(1606, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1607, NSERVERS);
+
+  Log_info("TEST 16: Partition plus restart test PASSED!");
+
+  Passed2();
+}
+
+int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
+  Init2(17, "Sequential partitions plus restart - two servers partitioned at different times while one restarts");
+
+  Log_info("TEST 17: Waiting for initial election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Initial leader elected: %d", leader);
+
+  // Commit initial entries to ensure cluster is stable
+  Log_info("TEST 17: Committing initial entries");
+  DoAgreeAndAssertIndex(1701, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1702, NSERVERS, index_++);
+  Log_info("TEST 17: Initial entries committed");
+
+  // Pick three different non-leader servers: A (partition first), B (kill/restart), C (partition second)
+  siteid_t server_A = 0;  // Will be partitioned first
+  siteid_t server_B = 0;  // Will be killed and restarted
+  siteid_t server_C = 0;  // Will be partitioned second
+  int found_count = 0;
+
+  for (int i = 0; i < NSERVERS && found_count < 3; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != (siteid_t)leader) {
+      if (found_count == 0) {
+        server_A = svr;
+      } else if (found_count == 1) {
+        server_B = svr;
+      } else if (found_count == 2) {
+        server_C = svr;
+      }
+      found_count++;
+    }
+  }
+
+  Assert2(found_count >= 3, "Could not find 3 non-leader servers");
+  Log_info("TEST 17: Server A (partition first): %d", server_A);
+  Log_info("TEST 17: Server B (kill/restart): %d", server_B);
+  Log_info("TEST 17: Server C (partition second): %d", server_C);
+
+  // ========================================
+  // T1: Partition A → Healthy: {B,C,D,E} = 4
+  // ========================================
+  Log_info("TEST 17: Step 1 - Partitioning server A (%d)", server_A);
+  config_->Disconnect(server_A);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Leader after partitioning A: %d", leader);
+
+  // Commit with 4 servers
+  Log_info("TEST 17: Committing with 4 servers (A partitioned)");
+  DoAgreeAndAssertIndex(1703, 4, index_++);
+
+  // ========================================
+  // T2: Kill B → Healthy: {C,D,E} = 3
+  // ========================================
+  Log_info("TEST 17: Step 2 - Killing server B (%d)", server_B);
+  config_->Kill(server_B);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Leader after killing B: %d", leader);
+
+  // Commit with 3 servers
+  Log_info("TEST 17: Committing with 3 servers (A partitioned, B dead)");
+  DoAgreeAndAssertIndex(1704, 3, index_++);
+
+  // ========================================
+  // T3: Restart B → B sends NotifyRestart, A is PENDING
+  // ========================================
+  Log_info("TEST 17: Step 3 - Restarting server B (%d) while A (%d) is still partitioned",
+           server_B, server_A);
+  config_->Restart(server_B);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Leader after restarting B: %d", leader);
+
+  // Commit with 4 servers (B is back, A still partitioned)
+  Log_info("TEST 17: Committing with 4 servers (A partitioned, B restarted)");
+  DoAgreeAndAssertIndex(1705, 4, index_++);
+
+  // ========================================
+  // T4: Partition C → Healthy: {B,D,E} = 3 (A and C both isolated)
+  // ========================================
+  Log_info("TEST 17: Step 4 - Partitioning server C (%d) while A (%d) is still partitioned",
+           server_C, server_A);
+  config_->Disconnect(server_C);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Leader after partitioning C: %d", leader);
+
+  // Commit with 3 servers (A and C partitioned)
+  Log_info("TEST 17: Committing with 3 servers (A and C partitioned)");
+  DoAgreeAndAssertIndex(1706, 3, index_++);
+
+  // ========================================
+  // T5: Heal A → A has stale connection to B, B's retry fixes it
+  // ========================================
+  Log_info("TEST 17: Step 5 - Healing partition for server A (%d)", server_A);
+  Log_info("TEST 17: A was partitioned when B restarted, so A has stale connection to B");
+  config_->Reconnect(server_A);
+
+  // Wait for A to catch up and for B's retry mechanism to fix A's stale connection
+  Log_info("TEST 17: Waiting for A to reconnect and B's retry to fix stale connection...");
+  Coroutine::Sleep(ELECTIONTIMEOUT * 2);
+
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Leader after healing A: %d", leader);
+
+  // Commit with 4 servers (A is back, C still partitioned)
+  Log_info("TEST 17: Committing with 4 servers (A healed, C still partitioned)");
+  DoAgreeAndAssertIndex(1707, 4, index_++);
+
+  // ========================================
+  // T6: Heal C → C has stale connection to B, B's retry fixes it
+  // ========================================
+  Log_info("TEST 17: Step 6 - Healing partition for server C (%d)", server_C);
+  Log_info("TEST 17: C was partitioned when B restarted, so C has stale connection to B");
+  config_->Reconnect(server_C);
+
+  // Wait for C to catch up and for B's retry mechanism to fix C's stale connection
+  Log_info("TEST 17: Waiting for C to reconnect and B's retry to fix stale connection...");
+  Coroutine::Sleep(ELECTIONTIMEOUT * 2);
+
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 17: Leader after healing C: %d", leader);
+
+  // ========================================
+  // T7: Verify all 5 servers work
+  // ========================================
+  Log_info("TEST 17: Step 7 - Final verification with all %d servers", NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1708, NSERVERS);
+
+  // Additional commits to verify stability
+  Log_info("TEST 17: Additional commits to verify stability");
+  DoAgreeAndAssertWaitSuccess(1709, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1710, NSERVERS);
+
+  Log_info("TEST 17: Sequential partitions plus restart test PASSED!");
+
+  Passed2();
+}
+
+int RaftLabTest::testMultipleRestartsPlusPartition(void) {
+  Init2(18, "Multiple restarts plus partition - server restarts multiple times while another is partitioned");
+
+  Log_info("TEST 18: Waiting for initial election");
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Initial leader elected: %d", leader);
+
+  // Commit initial entries
+  Log_info("TEST 18: Committing initial entries");
+  DoAgreeAndAssertIndex(1801, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(1802, NSERVERS, index_++);
+  Log_info("TEST 18: Initial entries committed");
+
+  // Pick three different non-leader servers: A (partition), B (multiple restarts), C (single restart)
+  siteid_t server_A = 0;  // Will be partitioned
+  siteid_t server_B = 0;  // Will be killed/restarted multiple times
+  siteid_t server_C = 0;  // Will be killed/restarted once
+  int found_count = 0;
+
+  for (int i = 0; i < NSERVERS && found_count < 3; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != (siteid_t)leader) {
+      if (found_count == 0) {
+        server_A = svr;
+      } else if (found_count == 1) {
+        server_B = svr;
+      } else if (found_count == 2) {
+        server_C = svr;
+      }
+      found_count++;
+    }
+  }
+
+  Assert2(found_count >= 3, "Could not find 3 non-leader servers");
+  Log_info("TEST 18: Server A (partition): %d", server_A);
+  Log_info("TEST 18: Server B (multiple restarts): %d", server_B);
+  Log_info("TEST 18: Server C (single restart): %d", server_C);
+
+  // ========================================
+  // T1: Partition A → Healthy: {B,C,D,E} = 4
+  // ========================================
+  Log_info("TEST 18: Step 1 - Partitioning server A (%d)", server_A);
+  config_->Disconnect(server_A);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after partitioning A: %d", leader);
+
+  DoAgreeAndAssertIndex(1803, 4, index_++);
+
+  // ========================================
+  // T2: Kill B → Healthy: {C,D,E} = 3
+  // ========================================
+  Log_info("TEST 18: Step 2 - Killing server B (%d) [first time]", server_B);
+  config_->Kill(server_B);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after killing B: %d", leader);
+
+  DoAgreeAndAssertIndex(1804, 3, index_++);
+
+  // ========================================
+  // T3: Restart B → B sends NotifyRestart, A is PENDING
+  // ========================================
+  Log_info("TEST 18: Step 3 - Restarting server B (%d) [first time]", server_B);
+  config_->Restart(server_B);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after restarting B [first time]: %d", leader);
+
+  DoAgreeAndAssertIndex(1805, 4, index_++);
+
+  // ========================================
+  // T4: Kill B again → Healthy: {C,D,E} = 3
+  //     B's retry state is lost!
+  // ========================================
+  Log_info("TEST 18: Step 4 - Killing server B (%d) [second time] - retry state will be lost!", server_B);
+  config_->Kill(server_B);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after killing B [second time]: %d", leader);
+
+  DoAgreeAndAssertIndex(1806, 3, index_++);
+
+  // ========================================
+  // T5: Restart B again → B sends NotifyRestart again, A still PENDING
+  // ========================================
+  Log_info("TEST 18: Step 5 - Restarting server B (%d) [second time]", server_B);
+  config_->Restart(server_B);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after restarting B [second time]: %d", leader);
+
+  DoAgreeAndAssertIndex(1807, 4, index_++);
+
+  // ========================================
+  // T6: Heal A → A receives NotifyRestart from B, fixes stale connection
+  // ========================================
+  Log_info("TEST 18: Step 6 - Healing partition for server A (%d)", server_A);
+  Log_info("TEST 18: A was partitioned through TWO restart cycles of B");
+  config_->Reconnect(server_A);
+
+  // Wait for A to catch up and for B's retry mechanism to fix A's stale connection
+  Log_info("TEST 18: Waiting for A to reconnect and B's retry to fix stale connection...");
+  Coroutine::Sleep(ELECTIONTIMEOUT * 2);
+
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after healing A: %d", leader);
+
+  // Verify all 5 servers work
+  Log_info("TEST 18: Verifying all 5 servers work after A healed");
+  DoAgreeAndAssertWaitSuccess(1808, NSERVERS);
+
+  // ========================================
+  // T7: Kill C → Healthy: {A,B,D,E} = 4
+  // ========================================
+  Log_info("TEST 18: Step 7 - Killing server C (%d)", server_C);
+  config_->Kill(server_C);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after killing C: %d", leader);
+
+  DoAgreeAndAssertIndex(1809, 4, index_++);
+
+  // ========================================
+  // T8: Restart C → C notifies all (all respond since everyone is connected)
+  // ========================================
+  Log_info("TEST 18: Step 8 - Restarting server C (%d)", server_C);
+  config_->Restart(server_C);
+
+  Coroutine::Sleep(ELECTIONTIMEOUT);
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 18: Leader after restarting C: %d", leader);
+
+  // ========================================
+  // T9: Verify all 5 servers work
+  // ========================================
+  Log_info("TEST 18: Step 9 - Final verification with all %d servers", NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1810, NSERVERS);
+
+  // Additional commits to verify stability
+  Log_info("TEST 18: Additional commits to verify stability");
+  DoAgreeAndAssertWaitSuccess(1811, NSERVERS);
+  DoAgreeAndAssertWaitSuccess(1812, NSERVERS);
+
+  Log_info("TEST 18: Multiple restarts plus partition test PASSED!");
 
   Passed2();
 }

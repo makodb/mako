@@ -174,16 +174,47 @@ STEP 4: TCP Reconnection (communicator.cc)
     }
 
 
-STEP 5: Retry Pending (commo.cc) - Optional
-  RetryPendingNotifyRestart can be called to retry PENDING peers:
+STEP 5: Automatic Retry via Election Timer (server.cc)
+  The election timer loop automatically retries PENDING peers every 200-400ms:
 
-    void RaftCommo::RetryPendingNotifyRestart() {
-      for (auto& pair : notify_restart_status_) {
-        if (pair.second == NotifyRestartStatus::PENDING) {
-          // Retry sending NotifyRestart to this peer
-        }
-      }
+    // In RaftServer::StartElectionTimer(), inside the while(!stop_) loop:
+    Coroutine::Sleep(RandomGenerator::rand(HEARTBEAT_INTERVAL * 2, HEARTBEAT_INTERVAL * 4));
+
+    // Retry NotifyRestart for any PENDING peers
+    // This handles the case where a peer was partitioned when we restarted
+    auto c = commo();
+    if (c != nullptr && c->HasPendingNotifyRestart()) {
+      Log_debug("[NOTIFY-RESTART-RETRY] Site %d: retrying for pending peers", site_id_);
+      c->RetryPendingNotifyRestart();
     }
+
+  This approach:
+  - Runs on ALL servers (not just leaders)
+  - Respects stop_ flag (stops when server is killed)
+  - Is part of existing coroutine lifecycle (no separate thread)
+  - Retries every 200-400ms until all peers are ACKNOWLEDGED or DOWN
+
+
+PARTITION + RESTART HANDLING
+----------------------------
+The retry mechanism handles the scenario where a server is partitioned when
+another server restarts:
+
+  T0: All 5 servers running
+  T1: Partition server A (network isolated)
+  T2: Kill server B
+  T3: Restart server B
+      - B sends NotifyRestart to all peers
+      - A is partitioned -> RPC times out -> A stays PENDING
+      - C, D, E receive -> ACKNOWLEDGED
+  T4: B's election timer loop retries NotifyRestart to A (still fails)
+  T5: A's partition heals (network reconnects)
+  T6: B's election timer loop retries NotifyRestart to A
+      - A receives it -> calls ReconnectToSite(B) -> ACKNOWLEDGED
+  T7: A's stale connection to B is now fixed!
+
+Without the retry mechanism, A would have a stale connection to B forever
+(until A itself restarts).
 
 
 DATA STRUCTURES
@@ -217,10 +248,20 @@ RELATED FILES
 
 TEST COVERAGE
 -------------
+Crash-Recovery Tests (Kill/Restart only):
 - Test 12: Single server kill/restart (follower, then leader)
 - Test 13: Two followers kill/restart
 - Test 14: Leader + follower kill/restart
 - Test 15: Comprehensive random crash-recovery (5 rounds, random server selection)
 
-All tests verify that after kill/restart cycles, servers can still reach
-consensus and commit entries, demonstrating the NotifyRestart mechanism works.
+Partition + Restart Tests (Tests the retry mechanism):
+- Test 16: One server partitioned, another killed/restarted
+  * Verifies retry fixes stale connection when partition heals
+- Test 17: Two servers sequentially partitioned while one restarts
+  * Verifies retry can fix multiple PENDING peers
+- Test 18: Multiple restarts while one server is partitioned
+  * Verifies retry survives server kill/restart cycles
+  * B restarts twice while A is partitioned, retry still fixes A
+
+All tests pass consistently, demonstrating the NotifyRestart mechanism
+with automatic retry handles both crash-recovery and partition+restart scenarios.

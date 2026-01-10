@@ -24,6 +24,9 @@ class RaftLabTest {
   int testTwoFollowerPersistence(void);
   int testLeaderFollowerPersistence(void);
   int testComprehensiveCrashRecovery(void);
+  int testPartitionPlusRestart(void);
+  int testSequentialPartitionsPlusRestart(void);
+  int testMultipleRestartsPlusPartition(void);
   int testInitialElection(void);
   int testReElection(void);
 
