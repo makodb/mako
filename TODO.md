@@ -300,11 +300,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - Random server kills, latency injection, packet loss, connection reset
           - Combined chaos, recovery verification
     - [ ] **Phase 8: Documentation**
-      - [ ] *medium* 8.1 API Documentation
-        - Document all new public classes and methods
-        - Usage examples for common scenarios
-        - Configuration options and defaults
-        - Troubleshooting guide
+      - [x] *medium* 8.1 API Documentation [DONE 2026-01-10]
+        - Created `doc/rpc_api.md`: complete API reference for all reliability classes
+        - Documented: ConnectionState, ReconnectPolicy, CircuitBreaker, RequestQueue,
+          RequestOptions, Heartbeat, ConnectionMetrics, Errors, Callbacks, Client, Server
+        - Included usage examples for common scenarios
       - [x] *medium* 8.2 Architecture Documentation [DONE 2026-01-10]
         - Updated `doc/transport_backends.md` with reliability features section
         - Created `doc/rpc_reliability.md`: comprehensive guide covering all reliability features
