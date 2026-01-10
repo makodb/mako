@@ -78,6 +78,7 @@ void Future::timed_wait(double sec) const {
   if (!condition_became_false && !guard->ready) {
     guard->timed_out = true;
     error_code_.set(ETIMEDOUT);
+    timeout_type_.set(TimeoutType::RESPONSE_TIMEOUT);
   }
 }
 

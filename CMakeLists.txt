@@ -1470,6 +1470,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_request_buffering ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_request_buffering COMMAND test_rpc_request_buffering)
 
+    # Timeout and Retry Tests (Phase 2.4)
+    add_executable(test_rpc_timeout_retry test/rpc_timeout_retry_test.cc)
+    target_include_directories(test_rpc_timeout_retry PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_timeout_retry PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_timeout_retry ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_timeout_retry COMMAND test_rpc_timeout_retry)
+
     # ============================================================================
     # RPC Reliability Integration Tests (Phase 7.2)
     # ============================================================================

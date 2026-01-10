@@ -1,0 +1,397 @@
+/**
+ * Unit tests for RPC Request Timeout and Retry.
+ * Tests RequestOptions, TimeoutType, and Future retry support.
+ */
+
+#include <gtest/gtest.h>
+#include <atomic>
+#include <thread>
+#include <vector>
+#include <cmath>
+#include "rpc/request_options.hpp"
+
+using namespace rrr;
+
+// ============================================================================
+// TimeoutType Tests
+// ============================================================================
+
+TEST(TimeoutTypeTest, DefaultIsNone) {
+    TimeoutType type = TimeoutType::NONE;
+    EXPECT_EQ(type, TimeoutType::NONE);
+}
+
+TEST(TimeoutTypeTest, StringConversions) {
+    EXPECT_STREQ(timeout_type_to_string(TimeoutType::NONE), "NONE");
+    EXPECT_STREQ(timeout_type_to_string(TimeoutType::CONNECT_TIMEOUT), "CONNECT_TIMEOUT");
+    EXPECT_STREQ(timeout_type_to_string(TimeoutType::REQUEST_TIMEOUT), "REQUEST_TIMEOUT");
+    EXPECT_STREQ(timeout_type_to_string(TimeoutType::RESPONSE_TIMEOUT), "RESPONSE_TIMEOUT");
+    EXPECT_STREQ(timeout_type_to_string(TimeoutType::TOTAL_TIMEOUT), "TOTAL_TIMEOUT");
+}
+
+TEST(TimeoutTypeTest, UnknownTypeReturnsUnknown) {
+    // Cast invalid value
+    auto invalid = static_cast<TimeoutType>(255);
+    EXPECT_STREQ(timeout_type_to_string(invalid), "UNKNOWN");
+}
+
+// ============================================================================
+// RequestOptions Default Values Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, DefaultValues) {
+    RequestOptions opts;
+    EXPECT_EQ(opts.timeout_ms, 1000u);
+    EXPECT_EQ(opts.total_timeout_ms, 0u);
+    EXPECT_EQ(opts.max_retries, 0u);
+    EXPECT_EQ(opts.base_delay_ms, 50u);
+    EXPECT_EQ(opts.max_delay_ms, 5000u);
+    EXPECT_FLOAT_EQ(opts.jitter_factor, 0.1f);
+    EXPECT_FALSE(opts.idempotent);
+}
+
+TEST(RequestOptionsTest, DefaultsPreset) {
+    auto opts = RequestOptions::defaults();
+    EXPECT_EQ(opts.timeout_ms, 1000u);
+    EXPECT_EQ(opts.max_retries, 0u);
+    EXPECT_FALSE(opts.idempotent);
+}
+
+// ============================================================================
+// RequestOptions Preset Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, WithRetryPreset) {
+    auto opts = RequestOptions::with_retry(3, 2000);
+    EXPECT_EQ(opts.timeout_ms, 2000u);
+    EXPECT_EQ(opts.max_retries, 3u);
+    EXPECT_TRUE(opts.idempotent);  // with_retry implies idempotent
+}
+
+TEST(RequestOptionsTest, WithRetryDefaultTimeout) {
+    auto opts = RequestOptions::with_retry(5);
+    EXPECT_EQ(opts.timeout_ms, 1000u);  // Default
+    EXPECT_EQ(opts.max_retries, 5u);
+    EXPECT_TRUE(opts.idempotent);
+}
+
+TEST(RequestOptionsTest, IdempotentRetryPreset) {
+    auto opts = RequestOptions::idempotent_retry();  // Default 3 retries
+    EXPECT_EQ(opts.max_retries, 3u);
+    EXPECT_TRUE(opts.idempotent);
+}
+
+TEST(RequestOptionsTest, IdempotentRetryCustom) {
+    auto opts = RequestOptions::idempotent_retry(10);
+    EXPECT_EQ(opts.max_retries, 10u);
+    EXPECT_TRUE(opts.idempotent);
+}
+
+TEST(RequestOptionsTest, NoTimeoutPreset) {
+    auto opts = RequestOptions::no_timeout();
+    EXPECT_EQ(opts.timeout_ms, 0u);
+    EXPECT_EQ(opts.total_timeout_ms, 0u);
+}
+
+TEST(RequestOptionsTest, FastPreset) {
+    auto opts = RequestOptions::fast();
+    EXPECT_EQ(opts.timeout_ms, 100u);
+    EXPECT_EQ(opts.max_retries, 2u);
+    EXPECT_EQ(opts.base_delay_ms, 10u);
+    EXPECT_EQ(opts.max_delay_ms, 100u);
+    EXPECT_TRUE(opts.idempotent);
+}
+
+TEST(RequestOptionsTest, PatientPreset) {
+    auto opts = RequestOptions::patient();
+    EXPECT_EQ(opts.timeout_ms, 10000u);
+    EXPECT_EQ(opts.total_timeout_ms, 60000u);
+    EXPECT_EQ(opts.max_retries, 5u);
+    EXPECT_EQ(opts.base_delay_ms, 500u);
+    EXPECT_EQ(opts.max_delay_ms, 10000u);
+    EXPECT_TRUE(opts.idempotent);
+}
+
+// ============================================================================
+// can_retry Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, CanRetryWhenIdempotentAndUnderLimit) {
+    RequestOptions opts;
+    opts.idempotent = true;
+    opts.max_retries = 3;
+
+    EXPECT_TRUE(opts.can_retry(0));
+    EXPECT_TRUE(opts.can_retry(1));
+    EXPECT_TRUE(opts.can_retry(2));
+    EXPECT_FALSE(opts.can_retry(3));  // At limit
+    EXPECT_FALSE(opts.can_retry(4));  // Over limit
+}
+
+TEST(RequestOptionsTest, CannotRetryWhenNotIdempotent) {
+    RequestOptions opts;
+    opts.idempotent = false;
+    opts.max_retries = 3;
+
+    EXPECT_FALSE(opts.can_retry(0));
+    EXPECT_FALSE(opts.can_retry(1));
+}
+
+TEST(RequestOptionsTest, CannotRetryWhenNoRetries) {
+    RequestOptions opts;
+    opts.idempotent = true;
+    opts.max_retries = 0;
+
+    EXPECT_FALSE(opts.can_retry(0));
+}
+
+// ============================================================================
+// calculate_delay_ms Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, CalculateDelayExponentialBackoff) {
+    RequestOptions opts;
+    opts.base_delay_ms = 100;
+    opts.max_delay_ms = 10000;
+    opts.jitter_factor = 0.0f;  // Disable jitter for deterministic test
+
+    // Exponential: base * 2^attempt
+    EXPECT_EQ(opts.calculate_delay_ms(0), 100u);   // 100 * 2^0 = 100
+    EXPECT_EQ(opts.calculate_delay_ms(1), 200u);   // 100 * 2^1 = 200
+    EXPECT_EQ(opts.calculate_delay_ms(2), 400u);   // 100 * 2^2 = 400
+    EXPECT_EQ(opts.calculate_delay_ms(3), 800u);   // 100 * 2^3 = 800
+}
+
+TEST(RequestOptionsTest, CalculateDelayCappedAtMax) {
+    RequestOptions opts;
+    opts.base_delay_ms = 100;
+    opts.max_delay_ms = 500;
+    opts.jitter_factor = 0.0f;
+
+    EXPECT_EQ(opts.calculate_delay_ms(0), 100u);
+    EXPECT_EQ(opts.calculate_delay_ms(1), 200u);
+    EXPECT_EQ(opts.calculate_delay_ms(2), 400u);
+    EXPECT_EQ(opts.calculate_delay_ms(3), 500u);  // Capped at max
+    EXPECT_EQ(opts.calculate_delay_ms(10), 500u); // Still capped
+}
+
+TEST(RequestOptionsTest, CalculateDelayWithJitter) {
+    RequestOptions opts;
+    opts.base_delay_ms = 100;
+    opts.max_delay_ms = 10000;
+    opts.jitter_factor = 0.2f;  // 20% jitter
+
+    // With jitter, delays should vary
+    std::vector<uint64_t> delays;
+    for (int i = 0; i < 100; i++) {
+        delays.push_back(opts.calculate_delay_ms(0));
+    }
+
+    // Check that not all delays are the same (jitter adds variation)
+    bool all_same = true;
+    for (size_t i = 1; i < delays.size(); i++) {
+        if (delays[i] != delays[0]) {
+            all_same = false;
+            break;
+        }
+    }
+    EXPECT_FALSE(all_same) << "Jitter should cause variation in delays";
+
+    // Check delays are within expected range: 100 +/- 10% (jitter_factor/2 * delay)
+    for (uint64_t delay : delays) {
+        EXPECT_GE(delay, 90u);   // 100 - 10
+        EXPECT_LE(delay, 110u);  // 100 + 10
+    }
+}
+
+// ============================================================================
+// Total Timeout Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, TotalTimeoutExceeded) {
+    RequestOptions opts;
+    opts.total_timeout_ms = 5000;
+
+    EXPECT_FALSE(opts.is_total_timeout_exceeded(0));
+    EXPECT_FALSE(opts.is_total_timeout_exceeded(4999));
+    EXPECT_TRUE(opts.is_total_timeout_exceeded(5000));
+    EXPECT_TRUE(opts.is_total_timeout_exceeded(10000));
+}
+
+TEST(RequestOptionsTest, TotalTimeoutNotSetNeverExceeds) {
+    RequestOptions opts;
+    opts.total_timeout_ms = 0;  // Disabled
+
+    EXPECT_FALSE(opts.is_total_timeout_exceeded(0));
+    EXPECT_FALSE(opts.is_total_timeout_exceeded(1000000));
+}
+
+TEST(RequestOptionsTest, RemainingTimeCalculation) {
+    RequestOptions opts;
+    opts.total_timeout_ms = 5000;
+
+    EXPECT_EQ(opts.remaining_time_ms(0), 5000u);
+    EXPECT_EQ(opts.remaining_time_ms(1000), 4000u);
+    EXPECT_EQ(opts.remaining_time_ms(4999), 1u);
+    EXPECT_EQ(opts.remaining_time_ms(5000), 0u);
+    EXPECT_EQ(opts.remaining_time_ms(6000), 0u);
+}
+
+TEST(RequestOptionsTest, RemainingTimeNoLimit) {
+    RequestOptions opts;
+    opts.total_timeout_ms = 0;
+
+    EXPECT_EQ(opts.remaining_time_ms(0), UINT64_MAX);
+    EXPECT_EQ(opts.remaining_time_ms(1000000), UINT64_MAX);
+}
+
+// ============================================================================
+// Thread Safety Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, ConcurrentDelayCalculation) {
+    RequestOptions opts;
+    opts.base_delay_ms = 100;
+    opts.max_delay_ms = 10000;
+    opts.jitter_factor = 0.1f;
+
+    std::atomic<int> error_count{0};
+    std::vector<std::thread> threads;
+
+    for (int i = 0; i < 8; i++) {
+        threads.emplace_back([&opts, &error_count, i]() {
+            for (int j = 0; j < 1000; j++) {
+                uint64_t delay = opts.calculate_delay_ms(i % 5);
+                // Should always be positive and reasonable
+                if (delay == 0 || delay > 15000) {
+                    error_count++;
+                }
+            }
+        });
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    EXPECT_EQ(error_count.load(), 0);
+}
+
+// ============================================================================
+// Edge Cases
+// ============================================================================
+
+TEST(RequestOptionsTest, ZeroBaseDelay) {
+    RequestOptions opts;
+    opts.base_delay_ms = 0;
+    opts.max_delay_ms = 1000;
+    opts.jitter_factor = 0.0f;
+
+    EXPECT_EQ(opts.calculate_delay_ms(0), 0u);
+    EXPECT_EQ(opts.calculate_delay_ms(5), 0u);
+}
+
+TEST(RequestOptionsTest, VeryLargeAttempt) {
+    RequestOptions opts;
+    opts.base_delay_ms = 100;
+    opts.max_delay_ms = 5000;
+    opts.jitter_factor = 0.0f;
+
+    // Very large attempt should be capped
+    EXPECT_EQ(opts.calculate_delay_ms(100), 5000u);
+    EXPECT_EQ(opts.calculate_delay_ms(1000), 5000u);
+}
+
+TEST(RequestOptionsTest, MaxDelayLessThanBase) {
+    RequestOptions opts;
+    opts.base_delay_ms = 1000;
+    opts.max_delay_ms = 500;  // Less than base!
+    opts.jitter_factor = 0.0f;
+
+    // Should cap at max even if less than base
+    EXPECT_EQ(opts.calculate_delay_ms(0), 500u);
+}
+
+// ============================================================================
+// RequestOptions Copy/Move Tests
+// ============================================================================
+
+TEST(RequestOptionsTest, CopyConstruct) {
+    RequestOptions opts;
+    opts.timeout_ms = 5000;
+    opts.max_retries = 10;
+    opts.idempotent = true;
+
+    RequestOptions copy = opts;
+    EXPECT_EQ(copy.timeout_ms, 5000u);
+    EXPECT_EQ(copy.max_retries, 10u);
+    EXPECT_TRUE(copy.idempotent);
+}
+
+TEST(RequestOptionsTest, MoveConstruct) {
+    RequestOptions opts;
+    opts.timeout_ms = 5000;
+    opts.max_retries = 10;
+
+    RequestOptions moved = std::move(opts);
+    EXPECT_EQ(moved.timeout_ms, 5000u);
+    EXPECT_EQ(moved.max_retries, 10u);
+}
+
+// ============================================================================
+// Integration with rusty::Cell
+// ============================================================================
+
+#include <rusty/cell.hpp>
+
+TEST(RequestOptionsTest, CellStorage) {
+    rusty::Cell<RequestOptions> cell{RequestOptions::defaults()};
+
+    auto opts = cell.get();
+    EXPECT_EQ(opts.timeout_ms, 1000u);
+
+    RequestOptions new_opts = RequestOptions::patient();
+    cell.set(new_opts);
+
+    auto retrieved = cell.get();
+    EXPECT_EQ(retrieved.timeout_ms, 10000u);
+    EXPECT_EQ(retrieved.max_retries, 5u);
+}
+
+TEST(RequestOptionsTest, CellConcurrentAccess) {
+    rusty::Cell<RequestOptions> cell{RequestOptions::defaults()};
+    std::atomic<int> error_count{0};
+    std::vector<std::thread> threads;
+
+    // Writers
+    for (int i = 0; i < 4; i++) {
+        threads.emplace_back([&cell, i]() {
+            for (int j = 0; j < 100; j++) {
+                RequestOptions opts;
+                opts.timeout_ms = static_cast<uint64_t>(i * 1000 + j);
+                cell.set(opts);
+            }
+        });
+    }
+
+    // Readers
+    for (int i = 0; i < 4; i++) {
+        threads.emplace_back([&cell, &error_count]() {
+            for (int j = 0; j < 100; j++) {
+                auto opts = cell.get();
+                // Should always be a valid value
+                if (opts.base_delay_ms == 0 && opts.max_delay_ms == 0) {
+                    // Only if both are 0 something is wrong
+                    // (they have defaults)
+                    error_count++;
+                }
+            }
+        });
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    EXPECT_EQ(error_count.load(), 0);
+}

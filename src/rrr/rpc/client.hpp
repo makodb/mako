@@ -15,6 +15,7 @@
 #include "reconnect_policy.hpp"
 #include "request_queue.hpp"
 #include "connection_metrics.hpp"
+#include "request_options.hpp"
 
 namespace rrr {
 
@@ -307,6 +308,11 @@ class Future {
     rusty::Mutex<State> state_;  // Mutex protects State (ready/timed_out flags)
     rusty::Condvar ready_cond_;  // Uses interior mutability (const methods like Rust's &self)
 
+    // Phase 2.4: Retry support
+    rusty::Cell<RequestOptions> options_;     // Request options (timeout, retry config)
+    rusty::Cell<TimeoutType> timeout_type_{TimeoutType::NONE};  // Type of timeout that occurred
+    rusty::Cell<uint16_t> retry_count_{0};    // Number of retries attempted
+
     // @safe - Uses rusty::Mutex and rusty::Condvar together (Rust-like pattern)
     // Takes Arc<Future> self parameter for callback safety
     void notify_ready(rusty::Arc<Future> self) const;
@@ -343,6 +349,20 @@ public:
     // @safe - Uses rusty::Mutex and rusty::Condvar together
     void timed_wait(double sec) const;
 
+    // @unsafe - rusty-cpp false positive: sec IS initialized
+    // Wait using configured options timeout
+    // Returns true if ready, false if timed out
+    bool wait_with_options() const {
+        auto opts = options_.get();
+        if (opts.timeout_ms == 0) {
+            wait();  // No timeout
+            return ready();
+        }
+        double sec = static_cast<double>(opts.timeout_ms) / 1000.0;
+        timed_wait(sec);
+        return ready() && !timed_out();
+    }
+
     // @safe - Uses rusty::Mutex
     bool timed_out() const {
         auto guard = state_.lock().unwrap();
@@ -372,6 +392,48 @@ public:
     // @safe - Simple getter
     i64 get_xid() const {
         return xid_;
+    }
+
+    // =========================================================================
+    // Phase 2.4: Retry Support Accessors
+    // =========================================================================
+
+    // @safe - Get request options
+    RequestOptions get_options() const {
+        return options_.get();
+    }
+
+    // @safe - Set request options
+    void set_options(const RequestOptions& opts) {
+        options_.set(opts);
+    }
+
+    // @safe - Get timeout type that occurred
+    TimeoutType get_timeout_type() const {
+        return timeout_type_.get();
+    }
+
+    // @safe - Set timeout type
+    void set_timeout_type(TimeoutType type) {
+        timeout_type_.set(type);
+    }
+
+    // @safe - Get current retry count
+    uint16_t get_retry_count() const {
+        return retry_count_.get();
+    }
+
+    // @safe - Increment retry count and return new value
+    uint16_t increment_retry_count() {
+        uint16_t current = retry_count_.get();
+        retry_count_.set(current + 1);
+        return current + 1;
+    }
+
+    // @safe - Check if should retry based on options and current state
+    bool should_retry() const {
+        auto opts = options_.get();
+        return opts.can_retry(retry_count_.get());
     }
 
     // =========================================================================
@@ -924,6 +986,38 @@ public:
         return request(rpc_id, attr, [](Marshal&) {});
     }
 
+    // =========================================================================
+    // Phase 2.4: Request with Options (Timeout/Retry Support)
+    // =========================================================================
+
+    /**
+     * Send an RPC request with explicit options for timeout and retry.
+     * Sets the options on the returned Future for use with wait_with_options().
+     *
+     * @param rpc_id The RPC method ID
+     * @param options Request options (timeout, retry config)
+     * @param attr Future attributes (callback, etc.)
+     * @param write_fn Lambda to write request arguments
+     * @return Result<Arc<Future>, i32>
+     */
+    // @unsafe - Same as request(), plus sets options
+    template<typename F>
+    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
+                                      const FutureAttr& attr, F&& write_fn) const {
+        auto result = request(rpc_id, attr, std::forward<F>(write_fn));
+        if (result.is_ok()) {
+            result.ok()->set_options(options);
+        }
+        return result;
+    }
+
+    // @unsafe - Convenience overload without FutureAttr
+    template<typename F>
+    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
+                                      F&& write_fn) const {
+        return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn));
+    }
+
     // @safe - Returns file descriptor
     int fd() const override {
         return socket_;
@@ -1092,6 +1186,36 @@ public:
     FutureResult request(i32 rpc_id, const FutureAttr& attr = FutureAttr()) const {
         // @unsafe
         { return request(rpc_id, attr, [](Marshal&) {}); }
+    }
+
+    // =========================================================================
+    // Phase 2.4: Request with Options (Timeout/Retry Support)
+    // =========================================================================
+
+    /**
+     * Send an RPC request with explicit options for timeout and retry.
+     * Sets the options on the returned Future for use with wait_with_options().
+     */
+    // @safe - Thread-safe RPC request with options
+    template<typename F>
+    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
+                                      const FutureAttr& attr, F&& write_fn) const {
+        auto guard = connection_.borrow();
+        if (guard->is_none()) {
+            return FutureResult::Err(ENOTCONN);
+        }
+        rpc_id_.set(rpc_id);
+        // @unsafe
+        { return guard->as_ref().unwrap()->request_with_options(
+            rpc_id, options, attr, std::forward<F>(write_fn)); }
+    }
+
+    // @safe - Convenience overload without FutureAttr
+    template<typename F>
+    FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
+                                      F&& write_fn) const {
+        // @unsafe
+        { return request_with_options(rpc_id, options, FutureAttr(), std::forward<F>(write_fn)); }
     }
 
     // @safe - Sets connection validity

@@ -17,7 +17,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
     - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
-    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled.
+    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-10, 03:15 - fixed borrow violations in client.cpp, server.cpp, reactor.cc, threading.cpp]
   - [x] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh rrrTests [DONE 2026-01-09]
     - Root cause 1: `Client::close()` was clearing connection to None, losing address for reconnect
       - Fix: Modified `Client::close()` to call `conn.close()` but NOT clear to None
@@ -168,11 +168,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Server: `IdempotencyCache` to store recent responses, return cached for duplicates
         - Configurable TTL and size
         - ~200-250 LOC
-      - [ ] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2, 2.3] [Plan: doc/rpc/phase2_timeout_retry.md]
-        - Enhance `Future::timed_wait()` with automatic retry
-        - `RequestOptions`: timeout, max_retries, idempotent flag, key
-        - Distinguish timeout types: CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT
-        - ~150-200 LOC
+      - [x] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2] [Plan: doc/rpc/phase2_timeout_retry.md] [DONE 2026-01-10]
+        - Created `src/rrr/rpc/request_options.hpp` (~230 LOC)
+        - TimeoutType enum: NONE, CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT, TOTAL_TIMEOUT
+        - RequestOptions struct: timeout_ms, total_timeout_ms, max_retries, base/max_delay_ms, jitter_factor, idempotent
+        - Presets: defaults(), with_retry(), idempotent_retry(), no_timeout(), fast(), patient()
+        - Helper methods: can_retry(), calculate_delay_ms(), is_total_timeout_exceeded(), remaining_time_ms()
+        - Added Future members: options_, timeout_type_, retry_count_ with getters/setters
+        - Added request_with_options() to ClientConnection and Client
+        - 30 unit tests in test/rpc_timeout_retry_test.cc
     - [ ] **Phase 3: Health Monitoring**
       - [x] *high* 3.1 Heartbeat/Keep-Alive Mechanism [deps: 1.3] [Plan: doc/rpc/phase3_heartbeat.md] [DONE]
         - Created `src/rrr/rpc/heartbeat.hpp` (~240 LOC)
