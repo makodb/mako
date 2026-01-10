@@ -1236,6 +1236,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc COMMAND test_rpc)
 
+    # Load Balancer Tests
+    add_executable(test_load_balancer test/test_load_balancer.cc test/benchmark_service.cc)
+    target_include_directories(test_load_balancer PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_load_balancer PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_load_balancer ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_load_balancer COMMAND test_load_balancer)
+
     # Atomic Lock Tests - Commented out due to crashes
     # add_executable(test_alock test/test_alock.cc)
     # target_include_directories(test_alock PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

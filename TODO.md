@@ -236,11 +236,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Fixed race condition: Client::close() now defers socket close to poll thread via mark_closing()
         - Created test/rpc_client_pool_test.cc with 20 tests (all passing)
         - ~250 LOC
-      - [ ] *low* 5.2 Load Balancing Strategies [deps: 3.2, 5.1] [Plan: doc/rpc/phase5_load_balancing.md]
-        - Create `src/rrr/rpc/load_balancer.hpp`
-        - Strategies: ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY, RANDOM
-        - Health-aware routing
-        - ~150-200 LOC
+      - [x] *low* 5.2 Load Balancing Strategies [deps: 3.2, 5.1] [DONE 2026-01-10]
+        - Created `src/rrr/rpc/load_balancer.hpp` (~170 LOC)
+        - LoadBalancingStrategy enum: RANDOM, ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY
+        - LoadBalancerState class for round-robin index tracking via rusty::Cell
+        - LoadBalancer class with select() template method for all strategies
+        - Added load_balancing field to PoolConfig, lb_state_ map to ClientPool
+        - Integrated with ClientPool::get_client() for health-aware load balancing
+        - Created test/test_load_balancer.cc with 19 tests (all passing)
       - [x] *low* 5.3 Bulk Reconnection Support [deps: 1.3, 5.1] [DONE 2026-01-10]
         - Added `ClientPool::reconnect_all()` overloads for address-specific and pool-wide reconnection
         - Added `BulkReconnectConfig` with presets: defaults(), fast(), gentle()

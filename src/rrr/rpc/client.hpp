@@ -16,6 +16,7 @@
 #include "request_queue.hpp"
 #include "connection_metrics.hpp"
 #include "request_options.hpp"
+#include "load_balancer.hpp"
 
 namespace rrr {
 
@@ -216,6 +217,7 @@ struct PoolConfig {
     bool health_check_enabled = true;    // Enable health-based removal
     uint64_t unhealthy_threshold_percent = 50;  // Remove if success rate < this %
     uint64_t min_requests_for_health = 10;      // Min requests before health check
+    LoadBalancingStrategy load_balancing = LoadBalancingStrategy::RANDOM;  // Selection strategy
 
     // @safe - Default constructor
     PoolConfig() = default;
@@ -1525,6 +1527,9 @@ class ClientPool {
 
     // Pool configuration (Cell for interior mutability)
     rusty::Cell<PoolConfig> config_;
+
+    // Load balancer state per address (for round-robin tracking)
+    std::map<std::string, LoadBalancerState> lb_state_;
 
     // Helper: Check if a client is considered healthy
     // @safe - Uses metrics to determine health

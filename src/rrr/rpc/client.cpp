@@ -1047,20 +1047,30 @@ ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectCon
 }
 
 // @unsafe - Gets cached or creates new client connections
-// Now includes health checking and automatic reconnection for failed connections
+// Now includes health checking, automatic reconnection, and load balancing
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
   rusty::Option<rusty::Arc<Client>> sp_cl = rusty::None;
   auto cfg = config_.get();
   int num_connections = cfg.min_connections;
 
   l_.lock();
+
+  // Get or create load balancer state for this address
+  auto& lb_state = lb_state_[addr];
+
   auto it = cache_.find(addr);
   if (it != cache_.end()) {
     auto& clients = it->second;
     int client_count = static_cast<int>(clients.size());
 
-    // Try to find a healthy client, reconnecting failed ones
-    int start_idx = rand_() % client_count;
+    // Use load balancer to select starting index
+    size_t start_idx = LoadBalancer::select(
+        cfg.load_balancing,
+        clients,
+        lb_state,
+        rand_()
+    );
+
     for (int i = 0; i < client_count; i++) {
       int idx = (start_idx + i) % client_count;
       auto& client = clients[idx];
