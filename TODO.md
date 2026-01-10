@@ -399,7 +399,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Modified `src/deptran/raft/server.cc`: Implemented persistence helpers, integrated calls
         - Persistence points: doVote(), OnAppendEntries(), SetLocalAppend(), RequestVote()
         - Plan: `doc/dev/phase1_3_raft_integration.md`
-      - [ ] 1.4 Paxos Integration - Modify PaxosServer to use LogStorage, persist ballots/entries
+      - [x] 1.4 Paxos Integration - Modify PaxosServer to use LogStorage, persist ballots/entries [DONE 2026-01-10, 07:30]
+        - Modified `src/deptran/paxos/server.h`: Added log_storage_ member, metadata constants, persistence helpers, public API
+        - Modified `src/deptran/paxos/server.cc`: Implemented PersistEpoch, PersistMaxCommitted, PersistLogEntry, PersistLogEntries, RecoverFromStorage
+        - Integrated persistence in: OnPrepare, OnAccept, OnCommit, OnBulkPrepare, OnBulkAccept, OnSyncCommit, OnBulkCommit
+        - All tests pass: shard1Replication (123445 ops/sec), shard2Replication (8824 ops/sec), shard1ReplicationRaft (68915 ops/sec)
+        - Plan: `doc/dev/phase1_4_paxos_integration.md`
     - [ ] **Phase 2: State Recovery on Startup** (~350 LOC)
       - [ ] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence
       - [ ] 2.2 Log Replay - Replay committed entries to rebuild state
