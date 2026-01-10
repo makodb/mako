@@ -1,10 +1,10 @@
 # RustyCpp TODO
 <!--
-This comment block is the prompt content in case you forget.
+This comment block is the instructions in case you forget.
 
 Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until interrupted. Don’t ask me for advice, just pick the best option you think that is honest, complete, and not corner-cutting: 
 
-1. Check if there are any repeated task that needs to be run again. If yes this is the task we need to do, otherwise, pick the top undone task with highest priority (high-medium-low), choose its first leaf task.  If there are no undone TODO items left, sleep a minute and git pull and restart step 1 (so this step is a dead loop until you find a todo item).
+1. Pick a task: First check if there are any repeated task that needs to be run again. If yes this is the task we need to do and go to step 2. If no repeated task needs to run, pick the top undone task with highest priority (high-medium-low), choose its first leaf task.  If there are no task at all, (no fit repeated task and no undone TODO items left), sleep a minute and git pull and restart step 1 (so this step is a dead loop until you find a todo item).
 2. Analyze the task, check if this can be done with not too many LOC (i.e., smaller than 500 lines code give or take). If not, try to analyze this task and break it down into several smaller tasks, expanding it in the TODO.md. The breakdown can be nested and hierarchical. Try to make each leaf task small enough (<500 lines LOC). You can document your analysis in the doc folder for future reference. 
 3. Try to execute the first leaf task. Make a plan for the task before execute, put the plan in the docs folder, and add the file name in the item in TODO.md for reference. You can all write your key findings as a few sentences in the TODO item. When write code, you are only allowed to write rusty safe code following the rusty-cpp guidelines unless you are explicitly allowed by the todo item description. Avoid using std types, using rusty alternatives if they exists (e.g., don't use unique_ptr, use rusty::Box; don't use std thread, use rusty thread).
 4. Make sure to add comprehensive test for the task executed. Run the whole ci test  to make sure no regression happens (remember to use make clean && make -j32 because rusty-cpp requires make clean before build). If tests fail, fix them using the best, honest, complete approach, run test suites again to verify fixes work. Do not cheat such as disabling the borrow checker. Repeat this step until no tests fail. 
@@ -379,3 +379,64 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] **Task 2: Enable Client Reconnection** - Added connection_state(), try_reconnect_if_needed(), modified ClientPool
     - [x] **Task 3: Communicator Support** - Added EnsureClientConnected() helper method
     - **Files Changed**: client.hpp, client.cpp, communicator.h, communicator.cc
+  - [ ] *high* Node/Shard Crash Recovery with Replication Support [Plan: doc/dev/node_crash_replication_plan.md]
+    - **Goal**: When a node crashes and reboots, it recovers state from replication log and rejoins cluster without data loss
+    - **Scope**: Raft and Paxos replication with persistent log, snapshots, and automatic recovery
+    - **Dependencies**: RPC Reliability Enhancement (complete), Transaction Timeout (complete)
+    - [ ] **Phase 1: Persistent Log Storage** (~400 LOC)
+      - [ ] 1.1 Log Persistence Interface - Abstract `LogStorage` interface with append/read/truncate
+      - [ ] 1.2 RocksDB Log Backend - Implement `RocksDBLogStorage` with batch writes
+      - [ ] 1.3 Raft Integration - Modify RaftServer to use LogStorage, persist term/vote/log/commit
+      - [ ] 1.4 Paxos Integration - Modify PaxosServer to use LogStorage, persist ballots/entries
+    - [ ] **Phase 2: State Recovery on Startup** (~350 LOC)
+      - [ ] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence
+      - [ ] 2.2 Log Replay - Replay committed entries to rebuild state
+      - [ ] 2.3 Uncommitted Entry Handling - Resolve uncommitted entries via consensus
+      - [ ] 2.4 State Machine Recovery - Rebuild transaction state and indexes from log
+    - [ ] **Phase 3: Snapshot Support** (~450 LOC)
+      - [ ] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods
+      - [ ] 3.2 Snapshot Format - Binary format with last_index/term, state data, compression
+      - [ ] 3.3 Snapshot Storage - RocksDB or file storage with retention policy
+      - [ ] 3.4 Log Compaction - Truncate log entries covered by snapshot
+    - [ ] **Phase 4: Leader Election Enhancement** (~300 LOC)
+      - [ ] 4.1 Pre-Vote Protocol - Prevent disruption from partitioned nodes
+      - [ ] 4.2 Leader Lease - Linearizable reads during lease period
+      - [ ] 4.3 Leadership Transfer - Graceful transfer before maintenance
+      - [ ] 4.4 Split-Brain Prevention - Ensure only majority partition elects leader
+    - [ ] **Phase 5: Client Failover** (~350 LOC)
+      - [ ] 5.1 Leader Discovery - Client queries replicas for current leader
+      - [ ] 5.2 Request Forwarding - Non-leaders forward to leader or return hint
+      - [ ] 5.3 Failover Strategy - Detect leader failure, query for new leader, retry
+      - [ ] 5.4 Read Replica Support - Optional reads from followers with staleness config
+    - [ ] **Phase 6: In-Flight Transaction Recovery** (~400 LOC)
+      - [ ] 6.1 Transaction Log Format - Log prepare/commit/abort phases durably
+      - [ ] 6.2 Coordinator Recovery - Resume in-progress 2PC from log
+      - [ ] 6.3 Participant Recovery - Query coordinator for transaction status
+      - [ ] 6.4 Orphan Transaction Cleanup - Timeout stuck transactions, garbage collection
+    - [ ] **Phase 7: Log Catchup Protocol** (~350 LOC)
+      - [ ] 7.1 Incremental Log Sync - Follower requests missing entries in batches
+      - [ ] 7.2 Snapshot Transfer - Chunked transfer for very behind followers
+      - [ ] 7.3 Parallel Catchup - Multiple shards catch up concurrently
+      - [ ] 7.4 Catchup Progress Tracking - Metrics and alerting for slow catchup
+    - [ ] **Phase 8: Health Monitoring and Failure Detection** (~300 LOC)
+      - [ ] 8.1 Heartbeat Enhancement - Configurable interval, adaptive timeout
+      - [ ] 8.2 Failure Detector - Phi accrual or similar, configurable sensitivity
+      - [ ] 8.3 Recovery Triggers - Automatic/manual recovery, rate limiting
+      - [ ] 8.4 Monitoring Integration - Metrics, logging, alerting hooks
+    - [ ] **Phase 9: Testing** (~500 LOC)
+      - [ ] 9.1 Unit Tests - Log persistence, recovery manager, snapshot (60 tests)
+      - [ ] 9.2 Integration Tests - Single node crash, leader crash, follower catchup (40 tests)
+      - [ ] 9.3 Stress Tests - Repeated crash cycles, crash during sync (30 tests)
+      - [ ] 9.4 Chaos Tests - Random kills, partitions, combined failures (30 tests)
+    - [ ] **Phase 10: Documentation** (~100 LOC)
+      - [ ] 10.1 Architecture Documentation - Design, components, failure scenarios
+      - [ ] 10.2 Operations Guide - Configuration, monitoring, manual recovery
+      - [ ] 10.3 API Documentation - Config options, interfaces, error handling
+    - **Success Criteria**:
+      1. No committed data lost on any single node failure
+      2. System remains available with minority failures
+      3. Node recovers within configurable timeout (default 30s)
+      4. All invariants maintained during recovery
+      5. Recovery doesn't impact normal operation significantly
+      6. All recovery events logged and metricated
+    - **RustyCpp Compliance**: All new code uses rusty types, @safe/@unsafe annotations, passes borrow checking
