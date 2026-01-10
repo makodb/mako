@@ -10,7 +10,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 4. Make sure to add comprehensive test for the task executed. Run the whole ci test  to make sure no regression happens (remember to use make clean && make -j32 because rusty-cpp requires make clean before build). If tests fail, fix them using the best, honest, complete approach, run test suites again to verify fixes work. Do not cheat such as disabling the borrow checker. Repeat this step until no tests fail. 
 5. Prepare for git commit, first check if you wrote any rusty unsafe code, if yes, then revert the changes and go back to Step 3 to redo task. Remove all temporary files, especially not to commit any binary files. For plan files, extract from implementation plan the design rational and user manual and put it in the docs folder. we can keep the plan files in docs/dev/ folder. Mark the task as done (or last done for repeated task) in the TODO.md with a timestamp [yy:mm:dd, hh:mm]  
 6. Git commit the changes. First do git pull --rebase, and fix conflicts if any. Remember to update submodule. If remote has any updates (merged through rebase), then run full ci tests again to make sure everything pass. If not pass, investigate and fix, repeat until pass all ci tests. Then do git push (if remote rejected because updates during we doing this step, restart this step).
-7. Go back to step 1. (The TODO.md file is possibly updated, so make sure you read the updated TODO.)
+7. Go back to step 1 for next task; don't ask me whether to continue, just continue. (The TODO.md file is possibly updated, so make sure you read the updated TODO.)
 
 -->
 
@@ -28,7 +28,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Root cause 4: `ErrorCategoriesWithCircuitBreaker` test used wrong error types
       - Fix: Changed `SERVICE_UNAVAILABLE` (APPLICATION error) to `CONNECTION_RESET` (CONNECTION error)
     - All 42 rrrTests now pass consistently
-  - [ ] *high* bug. the rrrTests ci still fails on ci server, please investigate and fix. verify fix by running it 10 times. 
+  - [x] *high* bug. the rrrTests ci still fails on ci server, please investigate and fix. verify fix by running it 10 times. [DONE 2026-01-10, 02:10]
+    - Verified: All 45 rrrTests pass consistently (ran 10 times, all passed)
+    - Full CI suite passed successfully
+    - GitHub Actions CI shows recent successful runs
+    - Previous fix (Phase 5.1 with Client::close() race condition) resolved the issue
   - [x] *high* build seems failing with most recent updates from rusty-cpp. make sure borrow-check is enabled for all files that have a safety annotation. investigate and fix the build failure. [DONE]
     - Investigation: Recent rusty-cpp updates (commit 86aa04a "Enforce borrow rules uniformly for pointers and references") introduced stricter checking that generates false positives:
       - "Cannot return 'value' because it has been moved"
