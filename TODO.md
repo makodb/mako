@@ -225,11 +225,16 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Client wrapper methods delegate to ClientConnection
         - 11 unit tests in test/rpc_restart_detection_test.cc
         - ~100 LOC
-      - [ ] *low* 4.3 Request Completion Tracking [deps: 2.3, 4.2] [Plan: doc/rpc/phase4_completion_tracking.md]
-        - Server maintains completion log of recent request XIDs
-        - Client can query if request completed on reconnection
-        - Integrate with idempotency cache
-        - ~150-200 LOC
+      - [x] *low* 4.3 Request Completion Tracking [deps: 2.3, 4.2] [DONE 2026-01-10]
+        - Created `src/rrr/rpc/completion_tracker.hpp` (~300 LOC)
+        - CompletionTracker: LRU-based completion log with TTL expiration
+          - Thread-safe via rusty::Mutex
+          - Statistics: total_tracked, queries, query_hits, evictions
+          - Methods: mark_completed, is_completed, remove, clear, evict_expired
+        - CompletionTrackerConfig: configurable TTL, max_entries, presets
+        - CompletionQueryResult: status enum with helpers (not_found, completed, expired)
+        - CompletionStatus: NOT_FOUND, COMPLETED, COMPLETED_WITH_ERROR, EXPIRED
+        - Created test/test_completion_tracker.cc with 27 tests (all passing)
     - [ ] **Phase 5: Client Pool Enhancements**
       - [x] *medium* 5.1 Enhanced ClientPool with Health Awareness [deps: 1.1, 3.2] [Plan: doc/rpc/phase5_health_pool.md] [DONE 2026-01-10]
         - Track connection health per pooled client

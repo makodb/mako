@@ -1250,6 +1250,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_idempotency ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_idempotency COMMAND test_idempotency)
 
+    # Completion Tracker Tests
+    add_executable(test_completion_tracker test/test_completion_tracker.cc)
+    target_include_directories(test_completion_tracker PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_completion_tracker PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_completion_tracker ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_completion_tracker COMMAND test_completion_tracker)
+
     # Atomic Lock Tests - Commented out due to crashes
     # add_executable(test_alock test/test_alock.cc)
     # target_include_directories(test_alock PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
