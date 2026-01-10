@@ -97,6 +97,10 @@ class Config {
   int jetpack_fastpath_attempt_rate_ = 0;
   int jetpack_recovery_batch_size_ = 1000;
 
+  // Transaction timeout configuration
+  // Default: 30 seconds (30,000,000 microseconds)
+  uint64_t txn_timeout_us_ = 30000000;
+
   enum SiteInfoType { CLIENT, SERVER };
   struct SiteInfo {
     siteid_t id; // unique site id
@@ -260,6 +264,8 @@ class Config {
   single_server_t get_single_server();
   uint32_t get_concurrent_txn();
   int GetJetpackRecoveryBatchSize() const { return jetpack_recovery_batch_size_; }
+  // @safe - Get transaction timeout in microseconds
+  uint64_t get_txn_timeout() const { return txn_timeout_us_; }
   bool get_batch_start();
   bool do_early_return();
   bool do_logging();

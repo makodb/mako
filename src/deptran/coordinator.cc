@@ -37,6 +37,7 @@ Coordinator::Coordinator(uint32_t coo_id,
   this->next_txn_id_.store(k);
   recorder_ = NULL;
   retry_wait_ = Config::GetConfig()->retry_wait();
+  txn_timeout_ = Config::GetConfig()->get_txn_timeout();
 
 	struct timespec begin, end;
 	//clock_gettime(CLOCK_MONOTONIC, &begin);

@@ -53,6 +53,8 @@ class Coordinator {
   int benchmark_;
   // Shared client status for statistics tracking
   rusty::Option<rusty::Arc<ClientStatus>> client_status_;
+  // Transaction timeout in microseconds (from config, default 30 seconds)
+  uint64_t txn_timeout_{30000000};
   uint32_t thread_id_;
   bool batch_optimal_ = false;
 	bool slow_ = false;

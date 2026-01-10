@@ -76,6 +76,7 @@ namespace janus {
 #define REPEAT      (-15)  // Jetpack: null_cmd retry indicator
 #define DELAYED     (1)
 #define WRONG_LEADER (-20)
+#define TXN_TIMEOUT (-30)  // Transaction timed out waiting for shard response
 
 #define MODE_NONE   (0x00)
 #define MODE_2PL    (0x01)

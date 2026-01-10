@@ -1,386 +1,178 @@
-# Transaction Timeout and Shard Failure Handling Plan
+# Transaction Timeout and Shard Failure Handling
 
-## Overview
+## Status: IMPLEMENTED
 
-This document describes the plan to add transaction-level timeout support so that requests complete with an "error" state when shards fail, allowing the system to continue running without blocking.
+This document describes the transaction timeout feature that allows transactions to complete with an error state if shards fail or become unreachable, preventing the system from blocking indefinitely.
 
-## Goals
+## Implementation Summary
 
-1. **Non-blocking failure handling**: Transactions should timeout and return error instead of blocking indefinitely
-2. **Minimal changes**: Leverage existing `Event::wait(timeout)` infrastructure
-3. **Best-effort commit**: Commit changes on reachable shards (no consistency guarantees for failed transactions)
-4. **Testability**: Add shard failure simulation to multi-shard single-process framework
+### Completed Tasks
 
-## Current Architecture
+1. **Task 1: Timeout Configuration** - DONE
+   - Added `txn_timeout_us_` to `Config` class (default: 30 seconds)
+   - Added `get_txn_timeout()` getter method
+   - Added YAML config support via `txn_timeout_ms` field
 
-### Event Timeout Infrastructure (Already Exists)
+2. **Task 2: Coordinator Wait Calls** - DONE
+   - Modified 4 wait() calls in `CoordinatorClassic` to use timeout
+   - Added timeout handling with logging and abort flag
 
-```cpp
-// src/rrr/reactor/event.h
-class Event {
-  enum EventStatus { INIT = 0, WAIT = 1, READY = 2, DONE = 3, TIMEOUT = 4 };
+3. **Task 3: Timeout Status** - DONE
+   - Added `TXN_TIMEOUT = -30` constant
+   - Added `timed_out_` flag to `TxReply`
 
-  // Timeout in microseconds (0 = no timeout)
-  virtual void wait(uint64_t timeout=0) final;
-};
+4. **Task 4: Shard Failure Simulation** - DONE
+   - Created `ShardFailureController` class
+   - Thread-safe using `std::atomic<bool>`
+   - Global controller pointer for test integration
 
-// src/rrr/reactor/quorum_event.h
-class QuorumEvent : public Event {
-  bool timeouted_ = false;  // Currently unused
-};
-```
-
-### Reactor Timeout Handling (Already Exists)
-
-```cpp
-// src/rrr/reactor/reactor.cc (lines 246-276)
-// - Checks timeout_events_ for expired wakeup_time_
-// - Sets status to TIMEOUT if time_now > wakeup_time_
-// - Resumes coroutine with TIMEOUT status
-```
-
-### Current Coordinator Wait Calls (No Timeout)
-
-```cpp
-// src/deptran/classic/coordinator.cc
-
-// Line 309 - Dispatch phase
-sp_int_event->wait();  // Blocks indefinitely
-
-// Line 433 - Prepare phase
-quorum_event->wait();  // Blocks indefinitely
-
-// Line 544 - Commit phase
-quorum_event->wait();  // Blocks indefinitely
-
-// Line 584 - Abort phase
-quorum_event->wait();  // Blocks indefinitely
-```
+5. **Task 5: Unit Tests** - DONE
+   - Created 9 unit tests for ShardFailureController
+   - All tests passing
 
 ## Design
 
 ### 1. Configuration
 
-Add to `src/deptran/config.h`:
+Added to `src/deptran/config.h`:
 
 ```cpp
-class Config {
-  // Transaction timeout in microseconds (default: 30 seconds)
-  uint64_t txn_timeout_us_ = 30 * 1000 * 1000;  // 30 seconds
+// Transaction timeout configuration
+// Default: 30 seconds (30,000,000 microseconds)
+uint64_t txn_timeout_us_ = 30000000;
 
-public:
-  uint64_t get_txn_timeout() const { return txn_timeout_us_; }
-};
+// Getter
+uint64_t get_txn_timeout() const { return txn_timeout_us_; }
 ```
 
-YAML config support:
+YAML config support in `LoadModeYML()`:
 ```yaml
-# In benchmark config file
-txn_timeout_ms: 30000  # 30 seconds (will be converted to microseconds)
+mode:
+  txn_timeout_ms: 30000  # 30 seconds (optional)
 ```
 
 ### 2. Coordinator Changes
 
-Add timeout member to base class:
+Added timeout member to `Coordinator` base class:
 
 ```cpp
-// src/deptran/coordinator.h
-class Coordinator {
-protected:
-  uint64_t txn_timeout_;  // Timeout in microseconds
-
-public:
-  Coordinator() {
-    txn_timeout_ = Config::GetConfig()->get_txn_timeout();
-  }
-};
+// Transaction timeout in microseconds (from config, default 30 seconds)
+uint64_t txn_timeout_{30000000};
 ```
 
-Modify wait calls in `src/deptran/classic/coordinator.cc`:
+Modified wait calls in `CoordinatorClassic` (4 locations):
 
 ```cpp
-// Dispatch phase (line 309)
+// Example: DispatchAsync
 sp_int_event->wait(txn_timeout_);
 if (sp_int_event->status_.get() == Event::TIMEOUT) {
-  Log_warn("Transaction %lu: Dispatch timeout", txn->id_);
+  Log_warn("Transaction %lu: DispatchAsync timed out after %lu us",
+           (unsigned long)cmd_->id_, (unsigned long)txn_timeout_);
   aborted_ = true;
-  txn->commit_.store(false);
-  GotoNextPhase();  // Go to abort/cleanup
-  return;
-}
-
-// Prepare phase (line 433)
-quorum_event->wait(txn_timeout_);
-if (quorum_event->status_.get() == Event::TIMEOUT || !quorum_event->yes()) {
-  Log_warn("Transaction %lu: Prepare timeout, voted_yes=%d/%d",
-           cmd_->id_, quorum_event->n_voted_yes_, quorum_event->quorum_);
-  quorum_event->timeouted_ = true;
-  aborted_ = true;
-}
-
-// Commit phase (line 544) - best effort
-quorum_event->wait(txn_timeout_);
-if (quorum_event->status_.get() == Event::TIMEOUT) {
-  Log_warn("Transaction %lu: Commit timeout, committed to %d/%d shards",
-           cmd_->id_, quorum_event->n_voted_yes_, quorum_event->n_total_);
-  // Continue - some shards may have committed
-}
-
-// Abort phase (line 584) - best effort
-quorum_event->wait(txn_timeout_);
-if (quorum_event->status_.get() == Event::TIMEOUT) {
-  Log_warn("Transaction %lu: Abort timeout, aborted on %d/%d shards",
-           cmd_->id_, quorum_event->n_voted_yes_, quorum_event->n_total_);
-  // Continue - best effort abort
+  tx_data().reply_.timed_out_ = true;
+  tx_data().reply_.res_ = TXN_TIMEOUT;
 }
 ```
 
-### 3. Transaction Reply Enhancement
+Similar patterns for:
+- `Prepare()` - aborts on timeout
+- `Commit()` - best-effort (logs warning, continues)
+- `Abort()` - best-effort (logs warning, continues)
 
-Add timeout status to reply:
+### 3. Timeout Status
 
+Added to `src/deptran/constants.h`:
 ```cpp
-// In appropriate header (constants.h or similar)
-enum TxnResult {
-  SUCCESS = 0,
-  REJECT = 1,
-  WRONG_LEADER = 2,
-  TIMEOUT = 3,        // New: transaction timed out
-  SHARD_FAILURE = 4   // New: specific shard(s) unreachable
-};
+#define TXN_TIMEOUT (-30)  // Transaction timed out
+```
 
-// In TxReply or TxData
-struct TxReply {
-  TxnResult res_;
-  std::vector<int> timed_out_shards_;  // Which shards didn't respond
-};
+Added to `TxReply` in `src/deptran/procedure.h`:
+```cpp
+// Timeout flag - set when transaction timed out
+bool timed_out_ = false;
 ```
 
 ### 4. Shard Failure Simulation
 
-Create `src/mako/benchmarks/shard_failure_controller.h`:
+Created `src/mako/benchmarks/shard_failure_controller.h`:
 
 ```cpp
-#pragma once
-
-#include <rusty/rusty.hpp>
-#include <vector>
-
-namespace mako {
-
-/**
- * Controller for simulating shard failures in tests.
- * Thread-safe using rusty::Cell for interior mutability.
- */
 class ShardFailureController {
-public:
-  static constexpr int MAX_SHARDS = 16;
-
 private:
-  // Per-shard failure flag
-  rusty::Cell<bool> failed_[MAX_SHARDS];
-
-  // Singleton instance
-  static ShardFailureController* instance_;
+    std::vector<std::unique_ptr<std::atomic<bool>>> shard_failed_;
+    size_t num_shards_;
 
 public:
-  ShardFailureController() {
-    for (int i = 0; i < MAX_SHARDS; i++) {
-      failed_[i].set(false);
-    }
-  }
-
-  // @safe - Get singleton instance
-  static ShardFailureController* get() {
-    if (!instance_) {
-      instance_ = new ShardFailureController();
-    }
-    return instance_;
-  }
-
-  // @safe - Mark shard as failed
-  void fail_shard(int shard_idx) {
-    if (shard_idx >= 0 && shard_idx < MAX_SHARDS) {
-      failed_[shard_idx].set(true);
-      Log_info("ShardFailureController: Shard %d marked as FAILED", shard_idx);
-    }
-  }
-
-  // @safe - Mark shard as recovered
-  void recover_shard(int shard_idx) {
-    if (shard_idx >= 0 && shard_idx < MAX_SHARDS) {
-      failed_[shard_idx].set(false);
-      Log_info("ShardFailureController: Shard %d marked as RECOVERED", shard_idx);
-    }
-  }
-
-  // @safe - Check if shard is failed
-  bool is_shard_failed(int shard_idx) const {
-    if (shard_idx >= 0 && shard_idx < MAX_SHARDS) {
-      return failed_[shard_idx].get();
-    }
-    return false;
-  }
-
-  // @safe - Reset all shards to healthy
-  void reset() {
-    for (int i = 0; i < MAX_SHARDS; i++) {
-      failed_[i].set(false);
-    }
-  }
+    explicit ShardFailureController(size_t num_shards);
+    void fail_shard(size_t shard_idx);
+    void recover_shard(size_t shard_idx);
+    bool is_shard_failed(size_t shard_idx) const;
+    void fail_all_shards();
+    void recover_all_shards();
+    size_t failed_shard_count() const;
 };
 
-}  // namespace mako
+// Global pointer for test integration
+inline ShardFailureController* g_shard_failure_controller = nullptr;
+inline bool is_shard_failed(size_t shard_idx);
 ```
 
-### 5. Integration with RPC Layer
+## Usage
 
-Modify `src/deptran/communicator.cc` to check failure controller:
+### Configuration (YAML)
+
+```yaml
+mode:
+  cc: mako
+  ab: paxos
+  txn_timeout_ms: 30000  # 30 second timeout (optional)
+```
+
+### Shard Failure Simulation (Test Code)
 
 ```cpp
 #include "mako/benchmarks/shard_failure_controller.h"
 
-// In SendXxx methods, before actually sending:
-Future* Communicator::SendPrepare(..., int shard_idx) {
-  // Check if shard is simulated as failed
-  if (mako::ShardFailureController::get()->is_shard_failed(shard_idx)) {
-    Log_debug("Skipping RPC to failed shard %d", shard_idx);
-    // Don't send - the quorum event will timeout
-    return nullptr;  // Or return a dummy future that never completes
-  }
+// Create controller
+janus::ShardFailureController controller(num_shards);
+janus::g_shard_failure_controller = &controller;
 
-  // Normal RPC send
-  ...
+// Fail a shard
+controller.fail_shard(1);
+
+// Check if shard is failed
+if (janus::is_shard_failed(1)) {
+    // Skip RPC or handle failure
 }
+
+// Recover shard
+controller.recover_shard(1);
+
+// Clean up
+janus::g_shard_failure_controller = nullptr;
 ```
 
-Alternative approach - check in scheduler on receiving side:
+## Files Changed
 
-```cpp
-// In scheduler, when receiving request:
-void Scheduler::OnPrepare(...) {
-  int my_shard = Config::GetConfig()->get_shard_id();
-  if (mako::ShardFailureController::get()->is_shard_failed(my_shard)) {
-    Log_debug("Shard %d is failed, dropping request", my_shard);
-    return;  // Don't process, don't reply
-  }
-  // Normal processing
-  ...
-}
-```
+| File | Change |
+|------|--------|
+| `src/deptran/config.h` | Added `txn_timeout_us_`, `get_txn_timeout()` |
+| `src/deptran/config.cc` | Added YAML loading for `txn_timeout_ms` |
+| `src/deptran/coordinator.h` | Added `txn_timeout_` member |
+| `src/deptran/coordinator.cc` | Initialize `txn_timeout_` from config |
+| `src/deptran/classic/coordinator.cc` | Added timeout to 4 wait() calls |
+| `src/deptran/constants.h` | Added `TXN_TIMEOUT = -30` |
+| `src/deptran/procedure.h` | Added `timed_out_` to `TxReply` |
+| `src/mako/benchmarks/shard_failure_controller.h` | New file |
+| `test/deptran/txn_timeout_test.cc` | New test file (9 tests) |
+| `CMakeLists.txt` | Added test_txn_timeout target |
 
-## Test Plan
+## Future Work
 
-### Test 1: Basic Timeout Test
-
-```cpp
-// test/deptran/txn_timeout_test.cpp
-
-TEST(TxnTimeout, BasicTimeout) {
-  // 1. Start 2-shard single-process mode
-  // 2. Run normal transactions - should succeed
-  // 3. Fail shard 1
-  ShardFailureController::get()->fail_shard(1);
-
-  // 4. Run cross-shard transaction
-  auto result = RunCrossShardTxn(shard0, shard1);
-
-  // 5. Verify timeout
-  EXPECT_EQ(result.res_, TIMEOUT);
-  EXPECT_TRUE(result.timed_out_shards_.contains(1));
-
-  // 6. Verify single-shard txns still work
-  auto result2 = RunSingleShardTxn(shard0);
-  EXPECT_EQ(result2.res_, SUCCESS);
-}
-```
-
-### Test 2: Partial Commit Test
-
-```cpp
-TEST(TxnTimeout, PartialCommit) {
-  // 1. Start cross-shard transaction
-  // 2. Let dispatch complete on both shards
-  // 3. Fail shard 1 before prepare
-  ShardFailureController::get()->fail_shard(1);
-
-  // 4. Transaction should timeout at prepare
-  // 5. Shard 0 should be in consistent state (not hung)
-}
-```
-
-### Test 3: Recovery Test
-
-```cpp
-TEST(TxnTimeout, Recovery) {
-  // 1. Fail shard 1
-  ShardFailureController::get()->fail_shard(1);
-
-  // 2. Run transactions - should timeout
-  auto result1 = RunCrossShardTxn();
-  EXPECT_EQ(result1.res_, TIMEOUT);
-
-  // 3. Recover shard 1
-  ShardFailureController::get()->recover_shard(1);
-
-  // 4. Transactions should work again
-  auto result2 = RunCrossShardTxn();
-  EXPECT_EQ(result2.res_, SUCCESS);
-}
-```
-
-### Test Script
-
-Create `examples/test_shard_failure_timeout.sh`:
-
-```bash
-#!/bin/bash
-
-# Test shard failure timeout handling
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../bash/util.sh"
-
-echo "Testing shard failure timeout..."
-
-# Start 2-shard single-process mode with short timeout
-CMD="./${BUILD_DIR:-build}/dbtest \
-    --num-threads 4 \
-    --shard-config src/mako/config/local-shards2-warehouses4.yml \
-    -P localhost \
-    -L 0,1 \
-    --txn-timeout-ms 5000 \
-    --fail-shard-after 10:1"  # Fail shard 1 after 10 seconds
-
-nohup $CMD > test_shard_failure.log 2>&1 &
-PID=$!
-
-# Wait for failure to occur and transactions to timeout
-sleep 20
-
-kill $PID 2>/dev/null
-
-# Check results
-if grep -q "Shard 1 marked as FAILED" test_shard_failure.log && \
-   grep -q "timeout" test_shard_failure.log; then
-    echo "SUCCESS: Shard failure and timeout detected"
-    exit 0
-else
-    echo "FAILURE: Expected timeout behavior not found"
-    tail -30 test_shard_failure.log
-    exit 1
-fi
-```
-
-## Implementation Order
-
-1. **Task 1** (Config): Add `txn_timeout_us_` to config (~50 LOC)
-2. **Task 2** (Coordinator): Add timeout to wait() calls (~100 LOC)
-3. **Task 3** (Reply): Add TIMEOUT status to reply (~50 LOC)
-4. **Task 4** (Simulation): Create ShardFailureController (~150 LOC)
-5. **Task 5** (Tests): Write tests using multi-shard framework (~300 LOC)
-
-**Total estimated**: ~650 LOC
+1. **Deep Communicator Integration**: Integrate ShardFailureController with Communicator to automatically skip RPCs to failed shards
+2. **Shard Timeout Metrics**: Track per-shard timeout statistics
+3. **Signal-based Failure Control**: Add signal handlers (USR1/USR2) for runtime failure injection
+4. **Integration Tests**: Add CI test for shard failure scenarios
 
 ## Key Implementation Notes
 
@@ -394,22 +186,9 @@ fi
    }
    ```
 
-3. **QuorumEvent timeout**: Also check `!quorum_event->yes()` to see if quorum was reached
-
-4. **Best-effort semantics**: For timed-out transactions:
-   - No consistency guarantees
+3. **Best-effort semantics**: For timed-out transactions during Commit/Abort:
+   - Logs warning but continues
    - Some shards may have committed, others may not
-   - This is acceptable per requirements
+   - Timeout flag is set for informational purposes
 
-5. **Shard failure simulation**: Works by either:
-   - Not sending RPCs to "failed" shards (sender-side)
-   - Dropping requests at "failed" shards (receiver-side)
-   - Either way, the QuorumEvent won't get enough votes and will timeout
-
-## References
-
-- Event system: `src/rrr/reactor/event.h`, `src/rrr/reactor/event.cc`
-- Reactor timeout handling: `src/rrr/reactor/reactor.cc` (lines 246-276)
-- Coordinator: `src/deptran/classic/coordinator.cc`
-- QuorumEvent: `src/rrr/reactor/quorum_event.h`
-- Multi-shard test: `examples/test_multi_shard_single_process.sh`
+4. **Thread-safety**: ShardFailureController uses `std::atomic<bool>` via `std::unique_ptr` per shard

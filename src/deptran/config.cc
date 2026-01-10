@@ -566,6 +566,10 @@ void Config::LoadModeYML(YAML::Node config) {
   if (config["jetpack_recovery_batch_size"]) {
     jetpack_recovery_batch_size_ = config["jetpack_recovery_batch_size"].as<int>();
   }
+  if (config["txn_timeout_ms"]) {
+    // Convert milliseconds to microseconds
+    txn_timeout_us_ = static_cast<uint64_t>(config["txn_timeout_ms"].as<int>()) * 1000;
+  }
 }
 
 void Config::UpdateWeights(YAML::Node config) {

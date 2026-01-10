@@ -28,6 +28,8 @@ class TxReply {
   txnid_t tx_id_;
   // Optional view data for client view updates (e.g., when WRONG_LEADER error occurs)
   std::shared_ptr<ViewData> sp_view_data_ = nullptr;
+  // Timeout flag - set when transaction timed out waiting for shard responses
+  bool timed_out_ = false;
 };
 
 class TxWorkspace {
