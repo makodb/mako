@@ -462,3 +462,152 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       5. Recovery doesn't impact normal operation significantly
       6. All recovery events logged and metricated
     - **RustyCpp Compliance**: All new code uses rusty types, @safe/@unsafe annotations, passes borrow checking
+  - [ ] *high* Configuration Node (C-Node) for Persistent Configuration
+    - **Goal**: Store cluster configuration persistently so system can reboot and recover configuration
+    - **Scope**: One node designated as c-node stores config in RocksDB; other nodes fetch config from c-node via RPC
+    - **Implementation Plan**: See `doc/config_node_plan.md`
+    - **Current State Analysis**:
+      - Configuration loaded from YAML files at startup (read-only after that)
+      - `Config` singleton stores: sites, replica groups, addresses, protocols, workload settings
+      - RocksDB currently used only for transaction logs, not configuration
+      - No runtime configuration updates supported
+      - No persistent configuration storage
+    - [ ] **Task 1: Design Configuration Schema for RocksDB** [~50 LOC]
+      - [ ] *high* 1.1 Define configuration data structures for persistence
+        - Cluster topology: sites (id, name, host, port, role, partition_id)
+        - Replica groups: partition → list of site IDs
+        - Protocol settings: tx_proto, replication_proto, timeouts
+        - Serialize to protobuf or JSON for RocksDB storage
+      - [ ] *high* 1.2 Define RocksDB key schema
+        - Key prefix scheme: `config/topology/sites`, `config/topology/replicas`, `config/settings/*`
+        - Version/epoch tracking for configuration updates
+    - [ ] **Task 2: Implement C-Node Configuration Storage** [~200 LOC]
+      - [ ] *high* 2.1 Create `ConfigStore` class
+        - File: `src/deptran/config_store.h`, `config_store.cc`
+        - Methods: `Save(Config*)`, `Load() -> Config*`, `GetVersion() -> uint64_t`
+        - Use RocksDB instance separate from transaction logs
+        - Store at path: `<data_dir>/config_db/`
+      - [ ] *high* 2.2 Implement configuration serialization
+        - Serialize `SiteInfo` structs to bytes
+        - Serialize `ReplicaGroup` mappings
+        - Serialize protocol and workload settings
+        - Use simple format (JSON or custom binary) - avoid protobuf dependency if possible
+      - [ ] *medium* 2.3 Add configuration versioning
+        - Store `config_version` (monotonic counter)
+        - Increment on each configuration update
+        - Used by other nodes to detect stale config
+    - [ ] **Task 3: Implement C-Node RPC Interface** [~150 LOC]
+      - [ ] *high* 3.1 Define configuration RPC methods
+        - `GetConfig(version) -> (config_data, current_version)`
+        - `GetConfigVersion() -> version`
+        - Add to existing RPC service or create new `ConfigService`
+      - [ ] *high* 3.2 Implement RPC server on c-node
+        - Register `ConfigService` on c-node process
+        - Serve configuration from in-memory `Config` singleton
+        - Return serialized configuration data
+      - [ ] *medium* 3.3 Handle concurrent requests
+        - Configuration is read-heavy, write-rare
+        - Use read-write lock for config access
+        - Cache serialized config to avoid repeated serialization
+    - [ ] **Task 4: Implement Config Fetching for Other Nodes** [~150 LOC]
+      - [ ] *high* 4.1 Add c-node connection logic
+        - New startup mode: `--config-node <host:port>`
+        - On startup, connect to c-node and fetch configuration
+        - Fall back to local YAML if c-node unreachable (optional)
+      - [ ] *high* 4.2 Implement configuration client
+        - Create `ConfigClient` class
+        - Methods: `FetchConfig(c_node_addr) -> Config*`
+        - Deserialize received configuration into `Config` object
+      - [ ] *medium* 4.3 Add retry and timeout handling
+        - Retry connecting to c-node with backoff
+        - Configurable timeout (default: 30 seconds)
+        - Fail startup if c-node unreachable after retries
+    - [ ] **Task 5: Integrate with Node Startup** [~100 LOC]
+      - [ ] *high* 5.1 Modify startup flow for c-node
+        - If `--is-config-node` flag set:
+          1. Load config from local YAML (first boot) or RocksDB (reboot)
+          2. Save config to RocksDB
+          3. Start ConfigService RPC server
+          4. Continue normal startup
+      - [ ] *high* 5.2 Modify startup flow for other nodes
+        - If `--config-node <addr>` flag set:
+          1. Connect to c-node
+          2. Fetch configuration via RPC
+          3. Initialize local `Config` singleton from fetched data
+          4. Continue normal startup
+      - [ ] *medium* 5.3 Add first-boot detection for c-node
+        - Check if RocksDB config exists
+        - If not, load from YAML and save to RocksDB
+        - If yes, load from RocksDB (ignore YAML)
+    - [ ] **Task 6: Write Tests** [~200 LOC]
+      - [ ] *high* 6.1 ConfigStore unit tests
+        - Test Save/Load roundtrip
+        - Test configuration versioning
+        - Test RocksDB persistence across restarts
+      - [ ] *high* 6.2 ConfigService RPC tests
+        - Test GetConfig returns correct data
+        - Test version checking
+        - Test concurrent requests
+      - [ ] *high* 6.3 End-to-end integration tests
+        - Start c-node, save config
+        - Start other nodes, verify they fetch config
+        - Restart c-node, verify config persisted
+        - Test with multi-shard single-process mode
+      - [ ] *medium* 6.4 Failure scenario tests
+        - C-node unavailable at startup
+        - C-node crashes after other nodes started
+        - Config version mismatch handling
+    - **Key Files**:
+      | File | Purpose |
+      |------|---------|
+      | `src/deptran/config_store.h` | New: ConfigStore class for RocksDB persistence |
+      | `src/deptran/config_store.cc` | New: ConfigStore implementation |
+      | `src/deptran/config_service.h` | New: RPC service for config distribution |
+      | `src/deptran/config_client.h` | New: Client to fetch config from c-node |
+      | `src/deptran/config.h` | Modify: Add serialization methods |
+      | `src/deptran/config.cc` | Modify: Add c-node startup logic |
+    - **Configuration Flow**:
+      ```
+      C-Node Startup (First Boot):
+        1. Load YAML config file
+        2. Initialize Config singleton
+        3. Save config to RocksDB (ConfigStore::Save)
+        4. Start ConfigService RPC server
+        5. Start normal server operations
+
+      C-Node Startup (Reboot):
+        1. Load config from RocksDB (ConfigStore::Load)
+        2. Initialize Config singleton
+        3. Start ConfigService RPC server
+        4. Start normal server operations
+
+      Other Node Startup:
+        1. Connect to c-node address
+        2. Call GetConfig RPC
+        3. Deserialize into Config singleton
+        4. Start normal server operations
+      ```
+    - **RocksDB Schema**:
+      ```
+      Key                           Value
+      ─────────────────────────────────────────────────
+      config/version                uint64 (monotonic counter)
+      config/topology/sites         serialized vector<SiteInfo>
+      config/topology/replicas      serialized vector<ReplicaGroup>
+      config/settings/tx_proto      int (protocol enum)
+      config/settings/repl_proto    int (replication enum)
+      config/settings/timeouts      serialized timeout settings
+      config/workload/type          int (workload enum)
+      config/workload/params        serialized workload params
+      ```
+    - **Success Criteria**:
+      1. C-node persists configuration to RocksDB
+      2. C-node recovers configuration on reboot (no YAML needed after first boot)
+      3. Other nodes successfully fetch configuration from c-node
+      4. System starts correctly with c-node-based configuration
+      5. Tests pass for persistence, RPC, and integration scenarios
+    - **Future Extensions** (not in this phase):
+      - Runtime configuration updates via c-node
+      - Multiple c-nodes for high availability
+      - Configuration change notifications to other nodes
+      - Configuration history/rollback
