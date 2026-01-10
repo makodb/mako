@@ -1450,6 +1450,45 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_errors ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_errors COMMAND test_rpc_errors)
 
+    # ============================================================================
+    # RPC Reliability Integration Tests (Phase 7.2)
+    # ============================================================================
+
+    # State Machine Integration Tests
+    add_executable(test_rpc_state_integration test/rpc_state_integration_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_state_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_state_integration PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_state_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_state_integration COMMAND test_rpc_state_integration)
+
+    # Reconnection Integration Tests
+    add_executable(test_rpc_reconnect_integration test/rpc_reconnect_integration_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_reconnect_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_reconnect_integration PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_reconnect_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_reconnect_integration COMMAND test_rpc_reconnect_integration)
+
+    # Circuit Breaker Integration Tests
+    add_executable(test_rpc_circuit_breaker_integration test/rpc_circuit_breaker_integration_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_circuit_breaker_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_circuit_breaker_integration PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_circuit_breaker_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_circuit_breaker_integration COMMAND test_rpc_circuit_breaker_integration)
+
+    # Error Integration Tests
+    add_executable(test_rpc_error_integration test/rpc_error_integration_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_error_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_error_integration PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_error_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_error_integration COMMAND test_rpc_error_integration)
+
+    # Combined Reliability Tests
+    add_executable(test_rpc_combined_reliability test/rpc_combined_reliability_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_combined_reliability PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_combined_reliability PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_combined_reliability ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_combined_reliability COMMAND test_rpc_combined_reliability)
+
     # Integration tests from CI
     add_test(NAME simpleTransaction COMMAND simpleTransaction)
 
