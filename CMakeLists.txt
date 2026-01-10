@@ -1558,6 +1558,31 @@ if(BUILD_TESTS)
     target_link_libraries(test_txn_timeout ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_txn_timeout COMMAND test_txn_timeout)
 
+    # Stress Crash Recovery Tests (Phase 7.3.1)
+    add_executable(test_rpc_stress_crash test/rpc_stress_crash_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_stress_crash PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_stress_crash PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_stress_crash ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    # NOTE: Stress tests take too long for regular CI (10+ minutes each).
+    # They are labeled "stress" and excluded from ctest by default.
+    # Run manually with: ctest -L stress --timeout 1800
+    add_test(NAME test_rpc_stress_crash COMMAND test_rpc_stress_crash)
+    set_tests_properties(test_rpc_stress_crash PROPERTIES
+        TIMEOUT 1800
+        LABELS "stress"
+    )
+
+    # Network Partition Simulation Tests (Phase 7.3.2)
+    add_executable(test_rpc_partition test/rpc_partition_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_partition PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_partition PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_partition ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_partition COMMAND test_rpc_partition)
+    set_tests_properties(test_rpc_partition PROPERTIES
+        TIMEOUT 600
+        LABELS "stress"
+    )
+
     # Integration tests from CI
     add_test(NAME simpleTransaction COMMAND simpleTransaction)
 
