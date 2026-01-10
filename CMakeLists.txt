@@ -1530,6 +1530,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_validation ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_validation COMMAND test_rpc_validation)
 
+    # Connection Health Metrics Tests (Phase 3.2)
+    add_executable(test_rpc_metrics test/rpc_metrics_test.cc test/benchmark_service.cc)
+    target_include_directories(test_rpc_metrics PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_metrics PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_rpc_metrics ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_metrics COMMAND test_rpc_metrics)
+
     # Transaction Timeout Tests
     add_executable(test_txn_timeout test/deptran/txn_timeout_test.cc)
     target_include_directories(test_txn_timeout PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

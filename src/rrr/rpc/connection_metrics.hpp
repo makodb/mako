@@ -1,0 +1,211 @@
+#pragma once
+
+/**
+ * Connection Health Metrics (Phase 3.2)
+ *
+ * Tracks request, data transfer, connection lifecycle, and latency metrics
+ * for monitoring connection health and performance.
+ *
+ * All metrics are thread-safe via rusty::Cell.
+ */
+
+#include <rusty/cell.hpp>
+#include <cstdint>
+#include <chrono>
+#include <limits>
+
+namespace rrr {
+
+// @safe - All fields use Cell for thread-safe interior mutability
+class ConnectionMetrics {
+public:
+    // @safe - Default constructor
+    ConnectionMetrics() = default;
+
+    // === Request Counters ===
+
+    // @safe - Get number of requests sent
+    uint64_t requests_sent() const {
+        return requests_sent_.get();
+    }
+
+    // @safe - Get number of requests completed successfully
+    uint64_t requests_completed() const {
+        return requests_completed_.get();
+    }
+
+    // @safe - Get number of requests that failed
+    uint64_t requests_failed() const {
+        return requests_failed_.get();
+    }
+
+    // @safe - Get number of requests that timed out
+    uint64_t requests_timed_out() const {
+        return requests_timed_out_.get();
+    }
+
+    // === Data Transfer Counters ===
+
+    // @safe - Get total bytes sent
+    uint64_t bytes_sent() const {
+        return bytes_sent_.get();
+    }
+
+    // @safe - Get total bytes received
+    uint64_t bytes_received() const {
+        return bytes_received_.get();
+    }
+
+    // === Connection Lifecycle ===
+
+    // @safe - Get number of reconnection attempts
+    uint64_t reconnect_count() const {
+        return reconnect_count_.get();
+    }
+
+    // @safe - Get timestamp when connection was established (ms since epoch)
+    uint64_t connect_time_ms() const {
+        return connect_time_ms_.get();
+    }
+
+    // === Latency Metrics ===
+
+    // @safe - Get minimum latency in microseconds
+    uint64_t min_latency_us() const {
+        auto min = min_latency_us_.get();
+        return (min == std::numeric_limits<uint64_t>::max()) ? 0 : min;
+    }
+
+    // @safe - Get maximum latency in microseconds
+    uint64_t max_latency_us() const {
+        return max_latency_us_.get();
+    }
+
+    // === Computed Metrics ===
+
+    // @safe - Calculate success rate as percentage (0-100)
+    uint64_t success_rate_percent() const {
+        auto completed = requests_completed_.get();
+        auto total = requests_sent_.get();
+        if (total == 0) return 100;  // No requests = 100% success
+        return (completed * 100) / total;
+    }
+
+    // @safe - Calculate average latency in microseconds
+    uint64_t avg_latency_us() const {
+        auto completed = requests_completed_.get();
+        if (completed == 0) return 0;
+        return total_latency_us_.get() / completed;
+    }
+
+    // @unsafe - Calculate connection uptime in milliseconds
+    uint64_t uptime_ms() const {
+        auto connect_time = connect_time_ms_.get();
+        if (connect_time == 0) return 0;
+        // @unsafe { std::chrono operations }
+        auto now = std::chrono::steady_clock::now();
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        return static_cast<uint64_t>(now_ms) - connect_time;
+    }
+
+    // === Recording Methods ===
+
+    // @safe - Record that a request was sent
+    void record_request_sent() const {
+        requests_sent_.set(requests_sent_.get() + 1);
+    }
+
+    // @safe - Record that a request completed successfully with latency
+    void record_request_completed(uint64_t latency_us) const {
+        requests_completed_.set(requests_completed_.get() + 1);
+        total_latency_us_.set(total_latency_us_.get() + latency_us);
+
+        // Update min/max
+        auto current_min = min_latency_us_.get();
+        if (latency_us < current_min) {
+            min_latency_us_.set(latency_us);
+        }
+
+        auto current_max = max_latency_us_.get();
+        if (latency_us > current_max) {
+            max_latency_us_.set(latency_us);
+        }
+    }
+
+    // @safe - Record that a request completed (without latency tracking)
+    void record_request_completed() const {
+        requests_completed_.set(requests_completed_.get() + 1);
+    }
+
+    // @safe - Record that a request failed
+    void record_request_failed() const {
+        requests_failed_.set(requests_failed_.get() + 1);
+    }
+
+    // @safe - Record that a request timed out
+    void record_request_timeout() const {
+        requests_timed_out_.set(requests_timed_out_.get() + 1);
+    }
+
+    // @safe - Record bytes sent
+    void record_bytes_sent(uint64_t bytes) const {
+        bytes_sent_.set(bytes_sent_.get() + bytes);
+    }
+
+    // @safe - Record bytes received
+    void record_bytes_received(uint64_t bytes) const {
+        bytes_received_.set(bytes_received_.get() + bytes);
+    }
+
+    // @safe - Record a reconnection attempt
+    void record_reconnect() const {
+        reconnect_count_.set(reconnect_count_.get() + 1);
+    }
+
+    // @unsafe - Record connection established
+    void record_connect() const {
+        // @unsafe { std::chrono operations }
+        auto now = std::chrono::steady_clock::now();
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+        connect_time_ms_.set(static_cast<uint64_t>(now_ms));
+    }
+
+    // @safe - Reset all metrics to initial values
+    void reset() const {
+        requests_sent_.set(0);
+        requests_completed_.set(0);
+        requests_failed_.set(0);
+        requests_timed_out_.set(0);
+        bytes_sent_.set(0);
+        bytes_received_.set(0);
+        reconnect_count_.set(0);
+        connect_time_ms_.set(0);
+        total_latency_us_.set(0);
+        min_latency_us_.set(std::numeric_limits<uint64_t>::max());
+        max_latency_us_.set(0);
+    }
+
+private:
+    // Request counters
+    mutable rusty::Cell<uint64_t> requests_sent_{0};
+    mutable rusty::Cell<uint64_t> requests_completed_{0};
+    mutable rusty::Cell<uint64_t> requests_failed_{0};
+    mutable rusty::Cell<uint64_t> requests_timed_out_{0};
+
+    // Data transfer counters
+    mutable rusty::Cell<uint64_t> bytes_sent_{0};
+    mutable rusty::Cell<uint64_t> bytes_received_{0};
+
+    // Connection lifecycle
+    mutable rusty::Cell<uint64_t> reconnect_count_{0};
+    mutable rusty::Cell<uint64_t> connect_time_ms_{0};
+
+    // Latency tracking (microseconds)
+    mutable rusty::Cell<uint64_t> total_latency_us_{0};
+    mutable rusty::Cell<uint64_t> min_latency_us_{std::numeric_limits<uint64_t>::max()};
+    mutable rusty::Cell<uint64_t> max_latency_us_{0};
+};
+
+}  // namespace rrr

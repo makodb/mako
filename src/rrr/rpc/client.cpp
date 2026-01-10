@@ -266,6 +266,9 @@ int ClientConnection::connect(const char* addr) {
   // Initialize last activity time
   update_last_activity();
 
+  // Record connection in metrics
+  metrics_.record_connect();
+
   Log_debug("rrr::ClientConnection: connected to %s", addr);
 
   // Transition to CONNECTED state
@@ -318,6 +321,9 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
 
   if (result == 0) {
     Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
+
+    // Record reconnection in metrics
+    metrics_.record_reconnect();
 
     // Replay any queued requests
     size_t replayed = replay_pending_requests();
@@ -420,9 +426,11 @@ int ClientConnection::handle_write() {
   guard->write_to_fd(socket_);
   size_t after_size = guard->content_size();
 
-  // Update activity timestamp if we wrote any data
+  // Update activity timestamp and metrics if we wrote any data
   if (after_size < before_size) {
+    size_t bytes_written = before_size - after_size;
     update_last_activity();
+    metrics_.record_bytes_sent(bytes_written);
   }
 
   if (guard->empty()) {
@@ -444,8 +452,11 @@ bool ClientConnection::handle_read() {
     return false;
   }
 
-  // Update activity timestamp on successful read
+  // Update activity timestamp and metrics on successful read
   update_last_activity();
+  if (bytes_read > 0) {
+    metrics_.record_bytes_received(static_cast<uint64_t>(bytes_read));
+  }
 
   // Process all available packets
   while (state_machine_.is_connected()) {
@@ -480,6 +491,13 @@ bool ClientConnection::handle_read() {
         fu->reply_.borrow_mut()->read_from_marshal(in_,
                                             packet_size - v_reply_xid.val_size()
                                                 - v_error_code.val_size());
+
+        // Record request completion in metrics
+        if (v_error_code.get() == 0) {
+          metrics_.record_request_completed();
+        } else {
+          metrics_.record_request_failed();
+        }
 
         fu->notify_ready(fu);  // Pass Arc to self for callback safety
 

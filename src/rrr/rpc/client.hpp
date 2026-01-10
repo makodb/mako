@@ -14,6 +14,7 @@
 #include "connection_state.hpp"
 #include "reconnect_policy.hpp"
 #include "request_queue.hpp"
+#include "connection_metrics.hpp"
 
 namespace rrr {
 
@@ -420,6 +421,9 @@ class ClientConnection: public Pollable {
     // Updated on send/receive operations
     rusty::Cell<uint64_t> last_activity_time_{0};
 
+    // Connection health metrics
+    ConnectionMetrics metrics_;
+
     // Flag set by request() to indicate write mode update needed
     // Checked by poll loop after processing events (only used when on poll thread)
     // Cell provides interior mutability for safe access through const methods
@@ -656,6 +660,16 @@ public:
     // @unsafe - Uses getsockopt system call
     bool validate_connection() const;
 
+    /**
+     * Get the connection metrics.
+     * Returns a const reference to the metrics for this connection.
+     */
+    // @safe - Simple getter
+    // @lifetime: (&'a) -> &'a
+    const ConnectionMetrics& metrics() const {
+        return metrics_;
+    }
+
 private:
     // @safe - Replay queued requests after reconnection
     // Returns number of requests replayed
@@ -759,6 +773,9 @@ public:
         } else {
             poll_thread_worker_->update_mode(*this, PollMode::READ | PollMode::WRITE);
         }
+
+        // Record request sent in metrics
+        metrics_.record_request_sent();
 
         return FutureResult::Ok(fu);
     }
@@ -1268,6 +1285,21 @@ public:
             return guard->as_ref().unwrap()->validate_connection();
         }
         return false;
+    }
+
+    /**
+     * Get the connection metrics.
+     * Returns nullptr if no connection exists.
+     */
+    // @unsafe - Returns raw pointer (nullable)
+    const ConnectionMetrics* metrics() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            // @unsafe { address-of for raw pointer return }
+            return &guard->as_ref().unwrap()->metrics();
+        }
+        // @unsafe { nullptr is forbidden in safe code but intentional here }
+        return nullptr;
     }
 
     // @safe - Jetpack: handle_free for explicit future cleanup

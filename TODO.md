@@ -176,11 +176,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Caller-driven design: should_send_heartbeat(), on_heartbeat_sent(), on_pong_received()
         - Timeout detection with callback support: check_timeout(), set_on_timeout()
         - Thread-safe via rusty::Cell for all mutable state
-      - [ ] *low* 3.2 Connection Health Metrics [Plan: doc/rpc/phase3_metrics.md]
-        - Create `src/rrr/rpc/connection_metrics.hpp`
-        - `ConnectionMetrics`: requests_sent/completed/failed, bytes, reconnect_count, avg_latency
-        - Track per connection, expose via accessors
-        - ~100-150 LOC
+      - [x] *low* 3.2 Connection Health Metrics [Plan: doc/rpc/phase3_metrics.md] [DONE 2026-01-09]
+        - Created `src/rrr/rpc/connection_metrics.hpp` (~180 LOC)
+        - `ConnectionMetrics` class with Cell-based thread-safe counters
+        - Tracks requests_sent/completed/failed/timed_out, bytes_sent/received
+        - Tracks reconnect_count, connect_time, latency (min/max/avg)
+        - Integrated with ClientConnection: connect(), reconnect(), handle_read(), handle_write(), request()
+        - Client wrapper exposes metrics via pointer to connection's metrics
+        - 18 unit tests in test/rpc_metrics_test.cc
       - [x] *medium* 3.3 Proactive Connection Validation [deps: 3.1] [Plan: doc/rpc/phase3_validation.md] [DONE 2026-01-09]
         - Added `KeepaliveConfig` struct with aggressive/relaxed/disabled presets
         - Implemented `apply_keepalive_options()` in ClientConnection (uses setsockopt for SO_KEEPALIVE, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT)
