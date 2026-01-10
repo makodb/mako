@@ -162,12 +162,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Integrated with RequestQueue from Phase 2.1
         - Implemented queue replay in `replay_pending_requests()` called after reconnection
         - Unit tests: 17 tests in `test/rpc_request_buffering_test.cc`
-      - [ ] *low* 2.3 Idempotency Support [deps: 2.2] [Plan: doc/rpc/phase2_idempotency.md]
-        - Create `src/rrr/rpc/idempotency.hpp`
-        - Client: Generate unique idempotency keys, include in request header
-        - Server: `IdempotencyCache` to store recent responses, return cached for duplicates
-        - Configurable TTL and size
-        - ~200-250 LOC
+      - [x] *low* 2.3 Idempotency Support [deps: 2.2] [DONE 2026-01-10]
+        - Created `src/rrr/rpc/idempotency.hpp` (~450 LOC)
+        - IdempotencyKey: client_id + sequence for unique request identification
+        - IdempotencyKeyGenerator: thread-safe sequence generation via rusty::Cell
+        - IdempotencyConfig: configurable TTL, max_entries, presets (defaults, small, large, disabled)
+        - IdempotencyCache: LRU cache with TTL-based expiration
+          - Thread-safe via rusty::Mutex for map and list
+          - Statistics: hits, misses, evictions, hit_rate
+          - Methods: lookup, store, remove, clear, evict_expired
+        - Marshal operators for IdempotencyKey serialization
+        - Created test/test_idempotency.cc with 32 tests (all passing)
       - [x] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2] [Plan: doc/rpc/phase2_timeout_retry.md] [DONE 2026-01-10]
         - Created `src/rrr/rpc/request_options.hpp` (~230 LOC)
         - TimeoutType enum: NONE, CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT, TOTAL_TIMEOUT

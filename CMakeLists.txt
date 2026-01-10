@@ -1243,6 +1243,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_load_balancer ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_load_balancer COMMAND test_load_balancer)
 
+    # Idempotency Tests
+    add_executable(test_idempotency test/test_idempotency.cc)
+    target_include_directories(test_idempotency PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_idempotency PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_idempotency ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_idempotency COMMAND test_idempotency)
+
     # Atomic Lock Tests - Commented out due to crashes
     # add_executable(test_alock test/test_alock.cc)
     # target_include_directories(test_alock PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
