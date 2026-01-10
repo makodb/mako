@@ -1584,6 +1584,66 @@ public:
     // @safe - Get number of addresses with cached clients
     size_t address_count();
 
+    // === Bulk Reconnection ===
+
+    /**
+     * Result of a bulk reconnection operation.
+     */
+    struct BulkReconnectResult {
+        size_t total;       // Total clients attempted
+        size_t succeeded;   // Number that reconnected successfully
+        size_t failed;      // Number that failed to reconnect
+        size_t skipped;     // Number skipped (already connected)
+    };
+
+    /**
+     * Configuration for bulk reconnection.
+     */
+    struct BulkReconnectConfig {
+        uint32_t max_concurrent = 10;     // Max concurrent reconnections
+        uint32_t delay_between_ms = 10;   // Delay between batches
+        bool skip_connected = true;       // Skip already connected clients
+
+        // Presets
+        static BulkReconnectConfig defaults() {
+            return BulkReconnectConfig{};
+        }
+
+        static BulkReconnectConfig fast() {
+            BulkReconnectConfig cfg;
+            cfg.max_concurrent = 50;
+            cfg.delay_between_ms = 0;
+            return cfg;
+        }
+
+        static BulkReconnectConfig gentle() {
+            BulkReconnectConfig cfg;
+            cfg.max_concurrent = 5;
+            cfg.delay_between_ms = 50;
+            return cfg;
+        }
+    };
+
+    /**
+     * Reconnect all clients for a specific address.
+     *
+     * @param addr The address to reconnect clients for
+     * @param config Configuration for the bulk operation
+     * @return Result containing success/failure counts
+     */
+    // @unsafe - Calls reconnect on clients
+    BulkReconnectResult reconnect_all(const std::string& addr,
+                                      const BulkReconnectConfig& config = BulkReconnectConfig::defaults());
+
+    /**
+     * Reconnect all clients across all addresses.
+     *
+     * @param config Configuration for the bulk operation
+     * @return Result containing success/failure counts
+     */
+    // @unsafe - Calls reconnect on clients
+    BulkReconnectResult reconnect_all(const BulkReconnectConfig& config = BulkReconnectConfig::defaults());
+
 };
 
 }

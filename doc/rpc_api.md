@@ -681,6 +681,30 @@ public:
     // Pool statistics
     size_t total_client_count();
     size_t address_count();
+
+    // Bulk reconnection result
+    struct BulkReconnectResult {
+        size_t total;       // Total clients attempted
+        size_t succeeded;   // Number that reconnected successfully
+        size_t failed;      // Number that failed to reconnect
+        size_t skipped;     // Number skipped (already connected)
+    };
+
+    // Bulk reconnection configuration
+    struct BulkReconnectConfig {
+        uint32_t max_concurrent = 10;     // Max concurrent reconnections
+        uint32_t delay_between_ms = 10;   // Delay between batches
+        bool skip_connected = true;       // Skip already connected clients
+
+        static BulkReconnectConfig defaults();  // max_concurrent=10, delay=10ms
+        static BulkReconnectConfig fast();      // max_concurrent=50, delay=0
+        static BulkReconnectConfig gentle();    // max_concurrent=5, delay=50ms
+    };
+
+    // Bulk reconnection
+    BulkReconnectResult reconnect_all(const std::string& addr,
+                                      const BulkReconnectConfig& config = BulkReconnectConfig::defaults());
+    BulkReconnectResult reconnect_all(const BulkReconnectConfig& config = BulkReconnectConfig::defaults());
 };
 ```
 

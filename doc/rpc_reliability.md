@@ -383,6 +383,26 @@ pool.remove_unhealthy_clients("127.0.0.1:8080");
 pool.close_idle_clients("127.0.0.1:8080", current_time_ms);
 ```
 
+### Bulk Reconnection
+
+Reconnect multiple clients efficiently:
+
+```cpp
+// Reconnect all clients for an address
+auto result = pool.reconnect_all("127.0.0.1:8080");
+Log_info("Reconnected %zu/%zu clients", result.succeeded, result.total);
+
+// Reconnect all clients in pool
+auto result = pool.reconnect_all();
+
+// Use gentle config for rate limiting
+auto config = ClientPool::BulkReconnectConfig::gentle();
+config.max_concurrent = 5;    // Max 5 concurrent reconnections
+config.delay_between_ms = 50; // 50ms between batches
+
+auto result = pool.reconnect_all(config);
+```
+
 ## Best Practices
 
 ### For Clients

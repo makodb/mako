@@ -241,11 +241,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Strategies: ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY, RANDOM
         - Health-aware routing
         - ~150-200 LOC
-      - [ ] *low* 5.3 Bulk Reconnection Support [deps: 1.3, 5.1] [Plan: doc/rpc/phase5_bulk_reconnect.md]
-        - Add `ClientPool::reconnect_all()`
-        - Parallel reconnection with rate limiting
-        - `FutureGroup` for tracking multiple async operations
-        - ~100-150 LOC
+      - [x] *low* 5.3 Bulk Reconnection Support [deps: 1.3, 5.1] [DONE 2026-01-10]
+        - Added `ClientPool::reconnect_all()` overloads for address-specific and pool-wide reconnection
+        - Added `BulkReconnectConfig` with presets: defaults(), fast(), gentle()
+        - Added `BulkReconnectResult` with total/succeeded/failed/skipped counts
+        - Parallel reconnection in batches with rate limiting and delays
+        - ~110 LOC
     - [ ] **Phase 6: Error Handling Improvements**
       - [x] *high* 6.1 Structured Error Types [Plan: doc/rpc/phase6_error_types.md] [DONE]
         - Created `src/rrr/rpc/errors.hpp` (~230 LOC)

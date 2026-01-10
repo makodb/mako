@@ -932,6 +932,120 @@ size_t ClientPool::address_count() {
   return count;
 }
 
+// @unsafe - Reconnects all clients for a specific address
+ClientPool::BulkReconnectResult ClientPool::reconnect_all(
+    const std::string& addr, const BulkReconnectConfig& config) {
+
+  BulkReconnectResult result{0, 0, 0, 0};
+
+  // Collect clients to reconnect
+  std::vector<rusty::Arc<Client>> clients_to_reconnect;
+  {
+    l_.lock();
+    auto it = cache_.find(addr);
+    if (it != cache_.end()) {
+      for (const auto& client : it->second) {
+        auto state = client->connection_state();
+        if (config.skip_connected && state == ConnectionState::CONNECTED) {
+          result.skipped++;
+        } else {
+          clients_to_reconnect.push_back(client);
+        }
+      }
+    }
+    l_.unlock();
+  }
+
+  result.total = clients_to_reconnect.size() + result.skipped;
+
+  // Reconnect in batches with rate limiting
+  size_t i = 0;
+  while (i < clients_to_reconnect.size()) {
+    // Process a batch
+    size_t batch_end = std::min(i + config.max_concurrent,
+                                clients_to_reconnect.size());
+
+    // Track reconnection results for this batch
+    std::vector<std::atomic<int>> batch_results(batch_end - i);
+    for (auto& r : batch_results) r.store(-1);
+
+    // Start async reconnections
+    for (size_t j = i; j < batch_end; j++) {
+      size_t idx = j - i;
+      clients_to_reconnect[j]->reconnect([&batch_results, idx](bool success) {
+        batch_results[idx].store(success ? 0 : 1);
+      });
+    }
+
+    // Wait for batch to complete (simple polling)
+    bool all_done = false;
+    while (!all_done) {
+      all_done = true;
+      for (const auto& r : batch_results) {
+        if (r.load() == -1) {
+          all_done = false;
+          break;
+        }
+      }
+      if (!all_done) {
+        // @unsafe { nanosleep }
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = 1000000;  // 1ms
+        nanosleep(&ts, nullptr);
+      }
+    }
+
+    // Count results
+    for (const auto& r : batch_results) {
+      if (r.load() == 0) {
+        result.succeeded++;
+      } else {
+        result.failed++;
+      }
+    }
+
+    i = batch_end;
+
+    // Delay between batches
+    if (config.delay_between_ms > 0 && i < clients_to_reconnect.size()) {
+      // @unsafe { nanosleep }
+      struct timespec ts;
+      ts.tv_sec = config.delay_between_ms / 1000;
+      ts.tv_nsec = (config.delay_between_ms % 1000) * 1000000;
+      nanosleep(&ts, nullptr);
+    }
+  }
+
+  return result;
+}
+
+// @unsafe - Reconnects all clients across all addresses
+ClientPool::BulkReconnectResult ClientPool::reconnect_all(const BulkReconnectConfig& config) {
+  BulkReconnectResult total_result{0, 0, 0, 0};
+
+  // Get list of addresses
+  std::vector<std::string> addresses;
+  {
+    l_.lock();
+    for (const auto& kv : cache_) {
+      addresses.push_back(kv.first);
+    }
+    l_.unlock();
+  }
+
+  // Reconnect each address
+  for (const auto& addr : addresses) {
+    auto result = reconnect_all(addr, config);
+    total_result.total += result.total;
+    total_result.succeeded += result.succeeded;
+    total_result.failed += result.failed;
+    total_result.skipped += result.skipped;
+  }
+
+  return total_result;
+}
+
 // @unsafe - Gets cached or creates new client connections
 // Now includes health checking and automatic reconnection for failed connections
 rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
