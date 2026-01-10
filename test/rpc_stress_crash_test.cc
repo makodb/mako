@@ -178,7 +178,7 @@ protected:
             return false;
         }
         auto fu = fu_result.unwrap();
-        fu->wait();
+        fu->timed_wait(0.5);  // 0.5 seconds (500ms) timeout to prevent blocking forever
         if (fu->get_error_code() == 0) {
             stats.requests_succeeded++;
             return true;
@@ -292,7 +292,7 @@ TEST_F(StressCrashTest, ServerCrashWith100PendingRequests) {
 
     // Wait for all futures with short timeout
     for (auto& fu : futures) {
-        fu->timed_wait(100);  // 100ms timeout
+        fu->timed_wait(0.1);  // 0.1 seconds (100ms) timeout
         if (fu->get_error_code() == 0) {
             stats.requests_succeeded++;
         } else {

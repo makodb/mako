@@ -128,7 +128,7 @@ protected:
         );
         if (fu_result.is_err()) return false;
         auto fu = fu_result.unwrap();
-        fu->timed_wait(500);
+        fu->timed_wait(0.5);  // 0.5 seconds (500ms) timeout
         return fu->get_error_code() == 0;
     }
 
