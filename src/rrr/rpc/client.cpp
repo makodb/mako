@@ -37,6 +37,15 @@ using namespace std;
 
 namespace rrr {
 
+// Helper function to get current time in milliseconds
+// @unsafe - Uses std::chrono which is not borrow-checked (but is memory-safe)
+static uint64_t current_time_ms() {
+    auto now = std::chrono::steady_clock::now();
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count());
+}
+
 // ============================================================================
 // Future implementation
 // ============================================================================
@@ -263,11 +272,10 @@ int ClientConnection::connect(const char* addr) {
   // @unsafe { setsockopt system calls }
   apply_keepalive_options();
 
-  // Initialize last activity time
-  update_last_activity();
-
-  // Record connection in metrics
-  metrics_.record_connect();
+  // Initialize last activity time and record connection in metrics
+  auto now_ms = current_time_ms();
+  update_last_activity(now_ms);
+  metrics_.record_connect(now_ms);
 
   Log_debug("rrr::ClientConnection: connected to %s", addr);
 
@@ -429,7 +437,7 @@ int ClientConnection::handle_write() {
   // Update activity timestamp and metrics if we wrote any data
   if (after_size < before_size) {
     size_t bytes_written = before_size - after_size;
-    update_last_activity();
+    update_last_activity(current_time_ms());
     metrics_.record_bytes_sent(bytes_written);
   }
 
@@ -453,7 +461,7 @@ bool ClientConnection::handle_read() {
   }
 
   // Update activity timestamp and metrics on successful read
-  update_last_activity();
+  update_last_activity(current_time_ms());
   if (bytes_read > 0) {
     metrics_.record_bytes_received(static_cast<uint64_t>(bytes_read));
   }
@@ -613,8 +621,7 @@ int Client::connect(const char* addr, bool client) const {
   is_client_mode_.set(client);
 
   // Apply pending keepalive config before connecting
-  // @unsafe { struct assignment }
-  mut_conn.set_keepalive(pending_keepalive_config_);
+  mut_conn.set_keepalive(pending_keepalive_config_.get());
 
   // Call connect through mutable reference
   int result = 0;
@@ -776,7 +783,8 @@ void ClientConnection::apply_keepalive_options() {
     return;
   }
 
-  if (!keepalive_config_.enabled) {
+  auto config = keepalive_config_.get();
+  if (!config.enabled) {
     // Disable keepalive
     int no = 0;
     // @unsafe { setsockopt system call }
@@ -795,29 +803,29 @@ void ClientConnection::apply_keepalive_options() {
 #ifdef __linux__
   // Linux-specific TCP keepalive parameters
   if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPIDLE,
-                 &keepalive_config_.idle_sec, sizeof(int)) != 0) {
+                 &config.idle_sec, sizeof(int)) != 0) {
     Log_warn("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
   }
   if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPINTVL,
-                 &keepalive_config_.interval_sec, sizeof(int)) != 0) {
+                 &config.interval_sec, sizeof(int)) != 0) {
     Log_warn("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
   }
   if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPCNT,
-                 &keepalive_config_.count, sizeof(int)) != 0) {
+                 &config.count, sizeof(int)) != 0) {
     Log_warn("Failed to set TCP_KEEPCNT: %s", strerror(errno));
   }
 #elif defined(__APPLE__)
   // macOS uses TCP_KEEPALIVE for idle time (equivalent to TCP_KEEPIDLE)
   if (setsockopt(socket_, IPPROTO_TCP, TCP_KEEPALIVE,
-                 &keepalive_config_.idle_sec, sizeof(int)) != 0) {
+                 &config.idle_sec, sizeof(int)) != 0) {
     Log_warn("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
   }
   // macOS doesn't have TCP_KEEPINTVL or TCP_KEEPCNT via setsockopt
 #endif
 
   Log_debug("TCP keepalive configured: idle=%ds, interval=%ds, count=%d",
-            keepalive_config_.idle_sec, keepalive_config_.interval_sec,
-            keepalive_config_.count);
+            config.idle_sec, config.interval_sec,
+            config.count);
 }
 
 // @unsafe - Validate connection is alive using getsockopt

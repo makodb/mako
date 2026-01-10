@@ -18,6 +18,14 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
+// Helper to get current time in milliseconds
+static uint64_t current_time_ms() {
+    auto now = std::chrono::steady_clock::now();
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count());
+}
+
 // Atomic counter for dynamic port allocation
 static std::atomic<int> g_validation_test_port{16000};
 
@@ -195,7 +203,7 @@ TEST_F(ConnectionValidationTest, IdleDetectionNotIdleInitially) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Just connected, should not be idle
-    EXPECT_FALSE(client->is_idle(100));  // Not idle after 100ms threshold
+    EXPECT_FALSE(client->is_idle(100, current_time_ms()));  // Not idle after 100ms threshold
 
     client->close();
     delete server;
@@ -213,10 +221,10 @@ TEST_F(ConnectionValidationTest, IdleDetectionBecomesIdle) {
     std::this_thread::sleep_for(milliseconds(300));
 
     // Should be idle after 100ms threshold (we waited 350ms total)
-    EXPECT_TRUE(client->is_idle(100));
+    EXPECT_TRUE(client->is_idle(100, current_time_ms()));
 
     // Should not be idle with very long threshold
-    EXPECT_FALSE(client->is_idle(500));
+    EXPECT_FALSE(client->is_idle(500, current_time_ms()));
 
     client->close();
     delete server;
@@ -232,7 +240,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
 
     // Wait a bit
     std::this_thread::sleep_for(milliseconds(100));
-    EXPECT_TRUE(client->is_idle(50));  // Idle for 50ms
+    EXPECT_TRUE(client->is_idle(50, current_time_ms()));  // Idle for 50ms
 
     // Make a request (which will update activity time)
     std::string input = "test";
@@ -248,7 +256,7 @@ TEST_F(ConnectionValidationTest, ActivityUpdatesOnRequest) {
     std::this_thread::sleep_for(milliseconds(20));
 
     // Should no longer be idle (activity time updated by read/write)
-    EXPECT_FALSE(client->is_idle(50));
+    EXPECT_FALSE(client->is_idle(50, current_time_ms()));
 
     client->close();
     delete server;

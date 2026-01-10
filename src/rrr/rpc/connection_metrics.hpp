@@ -7,11 +7,13 @@
  * for monitoring connection health and performance.
  *
  * All metrics are thread-safe via rusty::Cell.
+ *
+ * Note: Time-related methods accept timestamps as parameters to avoid
+ * internal std::chrono dependencies. Callers should provide timestamps.
  */
 
 #include <rusty/cell.hpp>
 #include <cstdint>
-#include <chrono>
 #include <limits>
 
 namespace rrr {
@@ -98,15 +100,13 @@ public:
         return total_latency_us_.get() / completed;
     }
 
-    // @unsafe - Calculate connection uptime in milliseconds
-    uint64_t uptime_ms() const {
+    // @safe - Calculate connection uptime in milliseconds
+    // @param current_time_ms Current time in milliseconds since epoch
+    uint64_t uptime_ms(uint64_t current_time_ms) const {
         auto connect_time = connect_time_ms_.get();
         if (connect_time == 0) return 0;
-        // @unsafe { std::chrono operations }
-        auto now = std::chrono::steady_clock::now();
-        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
-        return static_cast<uint64_t>(now_ms) - connect_time;
+        if (current_time_ms < connect_time) return 0;
+        return current_time_ms - connect_time;
     }
 
     // === Recording Methods ===
@@ -163,13 +163,10 @@ public:
         reconnect_count_.set(reconnect_count_.get() + 1);
     }
 
-    // @unsafe - Record connection established
-    void record_connect() const {
-        // @unsafe { std::chrono operations }
-        auto now = std::chrono::steady_clock::now();
-        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-            now.time_since_epoch()).count();
-        connect_time_ms_.set(static_cast<uint64_t>(now_ms));
+    // @safe - Record connection established
+    // @param current_time_ms Current time in milliseconds since epoch
+    void record_connect(uint64_t current_time_ms) const {
+        connect_time_ms_.set(current_time_ms);
     }
 
     // @safe - Reset all metrics to initial values

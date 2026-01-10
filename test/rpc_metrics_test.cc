@@ -20,6 +20,14 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
+// Helper to get current time in milliseconds
+static uint64_t current_time_ms() {
+    auto now = std::chrono::steady_clock::now();
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count());
+}
+
 // Atomic counter for dynamic port allocation
 static std::atomic<int> g_metrics_test_port{17000};
 
@@ -173,7 +181,7 @@ TEST(ConnectionMetricsTest, Reset) {
     metrics.record_bytes_sent(100);
     metrics.record_bytes_received(50);
     metrics.record_reconnect();
-    metrics.record_connect();
+    metrics.record_connect(current_time_ms());
 
     EXPECT_GT(metrics.requests_sent(), 0u);
 
@@ -192,10 +200,11 @@ TEST(ConnectionMetricsTest, ConnectTimeRecorded) {
 
     EXPECT_EQ(metrics.connect_time_ms(), 0u);
 
-    metrics.record_connect();
+    auto now_ms = current_time_ms();
+    metrics.record_connect(now_ms);
 
-    EXPECT_GT(metrics.connect_time_ms(), 0u);
-    EXPECT_GE(metrics.uptime_ms(), 0u);  // Should be >= 0
+    EXPECT_EQ(metrics.connect_time_ms(), now_ms);
+    EXPECT_GE(metrics.uptime_ms(current_time_ms()), 0u);  // Should be >= 0
 }
 
 TEST(ConnectionMetricsTest, ThreadSafety) {
@@ -295,12 +304,11 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
 
     EXPECT_TRUE(client->connected());
 
-    // Get initial metrics
-    auto metrics = client->metrics();
-    ASSERT_NE(metrics, nullptr);
+    // Get initial metrics (reference API)
+    const auto& metrics = client->metrics();
 
     // Connect time should be recorded
-    EXPECT_GT(metrics->connect_time_ms(), 0u);
+    EXPECT_GT(metrics.connect_time_ms(), 0u);
 
     // Make several requests
     for (int i = 0; i < 5; i++) {
@@ -316,12 +324,12 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     }
 
     // Verify metrics were updated
-    EXPECT_EQ(metrics->requests_sent(), 5u);
-    EXPECT_EQ(metrics->requests_completed(), 5u);
-    EXPECT_EQ(metrics->requests_failed(), 0u);
-    EXPECT_GT(metrics->bytes_sent(), 0u);
-    EXPECT_GT(metrics->bytes_received(), 0u);
-    EXPECT_EQ(metrics->success_rate_percent(), 100u);
+    EXPECT_EQ(metrics.requests_sent(), 5u);
+    EXPECT_EQ(metrics.requests_completed(), 5u);
+    EXPECT_EQ(metrics.requests_failed(), 0u);
+    EXPECT_GT(metrics.bytes_sent(), 0u);
+    EXPECT_GT(metrics.bytes_received(), 0u);
+    EXPECT_EQ(metrics.success_rate_percent(), 100u);
 
     client->close();
     delete server;
@@ -335,8 +343,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     ASSERT_EQ(client->connect(server_addr().c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
-    auto metrics = client->metrics();
-    ASSERT_NE(metrics, nullptr);
+    const auto& metrics = client->metrics();
 
     // Make some initial requests
     for (int i = 0; i < 3; i++) {
@@ -350,8 +357,8 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
         }
     }
 
-    EXPECT_EQ(metrics->requests_sent(), 3u);
-    EXPECT_EQ(metrics->reconnect_count(), 0u);
+    EXPECT_EQ(metrics.requests_sent(), 3u);
+    EXPECT_EQ(metrics.reconnect_count(), 0u);
 
     // Disconnect and reconnect
     client->close();
@@ -368,7 +375,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
 
     if (reconnect_done && client->connected()) {
         // Reconnect count should have increased
-        EXPECT_EQ(metrics->reconnect_count(), 1u);
+        EXPECT_EQ(metrics.reconnect_count(), 1u);
 
         // Make more requests after reconnect
         for (int i = 0; i < 2; i++) {
@@ -382,7 +389,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
             }
         }
 
-        EXPECT_EQ(metrics->requests_sent(), 5u);
+        EXPECT_EQ(metrics.requests_sent(), 5u);
     }
 
     client->close();
@@ -397,11 +404,10 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     ASSERT_EQ(client->connect(server_addr().c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
-    auto metrics = client->metrics();
-    ASSERT_NE(metrics, nullptr);
+    const auto& metrics = client->metrics();
 
-    uint64_t bytes_sent_before = metrics->bytes_sent();
-    uint64_t bytes_received_before = metrics->bytes_received();
+    uint64_t bytes_sent_before = metrics.bytes_sent();
+    uint64_t bytes_received_before = metrics.bytes_received();
 
     // Make a request
     std::string input = "test_data";
@@ -413,8 +419,8 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     fu_result.unwrap()->wait();
 
     // Bytes should have increased
-    EXPECT_GT(metrics->bytes_sent(), bytes_sent_before);
-    EXPECT_GT(metrics->bytes_received(), bytes_received_before);
+    EXPECT_GT(metrics.bytes_sent(), bytes_sent_before);
+    EXPECT_GT(metrics.bytes_received(), bytes_received_before);
 
     client->close();
     delete server;
@@ -423,9 +429,12 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
 TEST_F(ConnectionMetricsIntegrationTest, ClientWithoutConnection) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
 
-    // No connection yet - metrics should be nullptr
-    auto metrics = client->metrics();
-    EXPECT_EQ(metrics, nullptr);
+    // No connection yet - has_connection() should be false, metrics returns empty
+    EXPECT_FALSE(client->has_connection());
+    const auto& metrics = client->metrics();
+    // Empty metrics should have all zeros
+    EXPECT_EQ(metrics.requests_sent(), 0u);
+    EXPECT_EQ(metrics.bytes_sent(), 0u);
 }
 
 int main(int argc, char** argv) {
