@@ -493,11 +493,20 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - `SetNewLeaderProxy()` updates proxy to new leader
       - [~] 5.4 Read Replica Support - Optional reads from followers with staleness config
         - NOTE: Optional optimization for read performance
-    - [ ] **Phase 6: In-Flight Transaction Recovery** (~400 LOC)
-      - [ ] 6.1 Transaction Log Format - Log prepare/commit/abort phases durably
-      - [ ] 6.2 Coordinator Recovery - Resume in-progress 2PC from log
-      - [ ] 6.3 Participant Recovery - Query coordinator for transaction status
-      - [ ] 6.4 Orphan Transaction Cleanup - Timeout stuck transactions, garbage collection
+    - [x] **Phase 6: In-Flight Transaction Recovery** (~400 LOC) [ALREADY IMPLEMENTED]
+      - [x] 6.1 Transaction Log Format - Log prepare/commit/abort phases durably
+        - TpcPrepareCommand / TpcCommitCommand replicated through Raft/Paxos
+        - Commands persisted via LogStorage before response
+      - [x] 6.2 Coordinator Recovery - Resume in-progress 2PC from log
+        - Log replay (Phase 2) re-applies committed transactions
+        - n_retry_ mechanism handles interrupted transactions
+      - [x] 6.3 Participant Recovery - Query coordinator for transaction status
+        - Replicated state recovers via consensus log replay
+        - PrepareReplicated / CommitReplicated handle replayed commands
+      - [x] 6.4 Orphan Transaction Cleanup - Timeout stuck transactions, garbage collection
+        - txn_timeout_ (configurable, default 30s) times out stuck transactions
+        - Dispatch/Prepare/Commit/Abort all check timeouts
+        - Timed out transactions marked with TXN_TIMEOUT result
     - [ ] **Phase 7: Log Catchup Protocol** (~350 LOC)
       - [ ] 7.1 Incremental Log Sync - Follower requests missing entries in batches
       - [ ] 7.2 Snapshot Transfer - Chunked transfer for very behind followers
