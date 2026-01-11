@@ -150,6 +150,43 @@ bool RaftServer::RecoverFromStorage() {
   return true;
 }
 
+// @unsafe - Calls app_next_ callback
+void RaftServer::ReplayCommittedEntries() {
+  if (!app_next_) {
+    Log_warn("[RAFT-REPLAY] Site %d: No app_next_ callback, skipping replay", site_id_);
+    return;
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  slotid_t start = executeIndex + 1;
+  slotid_t end = commitIndex;
+
+  if (start > end) {
+    Log_info("[RAFT-REPLAY] Site %d: No entries to replay (executeIndex=%lu >= commitIndex=%lu)",
+             site_id_, executeIndex, commitIndex);
+    return;
+  }
+
+  Log_info("[RAFT-REPLAY] Site %d: Replaying entries %lu..%lu", site_id_, start, end);
+
+  size_t replayed = 0;
+  for (slotid_t id = start; id <= end; id++) {
+    auto instance = GetRaftInstance(id);
+    if (instance && instance->log_) {
+      app_next_(id, instance->log_);
+      executeIndex = id;
+      replayed++;
+    } else {
+      Log_warn("[RAFT-REPLAY] Site %d: Missing log entry at slot %lu, stopping replay", site_id_, id);
+      break;
+    }
+  }
+
+  Log_info("[RAFT-REPLAY] Site %d: Replayed %zu entries, executeIndex now %lu",
+           site_id_, replayed, executeIndex);
+}
+
 // ============================================================================
 
 // @safe

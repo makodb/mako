@@ -911,4 +911,44 @@ bool PaxosServer::RecoverFromStorage() {
   return true;
 }
 
+// @unsafe - Calls app_next_ callback
+void PaxosServer::ReplayCommittedEntries() {
+  if (!app_next_) {
+    Log_warn("[PAXOS-REPLAY] Site par %d loc %d: No app_next_ callback, skipping replay",
+             partition_id_, loc_id_);
+    return;
+  }
+
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  slotid_t start = max_executed_slot_ + 1;
+  slotid_t end = max_committed_slot_;
+
+  if (start > end) {
+    Log_info("[PAXOS-REPLAY] Site par %d loc %d: No entries to replay (max_executed=%lu >= max_committed=%lu)",
+             partition_id_, loc_id_, max_executed_slot_, max_committed_slot_);
+    return;
+  }
+
+  Log_info("[PAXOS-REPLAY] Site par %d loc %d: Replaying entries %lu..%lu",
+           partition_id_, loc_id_, start, end);
+
+  size_t replayed = 0;
+  for (slotid_t id = start; id <= end; id++) {
+    auto it = logs_.find(id);
+    if (it != logs_.end() && it->second && it->second->committed_cmd_) {
+      app_next_(id, it->second->committed_cmd_);
+      max_executed_slot_ = id;
+      replayed++;
+    } else {
+      Log_warn("[PAXOS-REPLAY] Site par %d loc %d: Missing committed entry at slot %lu, stopping replay",
+               partition_id_, loc_id_, id);
+      break;
+    }
+  }
+
+  Log_info("[PAXOS-REPLAY] Site par %d loc %d: Replayed %zu entries, max_executed now %lu",
+           partition_id_, loc_id_, replayed, max_executed_slot_);
+}
+
 } // namespace janus

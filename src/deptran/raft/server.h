@@ -444,6 +444,14 @@ class RaftServer : public TxLogServer {
   // @unsafe - Uses LogStorage operations
   bool RecoverFromStorage();
 
+  /**
+   * Replay committed entries after recovery.
+   * Called after app_next_ callback is registered to apply recovered entries.
+   * Must be called AFTER RegLearnerAction() sets up the callback.
+   */
+  // @unsafe - Calls app_next_ which may have side effects
+  void ReplayCommittedEntries();
+
   // ============================================================================
 
   // @unsafe - Calls undeclared doVote() and uses std::function callback
