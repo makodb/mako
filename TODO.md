@@ -591,21 +591,19 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] *high* 1.2 Define RocksDB key schema [DONE 2026-01-11, 14:00]
         - Key prefix scheme in `config_keys` namespace: `config/version`, `config/topology/sites`, `config/topology/replicas`, `config/settings`
         - Version tracking via `config/version` key
-    - [ ] **Task 2: Implement C-Node Configuration Storage** [~200 LOC]
-      - [ ] *high* 2.1 Create `ConfigStore` class
-        - File: `src/deptran/config_store.h`, `config_store.cc`
-        - Methods: `Save(Config*)`, `Load() -> Config*`, `GetVersion() -> uint64_t`
-        - Use RocksDB instance separate from transaction logs
-        - Store at path: `<data_dir>/config_db/`
-      - [ ] *high* 2.2 Implement configuration serialization
-        - Serialize `SiteInfo` structs to bytes
-        - Serialize `ReplicaGroup` mappings
-        - Serialize protocol and workload settings
-        - Use simple format (JSON or custom binary) - avoid protobuf dependency if possible
-      - [ ] *medium* 2.3 Add configuration versioning
-        - Store `config_version` (monotonic counter)
-        - Increment on each configuration update
-        - Used by other nodes to detect stale config
+    - [x] **Task 2: Implement C-Node Configuration Storage** [~350 LOC] [Plan: doc/dev/config_node_task2_plan.md] [DONE 2026-01-11, 14:40]
+      - [x] *high* 2.1 Create `ConfigStore` class [DONE 2026-01-11, 14:40]
+        - Created `src/deptran/config_store.h` (~110 LOC) and `config_store.cc` (~240 LOC)
+        - Methods: `save(PersistentConfig)`, `load() -> Option<PersistentConfig>`, `get_version()`, `has_config()`
+        - Uses RocksDB with atomic WriteBatch for consistency
+        - 13 unit tests in `test/config_store_test.cc` (all pass)
+      - [x] *high* 2.2 Implement configuration serialization [DONE in Task 1]
+        - Uses Marshal operators defined in config_schema.h
+        - Serializes sites, replica groups, and protocol settings
+      - [x] *medium* 2.3 Add configuration versioning [DONE 2026-01-11, 14:40]
+        - `PersistentConfig.version` field stored separately for quick checks
+        - `get_version()` reads only version key without full config load
+        - All 56 rrrTests pass
     - [ ] **Task 3: Implement C-Node RPC Interface** [~150 LOC]
       - [ ] *high* 3.1 Define configuration RPC methods
         - `GetConfig(version) -> (config_data, current_version)`

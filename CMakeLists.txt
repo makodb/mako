@@ -1240,6 +1240,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_schema ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_config_schema COMMAND test_config_schema)
 
+    # ConfigStore RocksDB Tests
+    add_executable(test_config_store test/config_store_test.cc)
+    target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_config_store PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_store txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_config_store COMMAND test_config_store)
+
     # RPC Tests
     add_executable(test_rpc test/test_rpc.cc test/benchmark_service.cc)
     target_include_directories(test_rpc PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
