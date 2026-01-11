@@ -12,6 +12,7 @@
 *.swp
 .obj/*
 */log
+logs/*
 */deptran/rcc_service.py
 */deptran/rcc_rpc.h
 */deptran/rcc_rpc.py
