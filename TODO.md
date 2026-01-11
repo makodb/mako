@@ -406,7 +406,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - All tests pass: shard1Replication (123445 ops/sec), shard2Replication (8824 ops/sec), shard1ReplicationRaft (68915 ops/sec)
         - Plan: `doc/dev/phase1_4_paxos_integration.md`
     - [ ] **Phase 2: State Recovery on Startup** (~350 LOC)
-      - [ ] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence
+      - [x] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence [DONE 2026-01-10, 09:15]
+        - Created `src/rrr/rpc/recovery_manager.hpp`: RecoveryMode enum, RecoveryConfig, RecoveryResult, RecoveryManager class
+        - Integrated with ServerWorker::InitializeRecovery() for Raft and Paxos servers
+        - Storage paths: `/tmp/<username>_mako_log_shard<N>_replica<M>`
+        - All tests pass: shard1Replication (183695 ops/sec), shard1ReplicationRaft (67136 ops/sec)
+        - Plan: `doc/dev/phase2_1_recovery_manager.md`
       - [ ] 2.2 Log Replay - Replay committed entries to rebuild state
       - [ ] 2.3 Uncommitted Entry Handling - Resolve uncommitted entries via consensus
       - [ ] 2.4 State Machine Recovery - Rebuild transaction state and indexes from log
