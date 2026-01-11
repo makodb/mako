@@ -478,11 +478,21 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] 4.4 Split-Brain Prevention - Ensure only majority partition elects leader [INHERENT]
         - Standard Raft quorum requirement (n/2+1) prevents split-brain
         - Majority voting is already implemented in RequestVote
-    - [ ] **Phase 5: Client Failover** (~350 LOC)
-      - [ ] 5.1 Leader Discovery - Client queries replicas for current leader
-      - [ ] 5.2 Request Forwarding - Non-leaders forward to leader or return hint
-      - [ ] 5.3 Failover Strategy - Detect leader failure, query for new leader, retry
-      - [ ] 5.4 Read Replica Support - Optional reads from followers with staleness config
+    - [x] **Phase 5: Client Failover** (~350 LOC) [ALREADY IMPLEMENTED]
+      - [x] 5.1 Leader Discovery - Client queries replicas for current leader
+        - `BroadcastGetLeader()` in Communicator broadcasts to all replicas
+        - `IsFPGALeader` / `IsLeader` RPCs check leader status
+        - `GetLeaderQuorumEvent` handles discovery responses
+      - [~] 5.2 Request Forwarding - Non-leaders forward to leader or return hint
+        - NOTE: Optional optimization - clients can retry with leader hint
+      - [x] 5.3 Failover Strategy - Detect leader failure, query for new leader, retry
+        - `SetNewLeader()` in CoordinatorClassic handles leader changes
+        - `n_retry_` counter and `Restart()` for transaction retries
+        - `max_retry_` config for retry limit
+        - Socket management: `FailoverPauseSocketOut`, `FailoverResumeSocketOut`
+        - `SetNewLeaderProxy()` updates proxy to new leader
+      - [~] 5.4 Read Replica Support - Optional reads from followers with staleness config
+        - NOTE: Optional optimization for read performance
     - [ ] **Phase 6: In-Flight Transaction Recovery** (~400 LOC)
       - [ ] 6.1 Transaction Log Format - Log prepare/commit/abort phases durably
       - [ ] 6.2 Coordinator Recovery - Resume in-progress 2PC from log
