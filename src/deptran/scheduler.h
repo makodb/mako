@@ -376,6 +376,19 @@ class TxLogServer {
 
   bool paused_ = false; // [Jetpack] For failure recovery additional helper
 
+  // Phase 2.4: State machine recovery tracking
+  bool in_state_machine_recovery_{false};
+  size_t transactions_recovered_{0};
+
+  // @safe - Check if recovery is in progress
+  bool IsRecovering() const { return in_state_machine_recovery_; }
+
+  // @safe - Get count of recovered transactions
+  size_t GetRecoveredTransactionCount() const { return transactions_recovered_; }
+
+  // @unsafe - Set recovery mode and log when complete
+  void SetRecoveryMode(bool recovering);
+
 #ifdef CHECK_ISO
   typedef map<Row*, map<colid_t, int>> deltas_t;
   deltas_t deltas_{};

@@ -329,6 +329,10 @@ int SchedulerClassic::CommitReplicated(TpcCommitCommand& tpc_commit_cmd) {
     // Log_info("[SUCCESS] Scheduler received SUCCESS for tx_id: %lu", tx_id);
     sp_tx->committed_ = true;
     DoCommit(*sp_tx);
+    // Phase 2.4: Track recovered transactions
+    if (in_state_machine_recovery_) {
+      transactions_recovered_++;
+    }
   } else if (commit_or_abort == REJECT) {
     Log_info("[REJECT] Scheduler received REJECT for tx_id: %lu", tx_id);
     sp_tx->aborted_ = true;

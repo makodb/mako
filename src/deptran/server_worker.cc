@@ -108,6 +108,9 @@ void ServerWorker::SetupBase() {
         std::placeholders::_1,
         std::placeholders::_2));
 
+    // Phase 2.4: Start state machine recovery tracking
+    tx_sched_->SetRecoveryMode(true);
+
     // Phase 2.2: Replay committed entries after callback is registered
     if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
       raft_server->ReplayCommittedEntries();
@@ -115,6 +118,9 @@ void ServerWorker::SetupBase() {
     if (auto* paxos_server = dynamic_cast<PaxosServer*>(rep_sched_)) {
       paxos_server->ReplayCommittedEntries();
     }
+
+    // Phase 2.4: End state machine recovery tracking
+    tx_sched_->SetRecoveryMode(false);
   }
 #endif
 }

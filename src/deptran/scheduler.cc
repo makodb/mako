@@ -202,6 +202,15 @@ TxLogServer::TxLogServer() : mtx_() {
   }
 }
 
+// @unsafe - Logs recovery status
+void TxLogServer::SetRecoveryMode(bool recovering) {
+  in_state_machine_recovery_ = recovering;
+  if (!recovering && transactions_recovered_ > 0) {
+    Log_info("[STATE-RECOVERY] Site %d: Recovery complete, %zu transactions applied",
+             site_id_, transactions_recovered_);
+  }
+}
+
 Coordinator *TxLogServer::CreateRepCoord(const i64& dep_id) {
   Coordinator *coord;
   static cooid_t cid = 0;
