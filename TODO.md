@@ -431,7 +431,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - All tests pass: shard1Replication (129035 ops/sec), shard1ReplicationRaft (69501 ops/sec)
         - Plan: `doc/dev/phase2_4_state_machine_recovery.md`
     - [ ] **Phase 3: Snapshot Support** (~450 LOC)
-      - [ ] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods
+      - [x] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods [DONE 2026-01-10]
+        - Created `src/rrr/rpc/snapshot_manager.hpp` (~290 LOC)
+        - SnapshotMetadata: last_included_index/term, timestamp, size, checksum
+        - SnapshotReader/Writer: abstract streaming interfaces for large snapshots
+        - SnapshotManager: abstract interface for snapshot operations
+        - SnapshotConfig: configuration for storage path, interval, retention
+        - Added snapshot_manager_ member and accessors to RaftServer and PaxosServer
+        - Plan: `doc/dev/phase3_1_snapshot_interface.md`
       - [ ] 3.2 Snapshot Format - Binary format with last_index/term, state data, compression
       - [ ] 3.3 Snapshot Storage - RocksDB or file storage with retention policy
       - [ ] 3.4 Log Compaction - Truncate log entries covered by snapshot

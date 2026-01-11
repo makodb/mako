@@ -7,6 +7,7 @@
 #include "commo.h"
 #include <rusty/box.hpp>
 #include "rpc/log_storage.hpp"
+#include "rpc/snapshot_manager.hpp"
 
 namespace janus {
 class Command;
@@ -49,6 +50,11 @@ class RaftServer : public TxLogServer {
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
   std::shared_ptr<rrr::LogStorage> log_storage_;  // Optional persistent storage
+
+  // ============================================================================
+  // SNAPSHOT SUPPORT (Phase 3.1)
+  // ============================================================================
+  std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
 
   // Metadata keys for consensus state
   static constexpr const char* META_TERM = "currentTerm";
@@ -459,6 +465,29 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only accessor
   size_t GetUncommittedCount() const;
+
+  // ============================================================================
+  // SNAPSHOT SUPPORT PUBLIC API (Phase 3.1)
+  // ============================================================================
+
+  /**
+   * Set the snapshot manager for this server.
+   * Should be called before starting the server.
+   * @param manager Shared pointer to SnapshotManager implementation
+   */
+  // @safe - Simple setter
+  void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
+    snapshot_manager_ = std::move(manager);
+  }
+
+  /**
+   * Get the current snapshot manager.
+   * @return Shared pointer to SnapshotManager, or nullptr if not set
+   */
+  // @safe - Simple getter
+  std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
+    return snapshot_manager_;
+  }
 
   // ============================================================================
 

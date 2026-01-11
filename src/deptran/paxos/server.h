@@ -5,6 +5,7 @@
 #include "../scheduler.h"
 #include "../paxos_worker.h"
 #include "rrr/rpc/log_storage.hpp"
+#include "rrr/rpc/snapshot_manager.hpp"
 
 namespace janus {
 class Command;
@@ -73,6 +74,20 @@ class PaxosServer : public TxLogServer {
   std::shared_ptr<rrr::LogStorage> GetLogStorage() const { return log_storage_; }
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
   bool RecoverFromStorage();
+
+  // ========================================================================
+  // SNAPSHOT SUPPORT (Phase 3.1)
+  // ========================================================================
+  std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;
+
+  // @unsafe - Moves ownership of snapshot manager
+  void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
+    snapshot_manager_ = std::move(manager);
+  }
+  // @safe - Read-only access
+  std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
+    return snapshot_manager_;
+  }
 
   /**
    * Replay committed entries after recovery.
