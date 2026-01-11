@@ -446,7 +446,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - SnapshotFormat: Serialize/Deserialize with checksum verification
         - Supports CRC32 checksums for both header and data
         - Plan: `doc/dev/phase3_2_snapshot_format.md`
-      - [ ] 3.3 Snapshot Storage - RocksDB or file storage with retention policy
+      - [x] 3.3 Snapshot Storage - RocksDB or file storage with retention policy [DONE 2026-01-10]
+        - Created `src/rrr/rpc/file_snapshot_manager.hpp` (~350 LOC)
+        - FileSnapshotWriter: Accumulates data, atomic write+rename on finalize
+        - FileSnapshotReader: Reads and verifies snapshot format on open
+        - FileSnapshotManager: Full SnapshotManager implementation
+          - File naming: snapshot_<index>_<term>.snap
+          - Automatic retention policy (max_snapshots)
+          - Thread-safe with mutex protection
+        - Plan: `doc/dev/phase3_3_snapshot_storage.md`
       - [ ] 3.4 Log Compaction - Truncate log entries covered by snapshot
     - [ ] **Phase 4: Leader Election Enhancement** (~300 LOC)
       - [ ] 4.1 Pre-Vote Protocol - Prevent disruption from partitioned nodes
