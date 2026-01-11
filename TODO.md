@@ -430,7 +430,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - State machine recovery happens via existing Next callback during log replay
         - All tests pass: shard1Replication (129035 ops/sec), shard1ReplicationRaft (69501 ops/sec)
         - Plan: `doc/dev/phase2_4_state_machine_recovery.md`
-    - [ ] **Phase 3: Snapshot Support** (~450 LOC)
+    - [x] **Phase 3: Snapshot Support** (~450 LOC) [DONE 2026-01-10]
       - [x] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods [DONE 2026-01-10]
         - Created `src/rrr/rpc/snapshot_manager.hpp` (~290 LOC)
         - SnapshotMetadata: last_included_index/term, timestamp, size, checksum
@@ -455,7 +455,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - Automatic retention policy (max_snapshots)
           - Thread-safe with mutex protection
         - Plan: `doc/dev/phase3_3_snapshot_storage.md`
-      - [ ] 3.4 Log Compaction - Truncate log entries covered by snapshot
+      - [x] 3.4 Log Compaction - Truncate log entries covered by snapshot [DONE 2026-01-10]
+        - Added CompactLog() to RaftServer and PaxosServer
+        - Removes entries from LogStorage using remove_range()
+        - Clears in-memory log entries (raft_logs_/logs_)
+        - Updates min_active_slot_ after compaction
+        - Safety: won't compact beyond commitIndex/max_committed_slot_
+        - Plan: `doc/dev/phase3_4_log_compaction.md`
     - [ ] **Phase 4: Leader Election Enhancement** (~300 LOC)
       - [ ] 4.1 Pre-Vote Protocol - Prevent disruption from partitioned nodes
       - [ ] 4.2 Leader Lease - Linearizable reads during lease period

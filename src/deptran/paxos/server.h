@@ -105,6 +105,15 @@ class PaxosServer : public TxLogServer {
   // @safe - Read-only accessor
   size_t GetUncommittedCount() const;
 
+  /**
+   * Compact log entries up to the given index (Phase 3.4).
+   * Removes entries from storage that are covered by a snapshot.
+   * @param up_to_index Remove entries with index <= this value
+   * @return Number of entries removed
+   */
+  // @unsafe - Modifies log storage
+  size_t CompactLog(slotid_t up_to_index);
+
 #ifdef CHECK_KEY_DISTRIBUTION
   KeyDistribution key_distribution_;
 #endif

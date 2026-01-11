@@ -202,6 +202,59 @@ size_t RaftServer::GetUncommittedCount() const {
   return 0;
 }
 
+// @unsafe - Modifies log storage
+size_t RaftServer::CompactLog(slotid_t up_to_index) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  if (!log_storage_) {
+    Log_debug("[RAFT-COMPACT] Site %d: No log storage, skipping compaction", site_id_);
+    return 0;
+  }
+
+  // Safety check: don't compact beyond commit index
+  if (up_to_index > commitIndex) {
+    Log_warn("[RAFT-COMPACT] Site %d: Cannot compact beyond commitIndex (%lu > %lu)",
+             site_id_, up_to_index, commitIndex);
+    up_to_index = commitIndex;
+  }
+
+  // Get current first slot
+  slotid_t first_slot = log_storage_->get_first_index();
+  if (first_slot == 0 || log_storage_->empty()) {
+    Log_debug("[RAFT-COMPACT] Site %d: Log is empty, nothing to compact", site_id_);
+    return 0;
+  }
+
+  // Nothing to compact if up_to_index is before first slot
+  if (up_to_index < first_slot) {
+    Log_debug("[RAFT-COMPACT] Site %d: up_to_index %lu < first_slot %lu, nothing to compact",
+              site_id_, up_to_index, first_slot);
+    return 0;
+  }
+
+  // Remove entries from storage
+  size_t to_remove = up_to_index - first_slot + 1;
+  if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
+    Log_info("[RAFT-COMPACT] Site %d: Compacted %zu entries [%lu..%lu]",
+             site_id_, to_remove, first_slot, up_to_index);
+
+    // Also remove from in-memory logs
+    for (slotid_t id = first_slot; id <= up_to_index; ++id) {
+      raft_logs_.erase(id);
+    }
+
+    // Update min_active_slot_
+    if (up_to_index + 1 > min_active_slot_) {
+      min_active_slot_ = up_to_index + 1;
+    }
+
+    return to_remove;
+  } else {
+    Log_error("[RAFT-COMPACT] Site %d: Failed to compact log entries", site_id_);
+    return 0;
+  }
+}
+
 // ============================================================================
 
 // @safe

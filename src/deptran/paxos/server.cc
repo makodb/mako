@@ -966,4 +966,60 @@ size_t PaxosServer::GetUncommittedCount() const {
   return 0;
 }
 
+// @unsafe - Modifies log storage
+size_t PaxosServer::CompactLog(slotid_t up_to_index) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  if (!log_storage_) {
+    Log_debug("[PAXOS-COMPACT] Site par %d loc %d: No log storage, skipping compaction",
+              partition_id_, loc_id_);
+    return 0;
+  }
+
+  // Safety check: don't compact beyond committed index
+  if (up_to_index > max_committed_slot_) {
+    Log_warn("[PAXOS-COMPACT] Site par %d loc %d: Cannot compact beyond max_committed (%lu > %lu)",
+             partition_id_, loc_id_, up_to_index, max_committed_slot_);
+    up_to_index = max_committed_slot_;
+  }
+
+  // Get current first slot
+  slotid_t first_slot = log_storage_->get_first_index();
+  if (first_slot == 0 || log_storage_->empty()) {
+    Log_debug("[PAXOS-COMPACT] Site par %d loc %d: Log is empty, nothing to compact",
+              partition_id_, loc_id_);
+    return 0;
+  }
+
+  // Nothing to compact if up_to_index is before first slot
+  if (up_to_index < first_slot) {
+    Log_debug("[PAXOS-COMPACT] Site par %d loc %d: up_to_index %lu < first_slot %lu, nothing to compact",
+              partition_id_, loc_id_, up_to_index, first_slot);
+    return 0;
+  }
+
+  // Remove entries from storage
+  size_t to_remove = up_to_index - first_slot + 1;
+  if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
+    Log_info("[PAXOS-COMPACT] Site par %d loc %d: Compacted %zu entries [%lu..%lu]",
+             partition_id_, loc_id_, to_remove, first_slot, up_to_index);
+
+    // Also remove from in-memory logs
+    for (slotid_t id = first_slot; id <= up_to_index; ++id) {
+      logs_.erase(id);
+    }
+
+    // Update min_active_slot_
+    if (up_to_index + 1 > min_active_slot_) {
+      min_active_slot_ = up_to_index + 1;
+    }
+
+    return to_remove;
+  } else {
+    Log_error("[PAXOS-COMPACT] Site par %d loc %d: Failed to compact log entries",
+              partition_id_, loc_id_);
+    return 0;
+  }
+}
+
 } // namespace janus
