@@ -605,32 +605,40 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - `PersistentConfig.version` field stored separately for quick checks
         - `get_version()` reads only version key without full config load
         - All 56 rrrTests pass
-    - [ ] **Task 3: Implement C-Node RPC Interface** [~150 LOC]
-      - [ ] *high* 3.1 Define configuration RPC methods
-        - `GetConfig(version) -> (config_data, current_version)`
-        - `GetConfigVersion() -> version`
-        - Add to existing RPC service or create new `ConfigService`
-      - [ ] *high* 3.2 Implement RPC server on c-node
-        - Register `ConfigService` on c-node process
-        - Serve configuration from in-memory `Config` singleton
-        - Return serialized configuration data
-      - [ ] *medium* 3.3 Handle concurrent requests
-        - Configuration is read-heavy, write-rare
-        - Use read-write lock for config access
-        - Cache serialized config to avoid repeated serialization
-    - [ ] **Task 4: Implement Config Fetching for Other Nodes** [~150 LOC]
-      - [ ] *high* 4.1 Add c-node connection logic
-        - New startup mode: `--config-node <host:port>`
-        - On startup, connect to c-node and fetch configuration
-        - Fall back to local YAML if c-node unreachable (optional)
-      - [ ] *high* 4.2 Implement configuration client
-        - Create `ConfigClient` class
-        - Methods: `FetchConfig(c_node_addr) -> Config*`
-        - Deserialize received configuration into `Config` object
-      - [ ] *medium* 4.3 Add retry and timeout handling
-        - Retry connecting to c-node with backoff
-        - Configurable timeout (default: 30 seconds)
-        - Fail startup if c-node unreachable after retries
+    - [x] **Task 3: Implement C-Node RPC Interface** [~150 LOC] [Plan: doc/dev/config_node_task3_plan.md] [DONE 2026-01-11, 15:30]
+      - [x] *high* 3.1 Define configuration RPC methods [DONE]
+        - Added `ConfigService` to `src/deptran/rcc_rpc.rpc` with 3 methods:
+          - `GetConfig(client_version) -> (current_version, has_update, config_data)`
+          - `GetConfigVersion() -> version`
+          - `HasConfig() -> has_config`
+        - Used `i32` for boolean returns (avoids `bool_t` macro conflicts)
+        - Used `string` for config_data (Marshal-serialized PersistentConfig)
+      - [x] *high* 3.2 Implement RPC server on c-node [DONE]
+        - Created `src/deptran/config_service.h` (~50 LOC) and `config_service.cc` (~80 LOC)
+        - `ConfigServiceImpl` extends generated `ConfigServiceService` base class
+        - Takes `ConfigStore&` reference, serves from persistent storage
+      - [x] *medium* 3.3 Handle concurrent requests [DONE]
+        - Thread-safe caching using `rusty::Mutex<rusty::Option<std::string>>`
+        - Version tracking with `rusty::Cell<uint64_t>`
+        - Cache validity flag with `rusty::Cell<bool>`
+        - `invalidate_cache()` method for cache invalidation
+        - 11 unit tests in `test/config_service_test.cc` (all pass)
+        - All 57 CI tests pass
+    - [x] **Task 4: Implement Config Fetching for Other Nodes** [~150 LOC] [Plan: doc/dev/config_node_task4_plan.md] [DONE 2026-01-11, 17:00]
+      - [x] *high* 4.1 Create ConfigClient class [DONE]
+        - Created `src/deptran/config_client.h` (~90 LOC) and `config_client.cc` (~140 LOC)
+        - Connects to c-node via RPC using ConfigServiceProxy
+        - Methods: `connect()`, `disconnect()`, `is_connected()`, `fetch_config()`, `fetch_version()`, `has_config()`
+        - Uses rusty types: `rusty::Option<T>`, `rusty::Cell<T>`, `rusty::Arc<T>`
+      - [x] *high* 4.2 Implement retry and timeout handling [DONE]
+        - Exponential backoff: `retry_delay_ms_` doubles on each retry up to `max_retry_delay_ms_`
+        - Configurable: `max_retries_` (default: 10), `retry_delay_ms_` (default: 1000ms), `max_retry_delay_ms_` (default: 30000ms)
+        - Connection timeout via `connect_timeout_ms_` (default: 5000ms)
+      - [x] *high* 4.3 Add unit tests [DONE]
+        - Created `test/config_client_test.cc` with 18 tests (all pass)
+        - Tests: construction, connection, HasConfig, FetchVersion, FetchConfig, error handling, integration
+        - Added test_config_client executable to CMakeLists.txt
+        - All 58 CI tests pass including test_config_client
     - [ ] **Task 5: Integrate with Node Startup** [~100 LOC]
       - [ ] *high* 5.1 Modify startup flow for c-node
         - If `--is-config-node` flag set:
