@@ -439,7 +439,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - SnapshotConfig: configuration for storage path, interval, retention
         - Added snapshot_manager_ member and accessors to RaftServer and PaxosServer
         - Plan: `doc/dev/phase3_1_snapshot_interface.md`
-      - [ ] 3.2 Snapshot Format - Binary format with last_index/term, state data, compression
+      - [x] 3.2 Snapshot Format - Binary format with last_index/term, state data, compression [DONE 2026-01-10]
+        - Created `src/rrr/rpc/snapshot_format.hpp` (~280 LOC)
+        - SnapshotHeader: 52-byte binary header with magic, version, metadata
+        - CRC32: Table-driven checksum (IEEE 802.3 polynomial)
+        - SnapshotFormat: Serialize/Deserialize with checksum verification
+        - Supports CRC32 checksums for both header and data
+        - Plan: `doc/dev/phase3_2_snapshot_format.md`
       - [ ] 3.3 Snapshot Storage - RocksDB or file storage with retention policy
       - [ ] 3.4 Log Compaction - Truncate log entries covered by snapshot
     - [ ] **Phase 4: Leader Election Enhancement** (~300 LOC)
