@@ -40,6 +40,7 @@ class RaftLabTest {
 
   int testUnreliableAgree(void);
   int testFigure8(void);
+  int testFigure8CrashRecovery(void);
 
   void wait(uint64_t microseconds);
 

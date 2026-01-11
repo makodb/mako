@@ -540,8 +540,10 @@ void RaftTestConfig::Kill(siteid_t svr) {
     frame->svr_->Disconnect(true);
   }
 
-  // Sleep briefly to allow pending operations to complete
-  usleep(100000); // 100ms
+  // Sleep to allow pending coroutines to complete
+  // The election timer coroutine sleeps for HEARTBEAT_INTERVAL * 2-4 (200-400ms)
+  // We must wait longer than this to ensure stale coroutines exit before we delete
+  usleep(450000); // 450ms > max election timer sleep (400ms)
 
   // Delete the frame (this will cascade delete svr_ and commo_)
   delete frame;

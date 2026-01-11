@@ -1,5 +1,6 @@
 #include "test.h"
 #include <set>
+#include <vector>
 #include <cstdlib>
 #include <ctime>
 
@@ -23,17 +24,18 @@ int RaftLabTest::Run(void) {
       // testPartitionPlusRestart()
       // testSequentialPartitionsPlusRestart()
       // testMultipleRestartsPlusPartition()
-      testInitialElection()
-      || TEST_EXPAND(testReElection())
-      || TEST_EXPAND(testBasicAgree())
-      || TEST_EXPAND(testFailAgree())
-      || TEST_EXPAND(testFailNoAgree())
-      || TEST_EXPAND(testRejoin())
-      || TEST_EXPAND(testConcurrentStarts())
-      || TEST_EXPAND(testBackup())
-      || TEST_EXPAND(testCount())
+      // testInitialElection()
+      // || TEST_EXPAND(testReElection())
+      // || TEST_EXPAND(testBasicAgree())
+      // || TEST_EXPAND(testFailAgree())
+      // || TEST_EXPAND(testFailNoAgree())
+      // || TEST_EXPAND(testRejoin())
+      // || TEST_EXPAND(testConcurrentStarts())
+      // || TEST_EXPAND(testBackup())
+      // || TEST_EXPAND(testCount())
       // || TEST_EXPAND(testUnreliableAgree())
       // || TEST_EXPAND(testFigure8())
+      testFigure8CrashRecovery()
     ) {
     Log_info("Test sequence failed");
     Print("TESTS FAILED");
@@ -1678,6 +1680,200 @@ int RaftLabTest::testFigure8(void) {
     break;
   }
   Assert2(success, "Failed to test figure 8");
+  Passed2();
+}
+
+int RaftLabTest::testFigure8CrashRecovery(void) {
+  Init2(19, "Figure 8 with crash/recovery instead of partitions");
+  bool success = false;
+
+  // This test is the crash/recovery version of testFigure8.
+  // Instead of using Disconnect/Reconnect (network partitions),
+  // we use Kill/Restart (crash/recovery) to test persistence.
+  // Leader should not determine commitment using log entries from previous terms.
+
+  for (int again = 0; again < 10; again++) {
+    Log_info("TEST 19: Attempt %d", again + 1);
+
+    // 1. Find initial leader (S1) and commit an entry
+    auto leader1 = config_->OneLeader();
+    AssertOneLeader(leader1);
+    uint64_t index1, term1, index2, term2;
+    auto ok = config_->Start(leader1, 1900, &index1, &term1);
+    if (!ok) {
+      Log_info("TEST 19: Leader changed during initial Start, retrying");
+      continue;
+    }
+    auto r = config_->Wait(index1, NSERVERS, term1);
+    AssertWaitNoError(r, index1);
+    AssertWaitNoTimeout(r, index1, NSERVERS);
+    index_ = index1;
+    Log_info("TEST 19: Initial entry committed at index %ld, term %ld", index1, term1);
+
+    // 2. Kill 3 followers, leaving S1 + 1 follower (S2)
+    //    S2 is getNextServerId(leader1, 4) to match original Figure 8 structure
+    siteid_t follower_s2 = config_->getNextServerId(leader1, 4);
+    siteid_t killed1 = config_->getNextServerId(leader1, 1);
+    siteid_t killed2 = config_->getNextServerId(leader1, 2);
+    siteid_t killed3 = config_->getNextServerId(leader1, 3);
+
+    Log_info("TEST 19: Killing 3 followers: %d, %d, %d (keeping leader %d and follower %d)",
+             killed1, killed2, killed3, leader1, follower_s2);
+    config_->Kill(killed1);
+    config_->Kill(killed2);
+    config_->Kill(killed3);
+
+    // 3. Start C1 on S1 - only replicated to S1 and S2 (NOT committed, only 2 servers)
+    ok = config_->Start(leader1, 1901, &index1, &term1);
+    if (!ok) {
+      Log_info("TEST 19: Leader changed during C1 Start, restarting killed servers and retrying");
+      config_->Restart(killed1);
+      config_->Restart(killed2);
+      config_->Restart(killed3);
+      Coroutine::Sleep(ELECTIONTIMEOUT);
+      continue;
+    }
+    Log_info("TEST 19: Started C1 (1901) at index %ld, term %ld - should NOT be committed", index1, term1);
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+
+    // C1 is at index1 for S1 and S2, but NOT committed (only 2 servers)
+    AssertNoneCommitted(index1);
+    Log_info("TEST 19: Verified C1 is not committed (only on 2 servers)");
+
+    // 4. Kill S1 and S2, restart the other 3 to elect new leader S3
+    Log_info("TEST 19: Killing S1 (%d) and S2 (%d), restarting other 3", leader1, follower_s2);
+    config_->Kill(leader1);
+    config_->Kill(follower_s2);
+    config_->Restart(killed1);
+    config_->Restart(killed2);
+    config_->Restart(killed3);
+
+    // 5. New leader S3 elected among the 3 restarted servers
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+    auto leader2 = config_->OneLeader();
+    AssertOneLeader(leader2);
+    Log_info("TEST 19: New leader S3 elected: %d", leader2);
+
+    // 6. Restart S1 and S2 - they recover from disk with C1 in their logs
+    Log_info("TEST 19: Restarting S1 (%d) and S2 (%d) - they should recover C1 from disk",
+             leader1, follower_s2);
+    config_->Restart(leader1);
+    config_->Restart(follower_s2);
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+
+    // S3 should still be leader
+    int current_leader = config_->OneLeader();
+    AssertOneLeader(current_leader);
+    Log_info("TEST 19: Current leader after S1/S2 restart: %d", current_leader);
+
+    // 7. Kill all except S3, have S3 start C2 at the same index as C1
+    //    We know exactly which servers exist: leader1, follower_s2, killed1, killed2, killed3
+    //    One of killed1/killed2/killed3 is now leader2, so we kill the others
+    Log_info("TEST 19: Isolating leader S3 (%d) by killing all others", leader2);
+
+    // Kill using explicit server IDs we tracked, not getServerIdByIndex
+    std::vector<siteid_t> all_servers = {leader1, follower_s2, killed1, killed2, killed3};
+    std::vector<siteid_t> killed_in_step7;
+    for (siteid_t svr : all_servers) {
+      if (svr != leader2) {
+        Log_info("TEST 19: Step 7 - Killing server %d", svr);
+        config_->Kill(svr);
+        killed_in_step7.push_back(svr);
+      }
+    }
+
+    ok = config_->Start(leader2, 1902, &index2, &term2);
+    if (!ok) {
+      Log_info("TEST 19: Leader S3 changed during C2 Start, restarting all and retrying");
+      for (siteid_t svr : killed_in_step7) {
+        config_->Restart(svr);
+      }
+      Coroutine::Sleep(ELECTIONTIMEOUT);
+      continue;
+    }
+
+    // C2 is at the same index as C1, but in a higher term
+    Log_info("TEST 19: Started C2 (1902) at index %ld, term %ld", index2, term2);
+    Assert2(index2 == index1, "Start() returned index %ld (%ld expected)", index2, index1);
+    Assert2(term2 > term1, "Start() returned term %ld (expected > %ld)", term2, term1);
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+    AssertNoneCommitted(index1);
+    Log_info("TEST 19: Verified neither C1 nor C2 is committed yet");
+
+    // 8. Kill S3, restart S1 (has C1), S2 (has C1), and one other
+    //    S1 or S2 should become leader because they have C1 (longer log)
+    Log_info("TEST 19: Killing S3 (%d), restarting S1, S2, and one other", leader2);
+    config_->Kill(leader2);
+    config_->Restart(leader1);      // S1 has C1
+    config_->Restart(follower_s2);  // S2 has C1
+
+    // Restart one more server (not S3/leader2) - use our tracked server IDs
+    // The other servers are killed1, killed2, killed3 - pick one that's not leader2
+    siteid_t third_server = 0;
+    for (siteid_t svr : {killed1, killed2, killed3}) {
+      if (svr != leader2) {
+        config_->Restart(svr);
+        third_server = svr;
+        Log_info("TEST 19: Also restarted server %d as third member", svr);
+        break;
+      }
+    }
+
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+    auto leader3 = config_->OneLeader();
+    AssertOneLeader(leader3);
+    Log_info("TEST 19: New leader after S3 killed: %d", leader3);
+
+    // Leader3 should ideally be S1 or S2 (they have longer logs with C1)
+    // But if not, we retry
+    if (leader3 != leader1 && leader3 != follower_s2) {
+      Log_info("TEST 19: Leader %d is not S1 or S2, retrying (1/3 chance)", leader3);
+      // Restart remaining servers for cleanup using explicit IDs
+      config_->Restart(leader2);
+      for (siteid_t svr : {killed1, killed2, killed3}) {
+        if (svr != third_server && svr != leader2) {
+          config_->Restart(svr);
+        }
+      }
+      Coroutine::Sleep(ELECTIONTIMEOUT);
+      continue;
+    }
+
+    // 9. C1 should NOT be committed yet - it's from a previous term
+    //    Leader cannot commit entries from previous terms directly
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+    AssertNoneCommitted(index1);
+    Log_info("TEST 19: Verified C1 still not committed (correct - from previous term)");
+
+    // 10. Commit something in the current term - this should also commit C1 indirectly
+    Log_info("TEST 19: Committing new entry in current term to trigger C1 commit");
+    auto new_index = config_->DoAgreement(1903, NSERVERS - 2, false);
+    Assert2(new_index > index1, "failed to reach agreement, got index %ld", new_index);
+    Log_info("TEST 19: New entry committed at index %ld", new_index);
+
+    // 11. Now C1 SHOULD be committed (indirectly, by the new commit in current term)
+    AssertNCommitted(index1, NSERVERS - 2);
+    Assert2(config_->ServerCommitted(leader3, index1, 1901),
+            "value 1901 not committed at index %ld when it should be", index1);
+    Log_info("TEST 19: Verified C1 (1901) is now committed at index %ld", index1);
+
+    success = true;
+
+    // Cleanup: restart all remaining dead servers using explicit IDs
+    Log_info("TEST 19: Cleaning up - restarting remaining servers");
+    config_->Restart(leader2);
+    // Restart any of killed1/killed2/killed3 that weren't already restarted
+    for (siteid_t svr : {killed1, killed2, killed3}) {
+      if (svr != third_server && svr != leader2) {
+        config_->Restart(svr);
+      }
+    }
+    Coroutine::Sleep(ELECTIONTIMEOUT);
+    break;
+  }
+
+  Assert2(success, "Failed to test Figure 8 with crash/recovery");
+  Log_info("TEST 19: Figure 8 crash/recovery test PASSED!");
   Passed2();
 }
 

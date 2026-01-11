@@ -1,15 +1,70 @@
 RAFT PERSISTENCE TEST - STATUS AND NOTES
 =========================================
 
-Date: 2026-01-10
+Date: 2026-01-11
 Branch: zeyu-raft-disk
 
 CURRENT STATUS
 --------------
-All persistence, crash-recovery, and partition+restart tests PASSING (Tests 12-18).
+All persistence, crash-recovery, partition+restart, and Figure 8 crash-recovery tests PASSING (Tests 12-19).
 
-LATEST IMPLEMENTATION (2026-01-10)
+LATEST IMPLEMENTATION (2026-01-11)
 ----------------------------------
+
+0. TEST 19: FIGURE 8 WITH CRASH/RECOVERY (2026-01-11)
+   Added crash/recovery version of the classic Figure 8 test (Test 11).
+
+   Purpose: Verify that the Figure 8 safety property holds when failures are
+   crashes (Kill/Restart) rather than network partitions (Disconnect/Reconnect).
+
+   Key difference from Test 11:
+   - Test 11: Uses Disconnect/Reconnect (server keeps in-memory state)
+   - Test 19: Uses Kill/Restart (server loses state, recovers from disk)
+
+   What Test 19 verifies:
+   - Uncommitted log entries persist correctly to disk
+   - Term and votedFor persist correctly across crashes
+   - Leader cannot commit entries from previous terms directly
+   - Old entries only commit indirectly when current-term entry commits
+   - Election restriction works with persisted state
+
+   Test flow:
+   1. Commit initial entry with all 5 servers
+   2. Kill 3 followers, keep leader S1 + follower S2
+   3. Start C1 on S1 -> only on S1, S2 (NOT committed)
+   4. Kill S1 and S2, restart other 3 -> new leader S3 elected
+   5. Restart S1 and S2 (they recover C1 from disk)
+   6. Kill all except S3, S3 starts C2 at same index as C1
+   7. Kill S3, restart S1, S2, and one other -> S1 or S2 becomes leader
+   8. Verify C1 NOT committed yet (from previous term)
+   9. Commit new entry in current term -> C1 now commits indirectly
+
+   Files changed:
+   - src/deptran/raft/test.h: Added testFigure8CrashRecovery declaration
+   - src/deptran/raft/test.cc: Added testFigure8CrashRecovery implementation
+
+   Bug fix during implementation:
+   - Original test used getServerIdByIndex() which returned invalid IDs (65535)
+     after multiple kill/restart cycles
+   - Fixed by explicitly tracking server IDs in vectors instead of using index lookup
+
+0b. FIX: KILL TIMEOUT FOR STALE COROUTINE RACE (2026-01-11)
+    Problem: Occasional segfault during restart caused by stale election timer coroutine.
+
+    Root cause:
+    - Election timer coroutine sleeps for 200-400ms (HEARTBEAT_INTERVAL * 2-4)
+    - Kill() only waited 100ms before deleting the server
+    - Stale coroutine wakes up after server deleted -> use-after-free -> segfault
+
+    Solution: Increased Kill() wait time from 100ms to 450ms.
+    This ensures all sleeping coroutines have time to wake up, check stop_=true,
+    and exit cleanly before memory is freed.
+
+    Trade-off: Each Kill() call now takes ~450ms instead of ~100ms, slowing down
+    tests with many kill/restart cycles. But eliminates the race condition.
+
+    File changed:
+    - src/deptran/raft/testconf.cc:544-546: usleep(100000) -> usleep(450000)
 
 1. NOTIFYRESTART MECHANISM WITH STATUS TRACKING
    Implemented a robust NotifyRestart mechanism for multi-server crash recovery:
@@ -76,6 +131,7 @@ FUTURE WORK
    - All tests pass consistently
 
 2. Potential Additional Tests (pending advisor review):
+   - Negative tests: Verify consensus NOT achieved when majority unavailable
    - Partitioned server becomes leader after reconnecting
    - Leader killed while partitioned servers exist
    - Rapid partition/heal cycles (tight timing)
@@ -101,6 +157,9 @@ TEST RESULTS SUMMARY
    - Test 16: One partitioned + one killed/restarted: PASSED consistently
    - Test 17: Two sequentially partitioned + one killed/restarted: PASSED consistently
    - Test 18: Multiple restarts while one partitioned: PASSED consistently
+
+4. Figure 8 Crash/Recovery Test (Test 19):
+   - Test 19: Figure 8 safety with Kill/Restart instead of Disconnect/Reconnect: PASSED
 
 Latest trace (trace_0108.txt @ 18:45) shows:
 - Kill() works correctly (doesn't destroy shared poll thread)
