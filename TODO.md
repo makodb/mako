@@ -405,7 +405,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Integrated persistence in: OnPrepare, OnAccept, OnCommit, OnBulkPrepare, OnBulkAccept, OnSyncCommit, OnBulkCommit
         - All tests pass: shard1Replication (123445 ops/sec), shard2Replication (8824 ops/sec), shard1ReplicationRaft (68915 ops/sec)
         - Plan: `doc/dev/phase1_4_paxos_integration.md`
-    - [ ] **Phase 2: State Recovery on Startup** (~350 LOC)
+    - [x] **Phase 2: State Recovery on Startup** (~350 LOC) [DONE 2026-01-10]
       - [x] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence [DONE 2026-01-10, 09:15]
         - Created `src/rrr/rpc/recovery_manager.hpp`: RecoveryMode enum, RecoveryConfig, RecoveryResult, RecoveryManager class
         - Integrated with ServerWorker::InitializeRecovery() for Raft and Paxos servers
@@ -424,7 +424,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Consensus protocols already handle uncommitted entries correctly
         - All tests pass: shard1Replication (167070 ops/sec), shard1ReplicationRaft (65486 ops/sec)
         - Plan: `doc/dev/phase2_3_uncommitted_entries.md`
-      - [ ] 2.4 State Machine Recovery - Rebuild transaction state and indexes from log
+      - [x] 2.4 State Machine Recovery - Rebuild transaction state and indexes from log [DONE 2026-01-10, 11:30]
+        - Added recovery mode tracking to TxLogServer (in_state_machine_recovery_, transactions_recovered_)
+        - SetRecoveryMode() logs completion with transaction count
+        - State machine recovery happens via existing Next callback during log replay
+        - All tests pass: shard1Replication (129035 ops/sec), shard1ReplicationRaft (69501 ops/sec)
+        - Plan: `doc/dev/phase2_4_state_machine_recovery.md`
     - [ ] **Phase 3: Snapshot Support** (~450 LOC)
       - [ ] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods
       - [ ] 3.2 Snapshot Format - Binary format with last_index/term, state data, compression
