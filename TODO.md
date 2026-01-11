@@ -418,7 +418,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Called AFTER RegLearnerAction() when app_next_ callback is valid
         - All tests pass: shard1Replication (136644 ops/sec), shard1ReplicationRaft (68512 ops/sec)
         - Plan: `doc/dev/phase2_2_log_replay.md`
-      - [ ] 2.3 Uncommitted Entry Handling - Resolve uncommitted entries via consensus
+      - [x] 2.3 Uncommitted Entry Handling - Resolve uncommitted entries via consensus [DONE 2026-01-10, 11:00]
+        - Added GetUncommittedCount() to RaftServer and PaxosServer
+        - Logging in ReplayCommittedEntries() shows uncommitted entry count
+        - Consensus protocols already handle uncommitted entries correctly
+        - All tests pass: shard1Replication (167070 ops/sec), shard1ReplicationRaft (65486 ops/sec)
+        - Plan: `doc/dev/phase2_3_uncommitted_entries.md`
       - [ ] 2.4 State Machine Recovery - Rebuild transaction state and indexes from log
     - [ ] **Phase 3: Snapshot Support** (~450 LOC)
       - [ ] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods
