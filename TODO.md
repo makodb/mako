@@ -412,7 +412,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Storage paths: `/tmp/<username>_mako_log_shard<N>_replica<M>`
         - All tests pass: shard1Replication (183695 ops/sec), shard1ReplicationRaft (67136 ops/sec)
         - Plan: `doc/dev/phase2_1_recovery_manager.md`
-      - [ ] 2.2 Log Replay - Replay committed entries to rebuild state
+      - [x] 2.2 Log Replay - Replay committed entries to rebuild state [DONE 2026-01-10, 10:30]
+        - Added ReplayCommittedEntries() to RaftServer and PaxosServer
+        - Replays entries from executeIndex/max_executed_slot_ to commitIndex/max_committed_slot_
+        - Called AFTER RegLearnerAction() when app_next_ callback is valid
+        - All tests pass: shard1Replication (136644 ops/sec), shard1ReplicationRaft (68512 ops/sec)
+        - Plan: `doc/dev/phase2_2_log_replay.md`
       - [ ] 2.3 Uncommitted Entry Handling - Resolve uncommitted entries via consensus
       - [ ] 2.4 State Machine Recovery - Rebuild transaction state and indexes from log
     - [ ] **Phase 3: Snapshot Support** (~450 LOC)
