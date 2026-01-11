@@ -583,15 +583,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - RocksDB currently used only for transaction logs, not configuration
       - No runtime configuration updates supported
       - No persistent configuration storage
-    - [ ] **Task 1: Design Configuration Schema for RocksDB** [~50 LOC]
-      - [ ] *high* 1.1 Define configuration data structures for persistence
-        - Cluster topology: sites (id, name, host, port, role, partition_id)
-        - Replica groups: partition → list of site IDs
-        - Protocol settings: tx_proto, replication_proto, timeouts
-        - Serialize to protobuf or JSON for RocksDB storage
-      - [ ] *high* 1.2 Define RocksDB key schema
-        - Key prefix scheme: `config/topology/sites`, `config/topology/replicas`, `config/settings/*`
-        - Version/epoch tracking for configuration updates
+    - [ ] **Task 1: Design Configuration Schema for RocksDB** [~100 LOC] [Plan: doc/dev/config_node_task1_plan.md]
+      - [x] *high* 1.1 Define configuration data structures for persistence [DONE 2026-01-11, 14:00]
+        - Created `src/deptran/config_schema.h` with PersistentSiteInfo, PersistentReplicaGroup, PersistentProtocolSettings, PersistentConfig
+        - Used existing Marshal serialization (consistent with RPC layer)
+        - Added 7 unit tests in `test/config_schema_test.cc` (all pass)
+      - [x] *high* 1.2 Define RocksDB key schema [DONE 2026-01-11, 14:00]
+        - Key prefix scheme in `config_keys` namespace: `config/version`, `config/topology/sites`, `config/topology/replicas`, `config/settings`
+        - Version tracking via `config/version` key
     - [ ] **Task 2: Implement C-Node Configuration Storage** [~200 LOC]
       - [ ] *high* 2.1 Create `ConfigStore` class
         - File: `src/deptran/config_store.h`, `config_store.cc`
