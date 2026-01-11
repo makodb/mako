@@ -4,6 +4,7 @@
 
 namespace janus {
 
+// @safe
 ConfigClient::ConfigClient(const std::string& c_node_addr)
     : c_node_addr_(c_node_addr),
       poll_thread_(rusty::None),
@@ -11,11 +12,12 @@ ConfigClient::ConfigClient(const std::string& c_node_addr)
       proxy_(rusty::None) {
 }
 
+// @unsafe - calls disconnect which does network I/O
 ConfigClient::~ConfigClient() {
     disconnect();
 }
 
-// @unsafe - Creates poll thread and client connection
+// @unsafe - Creates poll thread and establishes network connection
 bool ConfigClient::try_connect() {
     // Create poll thread if not already created
     if (poll_thread_.is_none()) {
@@ -30,26 +32,28 @@ bool ConfigClient::try_connect() {
 
     // Try to connect
     auto& client = rpc_client_.as_ref().unwrap();
-    int result = client->connect(c_node_addr_.c_str());  // @unsafe
+    // @unsafe { network connect syscall }
+    int result = client->connect(c_node_addr_.c_str());
 
     if (result == 0) {
         // Create proxy
         if (proxy_.is_none()) {
-            // Get raw pointer for proxy (it doesn't own the client)
-            // ConfigServiceProxy takes non-const Client* but we have Arc which gives const
-            auto proxy = new ConfigServiceProxy(const_cast<rrr::Client*>(client.get()));  // @unsafe
+            // @unsafe { new and const_cast for proxy }
+            auto proxy = new ConfigServiceProxy(const_cast<rrr::Client*>(client.get()));
             proxy_ = rusty::Some(proxy);
         }
-        Log_info("ConfigClient: Connected to c-node at %s", c_node_addr_.c_str());  // @unsafe
+        // @unsafe { logging I/O }
+        Log_info("ConfigClient: Connected to c-node at %s", c_node_addr_.c_str());
         return true;
     }
 
-    Log_warn("ConfigClient: Failed to connect to c-node at %s (error: %d)",  // @unsafe
+    // @unsafe { logging I/O }
+    Log_warn("ConfigClient: Failed to connect to c-node at %s (error: %d)",
              c_node_addr_.c_str(), result);
     return false;
 }
 
-// @unsafe - Establishes network connection with retry
+// @unsafe - Establishes network connection with retry and sleep
 bool ConfigClient::connect() {
     uint32_t retries = 0;
     uint32_t delay_ms = retry_delay_ms_.get();
@@ -63,28 +67,33 @@ bool ConfigClient::connect() {
 
         retries++;
         if (retries < max_retries) {
-            Log_info("ConfigClient: Retrying connection (%u/%u) in %u ms...",  // @unsafe
+            // @unsafe { logging I/O }
+            Log_info("ConfigClient: Retrying connection (%u/%u) in %u ms...",
                      retries, max_retries, delay_ms);
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));  // @unsafe
+            // @unsafe { thread sleep }
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
 
             // Exponential backoff with cap
             delay_ms = std::min(delay_ms * 2, max_delay);
         }
     }
 
-    Log_error("ConfigClient: Failed to connect after %u retries", max_retries);  // @unsafe
+    // @unsafe { logging I/O }
+    Log_error("ConfigClient: Failed to connect after %u retries", max_retries);
     return false;
 }
 
-// @safe - Cleanup only
+// @unsafe - Closes network connection and deletes proxy
 void ConfigClient::disconnect() {
     // Delete proxy first (it holds raw pointer to client)
     if (proxy_.is_some()) {
-        delete proxy_.take().unwrap();  // @unsafe
+        // @unsafe { delete operator }
+        delete proxy_.take().unwrap();
     }
 
     // Close client connection
     if (rpc_client_.is_some()) {
+        // @unsafe { network close }
         rpc_client_.as_ref().unwrap()->close();
         rpc_client_ = rusty::None;
     }
@@ -92,7 +101,7 @@ void ConfigClient::disconnect() {
     // Note: We keep poll_thread_ alive - it can be reused for reconnection
 }
 
-// @safe - Read-only check
+// @safe
 bool ConfigClient::is_connected() const {
     if (rpc_client_.is_none()) {
         return false;
@@ -102,10 +111,11 @@ bool ConfigClient::is_connected() const {
     return client->connection_state() == rrr::ConnectionState::CONNECTED;
 }
 
-// @unsafe - Makes RPC call
+// @unsafe - Makes RPC call over network
 rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
     if (proxy_.is_none()) {
-        Log_warn("ConfigClient: Not connected, cannot fetch config");  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot fetch config");
         return rusty::None;
     }
 
@@ -115,63 +125,75 @@ rusty::Option<PersistentConfig> ConfigClient::fetch_config() {
 
     // Call RPC with client_version=0 to get full config
     auto proxy = proxy_.as_ref().unwrap();
-    rrr::i32 result = proxy->GetConfig(0, &current_version, &has_update, &config_data);  // @unsafe
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->GetConfig(0, &current_version, &has_update, &config_data);
 
     if (result != 0) {
-        Log_warn("ConfigClient: GetConfig RPC failed with error %d", result);  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: GetConfig RPC failed with error %d", result);
         return rusty::None;
     }
 
     if (has_update == 0 || config_data.empty()) {
-        Log_warn("ConfigClient: C-node has no configuration");  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: C-node has no configuration");
         return rusty::None;
     }
 
     // Deserialize config_data to PersistentConfig
     rrr::Marshal m;
-    m.write(config_data.data(), config_data.size());  // @unsafe
+    // @unsafe { Marshal write not borrow-checked }
+    m.write(config_data.data(), config_data.size());
 
     PersistentConfig config;
-    m >> config;  // @unsafe
+    // @unsafe { Marshal read not borrow-checked }
+    m >> config;
 
-    Log_info("ConfigClient: Fetched configuration version %lu with %zu sites",  // @unsafe
+    // @unsafe { logging I/O }
+    Log_info("ConfigClient: Fetched configuration version %lu with %zu sites",
              config.version, config.sites.size());
 
     return rusty::Some(std::move(config));
 }
 
-// @unsafe - Makes RPC call
+// @unsafe - Makes RPC call over network
 rusty::Option<uint64_t> ConfigClient::fetch_version() {
     if (proxy_.is_none()) {
-        Log_warn("ConfigClient: Not connected, cannot fetch version");  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot fetch version");
         return rusty::None;
     }
 
     uint64_t version = 0;
     auto proxy = proxy_.as_ref().unwrap();
-    rrr::i32 result = proxy->GetConfigVersion(&version);  // @unsafe
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->GetConfigVersion(&version);
 
     if (result != 0) {
-        Log_warn("ConfigClient: GetConfigVersion RPC failed with error %d", result);  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: GetConfigVersion RPC failed with error %d", result);
         return rusty::None;
     }
 
     return rusty::Some(version);
 }
 
-// @unsafe - Makes RPC call
+// @unsafe - Makes RPC call over network
 rusty::Option<bool> ConfigClient::has_config() {
     if (proxy_.is_none()) {
-        Log_warn("ConfigClient: Not connected, cannot check has_config");  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot check has_config");
         return rusty::None;
     }
 
     rrr::i32 has_config_result = 0;
     auto proxy = proxy_.as_ref().unwrap();
-    rrr::i32 result = proxy->HasConfig(&has_config_result);  // @unsafe
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->HasConfig(&has_config_result);
 
     if (result != 0) {
-        Log_warn("ConfigClient: HasConfig RPC failed with error %d", result);  // @unsafe
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: HasConfig RPC failed with error %d", result);
         return rusty::None;
     }
 

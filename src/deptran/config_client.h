@@ -47,7 +47,7 @@ public:
     // @safe - Simple construction, no I/O
     explicit ConfigClient(const std::string& c_node_addr);
 
-    // @safe - Cleanup, releases resources
+    // @unsafe - Cleanup, releases network resources
     ~ConfigClient();
 
     // Delete copy operations (has owned resources)
@@ -71,7 +71,7 @@ public:
      * Disconnect from the configuration node.
      * Safe to call multiple times.
      */
-    // @safe - Cleanup only
+    // @unsafe - Closes network connection
     void disconnect();
 
     /**

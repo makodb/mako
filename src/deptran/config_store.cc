@@ -33,13 +33,15 @@ bool ConfigStore::open() {
     // @unsafe { RocksDB Open is not borrow-checked }
     rocksdb::Status status = rocksdb::DB::Open(options_, db_path_, &db_);
     if (!status.ok()) {
+        // @unsafe { logging I/O }
         Log_error("ConfigStore: Failed to open database at %s: %s",
-                  db_path_.c_str(), status.ToString().c_str());  // @unsafe
+                  db_path_.c_str(), status.ToString().c_str());
         return false;
     }
 
     is_open_.set(true);
-    Log_info("ConfigStore: Opened database at %s", db_path_.c_str());  // @unsafe
+    // @unsafe { logging I/O }
+    Log_info("ConfigStore: Opened database at %s", db_path_.c_str());
     return true;
 }
 
@@ -56,7 +58,8 @@ void ConfigStore::close() {
     }
 
     is_open_.set(false);
-    Log_info("ConfigStore: Closed database at %s", db_path_.c_str());  // @unsafe
+    // @unsafe { logging I/O }
+    Log_info("ConfigStore: Closed database at %s", db_path_.c_str());
 }
 
 // @unsafe - Marshal operations
@@ -78,11 +81,11 @@ bool ConfigStore::deserialize_from_string(const std::string& data, rrr::Marshal*
 // @unsafe - RocksDB I/O
 bool ConfigStore::save(const PersistentConfig& config) {
     if (!is_open_.get()) {
-        Log_error("ConfigStore: Cannot save - database not open");  // @unsafe
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Cannot save - database not open");
         return false;
     }
 
-    // Use a write batch for atomic writes
     // @unsafe { RocksDB WriteBatch is not borrow-checked }
     rocksdb::WriteBatch batch;
 
@@ -99,9 +102,10 @@ bool ConfigStore::save(const PersistentConfig& config) {
     {
         rrr::Marshal m;
         uint32_t size = static_cast<uint32_t>(config.sites.size());
-        m << size;  // @unsafe
+        // @unsafe { Marshal write not borrow-checked }
+        m << size;
         for (const auto& site : config.sites) {
-            m << site;  // @unsafe
+            m << site;
         }
         std::string sites_str;
         serialize_to_string(m, &sites_str);
@@ -112,9 +116,10 @@ bool ConfigStore::save(const PersistentConfig& config) {
     {
         rrr::Marshal m;
         uint32_t size = static_cast<uint32_t>(config.replica_groups.size());
-        m << size;  // @unsafe
+        // @unsafe { Marshal write not borrow-checked }
+        m << size;
         for (const auto& group : config.replica_groups) {
-            m << group;  // @unsafe
+            m << group;
         }
         std::string replicas_str;
         serialize_to_string(m, &replicas_str);
@@ -124,29 +129,32 @@ bool ConfigStore::save(const PersistentConfig& config) {
     // Serialize and write settings
     {
         rrr::Marshal m;
-        m << config.settings;  // @unsafe
+        // @unsafe { Marshal write not borrow-checked }
+        m << config.settings;
         std::string settings_str;
         serialize_to_string(m, &settings_str);
         batch.Put(config_keys::SETTINGS, settings_str);
     }
 
-    // Write batch atomically
     // @unsafe { RocksDB Write is not borrow-checked }
     rocksdb::Status status = db_->Write(write_options_, &batch);
     if (!status.ok()) {
+        // @unsafe { logging I/O }
         Log_error("ConfigStore: Failed to save configuration: %s",
-                  status.ToString().c_str());  // @unsafe
+                  status.ToString().c_str());
         return false;
     }
 
-    Log_info("ConfigStore: Saved configuration version %lu", config.version);  // @unsafe
+    // @unsafe { logging I/O }
+    Log_info("ConfigStore: Saved configuration version %lu", config.version);
     return true;
 }
 
 // @unsafe - RocksDB I/O
 rusty::Option<PersistentConfig> ConfigStore::load() {
     if (!is_open_.get()) {
-        Log_error("ConfigStore: Cannot load - database not open");  // @unsafe
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Cannot load - database not open");
         return rusty::None;
     }
 
@@ -158,16 +166,18 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         // @unsafe { RocksDB Get is not borrow-checked }
         rocksdb::Status status = db_->Get(read_options_, config_keys::VERSION, &value);
         if (!status.ok()) {
+            // @unsafe { logging I/O }
             if (status.IsNotFound()) {
-                Log_debug("ConfigStore: No configuration found");  // @unsafe
+                Log_debug("ConfigStore: No configuration found");
             } else {
                 Log_error("ConfigStore: Failed to read version: %s",
-                          status.ToString().c_str());  // @unsafe
+                          status.ToString().c_str());
             }
             return rusty::None;
         }
         if (value.size() != sizeof(uint64_t)) {
-            Log_error("ConfigStore: Invalid version data size");  // @unsafe
+            // @unsafe { logging I/O }
+            Log_error("ConfigStore: Invalid version data size");
             return rusty::None;
         }
         // @unsafe { memcpy is not borrow-checked }
@@ -180,17 +190,19 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         // @unsafe { RocksDB Get is not borrow-checked }
         rocksdb::Status status = db_->Get(read_options_, config_keys::SITES, &value);
         if (!status.ok()) {
+            // @unsafe { logging I/O }
             Log_error("ConfigStore: Failed to read sites: %s",
-                      status.ToString().c_str());  // @unsafe
+                      status.ToString().c_str());
             return rusty::None;
         }
         rrr::Marshal m;
         deserialize_from_string(value, &m);
         uint32_t size;
-        m >> size;  // @unsafe
+        // @unsafe { Marshal read not borrow-checked }
+        m >> size;
         config.sites.resize(size);
         for (uint32_t i = 0; i < size; ++i) {
-            m >> config.sites[i];  // @unsafe
+            m >> config.sites[i];
         }
     }
 
@@ -200,17 +212,19 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         // @unsafe { RocksDB Get is not borrow-checked }
         rocksdb::Status status = db_->Get(read_options_, config_keys::REPLICAS, &value);
         if (!status.ok()) {
+            // @unsafe { logging I/O }
             Log_error("ConfigStore: Failed to read replica groups: %s",
-                      status.ToString().c_str());  // @unsafe
+                      status.ToString().c_str());
             return rusty::None;
         }
         rrr::Marshal m;
         deserialize_from_string(value, &m);
         uint32_t size;
-        m >> size;  // @unsafe
+        // @unsafe { Marshal read not borrow-checked }
+        m >> size;
         config.replica_groups.resize(size);
         for (uint32_t i = 0; i < size; ++i) {
-            m >> config.replica_groups[i];  // @unsafe
+            m >> config.replica_groups[i];
         }
     }
 
@@ -220,17 +234,20 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
         // @unsafe { RocksDB Get is not borrow-checked }
         rocksdb::Status status = db_->Get(read_options_, config_keys::SETTINGS, &value);
         if (!status.ok()) {
+            // @unsafe { logging I/O }
             Log_error("ConfigStore: Failed to read settings: %s",
-                      status.ToString().c_str());  // @unsafe
+                      status.ToString().c_str());
             return rusty::None;
         }
         rrr::Marshal m;
         deserialize_from_string(value, &m);
-        m >> config.settings;  // @unsafe
+        // @unsafe { Marshal read not borrow-checked }
+        m >> config.settings;
     }
 
+    // @unsafe { logging I/O }
     Log_info("ConfigStore: Loaded configuration version %lu with %zu sites and %zu replica groups",
-             config.version, config.sites.size(), config.replica_groups.size());  // @unsafe
+             config.version, config.sites.size(), config.replica_groups.size());
 
     return rusty::Some(std::move(config));
 }
