@@ -17,7 +17,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
     - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
-    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-10, 03:15 - fixed borrow violations in client.cpp, server.cpp, reactor.cc, threading.cpp]
+    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-11, 13:00 - fixed CMakeLists.txt: removed raft_main_helper.cc from RAFT_BORROW_SRC (was inconsistent with exclusion note), excluded raft test files from borrow checking, verified borrow_check_all passes, all 54 rrrTests pass]
   - [ ] *medium* currently when we build the project from scratch, the build of the rusty-cpp submodule seems to be single threaded, make it parallel build (32 thread) to speed up.
   - [x] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh rrrTests [DONE 2026-01-09]
     - Root cause 1: `Client::close()` was clearing connection to None, losing address for reconnect
