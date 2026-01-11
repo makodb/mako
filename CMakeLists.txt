@@ -1247,6 +1247,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_store txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_store COMMAND test_config_store)
 
+    # ConfigService RPC Tests
+    # Note: Includes src/deptran for rcc_rpc.h dependencies (__dep__.h, rcc/tx.h, etc.)
+    add_executable(test_config_service test/config_service_test.cc)
+    target_include_directories(test_config_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
+    target_compile_options(test_config_service PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_service txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_config_service COMMAND test_config_service)
+
     # RPC Tests
     add_executable(test_rpc test/test_rpc.cc test/benchmark_service.cc)
     target_include_directories(test_rpc PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

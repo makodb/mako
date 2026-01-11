@@ -518,3 +518,20 @@ abstract service ClientControl {
     defer client_start ( | );
     defer DispatchTxn(TxDispatchRequest req | TxReply result);
 }
+
+// Configuration node service - serves cluster configuration to other nodes
+abstract service ConfigService {
+    // Get full configuration, checking version for caching
+    // If client_version matches server version, returns has_update=0 (no change)
+    // config_data is serialized PersistentConfig (empty string if no update needed)
+    defer GetConfig(uint64_t client_version |
+                    uint64_t current_version,
+                    i32 has_update,
+                    string config_data);
+
+    // Get just the config version (lightweight check)
+    defer GetConfigVersion( | uint64_t version);
+
+    // Check if config is available (returns 1 if config exists, 0 otherwise)
+    defer HasConfig( | i32 has_config);
+}
