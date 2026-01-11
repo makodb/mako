@@ -185,6 +185,21 @@ void RaftServer::ReplayCommittedEntries() {
 
   Log_info("[RAFT-REPLAY] Site %d: Replayed %zu entries, executeIndex now %lu",
            site_id_, replayed, executeIndex);
+
+  // Phase 2.3: Log uncommitted entries status
+  size_t uncommitted = GetUncommittedCount();
+  if (uncommitted > 0) {
+    Log_info("[RAFT-RECOVERY] Site %d: %zu uncommitted entries (lastLogIndex=%lu, commitIndex=%lu) - will be resolved by consensus",
+             site_id_, uncommitted, lastLogIndex, commitIndex);
+  }
+}
+
+// @safe - Read-only accessor
+size_t RaftServer::GetUncommittedCount() const {
+  if (lastLogIndex > commitIndex) {
+    return lastLogIndex - commitIndex;
+  }
+  return 0;
 }
 
 // ============================================================================

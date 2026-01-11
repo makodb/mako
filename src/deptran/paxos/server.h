@@ -82,6 +82,14 @@ class PaxosServer : public TxLogServer {
   // @unsafe - Calls app_next_ which may have side effects
   void ReplayCommittedEntries();
 
+  /**
+   * Get count of uncommitted entries after recovery.
+   * These entries will be resolved by the consensus protocol.
+   * @return Number of uncommitted entries (max_accepted_slot_ - max_committed_slot_)
+   */
+  // @safe - Read-only accessor
+  size_t GetUncommittedCount() const;
+
 #ifdef CHECK_KEY_DISTRIBUTION
   KeyDistribution key_distribution_;
 #endif

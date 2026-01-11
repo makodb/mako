@@ -949,6 +949,21 @@ void PaxosServer::ReplayCommittedEntries() {
 
   Log_info("[PAXOS-REPLAY] Site par %d loc %d: Replayed %zu entries, max_executed now %lu",
            partition_id_, loc_id_, replayed, max_executed_slot_);
+
+  // Phase 2.3: Log uncommitted entries status
+  size_t uncommitted = GetUncommittedCount();
+  if (uncommitted > 0) {
+    Log_info("[PAXOS-RECOVERY] Site par %d loc %d: %zu uncommitted entries (max_accepted=%lu, max_committed=%lu) - will be resolved by consensus",
+             partition_id_, loc_id_, uncommitted, max_accepted_slot_, max_committed_slot_);
+  }
+}
+
+// @safe - Read-only accessor
+size_t PaxosServer::GetUncommittedCount() const {
+  if (max_accepted_slot_ > max_committed_slot_) {
+    return max_accepted_slot_ - max_committed_slot_;
+  }
+  return 0;
 }
 
 } // namespace janus

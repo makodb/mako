@@ -452,6 +452,14 @@ class RaftServer : public TxLogServer {
   // @unsafe - Calls app_next_ which may have side effects
   void ReplayCommittedEntries();
 
+  /**
+   * Get count of uncommitted entries after recovery.
+   * These entries will be resolved by the consensus protocol.
+   * @return Number of uncommitted entries (lastLogIndex - commitIndex)
+   */
+  // @safe - Read-only accessor
+  size_t GetUncommittedCount() const;
+
   // ============================================================================
 
   // @unsafe - Calls undeclared doVote() and uses std::function callback
