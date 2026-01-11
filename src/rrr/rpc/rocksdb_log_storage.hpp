@@ -58,16 +58,16 @@ private:
     static constexpr const char* LOG_PREFIX = "log:";
     static constexpr const char* META_PREFIX = "meta:";
 
-    // @safe - Pure function for key formatting
+    // @unsafe - Uses ostringstream operations
     std::string make_log_key(slotid_t slot_id) const {
         std::ostringstream ss;
-        ss << LOG_PREFIX << std::setfill('0') << std::setw(20) << slot_id;
-        return ss.str();
+        ss << LOG_PREFIX << std::setfill('0') << std::setw(20) << slot_id;  // @unsafe
+        return ss.str();  // @unsafe
     }
 
-    // @safe - Pure function for metadata key formatting
+    // @unsafe - String concatenation
     std::string make_meta_key(const std::string& key) const {
-        return std::string(META_PREFIX) + key;
+        return std::string(META_PREFIX) + key;  // @unsafe
     }
 
     // @unsafe - Uses Marshal which has non-borrow-checked operations
@@ -360,9 +360,9 @@ public:
         return count;
     }
 
-    // @safe - Delegates to size()
+    // @unsafe - Calls size() which uses RocksDB
     bool empty() const override {
-        return size() == 0;
+        return size() == 0;  // @unsafe
     }
 
     // ========================================================================
@@ -460,7 +460,7 @@ public:
     /**
      * Get the database path.
      */
-    // @safe - Read-only accessor
+    // @lifetime: (&'a) -> &'a
     const std::string& get_db_path() const {
         return db_path_;
     }

@@ -6,6 +6,8 @@
 #include "frame.h"
 #include "communicator.h"
 #include "raft/server.h"
+#include "paxos/server.h"
+#include "rrr/rpc/recovery_manager.hpp"
 
 #include <gperftools/profiler.h>
 
@@ -51,7 +53,10 @@ void ServerWorker::SetupBase() {
     rep_sched_->loc_id_ = site_info_->locale_id;
     rep_sched_->site_id_ = site_info_->id;
     rep_sched_->rep_frame_ = rep_frame_;
-    
+
+    // Phase 2.1: Initialize recovery for replication servers
+    InitializeRecovery(site_info_->partition_id_, site_info_->locale_id);
+
     // Start election timer after site_id_ is properly initialized
     // if (RaftServer* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
     //   raft_server->StartElectionTimerForTest();
@@ -91,6 +96,9 @@ void ServerWorker::SetupBase() {
 
     tx_sched_->rep_frame_ = rep_frame_;
     tx_sched_->rep_sched_ = rep_sched_;
+
+    // Phase 2.1: Initialize recovery for replication servers
+    InitializeRecovery(site_info_->partition_id_, site_info_->locale_id);
   }
   // add callbacks to execute commands to rep_sched_
   if (rep_sched_ && tx_sched_) {
@@ -346,6 +354,84 @@ ServerWorker::~ServerWorker() {
   if (svr_hb_poll_thread_worker_g.is_some()) {
     svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
   }
+}
+
+// Phase 2.1: Initialize recovery for replication servers
+// @unsafe - Uses LogStorage and filesystem operations
+void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id) {
+  if (!rep_sched_) {
+    return;  // No replication scheduler to recover
+  }
+
+  // Create recovery config for this replica
+  rrr::RecoveryConfig config = rrr::RecoveryConfig::for_replica(partition_id, locale_id);
+
+  // Create recovery manager
+  rrr::RecoveryManager recovery_manager(config);
+
+  // Create storage backend
+  auto storage = recovery_manager.create_storage();
+  if (!storage) {
+    Log_error("Failed to create storage for partition %u replica %u", partition_id, locale_id);
+    return;
+  }
+
+  // Try to recover Raft server
+  if (auto* raft_server = dynamic_cast<RaftServer*>(rep_sched_)) {
+    auto result = recovery_manager.recover(
+        [raft_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+          raft_server->SetLogStorage(s);
+        },
+        [raft_server]() {
+          return raft_server->RecoverFromStorage();
+        },
+        [&storage](rrr::RecoveryResult& r) {
+          auto term_opt = storage->get_metadata("currentTerm");
+          if (term_opt.is_some()) {
+            r.recovered_term = std::stoull(term_opt.unwrap());
+          }
+        });
+
+    if (!result.success) {
+      Log_error("Raft recovery failed for partition %u replica %u: %s",
+                partition_id, locale_id, result.error_message.c_str());
+    } else {
+      Log_info("Raft recovery: partition=%u replica=%u mode=%d entries=%lu term=%lu time=%lums",
+               partition_id, locale_id, static_cast<int>(result.mode),
+               result.recovered_entries, result.recovered_term, result.recovery_time_ms);
+    }
+    return;
+  }
+
+  // Try to recover Paxos server
+  if (auto* paxos_server = dynamic_cast<PaxosServer*>(rep_sched_)) {
+    auto result = recovery_manager.recover(
+        [paxos_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+          paxos_server->SetLogStorage(s);
+        },
+        [paxos_server]() {
+          return paxos_server->RecoverFromStorage();
+        },
+        [&storage](rrr::RecoveryResult& r) {
+          auto epoch_opt = storage->get_metadata("cur_epoch");
+          if (epoch_opt.is_some()) {
+            r.recovered_epoch = std::stoull(epoch_opt.unwrap());
+          }
+        });
+
+    if (!result.success) {
+      Log_error("Paxos recovery failed for partition %u replica %u: %s",
+                partition_id, locale_id, result.error_message.c_str());
+    } else {
+      Log_info("Paxos recovery: partition=%u replica=%u mode=%d entries=%lu epoch=%lu time=%lums",
+               partition_id, locale_id, static_cast<int>(result.mode),
+               result.recovered_entries, result.recovered_epoch, result.recovery_time_ms);
+    }
+    return;
+  }
+
+  Log_debug("No Raft or Paxos server found for recovery in partition %u replica %u",
+            partition_id, locale_id);
 }
 
 } // namespace janus
