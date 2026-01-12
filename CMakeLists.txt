@@ -702,6 +702,7 @@ target_include_directories(txlog PRIVATE
     src/memdb
     src/deptran
     src/bench
+    src/mako
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     dependencies/yaml-cpp/include
     ${Boost_INCLUDE_DIRS}
@@ -1259,6 +1260,13 @@ if(BUILD_TESTS)
     target_compile_options(test_sharding_policy_cache PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_sharding_policy_cache txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_sharding_policy_cache COMMAND test_sharding_policy_cache)
+
+    # Shard Router Integration Tests (requires txlog for ShardingPolicyCache)
+    add_executable(test_shard_router test/shard_router_test.cc)
+    target_include_directories(test_shard_router PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
+    target_compile_options(test_shard_router PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_shard_router txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_shard_router COMMAND test_shard_router)
 
     # ConfigStore RocksDB Tests
     add_executable(test_config_store test/config_store_test.cc)

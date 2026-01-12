@@ -18,6 +18,7 @@
 #include "benchmarks/tpcc.h"
 #include "benchmarks/benchmark_config.h"
 #include "lib/common.h"
+#include "lib/table_registry.h"
 #include "benchmarks/rpc_setup.h"
 #include "mbta_sharded_ordered_index.hh"
 
@@ -1243,6 +1244,8 @@ public:
 
     auto tbl = global_table_instances[available_table_id];
     tbl->set_table_name(name) ;
+    // Register table in global registry for policy-based shard routing
+    mako::get_table_registry().register_table(available_table_id, name);
     // Record this table to prevent duplicate creation for the same (name, shard)
     tables_taken[std::make_tuple(name, shard_index)] = available_table_id;
     std::cout << "new table is createded with name: " << name 

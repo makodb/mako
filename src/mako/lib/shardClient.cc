@@ -6,6 +6,7 @@
 #include "lib/shardClient.h"
 #include "lib/configuration.h"
 #include "lib/common.h"
+#include "lib/shard_router.h"
 #include "benchmarks/sto/Interface.hh"
 
 namespace mako
@@ -168,7 +169,8 @@ namespace mako
     int ShardClient::remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value) {
 
         int table_id = remote_table_id;
-        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        // Use policy-based routing if available, otherwise fall back to table-ID-based
+        int dstShardIndex = compute_shard_for_key(table_id, start_key);
 
         TThread::readset_shard_bits |= (1 << dstShardIndex);
         Promise promise(GET_TIMEOUT);
@@ -203,9 +205,10 @@ namespace mako
     }
 
     int ShardClient::remoteGet(int remote_table_id, std::string key, std::string &value) {
-        
+
         int table_id = remote_table_id;
-        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        // Use policy-based routing if available, otherwise fall back to table-ID-based
+        int dstShardIndex = compute_shard_for_key(table_id, key);
 
         TThread::readset_shard_bits |= (1 << dstShardIndex) ;
         Promise promise(GET_TIMEOUT);
@@ -248,7 +251,8 @@ namespace mako
         for (int i = 0; i < remote_table_id_batch.size(); i++) {
             int remote_table_id = remote_table_id_batch[i];
             int table_id = remote_table_id;
-            int dst_shard_idx = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+            // Use policy-based routing if available, otherwise fall back to table-ID-based
+            int dst_shard_idx = compute_shard_for_key(table_id, key_batch[i]);
 
             // after combine remoteLock + remoteValidate, this step might need to be skipped
             TThread::writeset_shard_bits |= (1 << dst_shard_idx) ;
@@ -278,7 +282,8 @@ namespace mako
         Panic("Deprecated!");
 
         int table_id = remote_table_id;
-        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        // Use policy-based routing if available, otherwise fall back to table-ID-based
+        int dstShardIndex = compute_shard_for_key(table_id, key);
         
         TThread::writeset_shard_bits |= (1 << dstShardIndex) ;
         Promise promise(BASIC_TIMEOUT);
