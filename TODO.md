@@ -827,16 +827,26 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] *low* 2.5 Add helper functions [DONE]
         - `create_tpcc_sharding_policy(num_warehouses, num_shards)`: TPC-C preset
         - `create_uniform_sharding_policy(table_name, key_field, max_key, num_shards)`: Generic preset
-    - [ ] **Task 3: C-Node Sharding Policy Storage** [~200 LOC]
-      - [ ] *high* 3.1 Create `ShardingPolicyStore` class
-        - `save_policy(ShardingPolicySet)`: Persist to RocksDB
-        - `load_policy() -> Option<ShardingPolicySet>`: Load from RocksDB
-        - `get_version() -> uint64_t`: Get current policy version
+    - [x] **Task 3: C-Node Sharding Policy Storage** [~120 LOC] [DONE 2026-01-12, 17:45]
+      - [x] *high* 3.1 Add sharding policy methods to ConfigStore [DONE]
+        - `save_sharding_policy(ShardingPolicySet)`: Persist to RocksDB
+        - `load_sharding_policy() -> Option<ShardingPolicySet>`: Load from RocksDB
+        - `get_sharding_policy_version() -> uint64_t`: Get current policy version
+        - `has_sharding_policy() -> bool`: Check if policy exists
         - RocksDB key schema: `sharding/version`, `sharding/policy`
-      - [ ] *high* 3.2 Integrate with ConfigStore
-        - Store sharding policy alongside cluster configuration
-        - Load sharding policy during C-node startup (if exists)
-      - [ ] *medium* 3.3 Add unit tests for policy persistence
+      - [x] *high* 3.2 Integrate with ConfigStore [DONE]
+        - Sharding policy stored alongside cluster configuration
+        - Uses same RocksDB instance as cluster config
+        - Can coexist with cluster config (separate key prefixes)
+      - [x] *medium* 3.3 Add unit tests for policy persistence [DONE - 8 tests]
+        - SaveAndLoadShardingPolicy
+        - LoadNonExistentShardingPolicy
+        - HasShardingPolicy
+        - GetShardingPolicyVersion
+        - ShardingPolicyPersistenceAcrossReopen
+        - SaveShardingPolicyWithoutOpen
+        - LoadShardingPolicyWithoutOpen
+        - ClusterConfigAndShardingPolicyCoexist
     - [ ] **Task 4: C-Node RPC Interface for Sharding** [~150 LOC]
       - [ ] *high* 4.1 Add sharding RPCs to ConfigService
         - `SetShardingPolicy(policy_data) -> success`: Set policy (called by initializer)

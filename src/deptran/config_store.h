@@ -20,6 +20,7 @@
 #include <rusty/option.hpp>
 
 #include "config_schema.h"
+#include "sharding_policy.h"
 
 namespace janus {
 
@@ -121,6 +122,39 @@ public:
      */
     // @unsafe - RocksDB I/O
     bool has_config();
+
+    // ========================================================================
+    // Sharding Policy Storage
+    // ========================================================================
+
+    /**
+     * Save sharding policy to RocksDB.
+     * @param policy The sharding policy set to save
+     * @return true on success, false on failure
+     */
+    // @unsafe - RocksDB I/O
+    bool save_sharding_policy(const ShardingPolicySet& policy);
+
+    /**
+     * Load sharding policy from RocksDB.
+     * @return Some(policy) if found, None if not found or error
+     */
+    // @unsafe - RocksDB I/O
+    rusty::Option<ShardingPolicySet> load_sharding_policy();
+
+    /**
+     * Get the current sharding policy version without loading the full policy.
+     * @return The version number, or 0 if not found
+     */
+    // @unsafe - RocksDB I/O
+    uint64_t get_sharding_policy_version();
+
+    /**
+     * Check if a sharding policy exists in the database.
+     * @return true if policy exists, false otherwise
+     */
+    // @unsafe - RocksDB I/O
+    bool has_sharding_policy();
 };
 
 }  // namespace janus

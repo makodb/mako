@@ -36,6 +36,17 @@ constexpr const char* SETTINGS = "config/settings";
 
 }  // namespace config_keys
 
+// @safe - Key prefixes for sharding policy storage
+namespace sharding_keys {
+
+// Version key - stores policy version for cache invalidation
+constexpr const char* VERSION = "sharding/version";
+
+// Policy key - stores the full sharding policy set
+constexpr const char* POLICY = "sharding/policy";
+
+}  // namespace sharding_keys
+
 // ============================================================================
 // Serializable Data Structures
 // ============================================================================

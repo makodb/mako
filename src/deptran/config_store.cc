@@ -283,4 +283,121 @@ bool ConfigStore::has_config() {
     return status.ok();
 }
 
+// ============================================================================
+// Sharding Policy Storage Implementation
+// ============================================================================
+
+// @unsafe - RocksDB I/O
+bool ConfigStore::save_sharding_policy(const ShardingPolicySet& policy) {
+    if (!is_open_.get()) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Cannot save sharding policy - database not open");
+        return false;
+    }
+
+    // @unsafe { RocksDB WriteBatch is not borrow-checked }
+    rocksdb::WriteBatch batch;
+
+    // Serialize and write version
+    {
+        std::string version_str(sizeof(uint64_t), '\0');
+        uint64_t version = policy.version;
+        // @unsafe { memcpy is not borrow-checked }
+        std::memcpy(version_str.data(), &version, sizeof(uint64_t));
+        batch.Put(sharding_keys::VERSION, version_str);
+    }
+
+    // Serialize and write the full policy
+    {
+        rrr::Marshal m;
+        // @unsafe { Marshal write not borrow-checked }
+        m << policy;
+        std::string policy_str;
+        serialize_to_string(m, &policy_str);
+        batch.Put(sharding_keys::POLICY, policy_str);
+    }
+
+    // @unsafe { RocksDB Write is not borrow-checked }
+    rocksdb::Status status = db_->Write(write_options_, &batch);
+    if (!status.ok()) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Failed to save sharding policy: %s",
+                  status.ToString().c_str());
+        return false;
+    }
+
+    // @unsafe { logging I/O }
+    Log_info("ConfigStore: Saved sharding policy version %lu with %zu tables",
+             policy.version, policy.table_count());
+    return true;
+}
+
+// @unsafe - RocksDB I/O
+rusty::Option<ShardingPolicySet> ConfigStore::load_sharding_policy() {
+    if (!is_open_.get()) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Cannot load sharding policy - database not open");
+        return rusty::None;
+    }
+
+    // Read the full policy (version is inside ShardingPolicySet)
+    std::string value;
+    // @unsafe { RocksDB Get is not borrow-checked }
+    rocksdb::Status status = db_->Get(read_options_, sharding_keys::POLICY, &value);
+    if (!status.ok()) {
+        // @unsafe { logging I/O }
+        if (status.IsNotFound()) {
+            Log_debug("ConfigStore: No sharding policy found");
+        } else {
+            Log_error("ConfigStore: Failed to read sharding policy: %s",
+                      status.ToString().c_str());
+        }
+        return rusty::None;
+    }
+
+    // Deserialize
+    rrr::Marshal m;
+    deserialize_from_string(value, &m);
+    ShardingPolicySet policy;
+    // @unsafe { Marshal read not borrow-checked }
+    m >> policy;
+
+    // @unsafe { logging I/O }
+    Log_info("ConfigStore: Loaded sharding policy version %lu with %zu tables",
+             policy.version, policy.table_count());
+
+    return rusty::Some(std::move(policy));
+}
+
+// @unsafe - RocksDB I/O
+uint64_t ConfigStore::get_sharding_policy_version() {
+    if (!is_open_.get()) {
+        return 0;
+    }
+
+    std::string value;
+    // @unsafe { RocksDB Get is not borrow-checked }
+    rocksdb::Status status = db_->Get(read_options_, sharding_keys::VERSION, &value);
+    if (!status.ok() || value.size() != sizeof(uint64_t)) {
+        return 0;
+    }
+
+    uint64_t version;
+    // @unsafe { memcpy is not borrow-checked }
+    std::memcpy(&version, value.data(), sizeof(uint64_t));
+    return version;
+}
+
+// @unsafe - RocksDB I/O
+bool ConfigStore::has_sharding_policy() {
+    if (!is_open_.get()) {
+        return false;
+    }
+
+    std::string value;
+    // @unsafe { RocksDB Get is not borrow-checked }
+    rocksdb::Status status = db_->Get(read_options_, sharding_keys::VERSION, &value);
+    return status.ok();
+}
+
 }  // namespace janus
