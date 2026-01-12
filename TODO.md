@@ -788,8 +788,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] *high* 1.2 Implement Marshal serialization for sharding schema [DONE]
         - Serialize/deserialize for RocksDB storage and RPC transfer
       - [x] *medium* 1.3 Add unit tests for schema serialization [DONE - 18 tests]
-    - [ ] **Task 2: Sharding Policy Builder API** [~200 LOC]
-      - [ ] *high* 2.1 Create `ShardingPolicyBuilder` class (fluent API)
+    - [x] **Task 2: Sharding Policy Builder API** [~290 LOC] [DONE 2026-01-12, 16:00]
+      - [x] *high* 2.1 Create `ShardingPolicyBuilder` class (fluent API) [DONE]
         ```cpp
         // Example usage in TPC-C initialization:
         auto policy = ShardingPolicyBuilder(num_shards)
@@ -809,18 +809,24 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
             // ... other tables
             .build();
         ```
-      - [ ] *high* 2.2 Implement builder methods
+      - [x] *high* 2.2 Implement builder methods [DONE]
         - `table(name)`: Start configuring a table
         - `shardByField(index)`: Extract sharding key from field index
         - `shardByPrefix(len)`: Extract sharding key from key prefix
+        - `shardByHash()`: Hash-based key extraction for fallback
         - `addRange(start, end, shard)`: Add a range mapping
         - `defaultShard(shard)`: Set default shard for unmatched keys
         - `build()`: Validate and return ShardingPolicySet
-      - [ ] *medium* 2.3 Add validation in build()
+      - [x] *medium* 2.3 Add validation in build() [DONE]
         - Check ranges don't overlap
-        - Check all shards are valid (< num_shards)
-        - Warn if ranges have gaps
-      - [ ] *medium* 2.4 Add unit tests for builder
+        - Check all shard IDs are valid (< num_shards)
+        - Check default_shard is valid if set
+        - Check table names are not empty
+        - Check at least one table exists
+      - [x] *medium* 2.4 Add unit tests for builder [DONE - 16 builder tests]
+      - [x] *low* 2.5 Add helper functions [DONE]
+        - `create_tpcc_sharding_policy(num_warehouses, num_shards)`: TPC-C preset
+        - `create_uniform_sharding_policy(table_name, key_field, max_key, num_shards)`: Generic preset
     - [ ] **Task 3: C-Node Sharding Policy Storage** [~200 LOC]
       - [ ] *high* 3.1 Create `ShardingPolicyStore` class
         - `save_policy(ShardingPolicySet)`: Persist to RocksDB
