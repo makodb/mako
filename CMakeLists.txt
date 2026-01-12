@@ -534,6 +534,7 @@ set(MAKO_SRCFILES
   "${W}/benchmarks/queue.cc"
   "${W}/benchmarks/tpcc.cc"
   "${W}/benchmarks/rpc_setup.cc"
+  #"${W}/benchmarks/config_node_init.cc"  # TODO: Enable when rrr/mako header conflicts are resolved
   #"${W}/benchmarks/tpcc_simple.cc"
   #"${W}/benchmarks/ycsb.cc"
   "${W}/benchmarks/sync_util_init.cc"

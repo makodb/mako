@@ -1,0 +1,44 @@
+#pragma once
+
+/**
+ * @file config_node_init.h
+ * @brief Config node initialization functions for Mako.
+ *
+ * This header is separated from mako.hh to avoid include conflicts between
+ * rrr headers and mako lib headers. Include this only in files that need
+ * config node functionality.
+ *
+ * NOTE: The rrr headers (through config_*.h) define macros like 'verify' that
+ * may conflict with other code. Include this header last in your file.
+ */
+
+#include "deptran/config_store.h"
+#include "deptran/config_service.h"
+#include "deptran/config_client.h"
+#include "benchmark_config.h"
+
+namespace mako {
+
+// Global config node components (for c-node mode)
+extern janus::ConfigStore* g_config_store;
+extern rusty::Option<rusty::Arc<rrr::PollThread>> g_config_poll_thread;
+extern rrr::Server* g_config_rpc_server;
+
+/**
+ * @brief Initialize config node components for c-node mode.
+ * @return true if initialization succeeded, false otherwise
+ */
+bool init_config_node();
+
+/**
+ * @brief Fetch configuration from a remote c-node.
+ * @return true if config was fetched and applied, false otherwise
+ */
+bool fetch_config_from_cnode();
+
+/**
+ * @brief Shutdown config node components.
+ */
+void shutdown_config_node();
+
+}  // namespace mako
