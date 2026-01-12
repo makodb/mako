@@ -256,26 +256,30 @@ TEST_F(ShardingPolicyCacheTest, TpccStyleRouting) {
     ShardingPolicyCache cache;
 
     // Create TPC-C style policy: 10 warehouses across 2 shards
+    // TPC-C uses 1-indexed warehouse IDs (w_id = 1, 2, ..., 10)
+    // With 10 warehouses, 2 shards: warehouses_per_shard = 5
+    // Shard 0: w_id in [1, 6) → w_id 1, 2, 3, 4, 5
+    // Shard 1: w_id in [6, 11) → w_id 6, 7, 8, 9, 10
     auto policy = create_tpcc_sharding_policy(10, 2);
     cache.set_policy(policy);
 
     EXPECT_TRUE(cache.is_initialized());
     EXPECT_EQ(2, cache.get_num_shards());
 
-    // All TPC-C tables should route the same way by w_id
-    EXPECT_EQ(0, cache.get_shard_for_key("WAREHOUSE", 0));
-    EXPECT_EQ(0, cache.get_shard_for_key("WAREHOUSE", 4));
-    EXPECT_EQ(1, cache.get_shard_for_key("WAREHOUSE", 5));
-    EXPECT_EQ(1, cache.get_shard_for_key("WAREHOUSE", 9));
+    // All TPC-C tables should route the same way by w_id (1-indexed)
+    EXPECT_EQ(0, cache.get_shard_for_key("WAREHOUSE", 1));  // First warehouse
+    EXPECT_EQ(0, cache.get_shard_for_key("WAREHOUSE", 5));  // Last of shard 0
+    EXPECT_EQ(1, cache.get_shard_for_key("WAREHOUSE", 6));  // First of shard 1
+    EXPECT_EQ(1, cache.get_shard_for_key("WAREHOUSE", 10)); // Last warehouse
 
-    EXPECT_EQ(0, cache.get_shard_for_key("DISTRICT", 2));
-    EXPECT_EQ(1, cache.get_shard_for_key("DISTRICT", 7));
+    EXPECT_EQ(0, cache.get_shard_for_key("DISTRICT", 3));   // w_id 3 → shard 0
+    EXPECT_EQ(1, cache.get_shard_for_key("DISTRICT", 8));   // w_id 8 → shard 1
 
-    EXPECT_EQ(0, cache.get_shard_for_key("CUSTOMER", 3));
-    EXPECT_EQ(1, cache.get_shard_for_key("CUSTOMER", 8));
+    EXPECT_EQ(0, cache.get_shard_for_key("CUSTOMER", 4));   // w_id 4 → shard 0
+    EXPECT_EQ(1, cache.get_shard_for_key("CUSTOMER", 9));   // w_id 9 → shard 1
 
-    EXPECT_EQ(0, cache.get_shard_for_key("STOCK", 1));
-    EXPECT_EQ(1, cache.get_shard_for_key("STOCK", 6));
+    EXPECT_EQ(0, cache.get_shard_for_key("STOCK", 2));      // w_id 2 → shard 0
+    EXPECT_EQ(1, cache.get_shard_for_key("STOCK", 7));      // w_id 7 → shard 1
 }
 
 // =============================================================================

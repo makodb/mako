@@ -288,7 +288,14 @@ inline ShardingPolicySet TablePolicyBuilder::build() {
 
 /**
  * Create a TPC-C style sharding policy where all tables are sharded by w_id.
- * @param num_warehouses Total number of warehouses
+ *
+ * TPC-C uses 1-indexed warehouse IDs (w_id = 1, 2, ..., num_warehouses).
+ * This function creates ranges that map:
+ *   - Shard 0: w_id in [1, warehouses_per_shard]
+ *   - Shard 1: w_id in [warehouses_per_shard + 1, 2 * warehouses_per_shard]
+ *   - etc.
+ *
+ * @param num_warehouses Total number of warehouses (w_id ranges from 1 to num_warehouses)
  * @param num_shards Number of shards to distribute across
  * @return ShardingPolicySet for TPC-C workload
  */
@@ -298,29 +305,38 @@ inline ShardingPolicySet create_tpcc_sharding_policy(int num_warehouses, int num
         throw std::invalid_argument("num_warehouses and num_shards must be positive");
     }
 
-    int warehouses_per_shard = (num_warehouses + num_shards - 1) / num_shards;  // Round up
+    // Calculate warehouses per shard (round up to handle uneven distribution)
+    int warehouses_per_shard = (num_warehouses + num_shards - 1) / num_shards;
 
     auto builder = ShardingPolicyBuilder(num_shards);
 
-    // TPC-C tables all sharded by w_id (field 0)
+    // TPC-C tables all sharded by w_id (field 0 in composite keys)
+    // Note: ITEM table is read-only and not truly sharded, but we include it
+    // with shard 0 as default for consistency
     const char* tables[] = {
         "WAREHOUSE", "DISTRICT", "CUSTOMER", "STOCK",
-        "ORDER", "NEW_ORDER", "ORDER_LINE", "HISTORY", "ITEM"
+        "ORDER", "NEW_ORDER", "ORDER_LINE", "HISTORY", "ITEM",
+        // Also include lowercase versions for compatibility
+        "warehouse", "district", "customer", "stock",
+        "oorder", "new_order", "order_line", "history", "item"
     };
 
     for (const char* table_name : tables) {
         auto& table_builder = builder.table(table_name).shardByField(0);
 
-        // Add ranges for each shard
+        // Add ranges for each shard (1-indexed warehouse IDs)
         for (int s = 0; s < num_shards; ++s) {
-            int64_t start = s * warehouses_per_shard;
-            int64_t end = std::min((s + 1) * warehouses_per_shard, num_warehouses);
+            // TPC-C w_id starts from 1, so:
+            // Shard 0: [1, warehouses_per_shard + 1)  = w_id 1..warehouses_per_shard
+            // Shard 1: [warehouses_per_shard + 1, 2 * warehouses_per_shard + 1)
+            int64_t start = s * warehouses_per_shard + 1;  // 1-indexed
+            int64_t end = std::min((s + 1) * warehouses_per_shard + 1, num_warehouses + 1);
             if (start < end) {
                 table_builder.addRange(start, end, s);
             }
         }
 
-        table_builder.defaultShard(0);  // Default to shard 0 for safety
+        table_builder.defaultShard(0);  // Default to shard 0 for out-of-range
     }
 
     return builder.build();

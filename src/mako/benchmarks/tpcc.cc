@@ -36,6 +36,7 @@
 #include <chrono>
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
+#include "benchmarks/tpcc_sharding.h"
 
 using namespace std;
 using namespace util;
@@ -3560,6 +3561,16 @@ private:
         open_tables[t.first + "_" + to_string(i)] = v[i];
         //std::cout<<"Table: "<<t.first + "_" + to_string(i)<<", id:"<<v[i]->get_table_id()<<std::endl;
       }
+    }
+
+    // Initialize TPC-C sharding policy for policy-based routing
+    // This enables the ShardingPolicyCache to route keys to the correct shard
+    // based on warehouse ID rather than table ID alone
+    if (!mako::is_tpcc_sharding_initialized()) {
+      auto& cfg = BenchmarkConfig::getInstance();
+      int num_warehouses_total = cfg.getScaleFactor() * cfg.getNshards();
+      int num_shards = cfg.getNshards();
+      mako::initialize_tpcc_sharding_policy(num_warehouses_total, num_shards);
     }
 
     if (g_enable_partition_locks) {

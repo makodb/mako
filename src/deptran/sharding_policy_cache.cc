@@ -73,6 +73,16 @@ bool ShardingPolicyCache::is_initialized() const {
 }
 
 // @safe
+void ShardingPolicyCache::clear() {
+    {
+        auto guard = policy_.lock().unwrap();
+        *guard = rusty::None;
+    }
+    cached_version_.set(0);
+    initialized_.set(false);
+}
+
+// @safe
 uint64_t ShardingPolicyCache::get_version() const {
     return cached_version_.get();
 }

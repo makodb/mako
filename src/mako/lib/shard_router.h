@@ -8,17 +8,22 @@
  * 2. Falls back to table-ID-based routing (legacy: (table_id - 1) / NUM_TABLES_PER_SHARD)
  *
  * Thread-safety: All functions are thread-safe.
+ *
+ * NOTE: This header is intentionally minimal to avoid pulling in mako or deptran
+ * headers. Implementation is in src/deptran/shard_router.cc.
  */
 
 #ifndef _MAKO_SHARD_ROUTER_H_
 #define _MAKO_SHARD_ROUTER_H_
 
-#include "lib/common.h"
-#include "lib/table_registry.h"
 #include <string>
 #include <cstdint>
 
 namespace mako {
+
+// Number of tables pre-allocated per shard (for table-ID-based routing fallback)
+// This must match NUM_TABLES_PER_SHARD in lib/common.h
+constexpr int SHARD_ROUTER_NUM_TABLES_PER_SHARD = 200;
 
 /**
  * @brief Compute the shard index for a given table and key.

@@ -91,6 +91,13 @@ public:
     bool is_initialized() const;
 
     /**
+     * Clear the cached policy (for testing purposes).
+     * Resets the cache to uninitialized state.
+     */
+    // @safe - Only modifies internal state
+    void clear();
+
+    /**
      * Get the cached policy version.
      * @return Version number, or 0 if not initialized
      */

@@ -4,9 +4,13 @@
  *
  * This file is compiled as part of txlog library to have access to
  * deptran headers (ShardingPolicyCache, etc.).
+ *
+ * NOTE: We avoid including mako headers that pull in lib/common.h or rpc.h
+ * to prevent symbol conflicts between mako and deptran.
  */
 
 #include "mako/lib/shard_router.h"
+#include "mako/lib/table_registry.h"
 #include "sharding_policy_cache.h"
 
 namespace mako {
@@ -47,7 +51,7 @@ int compute_shard_for_key(int table_id, const std::string& key) {
     }
 
     // Fall back to table-ID-based routing
-    return (table_id - 1) / NUM_TABLES_PER_SHARD;
+    return (table_id - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD;
 }
 
 // @safe - Uses thread-safe caches
@@ -63,7 +67,7 @@ int compute_shard_for_key_value(int table_id, const std::string& table_name, int
     }
 
     // Fall back to table-ID-based routing
-    return (table_id - 1) / NUM_TABLES_PER_SHARD;
+    return (table_id - 1) / SHARD_ROUTER_NUM_TABLES_PER_SHARD;
 }
 
 // @safe - Uses thread-safe cache
