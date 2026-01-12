@@ -93,6 +93,9 @@ class threadinfo {
     threadinfo* next() const {
         return next_;
     }
+    void set_next(threadinfo* n) {
+        next_ = n;
+    }
 
     static threadinfo* make(int purpose, int index);
     // XXX destructor

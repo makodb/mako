@@ -61,8 +61,8 @@ threadinfo *threadinfo::make(int purpose, int index) {
     threadinfo* ti = new(malloc(8192)) threadinfo(purpose, index);
     ti->context_ = ctx;
 
-    // Prepend to context's thread list
-    ti->next_ = ctx->get_allthreads();
+    // Prepend to context's thread list (next_ is set inside register_threadinfo
+    // while holding the lock to avoid race conditions)
     ctx->register_threadinfo(ti);
 
     if (!threads_initialized) {

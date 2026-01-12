@@ -5,6 +5,7 @@
  */
 
 #include "masstree_context.h"
+#include "kvthread.hh"
 #include <mutex>
 
 // Thread-local context pointer
@@ -25,8 +26,9 @@ MasstreeContext::MasstreeContext()
 
 void MasstreeContext::register_threadinfo(threadinfo* ti) {
     std::lock_guard<std::mutex> lock(allthreads_lock_);
-    // ti->next_ should already be set by the caller to point to current head
-    // This atomically updates the head of the list
+    // Set next_ inside the lock to avoid race condition where multiple threads
+    // read the same head value before any of them register
+    ti->set_next(allthreads_.load(std::memory_order_relaxed));
     allthreads_.store(ti, std::memory_order_release);
 }
 
