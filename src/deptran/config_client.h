@@ -5,6 +5,7 @@
 #include "rcc/tx.h"
 #include "rcc_rpc.h"
 #include "config_schema.h"
+#include "sharding_policy.h"
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 
@@ -106,6 +107,47 @@ public:
      */
     // @unsafe - Makes RPC call
     rusty::Option<bool> has_config();
+
+    // =========================================================================
+    // Sharding Policy Methods
+    // =========================================================================
+
+    /**
+     * Fetch full sharding policy from c-node.
+     * Must be connected first.
+     *
+     * @return Option containing ShardingPolicySet, or None on failure
+     */
+    // @unsafe - Makes RPC call
+    rusty::Option<ShardingPolicySet> fetch_sharding_policy();
+
+    /**
+     * Fetch only the sharding policy version (lightweight check).
+     * Must be connected first.
+     *
+     * @return Option containing version, or None on failure
+     */
+    // @unsafe - Makes RPC call
+    rusty::Option<uint64_t> fetch_sharding_version();
+
+    /**
+     * Check if c-node has any sharding policy stored.
+     * Must be connected first.
+     *
+     * @return Option containing bool (true if policy exists), or None on failure
+     */
+    // @unsafe - Makes RPC call
+    rusty::Option<bool> has_sharding_policy();
+
+    /**
+     * Set sharding policy on c-node.
+     * Must be connected first.
+     *
+     * @param policy The sharding policy to set
+     * @return true on success, false on failure
+     */
+    // @unsafe - Makes RPC call
+    bool set_sharding_policy(const ShardingPolicySet& policy);
 
     // Configuration setters (all @safe)
     void set_max_retries(uint32_t retries) { max_retries_.set(retries); }

@@ -200,4 +200,138 @@ rusty::Option<bool> ConfigClient::has_config() {
     return rusty::Some(has_config_result != 0);
 }
 
+// ============================================================================
+// Sharding Policy Methods
+// ============================================================================
+
+// @unsafe - Makes RPC call over network
+rusty::Option<ShardingPolicySet> ConfigClient::fetch_sharding_policy() {
+    if (proxy_.is_none()) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot fetch sharding policy");
+        return rusty::None;
+    }
+
+    uint64_t current_version = 0;
+    rrr::i32 has_update = 0;
+    std::string policy_data;
+
+    // Call RPC with client_version=0 to get full policy
+    auto proxy = proxy_.as_ref().unwrap();
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->GetShardingPolicy(0, &current_version, &has_update, &policy_data);
+
+    if (result != 0) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: GetShardingPolicy RPC failed with error %d", result);
+        return rusty::None;
+    }
+
+    if (has_update == 0 || policy_data.empty()) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: C-node has no sharding policy");
+        return rusty::None;
+    }
+
+    // Deserialize policy_data to ShardingPolicySet
+    rrr::Marshal m;
+    // @unsafe { Marshal write not borrow-checked }
+    m.write(policy_data.data(), policy_data.size());
+
+    ShardingPolicySet policy;
+    // @unsafe { Marshal read not borrow-checked }
+    m >> policy;
+
+    // @unsafe { logging I/O }
+    Log_info("ConfigClient: Fetched sharding policy version %lu with %zu tables",
+             policy.version, policy.table_count());
+
+    return rusty::Some(std::move(policy));
+}
+
+// @unsafe - Makes RPC call over network
+rusty::Option<uint64_t> ConfigClient::fetch_sharding_version() {
+    if (proxy_.is_none()) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot fetch sharding version");
+        return rusty::None;
+    }
+
+    uint64_t version = 0;
+    auto proxy = proxy_.as_ref().unwrap();
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->GetShardingPolicyVersion(&version);
+
+    if (result != 0) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: GetShardingPolicyVersion RPC failed with error %d", result);
+        return rusty::None;
+    }
+
+    return rusty::Some(version);
+}
+
+// @unsafe - Makes RPC call over network
+rusty::Option<bool> ConfigClient::has_sharding_policy() {
+    if (proxy_.is_none()) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot check has_sharding_policy");
+        return rusty::None;
+    }
+
+    rrr::i32 has_policy_result = 0;
+    auto proxy = proxy_.as_ref().unwrap();
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->HasShardingPolicy(&has_policy_result);
+
+    if (result != 0) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: HasShardingPolicy RPC failed with error %d", result);
+        return rusty::None;
+    }
+
+    return rusty::Some(has_policy_result != 0);
+}
+
+// @unsafe - Makes RPC call over network
+bool ConfigClient::set_sharding_policy(const ShardingPolicySet& policy) {
+    if (proxy_.is_none()) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: Not connected, cannot set sharding policy");
+        return false;
+    }
+
+    // Serialize policy to string
+    rrr::Marshal m;
+    // @unsafe { Marshal write not borrow-checked }
+    m << policy;
+
+    std::string policy_data;
+    policy_data.resize(m.content_size());
+    // @unsafe { Marshal read not borrow-checked }
+    m.read(policy_data.data(), m.content_size());
+
+    rrr::i32 success = 0;
+    auto proxy = proxy_.as_ref().unwrap();
+    // @unsafe { RPC network call }
+    rrr::i32 result = proxy->SetShardingPolicy(policy_data, &success);
+
+    if (result != 0) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: SetShardingPolicy RPC failed with error %d", result);
+        return false;
+    }
+
+    if (success == 0) {
+        // @unsafe { logging I/O }
+        Log_warn("ConfigClient: SetShardingPolicy failed on server");
+        return false;
+    }
+
+    // @unsafe { logging I/O }
+    Log_info("ConfigClient: Set sharding policy version %lu with %zu tables",
+             policy.version, policy.table_count());
+    return true;
+}
+
 }  // namespace janus

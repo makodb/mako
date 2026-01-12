@@ -1253,6 +1253,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_sharding_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
 
+    # Sharding Policy Cache Tests (requires txlog for ConfigClient)
+    add_executable(test_sharding_policy_cache test/sharding_policy_cache_test.cc)
+    target_include_directories(test_sharding_policy_cache PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
+    target_compile_options(test_sharding_policy_cache PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_sharding_policy_cache txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_sharding_policy_cache COMMAND test_sharding_policy_cache)
+
     # ConfigStore RocksDB Tests
     add_executable(test_config_store test/config_store_test.cc)
     target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

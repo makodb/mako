@@ -861,21 +861,34 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - HasShardingPolicy: Check existence
       - [x] *medium* 4.3 Regenerate RPC code [DONE]
         - bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
-    - [ ] **Task 5: Client-Side Policy Cache and Routing** [~300 LOC]
-      - [ ] *high* 5.1 Create `ShardingPolicyCache` class
+    - [x] **Task 5: Client-Side Policy Cache and Routing** [~300 LOC] [DONE 2026-01-12, 19:30]
+      - [x] *high* 5.1 Create `ShardingPolicyCache` class [DONE]
         - `fetch_from_cnode()`: Fetch policy from C-node via RPC
+        - `fetch_from_client()`: Fetch using existing ConfigClient
+        - `set_policy()`: Set policy directly (for testing)
         - `get_shard_for_key(table_name, key) -> shard_id`: Main routing function
+        - `get_shard_for_composite_key(table_name, key_fields)`: Composite key routing
         - `is_initialized() -> bool`: Check if policy is loaded
-        - Local cache of ShardingPolicySet
-      - [ ] *high* 5.2 Implement key extraction logic
-        - `extract_shard_key(key, extractor) -> int64`: Extract sharding key value
-        - Support FIELD_INDEX: Parse composite key, extract nth field as int
-        - Support PREFIX_BYTES: Take first N bytes, interpret as int
-      - [ ] *high* 5.3 Implement range lookup
-        - Binary search on sorted ranges for O(log N) lookup
-        - Return default_shard if no range matches
-        - Return error (-1) if no default and no match
-      - [ ] *medium* 5.4 Add unit tests for routing logic
+        - Local cache of ShardingPolicySet with rusty::Mutex protection
+        - Global singleton via `get_sharding_policy_cache()`
+      - [x] *high* 5.2 Implement key extraction logic [DONE]
+        - `extract_key_value(extractor, key_fields) -> int64`: Extract from composite key
+        - `extract_key_from_bytes(extractor, bytes, len) -> int64`: Extract from raw bytes
+        - Support FIELD_INDEX: Extract nth field from vector
+        - Support PREFIX_BYTES: Take first N bytes, interpret as big-endian int
+        - Support HASH_MOD: XOR-rotate hash for fallback
+      - [x] *high* 5.3 Implement range lookup [DONE]
+        - Uses `TableShardingPolicy::get_shard()` with binary search O(log N)
+        - Returns default_shard if no range matches
+        - Returns -1 if no default and no match
+      - [x] *medium* 5.4 Add unit tests for routing logic [DONE - 18 tests]
+        - Test file: test/sharding_policy_cache_test.cc
+        - Basic initialization tests (DefaultConstruction, SetPolicy)
+        - Routing tests (GetShardForKey, UnknownTable, NotInitialized, HasPolicyForTable)
+        - Composite key tests (GetShardForCompositeKey, SecondField, InvalidFieldIndex)
+        - Key extraction tests (ExtractKeyValue FieldIndex/Hash/Bounds, ExtractKeyFromBytes Prefix/Hash)
+        - TPC-C style routing test
+        - Global singleton test
     - [ ] **Task 6: Integrate with Mako Transaction System** [~400 LOC]
       - [ ] *high* 6.1 Modify `ShardClient` to use policy-based routing
         - Replace `(table_id - 1) / NUM_TABLES_PER_SHARD` with policy lookup
