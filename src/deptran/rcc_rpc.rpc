@@ -534,4 +534,27 @@ abstract service ConfigService {
 
     // Check if config is available (returns 1 if config exists, 0 otherwise)
     defer HasConfig( | i32 has_config);
+
+    // ==========================================================================
+    // Sharding Policy RPCs
+    // ==========================================================================
+
+    // Set the sharding policy (called by initializer at system startup)
+    // policy_data is serialized ShardingPolicySet
+    // Returns success=1 on success, 0 on failure
+    defer SetShardingPolicy(string policy_data | i32 success);
+
+    // Get sharding policy, checking version for caching
+    // If client_version matches server version, returns has_update=0 (no change)
+    // policy_data is serialized ShardingPolicySet (empty string if no update needed)
+    defer GetShardingPolicy(uint64_t client_version |
+                            uint64_t current_version,
+                            i32 has_update,
+                            string policy_data);
+
+    // Get just the sharding policy version (lightweight check)
+    defer GetShardingPolicyVersion( | uint64_t version);
+
+    // Check if sharding policy is available (returns 1 if policy exists, 0 otherwise)
+    defer HasShardingPolicy( | i32 has_policy);
 }

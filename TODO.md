@@ -847,15 +847,20 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - SaveShardingPolicyWithoutOpen
         - LoadShardingPolicyWithoutOpen
         - ClusterConfigAndShardingPolicyCoexist
-    - [ ] **Task 4: C-Node RPC Interface for Sharding** [~150 LOC]
-      - [ ] *high* 4.1 Add sharding RPCs to ConfigService
+    - [x] **Task 4: C-Node RPC Interface for Sharding** [~150 LOC] [DONE 2026-01-12, 18:15]
+      - [x] *high* 4.1 Add sharding RPCs to ConfigService (rcc_rpc.rpc) [DONE]
         - `SetShardingPolicy(policy_data) -> success`: Set policy (called by initializer)
         - `GetShardingPolicy(client_version) -> (current_version, has_update, policy_data)`
         - `GetShardingPolicyVersion() -> version`
-      - [ ] *medium* 4.2 Implement RPC handlers
-        - SetShardingPolicy: Validate and store via ShardingPolicyStore
-        - GetShardingPolicy: Serve from store, support version-based caching
-      - [ ] *medium* 4.3 Add RPC tests
+        - `HasShardingPolicy() -> has_policy`
+      - [x] *medium* 4.2 Implement RPC handlers (config_service.cc) [DONE]
+        - Sharding policy cache with version-based invalidation
+        - SetShardingPolicy: Deserialize, store, invalidate cache
+        - GetShardingPolicy: Serve from cache, version-based client caching
+        - GetShardingPolicyVersion: Direct store lookup
+        - HasShardingPolicy: Check existence
+      - [x] *medium* 4.3 Regenerate RPC code [DONE]
+        - bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
     - [ ] **Task 5: Client-Side Policy Cache and Routing** [~300 LOC]
       - [ ] *high* 5.1 Create `ShardingPolicyCache` class
         - `fetch_from_cnode()`: Fetch policy from C-node via RPC
