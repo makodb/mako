@@ -17,7 +17,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
     - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
-    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-11, 13:00 - fixed CMakeLists.txt: removed raft_main_helper.cc from RAFT_BORROW_SRC (was inconsistent with exclusion note), excluded raft test files from borrow checking, verified borrow_check_all passes, all 54 rrrTests pass]
+    - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-12, 14:00 - fixed BulkReconnectConfig @safe annotations in client.hpp, verified borrow_check_deptran and borrow_check_rrr pass, all 59 rrrTests pass]
+    - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-01-12, 14:00 - checked 20 commits, no new std smart pointers found, config node files have proper @safe/@unsafe annotations] 
   - [x] *medium* currently when we build the project from scratch, the build of the rusty-cpp submodule seems to be single threaded, make it parallel build (32 thread) to speed up. [DONE 2026-01-11, 20:00]
     - Modified `third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake`:
       - Added `include(ProcessorCount)` to detect available CPUs
@@ -740,3 +741,232 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Multiple c-nodes for high availability
       - Configuration change notifications to other nodes
       - Configuration history/rollback
+  - [ ] *high* Dynamic Range-Based Sharding with C-Node Management [Plan: doc/dev/range_sharding_plan.md]
+    - **Goal**: Replace static table-ID-based sharding with user-defined range-based sharding policies managed by the C-node
+    - **Scope**:
+      - Users define sharding policies programmatically via C++ API at system initialization
+      - Range sharding based on user-specified key extraction (e.g., warehouse_id for TPC-C)
+      - C-node stores and distributes sharding policies to all nodes
+      - All data for the same key range goes to the same shard
+      - No runtime resharding/migration - policy set once at launch
+    - **Current State Analysis**:
+      - Table IDs encode shard ownership: `shard = (table_id - 1) / NUM_TABLES_PER_SHARD`
+      - Each shard has table IDs in range `[shard*200+1, (shard+1)*200]`
+      - No key-based routing - entire tables belong to shards
+      - Cross-shard routing in `ShardClient::remoteGet()` uses table_id to determine destination
+    - **Design Overview**:
+      ```
+      User Code (C++ API)           C-Node                    Data Nodes
+      ┌─────────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+      │ ShardingPolicyBuilder│    │ ShardingPolicy  │    │ PolicyCache     │
+      │   .table("STOCK")   │───►│ stored in       │───►│ (local copy)    │
+      │   .shardBy(0)       │    │ RocksDB         │    │                 │
+      │   .range(0,50,shard0)│    │                 │    │ route(key) →    │
+      │   .range(50,100,s1) │    │ GetShardPolicy  │    │   shard_id      │
+      │   .build()          │    │ RPC endpoint    │    │                 │
+      └─────────────────────┘    └─────────────────┘    └─────────────────┘
+      ```
+    - [ ] **Task 1: Define Sharding Policy Schema** [~250 LOC]
+      - [ ] *high* 1.1 Create `ShardingPolicy` data structures
+        - `KeyExtractor`: Defines how to extract sharding key from row key
+          - `extractor_type`: FIELD_INDEX, PREFIX_BYTES, HASH_MOD
+          - `field_index`: For composite keys, which field to use (0-based)
+          - `prefix_length`: For prefix-based extraction
+        - `RangeMapping`: Maps key ranges to shards
+          - `start_key`: Inclusive start of range (int64)
+          - `end_key`: Exclusive end of range (int64)
+          - `shard_id`: Target shard for this range
+        - `TableShardingPolicy`: Per-table sharding configuration
+          - `table_name`: Name of the table
+          - `key_extractor`: How to extract sharding key
+          - `ranges`: Vector of RangeMapping (sorted by start_key)
+          - `default_shard`: Shard for keys not matching any range (-1 for error)
+        - `ShardingPolicySet`: Collection of all table policies
+          - `version`: Policy version for cache invalidation
+          - `num_shards`: Total number of shards
+          - `policies`: Map of table_name → TableShardingPolicy
+      - [ ] *high* 1.2 Implement Marshal serialization for sharding schema
+        - Serialize/deserialize for RocksDB storage and RPC transfer
+      - [ ] *medium* 1.3 Add unit tests for schema serialization
+    - [ ] **Task 2: Sharding Policy Builder API** [~200 LOC]
+      - [ ] *high* 2.1 Create `ShardingPolicyBuilder` class (fluent API)
+        ```cpp
+        // Example usage in TPC-C initialization:
+        auto policy = ShardingPolicyBuilder(num_shards)
+            .table("WAREHOUSE")
+                .shardByField(0)  // w_id is field 0
+                .addRange(0, 5, 0)   // w_id 0-4 → shard 0
+                .addRange(5, 10, 1)  // w_id 5-9 → shard 1
+                .defaultShard(0)
+            .table("DISTRICT")
+                .shardByField(0)  // w_id is field 0
+                .addRange(0, 5, 0)
+                .addRange(5, 10, 1)
+            .table("STOCK")
+                .shardByField(0)  // w_id
+                .addRange(0, 5, 0)
+                .addRange(5, 10, 1)
+            // ... other tables
+            .build();
+        ```
+      - [ ] *high* 2.2 Implement builder methods
+        - `table(name)`: Start configuring a table
+        - `shardByField(index)`: Extract sharding key from field index
+        - `shardByPrefix(len)`: Extract sharding key from key prefix
+        - `addRange(start, end, shard)`: Add a range mapping
+        - `defaultShard(shard)`: Set default shard for unmatched keys
+        - `build()`: Validate and return ShardingPolicySet
+      - [ ] *medium* 2.3 Add validation in build()
+        - Check ranges don't overlap
+        - Check all shards are valid (< num_shards)
+        - Warn if ranges have gaps
+      - [ ] *medium* 2.4 Add unit tests for builder
+    - [ ] **Task 3: C-Node Sharding Policy Storage** [~200 LOC]
+      - [ ] *high* 3.1 Create `ShardingPolicyStore` class
+        - `save_policy(ShardingPolicySet)`: Persist to RocksDB
+        - `load_policy() -> Option<ShardingPolicySet>`: Load from RocksDB
+        - `get_version() -> uint64_t`: Get current policy version
+        - RocksDB key schema: `sharding/version`, `sharding/policy`
+      - [ ] *high* 3.2 Integrate with ConfigStore
+        - Store sharding policy alongside cluster configuration
+        - Load sharding policy during C-node startup (if exists)
+      - [ ] *medium* 3.3 Add unit tests for policy persistence
+    - [ ] **Task 4: C-Node RPC Interface for Sharding** [~150 LOC]
+      - [ ] *high* 4.1 Add sharding RPCs to ConfigService
+        - `SetShardingPolicy(policy_data) -> success`: Set policy (called by initializer)
+        - `GetShardingPolicy(client_version) -> (current_version, has_update, policy_data)`
+        - `GetShardingPolicyVersion() -> version`
+      - [ ] *medium* 4.2 Implement RPC handlers
+        - SetShardingPolicy: Validate and store via ShardingPolicyStore
+        - GetShardingPolicy: Serve from store, support version-based caching
+      - [ ] *medium* 4.3 Add RPC tests
+    - [ ] **Task 5: Client-Side Policy Cache and Routing** [~300 LOC]
+      - [ ] *high* 5.1 Create `ShardingPolicyCache` class
+        - `fetch_from_cnode()`: Fetch policy from C-node via RPC
+        - `get_shard_for_key(table_name, key) -> shard_id`: Main routing function
+        - `is_initialized() -> bool`: Check if policy is loaded
+        - Local cache of ShardingPolicySet
+      - [ ] *high* 5.2 Implement key extraction logic
+        - `extract_shard_key(key, extractor) -> int64`: Extract sharding key value
+        - Support FIELD_INDEX: Parse composite key, extract nth field as int
+        - Support PREFIX_BYTES: Take first N bytes, interpret as int
+      - [ ] *high* 5.3 Implement range lookup
+        - Binary search on sorted ranges for O(log N) lookup
+        - Return default_shard if no range matches
+        - Return error (-1) if no default and no match
+      - [ ] *medium* 5.4 Add unit tests for routing logic
+    - [ ] **Task 6: Integrate with Mako Transaction System** [~400 LOC]
+      - [ ] *high* 6.1 Modify `ShardClient` to use policy-based routing
+        - Replace `(table_id - 1) / NUM_TABLES_PER_SHARD` with policy lookup
+        - Add `table_name` parameter or lookup table_id → table_name
+        - `get_shard_for_key(table_name, key)` before sending remote request
+      - [ ] *high* 6.2 Update table registration in `mbta_wrapper`
+        - Store bidirectional mapping: table_name ↔ table_id
+        - When creating table, register name with policy cache
+      - [ ] *high* 6.3 Modify `mbta_sharded_ordered_index::pick_shard()`
+        - Use policy cache instead of `hash_key(key) % shard_tables_.size()`
+        - Extract table_name from index, call `get_shard_for_key()`
+      - [ ] *medium* 6.4 Update TThread shard tracking
+        - Track shard bits based on actual accessed shards (from policy)
+        - Ensure cross-shard detection works with new routing
+    - [ ] **Task 7: TPC-C Benchmark Integration** [~250 LOC]
+      - [ ] *high* 7.1 Create TPC-C sharding policy helper
+        ```cpp
+        // In tpcc.cc initialization:
+        ShardingPolicySet create_tpcc_sharding_policy(int num_warehouses, int num_shards) {
+            int warehouses_per_shard = num_warehouses / num_shards;
+            auto builder = ShardingPolicyBuilder(num_shards);
+
+            // All TPC-C tables sharded by w_id (field 0 in composite keys)
+            for (auto& table : {"WAREHOUSE", "DISTRICT", "CUSTOMER", "STOCK",
+                                "ORDER", "NEW_ORDER", "ORDER_LINE", "HISTORY", "ITEM"}) {
+                builder.table(table).shardByField(0);
+                for (int s = 0; s < num_shards; s++) {
+                    int start = s * warehouses_per_shard;
+                    int end = (s + 1) * warehouses_per_shard;
+                    builder.addRange(start, end, s);
+                }
+            }
+            return builder.build();
+        }
+        ```
+      - [ ] *high* 7.2 Update TPC-C initialization to set policy
+        - Build policy using helper
+        - Send to C-node via SetShardingPolicy RPC
+        - Wait for confirmation before starting workers
+      - [ ] *high* 7.3 Update TPC-C key encoding
+        - Ensure w_id is extractable as field 0 in all table keys
+        - Document key format for each table
+      - [ ] *medium* 7.4 Add integration tests
+        - Verify cross-shard Payment transactions route correctly
+        - Verify single-warehouse transactions stay local
+    - [ ] **Task 8: Startup Flow Integration** [~150 LOC]
+      - [ ] *high* 8.1 C-node startup
+        - Load existing sharding policy from RocksDB (if exists)
+        - Start serving GetShardingPolicy RPC
+        - Accept SetShardingPolicy from initializer
+      - [ ] *high* 8.2 Data node startup
+        - Fetch sharding policy from C-node before accepting transactions
+        - Initialize ShardingPolicyCache
+        - Block worker threads until policy is loaded
+      - [ ] *high* 8.3 Initializer node (first node to start)
+        - Build sharding policy using ShardingPolicyBuilder
+        - Send to C-node via SetShardingPolicy
+        - Can be the benchmark driver or a dedicated init process
+      - [ ] *medium* 8.4 Add startup tests
+    - [ ] **Task 9: Testing** [~300 LOC]
+      - [ ] *high* 9.1 Unit tests
+        - ShardingPolicy serialization roundtrip
+        - ShardingPolicyBuilder validation
+        - Key extraction for different extractors
+        - Range lookup correctness and edge cases
+      - [ ] *high* 9.2 Integration tests
+        - Policy set/get via C-node RPC
+        - Policy persistence across C-node restart
+        - Cross-shard transaction routing with policy
+      - [ ] *medium* 9.3 TPC-C sharding tests
+        - 2-shard setup with warehouse-based sharding
+        - Verify transactions access correct shards
+        - Verify data locality (same w_id data on same shard)
+        - Performance comparison with old table-ID sharding
+    - **Key Files to Modify/Create**:
+      | File | Purpose |
+      |------|---------|
+      | `src/deptran/sharding_policy.h` | New: ShardingPolicy, KeyExtractor, RangeMapping structs |
+      | `src/deptran/sharding_policy_builder.h` | New: Fluent API for building policies |
+      | `src/deptran/sharding_policy_store.h` | New: RocksDB storage for policies |
+      | `src/deptran/sharding_policy_cache.h` | New: Client-side policy cache with routing |
+      | `src/deptran/config_service.h` | Modify: Add SetShardingPolicy, GetShardingPolicy RPCs |
+      | `src/mako/lib/shardClient.cc` | Modify: Policy-based routing |
+      | `src/mako/benchmarks/mbta_wrapper.hh` | Modify: Policy-aware pick_shard(), table name registry |
+      | `src/mako/benchmarks/tpcc.cc` | Modify: Build and set TPC-C sharding policy |
+    - **Example: TPC-C Warehouse-Based Sharding**:
+      ```
+      Setup: 10 warehouses, 2 shards
+      Policy: w_id 0-4 → Shard 0, w_id 5-9 → Shard 1
+
+      Transaction: NewOrder(w_id=3, d_id=5, ...)
+        → Key for DISTRICT: encode(w_id=3, d_id=5)
+        → Extract field 0: w_id=3
+        → Lookup: 3 is in range [0,5) → Shard 0
+        → Route to Shard 0
+
+      Transaction: Payment(w_id=7, d_id=2, c_w_id=3, ...)
+        → Local warehouse (w_id=7) → range [5,10) → Shard 1
+        → Remote customer (c_w_id=3) → range [0,5) → Shard 0
+        → Cross-shard transaction detected via shard bits
+      ```
+    - **Success Criteria**:
+      1. Users can define range-based sharding via C++ builder API
+      2. C-node persists and distributes sharding policies
+      3. All nodes route requests based on key ranges, not table IDs
+      4. TPC-C benchmark works with warehouse-based sharding
+      5. Cross-shard transactions detected correctly based on key ranges
+      6. All existing tests pass with new sharding system
+    - **Future Extensions** (not in this phase):
+      - Runtime policy updates (resharding)
+      - Data migration when ranges change
+      - Automatic range splitting based on load
+      - Hash-based sharding option (hash key mod N shards)
+      - Multi-key sharding (shard by multiple fields)
+      - String key ranges (not just int64)

@@ -1609,11 +1609,16 @@ public:
         uint32_t delay_between_ms = 10;   // Delay between batches
         bool skip_connected = true;       // Skip already connected clients
 
+        // @safe - Default constructor creates POD struct
+        BulkReconnectConfig() = default;
+
         // Presets
+        // @safe - Pure function creating POD struct
         static BulkReconnectConfig defaults() {
             return BulkReconnectConfig{};
         }
 
+        // @safe - Pure function creating POD struct
         static BulkReconnectConfig fast() {
             BulkReconnectConfig cfg;
             cfg.max_concurrent = 50;
@@ -1621,6 +1626,7 @@ public:
             return cfg;
         }
 
+        // @safe - Pure function creating POD struct
         static BulkReconnectConfig gentle() {
             BulkReconnectConfig cfg;
             cfg.max_concurrent = 5;
