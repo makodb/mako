@@ -58,9 +58,10 @@ PID_S0_LOCALHOST=$!
 nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 $trd localhost 1 > simple-shard1-localhost.log 2>&1 &
 PID_S1_LOCALHOST=$!
 
-# Wait for experiments to run (includes 5s setup wait in simpleTransactionRep)
-echo "Running experiments for 60 seconds..."
-sleep 60
+# Wait for experiments to run (includes 5s setup wait + verification in simpleTransactionRep)
+# 90 seconds to allow tests + 5s wait + data integrity verification to complete
+echo "Running experiments for 90 seconds..."
+sleep 90
 
 # Kill ALL processes from both shards
 echo "Stopping shards..."

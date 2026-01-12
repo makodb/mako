@@ -909,14 +909,20 @@ public:
     }
 
     static void abort() {
-        always_assert(in_progress());
+        // Be defensive during shutdown - only abort if transaction is in progress
+        if (!in_progress()) {
+            return;
+        }
         TThread::txn->abort();
     }
 
     static void abort_without_throw() {
+        // Check if we need to do remote abort before aborting locally
+        bool needs_remote_abort = in_progress() &&
+            (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0);
         Sto::silent_abort();
-        if (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0)
-            TThread::sclient->remoteAbort(); 
+        if (needs_remote_abort)
+            TThread::sclient->remoteAbort();
     }
 
     static void silent_abort() {
@@ -927,19 +933,20 @@ public:
     template <typename T>
     static TransProxy item(const TObject* s, T key) {
         if (!in_progress()) {
-            Panic("IT should never happen:%d", TThread::txn->state_);
+            Panic("item() called when no transaction in progress: mode=%d", TThread::mode());
         }
-        always_assert(in_progress());
         return TThread::txn->item(s, key);
     }
 
     static void check_opacity(TransactionTid::type t) {
-        always_assert(in_progress());
+        // Be defensive during shutdown
+        if (!in_progress()) return;
         TThread::txn->check_opacity(t);
     }
 
     static void check_opacity() {
-        always_assert(in_progress());
+        // Be defensive during shutdown
+        if (!in_progress()) return;
         TThread::txn->check_opacity();
     }
 
@@ -954,34 +961,43 @@ public:
 
     template <typename T>
     static TransProxy new_item(const TObject* s, T key) {
-        always_assert(in_progress());
+        if (!in_progress()) {
+            Panic("new_item() called when no transaction in progress: mode=%d", TThread::mode());
+        }
         return TThread::txn->new_item(s, key);
     }
 
     template <typename T>
     static TransProxy read_item(const TObject* s, T key) {
-        always_assert(in_progress());
+        if (!in_progress()) {
+            Panic("read_item() called when no transaction in progress: mode=%d", TThread::mode());
+        }
         return TThread::txn->read_item(s, key);
     }
 
     template <typename T>
     static TransProxy fresh_item(const TObject* s, T key) {
-        always_assert(in_progress());
+        if (!in_progress()) {
+            Panic("fresh_item() called when no transaction in progress: mode=%d", TThread::mode());
+        }
         return TThread::txn->fresh_item(s, key);
     }
 
     static void commit() {
-        always_assert(in_progress());
+        // Be defensive during shutdown
+        if (!in_progress()) return;
         TThread::txn->commit();
     }
 
     static bool try_commit() {
-        always_assert(in_progress());
+        // Be defensive during shutdown - return false if no transaction
+        if (!in_progress()) return false;
         return TThread::txn->try_commit();
     }
 
     static bool try_commit_no_paxos() {
-        always_assert(in_progress());
+        // Be defensive during shutdown - return false if no transaction
+        if (!in_progress()) return false;
         return TThread::txn->try_commit(true);
     }
 

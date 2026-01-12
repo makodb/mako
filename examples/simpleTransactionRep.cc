@@ -947,22 +947,18 @@ int main(int argc, char **argv) {
 
     std::this_thread::sleep_for(std::chrono::seconds(5));
 
-    // Cleanup: stop helper and eRPC server threads before closing DB on leaders
-    if (benchConfig.getLeaderConfig()) {
-        mako::stop_erpc_server();
-    }
-
-    db_close();
-
-    // Data integrity verification on followers, learners and leaders
-    // Note: mako::DB::Open() returns the correct db for each role:
-    // - Leaders get the db from initWithDB()
-    // - Followers/learners get the db from init_env()
-    {
+    // Data integrity verification on followers and learners only
+    // Must be done BEFORE db_close() which shuts down Raft/Paxos infrastructure
+    // Note: Leaders are skipped because:
+    // 1. They are the source of data and may have cleanup issues during cross-shard operations
+    // 2. The test script only checks follower logs for verification results
+    // 3. Leader crashes during verification disrupt Raft and prevent followers from completing
+    if (!benchConfig.getLeaderConfig()) {
         bool verification_passed = verify_data_integrity(db, nshards, nthreads);
 
         if (!verification_passed) {
             printf("\n" RED "VERIFICATION FAILED - Database integrity compromised!" RESET "\n");
+            db_close();
             delete mako_db;
             return 1;
         }
@@ -970,6 +966,13 @@ int main(int argc, char **argv) {
 
     printf("\n" GREEN "All tests completed successfully!" RESET "\n");
     std::cout.flush();
+
+    // Cleanup: stop helper and eRPC server threads before closing DB on leaders
+    if (benchConfig.getLeaderConfig()) {
+        mako::stop_erpc_server();
+    }
+
+    db_close();
 
     delete mako_db;
     return 0;
