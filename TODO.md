@@ -401,11 +401,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] **Task 2: Enable Client Reconnection** - Added connection_state(), try_reconnect_if_needed(), modified ClientPool
     - [x] **Task 3: Communicator Support** - Added EnsureClientConnected() helper method
     - **Files Changed**: client.hpp, client.cpp, communicator.h, communicator.cc
-  - [ ] *high* Node/Shard Crash Recovery with Replication Support [Plan: doc/dev/node_crash_replication_plan.md]
+  - [x] *high* Node/Shard Crash Recovery with Replication Support [Plan: doc/dev/node_crash_replication_plan.md] [DONE 2026-01-11, 23:15]
     - **Goal**: When a node crashes and reboots, it recovers state from replication log and rejoins cluster without data loss
     - **Scope**: Raft and Paxos replication with persistent log, snapshots, and automatic recovery
     - **Dependencies**: RPC Reliability Enhancement (complete), Transaction Timeout (complete)
-    - [ ] **Phase 1: Persistent Log Storage** (~400 LOC)
+    - [x] **Phase 1: Persistent Log Storage** (~400 LOC)
       - [x] 1.1 Log Persistence Interface - Abstract `LogStorage` interface with append/read/truncate [DONE 2026-01-10, 04:30]
         - Created `src/rrr/rpc/log_storage.hpp`: LogEntry struct + LogStorage abstract interface
         - Created `src/rrr/rpc/memory_log_storage.hpp`: InMemoryLogStorage implementation
@@ -594,7 +594,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       5. Recovery doesn't impact normal operation significantly
       6. All recovery events logged and metricated
     - **RustyCpp Compliance**: All new code uses rusty types, @safe/@unsafe annotations, passes borrow checking
-  - [ ] *high* Configuration Node (C-Node) for Persistent Configuration
+  - [x] *high* Configuration Node (C-Node) for Persistent Configuration [DONE 2026-01-11, 22:55]
     - **Goal**: Store cluster configuration persistently so system can reboot and recover configuration
     - **Scope**: One node designated as c-node stores config in RocksDB; other nodes fetch config from c-node via RPC
     - **Implementation Plan**: See `doc/config_node_plan.md`
@@ -604,7 +604,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - RocksDB currently used only for transaction logs, not configuration
       - No runtime configuration updates supported
       - No persistent configuration storage
-    - [ ] **Task 1: Design Configuration Schema for RocksDB** [~100 LOC] [Plan: doc/dev/config_node_task1_plan.md]
+    - [x] **Task 1: Design Configuration Schema for RocksDB** [~100 LOC] [Plan: doc/dev/config_node_task1_plan.md]
       - [x] *high* 1.1 Define configuration data structures for persistence [DONE 2026-01-11, 14:00]
         - Created `src/deptran/config_schema.h` with PersistentSiteInfo, PersistentReplicaGroup, PersistentProtocolSettings, PersistentConfig
         - Used existing Marshal serialization (consistent with RPC layer)
