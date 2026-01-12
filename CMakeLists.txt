@@ -1269,6 +1269,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_client txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_client COMMAND test_config_client)
 
+    # Config Node Failure Scenario Tests
+    add_executable(test_config_failure test/config_failure_test.cc)
+    target_include_directories(test_config_failure PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
+    target_compile_options(test_config_failure PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_config_failure txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_config_failure COMMAND test_config_failure)
+
     # RPC Tests
     add_executable(test_rpc test/test_rpc.cc test/benchmark_service.cc)
     target_include_directories(test_rpc PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
