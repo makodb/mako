@@ -954,6 +954,9 @@ int main(int argc, char **argv) {
     // 2. The test script only checks follower logs for verification results
     // 3. Leader crashes during verification disrupt Raft and prevent followers from completing
     if (!benchConfig.getLeaderConfig()) {
+        // Wait for replication to complete before verifying data integrity
+        // Without this, verification runs before any data is replicated!
+        wait_for_termination();
         bool verification_passed = verify_data_integrity(db, nshards, nthreads);
 
         if (!verification_passed) {
