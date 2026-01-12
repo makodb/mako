@@ -766,8 +766,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       │   .build()          │    │ RPC endpoint    │    │                 │
       └─────────────────────┘    └─────────────────┘    └─────────────────┘
       ```
-    - [ ] **Task 1: Define Sharding Policy Schema** [~250 LOC]
-      - [ ] *high* 1.1 Create `ShardingPolicy` data structures
+    - [x] **Task 1: Define Sharding Policy Schema** [~250 LOC] [DONE 2026-01-12, 15:00]
+      - [x] *high* 1.1 Create `ShardingPolicy` data structures [DONE]
         - `KeyExtractor`: Defines how to extract sharding key from row key
           - `extractor_type`: FIELD_INDEX, PREFIX_BYTES, HASH_MOD
           - `field_index`: For composite keys, which field to use (0-based)
@@ -785,9 +785,9 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - `version`: Policy version for cache invalidation
           - `num_shards`: Total number of shards
           - `policies`: Map of table_name → TableShardingPolicy
-      - [ ] *high* 1.2 Implement Marshal serialization for sharding schema
+      - [x] *high* 1.2 Implement Marshal serialization for sharding schema [DONE]
         - Serialize/deserialize for RocksDB storage and RPC transfer
-      - [ ] *medium* 1.3 Add unit tests for schema serialization
+      - [x] *medium* 1.3 Add unit tests for schema serialization [DONE - 18 tests]
     - [ ] **Task 2: Sharding Policy Builder API** [~200 LOC]
       - [ ] *high* 2.1 Create `ShardingPolicyBuilder` class (fluent API)
         ```cpp

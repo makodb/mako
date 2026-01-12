@@ -1246,6 +1246,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_schema ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_config_schema COMMAND test_config_schema)
 
+    # Sharding Policy Tests
+    add_executable(test_sharding_policy test/sharding_policy_test.cc)
+    target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_sharding_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
+
     # ConfigStore RocksDB Tests
     add_executable(test_config_store test/config_store_test.cc)
     target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
