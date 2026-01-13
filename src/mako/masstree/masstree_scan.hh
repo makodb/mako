@@ -71,14 +71,14 @@ class scanstackelt {
     }
 
     template <typename H>
-    // @unsafe - walks the tree without additional synchronization
+    // @unsafe { Walks tree via raw pointers with version checking }
     int find_initial(H& helper, key_type& ka, bool emit_equal,
                      leafvalue_type& entry, threadinfo& ti);
     template <typename H>
-    // @unsafe - retries traversal on raw nodes
+    // @unsafe { Retries traversal via reach_leaf() on raw nodes }
     int find_retry(H& helper, key_type& ka, threadinfo& ti);
     template <typename H>
-    // @unsafe - advances cursor via raw node pointers
+    // @unsafe { Advances cursor via raw node pointers, uses fence() }
     int find_next(H& helper, key_type& ka, leafvalue_type& entry);
 
     int kp() const {

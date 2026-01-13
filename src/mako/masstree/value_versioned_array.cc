@@ -30,7 +30,7 @@
 #include "value_versioned_array.hh"
 #include <string.h>
 
-// @unsafe - uses threadinfo allocator for raw memory and memset() without RAII
+// @unsafe { Allocates via ti.allocate(), uses memset() on cols_[] }
 rusty::MutPtr<value_versioned_array> value_versioned_array::make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti) {
     rusty::MutPtr<value_versioned_array> row = (value_versioned_array*) ti.allocate(shallow_size(ncol), memtag_value);
     row->ts_ = ts;
@@ -40,7 +40,7 @@ rusty::MutPtr<value_versioned_array> value_versioned_array::make_sized_row(int n
     return row;
 }
 
-// @unsafe - uses memcpy() on raw column data and modifies storage via pointer
+// @unsafe { Uses memcpy() on cols_[], modifies storage via pointer }
 void value_versioned_array::snapshot(rusty::MutPtr<value_versioned_array>& storage,
                                      const std::vector<index_type>& f, threadinfo& ti) const {
     if (!storage || storage->ncol_cap_ < ncol_) {
@@ -62,7 +62,7 @@ void value_versioned_array::snapshot(rusty::MutPtr<value_versioned_array>& stora
     }
 }
 
-// @unsafe - uses threadinfo allocator, memcpy()/memset(), and fence() memory barrier
+// @unsafe { Allocates via ti.allocate(), uses memcpy()/memset()/fence() }
 rusty::MutPtr<value_versioned_array>
 value_versioned_array::update(const Json* first, const Json* last,
                               kvtimestamp_t ts, threadinfo& ti,
@@ -100,14 +100,14 @@ value_versioned_array::update(const Json* first, const Json* last,
     return row;
 }
 
-// @unsafe - calls threadinfo::deallocate() to free raw memory without RAII
+// @unsafe { Frees cols_[] and this via ti.deallocate() }
 void value_versioned_array::deallocate(threadinfo &ti) {
     for (short i = 0; i < ncol_; ++i)
         value_array::deallocate_column(cols_[i], ti);
     ti.deallocate(this, shallow_size(), memtag_value);
 }
 
-// @unsafe - schedules deferred free via RCU without ownership verification
+// @unsafe { Schedules RCU free for cols_[] and this }
 void value_versioned_array::deallocate_rcu(threadinfo &ti) {
     for (short i = 0; i < ncol_; ++i)
         value_array::deallocate_column_rcu(cols_[i], ti);

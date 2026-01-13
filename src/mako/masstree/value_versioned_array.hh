@@ -183,13 +183,13 @@ inline size_t value_versioned_array::shallow_size() const {
     return shallow_size(ncol_);
 }
 
-// @unsafe - allocates new row with raw pointer arithmetic
+// @unsafe { Calls update() which uses allocator and memcpy() }
 inline rusty::MutPtr<value_versioned_array> value_versioned_array::create(const Json* first, const Json* last, kvtimestamp_t ts, threadinfo& ti) {
     value_versioned_array empty;
     return empty.update(first, last, ts, ti, true);
 }
 
-// @unsafe - constructs row via direct allocator access
+// @unsafe { Allocates via ti.allocate(), writes to cols_[] array }
 inline rusty::MutPtr<value_versioned_array> value_versioned_array::create1(Str value, kvtimestamp_t ts, threadinfo& ti) {
     rusty::MutPtr<value_versioned_array> row = (value_versioned_array*) ti.allocate(shallow_size(1), memtag_value);
     row->ts_ = ts;
@@ -199,7 +199,7 @@ inline rusty::MutPtr<value_versioned_array> value_versioned_array::create1(Str v
     return row;
 }
 
-// @unsafe - schedules raw struct deallocation
+// @unsafe { Schedules RCU free via deallocate_rcu() }
 inline void value_versioned_array::deallocate_rcu_after_update(const Json*, const Json*, threadinfo& ti) {
     ti.deallocate_rcu(this, shallow_size(), memtag_value);
 }
@@ -209,7 +209,7 @@ inline void value_versioned_array::deallocate_after_failed_update(const Json*, c
 }
 
 template <typename PARSER>
-// @unsafe - parses into raw buffer without extra checks
+// @unsafe { Parses via external PARSER, allocates row, writes to cols_[] }
 rusty::MutPtr<value_versioned_array>
 value_versioned_array::checkpoint_read(PARSER& par, kvtimestamp_t ts,
                                        threadinfo& ti) {

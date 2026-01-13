@@ -185,7 +185,7 @@ result_t query<R>::run_put(T& table, Str key,
     return inserted ? Inserted : Updated;
 }
 
-// @unsafe - mutates row pointers and schedules old versions for RCU reclamation
+// @unsafe { Mutates row pointers, schedules old rows for RCU reclamation }
 template <typename R>
 inline bool query<R>::apply_put(rusty::MutPtr<R>& value, bool found, const Json* firstreq,
                                 const Json* lastreq, threadinfo& ti) {
@@ -228,7 +228,7 @@ result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     return inserted ? Inserted : Updated;
 }
 
-// @unsafe - swaps out stored rows and frees previous buffers via RCU
+// @unsafe { Swaps row pointers, frees old buffers via deallocate_rcu() }
 template <typename R>
 inline bool query<R>::apply_replace(rusty::MutPtr<R>& value, bool found, Str new_value,
                                     threadinfo& ti) {
@@ -260,7 +260,7 @@ bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
     return found;
 }
 
-// @unsafe - deletes rows by marking and freeing value buffers
+// @unsafe { Frees row via deallocate_rcu(), updates phantom epoch }
 template <typename R>
 inline void query<R>::apply_remove(rusty::MutPtr<R>& value, kvtimestamp_t& node_ts,
                                    threadinfo& ti) {
@@ -278,7 +278,7 @@ inline void query<R>::apply_remove(rusty::MutPtr<R>& value, kvtimestamp_t& node_
 
 
 template <typename R>
-// @unsafe - Scan visitor that accesses raw row pointers and copies key data
+// @unsafe { Scan visitor: memcpy() on key data, accesses raw row pointers }
 class query_json_scanner {
   public:
     query_json_scanner(query<R> &q, lcdf::Json& request)

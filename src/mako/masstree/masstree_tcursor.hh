@@ -65,7 +65,7 @@ class unlocked_tcursor {
           lv_(leafvalue<P>::make_empty()), root_(table.fix_root()) {
     }
 
-    // @unsafe - traverses nodes without locks; relies on raw pointer invariants
+    // @unsafe { Traverses tree via raw pointers without locks }
     bool find_unlocked(threadinfo& ti);
 
     // @safe - Returns value copy
@@ -164,12 +164,12 @@ class tcursor {
         return new_nodes_;
     }
 
-    // @unsafe - acquires locks and manipulates raw nodes
+    // @unsafe { Acquires locks, manipulates raw node pointers }
     inline bool find_locked(threadinfo& ti);
-    // @unsafe - inserts via raw node manipulation
+    // @unsafe { Inserts via raw node manipulation, may split }
     inline bool find_insert(threadinfo& ti);
 
-    // @unsafe - updates node state and releases locks
+    // @unsafe { Updates node state, releases locks }
     inline void finish(int answer, threadinfo& ti);
 
     inline nodeversion_value_type previous_full_version_value() const;
@@ -198,10 +198,10 @@ class tcursor {
     inline void finish_insert();
     inline bool finish_remove(threadinfo& ti);
 
-    // @unsafe - Reshapes internode after operations
+    // @unsafe { Patches internode keys after child removal }
     static bool reshape(rusty::MutPtr<internode_type> n, ikey_type ikey,
                         rusty::MutPtr<node_type> root, Str prefix, threadinfo& ti);
-    // @unsafe - Collapses internode after operations
+    // @unsafe { Collapses single-child internodes to shorten tree }
     static bool collapse(rusty::MutPtr<internode_type> n, ikey_type ikey,
                          rusty::MutPtr<node_type> root, Str prefix, threadinfo& ti);
     /** Remove @a leaf from the Masstree rooted at @a rootp.
@@ -209,7 +209,7 @@ class tcursor {
      *   If removing a leaf in layer 0, @a prefix is empty.
      *   If removing, for example, the node containing key "01234567ABCDEF" in the layer-1 tree
      *   rooted at "01234567", then @a prefix should equal "01234567". */
-    // @unsafe - Removes leaf from tree via raw node manipulation
+    // @unsafe { Unlinks leaf from tree, frees via RCU }
     static bool remove_leaf(rusty::MutPtr<leaf_type> leaf, rusty::MutPtr<node_type> root,
                             Str prefix, threadinfo& ti);
 

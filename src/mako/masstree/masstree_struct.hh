@@ -79,14 +79,14 @@ class node_base : public make_nodeversion<P>::type {
     }
     // @unsafe - manipulates parent pointers under locks
     inline internode_type* locked_parent(threadinfo& ti) const;
-    // @unsafe - uses static_cast and pointer dereference
+    // @unsafe { Uses static_cast to downcast this to leaf/internode }
     inline void set_parent(base_type* p) {
         if (this->isleaf())
             static_cast<leaf_type*>(this)->parent_ = p;
         else
             static_cast<internode_type*>(this)->parent_ = p;
     }
-    // @unsafe - initializes as root (uses this-> pointer access)
+    // @unsafe { Calls set_parent() which uses static_cast on this }
     inline void make_layer_root() {
         set_parent(nullptr);
         this->mark_root();
@@ -131,7 +131,7 @@ class internode : public node_base<P> {
         : node_base<P>(false), nkeys_(0), parent_() {
     }
 
-    // @unsafe - allocates via raw memory pool
+    // @unsafe { Placement new on raw memory from pool_allocate() }
     static internode<P>* make(threadinfo& ti) {
         void* ptr = ti.pool_allocate(sizeof(internode<P>),
                                      memtag_masstree_internode);
@@ -155,11 +155,11 @@ class internode : public node_base<P> {
     ikey_type ikey(int p) const {
         return ikey0_[p];
     }
-    // @unsafe - calls ::compare() which is @unsafe
+    // @unsafe { Calls ::compare() which is not borrow-checked }
     int compare_key(ikey_type a, int bp) const {
         return ::compare(a, ikey(bp));
     }
-    // @unsafe - calls ::compare() which is @unsafe
+    // @unsafe { Calls ::compare() which is not borrow-checked }
     int compare_key(const key_type& a, int bp) const {
         return ::compare(a.ikey(), ikey(bp));
     }
@@ -174,24 +174,24 @@ class internode : public node_base<P> {
 
     void print(FILE* f, const char* prefix, int indent, int kdepth);
 
-    // @unsafe - frees leaf memory and ksuf storage manually
+    // @unsafe { Frees this via pool_deallocate() without RAII }
     void deallocate(threadinfo& ti) {
         ti.pool_deallocate(this, sizeof(*this), memtag_masstree_internode);
     }
-    // @unsafe - schedules RCU free for leaf and ksuf storage
+    // @unsafe { Schedules RCU free via pool_deallocate_rcu() }
     void deallocate_rcu(threadinfo& ti) {
         ti.pool_deallocate_rcu(this, sizeof(*this), memtag_masstree_internode);
     }
 
   private:
-    // @unsafe - assigns key and child at position, dereferences raw pointer
+    // @unsafe { Calls set_parent() and assigns to child_[] array }
     void assign(int p, ikey_type ikey, node_base<P>* child) {
         child->set_parent(this);
         child_[p + 1] = child;
         ikey0_[p] = ikey;
     }
 
-    // @unsafe - raw memcpy of key/child arrays during split/merge
+    // @unsafe { memcpy() on ikey0_[] and child_[] arrays }
     void shift_from(int p, const internode<P>* x, int xp, int n) {
         masstree_precondition(x != this);
         if (n) {
@@ -199,13 +199,13 @@ class internode : public node_base<P> {
             memcpy(child_ + p + 1, x->child_ + xp + 1, sizeof(child_[0]) * n);
         }
     }
-    // @unsafe - raw memmove of key/child arrays
+    // @unsafe { memmove() on ikey0_[], raw pointer arithmetic on child_[] }
     void shift_up(int p, int xp, int n) {
         memmove(ikey0_ + p, ikey0_ + xp, sizeof(ikey0_[0]) * n);
         for (node_base<P> **a = child_ + p + n, **b = child_ + xp + n; n; --a, --b, --n)
             *a = *b;
     }
-    // @unsafe - raw memmove of key/child arrays
+    // @unsafe { memmove() on ikey0_[], raw pointer arithmetic on child_[] }
     void shift_down(int p, int xp, int n) {
         memmove(ikey0_ + p, ikey0_ + xp, sizeof(ikey0_[0]) * n);
         for (node_base<P> **a = child_ + p + 1, **b = child_ + xp + 1; n; ++a, ++b, --n)
@@ -232,7 +232,7 @@ class leafvalue {
     leafvalue(value_type v) {
         u_.v = v;
     }
-    // @unsafe - pointer initialization (uses reinterpret_cast)
+    // @unsafe { Uses reinterpret_cast to store pointer as uintptr_t }
     leafvalue(node_base<P>* n) {
         u_.x = reinterpret_cast<uintptr_t>(n);
     }
@@ -243,7 +243,7 @@ class leafvalue {
     }
 
     typedef bool (leafvalue<P>::*unspecified_bool_type)() const;
-    // @unsafe - takes address of member function
+    // @unsafe { Takes address of member function for safe-bool idiom }
     operator unspecified_bool_type() const {
         return u_.x ? &leafvalue<P>::empty : 0;
     }
@@ -256,17 +256,17 @@ class leafvalue {
     value_type value() const {
         return u_.v;
     }
-    // @unsafe - returns reference without lifetime tracking
+    // @unsafe { Returns mutable reference without lifetime tracking }
     value_type& value() {
         return u_.v;
     }
 
-    // @unsafe - returns layer pointer
+    // @unsafe { Uses reinterpret_cast to recover pointer from uintptr_t }
     node_base<P>* layer() const {
         return reinterpret_cast<node_base<P>*>(u_.x);
     }
 
-    // @unsafe - prefetch hint
+    // @unsafe { Dereferences u_.n pointer for prefetch }
     void prefetch(int keylenx) const {
         if (!leaf<P>::keylenx_is_layer(keylenx))
             prefetcher_type()(u_.v);
@@ -332,7 +332,7 @@ class leaf : public node_base<P> {
             phantom_epoch_[0] = phantom_epoch;
     }
 
-    // @unsafe - allocates leaf with raw memory pools
+    // @unsafe { Placement new on raw memory from pool_allocate() }
     static leaf<P>* make(int ksufsize, phantom_epoch_type phantom_epoch, threadinfo& ti) {
         size_t sz = iceil(sizeof(leaf<P>) + std::min(ksufsize, 128), 64);
         void* ptr = ti.pool_allocate(sz, memtag_masstree_leaf);
@@ -342,7 +342,7 @@ class leaf : public node_base<P> {
             n->created_at_[0] = ti.operation_timestamp();
         return n;
     }
-    // @unsafe - creates root leaf via raw allocation
+    // @unsafe { Calls make() and make_layer_root() which are @unsafe }
     static leaf<P>* make_root(int ksufsize, leaf<P>* parent, threadinfo& ti) {
         leaf<P>* n = make(ksufsize, parent ? parent->phantom_epoch() : phantom_epoch_type(), ti);
         n->next_.ptr = n->prev_ = 0;
@@ -377,7 +377,7 @@ class leaf : public node_base<P> {
         static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(permuter_type::size_bits), "not enough bits to add size to version");
         return (this->version_value() << permuter_type::size_bits) + size();
     }
-    // @unsafe - calls v.unlock() which manipulates version bits
+    // @unsafe { Calls v.unlock() which manipulates version bits atomically }
     typename nodeversion_type::value_type full_unlocked_version_value() const {
         static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(permuter_type::size_bits), "not enough bits to add size to version");
         typename node_base<P>::nodeversion_type v(*this);
@@ -389,7 +389,7 @@ class leaf : public node_base<P> {
     }
 
     using node_base<P>::has_changed;
-    // @unsafe - calls base has_changed which uses fence()
+    // @unsafe { Calls base has_changed() which uses memory fence() }
     bool has_changed(nodeversion_type oldv,
                      typename permuter_type::storage_type oldperm) const {
         return this->has_changed(oldv) || oldperm != permutation_;
@@ -411,7 +411,7 @@ class leaf : public node_base<P> {
     ikey_type ikey_bound() const {
         return ikey0_[0];
     }
-    // @unsafe - calls key::compare() which is @unsafe
+    // @unsafe { Calls key::compare() which is not borrow-checked }
     int compare_key(const key_type& a, int bp) const {
         return a.compare(ikey(bp), keylenx_[bp]);
     }
@@ -540,12 +540,12 @@ class leaf : public node_base<P> {
 
     void print(FILE* f, const char* prefix, int indent, int kdepth);
 
-    // @unsafe - uses reinterpret_cast and C-style cast (uintptr_t)
+    // @unsafe { Uses reinterpret_cast and mask on next_.x union member }
     leaf<P>* safe_next() const {
         return reinterpret_cast<leaf<P>*>(next_.x & ~(uintptr_t) 1);
     }
 
-    // @unsafe - frees leaf memory and ksuf storage manually
+    // @unsafe { Frees ksuf_ and this via deallocate() without RAII }
     void deallocate(threadinfo& ti) {
         if (ksuf_)
             ti.deallocate(ksuf_, ksuf_->capacity(),
@@ -554,7 +554,7 @@ class leaf : public node_base<P> {
             iksuf_[0].~stringbag();
         ti.pool_deallocate(this, allocated_size(), memtag_masstree_leaf);
     }
-    // @unsafe - schedules RCU free for leaf and ksuf storage
+    // @unsafe { Schedules RCU free for ksuf_ and this }
     void deallocate_rcu(threadinfo& ti) {
         if (ksuf_)
             ti.deallocate_rcu(ksuf_, ksuf_->capacity(),
@@ -568,7 +568,7 @@ class leaf : public node_base<P> {
         modstate_ = modstate_deleted_layer;
     }
 
-    // @unsafe - writes key/value directly into leaf slots
+    // @unsafe { Writes to lv_[], ikey0_[], keylenx_[] arrays; calls assign_ksuf() }
     inline void assign(int p, const key_type& ka, threadinfo& ti) {
         lv_[p] = leafvalue_type::make_empty();
         ikey0_[p] = ka.ikey();
@@ -579,6 +579,7 @@ class leaf : public node_base<P> {
             assign_ksuf(p, ka.suffix(), false, ti);
         }
     }
+    // @unsafe { Writes to lv_[], ikey0_[], keylenx_[] arrays; calls assign_ksuf() }
     inline void assign_initialize(int p, const key_type& ka, threadinfo& ti) {
         lv_[p] = leafvalue_type::make_empty();
         ikey0_[p] = ka.ikey();
@@ -589,7 +590,7 @@ class leaf : public node_base<P> {
             assign_ksuf(p, ka.suffix(), true, ti);
         }
     }
-    // @unsafe - copies data between leaves without extra checks
+    // @unsafe { Copies from source leaf x via raw pointer access }
     inline void assign_initialize(int p, leaf<P>* x, int xp, threadinfo& ti) {
         lv_[p] = x->lv_[xp];
         ikey0_[p] = x->ikey0_[xp];

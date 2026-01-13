@@ -25,7 +25,7 @@
 namespace Masstree {
 
 template <typename P>
-// @unsafe - removes entire layers via raw pointer rewrites
+// @unsafe { Removes empty tree layers, frees nodes via RCU }
 bool tcursor<P>::gc_layer(threadinfo& ti)
 {
     find_locked(ti);
@@ -291,7 +291,7 @@ bool tcursor<P>::collapse(internode_type* n, ikey_type ikey,
 }
 
 template <typename P>
-// @unsafe - RCU callback for full tree destruction; traverses and frees all nodes
+// @unsafe { RCU callback: traverses entire tree, deallocates all nodes }
 struct destroy_rcu_callback : public P::threadinfo_type::mrcu_callback {
     typedef typename P::threadinfo_type threadinfo;
     typedef typename node_base<P>::leaf_type leaf_type;

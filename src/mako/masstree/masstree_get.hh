@@ -25,7 +25,7 @@
 namespace Masstree {
 
 template <typename P>
-// @unsafe - traverses the B-tree without locks via raw pointers
+// @unsafe { Traverses tree via raw pointers without locks, uses memory fences }
 bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 {
     int match;
@@ -63,7 +63,7 @@ bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 }
 
 template <typename P>
-// @unsafe - wraps unlocked traversal; safe wrappers must audit callers
+// @unsafe { Calls find_unlocked() which traverses via raw pointers }
 inline bool basic_table<P>::get(Str key, value_type &value,
                                 threadinfo& ti) const
 {
@@ -75,7 +75,7 @@ inline bool basic_table<P>::get(Str key, value_type &value,
 }
 
 template <typename P>
-// @unsafe - locks & manipulates raw nodes directly
+// @unsafe { Locks nodes, traverses via raw pointers, uses fence() }
 bool tcursor<P>::find_locked(threadinfo& ti)
 {
     rusty::MutPtr<node_base<P>> root = root_;
