@@ -21,6 +21,7 @@
 #define MASSTREE_GET_HH 1
 #include "masstree_tcursor.hh"
 #include "masstree_key.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 
 template <typename P>
@@ -29,7 +30,7 @@ bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 {
     int match;
     key_indexed_position kx;
-    node_base<P>* root = const_cast<node_base<P>*>(root_);
+    rusty::MutPtr<node_base<P>> root = const_cast<node_base<P>*>(root_);
 
  retry:
     n_ = root->reach_leaf(ka_, v_, ti);
@@ -77,7 +78,7 @@ template <typename P>
 // @unsafe - locks & manipulates raw nodes directly
 bool tcursor<P>::find_locked(threadinfo& ti)
 {
-    node_base<P>* root = const_cast<node_base<P>*>(root_);
+    rusty::MutPtr<node_base<P>> root = root_;
     nodeversion_type v;
     permuter_type perm;
 
@@ -117,7 +118,7 @@ bool tcursor<P>::find_locked(threadinfo& ti)
         goto retry;
     } else if (unlikely(n_->deleted_layer())) {
         ka_.unshift_all();
-        root = const_cast<node_base<P>*>(root_);
+        root = root_;
         goto retry;
     }
     return state_;
