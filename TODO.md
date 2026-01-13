@@ -1116,18 +1116,52 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Converted private member: root_
         - Updated masstree_struct.hh implementations to match
         - All 65 rrrTests pass
-      - [ ] 2.5 Convert masstree_get.hh function signatures
-      - [ ] 2.6 Convert masstree_insert.hh function signatures
-      - [ ] 2.7 Convert masstree_scan.hh function signatures
-      - [ ] 2.8 Convert kvrow.hh pointers
-      - [ ] 2.9 Convert value_versioned_array pointers
-    - [ ] **Phase 3: Rewrite Unsafe to Safe**
-      - [ ] 3.1 Convert simple getters to safe functions
-      - [ ] 3.2 Convert threadinfo accessors to safe
-      - [ ] 3.3 Convert masstree_context accessors to safe
-      - [ ] 3.4 Wrap unavoidable unsafe ops in explicit @unsafe blocks
-      - [ ] 3.5 Convert const traversal functions
-      - [ ] 3.6 Convert scan iteration to use safe wrappers
+      - [x] 2.5 Convert masstree_tcursor.hh/masstree_get.hh function signatures [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp> to both files
+        - Converted unlocked_tcursor members: n_, root_ to rusty pointers
+        - Converted tcursor members: n_, root_, original_n_ to rusty::MutPtr
+        - Updated constructors to take rusty::MutPtr<node_base<P>>
+        - Updated node(), original_node(), reset_retry() return types
+        - Updated small_vector<std::pair<...>> to use rusty::MutPtr
+        - Updated static functions (reshape, collapse, remove_leaf) parameters
+        - Converted local variables in find_unlocked() and find_locked()
+      - [x] 2.6 Convert masstree_insert.hh function signatures [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp>
+        - Converted local variables in make_new_layer(): twig_head, twig_tail, nl
+      - [x] 2.7 Convert masstree_scan.hh function signatures [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp>
+        - Converted scanstackelt members: root_, n_, node_stack_
+        - Updated node() return type to rusty::MutPtr<leaf<P>>
+      - [x] 2.8 Convert kvrow.hh pointers [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp>
+        - Updated query_helper::snapshot() to use rusty::Ptr<R>
+        - Updated emit_fields/emit_fields1() parameters to rusty::Ptr<R>
+        - Updated apply_put/apply_replace/apply_remove() to use rusty::MutPtr<R>&
+        - Updated query_json_scanner::visit_value() to rusty::MutPtr<R>
+      - [x] 2.9 Convert value_versioned_array pointers [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp>
+        - Updated snapshot(), update(), create(), create1(), checkpoint_read(), make_sized_row()
+        - Updated query_helper<value_versioned_array> specialization
+        - Updated value_versioned_array.cc implementations
+    - [x] **Phase 3: Rewrite Unsafe to Safe** [DONE 2026-01-13]
+      - [x] 3.1 Convert simple getters to safe functions [DONE 2026-01-13]
+        - masstree_struct.hh: leafvalue::empty(), value() const, default/value ctors,
+          make_empty(), leaf::permutation(), full_version_value()
+      - [x] 3.2 Convert threadinfo accessors to safe [DONE 2026-01-13]
+        - Already properly marked in kvthread.hh - reviewed, no changes needed
+      - [x] 3.3 Convert masstree_context accessors to safe [DONE 2026-01-13]
+        - Already properly marked in masstree_context.h - reviewed, no changes needed
+      - [x] 3.4 Wrap unavoidable unsafe ops in explicit @unsafe blocks [DONE 2026-01-13]
+        - Updated 62 functions across 10 files to use @unsafe { reason } block format
+        - Files: masstree_struct.hh, kvrow.hh, value_versioned_array.hh/cc,
+          masstree_tcursor.hh, masstree_get.hh, masstree_insert.hh, masstree_split.hh,
+          masstree_remove.hh, masstree_scan.hh
+      - [x] 3.5 Convert const traversal functions [DONE 2026-01-13]
+        - Reviewed: Most read-only accessors already correctly marked @safe
+        - Functions using fence()/reinterpret_cast must remain @unsafe
+      - [x] 3.6 Convert scan iteration to use safe wrappers [DONE 2026-01-13]
+        - Reviewed: scanstackelt getters (node, size, permutation) already @safe
+        - Iteration functions must remain @unsafe due to raw pointer traversal
     - [ ] **Phase 4: Enable Borrow Checking**
       - [ ] 4.1 Enable borrow checking for masstree_context
       - [ ] 4.2 Enable borrow checking for kvthread
