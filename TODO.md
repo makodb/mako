@@ -1060,7 +1060,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Tier 3: masstree_struct.hh (~850 lines) - Node definitions
       - Tier 4: kvrow.hh, value_versioned_array.hh/cc (~600 lines) - Value types
       - Tier 5: string.hh/cc, json.hh/cc, msgpack.hh/cc (~7760 lines) - Utilities
-    - [ ] **Phase 1: Audit & Annotate Safe Functions**
+    - [x] **Phase 1: Audit & Annotate Safe Functions** [DONE 2026-01-13]
       - [x] 1.1 Audit masstree_context.h/cc - mark getters/setters as @safe [DONE 2026-01-13]
         - Marked @safe: get_epoch(), set_epoch(), increment_epoch(), id(), constructor
         - Marked @unsafe: epoch_ref(), get_allthreads(), register_threadinfo(),
@@ -1070,14 +1070,27 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           has_counter(), counter(), mark(), pthread() const
         - Marked @unsafe: next(), set_next(), make(), context(), logger(), set_logger(),
           observe_phantoms(), rcu_*, pthread() non-const, report_rcu*
-      - [ ] 1.3 Audit masstree.hh table interface
-      - [ ] 1.4 Audit masstree_get.hh
-      - [ ] 1.5 Audit masstree_insert.hh
-      - [ ] 1.6 Audit masstree_scan.hh
-      - [ ] 1.7 Audit masstree_remove.hh
-      - [ ] 1.8 Audit masstree_struct.hh
-      - [ ] 1.9 Audit kvrow.hh
-      - [ ] 1.10 Audit value_versioned_array.hh/cc
+      - [x] 1.3 Audit masstree.hh table interface [DONE 2026-01-13]
+        - Marked @safe: basic_table constructor
+        - Marked @unsafe: initialize, destroy, root, fix_root, get, scan, rscan, modify, modify_insert, print
+      - [x] 1.4 Audit masstree_get.hh - already annotated with file-level @unsafe
+      - [x] 1.5 Audit masstree_insert.hh [DONE 2026-01-13]
+        - Marked @unsafe: find_insert, make_new_layer, finish_insert, finish, modify, modify_insert
+      - [x] 1.6 Audit masstree_scan.hh [DONE 2026-01-13]
+        - Marked scanstackelt methods, forward/reverse helpers, scan implementations
+      - [x] 1.7 Audit masstree_remove.hh [DONE 2026-01-13]
+        - Marked @unsafe: gc_layer, gc_layer_rcu_callback::operator()/make, finish_remove,
+          remove_leaf, reshape, collapse, destroy_rcu_callback, basic_table::destroy
+      - [x] 1.8 Audit masstree_struct.hh [DONE 2026-01-13]
+        - Marked node_base, internode, leaf, leafvalue classes
+        - Marked @unsafe: make*, locked_parent, reach_leaf, stable_last_key_compare, advance_to_key, assign_ksuf
+      - [x] 1.9 Audit kvrow.hh [DONE 2026-01-13]
+        - Marked @unsafe: query_helper::snapshot, emit_fields, run_get/put/replace/remove/scan/rscan
+        - Marked @safe: assign_timestamp
+      - [x] 1.10 Audit value_versioned_array.hh/cc [DONE 2026-01-13]
+        - Marked rowversion struct (stable/has_changed @unsafe)
+        - Marked @safe: constructor, timestamp, ncol, shallow_size
+        - Marked @unsafe: col, create/create1, checkpoint_*, query_helper snapshot
     - [ ] **Phase 2: Replace Raw Pointers with Ptr/MutPtr**
       - [ ] 2.1 Add rusty/ptr.hpp include to masstree headers
       - [ ] 2.2 Convert masstree_context.h pointers
