@@ -31,9 +31,14 @@ typedef uint64_t mrcu_epoch_type;
  * - Call BindCurrentThread(ctx) to associate current thread with a context
  * - Call Current() to get the context for the current thread
  * - If no context is bound, returns a default global context (backward compat)
+ *
+ * RustyCpp Safety Annotations:
+ * - @safe: Pure getters/setters with atomic operations only
+ * - @unsafe: Functions returning raw pointers or accepting raw pointer parameters
  */
 class MasstreeContext {
 public:
+    // @safe - Pure initialization
     MasstreeContext();
     ~MasstreeContext() = default;
 
@@ -42,38 +47,45 @@ public:
     MasstreeContext& operator=(const MasstreeContext&) = delete;
 
     // Epoch management
+    // @safe - Returns copy of atomic value
     mrcu_epoch_type get_epoch() const {
         return epoch_.load(std::memory_order_acquire);
     }
 
+    // @safe - Atomic store, no pointer operations
     void set_epoch(mrcu_epoch_type e) {
         epoch_.store(e, std::memory_order_release);
     }
 
+    // @safe - Atomic read-modify-write, no pointer operations
     void increment_epoch(mrcu_epoch_type delta = 2) {
         epoch_.fetch_add(delta, std::memory_order_acq_rel);
     }
 
-    // Reference for direct access (needed for some legacy code patterns)
+    // @unsafe { Returns volatile reference for legacy code patterns, bypasses safety }
     volatile mrcu_epoch_type& epoch_ref() {
         return reinterpret_cast<volatile mrcu_epoch_type&>(epoch_);
     }
 
     // Thread registry
+    // @unsafe { Returns raw pointer to threadinfo }
     threadinfo* get_allthreads() const {
         return allthreads_.load(std::memory_order_acquire);
     }
 
+    // @unsafe { Accepts raw pointer parameter }
     void register_threadinfo(threadinfo* ti);
 
-    // Context ID (for debugging)
+    // @safe - Returns copy of int value
     int id() const { return context_id_; }
 
-    // Static accessors for thread binding
+    // @unsafe { Accepts raw pointer parameter }
     static void BindCurrentThread(MasstreeContext* ctx);
+
+    // @unsafe { Returns raw pointer }
     static MasstreeContext* Current();
 
-    // Factory
+    // @unsafe { Uses 'new' operator, returns raw pointer }
     static MasstreeContext* Create();
 
 private:

@@ -1061,7 +1061,10 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Tier 4: kvrow.hh, value_versioned_array.hh/cc (~600 lines) - Value types
       - Tier 5: string.hh/cc, json.hh/cc, msgpack.hh/cc (~7760 lines) - Utilities
     - [ ] **Phase 1: Audit & Annotate Safe Functions**
-      - [ ] 1.1 Audit masstree_context.h/cc - mark getters/setters as @safe
+      - [x] 1.1 Audit masstree_context.h/cc - mark getters/setters as @safe [DONE 2026-01-13]
+        - Marked @safe: get_epoch(), set_epoch(), increment_epoch(), id(), constructor
+        - Marked @unsafe: epoch_ref(), get_allthreads(), register_threadinfo(),
+          BindCurrentThread(), Current(), Create()
       - [ ] 1.2 Audit kvthread.hh public interface - mark accessors as @safe
       - [ ] 1.3 Audit masstree.hh table interface
       - [ ] 1.4 Audit masstree_get.hh
