@@ -31,8 +31,8 @@
 #include <string.h>
 
 // @unsafe - uses threadinfo allocator for raw memory and memset() without RAII
-value_versioned_array* value_versioned_array::make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti) {
-    value_versioned_array* row = (value_versioned_array*) ti.allocate(shallow_size(ncol), memtag_value);
+rusty::MutPtr<value_versioned_array> value_versioned_array::make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti) {
+    rusty::MutPtr<value_versioned_array> row = (value_versioned_array*) ti.allocate(shallow_size(ncol), memtag_value);
     row->ts_ = ts;
     row->ver_ = rowversion();
     row->ncol_ = row->ncol_cap_ = ncol;
@@ -40,8 +40,8 @@ value_versioned_array* value_versioned_array::make_sized_row(int ncol, kvtimesta
     return row;
 }
 
-// @unsafe - uses memcpy() on raw column data and modifies storage via raw pointer
-void value_versioned_array::snapshot(value_versioned_array*& storage,
+// @unsafe - uses memcpy() on raw column data and modifies storage via pointer
+void value_versioned_array::snapshot(rusty::MutPtr<value_versioned_array>& storage,
                                      const std::vector<index_type>& f, threadinfo& ti) const {
     if (!storage || storage->ncol_cap_ < ncol_) {
         if (storage)
@@ -63,12 +63,12 @@ void value_versioned_array::snapshot(value_versioned_array*& storage,
 }
 
 // @unsafe - uses threadinfo allocator, memcpy()/memset(), and fence() memory barrier
-value_versioned_array*
+rusty::MutPtr<value_versioned_array>
 value_versioned_array::update(const Json* first, const Json* last,
                               kvtimestamp_t ts, threadinfo& ti,
                               bool always_copy) {
     int ncol = last[-2].as_u() + 1;
-    value_versioned_array* row;
+    rusty::MutPtr<value_versioned_array> row;
     if (ncol > ncol_cap_ || always_copy) {
         row = (value_versioned_array*) ti.allocate(shallow_size(ncol), memtag_value);
         row->ts_ = ts;

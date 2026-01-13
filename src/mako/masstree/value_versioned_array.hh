@@ -23,6 +23,7 @@
 #include "kvthread.hh"
 #include "timestamp.hh"
 #include "value_array.hh"
+#include <rusty/ptr.hpp>
 using lcdf::Str;
 
 // @unsafe - Optimistic row versioning with fence-based synchronization
@@ -94,21 +95,21 @@ class value_versioned_array {
     void deallocate(threadinfo &ti);
     void deallocate_rcu(threadinfo &ti);
 
-    void snapshot(value_versioned_array*& storage,
+    void snapshot(rusty::MutPtr<value_versioned_array>& storage,
                   const std::vector<index_type>& f, threadinfo& ti) const;
 
-    value_versioned_array* update(const Json* first, const Json* last,
-                                  kvtimestamp_t ts, threadinfo& ti,
-                                  bool always_copy = false);
-    static value_versioned_array* create(const Json* first, const Json* last,
-                                         kvtimestamp_t ts, threadinfo& ti);
-    static value_versioned_array* create1(Str value, kvtimestamp_t ts, threadinfo& ti);
+    rusty::MutPtr<value_versioned_array> update(const Json* first, const Json* last,
+                                                kvtimestamp_t ts, threadinfo& ti,
+                                                bool always_copy = false);
+    static rusty::MutPtr<value_versioned_array> create(const Json* first, const Json* last,
+                                                       kvtimestamp_t ts, threadinfo& ti);
+    static rusty::MutPtr<value_versioned_array> create1(Str value, kvtimestamp_t ts, threadinfo& ti);
     inline void deallocate_rcu_after_update(const Json* first, const Json* last, threadinfo& ti);
     inline void deallocate_after_failed_update(const Json* first, const Json* last, threadinfo& ti);
 
     template <typename PARSER>
-    static value_versioned_array* checkpoint_read(PARSER& par, kvtimestamp_t ts,
-                                                  threadinfo& ti);
+    static rusty::MutPtr<value_versioned_array> checkpoint_read(PARSER& par, kvtimestamp_t ts,
+                                                                threadinfo& ti);
     template <typename UNPARSER>
     void checkpoint_write(UNPARSER& unpar) const;
 
@@ -128,22 +129,22 @@ class value_versioned_array {
 
     static inline size_t shallow_size(int ncol);
     inline size_t shallow_size() const;
-    static value_versioned_array* make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti);
+    static rusty::MutPtr<value_versioned_array> make_sized_row(int ncol, kvtimestamp_t ts, threadinfo& ti);
 };
 
 template <>
 // @unsafe - MVCC query helper that creates snapshots for consistent reads
 struct query_helper<value_versioned_array> {
-    value_versioned_array* snapshot_;
+    rusty::MutPtr<value_versioned_array> snapshot_;
 
     // @safe - default initialization
     query_helper()
         : snapshot_() {
     }
-    // @unsafe { Allocates snapshot copy via raw pointers }
-    inline const value_versioned_array* snapshot(const value_versioned_array* row,
-                                                 const std::vector<value_versioned_array::index_type>& f,
-                                                 threadinfo& ti) {
+    // @safe - Returns rusty::Ptr (borrow-checked pointer type)
+    inline rusty::Ptr<value_versioned_array> snapshot(rusty::Ptr<value_versioned_array> row,
+                                                      const std::vector<value_versioned_array::index_type>& f,
+                                                      threadinfo& ti) {
         row->snapshot(snapshot_, f, ti);
         return snapshot_;
     }
@@ -183,14 +184,14 @@ inline size_t value_versioned_array::shallow_size() const {
 }
 
 // @unsafe - allocates new row with raw pointer arithmetic
-inline value_versioned_array* value_versioned_array::create(const Json* first, const Json* last, kvtimestamp_t ts, threadinfo& ti) {
+inline rusty::MutPtr<value_versioned_array> value_versioned_array::create(const Json* first, const Json* last, kvtimestamp_t ts, threadinfo& ti) {
     value_versioned_array empty;
     return empty.update(first, last, ts, ti, true);
 }
 
 // @unsafe - constructs row via direct allocator access
-inline value_versioned_array* value_versioned_array::create1(Str value, kvtimestamp_t ts, threadinfo& ti) {
-    value_versioned_array* row = (value_versioned_array*) ti.allocate(shallow_size(1), memtag_value);
+inline rusty::MutPtr<value_versioned_array> value_versioned_array::create1(Str value, kvtimestamp_t ts, threadinfo& ti) {
+    rusty::MutPtr<value_versioned_array> row = (value_versioned_array*) ti.allocate(shallow_size(1), memtag_value);
     row->ts_ = ts;
     row->ver_ = rowversion();
     row->ncol_ = row->ncol_cap_ = 1;
@@ -209,12 +210,12 @@ inline void value_versioned_array::deallocate_after_failed_update(const Json*, c
 
 template <typename PARSER>
 // @unsafe - parses into raw buffer without extra checks
-value_versioned_array*
+rusty::MutPtr<value_versioned_array>
 value_versioned_array::checkpoint_read(PARSER& par, kvtimestamp_t ts,
                                        threadinfo& ti) {
     unsigned ncol;
     par.read_array_header(ncol);
-    value_versioned_array* row = make_sized_row(ncol, ts, ti);
+    rusty::MutPtr<value_versioned_array> row = make_sized_row(ncol, ts, ti);
     Str col;
     for (unsigned i = 0; i != ncol; i++) {
         par >> col;
