@@ -1,0 +1,228 @@
+/**
+ * @file fiber.h
+ * @brief Modern fiber API following Boost.Fiber conventions.
+ *
+ * This file provides a cleaner API for working with stackful coroutines,
+ * using "fiber" terminology that aligns with industry conventions.
+ *
+ * Key differences from C++20 coroutines:
+ *   - C++20 coroutines are stackless (state machines)
+ *   - Our implementation uses Boost.Coroutine2 which provides stackful execution
+ *   - Stackful execution contexts are properly called "fibers"
+ *
+ * Example usage:
+ *   // Create and run a fiber
+ *   auto fiber = Fiber::create_run([]{
+ *       this_fiber::sleep_ms(100);
+ *       this_fiber::yield();
+ *   });
+ *
+ *   // Get current fiber ID
+ *   auto id = this_fiber::get_id();
+ *
+ * Note: This header uses rrr::Time for timing, NOT std::chrono.
+ */
+
+#pragma once
+
+#include "coroutine.h"
+#include "event.h"  // For Event types
+#include "../base/basetypes.hpp"  // For rrr::Time
+#include <rusty/option.hpp>
+#include <rusty/rc.hpp>
+
+namespace rrr {
+
+// =============================================================================
+// Type Alias: Fiber = Coroutine
+// =============================================================================
+
+/**
+ * Fiber is an alias for Coroutine, providing clearer terminology.
+ *
+ * "Coroutine" is kept for backward compatibility, but "Fiber" is preferred
+ * for new code as it accurately describes our stackful execution model.
+ */
+using Fiber = Coroutine;
+
+// =============================================================================
+// Event Combinator Aliases (Clearer Naming)
+// =============================================================================
+
+/**
+ * WaitAll waits for all child events to complete (AND semantics).
+ *
+ * Example:
+ *   auto event1 = Reactor::create_sp_event<IntEvent>();
+ *   auto event2 = Reactor::create_sp_event<IntEvent>();
+ *   auto wait_all = Reactor::create_sp_event<WaitAll>(event1, event2);
+ *   wait_all->wait();  // Blocks until both event1 and event2 are ready
+ *
+ * @safe - This is just a type alias
+ */
+using WaitAll = AndEvent;
+
+/**
+ * WaitAny waits for any child event to complete (OR semantics).
+ *
+ * Example:
+ *   auto event1 = Reactor::create_sp_event<IntEvent>();
+ *   auto event2 = Reactor::create_sp_event<IntEvent>();
+ *   auto wait_any = Reactor::create_sp_event<WaitAny>(event1, event2);
+ *   wait_any->wait();  // Blocks until either event1 or event2 is ready
+ *
+ * @safe - This is just a type alias
+ */
+using WaitAny = OrEvent;
+
+/**
+ * WaitN waits for N child events to complete (N-of-M semantics).
+ *
+ * Example:
+ *   auto event1 = Reactor::create_sp_event<IntEvent>();
+ *   auto event2 = Reactor::create_sp_event<IntEvent>();
+ *   auto event3 = Reactor::create_sp_event<IntEvent>();
+ *   auto wait_n = Reactor::create_sp_event<WaitN>(2);  // Wait for 2 events
+ *   wait_n->add(event1);
+ *   wait_n->add(event2);
+ *   wait_n->add(event3);
+ *   wait_n->wait();  // Blocks until any 2 of the 3 events are ready
+ *
+ * @safe - This is just a type alias
+ */
+using WaitN = NEvent;
+
+// =============================================================================
+// this_fiber Namespace (like std::this_thread for threads)
+// =============================================================================
+
+/**
+ * Namespace for operations on the currently executing fiber.
+ *
+ * These functions operate on the current fiber context and should only be
+ * called from within a fiber (not from the main thread).
+ *
+ * Note: All time-based functions use rrr::Time internally, NOT std::chrono.
+ */
+namespace this_fiber {
+
+/**
+ * Get the ID of the currently executing fiber.
+ *
+ * @return Fiber ID (uint64_t), or 0 if called outside fiber context
+ *
+ * @safe - Uses only safe rusty::Option operations
+ */
+inline uint64_t get_id() noexcept {
+    auto coro = Coroutine::current_coroutine();
+    if (coro.is_some()) {
+        // @unsafe { accessing Rc internals }
+        return coro.unwrap()->id;
+    }
+    return 0;
+}
+
+/**
+ * Get the currently executing fiber as an Option<Rc<Coroutine>>.
+ *
+ * @return Some(fiber) if in fiber context, None otherwise
+ *
+ * @safe - Delegates to Coroutine::current_coroutine()
+ */
+inline rusty::Option<rusty::Rc<Coroutine>> current() noexcept {
+    return Coroutine::current_coroutine();
+}
+
+/**
+ * Check if currently executing within a fiber context.
+ *
+ * @return true if in fiber context, false otherwise
+ *
+ * @safe - Uses only safe Option operations
+ */
+inline bool in_fiber_context() noexcept {
+    return Coroutine::current_coroutine().is_some();
+}
+
+/**
+ * Yield execution to other fibers.
+ *
+ * This allows the reactor to run other ready fibers before returning
+ * to the current fiber.
+ *
+ * @note No-op if called outside fiber context
+ *
+ * @unsafe - Delegates to boost coroutine yield
+ */
+inline void yield() noexcept {
+    auto coro = Coroutine::current_coroutine();
+    if (coro.is_some()) {
+        // @unsafe { boost coroutine yield }
+        coro.unwrap()->yield_();
+    }
+}
+
+/**
+ * Sleep for specified microseconds.
+ *
+ * Uses rrr::Time internally (NOT std::chrono).
+ *
+ * @param microseconds Duration to sleep in microseconds
+ *
+ * @unsafe - Calls Coroutine::sleep which uses Time internally
+ */
+inline void sleep_us(uint64_t microseconds) {
+    // @unsafe { Coroutine::sleep uses Time internally }
+    Coroutine::sleep(microseconds);
+}
+
+/**
+ * Sleep for specified milliseconds.
+ *
+ * Convenience wrapper - uses rrr::Time internally (NOT std::chrono).
+ *
+ * @param milliseconds Duration to sleep in milliseconds
+ *
+ * @unsafe - Calls Coroutine::sleep which uses Time internally
+ */
+inline void sleep_ms(uint64_t milliseconds) {
+    // @unsafe { Coroutine::sleep }
+    Coroutine::sleep(milliseconds * 1000);
+}
+
+/**
+ * Sleep for specified seconds.
+ *
+ * Convenience wrapper - uses rrr::Time internally (NOT std::chrono).
+ *
+ * @param seconds Duration to sleep in seconds
+ *
+ * @unsafe - Calls Coroutine::sleep which uses Time internally
+ */
+inline void sleep_s(uint64_t seconds) {
+    // @unsafe { Coroutine::sleep }
+    Coroutine::sleep(seconds * Time::RRR_USEC_PER_SEC);
+}
+
+/**
+ * Sleep until specified absolute time (microseconds since epoch).
+ *
+ * If the specified time has already passed, returns immediately.
+ * Uses rrr::Time::now() for current time (NOT std::chrono).
+ *
+ * @param abs_time_us Absolute time in microseconds since epoch
+ *
+ * @unsafe - Calls Time::now() and Coroutine::sleep
+ */
+inline void sleep_until_us(uint64_t abs_time_us) {
+    // @unsafe { Time::now }
+    uint64_t now = Time::now(true);
+    if (abs_time_us > now) {
+        // @unsafe { Coroutine::sleep }
+        Coroutine::sleep(abs_time_us - now);
+    }
+}
+
+}  // namespace this_fiber
+
+}  // namespace rrr

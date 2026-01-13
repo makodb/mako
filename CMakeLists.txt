@@ -1276,6 +1276,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_tpcc_sharding txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_tpcc_sharding COMMAND test_tpcc_sharding)
 
+    # Fiber API Tests
+    add_executable(test_fiber test/fiber_test.cc)
+    target_include_directories(test_fiber PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/rrr)
+    target_compile_options(test_fiber PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_fiber rrr ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} pthread)
+    add_test(NAME test_fiber COMMAND test_fiber)
+
     # ConfigStore RocksDB Tests
     add_executable(test_config_store test/config_store_test.cc)
     target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

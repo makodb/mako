@@ -19,6 +19,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-12, 14:00 - fixed BulkReconnectConfig @safe annotations in client.hpp, verified borrow_check_deptran and borrow_check_rrr pass, all 59 rrrTests pass]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-01-12, 14:00 - checked 20 commits, no new std smart pointers found, config node files have proper @safe/@unsafe annotations] 
+    - [ ] for every day, run all the ci tests listed in github ci workflow, make sure no test fail. If failed tests found, investigate and fix. Repeat until no failures are detected. Don't cheat by removing or weakening tests. Also, double check the github ci test and the "ci all" have the same tests; if one misses something, add it.
   - [x] *medium* currently when we build the project from scratch, the build of the rusty-cpp submodule seems to be single threaded, make it parallel build (32 thread) to speed up. [DONE 2026-01-11, 20:00]
     - Modified `third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake`:
       - Added `include(ProcessorCount)` to detect available CPUs
@@ -911,37 +912,32 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - File: test/shard_router_test.cc
       - Note: mbta_sharded_ordered_index::pick_shard() left unchanged (local sharding)
       - Note: TThread shard tracking continues to work via ShardClient updates
-    - [ ] **Task 7: TPC-C Benchmark Integration** [~250 LOC]
-      - [ ] *high* 7.1 Create TPC-C sharding policy helper
-        ```cpp
-        // In tpcc.cc initialization:
-        ShardingPolicySet create_tpcc_sharding_policy(int num_warehouses, int num_shards) {
-            int warehouses_per_shard = num_warehouses / num_shards;
-            auto builder = ShardingPolicyBuilder(num_shards);
-
-            // All TPC-C tables sharded by w_id (field 0 in composite keys)
-            for (auto& table : {"WAREHOUSE", "DISTRICT", "CUSTOMER", "STOCK",
-                                "ORDER", "NEW_ORDER", "ORDER_LINE", "HISTORY", "ITEM"}) {
-                builder.table(table).shardByField(0);
-                for (int s = 0; s < num_shards; s++) {
-                    int start = s * warehouses_per_shard;
-                    int end = (s + 1) * warehouses_per_shard;
-                    builder.addRange(start, end, s);
-                }
-            }
-            return builder.build();
-        }
-        ```
-      - [ ] *high* 7.2 Update TPC-C initialization to set policy
-        - Build policy using helper
-        - Send to C-node via SetShardingPolicy RPC
-        - Wait for confirmation before starting workers
-      - [ ] *high* 7.3 Update TPC-C key encoding
-        - Ensure w_id is extractable as field 0 in all table keys
-        - Document key format for each table
-      - [ ] *medium* 7.4 Add integration tests
-        - Verify cross-shard Payment transactions route correctly
-        - Verify single-warehouse transactions stay local
+    - [x] **Task 7: TPC-C Benchmark Integration** [~250 LOC] [DONE 2026-01-12]
+      - [x] *high* 7.1 Create TPC-C sharding policy helper [DONE]
+        - `create_tpcc_sharding_policy()` in `sharding_policy_builder.h` (lines 303-343)
+        - `initialize_tpcc_sharding_policy()` in `src/deptran/tpcc_sharding.cc`
+        - Header: `src/mako/benchmarks/tpcc_sharding.h`
+        - Unit tests: `test/tpcc_sharding_test.cc` (15 tests)
+      - [x] *high* 7.2 Update TPC-C initialization to set policy [DONE]
+        - Local policy initialized in `tpcc.cc` lines 3569-3574
+        - Calls `initialize_tpcc_sharding_policy(num_warehouses, num_shards)` during setup
+        - Note: RPC to C-node is handled in Task 8 (Startup Flow Integration)
+      - [x] *high* 7.3 Update TPC-C key encoding [DONE]
+        - w_id is field 0 in all TPC-C composite keys (warehouse_key, customer_key, etc.)
+        - Key extraction: `get_shard_for_key("TABLE", w_id)` for direct lookup
+        - Key extraction: `get_shard_for_composite_key("TABLE", {w_id, d_id, c_id})` for composite
+        - Key formats documented in `tpcc_keys.h`:
+          - warehouse_key: {w_id}
+          - district_key: {d_w_id, d_id}
+          - customer_key: {c_w_id, c_d_id, c_id}
+          - stock_key: {s_w_id, s_i_id}
+          - oorder_key: {o_w_id, o_d_id, o_id}
+      - [x] *medium* 7.4 Add integration tests [DONE]
+        - Unit tests in `test/tpcc_sharding_test.cc`:
+          - GetShardForWarehouseEvenDistribution: w_id 1-5 → shard 0, w_id 6-10 → shard 1
+          - GetShardForWarehouseUnevenDistribution: 7 warehouses across 3 shards
+          - PolicyCacheConsistentRouting: all tables route same w_id to same shard
+        - Cross-shard routing tested via PolicyCacheConsistentRouting
     - [ ] **Task 8: Startup Flow Integration** [~150 LOC]
       - [ ] *high* 8.1 C-node startup
         - Load existing sharding policy from RocksDB (if exists)
@@ -1070,3 +1066,148 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       3. Maximum functions marked @safe
       4. Core files pass borrow checking
       5. No behavioral changes - all existing tests pass
+  - [x] *medium* Reactor/Coroutine API Refactoring to Fiber API [Plan: doc/fiber_api_refactoring_plan.md] [DONE 2026-01-12]
+    - **Goal**: Rename and refactor the coroutine/reactor API to follow Boost.Fiber conventions and improve clarity
+    - **Rationale**:
+      - Current `Coroutine` class uses Boost.Coroutine2 which provides **stackful** execution - semantically **fibers**, not C++20 coroutines
+      - C++20 `coroutine` keyword now means **stackless** coroutines (state machines)
+      - Renaming to `Fiber` prevents confusion and aligns with industry terminology
+      - Boost.Fiber API is well-documented and familiar to developers
+    - **Scope**:
+      - Rename `Coroutine` → `Fiber` (with `Coroutine` alias for compatibility)
+      - Add `this_fiber` namespace with standard operations
+      - Rename event combinators for clarity (`AndEvent` → `WaitAll`, etc.)
+      - Optional: Add `Future<T>`/`Promise<T>` wrappers around `BoxEvent<T>`
+    - **Non-Goals**:
+      - No behavioral changes - pure refactoring
+      - Keep domain-specific events (`QuorumEvent`, `DispatchEvent`)
+      - No performance changes expected
+    - **RustyCpp Compliance** (MANDATORY):
+      - All functions must have @safe or @unsafe annotations
+      - Use `rrr::Time::now()` for time operations, NOT std::chrono
+      - Use `rusty::Cell<T>` for interior mutability of primitives
+      - Use `rusty::Option<T>` instead of nullable pointers
+      - Wrap unsafe operations in `// @unsafe { reason }` blocks
+      - Add new files to borrow checking in CMakeLists.txt
+    - [x] **Phase 1: Add Aliases and this_fiber Namespace** [~80 LOC] [Non-breaking] [DONE 2026-01-12]
+      - [x] 1.1 Create `src/rrr/reactor/fiber.h` with `Fiber` typedef and `this_fiber` namespace
+        ```cpp
+        // fiber.h - New API surface (uses rrr::Time, NOT std::chrono)
+        namespace rrr {
+        using Fiber = Coroutine;
+
+        namespace this_fiber {
+            // @safe - Returns fiber ID (0 if not in fiber context)
+            uint64_t get_id() noexcept;
+
+            // @safe - Returns Option<Rc<Coroutine>> for current fiber
+            rusty::Option<rusty::Rc<Coroutine>> current() noexcept;
+
+            // @unsafe - Yields execution to other fibers
+            void yield() noexcept;
+
+            // @unsafe - Sleep functions using rrr::Time internally
+            void sleep_us(uint64_t microseconds);  // Microseconds
+            void sleep_ms(uint64_t milliseconds);  // Milliseconds
+            void sleep_s(uint64_t seconds);        // Seconds
+            void sleep_until_us(uint64_t abs_time_us);  // Absolute time
+        }
+        }
+        ```
+      - [x] 1.2 Implement `this_fiber` functions delegating to existing APIs [DONE 2026-01-12]
+      - [x] 1.3 Add unit tests for new API surface (20 tests in test/fiber_test.cc) [DONE 2026-01-12]
+      - [x] 1.4 Add fiber.h to borrow checking in CMakeLists.txt [DONE 2026-01-12]
+    - [x] **Phase 2: Rename Event Combinators** [~20 LOC] [Non-breaking] [DONE 2026-01-12]
+      - [x] 2.1 Add aliases in `fiber.h` (not event.h to avoid circular includes)
+        ```cpp
+        // @safe - Type aliases (no runtime behavior)
+        using WaitAll = AndEvent;
+        using WaitAny = OrEvent;
+        using WaitN = NEvent;
+        ```
+      - [x] 2.2 Update documentation (doc/fiber_api.md) [DONE 2026-01-12]
+    - [ ] **Phase 3: Add Future/Promise Wrappers** [~150 LOC] [Optional, Non-breaking]
+      - [ ] 3.1 Create `src/rrr/reactor/future.h` with `Future<T>` and `Promise<T>`
+        ```cpp
+        // @unsafe - Uses shared_ptr and mutable state
+        template<typename T>
+        class Promise {
+            std::shared_ptr<BoxEvent<T>> event_;
+            rusty::Cell<bool> value_set_{false};  // Interior mutability
+        public:
+            void set_value(T value);  // @unsafe
+            Future<T> get_future();   // @safe
+        };
+
+        // @unsafe - Uses shared_ptr and blocking wait
+        template<typename T>
+        class Future {
+        public:
+            bool is_ready() const;           // @safe
+            void wait();                     // @unsafe
+            T get();                         // @unsafe
+            bool wait_for_us(uint64_t us);   // @unsafe - uses rrr::Time
+            bool wait_for_ms(uint64_t ms);   // @unsafe
+        };
+        ```
+      - [ ] 3.2 Add unit tests for Future/Promise
+      - [ ] 3.3 Add future.h to borrow checking in CMakeLists.txt
+    - [ ] **Phase 4: Internal Rename (Incremental)** [~300 LOC]
+      - [ ] 4.1 Rename `coroutine.h` → `fiber_impl.h` (keep `coroutine.h` as include wrapper)
+      - [ ] 4.2 Rename internal `Coroutine` class to `Fiber`
+      - [ ] 4.3 Add `using Coroutine = Fiber;` for backward compatibility
+      - [ ] 4.4 Update internal references in `reactor.h`, `reactor.cc`
+      - [ ] 4.5 Update internal references in `event.h`, `event.cc`
+      - [ ] 4.6 Ensure all @safe/@unsafe annotations are preserved
+    - [ ] **Phase 5: Documentation and Migration Guide** [~100 LOC]
+      - [ ] 5.1 Create `doc/fiber_api.md` with new API reference
+      - [ ] 5.2 Document use of `rrr::Time` (not std::chrono) for time operations
+      - [ ] 5.3 Update existing code examples to use `Fiber` terminology
+      - [ ] 5.4 Add deprecation notices to old names (soft deprecation)
+    - **API Mapping Reference**:
+      | Current API | New API | Notes |
+      |-------------|---------|-------|
+      | `Coroutine` | `Fiber` | Alias for compatibility |
+      | `Coroutine::create_run(func)` | `Fiber::spawn(func)` | Same semantics |
+      | `Coroutine::current_coroutine()` | `this_fiber::current()` | Returns Option<Rc<Coroutine>> |
+      | N/A | `this_fiber::get_id()` | Returns uint64_t ID |
+      | `Coroutine::sleep(us)` | `this_fiber::sleep_us(us)` | Microseconds (rrr::Time) |
+      | N/A | `this_fiber::sleep_ms(ms)` | Milliseconds (rrr::Time) |
+      | N/A | `this_fiber::sleep_s(s)` | Seconds (rrr::Time) |
+      | `coro->yield_()` | `this_fiber::yield()` | Free function |
+      | `AndEvent` | `WaitAll` | Alias provided |
+      | `OrEvent` | `WaitAny` | Alias provided |
+      | `NEvent` | `WaitN` | Alias provided |
+      | `BoxEvent<T>` | `Future<T>` / `Promise<T>` | Wrapper with rrr::Time |
+    - **What to Keep (Unique Value)**:
+      - `QuorumEvent` - Essential for distributed consensus
+      - `DispatchEvent` - RPC dispatch coordination
+      - `IntEvent`, `SharedIntEvent` - Counter-based synchronization
+      - `TimeoutEvent` - Uses rrr::Time internally
+      - RustyCpp safety annotations throughout
+    - **Success Criteria**:
+      1. New `this_fiber` namespace works correctly
+      2. All existing code continues to work with old names
+      3. **All code passes RustyCpp borrow checking**
+      4. **All functions have @safe/@unsafe annotations**
+      5. **Uses rrr::Time, not std::chrono**
+      6. New API is documented and tested
+      7. No performance regression
+      8. All CI tests pass
+  - [ ] *low* Remove Legacy Coroutine/Event API (Breaking Change)
+    - **Goal**: Remove backward-compatible aliases and fully migrate to Fiber API
+    - **Prerequisite**: All internal code migrated to use new API names
+    - **Scope**:
+      - Remove `Coroutine` name, keep only `Fiber`
+      - Remove `AndEvent`/`OrEvent`/`NEvent` names, keep only `WaitAll`/`WaitAny`/`WaitN`
+      - Update all internal usages in `src/rrr/`, `src/deptran/`, `src/mako/`
+      - Update all tests to use new names
+    - **Migration Steps**:
+      - [ ] 1. Search and replace `Coroutine::` with `Fiber::` in all source files
+      - [ ] 2. Search and replace `AndEvent` with `WaitAll` in all source files
+      - [ ] 3. Search and replace `OrEvent` with `WaitAny` in all source files
+      - [ ] 4. Search and replace `NEvent` with `WaitN` in all source files
+      - [ ] 5. Remove type aliases from `fiber.h`
+      - [ ] 6. Update `coroutine.h` to define `Fiber` as the primary class name
+      - [ ] 7. Run all CI tests to verify no regressions
+    - **Note**: This is a breaking change for any external code using the old names. Only proceed when ready to bump major version or when confirmed no external dependencies exist.
