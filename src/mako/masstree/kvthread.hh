@@ -90,64 +90,80 @@ class threadinfo {
 
     // allthreads is now per-context in MasstreeContext
 
+    // @unsafe { Returns raw pointer }
     threadinfo* next() const {
         return next_;
     }
+    // @unsafe { Accepts raw pointer }
     void set_next(threadinfo* n) {
         next_ = n;
     }
 
+    // @unsafe { Factory returns raw pointer via placement new }
     static threadinfo* make(int purpose, int index);
     // XXX destructor
 
     // thread information
+    // @safe - Returns value copy
     int purpose() const {
         return purpose_;
     }
+    // @safe - Returns value copy
     int index() const {
         return index_;
     }
+    // @unsafe { Returns raw pointer }
     MasstreeContext* context() const {
         return context_;
     }
+    // @unsafe { Returns raw pointer }
     loginfo* logger() const {
         return logger_;
     }
+    // @unsafe { Accepts raw pointer }
     void set_logger(loginfo* logger) {
         assert(!logger_ && logger);
         logger_ = logger;
     }
 
     // timestamps
+    // @safe - Returns value copy
     kvtimestamp_t operation_timestamp() const {
         return timestamp();
     }
+    // @safe - Returns value copy
     kvtimestamp_t update_timestamp() const {
         return ts_;
     }
+    // @safe - Returns value copy (ts_ is mutable for internal use)
     kvtimestamp_t update_timestamp(kvtimestamp_t x) const {
         if (circular_int<kvtimestamp_t>::less_equal(ts_, x))
             // x might be a marker timestamp; ensure result is not
             ts_ = (x | 1) + 1;
         return ts_;
     }
+    // @unsafe { Accesses raw pointer member of N }
     template <typename N> void observe_phantoms(N* n) {
         if (circular_int<kvtimestamp_t>::less(ts_, n->phantom_epoch_[0]))
             ts_ = n->phantom_epoch_[0];
     }
 
     // event counters
+    // @safe - Modifies owned counter array
     void mark(threadcounter ci) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             ++counters_[ci];
     }
+    // @safe - Modifies owned counter array
     void mark(threadcounter ci, int64_t delta) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             counters_[ci] += delta;
     }
+    // @safe - Returns bool value
     bool has_counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci);
     }
+    // @safe - Returns value copy
     uint64_t counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci) ? counters_[ci] : 0;
     }
@@ -263,36 +279,44 @@ class threadinfo {
              -nl * CACHE_LINE_SIZE);
     }
 
-    // RCU
+    // RCU - Read-Copy-Update memory reclamation
+    // @unsafe { Reads epoch from context raw pointer }
     void rcu_start() {
         mrcu_epoch_type current = context_->get_epoch();
         if (gc_epoch_ != current)
             gc_epoch_ = current;
     }
+    // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_stop() {
         if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 1)
             hard_rcu_quiesce();
         gc_epoch_ = 0;
     }
+    // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_quiesce() {
         rcu_start();
         if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 2)
             hard_rcu_quiesce();
     }
     typedef ::mrcu_callback mrcu_callback;
+    // @unsafe { Accepts raw pointer callback }
     void rcu_register(mrcu_callback* cb) {
         record_rcu(cb, memtag(-1));
     }
 
     // thread management
+    // @unsafe { Returns mutable reference to pthread_t }
     pthread_t& pthread() {
         return pthreadid_;
     }
+    // @safe - Returns value copy
     pthread_t pthread() const {
         return pthreadid_;
     }
 
+    // @unsafe { Accepts raw pointer for debug output }
     void report_rcu(void* ptr) const;
+    // @unsafe { Accepts raw pointer for debug output }
     static void report_rcu_all(void* ptr);
 
   private:

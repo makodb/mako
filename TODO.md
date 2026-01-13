@@ -1065,7 +1065,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Marked @safe: get_epoch(), set_epoch(), increment_epoch(), id(), constructor
         - Marked @unsafe: epoch_ref(), get_allthreads(), register_threadinfo(),
           BindCurrentThread(), Current(), Create()
-      - [ ] 1.2 Audit kvthread.hh public interface - mark accessors as @safe
+      - [x] 1.2 Audit kvthread.hh public interface - mark accessors as @safe [DONE 2026-01-13]
+        - Marked @safe: purpose(), index(), operation_timestamp(), update_timestamp(),
+          has_counter(), counter(), mark(), pthread() const
+        - Marked @unsafe: next(), set_next(), make(), context(), logger(), set_logger(),
+          observe_phantoms(), rcu_*, pthread() non-const, report_rcu*
       - [ ] 1.3 Audit masstree.hh table interface
       - [ ] 1.4 Audit masstree_get.hh
       - [ ] 1.5 Audit masstree_insert.hh
