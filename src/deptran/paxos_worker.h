@@ -637,7 +637,10 @@ public:
   static moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> coo_queue;
   static std::queue<shared_ptr<Coordinator>> coo_queue_nc;
   moodycamel::ConcurrentQueue<Marshallable*> replay_queue;
-  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(1000000, nullptr);
+  // Reduced from 1,000,000 to 100,000 (10x bulkBatchCount of 10,000)
+  // 1M entries × 16 bytes = 16MB per PaxosWorker, which caused memory explosion
+  // when running multiple shards (12 workers × 16MB = 192MB just for this vector)
+  vector<shared_ptr<Coordinator>> all_coords = vector<shared_ptr<Coordinator>>(100000, nullptr);
   std::mutex nc_submit_l_;
   std::recursive_mutex election_state_lock;
   const unsigned int cnt = bulkBatchCount;
