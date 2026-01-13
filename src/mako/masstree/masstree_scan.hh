@@ -35,18 +35,23 @@ class scanstackelt {
     typedef typename P::threadinfo_type threadinfo;
     typedef typename node_base<P>::nodeversion_type nodeversion_type;
 
+    // @unsafe { Returns raw leaf pointer }
     leaf<P>* node() const {
         return n_;
     }
+    // @safe - Returns computed value
     typename nodeversion_type::value_type full_version_value() const {
         return (v_.version_value() << permuter_type::size_bits) + perm_.size();
     }
+    // @safe - Returns value copy
     int size() const {
         return perm_.size();
     }
+    // @safe - Returns value copy
     permuter_type permutation() const {
         return perm_;
     }
+    // @unsafe { Accesses raw node pointer via n.n_ }
     int operator()(const key_type &k, const scanstackelt<P> &n, int p) {
         return n.n_->compare_key(k, p);
     }
@@ -313,6 +318,7 @@ int scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
 }
 
 template <typename P> template <typename H, typename F>
+// @unsafe { Core scan implementation; traverses tree via raw pointers }
 int basic_table<P>::scan(H helper,
                          Str firstkey, bool emit_firstkey,
                          F& scanner,
@@ -393,6 +399,7 @@ int basic_table<P>::scan(H helper,
 }
 
 template <typename P> template <typename F>
+// @unsafe { Forward scan; delegates to unsafe core scan }
 int basic_table<P>::scan(Str firstkey, bool emit_firstkey,
                          F& scanner,
                          threadinfo& ti) const
@@ -401,6 +408,7 @@ int basic_table<P>::scan(Str firstkey, bool emit_firstkey,
 }
 
 template <typename P> template <typename F>
+// @unsafe { Reverse scan; delegates to unsafe core scan }
 int basic_table<P>::rscan(Str firstkey, bool emit_firstkey,
                           F& scanner,
                           threadinfo& ti) const

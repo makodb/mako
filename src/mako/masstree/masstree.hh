@@ -67,28 +67,37 @@ class basic_table {
     typedef unlocked_tcursor<P> unlocked_cursor_type;
     typedef tcursor<P> cursor_type;
 
+    // @safe - Default initialization
     inline basic_table();
 
-    // @unsafe - mutates root pointer using raw allocation
+    // @unsafe { Mutates root pointer using raw allocation }
     void initialize(threadinfo& ti);
-    // @unsafe - tears down tree via raw pointers
+    // @unsafe { Tears down tree via raw pointers }
     void destroy(threadinfo& ti);
 
+    // @unsafe { Returns raw node pointer }
     inline node_type* root() const;
+    // @unsafe { Returns raw node pointer, may modify root_ atomically }
     inline node_type* fix_root();
 
+    // @unsafe { Traverses tree via raw pointers }
     bool get(Str key, value_type& value, threadinfo& ti) const;
 
+    // @unsafe { Traverses tree via raw pointers, calls scanner callback }
     template <typename F>
     int scan(Str firstkey, bool matchfirst, F& scanner, threadinfo& ti) const;
+    // @unsafe { Traverses tree via raw pointers, calls scanner callback }
     template <typename F>
     int rscan(Str firstkey, bool matchfirst, F& scanner, threadinfo& ti) const;
 
+    // @unsafe { Modifies tree via raw pointers }
     template <typename F>
     inline int modify(Str key, F& f, threadinfo& ti);
+    // @unsafe { Modifies tree via raw pointers, may allocate nodes }
     template <typename F>
     inline int modify_insert(Str key, F& f, threadinfo& ti);
 
+    // @unsafe { Uses FILE* raw pointer }
     inline void print(FILE* f = 0, int indent = 0) const;
 
   private:

@@ -123,6 +123,7 @@ struct gc_layer_rcu_callback : public P::threadinfo_type::mrcu_callback {
 };
 
 template <typename P>
+// @unsafe { RCU callback that removes empty layers via raw pointers }
 void gc_layer_rcu_callback<P>::operator()(threadinfo& ti)
 {
     while (!root_->is_root())
@@ -137,6 +138,7 @@ void gc_layer_rcu_callback<P>::operator()(threadinfo& ti)
 }
 
 template <typename P>
+// @unsafe { Allocates RCU callback via raw pointer placement new }
 void gc_layer_rcu_callback<P>::make(node_base<P>* root, Str prefix,
                                     threadinfo& ti)
 {
@@ -148,6 +150,7 @@ void gc_layer_rcu_callback<P>::make(node_base<P>* root, Str prefix,
 }
 
 template <typename P>
+// @unsafe { Modifies node permutation, may trigger leaf removal via raw pointers }
 bool tcursor<P>::finish_remove(threadinfo& ti)
 {
     if (n_->modstate_ == leaf<P>::modstate_insert) {
@@ -165,6 +168,7 @@ bool tcursor<P>::finish_remove(threadinfo& ti)
 }
 
 template <typename P>
+// @unsafe { Unlinks leaf from tree structure, frees via RCU, modifies parent chain }
 bool tcursor<P>::remove_leaf(leaf_type* leaf, node_type* root,
                              Str prefix, threadinfo& ti)
 {
@@ -227,6 +231,7 @@ bool tcursor<P>::remove_leaf(leaf_type* leaf, node_type* root,
 }
 
 template <typename P>
+// @unsafe { Patches internode keys and propagates changes up parent chain }
 bool tcursor<P>::reshape(internode_type* n, ikey_type ikey,
                          node_type* root, Str prefix, threadinfo& ti)
 {
@@ -255,6 +260,7 @@ bool tcursor<P>::reshape(internode_type* n, ikey_type ikey,
 }
 
 template <typename P>
+// @unsafe { Collapses single-child internodes, frees via RCU, rewrites parent pointers }
 bool tcursor<P>::collapse(internode_type* n, ikey_type ikey,
                           node_type* root, Str prefix, threadinfo& ti)
 {
@@ -285,6 +291,7 @@ bool tcursor<P>::collapse(internode_type* n, ikey_type ikey,
 }
 
 template <typename P>
+// @unsafe - RCU callback for full tree destruction; traverses and frees all nodes
 struct destroy_rcu_callback : public P::threadinfo_type::mrcu_callback {
     typedef typename P::threadinfo_type threadinfo;
     typedef typename node_base<P>::leaf_type leaf_type;
@@ -302,6 +309,7 @@ struct destroy_rcu_callback : public P::threadinfo_type::mrcu_callback {
 };
 
 template <typename P>
+// @unsafe { Returns raw pointer to parent_ field for workqueue linking }
 inline node_base<P>** destroy_rcu_callback<P>::link_ptr(node_base<P>* n) {
     if (n->isleaf())
         return &static_cast<leaf_type*>(n)->parent_;
@@ -310,6 +318,7 @@ inline node_base<P>** destroy_rcu_callback<P>::link_ptr(node_base<P>* n) {
 }
 
 template <typename P>
+// @unsafe { Enqueues node via raw pointer manipulation }
 inline void destroy_rcu_callback<P>::enqueue(node_base<P>* n,
                                              node_base<P>**& tailp) {
     *tailp = n;
@@ -317,6 +326,7 @@ inline void destroy_rcu_callback<P>::enqueue(node_base<P>* n,
 }
 
 template <typename P>
+// @unsafe { Traverses entire tree via workqueue, deallocates all nodes }
 void destroy_rcu_callback<P>::operator()(threadinfo& ti) {
     if (++count_ == 1) {
         while (!root_->is_root())
@@ -362,6 +372,7 @@ void destroy_rcu_callback<P>::operator()(threadinfo& ti) {
 }
 
 template <typename P>
+// @unsafe { Schedules RCU callback to destroy entire tree via raw pointers }
 void basic_table<P>::destroy(threadinfo& ti) {
     if (root_) {
         void* data = ti.allocate(sizeof(destroy_rcu_callback<P>), memtag_masstree_gc);

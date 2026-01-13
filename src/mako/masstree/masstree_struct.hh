@@ -616,6 +616,7 @@ class leaf : public node_base<P> {
 
 
 template <typename P>
+// @unsafe { Allocates root leaf via raw memory pool }
 void basic_table<P>::initialize(threadinfo& ti) {
     masstree_precondition(!root_);
     root_ = node_type::leaf_type::make_root(0, 0, ti);
@@ -626,6 +627,7 @@ void basic_table<P>::initialize(threadinfo& ti) {
     @pre this->locked()
     @post this->parent() == result && (!result || result->locked()) */
 template <typename P>
+// @unsafe { Traverses parent chain acquiring locks, uses raw pointers }
 internode<P>* node_base<P>::locked_parent(threadinfo& ti) const
 {
     node_base<P>* p;
@@ -650,6 +652,7 @@ internode<P>* node_base<P>::locked_parent(threadinfo& ti) const
 
     Reruns the comparison until a stable comparison is obtained. */
 template <typename P>
+// @unsafe { Retries comparison under concurrent modification using fence }
 inline int
 internode<P>::stable_last_key_compare(const key_type& k, nodeversion_type v,
                                       threadinfo& ti) const
@@ -663,6 +666,7 @@ internode<P>::stable_last_key_compare(const key_type& k, nodeversion_type v,
 }
 
 template <typename P>
+// @unsafe { Retries comparison under concurrent modification using fence }
 inline int
 leaf<P>::stable_last_key_compare(const key_type& k, nodeversion_type v,
                                  threadinfo& ti) const
@@ -682,6 +686,7 @@ leaf<P>::stable_last_key_compare(const key_type& k, nodeversion_type v,
 
     Returns a stable leaf. Sets @a version to the stable version. */
 template <typename P>
+// @unsafe { Traverses tree via raw internode/child pointers with retry loops }
 inline leaf<P>* node_base<P>::reach_leaf(const key_type& ka,
                                          nodeversion_type& version,
                                          threadinfo& ti) const
@@ -740,6 +745,7 @@ inline leaf<P>* node_base<P>::reach_leaf(const key_type& ka,
     advances through the leaves using the B^link-tree pointers and returns
     the relevant leaf, setting @a v to the stable version for that leaf. */
 template <typename P>
+// @unsafe { Follows B^link-tree next pointers via safe_next() }
 leaf<P>* leaf<P>::advance_to_key(const key_type& ka, nodeversion_type& v,
                                  threadinfo& ti) const
 {
@@ -773,6 +779,7 @@ leaf<P>* leaf<P>::advance_to_key(const key_type& ka, nodeversion_type& v,
     positions [0,p) are ready: keysuffixes in that range are copied. In either
     case, the key at position p is NOT copied; it is assigned to @a s. */
 template <typename P>
+// @unsafe { May allocate new suffix storage, copies via raw pointers, RCU frees old }
 void leaf<P>::assign_ksuf(int p, Str s, bool initializing, threadinfo& ti) {
     if ((ksuf_ && ksuf_->assign(p, s))
         || (extrasize64_ > 0 && iksuf_[0].assign(p, s)))

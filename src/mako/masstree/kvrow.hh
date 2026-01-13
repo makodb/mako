@@ -41,6 +41,7 @@ typedef value_bag<uint16_t> row_type;
 
 template <typename R>
 struct query_helper {
+    // @unsafe { Returns raw row pointer without copying }
     inline const R* snapshot(const R* row, const std::vector<typename R::index_type>&, threadinfo&) {
         return row;
     }
@@ -97,6 +98,7 @@ class query {
 
 
 template <typename R>
+// @unsafe { Accesses row columns via raw pointer snapshot }
 void query<R>::emit_fields(const R* value, Json& req, threadinfo& ti) {
     const R* snapshot = helper_.snapshot(value, f_, ti);
     if (f_.empty()) {
@@ -109,6 +111,7 @@ void query<R>::emit_fields(const R* value, Json& req, threadinfo& ti) {
 }
 
 template <typename R>
+// @unsafe { Accesses row columns via raw pointer snapshot }
 void query<R>::emit_fields1(const R* value, Json& req, threadinfo& ti) {
     const R* snapshot = helper_.snapshot(value, f_, ti);
     if ((f_.empty() && snapshot->ncol() == 1) || f_.size() == 1)
@@ -124,6 +127,7 @@ void query<R>::emit_fields1(const R* value, Json& req, threadinfo& ti) {
 
 
 template <typename R> template <typename T>
+// @unsafe { Traverses Masstree via unlocked cursor, accesses row values }
 void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
     typename T::unlocked_cursor_type lp(table, req[2].as_s());
     bool found = lp.find_unlocked(ti);
@@ -139,6 +143,7 @@ void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
 }
 
 template <typename R> template <typename T>
+// @unsafe { Traverses Masstree via unlocked cursor, returns column value }
 bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) {
     typename T::unlocked_cursor_type lp(table, key);
     bool found = lp.find_unlocked(ti);
@@ -151,12 +156,14 @@ bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) 
 
 
 template <typename R>
+// @safe - updates timestamp via threadinfo
 inline void query<R>::assign_timestamp(threadinfo& ti) {
     qtimes_.ts = ti.update_timestamp();
     qtimes_.prev_ts = 0;
 }
 
 template <typename R>
+// @safe - updates timestamp via threadinfo with minimum
 inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
     qtimes_.ts = ti.update_timestamp(min_ts);
     qtimes_.prev_ts = min_ts;
@@ -164,6 +171,7 @@ inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
 
 
 template <typename R> template <typename T>
+// @unsafe { Uses cursor to find/insert, mutates raw row pointers }
 result_t query<R>::run_put(T& table, Str key,
                            const Json* firstreq, const Json* lastreq,
                            threadinfo& ti) {
@@ -208,6 +216,7 @@ inline bool query<R>::apply_put(R*& value, bool found, const Json* firstreq,
 }
 
 template <typename R> template <typename T>
+// @unsafe { Uses cursor to find/insert, replaces raw row data }
 result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
     bool found = lp.find_insert(ti);
@@ -240,6 +249,7 @@ inline bool query<R>::apply_replace(R*& value, bool found, Str new_value,
 }
 
 template <typename R> template <typename T>
+// @unsafe { Uses locked cursor, frees row via RCU }
 bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
     bool found = lp.find_locked(ti);
@@ -267,6 +277,7 @@ inline void query<R>::apply_remove(R*& value, kvtimestamp_t& node_ts,
 
 
 template <typename R>
+// @unsafe - Scan visitor that accesses raw row pointers and copies key data
 class query_json_scanner {
   public:
     query_json_scanner(query<R> &q, lcdf::Json& request)
@@ -306,6 +317,7 @@ class query_json_scanner {
 };
 
 template <typename R> template <typename T>
+// @unsafe { Invokes Masstree scan with visitor callback }
 void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();
@@ -316,6 +328,7 @@ void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
 }
 
 template <typename R> template <typename T>
+// @unsafe { Invokes Masstree reverse scan with visitor callback }
 void query<R>::run_rscan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();

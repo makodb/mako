@@ -64,6 +64,7 @@ bool tcursor<P>::find_insert(threadinfo& ti)
 }
 
 template <typename P>
+// @unsafe { Allocates new leaf nodes, manipulates raw pointers }
 bool tcursor<P>::make_new_layer(threadinfo& ti) {
     key_type oka(n_->ksuf(kx_.p));
     ka_.shift();
@@ -131,6 +132,7 @@ bool tcursor<P>::make_new_layer(threadinfo& ti) {
 }
 
 template <typename P>
+// @unsafe { Modifies node permutation via raw pointer }
 void tcursor<P>::finish_insert()
 {
     permuter_type perm(n_->permutation_);
@@ -141,6 +143,7 @@ void tcursor<P>::finish_insert()
 }
 
 template <typename P>
+// @unsafe { May remove or insert; unlocks raw node pointer }
 inline void tcursor<P>::finish(int state, threadinfo& ti)
 {
     if (state < 0 && state_ == 1) {
@@ -157,6 +160,7 @@ inline void tcursor<P>::finish(int state, threadinfo& ti)
 }
 
 template <typename P> template <typename F>
+// @unsafe { Locks nodes, calls user callback f }
 inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 {
     tcursor<P> lp(*this, key);
@@ -171,6 +175,7 @@ inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 }
 
 template <typename P> template <typename F>
+// @unsafe { Locks nodes, may insert, calls user callback f }
 inline int basic_table<P>::modify_insert(Str key, F& f, threadinfo& ti)
 {
     tcursor<P> lp(*this, key);

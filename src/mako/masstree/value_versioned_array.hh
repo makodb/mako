@@ -25,22 +25,29 @@
 #include "value_array.hh"
 using lcdf::Str;
 
+// @unsafe - Optimistic row versioning with fence-based synchronization
 struct rowversion {
+    // @safe - default initialization
     rowversion() {
         v_.u = 0;
     }
+    // @safe - returns dirty flag
     bool dirty() {
         return v_.dirty;
     }
+    // @safe - sets dirty flag via bit op
     void setdirty() {
         v_.u = v_.u | 0x80000000;
     }
+    // @safe - clears dirty flag
     void clear() {
         v_.u = v_.u & 0x7fffffff;
     }
+    // @safe - clears and increments counter
     void clearandbump() {
         v_.u = (v_.u + 1) & 0x7fffffff;
     }
+    // @unsafe { Spin-waits on dirty flag with relax_fence }
     rowversion stable() const {
         value_t x = v_;
         while (x.dirty) {
@@ -50,6 +57,7 @@ struct rowversion {
         acquire_fence();
         return x;
     }
+    // @unsafe { Memory fence before counter comparison }
     bool has_changed(rowversion x) const {
         fence();
         return x.v_.ctr != v_.ctr;
@@ -124,12 +132,15 @@ class value_versioned_array {
 };
 
 template <>
+// @unsafe - MVCC query helper that creates snapshots for consistent reads
 struct query_helper<value_versioned_array> {
     value_versioned_array* snapshot_;
 
+    // @safe - default initialization
     query_helper()
         : snapshot_() {
     }
+    // @unsafe { Allocates snapshot copy via raw pointers }
     inline const value_versioned_array* snapshot(const value_versioned_array* row,
                                                  const std::vector<value_versioned_array::index_type>& f,
                                                  threadinfo& ti) {
@@ -138,18 +149,22 @@ struct query_helper<value_versioned_array> {
     }
 };
 
+// @safe - default initialization
 inline value_versioned_array::value_versioned_array()
     : ts_(0), ncol_(0), ncol_cap_(0) {
 }
 
+// @safe - returns timestamp copy
 inline kvtimestamp_t value_versioned_array::timestamp() const {
     return ts_;
 }
 
+// @safe - returns column count
 inline int value_versioned_array::ncol() const {
     return ncol_;
 }
 
+// @unsafe { Accesses cols_ array via raw pointer dereference }
 inline Str value_versioned_array::col(int i) const {
     if (unsigned(i) < unsigned(ncol_) && cols_[i])
         return Str(cols_[i]->s, cols_[i]->len);
@@ -157,10 +172,12 @@ inline Str value_versioned_array::col(int i) const {
         return Str();
 }
 
+// @safe - pure computation
 inline size_t value_versioned_array::shallow_size(int ncol) {
     return sizeof(value_versioned_array) + ncol * sizeof(lcdf::inline_string*);
 }
 
+// @safe - pure computation
 inline size_t value_versioned_array::shallow_size() const {
     return shallow_size(ncol_);
 }
@@ -207,6 +224,7 @@ value_versioned_array::checkpoint_read(PARSER& par, kvtimestamp_t ts,
 }
 
 template <typename UNPARSER>
+// @unsafe { Iterates cols_ array via col() accessor }
 void value_versioned_array::checkpoint_write(UNPARSER& unpar) const {
     unpar.write_array_header(ncol_);
     for (short i = 0; i != ncol_; ++i)
