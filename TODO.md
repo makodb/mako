@@ -1012,3 +1012,61 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Hash-based sharding option (hash key mod N shards)
       - Multi-key sharding (shard by multiple fields)
       - String key ranges (not just int64)
+  - [ ] *medium* Masstree RustyCpp Safety Migration [Plan: doc/masstree_rusty_migration_plan.md]
+    - **Goal**: Incrementally migrate masstree code (~28,782 lines across 78 files) to be rusty-safe
+    - **Approach**:
+      1. Phase 1: Audit and annotate existing functions as @safe or @unsafe
+      2. Phase 2: Replace raw pointers with rusty::Ptr<T>/MutPtr<T> wrappers
+      3. Phase 3: Rewrite unsafe functions to safe equivalents where possible
+      4. Phase 4: Enable borrow checking for migrated files
+      5. Phase 5: Advanced patterns (Box, Arc, Cell/RefCell)
+    - **Priority Order** (by file importance):
+      - Tier 1: masstree_context.h/cc, kvthread.hh/cc (~500 lines) - Foundation
+      - Tier 2: masstree.hh, masstree_get/insert/scan/remove.hh (~1250 lines) - Core B-tree ops
+      - Tier 3: masstree_struct.hh (~850 lines) - Node definitions
+      - Tier 4: kvrow.hh, value_versioned_array.hh/cc (~600 lines) - Value types
+      - Tier 5: string.hh/cc, json.hh/cc, msgpack.hh/cc (~7760 lines) - Utilities
+    - [ ] **Phase 1: Audit & Annotate Safe Functions**
+      - [ ] 1.1 Audit masstree_context.h/cc - mark getters/setters as @safe
+      - [ ] 1.2 Audit kvthread.hh public interface - mark accessors as @safe
+      - [ ] 1.3 Audit masstree.hh table interface
+      - [ ] 1.4 Audit masstree_get.hh
+      - [ ] 1.5 Audit masstree_insert.hh
+      - [ ] 1.6 Audit masstree_scan.hh
+      - [ ] 1.7 Audit masstree_remove.hh
+      - [ ] 1.8 Audit masstree_struct.hh
+      - [ ] 1.9 Audit kvrow.hh
+      - [ ] 1.10 Audit value_versioned_array.hh/cc
+    - [ ] **Phase 2: Replace Raw Pointers with Ptr/MutPtr**
+      - [ ] 2.1 Add rusty/ptr.hpp include to masstree headers
+      - [ ] 2.2 Convert masstree_context.h pointers
+      - [ ] 2.3 Convert kvthread.hh public interface pointers
+      - [ ] 2.4 Convert masstree.hh interface pointers
+      - [ ] 2.5 Convert masstree_get.hh function signatures
+      - [ ] 2.6 Convert masstree_insert.hh function signatures
+      - [ ] 2.7 Convert masstree_scan.hh function signatures
+      - [ ] 2.8 Convert kvrow.hh pointers
+      - [ ] 2.9 Convert value_versioned_array pointers
+    - [ ] **Phase 3: Rewrite Unsafe to Safe**
+      - [ ] 3.1 Convert simple getters to safe functions
+      - [ ] 3.2 Convert threadinfo accessors to safe
+      - [ ] 3.3 Convert masstree_context accessors to safe
+      - [ ] 3.4 Wrap unavoidable unsafe ops in explicit @unsafe blocks
+      - [ ] 3.5 Convert const traversal functions
+      - [ ] 3.6 Convert scan iteration to use safe wrappers
+    - [ ] **Phase 4: Enable Borrow Checking**
+      - [ ] 4.1 Enable borrow checking for masstree_context
+      - [ ] 4.2 Enable borrow checking for kvthread
+      - [ ] 4.3 Incrementally enable more files
+    - [ ] **Phase 5: Advanced Safety Patterns** (Future)
+      - [ ] 5.1 Replace raw allocations with rusty::Box
+      - [ ] 5.2 Convert shared state to rusty::Arc
+      - [ ] 5.3 Convert interior mutability to rusty::Cell/RefCell
+      - [ ] 5.4 Document remaining unsafe boundaries
+    - **Estimated Effort**: ~15-24 hours
+    - **Success Criteria**:
+      1. All functions annotated with @safe or @unsafe
+      2. Public APIs use Ptr<T>/MutPtr<T> wrappers
+      3. Maximum functions marked @safe
+      4. Core files pass borrow checking
+      5. No behavioral changes - all existing tests pass
