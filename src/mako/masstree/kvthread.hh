@@ -25,6 +25,7 @@
 #include "circular_int.hh"
 #include "timestamp.hh"
 #include "memdebug.hh"
+#include <rusty/ptr.hpp>
 #include <assert.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -90,17 +91,17 @@ class threadinfo {
 
     // allthreads is now per-context in MasstreeContext
 
-    // @unsafe { Returns raw pointer }
-    threadinfo* next() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<threadinfo> next() const {
         return next_;
     }
-    // @unsafe { Accepts raw pointer }
-    void set_next(threadinfo* n) {
+    // @safe - Takes rusty::MutPtr parameter
+    void set_next(rusty::MutPtr<threadinfo> n) {
         next_ = n;
     }
 
-    // @unsafe { Factory returns raw pointer via placement new }
-    static threadinfo* make(int purpose, int index);
+    // @unsafe { Factory uses placement new }
+    static rusty::MutPtr<threadinfo> make(int purpose, int index);
     // XXX destructor
 
     // thread information
@@ -112,16 +113,16 @@ class threadinfo {
     int index() const {
         return index_;
     }
-    // @unsafe { Returns raw pointer }
-    MasstreeContext* context() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<MasstreeContext> context() const {
         return context_;
     }
-    // @unsafe { Returns raw pointer }
-    loginfo* logger() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<loginfo> logger() const {
         return logger_;
     }
-    // @unsafe { Accepts raw pointer }
-    void set_logger(loginfo* logger) {
+    // @safe - Takes rusty::MutPtr parameter
+    void set_logger(rusty::MutPtr<loginfo> logger) {
         assert(!logger_ && logger);
         logger_ = logger;
     }
@@ -169,9 +170,9 @@ class threadinfo {
     }
 
     struct accounting_relax_fence_function {
-        threadinfo* ti_;
+        rusty::MutPtr<threadinfo> ti_;
         threadcounter ci_;
-        accounting_relax_fence_function(threadinfo* ti, threadcounter ci)
+        accounting_relax_fence_function(rusty::MutPtr<threadinfo> ti, threadcounter ci)
             : ti_(ti), ci_(ci) {
         }
         void operator()() {
@@ -188,8 +189,8 @@ class threadinfo {
     }
 
     struct stable_accounting_relax_fence_function {
-        threadinfo* ti_;
-        stable_accounting_relax_fence_function(threadinfo* ti)
+        rusty::MutPtr<threadinfo> ti_;
+        stable_accounting_relax_fence_function(rusty::MutPtr<threadinfo> ti)
             : ti_(ti) {
         }
         template <typename V>
@@ -299,8 +300,9 @@ class threadinfo {
             hard_rcu_quiesce();
     }
     typedef ::mrcu_callback mrcu_callback;
-    // @unsafe { Accepts raw pointer callback }
-    void rcu_register(mrcu_callback* cb) {
+    // @safe - Takes rusty::MutPtr parameter (underlying record_rcu is @unsafe)
+    void rcu_register(rusty::MutPtr<mrcu_callback> cb) {
+        // @unsafe { record_rcu uses raw void* internally }
         record_rcu(cb, memtag(-1));
     }
 
@@ -324,15 +326,15 @@ class threadinfo {
         struct {
             mrcu_epoch_type gc_epoch_;
             mrcu_epoch_type limbo_epoch_;
-            loginfo *logger_;
+            rusty::MutPtr<loginfo> logger_;
 
-            threadinfo *next_;
+            rusty::MutPtr<threadinfo> next_;
             int purpose_;
             int index_;         // the index of a udp, logging, tcp,
                                 // checkpoint or recover thread
 
             pthread_t pthreadid_;
-            MasstreeContext* context_;  // The context this threadinfo belongs to
+            rusty::MutPtr<MasstreeContext> context_;  // The context this threadinfo belongs to
         };
         char padding1[CACHE_LINE_SIZE];
     };

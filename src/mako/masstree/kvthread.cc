@@ -53,12 +53,12 @@ inline threadinfo::threadinfo(int purpose, int index) {
     ts_ = 2;
 }
 
-// @unsafe - uses placement new on raw malloc(8192) buffer without RAII
-threadinfo *threadinfo::make(int purpose, int index) {
+// @unsafe { Uses placement new on raw malloc(8192) buffer }
+rusty::MutPtr<threadinfo> threadinfo::make(int purpose, int index) {
     static int threads_initialized;
 
-    MasstreeContext* ctx = MasstreeContext::Current();
-    threadinfo* ti = new(malloc(8192)) threadinfo(purpose, index);
+    rusty::MutPtr<MasstreeContext> ctx = MasstreeContext::Current();
+    rusty::MutPtr<threadinfo> ti = new(malloc(8192)) threadinfo(purpose, index);
     ti->context_ = ctx;
 
     // Prepend to context's thread list (next_ is set inside register_threadinfo
@@ -93,7 +93,7 @@ void threadinfo::refill_rcu() {
 // @unsafe - frees raw void* pointers from limbo queue without ownership tracking
 void threadinfo::hard_rcu_quiesce() {
     mrcu_epoch_type min_epoch = gc_epoch_;
-    for (threadinfo *ti = context_->get_allthreads(); ti; ti = ti->next()) {
+    for (rusty::MutPtr<threadinfo> ti = context_->get_allthreads(); ti; ti = ti->next()) {
         prefetch((const void *) ti->next());
         mrcu_epoch_type epoch = ti->gc_epoch_;
         if (epoch && mrcu_signed_epoch_type(epoch - min_epoch) < 0)
@@ -162,12 +162,12 @@ void threadinfo::report_rcu(void *ptr) const
     }
 }
 
-// @unsafe - iterates context threadinfo* linked list without lifetime tracking
+// @unsafe - iterates context threadinfo list without lifetime tracking
 void threadinfo::report_rcu_all(void *ptr)
 {
     // Note: This now only reports for the current context
-    MasstreeContext* ctx = MasstreeContext::Current();
-    for (threadinfo *ti = ctx->get_allthreads(); ti; ti = ti->next())
+    rusty::MutPtr<MasstreeContext> ctx = MasstreeContext::Current();
+    for (rusty::MutPtr<threadinfo> ti = ctx->get_allthreads(); ti; ti = ti->next())
         ti->report_rcu(ptr);
 }
 

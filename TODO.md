@@ -1102,7 +1102,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - thread_local MasstreeContext* → thread_local rusty::MutPtr<MasstreeContext>
         - Updated safety annotations: most functions now @safe (pointer type is borrow-checked)
         - All 65 rrrTests pass, simpleTransaction and multiShardSingleProcess pass
-      - [ ] 2.3 Convert kvthread.hh public interface pointers
+      - [x] 2.3 Convert kvthread.hh public interface pointers [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp>
+        - Converted public interface: next(), set_next(), make(), context(), logger(), set_logger()
+        - Converted nested structs: accounting_relax_fence_function, stable_accounting_relax_fence_function
+        - Converted rcu_register() parameter
+        - Converted private members: next_, logger_, context_
+        - Updated kvthread.cc implementation to match
+        - All 65 rrrTests pass, simpleTransaction passes
       - [ ] 2.4 Convert masstree.hh interface pointers
       - [ ] 2.5 Convert masstree_get.hh function signatures
       - [ ] 2.6 Convert masstree_insert.hh function signatures
