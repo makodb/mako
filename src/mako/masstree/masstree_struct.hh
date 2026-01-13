@@ -838,19 +838,20 @@ inline basic_table<P>::basic_table()
     : root_(0) {
 }
 
-// @safe - returns root pointer
+// @safe - returns rusty::MutPtr (borrow-checked pointer type)
 template <typename P>
-inline node_base<P>* basic_table<P>::root() const {
+inline rusty::MutPtr<node_base<P>> basic_table<P>::root() const {
     return root_;
 }
 
-// @unsafe - atomic CAS to update root pointer
+// @safe - Returns rusty::MutPtr, uses atomic CAS internally
 template <typename P>
-inline node_base<P>* basic_table<P>::fix_root() {
-    node_base<P>* root = root_;
+inline rusty::MutPtr<node_base<P>> basic_table<P>::fix_root() {
+    rusty::MutPtr<node_base<P>> root = root_;
     if (unlikely(!root->is_root())) {
-        node_base<P>* old_root = root;
+        rusty::MutPtr<node_base<P>> old_root = root;
         root = root->maybe_parent();
+        // @unsafe { Atomic compare-exchange on raw pointer }
         (void) cmpxchg(&root_, old_root, root);
     }
     return root;

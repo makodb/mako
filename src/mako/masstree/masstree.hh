@@ -22,6 +22,7 @@
 #include "compiler.hh"
 #include "str.hh"
 #include "ksearch.hh"
+#include <rusty/ptr.hpp>
 
 namespace Masstree {
 using lcdf::Str;
@@ -75,10 +76,10 @@ class basic_table {
     // @unsafe { Tears down tree via raw pointers }
     void destroy(threadinfo& ti);
 
-    // @unsafe { Returns raw node pointer }
-    inline node_type* root() const;
-    // @unsafe { Returns raw node pointer, may modify root_ atomically }
-    inline node_type* fix_root();
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    inline rusty::MutPtr<node_type> root() const;
+    // @safe - Returns rusty::MutPtr, may modify root_ atomically
+    inline rusty::MutPtr<node_type> fix_root();
 
     // @unsafe { Traverses tree via raw pointers }
     bool get(Str key, value_type& value, threadinfo& ti) const;
@@ -101,7 +102,7 @@ class basic_table {
     inline void print(FILE* f = 0, int indent = 0) const;
 
   private:
-    node_type* root_;
+    rusty::MutPtr<node_type> root_;
 
     template <typename H, typename F>
     int scan(H helper, Str firstkey, bool matchfirst,

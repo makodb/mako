@@ -1110,7 +1110,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Converted private members: next_, logger_, context_
         - Updated kvthread.cc implementation to match
         - All 65 rrrTests pass, simpleTransaction passes
-      - [ ] 2.4 Convert masstree.hh interface pointers
+      - [x] 2.4 Convert masstree.hh interface pointers [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp> to masstree.hh
+        - Converted basic_table methods: root(), fix_root()
+        - Converted private member: root_
+        - Updated masstree_struct.hh implementations to match
+        - All 65 rrrTests pass
       - [ ] 2.5 Convert masstree_get.hh function signatures
       - [ ] 2.6 Convert masstree_insert.hh function signatures
       - [ ] 2.7 Convert masstree_scan.hh function signatures
