@@ -961,7 +961,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Builds TPC-C sharding policy using ShardingPolicyBuilder
         - Sends to C-node via SetShardingPolicy RPC
         - Also initializes local ShardingPolicyCache after successful send
-      - [ ] *medium* 8.4 Add startup tests
+      - [x] *medium* 8.4 Add startup tests [DONE 2026-01-13, 13:45]
+        - Created test/sharding_startup_test.cc with 12 tests
+        - Tests cover: C-node first boot/reboot, policy persistence, RPC serving
+        - Tests cover: Initializer sending policy, data node fetching, end-to-end flow
+        - Plan: docs/dev/task8_4_startup_tests_plan.md
     - [x] **Task 9: Testing** [~300 LOC] [DONE 2026-01-13]
       - [x] *high* 9.1 Unit tests [DONE - existing tests verified]
         - test_sharding_policy.cc: 34 tests (serialization, builder validation, key extraction)

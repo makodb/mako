@@ -1313,6 +1313,13 @@ if(BUILD_TESTS)
     target_link_libraries(test_config_failure txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_failure COMMAND test_config_failure)
 
+    # Sharding Policy Startup Tests
+    add_executable(test_sharding_startup test/sharding_startup_test.cc)
+    target_include_directories(test_sharding_startup PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako/benchmarks)
+    target_compile_options(test_sharding_startup PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_sharding_startup txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    add_test(NAME test_sharding_startup COMMAND test_sharding_startup)
+
     # RPC Tests
     add_executable(test_rpc test/test_rpc.cc test/benchmark_service.cc)
     target_include_directories(test_rpc PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
