@@ -21,6 +21,7 @@
 #define MASSTREE_INSERT_HH
 #include "masstree_get.hh"
 #include "masstree_split.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 
 template <typename P>
@@ -71,10 +72,10 @@ bool tcursor<P>::make_new_layer(threadinfo& ti) {
     int kcmp = oka.compare(ka_);
 
     // Create a twig of nodes until the suffixes diverge
-    leaf_type* twig_head = n_;
-    leaf_type* twig_tail = n_;
+    rusty::MutPtr<leaf_type> twig_head = n_;
+    rusty::MutPtr<leaf_type> twig_tail = n_;
     while (kcmp == 0) {
-        leaf_type* nl = leaf_type::make_root(0, twig_tail, ti);
+        rusty::MutPtr<leaf_type> nl = leaf_type::make_root(0, twig_tail, ti);
         nl->assign_initialize_for_layer(0, oka);
         if (twig_head != n_)
             twig_tail->lv_[0] = nl;
@@ -96,7 +97,7 @@ bool tcursor<P>::make_new_layer(threadinfo& ti) {
             + n_->iksuf_[0].overhead(n_->width);
     else
         ksufsize = 0;
-    leaf_type *nl = leaf_type::make_root(ksufsize, twig_tail, ti);
+    rusty::MutPtr<leaf_type> nl = leaf_type::make_root(ksufsize, twig_tail, ti);
     nl->assign_initialize(0, kcmp < 0 ? oka : ka_, ti);
     nl->assign_initialize(1, kcmp < 0 ? ka_ : oka, ti);
     nl->lv_[kcmp > 0] = n_->lv_[kx_.p];
