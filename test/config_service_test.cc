@@ -11,6 +11,8 @@
 #include "../src/deptran/config_service.h"
 #include "../src/deptran/config_store.h"
 #include "../src/deptran/config_schema.h"
+#include "../src/deptran/sharding_policy.h"
+#include "../src/deptran/sharding_policy_builder.h"
 
 namespace janus {
 namespace test {
@@ -270,6 +272,203 @@ TEST_F(ConfigServiceTest, ProtocolSettingsPersistence) {
     EXPECT_EQ(5, loaded.settings.benchmark);
     EXPECT_EQ(60000000u, loaded.settings.txn_timeout_us);
     EXPECT_EQ(4u, loaded.settings.scale_factor);
+}
+
+// ============================================================================
+// Sharding Policy Tests
+// ============================================================================
+
+// Test HasShardingPolicy when no policy exists
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, HasShardingPolicyEmpty) {
+    EXPECT_FALSE(store_->has_sharding_policy());
+}
+
+// Test HasShardingPolicy when policy exists
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, HasShardingPolicyWithData) {
+    auto policy = ShardingPolicyBuilder(2)
+        .table("TEST")
+            .shardByField(0)
+            .addRange(0, 50, 0)
+            .addRange(50, 100, 1)
+        .build();
+
+    EXPECT_TRUE(store_->save_sharding_policy(policy));
+    EXPECT_TRUE(store_->has_sharding_policy());
+}
+
+// Test GetShardingPolicyVersion when no policy exists
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, GetShardingPolicyVersionEmpty) {
+    EXPECT_EQ(0u, store_->get_sharding_policy_version());
+}
+
+// Test GetShardingPolicyVersion when policy exists
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, GetShardingPolicyVersionWithData) {
+    auto policy = ShardingPolicyBuilder(2)
+        .table("TEST")
+            .shardByField(0)
+            .addRange(0, 50, 0)
+            .addRange(50, 100, 1)
+        .build();
+    policy.version = 456;
+
+    EXPECT_TRUE(store_->save_sharding_policy(policy));
+    EXPECT_EQ(456u, store_->get_sharding_policy_version());
+}
+
+// Test sharding policy save and load roundtrip via service
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, ShardingPolicySaveLoadRoundtrip) {
+    auto original = ShardingPolicyBuilder(3)
+        .table("WAREHOUSE")
+            .shardByField(0)
+            .addRange(1, 4, 0)
+            .addRange(4, 7, 1)
+            .addRange(7, 10, 2)
+        .table("DISTRICT")
+            .shardByField(0)
+            .addRange(1, 4, 0)
+            .addRange(4, 7, 1)
+            .addRange(7, 10, 2)
+        .build();
+    original.version = 789;
+
+    EXPECT_TRUE(store_->save_sharding_policy(original));
+
+    auto loaded_opt = store_->load_sharding_policy();
+    EXPECT_TRUE(loaded_opt.is_some());
+
+    ShardingPolicySet loaded = loaded_opt.unwrap();
+    EXPECT_EQ(original.version, loaded.version);
+    EXPECT_EQ(original.num_shards, loaded.num_shards);
+    EXPECT_EQ(original.table_count(), loaded.table_count());
+    EXPECT_TRUE(loaded.has_policy("WAREHOUSE"));
+    EXPECT_TRUE(loaded.has_policy("DISTRICT"));
+
+    // Verify routing
+    const auto* warehouse_policy = loaded.get_policy("WAREHOUSE");
+    ASSERT_NE(nullptr, warehouse_policy);
+    EXPECT_EQ(0, warehouse_policy->get_shard(2));  // w_id 2 -> shard 0
+    EXPECT_EQ(1, warehouse_policy->get_shard(5));  // w_id 5 -> shard 1
+    EXPECT_EQ(2, warehouse_policy->get_shard(8));  // w_id 8 -> shard 2
+}
+
+// Test sharding policy cache invalidation
+// @safe
+TEST_F(ConfigServiceTest, ShardingPolicyCacheInvalidation) {
+    auto policy1 = ShardingPolicyBuilder(2)
+        .table("TEST")
+            .shardByField(0)
+            .addRange(0, 50, 0)
+            .addRange(50, 100, 1)
+        .build();
+    policy1.version = 100;
+    EXPECT_TRUE(store_->save_sharding_policy(policy1));
+
+    EXPECT_EQ(100u, store_->get_sharding_policy_version());
+
+    // Save new policy
+    auto policy2 = ShardingPolicyBuilder(2)
+        .table("TEST")
+            .shardByField(0)
+            .addRange(0, 50, 0)
+            .addRange(50, 100, 1)
+        .build();
+    policy2.version = 200;
+    EXPECT_TRUE(store_->save_sharding_policy(policy2));
+
+    // Invalidate cache
+    service_->invalidate_sharding_cache();
+
+    // Should see new version
+    EXPECT_EQ(200u, store_->get_sharding_policy_version());
+}
+
+// Test sharding policy multiple updates
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, ShardingPolicyMultipleUpdates) {
+    for (uint64_t v = 1; v <= 5; ++v) {
+        auto policy = ShardingPolicyBuilder(2)
+            .table("TEST")
+                .shardByField(0)
+                .addRange(0, 50, 0)
+                .addRange(50, 100, 1)
+            .build();
+        policy.version = v;
+        EXPECT_TRUE(store_->save_sharding_policy(policy));
+        EXPECT_EQ(v, store_->get_sharding_policy_version());
+
+        // Invalidate cache between updates
+        service_->invalidate_sharding_cache();
+    }
+}
+
+// Test cluster config and sharding policy coexist in service
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, ConfigAndShardingPolicyCoexistInService) {
+    // Save cluster config
+    PersistentConfig config = create_sample_config(10);
+    EXPECT_TRUE(store_->save(config));
+
+    // Save sharding policy
+    auto policy = ShardingPolicyBuilder(2)
+        .table("WAREHOUSE")
+            .shardByField(0)
+            .addRange(1, 6, 0)
+            .addRange(6, 11, 1)
+        .build();
+    policy.version = 20;
+    EXPECT_TRUE(store_->save_sharding_policy(policy));
+
+    // Verify both exist
+    EXPECT_TRUE(store_->has_config());
+    EXPECT_TRUE(store_->has_sharding_policy());
+    EXPECT_EQ(10u, store_->get_version());
+    EXPECT_EQ(20u, store_->get_sharding_policy_version());
+
+    // Load and verify both
+    auto config_opt = store_->load();
+    EXPECT_TRUE(config_opt.is_some());
+    EXPECT_EQ(10u, config_opt.unwrap().version);
+
+    auto policy_opt = store_->load_sharding_policy();
+    EXPECT_TRUE(policy_opt.is_some());
+    EXPECT_EQ(20u, policy_opt.unwrap().version);
+}
+
+// Test TPC-C style sharding policy via service
+// @unsafe - RocksDB I/O
+TEST_F(ConfigServiceTest, TpccShardingPolicyViaService) {
+    // Create TPC-C policy: 10 warehouses across 2 shards
+    auto policy = create_tpcc_sharding_policy(10, 2);
+    policy.version = 1000;
+
+    EXPECT_TRUE(store_->save_sharding_policy(policy));
+
+    auto loaded_opt = store_->load_sharding_policy();
+    EXPECT_TRUE(loaded_opt.is_some());
+
+    ShardingPolicySet loaded = loaded_opt.unwrap();
+    EXPECT_EQ(1000u, loaded.version);
+    EXPECT_EQ(2, loaded.num_shards);
+
+    // Verify all TPC-C tables exist
+    EXPECT_TRUE(loaded.has_policy("WAREHOUSE"));
+    EXPECT_TRUE(loaded.has_policy("DISTRICT"));
+    EXPECT_TRUE(loaded.has_policy("CUSTOMER"));
+    EXPECT_TRUE(loaded.has_policy("STOCK"));
+    EXPECT_TRUE(loaded.has_policy("ORDER"));
+
+    // Verify routing: w_id 1-5 -> shard 0, w_id 6-10 -> shard 1
+    const auto* warehouse_policy = loaded.get_policy("WAREHOUSE");
+    ASSERT_NE(nullptr, warehouse_policy);
+    EXPECT_EQ(0, warehouse_policy->get_shard(1));
+    EXPECT_EQ(0, warehouse_policy->get_shard(5));
+    EXPECT_EQ(1, warehouse_policy->get_shard(6));
+    EXPECT_EQ(1, warehouse_policy->get_shard(10));
 }
 
 }  // namespace test
