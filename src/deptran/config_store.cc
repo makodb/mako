@@ -5,6 +5,7 @@
 
 #include "config_store.h"
 #include "../rrr/base/logging.hpp"
+#include <cstring>
 
 namespace janus {
 
