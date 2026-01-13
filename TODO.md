@@ -16,7 +16,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). [last checked: 2026-01-13, 13:50 - failure on commit 6f4a0d77, same shard0 startup issue. Memory fix a41e1da3 still in CI queue (5 runs queued)]
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). [last checked: 2026-01-13, 20:44 - all 12 recent runs still queued, memory fix a41e1da3 waiting. Last completed run (6f4a0d77) failed with shard0 startup issue - expecting fix once a41e1da3 runs]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-13, 10:45 - all borrow_check targets pass with no violations, 64 rrrTests pass]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-01-13, 10:45 - checked 40+ commits, no new std smart pointers, all new code has proper @safe/@unsafe annotations for I/O operations]
     - [ ] for every day, run all the ci tests listed in github ci workflow, make sure no test fail. If failed tests found, investigate and fix. Repeat until no failures are detected. Don't cheat by removing or weakening tests. Also, double check the github ci test and the "ci all" have the same tests; if one misses something, add it. [last done: 2026-01-13, 15:00 - all CI steps completed successfully: rrrTests 65/65, simpleTransaction, simplePaxos, shardNoReplication, shard2Replication, shard1Replication, shardFaultTolerance, multiShardSingleProcess, shard2SingleProcess, shard2SingleProcessReplication]
@@ -1092,8 +1092,16 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Marked @safe: constructor, timestamp, ncol, shallow_size
         - Marked @unsafe: col, create/create1, checkpoint_*, query_helper snapshot
     - [ ] **Phase 2: Replace Raw Pointers with Ptr/MutPtr**
-      - [ ] 2.1 Add rusty/ptr.hpp include to masstree headers
-      - [ ] 2.2 Convert masstree_context.h pointers
+      - [x] 2.1 Add rusty/ptr.hpp include to masstree headers [DONE 2026-01-13]
+      - [x] 2.2 Convert masstree_context.h pointers [DONE 2026-01-13]
+        - Added #include <rusty/ptr.hpp> to masstree_context.h
+        - Converted all raw pointers to rusty::MutPtr<T>:
+          - get_allthreads(), register_threadinfo(), BindCurrentThread()
+          - Current(), Create() return types
+          - std::atomic<threadinfo*> → std::atomic<rusty::MutPtr<threadinfo>>
+          - thread_local MasstreeContext* → thread_local rusty::MutPtr<MasstreeContext>
+        - Updated safety annotations: most functions now @safe (pointer type is borrow-checked)
+        - All 65 rrrTests pass, simpleTransaction and multiShardSingleProcess pass
       - [ ] 2.3 Convert kvthread.hh public interface pointers
       - [ ] 2.4 Convert masstree.hh interface pointers
       - [ ] 2.5 Convert masstree_get.hh function signatures

@@ -15,6 +15,7 @@
 #include <atomic>
 #include <mutex>
 #include <cstdint>
+#include <rusty/ptr.hpp>
 
 class threadinfo;
 
@@ -68,36 +69,36 @@ public:
     }
 
     // Thread registry
-    // @unsafe { Returns raw pointer to threadinfo }
-    threadinfo* get_allthreads() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<threadinfo> get_allthreads() const {
         return allthreads_.load(std::memory_order_acquire);
     }
 
-    // @unsafe { Accepts raw pointer parameter }
-    void register_threadinfo(threadinfo* ti);
+    // @safe - Takes rusty::MutPtr parameter
+    void register_threadinfo(rusty::MutPtr<threadinfo> ti);
 
     // @safe - Returns copy of int value
     int id() const { return context_id_; }
 
-    // @unsafe { Accepts raw pointer parameter }
-    static void BindCurrentThread(MasstreeContext* ctx);
+    // @safe - Takes rusty::MutPtr parameter
+    static void BindCurrentThread(rusty::MutPtr<MasstreeContext> ctx);
 
-    // @unsafe { Returns raw pointer }
-    static MasstreeContext* Current();
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    static rusty::MutPtr<MasstreeContext> Current();
 
-    // @unsafe { Uses 'new' operator, returns raw pointer }
-    static MasstreeContext* Create();
+    // @unsafe { Uses 'new' operator }
+    static rusty::MutPtr<MasstreeContext> Create();
 
 private:
     int context_id_;
     std::atomic<mrcu_epoch_type> epoch_{1};
-    std::atomic<threadinfo*> allthreads_{nullptr};
+    std::atomic<rusty::MutPtr<threadinfo>> allthreads_{nullptr};
     std::mutex allthreads_lock_;
 
     static std::atomic<int> s_next_context_id_;
 };
 
 // Thread-local context pointer
-extern thread_local MasstreeContext* tl_masstree_context;
+extern thread_local rusty::MutPtr<MasstreeContext> tl_masstree_context;
 
 #endif // MASSTREE_CONTEXT_H
