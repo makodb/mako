@@ -65,6 +65,18 @@ for i in 0 1; do
         continue
     fi
     
+    # Check for TPC-C sharding policy initialization (only for shard 0, as policy is shared)
+    if [ "$i" -eq 0 ]; then
+        if grep -q "TPC-C Sharding: Initialized policy" "$log"; then
+            echo "  ✓ TPC-C sharding policy initialized"
+            # Show the initialization line for reference
+            grep "TPC-C Sharding: Initialized policy" "$log" | tail -n 1 | sed 's/^/    /'
+        else
+            echo "  ✗ TPC-C sharding policy not initialized"
+            failed=1
+        fi
+    fi
+
     # Check for agg_persist_throughput keyword
     if grep -q "agg_persist_throughput" "$log"; then
         echo "  ✓ Found 'agg_persist_throughput' keyword"

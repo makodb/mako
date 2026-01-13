@@ -100,6 +100,16 @@ if [ ! -f "$log_file" ]; then
     exit 1
 fi
 
+# Check for TPC-C sharding policy initialization
+if grep -q "TPC-C Sharding: Initialized policy" "$log_file"; then
+    echo "  OK TPC-C sharding policy initialized"
+    # Show the initialization line for reference
+    grep "TPC-C Sharding: Initialized policy" "$log_file" | tail -n 1 | sed 's/^/    /'
+else
+    echo "  X TPC-C sharding policy not initialized"
+    failed=1
+fi
+
 # Check 1: Multi-shard mode initialization
 if grep -q "Multi-shard mode: running 2 shards in this process" "$log_file"; then
     echo "  OK Multi-shard mode initialization detected (2 shards)"

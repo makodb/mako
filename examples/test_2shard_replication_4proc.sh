@@ -137,6 +137,16 @@ if [ ! -f "4proc-localhost.log" ]; then
     echo "  [X] Log file not found"
     failed=1
 else
+    # Check for TPC-C sharding policy initialization
+    if grep -q "TPC-C Sharding: Initialized policy" "4proc-localhost.log"; then
+        echo "  [OK] TPC-C sharding policy initialized"
+        # Show the initialization line for reference
+        grep "TPC-C Sharding: Initialized policy" "4proc-localhost.log" | tail -n 1 | sed 's/^/    /'
+    else
+        echo "  [X] TPC-C sharding policy not initialized"
+        failed=1
+    fi
+
     # Check for multi-shard initialization
     if grep -q "Multi-shard mode" "4proc-localhost.log"; then
         echo "  [OK] Multi-shard mode detected"

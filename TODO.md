@@ -16,7 +16,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). [last checked: 2026-01-13, 12:40 - failure on commit 1b98df69, shard2Replication test timed out (shard0 never started). NOTE: Local tests pass, may be fixed by a41e1da3 (memory fix) in CI queue]
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). [last checked: 2026-01-13, 13:50 - failure on commit 6f4a0d77, same shard0 startup issue. Memory fix a41e1da3 still in CI queue (5 runs queued)]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-13, 10:45 - all borrow_check targets pass with no violations, 64 rrrTests pass]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-01-13, 10:45 - checked 40+ commits, no new std smart pointers, all new code has proper @safe/@unsafe annotations for I/O operations]
     - [ ] for every day, run all the ci tests listed in github ci workflow, make sure no test fail. If failed tests found, investigate and fix. Repeat until no failures are detected. Don't cheat by removing or weakening tests. Also, double check the github ci test and the "ci all" have the same tests; if one misses something, add it. [last done: 2026-01-13, 10:50 - all CI steps completed successfully]
@@ -979,11 +979,27 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - ShardingPolicyCacheInvalidation, ShardingPolicyMultipleUpdates
           - ConfigAndShardingPolicyCoexistInService
           - TpccShardingPolicyViaService
-      - [ ] *medium* 9.3 TPC-C sharding tests
-        - 2-shard setup with warehouse-based sharding
-        - Verify transactions access correct shards
-        - Verify data locality (same w_id data on same shard)
-        - Performance comparison with old table-ID sharding
+      - [ ] *medium* 9.3 TPC-C sharding integration tests [Analysis: 2026-01-13]
+        - **Gap Analysis**: Unit tests cover sharding policy logic; CI runs 2-shard tests.
+          Missing: explicit verification that transactions use the new sharding policy
+        - [x] 9.3.1 Add sharding policy initialization logging to dbtest startup [DONE - already exists]
+          - Log when sharding policy is loaded from C-node or initialized locally
+          - Log number of tables, number of shards, policy version
+          - Already implemented in tpcc_sharding.cc:46-49: "TPC-C Sharding: Initialized policy..."
+        - [x] 9.3.2 Add CI test step to verify sharding policy is active [DONE 2026-01-13]
+          - Check log output for "TPC-C Sharding: Initialized policy" message in shard0 logs
+          - Modified test scripts: test_2shard_no_replication.sh, test_2shard_replication.sh,
+            test_2shard_replication_raft.sh, test_2shard_single_process.sh,
+            test_2shard_single_process_replication.sh, test_2shard_replication_4proc.sh
+        - [ ] 9.3.3 Add remote transaction tracking metrics (~100 LOC)
+          - Count local vs remote transactions in NewOrder
+          - Expose metrics in benchmark output
+        - [ ] 9.3.4 Add data locality validation test (~150 LOC)
+          - After loading data, verify warehouse data is on correct shard
+          - Query WAREHOUSE, DISTRICT, STOCK for sample w_id values
+        - [ ] 9.3.5 Document expected sharding behavior (~50 LOC doc)
+          - Expected remote ratio for TPC-C with warehouse-based sharding
+          - Comparison with table-ID sharding (baseline)
     - **Key Files to Modify/Create**:
       | File | Purpose |
       |------|---------|
