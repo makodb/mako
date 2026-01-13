@@ -492,13 +492,13 @@ TEST_F(ShardingPolicyTest, CreateTpccShardingPolicy) {
     EXPECT_TRUE(policy.has_policy("HISTORY"));
     EXPECT_TRUE(policy.has_policy("ITEM"));
 
-    // With 10 warehouses and 2 shards:
-    // Shard 0: warehouses 0-4
-    // Shard 1: warehouses 5-9
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 0), 0);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 4), 0);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 5), 1);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 9), 1);
+    // With 10 warehouses and 2 shards (TPC-C uses 1-indexed w_id):
+    // Shard 0: warehouses 1-5
+    // Shard 1: warehouses 6-10
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 1), 0);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 5), 0);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 6), 1);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 10), 1);
 
     // All tables should route the same way (by w_id)
     EXPECT_EQ(policy.get_shard_for_key("DISTRICT", 3), 0);
@@ -513,15 +513,15 @@ TEST_F(ShardingPolicyTest, CreateTpccShardingPolicyUneven) {
 
     EXPECT_EQ(policy.num_shards, 3);
 
-    // With 7 warehouses and 3 shards (ceil(7/3) = 3 per shard):
-    // Shard 0: warehouses 0-2
-    // Shard 1: warehouses 3-5
-    // Shard 2: warehouses 6
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 0), 0);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 2), 0);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 3), 1);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 5), 1);
-    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 6), 2);
+    // With 7 warehouses and 3 shards (ceil(7/3) = 3 per shard, TPC-C 1-indexed):
+    // Shard 0: warehouses 1-3
+    // Shard 1: warehouses 4-6
+    // Shard 2: warehouse 7
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 1), 0);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 3), 0);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 4), 1);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 6), 1);
+    EXPECT_EQ(policy.get_shard_for_key("WAREHOUSE", 7), 2);
 }
 
 TEST_F(ShardingPolicyTest, CreateTpccShardingPolicyValidation) {
