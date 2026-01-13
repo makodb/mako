@@ -225,19 +225,19 @@ class leafvalue {
     typedef typename P::value_type value_type;
     typedef typename make_prefetcher<P>::type prefetcher_type;
 
-    // @unsafe - default initialization
+    // @safe - default initialization (empty body)
     leafvalue() {
     }
-    // @unsafe - value initialization
+    // @safe - value initialization (assigns to owned member)
     leafvalue(value_type v) {
         u_.v = v;
     }
-    // @unsafe - pointer initialization
+    // @unsafe - pointer initialization (uses reinterpret_cast)
     leafvalue(node_base<P>* n) {
         u_.x = reinterpret_cast<uintptr_t>(n);
     }
 
-    // @unsafe - creates empty leafvalue
+    // @safe - creates empty leafvalue (calls safe value constructor)
     static leafvalue<P> make_empty() {
         return leafvalue<P>(value_type());
     }
@@ -247,12 +247,12 @@ class leafvalue {
     operator unspecified_bool_type() const {
         return u_.x ? &leafvalue<P>::empty : 0;
     }
-    // @unsafe - relies on raw tagged union pointer state
+    // @safe - returns bool check on union state
     bool empty() const {
         return !u_.x;
     }
 
-    // @unsafe - returns stored value
+    // @safe - returns value copy
     value_type value() const {
         return u_.v;
     }
@@ -368,15 +368,14 @@ class leaf : public node_base<P> {
     int size() const {
         return permuter_type::size(permutation_);
     }
-    // @unsafe - returns permuter copy via raw storage cast
+    // @safe - returns permuter copy (kpermuter value constructor is @safe)
     permuter_type permutation() const {
         return permuter_type(permutation_);
     }
-    // @safe - pure arithmetic
+    // @safe - pure arithmetic (static_assert, bit shift, addition)
     typename nodeversion_type::value_type full_version_value() const {
         static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(permuter_type::size_bits), "not enough bits to add size to version");
-        // @unsafe - operator<<
-        { return (this->version_value() << permuter_type::size_bits) + size(); }
+        return (this->version_value() << permuter_type::size_bits) + size();
     }
     // @unsafe - calls v.unlock() which manipulates version bits
     typename nodeversion_type::value_type full_unlocked_version_value() const {
