@@ -16,7 +16,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items).
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). [last checked: 2026-01-13, 12:40 - failure on commit 1b98df69, shard2Replication test timed out (shard0 never started). NOTE: Local tests pass, may be fixed by a41e1da3 (memory fix) in CI queue]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-13, 10:45 - all borrow_check targets pass with no violations, 64 rrrTests pass]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-01-13, 10:45 - checked 40+ commits, no new std smart pointers, all new code has proper @safe/@unsafe annotations for I/O operations]
     - [ ] for every day, run all the ci tests listed in github ci workflow, make sure no test fail. If failed tests found, investigate and fix. Repeat until no failures are detected. Don't cheat by removing or weakening tests. Also, double check the github ci test and the "ci all" have the same tests; if one misses something, add it. [last done: 2026-01-13, 10:50 - all CI steps completed successfully]
@@ -742,6 +742,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Multiple c-nodes for high availability
       - Configuration change notifications to other nodes
       - Configuration history/rollback
+  - [ ] *high* CI failure: shard2Replication test timeout on commit 1b98df69 [Added: 2026-01-13, 12:40]
+    - **Issue**: CI shard2Replication test times out - shard0 never starts (stays at 0 throughout 120s)
+    - **Commit**: 1b98df69 (Implement sharding policy startup flow integration Task 8)
+    - **Local Status**: Test passes locally on both rrr and erpc transports
+    - **Likely Cause**: Memory explosion from PaxosWorker all_coords pre-allocation (1M entries = 16MB per worker)
+    - **Fix Status**: Memory fix committed in a41e1da3, waiting in CI queue
+    - **Action Required**: Verify CI passes after a41e1da3 runs. If still failing, investigate further.
   - [ ] *high* Dynamic Range-Based Sharding with C-Node Management [Plan: doc/dev/range_sharding_plan.md]
     - **Goal**: Replace static table-ID-based sharding with user-defined range-based sharding policies managed by the C-node
     - **Scope**:
