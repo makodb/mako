@@ -37,6 +37,17 @@ bool init_config_node();
 bool fetch_config_from_cnode();
 
 /**
+ * @brief Fetch sharding policy from a remote c-node.
+ *
+ * Data nodes call this at startup to get the sharding policy from the c-node.
+ * If no policy is set on the c-node yet, returns true (uses fallback routing).
+ * Initializes the global sharding policy cache on success.
+ *
+ * @return true if policy was fetched (or no policy exists), false on error
+ */
+bool fetch_sharding_policy_from_cnode();
+
+/**
  * @brief Shutdown config node components.
  */
 void shutdown_config_node();

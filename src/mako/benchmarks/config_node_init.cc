@@ -5,6 +5,7 @@
 
 #include "config_node_init.h"
 #include "deptran/config_converter.h"
+#include "deptran/sharding_policy_cache.h"
 #include "rrr/base/logging.hpp"
 
 namespace mako {
@@ -82,6 +83,23 @@ bool init_config_node() {
             }
         } else {
             rrr::Log_warn("Failed to load config from RocksDB on reboot");
+        }
+
+        // Load sharding policy from RocksDB if exists
+        // @unsafe { RocksDB I/O }
+        if (g_config_store->has_sharding_policy()) {
+            auto policy_opt = g_config_store->load_sharding_policy();
+            if (policy_opt.is_some()) {
+                janus::ShardingPolicySet policy = policy_opt.unwrap();
+                rrr::Log_info("Loaded sharding policy version %lu with %zu tables from RocksDB",
+                              policy.version, policy.table_count());
+                // Initialize global sharding policy cache
+                janus::get_sharding_policy_cache().set_policy(std::move(policy));
+            } else {
+                rrr::Log_warn("Failed to load sharding policy from RocksDB on reboot");
+            }
+        } else {
+            rrr::Log_info("No sharding policy stored yet - waiting for initializer");
         }
     }
 
@@ -161,6 +179,71 @@ bool fetch_config_from_cnode() {
     benchConfig.setNshards(benchConfig.getConfig()->nshards);
 
     rrr::Log_info("Applied configuration from c-node (nshards=%d)", benchConfig.getConfig()->nshards);
+
+    // @unsafe { network disconnect }
+    client.disconnect();
+    return true;
+}
+
+// @unsafe - Network I/O
+bool fetch_sharding_policy_from_cnode() {
+    auto& benchConfig = BenchmarkConfig::getInstance();
+
+    const std::string& c_node_addr = benchConfig.getConfigNodeAddr();
+    if (c_node_addr.empty()) {
+        rrr::Log_debug("No c-node address specified, skipping sharding policy fetch");
+        return false;
+    }
+
+    // Check if already initialized
+    if (janus::get_sharding_policy_cache().is_initialized()) {
+        rrr::Log_info("Sharding policy already initialized, skipping c-node fetch");
+        return true;
+    }
+
+    rrr::Log_info("Fetching sharding policy from c-node at %s", c_node_addr.c_str());
+
+    // @unsafe { network client creation }
+    janus::ConfigClient client(c_node_addr);
+    client.set_max_retries(10);  // More retries for policy - it may not be set yet
+    client.set_retry_delay_ms(500);
+
+    // @unsafe { network connect }
+    if (!client.connect()) {
+        rrr::Log_warn("Failed to connect to c-node at %s", c_node_addr.c_str());
+        return false;
+    }
+
+    // Check if c-node has a sharding policy
+    // @unsafe { RPC call }
+    auto has_policy_opt = client.has_sharding_policy();
+    if (has_policy_opt.is_none()) {
+        rrr::Log_warn("Failed to check if c-node has sharding policy");
+        client.disconnect();
+        return false;
+    }
+
+    if (!has_policy_opt.unwrap()) {
+        rrr::Log_info("C-node does not have a sharding policy yet - will use fallback routing");
+        client.disconnect();
+        return true;  // Not an error, just no policy set yet
+    }
+
+    // @unsafe { RPC call }
+    auto policy_opt = client.fetch_sharding_policy();
+    if (policy_opt.is_none()) {
+        rrr::Log_warn("Failed to fetch sharding policy from c-node");
+        client.disconnect();
+        return false;
+    }
+
+    janus::ShardingPolicySet policy = policy_opt.unwrap();
+    rrr::Log_info("Fetched sharding policy version %lu with %zu tables from c-node",
+                  policy.version, policy.table_count());
+
+    // Initialize global sharding policy cache
+    janus::get_sharding_policy_cache().set_policy(std::move(policy));
+    rrr::Log_info("Sharding policy cache initialized");
 
     // @unsafe { network disconnect }
     client.disconnect();

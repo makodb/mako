@@ -938,19 +938,22 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - GetShardForWarehouseUnevenDistribution: 7 warehouses across 3 shards
           - PolicyCacheConsistentRouting: all tables route same w_id to same shard
         - Cross-shard routing tested via PolicyCacheConsistentRouting
-    - [ ] **Task 8: Startup Flow Integration** [~150 LOC]
-      - [ ] *high* 8.1 C-node startup
-        - Load existing sharding policy from RocksDB (if exists)
-        - Start serving GetShardingPolicy RPC
-        - Accept SetShardingPolicy from initializer
-      - [ ] *high* 8.2 Data node startup
-        - Fetch sharding policy from C-node before accepting transactions
-        - Initialize ShardingPolicyCache
-        - Block worker threads until policy is loaded
-      - [ ] *high* 8.3 Initializer node (first node to start)
-        - Build sharding policy using ShardingPolicyBuilder
-        - Send to C-node via SetShardingPolicy
-        - Can be the benchmark driver or a dedicated init process
+    - [x] **Task 8: Startup Flow Integration** [~150 LOC] [DONE 2026-01-12]
+      - [x] *high* 8.1 C-node startup [DONE]
+        - Modified `config_node_init.cc` (both deptran and mako versions)
+        - Load existing sharding policy from RocksDB on reboot
+        - Initialize global ShardingPolicyCache with loaded policy
+        - ConfigServiceImpl already serves GetShardingPolicy/SetShardingPolicy RPCs
+      - [x] *high* 8.2 Data node startup [DONE]
+        - Added `fetch_sharding_policy_from_cnode()` function
+        - Connects to C-node and fetches sharding policy via RPC
+        - Initializes ShardingPolicyCache with fetched policy
+        - Returns true if no policy exists (falls back to table-ID routing)
+      - [x] *high* 8.3 Initializer node (first node to start) [DONE]
+        - Added `send_tpcc_sharding_policy_to_cnode()` function
+        - Builds TPC-C sharding policy using ShardingPolicyBuilder
+        - Sends to C-node via SetShardingPolicy RPC
+        - Also initializes local ShardingPolicyCache after successful send
       - [ ] *medium* 8.4 Add startup tests
     - [ ] **Task 9: Testing** [~300 LOC]
       - [ ] *high* 9.1 Unit tests
