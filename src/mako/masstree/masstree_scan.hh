@@ -21,6 +21,7 @@
 #define MASSTREE_SCAN_HH
 #include "masstree_tcursor.hh"
 #include "masstree_struct.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 
 template <typename P>
@@ -35,8 +36,8 @@ class scanstackelt {
     typedef typename P::threadinfo_type threadinfo;
     typedef typename node_base<P>::nodeversion_type nodeversion_type;
 
-    // @unsafe { Returns raw leaf pointer }
-    leaf<P>* node() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<leaf<P>> node() const {
         return n_;
     }
     // @safe - Returns computed value
@@ -57,12 +58,12 @@ class scanstackelt {
     }
 
   private:
-    node_base<P>* root_;
-    leaf<P>* n_;
+    rusty::MutPtr<node_base<P>> root_;
+    rusty::MutPtr<leaf<P>> n_;
     nodeversion_type v_;
     permuter_type perm_;
     int ki_;
-    small_vector<node_base<P>*, 2> node_stack_;
+    small_vector<rusty::MutPtr<node_base<P>>, 2> node_stack_;
 
     enum { scan_emit, scan_find_next, scan_down, scan_up, scan_retry };
 
