@@ -749,7 +749,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Likely Cause**: Memory explosion from PaxosWorker all_coords pre-allocation (1M entries = 16MB per worker)
     - **Fix Status**: Memory fix committed in a41e1da3, waiting in CI queue
     - **Action Required**: Verify CI passes after a41e1da3 runs. If still failing, investigate further.
-  - [ ] *high* Dynamic Range-Based Sharding with C-Node Management [Plan: doc/dev/range_sharding_plan.md]
+  - [x] *high* Dynamic Range-Based Sharding with C-Node Management [DONE 2026-01-13]
     - **Goal**: Replace static table-ID-based sharding with user-defined range-based sharding policies managed by the C-node
     - **Scope**:
       - Users define sharding policies programmatically via C++ API at system initialization
