@@ -55,11 +55,18 @@ cleanup_processes() {
     rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
     echo "Cleaning up any lingering test processes..."
 
-    # Kill test executables
-    pkill -9 -f simpleTransactionRep 2>/dev/null || true
-    pkill -9 -f dbtest 2>/dev/null || true
-    pkill -9 -f simplePaxos 2>/dev/null || true
-    pkill -9 -f simpleTransaction 2>/dev/null || true
+    # Kill test executables (exclude ci.sh itself and its parent processes)
+    # Use pgrep to get PIDs, filter out current process tree, then kill
+    local my_pid=$$
+    local my_ppid=$(ps -o ppid= -p $my_pid | tr -d ' ')
+
+    for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction; do
+        pgrep -f "$proc" 2>/dev/null | while read pid; do
+            if [ "$pid" != "$my_pid" ] && [ "$pid" != "$my_ppid" ] && [ "$pid" != "1" ]; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+    done
 
     # Kill test wrapper scripts (2shard tests with/without replication)
     pkill -9 -f "test_2shard_no_replication.sh" 2>/dev/null || true
