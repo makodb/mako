@@ -33,7 +33,7 @@ namespace janus {
 // ============================================================================
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistTermAndVote() {
+void RaftServer::PersistTermAndVoteToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
@@ -44,7 +44,7 @@ void RaftServer::PersistTermAndVote() {
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistVote() {
+void RaftServer::PersistVoteToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
@@ -54,7 +54,7 @@ void RaftServer::PersistVote() {
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistCommitIndex() {
+void RaftServer::PersistCommitIndexToLogStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
@@ -64,7 +64,7 @@ void RaftServer::PersistCommitIndex() {
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
+void RaftServer::PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& data) {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
@@ -80,7 +80,7 @@ void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
 }
 
 // @unsafe - Uses LogStorage API
-void RaftServer::PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries) {
+void RaftServer::PersistLogEntriesToLogStorage(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries) {
   if (!log_storage_ || !log_storage_->is_open() || entries.empty()) {
     return;
   }
@@ -710,12 +710,10 @@ void RaftServer::applyLogs() {
 // ============================================================================
 // This struct holds context for each pending AppendEntries RPC.
 // Used to send RPCs in parallel and process responses without blocking.
+// The response field uses shared_ptr to ensure memory validity when callback fires.
 struct PendingAppendEntries {
   siteid_t follower_id;
-  shared_ptr<IntEvent> event;
-  uint64_t ret_status;
-  uint64_t ret_term;
-  uint64_t ret_last_log_index;
+  shared_ptr<AppendEntriesResponse> response;  // shared_ptr ensures callback memory safety
   shared_ptr<Marshallable> cmd;  // nullptr for heartbeat
   uint64_t sent_term;  // term when RPC was sent
 };
@@ -894,18 +892,15 @@ void RaftServer::HeartbeatLoop() {
 #endif
         mtx_.unlock();
 
-        // Create pending RPC context on heap for stable address
+        // Create pending RPC context
         auto pending = std::make_unique<PendingAppendEntries>();
         pending->follower_id = site_id;
-        pending->ret_status = false;
-        pending->ret_term = 0;
-        pending->ret_last_log_index = 0;
         pending->cmd = cmd;
         pending->sent_term = term;
 
         // Send RPC (non-blocking - just initiates the async call)
-        // Pointers to pending->ret_* are stable because pending is heap-allocated
-        pending->event = commo()->SendAppendEntries2(site_id,
+        // Response is allocated with shared_ptr - callback captures it to ensure memory validity
+        pending->response = commo()->SendAppendEntries2(site_id,
                                               partition_id,
                                               -1,
                                               -1,
@@ -916,10 +911,7 @@ void RaftServer::HeartbeatLoop() {
                                               prevLogTerm,
                                               current_commit_index,
                                               cmd,
-                                              cmdLogTerm,
-                                              &pending->ret_status,
-                                              &pending->ret_term,
-                                              &pending->ret_last_log_index);
+                                              cmdLogTerm);
 
         pending_rpcs.push_back(std::move(pending));
       }
@@ -937,10 +929,11 @@ void RaftServer::HeartbeatLoop() {
         }
 
         auto& pending = *pending_ptr;  // Dereference unique_ptr for cleaner access
+        auto& resp = *pending.response;  // Access response data
 
-        pending.event->wait(PER_RPC_TIMEOUT);
+        resp.event->wait(PER_RPC_TIMEOUT);
 
-        if (pending.event->status_.get() == Event::TIMEOUT) {
+        if (resp.event->status_.get() == Event::TIMEOUT) {
           Log_debug("[PARALLEL-HB] Timeout waiting for follower %d", pending.follower_id);
           continue;  // Skip this follower, try again next round
         }
@@ -949,27 +942,27 @@ void RaftServer::HeartbeatLoop() {
         auto& next_index = next_index_[pending.follower_id];
         auto& match_index = match_index_[pending.follower_id];
 
-        if (pending.ret_status == false && pending.ret_term == 0 && pending.ret_last_log_index == 0) {
+        if (resp.status == false && resp.term == 0 && resp.last_log_index == 0) {
           // RPC failed or no response - do nothing
         } else if (currentTerm > pending.sent_term) {
           // Stale response from old term - ignore
-        } else if (pending.ret_status == 0 && pending.ret_term > pending.sent_term) {
+        } else if (resp.status == 0 && resp.term > pending.sent_term) {
           // case 1: AppendEntries rejected because leader's term is expired
           if (currentTerm == pending.sent_term) {
             Log_info("[STEPDOWN] Site %d: Stepping down due to higher term from follower %d (my_term=%lu, follower_term=%lu)",
-                     site_id_, pending.follower_id, pending.sent_term, pending.ret_term);
+                     site_id_, pending.follower_id, pending.sent_term, resp.term);
             setIsLeader(false);
-            currentTerm = pending.ret_term;
+            currentTerm = resp.term;
             mtx_.unlock();
             break;  // Stop processing - we're no longer leader
           }
-        } else if (pending.ret_status == 0) {
+        } else if (resp.status == 0) {
           // case 2: AppendEntries rejected - log inconsistency
-          if (pending.ret_last_log_index > 0 && pending.ret_last_log_index < next_index - 1) {
+          if (resp.last_log_index > 0 && resp.last_log_index < next_index - 1) {
             uint64_t old_next = next_index;
-            next_index = pending.ret_last_log_index + 1;
+            next_index = resp.last_log_index + 1;
             Log_info("[LOG-RECONCILE] Site %d: Fast backoff for follower %d: next_index %lu -> %lu (gap: %lu, follower reported last: %lu)",
-                     site_id_, pending.follower_id, old_next, next_index, old_next - next_index, pending.ret_last_log_index);
+                     site_id_, pending.follower_id, old_next, next_index, old_next - next_index, resp.last_log_index);
           } else if (next_index > 10) {
             uint64_t old_next = next_index;
             next_index = next_index / 2;
@@ -984,17 +977,17 @@ void RaftServer::HeartbeatLoop() {
           }
         } else {
           // case 3: AppendEntries accepted
-          verify(pending.ret_status == true);
+          verify(resp.status == true);
           if (pending.cmd == nullptr) {
             Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
-            if (pending.ret_last_log_index > match_index) {
-              match_index = pending.ret_last_log_index;
+            if (resp.last_log_index > match_index) {
+              match_index = resp.last_log_index;
               if (match_index > lastLogIndex) {
                 match_index = lastLogIndex;
               }
               Log_debug("heartbeat updated match_index for site %d: match_index=%lu", pending.follower_id, match_index);
             }
-            if (pending.ret_last_log_index >= next_index) {
+            if (resp.last_log_index >= next_index) {
               if (next_index <= lastLogIndex) {
                 next_index++;
                 Log_debug("empty heartbeat incrementing next_index for site: %d, next_index: %d", pending.follower_id, next_index);
@@ -1002,27 +995,27 @@ void RaftServer::HeartbeatLoop() {
             }
           } else {
             Log_debug("case 3B: AppendEntries accepted for non-empty msg");
-            if (pending.ret_last_log_index < next_index) {
-              next_index = pending.ret_last_log_index + 1;
-              match_index = pending.ret_last_log_index;
+            if (resp.last_log_index < next_index) {
+              next_index = resp.last_log_index + 1;
+              match_index = resp.last_log_index;
               mtx_.unlock();
               continue;
             }
             Log_debug("loc %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
-                pending.follower_id, pending.ret_last_log_index, next_index, match_index);
+                pending.follower_id, resp.last_log_index, next_index, match_index);
 #ifndef RAFT_BATCH_OPTIMIZATION
             match_index = next_index;
             next_index++;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
-            match_index = pending.ret_last_log_index;
-            next_index = pending.ret_last_log_index + 1;
+            match_index = resp.last_log_index;
+            next_index = resp.last_log_index + 1;
 #endif
             if (match_index > lastLogIndex) {
               match_index = lastLogIndex;
             }
             Log_debug("leader site %d receiving site %ld followerLastLogIndex=%ld followerNextIndex=%ld followerMatchedIndex=%ld",
-                site_id_, pending.follower_id, pending.ret_last_log_index, next_index, match_index);
+                site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
           }
         }
         mtx_.unlock();
@@ -1134,7 +1127,7 @@ bool RaftServer::RequestVote() {
     PersistState(currentTerm, vote_for_, "RequestVote: starting election");
 
     LogTermChange("starting election", prev_local_term, currentTerm);
-    PersistTermAndVote();  // Persist term increment and self-vote
+    // PersistState() already called above - no need for duplicate persistence
     lstoff = lastLogIndex - snapidx_ ;
     if (lstoff == 0) {
       lst_idx = snapidx_;
@@ -1438,7 +1431,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server %d, set to be follower", loc_id_ ) ;
           setIsLeader(false) ;
-          PersistTermAndVote();  // Persist term/vote change
+          // PersistState() already called above - no need for duplicate persistence
       }
   }
 

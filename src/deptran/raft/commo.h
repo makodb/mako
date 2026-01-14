@@ -63,6 +63,15 @@ class SendAppendEntriesResults {
   bool empty = true;
 };
 
+// Response data for async AppendEntries RPC
+// Uses shared_ptr semantics to ensure memory validity when callback fires
+struct AppendEntriesResponse {
+  shared_ptr<IntEvent> event;
+  uint64_t status = 0;
+  uint64_t term = 0;
+  uint64_t last_log_index = 0;
+};
+
 
 class RaftCommo : public Communicator {
 
@@ -85,7 +94,8 @@ friend class RaftProxy;
   RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
 
   // @safe
-  shared_ptr<IntEvent>
+  // Returns shared_ptr to response data - callback captures this to ensure memory validity
+  shared_ptr<AppendEntriesResponse>
   SendAppendEntries2(siteid_t site_id,
                     parid_t par_id,
                     slotid_t slot_id,
@@ -97,10 +107,7 @@ friend class RaftProxy;
                     uint64_t prevLogTerm,
                     uint64_t commitIndex,
                     shared_ptr<Marshallable> cmd,
-                    uint64_t cmdLogTerm,
-                    uint64_t* ret_status,
-                    uint64_t* ret_term,
-                    uint64_t* ret_last_log_index
+                    uint64_t cmdLogTerm
                     );
 
   // @safe

@@ -20,10 +20,10 @@ int RaftLabTest::Run(void) {
   if (// testPersistence()
       // || testTwoFollowerPersistence()
       // || testLeaderFollowerPersistence()
-      // testComprehensiveCrashRecovery()
+      testComprehensiveCrashRecovery()
       // testPartitionPlusRestart()
       // testSequentialPartitionsPlusRestart()
-      // testMultipleRestartsPlusPartition()
+      || TEST_EXPAND(testMultipleRestartsPlusPartition())
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -35,7 +35,7 @@ int RaftLabTest::Run(void) {
       // || TEST_EXPAND(testCount())
       // || TEST_EXPAND(testUnreliableAgree())
       // || TEST_EXPAND(testFigure8())
-      testFigure8CrashRecovery()
+      // testFigure8CrashRecovery()
     ) {
     Log_info("Test sequence failed");
     Print("TESTS FAILED");

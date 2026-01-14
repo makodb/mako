@@ -176,7 +176,7 @@ class RaftServer : public TxLogServer {
           PersistState(currentTerm, vote_for_, "doVote: observed higher term");
 
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
-          PersistTermAndVote();  // Persist term/vote change
+          // PersistState() already called above - no need for duplicate persistence
       }
 
       if(vote)
@@ -190,7 +190,7 @@ class RaftServer : public TxLogServer {
 #ifdef RAFT_LEADER_ELECTION_DEBUG
           Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
 #endif
-          PersistVote();  // Persist vote change
+          // PersistState() already called above - no need for duplicate persistence
           //reset timeout
           resetTimer("granted vote");
       }

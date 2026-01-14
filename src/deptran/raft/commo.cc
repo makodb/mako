@@ -23,7 +23,8 @@ RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(
 }
 
 // @safe - Calls undeclared Reactor::create_sp_event() variadic template functions
-shared_ptr<IntEvent>
+// Returns shared_ptr<AppendEntriesResponse> - callback captures this to ensure memory validity
+shared_ptr<AppendEntriesResponse>
 RaftCommo::SendAppendEntries2(siteid_t site_id,
                              parid_t par_id,
                              slotid_t slot_id,
@@ -35,13 +36,12 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                              uint64_t prevLogTerm,
                              uint64_t commitIndex,
                              shared_ptr<Marshallable> cmd,
-                             uint64_t cmdLogTerm,
-                             uint64_t* ret_status,
-                             uint64_t* ret_term,
-                             uint64_t* ret_last_log_index
+                             uint64_t cmdLogTerm
                              ) {
-  // verify(par_id == 0);                          
-  auto ret = Reactor::create_sp_event<IntEvent>();
+  // Allocate response data with shared_ptr - callback captures this to keep memory valid
+  auto response = std::make_shared<AppendEntriesResponse>();
+  response->event = Reactor::create_sp_event<IntEvent>();
+
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -52,16 +52,17 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
 		auto follower_id = p.first;
     auto proxy = (RaftProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [ret,ret_status,ret_term,ret_last_log_index,site_id](rusty::Arc<Future> fu) {
+    // Capture response shared_ptr - ensures memory stays valid even after caller releases
+    fuattr.callback = [response,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
         // Don't reconnect here - rely on NotifyRestart mechanism instead
         Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
-      fu->get_reply() >> *ret_status >> *ret_term >> *ret_last_log_index;
+      fu->get_reply() >> response->status >> response->term >> response->last_log_index;
       Log_info("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu",
-               site_id, *ret_status, *ret_term, *ret_last_log_index);
-      ret->set(1);
+               site_id, response->status, response->term, response->last_log_index);
+      response->event->set(1);
     };
 
     if (cmd == nullptr) {
@@ -94,7 +95,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
                                        fuattr);
     }
   }
-  return ret;
+  return response;
 }
 
 // @safe
