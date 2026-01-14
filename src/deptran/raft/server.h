@@ -58,25 +58,17 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
 
-  // Metadata keys for consensus state
+  // Metadata keys for LogStorage persistence
   static constexpr const char* META_TERM = "currentTerm";
   static constexpr const char* META_VOTE_FOR = "vote_for";
   static constexpr const char* META_COMMIT_INDEX = "commitIndex";
 
-  // @unsafe - Persists term and vote_for to storage
-  void PersistTermAndVote();
-
-  // @unsafe - Persists vote_for only to storage
-  void PersistVote();
-
-  // @unsafe - Persists commitIndex to storage
-  void PersistCommitIndex();
-
-  // @unsafe - Persists a single log entry
-  void PersistLogEntry(slotid_t slot_id, const RaftData& data);
-
-  // @unsafe - Persists multiple log entries
-  void PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
+  // LogStorage-based persistence (optional, separate from RaftPersistence)
+  void PersistTermAndVoteToLogStorage();
+  void PersistVoteToLogStorage();
+  void PersistCommitIndexToLogStorage();
+  void PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& data);
+  void PersistLogEntriesToLogStorage(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
 
   // ============================================================================
 

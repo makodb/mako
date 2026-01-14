@@ -168,7 +168,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
       test.Cleanup();
       Log_info("Test coroutine: Tests completed, turning off reactor loop");
       // Turn off Reactor loop
-      Reactor::get_reactor()->looping_ = false;
+      Reactor::get_reactor()->looping_.set(false);
       return;
     }));
     Log_info("raft_test_coro_ id=%d", raft_test_coro_.as_ref().unwrap()->id);
