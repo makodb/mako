@@ -232,8 +232,7 @@ bool ServerConnection::handle_read() {
                 size_t svc_index = it->second;
                 auto weak_this = weak_self_;
                 auto ctx = ctx_.clone();  // Clone Arc for the coroutine
-                int fd_for_log = socket_;  // Capture for logging inside lambda
-                Coroutine::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this, fd_for_log]() mutable {
+                Coroutine::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
                     // Borrow inside coroutine - guard released when lambda exits
                     // (*guard) dereferences RefMut to get Box<Service>&
                     // (*guard)-> calls Box::operator-> to get Service*
@@ -244,9 +243,7 @@ bool ServerConnection::handle_read() {
         }
     }
 
-    Log_info("[RPC-DISPATCH] fd=%d calling Reactor::loop()", socket_);
     Reactor::get_reactor()->loop();
-    Log_info("[RPC-DISPATCH] fd=%d Reactor::loop() returned", socket_);
 
     return false;
 }
@@ -376,8 +373,7 @@ bool ServerListener::handle_read() {
 #endif
     }
     if (clnt_socket >= 0) {
-      // Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
-      Log_info("[NEW-CONN] server@%s accpeted new client, fd=%d", this->addr_.c_str(), clnt_socket);
+      Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       // @unsafe - set_nonblocking
       { verify(set_nonblocking(clnt_socket, true) == 0); }
 
