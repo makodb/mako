@@ -1,3 +1,8 @@
+/**
+ * @file fiber_impl.cc
+ * @brief Implementation of the Fiber class.
+ */
+
 #include <utility>
 
 #include <functional>
@@ -5,29 +10,29 @@
 #include <memory>
 #include <boost/coroutine2/protected_fixedsize_stack.hpp>
 #include "../base/all.hpp"
-#include "coroutine.h"
+#include "fiber_impl.h"
 #include "reactor.h"
 
 // #define USE_PROTECTED_STACK
 
 namespace rrr {
-uint64_t Coroutine::global_id = 0;
+uint64_t Fiber::global_id = 0;
 
-Coroutine::Coroutine(rusty::Function<void()> func)
+Fiber::Fiber(rusty::Function<void()> func)
     : status_(INIT),
       needs_finalize_(false),
       func_(std::move(func)),
       boost_coro_task_(rusty::None),
       boost_coro_yield_(boost::none),
-      id(Coroutine::global_id++) {
+      id(Fiber::global_id++) {
 }
 
-Coroutine::~Coroutine() {
+Fiber::~Fiber() {
   // rusty::Box automatically handles cleanup
 //  verify(0);
 }
 
-void Coroutine::boost_run_wrapper(boost_coro_yield_t& yield) {
+void Fiber::boost_run_wrapper(boost_coro_yield_t& yield) {
   boost_coro_yield_ = yield;
   verify(*func_.borrow());
   auto reactor = Reactor::get_reactor();
@@ -48,10 +53,10 @@ void Coroutine::boost_run_wrapper(boost_coro_yield_t& yield) {
   }
 }
 
-// @safe - Initializes and starts a coroutine
-// SAFETY: Single-threaded coroutine execution, no concurrent mutation.
+// @safe - Initializes and starts a fiber
+// SAFETY: Single-threaded fiber execution, no concurrent mutation.
 // Uses @unsafe blocks for: RefCell operations, get_reactor, STL, const_cast, std::bind, boost.
-void Coroutine::run() const {
+void Fiber::run() const {
   // @unsafe
   {
     verify((*boost_coro_task_.borrow()).is_none());
@@ -60,7 +65,7 @@ void Coroutine::run() const {
     auto reactor = Reactor::get_reactor();
     auto sz = reactor->coros_.borrow()->len();
     verify(sz > 0);
-    auto task = std::bind(&Coroutine::boost_run_wrapper, const_cast<Coroutine*>(this), std::placeholders::_1);
+    auto task = std::bind(&Fiber::boost_run_wrapper, const_cast<Fiber*>(this), std::placeholders::_1);
     *boost_coro_task_.borrow_mut() = rusty::Some(rusty::make_box<boost_coro_task_t>(std::move(task)));
 #ifdef USE_BOOST_COROUTINE1
     (*(*boost_coro_task_.borrow()).as_ref().unwrap())();
@@ -69,8 +74,8 @@ void Coroutine::run() const {
 }
 
 // @safe - Yields control back to the reactor
-// SAFETY: Single-threaded coroutine execution
-void Coroutine::yield_() const {
+// SAFETY: Single-threaded fiber execution
+void Fiber::yield_() const {
   // @unsafe
   {
     verify(boost_coro_yield_);
@@ -85,9 +90,9 @@ void Coroutine::yield_() const {
   }
 }
 
-// @safe - Resumes a paused coroutine
-// SAFETY: Single-threaded coroutine execution
-void Coroutine::continue_() const {
+// @safe - Resumes a paused fiber
+// SAFETY: Single-threaded fiber execution
+void Fiber::continue_() const {
   // @unsafe
   {
     auto s = status_.get();
@@ -96,16 +101,16 @@ void Coroutine::continue_() const {
     status_.set(RESUMED);
     (*(*boost_coro_task_.borrow_mut()).as_mut().unwrap())();
   }
-  // some events might have been triggered from last coroutine,
+  // some events might have been triggered from last fiber,
   // but you have to manually call the scheduler to loop.
 }
 
-bool Coroutine::finished() const {
+bool Fiber::finished() const {
   auto s = status_.get();
   return s == FINISHED || s == RECYCLED;
 }
 
-void Coroutine::do_finalize() {
+void Fiber::do_finalize() {
   // Handle finalization logic if needed
   needs_finalize_.set(false);
 }

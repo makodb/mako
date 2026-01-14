@@ -1096,7 +1096,7 @@ if(NOT TARGET rrr)
     #   - Other *.cpp/*.cc files (need safety annotations or have violations)
     set(RRR_BORROW_SRC
         # Reactor files that pass borrow checking
-        src/rrr/reactor/coroutine.cc
+        src/rrr/reactor/fiber_impl.cc
         src/rrr/reactor/event.cc
         src/rrr/reactor/quorum_event.cc
         src/rrr/reactor/epoll_wrapper.cc

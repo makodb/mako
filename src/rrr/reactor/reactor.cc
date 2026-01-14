@@ -42,10 +42,10 @@ thread_local PollThreadWorker* PollThreadWorker::current_worker_ = nullptr;
 thread_local std::unordered_set<std::string> Reactor::dangling_ips_{};
 SpinLock Reactor::trying_job_;
 
-// @safe - Returns current coroutine with single-threaded reference counting
+// @safe - Returns current fiber with single-threaded reference counting
 // SAFETY: Returns copy of thread-local Rc - single-threaded, no synchronization needed
-// Returns None if called outside of a coroutine context
-rusty::Option<rusty::Rc<Coroutine>> Coroutine::current_coroutine() {
+// Returns None if called outside of a fiber context
+rusty::Option<rusty::Rc<Fiber>> Fiber::current_fiber() {
   // @unsafe - RefCell::borrow, Rc::clone
   {
     auto guard = Reactor::sp_running_coro_th_.borrow();
@@ -56,17 +56,17 @@ rusty::Option<rusty::Rc<Coroutine>> Coroutine::current_coroutine() {
   }
 }
 
-// @unsafe - Creates and runs a new coroutine with rusty::Rc ownership
-rusty::Rc<Coroutine>
-Coroutine::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
+// @unsafe - Creates and runs a new fiber with rusty::Rc ownership
+rusty::Rc<Fiber>
+Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t line) {
   auto reactor_rc = Reactor::get_reactor();
   // Rc gives const access, create_run_coroutine is const (safe: thread-local, single owner)
   auto coro = reactor_rc->create_run_coroutine(std::move(func), file, line);
-  // some events might be triggered in the last coroutine.
+  // some events might be triggered in the last fiber.
   return coro;
 }
 
-void Coroutine::sleep(uint64_t microseconds) {
+void Fiber::sleep(uint64_t microseconds) {
   auto x = Reactor::create_sp_event<TimeoutEvent>(microseconds);
   x->wait();
 }

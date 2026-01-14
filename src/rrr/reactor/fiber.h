@@ -115,23 +115,23 @@ namespace this_fiber {
  * @safe - Uses only safe rusty::Option operations
  */
 inline uint64_t get_id() noexcept {
-    auto coro = Coroutine::current_coroutine();
-    if (coro.is_some()) {
+    auto fiber = Fiber::current_fiber();
+    if (fiber.is_some()) {
         // @unsafe { accessing Rc internals }
-        return coro.unwrap()->id;
+        return fiber.unwrap()->id;
     }
     return 0;
 }
 
 /**
- * Get the currently executing fiber as an Option<Rc<Coroutine>>.
+ * Get the currently executing fiber as an Option<Rc<Fiber>>.
  *
  * @return Some(fiber) if in fiber context, None otherwise
  *
- * @safe - Delegates to Coroutine::current_coroutine()
+ * @safe - Delegates to Fiber::current_fiber()
  */
-inline rusty::Option<rusty::Rc<Coroutine>> current() noexcept {
-    return Coroutine::current_coroutine();
+inline rusty::Option<rusty::Rc<Fiber>> current() noexcept {
+    return Fiber::current_fiber();
 }
 
 /**
@@ -142,7 +142,7 @@ inline rusty::Option<rusty::Rc<Coroutine>> current() noexcept {
  * @safe - Uses only safe Option operations
  */
 inline bool in_fiber_context() noexcept {
-    return Coroutine::current_coroutine().is_some();
+    return Fiber::current_fiber().is_some();
 }
 
 /**
@@ -156,10 +156,10 @@ inline bool in_fiber_context() noexcept {
  * @unsafe - Delegates to boost coroutine yield
  */
 inline void yield() noexcept {
-    auto coro = Coroutine::current_coroutine();
-    if (coro.is_some()) {
+    auto fiber = Fiber::current_fiber();
+    if (fiber.is_some()) {
         // @unsafe { boost coroutine yield }
-        coro.unwrap()->yield_();
+        fiber.unwrap()->yield_();
     }
 }
 
@@ -170,11 +170,11 @@ inline void yield() noexcept {
  *
  * @param microseconds Duration to sleep in microseconds
  *
- * @unsafe - Calls Coroutine::sleep which uses Time internally
+ * @unsafe - Calls Fiber::sleep which uses Time internally
  */
 inline void sleep_us(uint64_t microseconds) {
-    // @unsafe { Coroutine::sleep uses Time internally }
-    Coroutine::sleep(microseconds);
+    // @unsafe { Fiber::sleep uses Time internally }
+    Fiber::sleep(microseconds);
 }
 
 /**
@@ -184,11 +184,11 @@ inline void sleep_us(uint64_t microseconds) {
  *
  * @param milliseconds Duration to sleep in milliseconds
  *
- * @unsafe - Calls Coroutine::sleep which uses Time internally
+ * @unsafe - Calls Fiber::sleep which uses Time internally
  */
 inline void sleep_ms(uint64_t milliseconds) {
-    // @unsafe { Coroutine::sleep }
-    Coroutine::sleep(milliseconds * 1000);
+    // @unsafe { Fiber::sleep }
+    Fiber::sleep(milliseconds * 1000);
 }
 
 /**
@@ -198,11 +198,11 @@ inline void sleep_ms(uint64_t milliseconds) {
  *
  * @param seconds Duration to sleep in seconds
  *
- * @unsafe - Calls Coroutine::sleep which uses Time internally
+ * @unsafe - Calls Fiber::sleep which uses Time internally
  */
 inline void sleep_s(uint64_t seconds) {
-    // @unsafe { Coroutine::sleep }
-    Coroutine::sleep(seconds * Time::RRR_USEC_PER_SEC);
+    // @unsafe { Fiber::sleep }
+    Fiber::sleep(seconds * Time::RRR_USEC_PER_SEC);
 }
 
 /**
@@ -213,14 +213,14 @@ inline void sleep_s(uint64_t seconds) {
  *
  * @param abs_time_us Absolute time in microseconds since epoch
  *
- * @unsafe - Calls Time::now() and Coroutine::sleep
+ * @unsafe - Calls Time::now() and Fiber::sleep
  */
 inline void sleep_until_us(uint64_t abs_time_us) {
     // @unsafe { Time::now }
     uint64_t now = Time::now(true);
     if (abs_time_us > now) {
-        // @unsafe { Coroutine::sleep }
-        Coroutine::sleep(abs_time_us - now);
+        // @unsafe { Fiber::sleep }
+        Fiber::sleep(abs_time_us - now);
     }
 }
 

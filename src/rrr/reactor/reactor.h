@@ -93,7 +93,8 @@ namespace rrr {
 using std::make_unique;
 using std::make_shared;
 
-class Coroutine;
+// Note: Coroutine is a type alias for Fiber (defined in fiber_impl.h)
+// The full definition is available via #include "coroutine.h" above
 
 /**
  * @class Reactor

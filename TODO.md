@@ -1255,13 +1255,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Convenience: make_promise<T>() and make_ready_future<T>(value)
       - [x] 3.2 Added 17 unit tests for Future/Promise in test/fiber_test.cc
       - [x] 3.3 Header-only template, borrow-checked when included by source files
-    - [ ] **Phase 4: Internal Rename (Incremental)** [~300 LOC]
-      - [ ] 4.1 Rename `coroutine.h` → `fiber_impl.h` (keep `coroutine.h` as include wrapper)
-      - [ ] 4.2 Rename internal `Coroutine` class to `Fiber`
-      - [ ] 4.3 Add `using Coroutine = Fiber;` for backward compatibility
-      - [ ] 4.4 Update internal references in `reactor.h`, `reactor.cc`
-      - [ ] 4.5 Update internal references in `event.h`, `event.cc`
-      - [ ] 4.6 Ensure all @safe/@unsafe annotations are preserved
+    - [x] **Phase 4: Internal Rename (Incremental)** [DONE 2026-01-14]
+      - [x] 4.1 Renamed `coroutine.h` → `fiber_impl.h` (coroutine.h now includes fiber_impl.h)
+      - [x] 4.2 Renamed internal class from `Coroutine` to `Fiber`
+      - [x] 4.3 Added `using Coroutine = Fiber;` for backward compatibility
+      - [x] 4.4 Updated reactor.cc: `Fiber::current_fiber()`, `Fiber::create_run_impl()`, `Fiber::sleep()`
+      - [x] 4.5 Updated fiber.h: all `this_fiber` functions now use `Fiber::` internally
+      - [x] 4.6 All @safe/@unsafe annotations preserved, borrow checks pass
     - [ ] **Phase 5: Documentation and Migration Guide** [~100 LOC]
       - [ ] 5.1 Create `doc/fiber_api.md` with new API reference
       - [ ] 5.2 Document use of `rrr::Time` (not std::chrono) for time operations
