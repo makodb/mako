@@ -1177,11 +1177,6 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Fixed leaf::full_version_value(), scanstackelt::full_version_value()
         - Fixed leafvalue::value() const
         - CMakeLists.txt: add_borrow_check(src/mako/masstree/query_masstree.cc)
-    - [ ] **Phase 5: Advanced Safety Patterns** (Future)
-      - [ ] 5.1 Replace raw allocations with rusty::Box
-      - [ ] 5.2 Convert shared state to rusty::Arc
-      - [ ] 5.3 Convert interior mutability to rusty::Cell/RefCell
-      - [ ] 5.4 Document remaining unsafe boundaries
     - **Estimated Effort**: ~15-24 hours
     - **Success Criteria**:
       1. All functions annotated with @safe or @unsafe
@@ -1189,6 +1184,10 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       3. Maximum functions marked @safe
       4. Core files pass borrow checking
       5. No behavioral changes - all existing tests pass
+    - **NOTE**: Phase 5 (Advanced Safety Patterns - Box/Arc/Cell) intentionally skipped.
+      Masstree is performance-critical and adding reference counting or interior
+      mutability wrappers would hurt throughput. The current approach (Ptr/MutPtr
+      with @safe/@unsafe annotations) provides safety documentation without runtime cost.
   - [x] *medium* Reactor/Coroutine API Refactoring to Fiber API [Plan: doc/fiber_api_refactoring_plan.md] [DONE 2026-01-12]
     - **Goal**: Rename and refactor the coroutine/reactor API to follow Boost.Fiber conventions and improve clarity
     - **Rationale**:
