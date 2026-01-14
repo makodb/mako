@@ -288,6 +288,173 @@ TEST_F(FiberTest, SleepUntilFutureTime) {
     SUCCEED();
 }
 
+// =============================================================================
+// Future/Promise Tests
+// =============================================================================
+
+TEST_F(FiberTest, PromiseGetFutureOnce) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    EXPECT_TRUE(future.valid());
+}
+
+TEST_F(FiberTest, PromiseGetFutureTwiceThrows) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    EXPECT_THROW(promise.get_future(), std::logic_error);
+}
+
+TEST_F(FiberTest, PromiseSetValueOnce) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    promise.set_value(42);
+    EXPECT_TRUE(promise.is_ready());
+}
+
+TEST_F(FiberTest, PromiseSetValueTwiceThrows) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    promise.set_value(42);
+    EXPECT_THROW(promise.set_value(100), std::logic_error);
+}
+
+TEST_F(FiberTest, FutureIsReadyAfterSet) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    EXPECT_FALSE(future.is_ready());
+    promise.set_value(42);
+    EXPECT_TRUE(future.is_ready());
+}
+
+TEST_F(FiberTest, FutureGetValueImmediate) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    promise.set_value(42);
+
+    // Value already set, get() returns immediately (no blocking)
+    EXPECT_EQ(42, future.get());
+}
+
+TEST_F(FiberTest, FutureGetValueMultipleTimes) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    promise.set_value(42);
+
+    // Can call get() multiple times
+    EXPECT_EQ(42, future.get());
+    EXPECT_EQ(42, future.get());
+    EXPECT_EQ(42, future.get());
+}
+
+TEST_F(FiberTest, FutureGetValueInFiber) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    int received_value = 0;
+    auto reactor = Reactor::get_reactor();
+
+    // Consumer fiber waits for value
+    Fiber::create_run([&future, &received_value]() {
+        received_value = future.get();
+    });
+
+    // Producer sets value
+    promise.set_value(42);
+
+    // Run reactor to let consumer fiber complete
+    reactor->loop();
+
+    EXPECT_EQ(42, received_value);
+}
+
+TEST_F(FiberTest, FutureWaitForTimeout) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    bool ready = false;
+    auto reactor = Reactor::get_reactor();
+
+    // Run wait_for inside a fiber context
+    Fiber::create_run([&future, &ready]() {
+        // Wait with timeout should return false if not set
+        ready = future.wait_for(1000);  // 1ms timeout
+    });
+
+    reactor->loop();
+
+    EXPECT_FALSE(ready);
+}
+
+TEST_F(FiberTest, FutureWaitForReady) {
+    Promise<int> promise;
+    auto future = promise.get_future();
+    promise.set_value(42);
+
+    // Wait should return immediately if already set
+    bool ready = future.wait_for(1000);
+    EXPECT_TRUE(ready);
+}
+
+TEST_F(FiberTest, DefaultFutureIsInvalid) {
+    Future<int> future;
+    EXPECT_FALSE(future.valid());
+    EXPECT_FALSE(future.is_ready());
+}
+
+TEST_F(FiberTest, MovedFromFutureIsInvalid) {
+    Promise<int> promise;
+    auto future1 = promise.get_future();
+    auto future2 = std::move(future1);
+
+    EXPECT_FALSE(future1.valid());
+    EXPECT_TRUE(future2.valid());
+}
+
+TEST_F(FiberTest, MovedFromPromiseThrows) {
+    Promise<int> promise1;
+    auto future = promise1.get_future();
+    Promise<int> promise2 = std::move(promise1);
+
+    // Moved-from promise should throw
+    EXPECT_THROW(promise1.set_value(42), std::logic_error);
+
+    // New owner should work
+    promise2.set_value(42);
+    EXPECT_EQ(42, future.get());
+}
+
+TEST_F(FiberTest, MakePromiseConvenience) {
+    auto [promise, future] = make_promise<std::string>();
+    EXPECT_TRUE(future.valid());
+    EXPECT_FALSE(future.is_ready());
+
+    promise.set_value("hello");
+    EXPECT_EQ("hello", future.get());
+}
+
+TEST_F(FiberTest, MakeReadyFuture) {
+    auto future = make_ready_future<int>(42);
+    EXPECT_TRUE(future.valid());
+    EXPECT_TRUE(future.is_ready());
+    EXPECT_EQ(42, future.get());
+}
+
+TEST_F(FiberTest, FutureWithStringType) {
+    Promise<std::string> promise;
+    auto future = promise.get_future();
+    promise.set_value("hello world");
+    EXPECT_EQ("hello world", future.get());
+}
+
+TEST_F(FiberTest, FutureWithVectorType) {
+    Promise<std::vector<int>> promise;
+    auto future = promise.get_future();
+    promise.set_value({1, 2, 3, 4, 5});
+
+    auto& result = future.get();
+    EXPECT_EQ(5u, result.size());
+    EXPECT_EQ(1, result[0]);
+    EXPECT_EQ(5, result[4]);
+}
+
 }  // namespace rrr
 
 int main(int argc, char** argv) {

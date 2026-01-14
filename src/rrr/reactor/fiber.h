@@ -27,6 +27,7 @@
 
 #include "coroutine.h"
 #include "event.h"  // For Event types
+#include "future.h"  // For Future/Promise
 #include "../base/basetypes.hpp"  // For rrr::Time
 #include <rusty/option.hpp>
 #include <rusty/rc.hpp>
