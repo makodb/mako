@@ -15,6 +15,7 @@
 #include <thread>
 #include <vector>
 #include <random>
+#include <unistd.h>  // for getpid()
 #include <rusty/arc.hpp>
 #include "reactor/reactor.h"
 #include "rpc/client.hpp"
@@ -30,8 +31,23 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
-// @safe - Atomic counter for port allocation
-static std::atomic<int> g_partition_test_port{19000};
+// @safe - Generate a random base port to avoid collisions when multiple test
+// processes run in parallel. Uses PID and high-resolution time to seed.
+static int generate_random_base_port() {
+    // Use process ID and time to create a unique seed for each process
+    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::seed_seq seq{static_cast<unsigned>(getpid()),
+                      static_cast<unsigned>(now & 0xFFFFFFFF),
+                      static_cast<unsigned>(now >> 32)};
+    std::mt19937 gen(seq);
+    // Use port range 20000-50000 to avoid conflicts with other services
+    std::uniform_int_distribution<> dist(20000, 50000);
+    return dist(gen);
+}
+
+// @safe - Atomic counter for port allocation with random base to avoid
+// port collisions when running multiple test instances in parallel (CI)
+static std::atomic<int> g_partition_test_port{generate_random_base_port()};
 
 // ============================================================================
 // Partition Test Service

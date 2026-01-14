@@ -23,6 +23,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
   - [x] *medium* CI stability: Add memory limit (30GB max) for shard2SingleProcessReplication test to prevent CI server crashes due to memory overuse. [DONE 2026-01-14]
     - Added `run_with_memory_limit` helper function to ci/ci.sh using `ulimit -v`
     - Applied 30GB (31457280KB) limit to shard2SingleProcessReplication test
+  - [x] *medium* CI stability: Fix RPC partition test flakiness due to port collisions. [DONE 2026-01-14]
+    - Root cause: When CI runs multiple test instances in parallel, they all start with same static port counter (19000)
+    - Fix: Use random base port derived from PID and high-resolution time to avoid collisions
+    - Modified: test/rpc_partition_test.cc - added `generate_random_base_port()` function
+    - Note: Other RPC tests may have same issue (rpc_chaos_test, rpc_reconnect_integration_test, etc.)
+    - Future: Consider creating shared test helper for random port allocation
   - [x] *medium* currently when we build the project from scratch, the build of the rusty-cpp submodule seems to be single threaded, make it parallel build (32 thread) to speed up. [DONE 2026-01-11, 20:00]
     - Modified `third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake`:
       - Added `include(ProcessorCount)` to detect available CPUs
