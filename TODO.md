@@ -742,13 +742,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Multiple c-nodes for high availability
       - Configuration change notifications to other nodes
       - Configuration history/rollback
-  - [ ] *high* CI failure: shard2Replication test timeout on commit 1b98df69 [Added: 2026-01-13, 12:40]
+  - [x] *high* CI failure: shard2Replication test timeout on commit 1b98df69 [FIXED 2026-01-14]
     - **Issue**: CI shard2Replication test times out - shard0 never starts (stays at 0 throughout 120s)
-    - **Commit**: 1b98df69 (Implement sharding policy startup flow integration Task 8)
-    - **Local Status**: Test passes locally on both rrr and erpc transports
-    - **Likely Cause**: Memory explosion from PaxosWorker all_coords pre-allocation (1M entries = 16MB per worker)
-    - **Fix Status**: Memory fix committed in a41e1da3, waiting in CI queue
-    - **Action Required**: Verify CI passes after a41e1da3 runs. If still failing, investigate further.
+    - **Root Cause**: Memory explosion from PaxosWorker all_coords pre-allocation (1M entries = 16MB per worker)
+    - **Fix**: Reduced pre-allocation in commit a41e1da3
+    - **Verification**: Test passes locally on both rrr (8808 ops/sec) and erpc (45293 ops/sec) transports
   - [x] *high* Dynamic Range-Based Sharding with C-Node Management [DONE 2026-01-13]
     - **Goal**: Replace static table-ID-based sharding with user-defined range-based sharding policies managed by the C-node
     - **Scope**:
