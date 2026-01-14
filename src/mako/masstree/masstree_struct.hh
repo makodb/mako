@@ -91,7 +91,7 @@ class node_base : public make_nodeversion<P>::type {
         set_parent(nullptr);
         this->mark_root();
     }
-    // @safe - returns parent or self
+    // @unsafe { Uses raw pointer, const_cast }
     inline base_type* maybe_parent() const {
         base_type* x = parent();
         return parent_exists(x) ? x : const_cast<base_type*>(this);
@@ -252,7 +252,7 @@ class leafvalue {
         return !u_.x;
     }
 
-    // @safe - returns value copy
+    // @unsafe { May return reference-like value depending on P::value_type }
     value_type value() const {
         return u_.v;
     }
@@ -372,7 +372,7 @@ class leaf : public node_base<P> {
     permuter_type permutation() const {
         return permuter_type(permutation_);
     }
-    // @safe - pure arithmetic (static_assert, bit shift, addition)
+    // @unsafe { Uses operator<< which is not borrow-checked }
     typename nodeversion_type::value_type full_version_value() const {
         static_assert(int(nodeversion_type::traits_type::top_stable_bits) >= int(permuter_type::size_bits), "not enough bits to add size to version");
         return (this->version_value() << permuter_type::size_bits) + size();

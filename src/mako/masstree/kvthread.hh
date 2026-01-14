@@ -128,7 +128,7 @@ class threadinfo {
     }
 
     // timestamps
-    // @safe - Returns value copy
+    // @unsafe { timestamp() is not borrow-checked }
     kvtimestamp_t operation_timestamp() const {
         return timestamp();
     }
@@ -160,7 +160,7 @@ class threadinfo {
         if (has_threadcounter<int(ncounters)>::test(ci))
             counters_[ci] += delta;
     }
-    // @safe - Returns bool value
+    // @unsafe { has_threadcounter::test is not borrow-checked }
     bool has_counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci);
     }
@@ -300,9 +300,8 @@ class threadinfo {
             hard_rcu_quiesce();
     }
     typedef ::mrcu_callback mrcu_callback;
-    // @safe - Takes rusty::MutPtr parameter (underlying record_rcu is @unsafe)
+    // @unsafe { record_rcu is not borrow-checked }
     void rcu_register(rusty::MutPtr<mrcu_callback> cb) {
-        // @unsafe { record_rcu uses raw void* internally }
         record_rcu(cb, memtag(-1));
     }
 
@@ -311,7 +310,7 @@ class threadinfo {
     pthread_t& pthread() {
         return pthreadid_;
     }
-    // @safe - Returns value copy
+    // @unsafe { Returns pthread_t value from non-borrow-checked member }
     pthread_t pthread() const {
         return pthreadid_;
     }

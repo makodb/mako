@@ -201,7 +201,7 @@ class key {
         // @unsafe - Str constructor
         { return Str(first_, s_); }
     }
-    // @safe - pointer arithmetic
+    // @unsafe { pointer arithmetic on raw pointers }
     int prefix_length() const {
         return s_ - first_;
     }

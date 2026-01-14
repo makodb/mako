@@ -1162,10 +1162,21 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] 3.6 Convert scan iteration to use safe wrappers [DONE 2026-01-13]
         - Reviewed: scanstackelt getters (node, size, permutation) already @safe
         - Iteration functions must remain @unsafe due to raw pointer traversal
-    - [ ] **Phase 4: Enable Borrow Checking**
-      - [ ] 4.1 Enable borrow checking for masstree_context
-      - [ ] 4.2 Enable borrow checking for kvthread
-      - [ ] 4.3 Incrementally enable more files
+    - [x] **Phase 4: Enable Borrow Checking** [DONE 2026-01-13]
+      - [x] 4.1 Enable borrow checking for masstree_context [DONE 2026-01-13]
+        - Fixed @unsafe annotations for std::atomic operations
+        - CMakeLists.txt: add_borrow_check(src/mako/masstree/masstree_context.cc)
+      - [x] 4.2 Enable borrow checking for kvthread [DONE 2026-01-13]
+        - Fixed @unsafe annotations for timestamp(), has_threadcounter::test(), record_rcu()
+        - CMakeLists.txt: add_borrow_check(src/mako/masstree/kvthread.cc)
+      - [x] 4.3 Enable borrow checking for value_versioned_array.cc [DONE 2026-01-13]
+        - Fixed query_helper::snapshot() annotation
+        - CMakeLists.txt: add_borrow_check(src/mako/masstree/value_versioned_array.cc)
+      - [x] 4.4 Enable borrow checking for query_masstree.cc [DONE 2026-01-13]
+        - Fixed kpermuter::make_sorted(), key::prefix_length(), maybe_parent()
+        - Fixed leaf::full_version_value(), scanstackelt::full_version_value()
+        - Fixed leafvalue::value() const
+        - CMakeLists.txt: add_borrow_check(src/mako/masstree/query_masstree.cc)
     - [ ] **Phase 5: Advanced Safety Patterns** (Future)
       - [ ] 5.1 Replace raw allocations with rusty::Box
       - [ ] 5.2 Convert shared state to rusty::Arc

@@ -34,8 +34,8 @@ typedef uint64_t mrcu_epoch_type;
  * - If no context is bound, returns a default global context (backward compat)
  *
  * RustyCpp Safety Annotations:
- * - @safe: Pure getters/setters with atomic operations only
- * - @unsafe: Functions returning raw pointers or accepting raw pointer parameters
+ * - @safe: Pure getters that don't call std:: functions
+ * - @unsafe: Functions using std::atomic, std::lock_guard, std::call_once, or 'new'
  */
 class MasstreeContext {
 public:
@@ -48,17 +48,17 @@ public:
     MasstreeContext& operator=(const MasstreeContext&) = delete;
 
     // Epoch management
-    // @safe - Returns copy of atomic value
+    // @unsafe { std::atomic::load is not borrow-checked }
     mrcu_epoch_type get_epoch() const {
         return epoch_.load(std::memory_order_acquire);
     }
 
-    // @safe - Atomic store, no pointer operations
+    // @unsafe { std::atomic::store is not borrow-checked }
     void set_epoch(mrcu_epoch_type e) {
         epoch_.store(e, std::memory_order_release);
     }
 
-    // @safe - Atomic read-modify-write, no pointer operations
+    // @unsafe { std::atomic::fetch_add is not borrow-checked }
     void increment_epoch(mrcu_epoch_type delta = 2) {
         epoch_.fetch_add(delta, std::memory_order_acq_rel);
     }
@@ -69,21 +69,21 @@ public:
     }
 
     // Thread registry
-    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    // @unsafe { std::atomic::load is not borrow-checked }
     rusty::MutPtr<threadinfo> get_allthreads() const {
         return allthreads_.load(std::memory_order_acquire);
     }
 
-    // @safe - Takes rusty::MutPtr parameter
+    // @unsafe { std::lock_guard, std::atomic::store are not borrow-checked }
     void register_threadinfo(rusty::MutPtr<threadinfo> ti);
 
     // @safe - Returns copy of int value
     int id() const { return context_id_; }
 
-    // @safe - Takes rusty::MutPtr parameter
+    // @safe - Assigns thread-local pointer
     static void BindCurrentThread(rusty::MutPtr<MasstreeContext> ctx);
 
-    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    // @unsafe { std::call_once is not borrow-checked }
     static rusty::MutPtr<MasstreeContext> Current();
 
     // @unsafe { Uses 'new' operator }

@@ -91,7 +91,7 @@ template <int width> class kpermuter {
         value_type p = (value_type) info::initial_value >> ((max_width - width) << 2);
         return p & ~(value_type) 15;
     }
-    // @safe - pure bit arithmetic
+    // @unsafe { Calls make_empty() which uses C-style casts }
     /** @brief Return a permuter with size @a n.
 
         The returned permutation has size() @a n. For 0 <= i < @a n,

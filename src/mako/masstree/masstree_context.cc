@@ -22,14 +22,14 @@ std::atomic<int> MasstreeContext::s_next_context_id_{0};
 static rusty::MutPtr<MasstreeContext> g_default_context = nullptr;
 static std::once_flag g_default_context_init;
 
-// @safe - Pure initialization, no pointer operations
+// @unsafe { std::atomic::fetch_add is not borrow-checked }
 MasstreeContext::MasstreeContext()
     : context_id_(s_next_context_id_.fetch_add(1))
     , epoch_(1)
     , allthreads_(nullptr) {
 }
 
-// @safe - Uses rusty::MutPtr, modifies linked list
+// @unsafe { std::lock_guard, std::atomic::store are not borrow-checked }
 void MasstreeContext::register_threadinfo(rusty::MutPtr<threadinfo> ti) {
     std::lock_guard<std::mutex> lock(allthreads_lock_);
     // Set next_ inside the lock to avoid race condition where multiple threads
@@ -38,17 +38,16 @@ void MasstreeContext::register_threadinfo(rusty::MutPtr<threadinfo> ti) {
     allthreads_.store(ti, std::memory_order_release);
 }
 
-// @safe - Uses rusty::MutPtr
+// @safe - Assigns thread-local pointer
 void MasstreeContext::BindCurrentThread(rusty::MutPtr<MasstreeContext> ctx) {
     tl_masstree_context = ctx;
 }
 
-// @safe - Returns rusty::MutPtr, lazy-initializes global state via @unsafe block
+// @unsafe { std::call_once, 'new' operator are not borrow-checked }
 rusty::MutPtr<MasstreeContext> MasstreeContext::Current() {
     if (tl_masstree_context) {
         return tl_masstree_context;
     }
-    // @unsafe { Uses 'new' operator for lazy-init }
     std::call_once(g_default_context_init, []() {
         g_default_context = new MasstreeContext();
     });

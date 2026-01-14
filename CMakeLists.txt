@@ -318,22 +318,24 @@ set(BORROW_CHECKER_INCLUDE_PATHS
 add_compile_definitions(MASSTREE_CONFIG_H=\"${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/config.h\")
 add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree_btree.h\")
 
-# Masstree borrow checking disabled due to false positives from recent rusty-cpp
-# updates that enforce stricter uniform borrow rules for pointers and references.
-# The following errors are triggered:
-#   - "Cannot return 'value' because it has been moved"
-#   - "Cannot borrow from 'this': variable is not alive in current scope"
-# Re-enable when these issues are resolved in rusty-cpp.
+# Masstree borrow checking - incrementally enabled per file
+# Phase 4 of RustyCpp migration enables borrow checking file by file
+# See TODO.md "Masstree RustyCpp Safety Migration" for details
 #
-# file(GLOB_RECURSE MASSTREE_BORROW_CHECK_SOURCES
-#     RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
-#     src/mako/masstree/*.c
-#     src/mako/masstree/*.cc
-# )
+# Previously disabled due to false positives that have been addressed by:
+#   - Adding @unsafe { reason } annotations to all unsafe functions
+#   - Converting raw pointers to rusty::Ptr<T>/MutPtr<T> wrappers
+#   - Marking safe getters/setters with @safe annotations
 #
-# foreach(SRC ${MASSTREE_BORROW_CHECK_SOURCES})
-#     add_borrow_check(${SRC})
-# endforeach()
+# Phase 4.1: Enable borrow checking for masstree_context
+add_borrow_check(src/mako/masstree/masstree_context.cc)
+#
+# Phase 4.2: Enable borrow checking for kvthread
+add_borrow_check(src/mako/masstree/kvthread.cc)
+#
+# Phase 4.3: Enable more files incrementally
+add_borrow_check(src/mako/masstree/value_versioned_array.cc)
+add_borrow_check(src/mako/masstree/query_masstree.cc)
 
 # Compiler flags
 set(CXXFLAGS

@@ -40,7 +40,7 @@ class scanstackelt {
     rusty::MutPtr<leaf<P>> node() const {
         return n_;
     }
-    // @safe - Returns computed value
+    // @unsafe { Uses operator<< which is not borrow-checked }
     typename nodeversion_type::value_type full_version_value() const {
         return (v_.version_value() << permuter_type::size_bits) + perm_.size();
     }

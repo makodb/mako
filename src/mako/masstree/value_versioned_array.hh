@@ -141,7 +141,7 @@ struct query_helper<value_versioned_array> {
     query_helper()
         : snapshot_() {
     }
-    // @safe - Returns rusty::Ptr (borrow-checked pointer type)
+    // @unsafe { Calls value_versioned_array::snapshot which uses memcpy }
     inline rusty::Ptr<value_versioned_array> snapshot(rusty::Ptr<value_versioned_array> row,
                                                       const std::vector<value_versioned_array::index_type>& f,
                                                       threadinfo& ti) {
