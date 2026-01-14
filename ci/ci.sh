@@ -88,6 +88,25 @@ cleanup_processes() {
     echo "Cleanup complete."
 }
 
+# Run a command with memory limit (in KB)
+# Usage: run_with_memory_limit <limit_kb> <command...>
+# Example: run_with_memory_limit 31457280 bash ./examples/test.sh  # 30GB limit
+run_with_memory_limit() {
+    local limit_kb=$1
+    shift
+    local limit_gb=$((limit_kb / 1024 / 1024))
+    echo "[Memory limit] Setting virtual memory limit to ${limit_gb}GB (${limit_kb}KB)"
+
+    # Use ulimit to set virtual memory limit
+    # This prevents runaway memory usage from crashing CI servers
+    (
+        ulimit -v $limit_kb 2>/dev/null || {
+            echo "[Memory limit] Warning: Could not set ulimit -v, running without limit"
+        }
+        "$@"
+    )
+}
+
 # Function 1: Compile
 compile() {
     echo "========================================="
@@ -374,7 +393,10 @@ run_2shard_single_process_replication() {
     echo "========================================="
     cleanup_processes
     set +e
-    bash ./examples/test_2shard_single_process_replication.sh
+    # Memory limit: 30GB (30 * 1024 * 1024 KB = 31457280 KB)
+    # This test runs 7 processes and can consume significant memory
+    # The limit prevents memory overuse from crashing CI servers
+    run_with_memory_limit 31457280 bash ./examples/test_2shard_single_process_replication.sh
     local test_result=$?
     set -e
     check_for_hanging_processes "shard2SingleProcessReplication"
