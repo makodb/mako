@@ -11,6 +11,7 @@ following conventions established by Boost.Fiber. Key features:
 - **this_fiber Namespace**: Provides `this_fiber::get_id()`, `this_fiber::yield()`, `this_fiber::sleep_*()` etc.
 - **Event Combinators**: `WaitAll`, `WaitAny`, `WaitN` for clear event composition
 - **Time API**: Uses `rrr::Time` internally (NOT `std::chrono`)
+- **Future/Promise**: Async value delivery with fiber-aware blocking
 
 For conceptual background on coroutines vs fibers and the reactor pattern, see [coroutines_guide.md](coroutines_guide.md).
 
@@ -36,16 +37,33 @@ void example() {
 }
 ```
 
-## Type Aliases
+## Class Hierarchy
 
 ### Fiber
 
+`Fiber` is the primary class for stackful coroutines. The implementation is in `fiber_impl.h`.
+
 ```cpp
-using Fiber = Coroutine;
+class Fiber {
+public:
+    static rusty::Rc<Fiber> create_run(Func&& func, ...);
+    static rusty::Option<rusty::Rc<Fiber>> current_fiber();
+    static void sleep(uint64_t microseconds);
+    void run() const;
+    void yield_() const;
+    void continue_() const;
+    bool finished() const;
+    // ...
+};
 ```
 
-`Fiber` is an alias for `Coroutine`. Use `Fiber` for new code as it more accurately
-describes our stackful execution model (C++20 coroutines are stackless; ours are stackful).
+**Backward Compatibility:** `Coroutine` is an alias for `Fiber`:
+```cpp
+using Coroutine = Fiber;  // In fiber_impl.h
+```
+
+Use `Fiber` for new code as it more accurately describes our stackful execution model
+(C++20 coroutines are stackless; ours are stackful).
 
 ### Event Combinators
 
@@ -265,6 +283,106 @@ Fiber::create_run([&]() {
 
 This is consistent with the rest of the RRR codebase and avoids mixing time representations.
 
+## Future/Promise API
+
+The Future/Promise API provides asynchronous value delivery with fiber-aware blocking.
+Include `<reactor/future.h>` to use these types.
+
+### Promise<T>
+
+A `Promise<T>` is the producer side of an async value. It can be set exactly once.
+
+```cpp
+template <typename T>
+class Promise {
+public:
+    Promise();                          // Creates empty promise
+    Future<T> get_future();             // Get associated future (only once)
+    void set_value(const T& value);     // Set the value (wakes waiting fibers)
+    void set_value(T&& value);          // Move-set the value
+    bool is_ready() const noexcept;     // Check if value has been set
+};
+```
+
+### Future<T>
+
+A `Future<T>` is the consumer side. It can wait for and retrieve the value.
+
+```cpp
+template <typename T>
+class Future {
+public:
+    T& get();                           // Wait and get value (blocks in fiber context)
+    bool wait_for(uint64_t timeout_us); // Wait with timeout, returns true if ready
+    bool is_ready() const noexcept;     // Check if value is available
+    bool valid() const noexcept;        // Check if future has shared state
+};
+```
+
+### Factory Functions
+
+```cpp
+// Create a linked promise/future pair
+template <typename T>
+std::pair<Promise<T>, Future<T>> make_promise();
+
+// Create a future that is immediately ready with the given value
+template <typename T>
+Future<T> make_ready_future(T value);
+```
+
+### Example Usage
+
+**Basic Promise/Future:**
+```cpp
+Fiber::create_run([]() {
+    auto [promise, future] = make_promise<int>();
+
+    // Producer fiber
+    Fiber::create_run([p = std::move(promise)]() mutable {
+        this_fiber::sleep_ms(100);
+        p.set_value(42);
+    });
+
+    // Consumer waits for value
+    int result = future.get();  // Blocks until value is set
+    // result == 42
+});
+```
+
+**Timeout-based Waiting:**
+```cpp
+Fiber::create_run([]() {
+    auto [promise, future] = make_promise<std::string>();
+
+    if (future.wait_for(50000)) {  // 50ms timeout
+        auto& value = future.get();  // Value is ready
+    } else {
+        // Timeout expired, value not ready yet
+    }
+});
+```
+
+**Ready Future (no waiting needed):**
+```cpp
+auto future = make_ready_future<int>(100);
+int value = future.get();  // Returns immediately with 100
+```
+
+### Important Notes
+
+1. **Fiber Context Required**: `Future::get()` and `Future::wait_for()` must be called
+   from within a fiber context. Calling from the main thread will not block properly.
+
+2. **Single Consumer**: Each `Future` should only have one consumer. The behavior of
+   multiple fibers calling `get()` on the same future is undefined.
+
+3. **Move-only Promise**: After calling `get_future()`, the Promise should typically
+   be moved to the producer fiber.
+
+4. **Thread Safety**: Promise and Future are designed for single-threaded fiber use.
+   For cross-thread communication, use appropriate synchronization.
+
 ## RustyCpp Safety
 
 All functions in the Fiber API are annotated with `@safe` or `@unsafe` markers:
@@ -282,15 +400,21 @@ If you have existing code using `Coroutine`, you can migrate to `Fiber`:
 | Old API | New API |
 |---------|---------|
 | `Coroutine::create_run(...)` | `Fiber::create_run(...)` |
-| `Coroutine::current_coroutine()` | `this_fiber::current()` |
+| `Coroutine::current_coroutine()` | `this_fiber::current()` or `Fiber::current_fiber()` |
 | `coro->yield_()` | `this_fiber::yield()` |
 | `Coroutine::sleep(us)` | `this_fiber::sleep_us(us)` |
 | `AndEvent` | `WaitAll` |
 | `OrEvent` | `WaitAny` |
 | `NEvent` | `WaitN` |
 
-Both APIs work identically as `Fiber = Coroutine` is just a type alias.
-Existing code continues to work; use the new names in new code for clarity.
+**Implementation Note:** As of Phase 4, `Fiber` is the primary class name (in `fiber_impl.h`)
+and `Coroutine` is now a type alias for backward compatibility:
+```cpp
+using Coroutine = Fiber;  // In fiber_impl.h
+```
+
+Both APIs work identically. Existing code using `Coroutine` continues to work unchanged.
+Use `Fiber` and `this_fiber::` for new code.
 
 ## See Also
 

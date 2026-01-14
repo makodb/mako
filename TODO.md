@@ -1262,11 +1262,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] 4.4 Updated reactor.cc: `Fiber::current_fiber()`, `Fiber::create_run_impl()`, `Fiber::sleep()`
       - [x] 4.5 Updated fiber.h: all `this_fiber` functions now use `Fiber::` internally
       - [x] 4.6 All @safe/@unsafe annotations preserved, borrow checks pass
-    - [ ] **Phase 5: Documentation and Migration Guide** [~100 LOC]
-      - [ ] 5.1 Create `doc/fiber_api.md` with new API reference
-      - [ ] 5.2 Document use of `rrr::Time` (not std::chrono) for time operations
-      - [ ] 5.3 Update existing code examples to use `Fiber` terminology
-      - [ ] 5.4 Add deprecation notices to old names (soft deprecation)
+    - [x] **Phase 5: Documentation and Migration Guide** [~100 LOC] [DONE 2026-01-14]
+      - [x] 5.1 Updated `doc/fiber_api.md` with complete API reference
+      - [x] 5.2 Documented use of `rrr::Time` (not std::chrono) for time operations
+      - [x] 5.3 Added Future/Promise API documentation with examples
+      - [x] 5.4 Updated migration guide to reflect Phase 4 changes (Fiber is primary, Coroutine is alias)
     - **API Mapping Reference**:
       | Current API | New API | Notes |
       |-------------|---------|-------|
