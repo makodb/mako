@@ -1046,14 +1046,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Hash-based sharding option (hash key mod N shards)
       - Multi-key sharding (shard by multiple fields)
       - String key ranges (not just int64)
-  - [ ] *medium* Masstree RustyCpp Safety Migration [Plan: doc/masstree_rusty_migration_plan.md]
+  - [x] *medium* Masstree RustyCpp Safety Migration [Plan: doc/masstree_rusty_migration_plan.md] [DONE 2026-01-13]
     - **Goal**: Incrementally migrate masstree code (~28,782 lines across 78 files) to be rusty-safe
     - **Approach**:
       1. Phase 1: Audit and annotate existing functions as @safe or @unsafe
       2. Phase 2: Replace raw pointers with rusty::Ptr<T>/MutPtr<T> wrappers
       3. Phase 3: Rewrite unsafe functions to safe equivalents where possible
       4. Phase 4: Enable borrow checking for migrated files
-      5. Phase 5: Advanced patterns (Box, Arc, Cell/RefCell)
     - **Priority Order** (by file importance):
       - Tier 1: masstree_context.h/cc, kvthread.hh/cc (~500 lines) - Foundation
       - Tier 2: masstree.hh, masstree_get/insert/scan/remove.hh (~1250 lines) - Core B-tree ops
@@ -1091,7 +1090,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Marked rowversion struct (stable/has_changed @unsafe)
         - Marked @safe: constructor, timestamp, ncol, shallow_size
         - Marked @unsafe: col, create/create1, checkpoint_*, query_helper snapshot
-    - [ ] **Phase 2: Replace Raw Pointers with Ptr/MutPtr**
+    - [x] **Phase 2: Replace Raw Pointers with Ptr/MutPtr** [DONE 2026-01-13]
       - [x] 2.1 Add rusty/ptr.hpp include to masstree headers [DONE 2026-01-13]
       - [x] 2.2 Convert masstree_context.h pointers [DONE 2026-01-13]
         - Added #include <rusty/ptr.hpp> to masstree_context.h
