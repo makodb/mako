@@ -17,13 +17,13 @@ int RaftLabTest::Run(void) {
   config_->SetLearnerAction();
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
-  if (// testPersistence()
-      // || testTwoFollowerPersistence()
-      // || testLeaderFollowerPersistence()
-      testComprehensiveCrashRecovery()
-      // testPartitionPlusRestart()
-      // testSequentialPartitionsPlusRestart()
-      || TEST_EXPAND(testMultipleRestartsPlusPartition())
+  if (TEST_EXPAND(testPersistence())                      // Test 13
+      || TEST_EXPAND(testLeaderFollowerPersistence())      // Test 14
+      || TEST_EXPAND(testComprehensiveCrashRecovery())     // Test 15
+      || TEST_EXPAND(testPartitionPlusRestart())           // Test 16
+      || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
+      || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
+      || TEST_EXPAND(testFigure8CrashRecovery())           // Test 19
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -35,7 +35,6 @@ int RaftLabTest::Run(void) {
       // || TEST_EXPAND(testCount())
       // || TEST_EXPAND(testUnreliableAgree())
       // || TEST_EXPAND(testFigure8())
-      // testFigure8CrashRecovery()
     ) {
     Log_info("Test sequence failed");
     Print("TESTS FAILED");

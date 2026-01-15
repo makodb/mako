@@ -2,9 +2,9 @@
 #include "../../rrr/misc/marshal.hpp"
 #include "../config.h"
 #include "frame.h"
-#include "raft_persistence.h"
 #include "service.h"
 #include "commo.h"
+#include "rpc/recovery_manager.hpp"
 #include <cstring>
 
 namespace janus {
@@ -626,32 +626,34 @@ void RaftTestConfig::Restart(siteid_t svr) {
   if (should_enable) {
     Log_info("[RAFT-TEST-RESTART] Loading persistence for site %d", svr);
 
-    frame->svr_->persistence_ = std::make_unique<RaftPersistence>();
+    // Create RecoveryConfig
+    rrr::RecoveryConfig config;
     std::string base_path = "/tmp";
-    if ((frame->svr_->persistence_->Init)(svr, site_info->partition_id_, base_path)) {
-      frame->svr_->persistence_enabled_ = true;
+    config.storage_path = base_path + "/raft_" + std::to_string(svr) +
+                         "_partition_" + std::to_string(site_info->partition_id_);
 
-      uint64_t loaded_term = 0;
-      uint32_t loaded_vote_for = INVALID_SITEID;
-      frame->svr_->persistence_->LoadTerm(loaded_term);
-      frame->svr_->persistence_->LoadVotedFor(loaded_vote_for);
+    // Create RecoveryManager and storage
+    rrr::RecoveryManager manager(config);
+    auto storage = manager.create_storage();
 
-      frame->svr_->currentTerm = loaded_term;
-      frame->svr_->vote_for_ = loaded_vote_for;
-
-      // Load logs
-      std::map<slotid_t, std::shared_ptr<RaftData>> loaded_logs;
-      if (frame->svr_->persistence_->LoadAllLogs(loaded_logs)) {
-        for (const auto& pair : loaded_logs) {
-          frame->svr_->raft_logs_[pair.first] = pair.second;
-          if (pair.first > frame->svr_->lastLogIndex) {
-            frame->svr_->lastLogIndex = pair.first;
-          }
+    if (storage) {
+      // Use RecoveryManager to orchestrate recovery
+      auto result = manager.recover(
+        [frame](std::shared_ptr<rrr::LogStorage> s) { frame->svr_->SetLogStorage(s); },
+        [frame]() { return frame->svr_->RecoverFromStorage(); },
+        [frame](rrr::RecoveryResult& r) {
+          r.recovered_term = frame->svr_->currentTerm;
+          r.recovered_entries = frame->svr_->raft_logs_.size();
         }
-      }
+      );
 
-      Log_info("[RAFT-TEST-RESTART] Loaded: term=%lu vote=%u lastLogIndex=%lu",
-               frame->svr_->currentTerm, frame->svr_->vote_for_, frame->svr_->lastLogIndex);
+      if (result.success) {
+        Log_info("[RAFT-TEST-RESTART] Loaded: term=%lu vote=%d lastLogIndex=%lu (mode=%d)",
+                 frame->svr_->currentTerm, frame->svr_->vote_for_,
+                 frame->svr_->lastLogIndex, static_cast<int>(result.mode));
+      } else {
+        Log_error("[RAFT-TEST-RESTART] Recovery failed: %s", result.error_message.c_str());
+      }
     }
   }
 

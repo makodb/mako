@@ -5,9 +5,9 @@
 #include "../scheduler.h"
 #include "../classic/tpc_command.h"
 #include "commo.h"
-#include "raft_persistence.h"
 #include <rusty/box.hpp>
 #include "rpc/log_storage.hpp"
+#include "rpc/recovery_manager.hpp"
 #include "rpc/snapshot_manager.hpp"
 
 namespace janus {
@@ -63,7 +63,7 @@ class RaftServer : public TxLogServer {
   static constexpr const char* META_VOTE_FOR = "vote_for";
   static constexpr const char* META_COMMIT_INDEX = "commitIndex";
 
-  // LogStorage-based persistence (optional, separate from RaftPersistence)
+  // LogStorage-based persistence helper methods
   void PersistTermAndVoteToLogStorage();
   void PersistVoteToLogStorage();
   void PersistCommitIndexToLogStorage();
@@ -244,36 +244,25 @@ class RaftServer : public TxLogServer {
     return RandomGenerator::rand_double(0.4, 0.7) ;
   }
 
-  // @unsafe - Calls persistence_ which may be nullptr
+  // @unsafe - Uses LogStorage for persistence
   void PersistState(uint64_t term, siteid_t voted_for, const char* reason = "unspecified") {
-    if (!persistence_enabled_ || !persistence_) return;
-
-    bool success = persistence_->PersistState(term, voted_for);
-    if (!success) {
-      Log_error("[RAFT-PERSISTENCE] Failed to persist state (term=%lu votedFor=%u reason=%s)",
-                term, voted_for, reason);
-    } else {
-      Log_debug("[RAFT-PERSISTENCE] Persisted: term=%lu votedFor=%u (%s)",
-                term, voted_for, reason);
-    }
+    if (!log_storage_ || !log_storage_->is_open()) return;
+    PersistTermAndVoteToLogStorage();
+    Log_debug("[RAFT-PERSISTENCE] Persisted: term=%lu votedFor=%u (%s)",
+              term, voted_for, reason);
   }
 
-  // @unsafe - Calls persistence_ which may be nullptr
+  // @unsafe - Uses LogStorage for persistence
   void PersistLogEntry(slotid_t slot_id, const RaftData& entry, const char* reason = "unspecified") {
-    if (!persistence_enabled_ || !persistence_) return;
-
-    bool success = persistence_->PersistLogEntry(slot_id, entry);
-    if (!success) {
-      Log_error("[RAFT-PERSISTENCE] Failed to persist log slot=%lu (%s)", slot_id, reason);
-    } else {
-      Log_debug("[RAFT-PERSISTENCE] Persisted log: slot=%lu (%s)", slot_id, reason);
-    }
+    if (!log_storage_ || !log_storage_->is_open()) return;
+    PersistLogEntryToLogStorage(slot_id, entry);
+    Log_debug("[RAFT-PERSISTENCE] Persisted log: slot=%lu (%s)", slot_id, reason);
   }
 
-  // @unsafe - Calls persistence_ which may be nullptr
+  // @unsafe - Uses LogStorage for persistence
   void PersistCommitIndex(uint64_t commit_index, const char* reason = "unspecified") {
-    if (!persistence_enabled_ || !persistence_) return;
-    persistence_->PersistCommitIndex(commit_index);
+    if (!log_storage_ || !log_storage_->is_open()) return;
+    PersistCommitIndexToLogStorage();
   }
 
   /**
@@ -310,10 +299,6 @@ class RaftServer : public TxLogServer {
   uint64_t executeIndex = 0;
   map<slotid_t, shared_ptr<RaftData>> raft_logs_{};
 //  vector<shared_ptr<RaftData>> raft_logs_{};
-
-  // Persistence layer for crash recovery (optional - can be nullptr)
-  std::unique_ptr<RaftPersistence> persistence_;
-  bool persistence_enabled_ = false;
 
   // For looping_ control usage, once ready_for_replication_ is ready (set to 1), a specific coroutine will do replication
   std::recursive_mutex ready_for_replication_mtx_{};

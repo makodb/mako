@@ -24,6 +24,7 @@
 
 #include "log_storage.hpp"
 #include "misc/marshal.hpp"
+#include "base/logging.hpp"
 
 namespace rrr {
 
@@ -90,10 +91,10 @@ private:
 
 public:
     /**
-     * Construct a RocksDB log storage.
+     * Construct a RocksDB log storage and open the database.
      * @param db_path Path to the database directory
      */
-    // @safe - Constructor, no side effects beyond initialization
+    // @unsafe - Opens RocksDB database
     explicit RocksDBLogStorage(const std::string& db_path)
         : db_path_(db_path) {
         // Configure RocksDB options
@@ -109,6 +110,9 @@ public:
 
         // Read options - defaults are fine
         read_options_.verify_checksums = true;
+
+        // Open the database immediately
+        open();
     }
 
     // @unsafe - Calls close() which uses RocksDB API
@@ -128,10 +132,13 @@ public:
 
         rocksdb::Status status = rocksdb::DB::Open(options_, db_path_, &db_);  // @unsafe
         if (!status.ok()) {
+            Log_error("[RocksDBLogStorage] Failed to open %s: %s",
+                      db_path_.c_str(), status.ToString().c_str());
             return false;
         }
 
         is_open_.set(true);
+        Log_info("[RocksDBLogStorage] Opened database at %s", db_path_.c_str());
         return true;
     }
 

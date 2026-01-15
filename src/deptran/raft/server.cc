@@ -314,9 +314,7 @@ bool JetpackRecoveryEnabled() {
 
 // @safe - Uses rusty::Box for timer ownership
 RaftServer::RaftServer(Frame * frame)
-  : timer_(rusty::Box<Timer>::make(Timer())),  // Initialize Box in member initializer list
-    persistence_(nullptr),
-    persistence_enabled_(false)
+  : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
   frame_ = frame ;
 #ifdef RAFT_TEST_CORO
@@ -375,58 +373,50 @@ void RaftServer::Setup() {
   // Record startup time for grace period logic
   startup_timestamp_ = Time::now();
 
-  // ========== INITIALIZE PERSISTENCE ==========
+  // ========== INITIALIZE PERSISTENCE (LogStorage + RecoveryManager) ==========
   const char* persistence_flag = std::getenv("MAKO_RAFT_PERSISTENCE");
   bool should_enable = (persistence_flag &&
                        (strcmp(persistence_flag, "1") == 0 ||
                         strcmp(persistence_flag, "true") == 0));
 
   if (should_enable) {
-    Log_info("[RAFT-PERSISTENCE] Initializing for site %d partition %d",
+    Log_info("[RAFT-PERSISTENCE] Initializing LogStorage for site %d partition %d",
              site_id_, partition_id_);
 
-    persistence_ = std::make_unique<RaftPersistence>();
-
+    // Create RecoveryConfig
+    rrr::RecoveryConfig config;
     std::string base_path = "/tmp";
     const char* custom_path = std::getenv("MAKO_RAFT_PERSISTENCE_PATH");
     if (custom_path && custom_path[0] != '\0') {
       base_path = custom_path;
     }
+    config.storage_path = base_path + "/raft_" + std::to_string(site_id_) +
+                         "_partition_" + std::to_string(partition_id_);
 
-    if (!persistence_->Init(site_id_, partition_id_, base_path)) {
-      Log_error("[RAFT-PERSISTENCE] Init failed - continuing without persistence");
-      persistence_.reset();
+    // Create RecoveryManager and storage
+    rrr::RecoveryManager manager(config);
+    auto storage = manager.create_storage();
+
+    if (!storage) {
+      Log_error("[RAFT-PERSISTENCE] Failed to create LogStorage - continuing without persistence");
     } else {
-      persistence_enabled_ = true;
-
-      // ========== LOAD PERSISTED STATE ==========
-      uint64_t loaded_term = 0;
-      uint32_t loaded_vote_for = INVALID_SITEID;
-
-      persistence_->LoadTerm(loaded_term);
-      persistence_->LoadVotedFor(loaded_vote_for);
-
-      Log_info("[RAFT-PERSISTENCE] Loaded: term=%lu votedFor=%u",
-               loaded_term, loaded_vote_for);
-
-      currentTerm = loaded_term;
-      vote_for_ = loaded_vote_for;
-
-      // Load logs
-      std::map<slotid_t, std::shared_ptr<RaftData>> loaded_logs;
-      if (persistence_->LoadAllLogs(loaded_logs)) {
-        Log_info("[RAFT-PERSISTENCE] Loaded %zu log entries", loaded_logs.size());
-
-        for (const auto& pair : loaded_logs) {
-          raft_logs_[pair.first] = pair.second;
-          if (pair.first > lastLogIndex) {
-            lastLogIndex = pair.first;
-          }
+      // Use RecoveryManager to orchestrate recovery
+      auto result = manager.recover(
+        [this](std::shared_ptr<rrr::LogStorage> s) { SetLogStorage(s); },
+        [this]() { return RecoverFromStorage(); },
+        [this](rrr::RecoveryResult& r) {
+          r.recovered_term = currentTerm;
+          r.recovered_entries = raft_logs_.size();
         }
-      }
+      );
 
-      Log_info("[RAFT-PERSISTENCE] Recovery complete: term=%lu vote=%u lastLogIndex=%lu",
-               currentTerm, vote_for_, lastLogIndex);
+      if (result.success) {
+        Log_info("[RAFT-PERSISTENCE] Recovery complete: mode=%d term=%lu entries=%lu time=%lums",
+                 static_cast<int>(result.mode), result.recovered_term,
+                 result.recovered_entries, result.recovery_time_ms);
+      } else {
+        Log_error("[RAFT-PERSISTENCE] Recovery failed: %s", result.error_message.c_str());
+      }
     }
   } else {
     Log_info("[RAFT-PERSISTENCE] Disabled (set MAKO_RAFT_PERSISTENCE=1 to enable)");
