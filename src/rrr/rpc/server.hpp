@@ -670,6 +670,15 @@ public:
     std::string addr() const {
         return ctx_.as_ref().unwrap()->addr;
     }
+
+    /**
+     * Get the actual port the server is bound to.
+     * Useful when starting with port 0 (ephemeral port assignment).
+     * Must be called after start().
+     * @return The bound port number, or -1 if not yet started
+     */
+    // @unsafe - Calls getsockname
+    int get_bound_port() const;
 };
 
 } // namespace rrr

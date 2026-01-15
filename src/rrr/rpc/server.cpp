@@ -492,19 +492,13 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 
   if (rp == nullptr) {
     // Failed to bind to any address
-    Log_error("rrr::Server: FATAL - failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
+    Log_error("rrr::Server: failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
     Log_error("rrr::Server: This is likely because the port is already in use by another process");
     Log_error("rrr::Server: Please check: sudo lsof -i :%s or sudo ss -tulpn | grep %s", port.c_str(), port.c_str());
     // gai_result_ RAII wrapper handles freeaddrinfo automatically
-
-    // Print more helpful message and abort
-    fprintf(stderr, "\n====== FATAL ERROR ======\n");
-    fprintf(stderr, "Failed to bind to port %s - port may be in use\n", port.c_str());
-    fprintf(stderr, "Check with: sudo lsof -i :%s\n", port.c_str());
-    fprintf(stderr, "=========================\n\n");
-    fflush(stderr);
-
-    verify(0);  // Fatal error - cannot start server
+    // Mark socket as invalid so start() can detect failure
+    server_sock_ = -1;
+    return;  // Caller should check server_sock_ for failure
   } else {
     // gai_result_ already stores the AddrInfo, just save pointer into the list
     p_svr_addr_ = rp;
@@ -550,6 +544,15 @@ int Server::start(const char* bind_addr) {
 
   server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
       ctx_.as_ref().unwrap().clone(), addr_str));
+
+  // Check if listener was created successfully (binding may have failed)
+  if (server_listener_.as_ref().unwrap()->server_sock_ < 0) {
+    Log_error("rrr::Server::start: failed to bind to %s", bind_addr);
+    server_listener_ = rusty::None;
+    ctx_ = rusty::None;
+    return -1;
+  }
+
   poll_thread_.as_ref().unwrap()->add(server_listener_.as_ref().unwrap().clone());
   return 0;
 }
@@ -682,6 +685,30 @@ void Server::graceful_shutdown(uint64_t drain_timeout_ms) {
 
     Log_info("Server::graceful_shutdown: transitioning to STOPPED");
     shutdown_phase_.set(ShutdownPhase::STOPPED);
+}
+
+// @unsafe - Calls getsockname
+int Server::get_bound_port() const {
+    if (server_listener_.is_none()) {
+        return -1;
+    }
+
+    int sock = server_listener_.as_ref().unwrap()->server_sock_;
+    if (sock < 0) {
+        return -1;
+    }
+
+    struct sockaddr_in addr;
+    socklen_t addrlen = sizeof(addr);
+    memset(&addr, 0, sizeof(addr));
+
+    if (getsockname(sock, (struct sockaddr*)&addr, &addrlen) != 0) {
+        Log_error("Server::get_bound_port: getsockname failed, errno=%d (%s)",
+                  errno, strerror(errno));
+        return -1;
+    }
+
+    return ntohs(addr.sin_port);
 }
 
 } // namespace rrr
