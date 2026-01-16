@@ -50,6 +50,9 @@ jobs:
       - name: Run tests - simple transaction
         run: ./ci/ci.sh simpleTransaction
 
+      - name: Run tests - client-server mode
+        run: ./ci/ci.sh clientServer
+
       - name: Run tests - simple replication
         run: ./ci/ci.sh simplePaxos 
 

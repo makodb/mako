@@ -19,6 +19,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Goal: I currently coloate all client and transaction execution code, I want to decouple a client from transaction execution, so that I can deploy client on different servers.
     - Analysis: Task exceeds 500 LOC (~600-750 LOC total). Breaking down into subtasks:
     - Implementation complete! All 5 subtasks done. Note: Full RPC integration uses stub implementations.
+    - [x] *high* Add a testcase: add a testcase in ci.yml and ci.sh [26:01:16, 18:30]
+      - Added `run_client_server_test()` function to ci.sh
+      - Added `clientServer` case to ci.sh command parser
+      - Added test step to ci.yml after simpleTransaction
+      - Updated test_client_server.sh to test: usage help, makoServer help, client error handling
+    - [ ] *high* Add several evaluation and performance analysis in documentation md files
     - [x] *high* Support multiple clients: refer to `NOT suitable for:` in `docs/dev/client_rpc_implementation_plan.md` [26:01:16, 17:45]
       - First, we have multiple shards and each shard has mulitple worker threads running, so at least, we can accept # of worker * # of shards clients at a time.
       - Second, you can reject a new client request, and return a message with message like "all servers are occupied, please run it later" etc

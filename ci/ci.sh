@@ -429,6 +429,20 @@ run_cpu_throttling_scaling() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
+run_client_server_test() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh clientServer"
+    echo "========================================="
+    cleanup_processes
+    set +e
+    bash ./ci/test_client_server.sh
+    local test_result=$?
+    set -e
+    check_for_hanging_processes "clientServer"
+    local hanging_check=$?
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
 cleanup() {
     cleanup_processes
     make BUILD_DIR=${BUILD_DIR} clean
@@ -505,11 +519,15 @@ case "${1:-}" in
     cpuThrottlingScaling)
         run_cpu_throttling_scaling
         ;;
+    clientServer)
+        run_client_server_test
+        ;;
     all)
         # Run all steps in sequence
         compile
         run_rrr_unit_tests
         run_simple_transaction
+        run_client_server_test
         run_simple_paxos
         run_2shard_no_replication
         run_2shard_no_replication_erpc
