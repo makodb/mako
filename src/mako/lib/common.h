@@ -186,6 +186,16 @@ namespace mako
     const uint8_t clientPutReqType = 23;
     const uint8_t clientGetReqType = 24;
     const uint8_t clientDeleteReqType = 25;
+    const uint8_t clientServerBusyType = 26;  // Server busy rejection response
+
+    // Maximum message length for server busy response
+    const size_t max_busy_message_length = 64;
+
+    // Server busy response (sent when all workers are occupied)
+    struct client_server_busy_response_t {
+        uint8_t status;     // Always ErrorCode::SERVER_BUSY
+        char message[max_busy_message_length];  // Human-readable message
+    };
 
     const size_t max_key_length = 64;
 #if defined(MEGA_BENCHMARK)
@@ -454,6 +464,7 @@ namespace mako
         static const int TIMEOUT = 1;
         static const int ERROR = 2;
         static const int ABORT = 3;
+        static const int SERVER_BUSY = 4;  // All workers occupied
     };
 
     using resp_continuation_t =

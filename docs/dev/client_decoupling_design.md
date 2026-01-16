@@ -592,8 +592,98 @@ std::atomic<uint64_t> server_txn_counter_{0};  // Unique server-side txn ID gene
 ./ci/ci.sh simpleTransaction
 ```
 
+## Known Limitations
+
+### Critical: Transaction Isolation Not Guaranteed
+
+**The current implementation does NOT provide transaction isolation for concurrent clients.**
+
+#### Why This Matters
+
+In the original colocated model:
+- Client and server run in the same process/thread
+- Operations are synchronous - one transaction completes before the next
+- `scoped_db_thread_ctx` establishes proper transaction boundaries
+- Mako's OCC/2PL mechanisms provide isolation automatically
+
+In the decoupled model:
+- Multiple TCP clients can connect simultaneously
+- Each client sends independent RPC requests
+- The server handlers (`HandleClientPutRequest`, etc.) call `shard_put()/shard_get()` directly
+- **No transaction context per client**, no isolation guarantees
+
+#### What Can Happen
+
+```
+Timeline showing interleaved operations from two clients:
+
+Time    Client A                    Client B
+────    ───────────────────────     ───────────────────────
+t1      BeginTxn (txn_A)
+t2                                  BeginTxn (txn_B)
+t3      Put(k1, "valueA")
+t4                                  Put(k1, "valueB")  ← Overwrites A!
+t5      Put(k2, "dataA")
+t6                                  Commit (txn_B)    ← B commits first
+t7      Commit (txn_A)
+t8      Get(k1) returns "valueB"    ← Lost update!
+```
+
+**Result**: Client A's write to `k1` was silently lost.
+
+#### What's Missing for True ACID
+
+| ACID Property | Current Status | What's Needed |
+|--------------|----------------|---------------|
+| **Atomicity** | ❌ Partial | Write buffering until commit, rollback on abort |
+| **Consistency** | ❌ Not enforced | Transaction boundaries per client |
+| **Isolation** | ❌ None | OCC validation or 2PL lock acquisition |
+| **Durability** | ✅ Via Paxos/Raft | (Inherited from existing replication) |
+
+#### How to Fix (Future Work)
+
+1. **Per-client transaction context**:
+   ```cpp
+   std::unordered_map<uint64_t, TransactionContext*> client_txn_contexts_;
+   ```
+
+2. **Integrate with scoped_db_thread_ctx**:
+   ```cpp
+   void HandleClientPutRequest(...) {
+       auto* ctx = GetTxnContext(txn_id);
+       scoped_db_thread_ctx scope(db, ctx);  // Bind to transaction
+       // Now operations are tracked
+   }
+   ```
+
+3. **OCC validation at commit time**:
+   ```cpp
+   void HandleClientCommitRequest(...) {
+       auto* ctx = GetTxnContext(txn_id);
+       if (!ctx->ValidateReadSet()) {
+           ctx->Abort();
+           return ABORT;
+       }
+       ctx->ApplyWriteSet();
+       ctx->Commit();
+   }
+   ```
+
+#### Safe Use Cases for Current Implementation
+
+- ✅ **Single client** at a time (serialize access externally)
+- ✅ **Read-only workloads** (no write conflicts possible)
+- ✅ **Testing/demonstration** of RPC infrastructure
+- ✅ **Building block** for future full transaction support
+
+**NOT safe for:**
+- ❌ Multiple concurrent writers
+- ❌ Production ACID requirements
+- ❌ Distributed transactions across shards
+
 ## References
 
 - Existing RPC implementation: `src/mako/lib/client.h`
 - Transport backends: `doc/transport_backends.md`
 - Architecture overview: `doc/architecture.md`
+- Implementation plan with detailed notes: `docs/dev/client_rpc_implementation_plan.md`

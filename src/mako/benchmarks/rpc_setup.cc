@@ -290,8 +290,12 @@ bool mako::setup_client_tcp_server(int port)
     return false;
   }
 
-  // Create and start the TCP server
-  g_client_tcp_server = new ClientTcpServer(port);
+  // Get configuration for worker pool size
+  auto& cfg = BenchmarkConfig::getInstance();
+  size_t max_clients = cfg.getNthreads();  // One client per worker thread
+
+  // Create and start the TCP server with worker pool
+  g_client_tcp_server = new ClientTcpServer(port, max_clients);
   g_client_tcp_server->SetReceiver(receiver);
 
   if (!g_client_tcp_server->Start()) {
@@ -301,7 +305,8 @@ bool mako::setup_client_tcp_server(int port)
     return false;
   }
 
-  std::cerr << "[CLIENT_TCP] Server started on port " << port << std::endl;
+  std::cerr << "[CLIENT_TCP] Server started on port " << port
+            << " (max " << max_clients << " concurrent clients)" << std::endl;
   return true;
 }
 

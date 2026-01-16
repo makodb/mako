@@ -19,6 +19,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Goal: I currently coloate all client and transaction execution code, I want to decouple a client from transaction execution, so that I can deploy client on different servers.
     - Analysis: Task exceeds 500 LOC (~600-750 LOC total). Breaking down into subtasks:
     - Implementation complete! All 5 subtasks done. Note: Full RPC integration uses stub implementations.
+    - [x] *high* Support multiple clients: refer to `NOT suitable for:` in `docs/dev/client_rpc_implementation_plan.md` [26:01:16, 17:45]
+      - First, we have multiple shards and each shard has mulitple worker threads running, so at least, we can accept # of worker * # of shards clients at a time.
+      - Second, you can reject a new client request, and return a message with message like "all servers are occupied, please run it later" etc
+      - Implementation complete! Worker pool pattern for concurrent client handling:
+        - Added WorkerSlot struct with atomic acquire/release for thread-safe slot management
+        - ClientTcpServer now supports configurable max_clients (= nthreads per shard)
+        - When all workers busy, rejects new clients with SERVER_BUSY error and message
+        - Added clientServerBusyType (26) and client_server_busy_response_t to common.h
+        - Plan file: docs/dev/multi_client_support_plan.md
     - [x] *high* Implement full-fledged features: refer to `Current Limitations` in `docs/dev/client_decoupling_design.md` [26:01:16, 15:10]
       - Note: Try to reuse existing code as much as possible; don't reinvent only if needed
       - Implementation complete! Full TCP-based client-server RPC communication:

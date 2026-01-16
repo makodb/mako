@@ -125,3 +125,125 @@ All new code must follow RustyCpp guidelines:
 1. **Socket errors**: Add proper error handling and connection retry
 2. **Timeout**: Add configurable timeout for RPC calls
 3. **Thread safety**: Use mutex for transaction state map
+
+---
+
+## Implementation Notes (Post-Implementation Update)
+
+### What Was Implemented
+
+The implementation provides a basic client-server RPC infrastructure:
+
+1. **Server-Side** (`src/mako/lib/server.cc`):
+   - 6 handlers for message types 20-25 (BeginTxn, Commit, Rollback, Put, Get, Delete)
+   - Transaction ID tracking in `client_transactions_` map with mutex protection
+   - `ClientTcpServer` class in `lib/client_tcp_server.h` for accepting TCP connections
+
+2. **Client-Side** (`src/mako/remote_db.hh`):
+   - TCP socket connection to server
+   - Synchronous request-response RPC calls
+   - `RemoteDB` and `RemoteTable` classes mirroring local `DB` interface
+
+3. **Integration** (`examples/makoServer.cc`):
+   - Server starts `ClientTcpServer` on port 31000+shardIdx
+   - Cleanup on shutdown
+
+### Critical Limitation: Transaction Isolation
+
+**Problem Statement:**
+
+In the original colocated model:
+- Client and server share the same process/thread
+- Operations are synchronous - one transaction completes before the next starts
+- `scoped_db_thread_ctx` ensures proper transaction boundaries
+- Mako's OCC/2PL provides isolation automatically
+
+In the current decoupled model:
+- Multiple TCP clients can connect simultaneously
+- Each client sends independent requests
+- **The current implementation does NOT provide true transaction isolation**
+
+**Current Behavior:**
+
+```
+Client A: BeginTxn → Put(k1, v1) → Put(k2, v2) → Commit
+Client B: BeginTxn → Put(k1, v3) →            → Commit
+
+Interleaved execution may result in:
+  Put(k1, v1) [A]
+  Put(k1, v3) [B]  ← Overwrites A's write!
+  Put(k2, v2) [A]
+  Commit [B]
+  Commit [A]
+```
+
+**Root Cause:**
+
+The handlers call `shard_put()` / `shard_get()` directly without:
+1. Establishing a proper transaction context per client
+2. Acquiring locks or versioning for OCC
+3. Integrating with Mako's existing transaction coordinator
+
+**What's Missing for True Transaction Support:**
+
+```cpp
+// Current (No Isolation):
+void HandleClientPutRequest(...) {
+    // Just verifies txn_id exists in map
+    it->second->shard_put(key, value);  // Direct call, no isolation
+}
+
+// Required (With Isolation):
+void HandleClientPutRequest(...) {
+    // 1. Get transaction context for this client
+    auto* txn_ctx = GetOrCreateTxnContext(txn_id);
+
+    // 2. Execute within transaction boundary
+    scoped_db_thread_ctx ctx(db, txn_ctx);  // Bind to transaction
+
+    // 3. OCC: Record read/write set
+    txn_ctx->AddToWriteSet(table_id, key, value);
+
+    // 4. Actually perform the write (may be buffered until commit)
+    it->second->shard_put(key, value);
+}
+
+void HandleClientCommitRequest(...) {
+    auto* txn_ctx = GetTxnContext(txn_id);
+
+    // OCC validation: Check for conflicts with concurrent transactions
+    if (!txn_ctx->ValidateReadSet()) {
+        txn_ctx->Abort();
+        return ABORT;
+    }
+
+    // Atomically apply write set
+    txn_ctx->ApplyWriteSet();
+    txn_ctx->Commit();
+}
+```
+
+### Recommended Next Steps
+
+To achieve true transaction isolation in the decoupled model:
+
+| Priority | Task | Complexity |
+|----------|------|------------|
+| **High** | Per-client transaction context management | Medium (~200 LOC) |
+| **High** | Integrate with existing `scoped_db_thread_ctx` | Medium (~150 LOC) |
+| **Medium** | Read/write set tracking for OCC validation | High (~300 LOC) |
+| **Medium** | Proper commit protocol with conflict detection | High (~250 LOC) |
+| **Low** | Multi-shard transaction coordination (2PC) | Very High (~500+ LOC) |
+
+### Current Suitable Use Cases
+
+The current implementation is suitable for:
+- ✅ Single-client scenarios (one client at a time)
+- ✅ Read-only workloads (no write conflicts)
+- ✅ Demonstration and testing of RPC infrastructure
+- ✅ Building blocks for future full transaction support
+
+**NOT suitable for:**
+- ❌ Multi-client concurrent writes
+- ❌ Production workloads requiring ACID guarantees
+- ❌ Distributed transactions across shards
