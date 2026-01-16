@@ -158,6 +158,14 @@ int main(int argc, char **argv) {
         }
         mako::setup_helper(db, std::ref(open_tables));
 
+        // Start TCP server for RemoteDB client connections
+        int client_port = 31000 + shardIdx;  // Different port per shard
+        if (mako::setup_client_tcp_server(client_port)) {
+            printf("Client TCP server started on port %d\n", client_port);
+        } else {
+            printf("Warning: Failed to start client TCP server\n");
+        }
+
         printf("RPC server started, waiting for client connections...\n");
     } else {
         printf("Running as %s, waiting for replication data...\n", paxos_proc_name.c_str());
@@ -173,8 +181,9 @@ int main(int argc, char **argv) {
 
     printf("\nShutting down server...\n");
 
-    // Cleanup: stop helper and eRPC server threads
+    // Cleanup: stop client TCP server, helper and eRPC server threads
     if (benchConfig.getLeaderConfig()) {
+        mako::stop_client_tcp_server();
         mako::stop_erpc_server();
     }
 

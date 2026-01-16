@@ -37,6 +37,16 @@ void stop_erpc_server();
 // Initialize per thread
 void initialize_per_thread(abstract_db *db) ;
 
+// Start TCP server for remote client connections.
+// The TCP server listens on the specified port and routes client API
+// requests (BeginTxn, Commit, Put, Get, etc.) to the ShardReceiver handlers.
+// @param port - TCP port to listen on (default 31000)
+// @return true if started successfully
+bool setup_client_tcp_server(int port = 31000);
+
+// Stop the client TCP server.
+void stop_client_tcp_server();
+
 } // namespace mako
 
 #endif // MAKO_BENCHMARKS_RPC_SETUP_H

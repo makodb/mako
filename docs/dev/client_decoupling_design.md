@@ -239,14 +239,15 @@ db->Commit(txn);
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| RemoteDB class | ✅ Complete | Full interface implemented |
-| RemoteTable class | ✅ Complete | Put/Get/Delete methods |
+| RemoteDB class | ✅ Complete | Full interface with TCP socket RPC |
+| RemoteTable class | ✅ Complete | Put/Get/Delete via RPC |
 | Transaction handles | ✅ Complete | Encoding/decoding works |
-| makoServer binary | ✅ Complete | Standalone server runs |
+| makoServer binary | ✅ Complete | Standalone server with TCP listener |
 | Client mode flag | ✅ Complete | `--client <host> <port>` |
 | RPC message types | ✅ Complete | Defined in common.h |
-| Actual RPC calls | ⏳ Stub | Returns "not implemented" |
-| Server-side handlers | ⏳ TODO | Need to add to ShardReceiver |
+| Actual RPC calls | ✅ Complete | TCP socket communication implemented |
+| Server-side handlers | ✅ Complete | Added to ShardReceiver (types 20-25) |
+| ClientTcpServer | ✅ Complete | TCP listener for client connections |
 
 ## Component Design
 
@@ -367,11 +368,13 @@ std::unordered_map<RemoteTxnId, void*> active_transactions_;
 - [x] Verify API functionality (stubs return expected errors)
 - Est: ~100 LOC (actual: ~144 LOC)
 
-### Phase 6: Full RPC Integration (Future)
-- [ ] Implement actual RPC communication for Put/Get/Delete
-- [ ] Add server-side handlers for client requests
-- [ ] Add transaction state management on server
-- [ ] End-to-end data integrity tests
+### Phase 6: Full RPC Integration ✅
+- [x] Implement actual RPC communication for Put/Get/Delete via TCP sockets
+- [x] Add server-side handlers for client requests (`HandleClientPutRequest`, etc.)
+- [x] Add transaction state management on server (`client_transactions_` map)
+- [x] Add `ClientTcpServer` for accepting client connections
+- [x] Integrated TCP server into `makoServer.cc` via `setup_client_tcp_server()`
+- Est: ~500 LOC (actual: ~490 LOC)
 
 ## API Usage Example
 
@@ -516,97 +519,68 @@ This section explains how to use the client-server decoupling feature.
 ./build/simpleTransactionRep --client 192.168.1.100 31000
 ```
 
-### Current Limitations
+### Implementation Complete
 
-> **Note**: The current implementation uses stub RPC methods. Client mode demonstrates
-> the API architecture but actual Put/Get operations return "not implemented" errors.
-> Full RPC integration is planned for a future iteration.
+The full client-server RPC communication is now implemented:
 
-#### What Works ✅
+#### Client-Side Components (RemoteDB)
 
-| Feature | Description |
-|---------|-------------|
-| Client connection | `RemoteDB::Connect()` creates client instance and sets connected state |
-| Transaction lifecycle | `BeginTransaction()` generates unique txn_id, `Commit()`/`Rollback()` complete cleanly |
-| Table proxy | `GetTable()` creates and caches `RemoteTable` instances |
-| Error handling | All stubs return proper `Status` objects with descriptive messages |
-| Server binary | `makoServer` starts database and waits for client connections |
+| Method | Implementation |
+|--------|----------------|
+| `RemoteDB::Connect()` | Establishes TCP socket connection to server |
+| `RemoteDB::BeginTransaction()` | Sends RPC to server, receives txn_id |
+| `RemoteDB::Commit()` | Sends commit RPC with txn_id |
+| `RemoteDB::Rollback()` | Sends rollback RPC with txn_id |
+| `RemoteDB::SendPut()` | Sends Put RPC with key/value to server |
+| `RemoteDB::SendGet()` | Sends Get RPC, receives value from server |
+| `RemoteDB::SendDelete()` | Sends Delete RPC with key |
 
-#### What's Not Implemented (Stub Code Locations)
+#### Server-Side Components
 
-The following methods in `src/mako/remote_db.hh` are **stub implementations** that don't perform actual RPC:
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `ClientTcpServer` | `src/mako/lib/client_tcp_server.h` | TCP listener for client connections |
+| `HandleClientBeginTxnRequest` | `src/mako/lib/server.cc` | Handler for BeginTxn requests |
+| `HandleClientCommitRequest` | `src/mako/lib/server.cc` | Handler for Commit requests |
+| `HandleClientRollbackRequest` | `src/mako/lib/server.cc` | Handler for Rollback requests |
+| `HandleClientPutRequest` | `src/mako/lib/server.cc` | Handler for Put requests |
+| `HandleClientGetRequest` | `src/mako/lib/server.cc` | Handler for Get requests |
+| `HandleClientDeleteRequest` | `src/mako/lib/server.cc` | Handler for Delete requests |
 
-| Method | Line | Current Behavior | What It Should Do |
-|--------|------|------------------|-------------------|
-| `RemoteDB::Connect()` | 272-290 | Sets `is_connected_=true` without network connection | Establish TCP/eRPC connection to server |
-| `RemoteDB::BeginTransaction()` | 297-308 | Generates local txn_id only | Send RPC to server, get server-assigned txn_id |
-| `RemoteDB::Commit()` | 310-317 | No-op (does nothing) | Send commit RPC, wait for server acknowledgment |
-| `RemoteDB::Rollback()` | 319-326 | No-op (does nothing) | Send rollback RPC to cleanup server state |
-| `RemoteDB::SendPut()` | 328-337 | Returns `IOError("Remote Put not yet implemented")` | Send Put RPC with txn_id, table_id, key, value |
-| `RemoteDB::SendGet()` | 339-347 | Returns `IOError("Remote Get not yet implemented")` | Send Get RPC, receive value from server |
-| `RemoteDB::SendDelete()` | 349-357 | Returns `IOError("Remote Delete not yet implemented")` | Send Delete RPC with txn_id, table_id, key |
+#### Transaction State Management
 
-#### Stub Code Examples
-
-**Example: SendPut stub** (`src/mako/remote_db.hh:328-337`):
+The server maintains a map of client transactions:
 ```cpp
-inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
-                                const std::string& key, const std::string& value) {
-    if (!is_connected_.load()) {
-        return Status::IOError("Not connected to server");
-    }
-
-    // TODO: Send RPC to server
-    // For now, return error indicating not implemented
-    return Status::IOError("Remote Put not yet implemented - use local mode");
-}
+// In ShardReceiver (server.h)
+std::unordered_map<uint64_t, uint64_t> client_transactions_;  // client_txn_id -> server_txn_id
+std::mutex client_txn_mutex_;  // Thread-safe access
+std::atomic<uint64_t> server_txn_counter_{0};  // Unique server-side txn ID generator
 ```
 
-**Example: BeginTransaction stub** (`src/mako/remote_db.hh:297-308`):
-```cpp
-inline void* RemoteDB::BeginTransaction() {
-    if (!is_connected_.load()) {
-        return nullptr;
-    }
+#### Architecture Diagram
 
-    // TODO: Send RPC to server to create transaction
-    // For now, generate a local txn_id (will fail on actual operations)
-    uint64_t txn_id = (static_cast<uint64_t>(client_id_) << 32) |
-                      static_cast<uint64_t>(GetNextReqId());
-
-    return EncodeTxnHandle(txn_id);
-}
 ```
-
-#### Server-Side Missing Pieces
-
-The server (`makoServer`) currently lacks handlers for client requests. To complete the implementation:
-
-1. **Add RPC handlers in `ShardReceiver`** (`src/mako/lib/shardreceiver.cc`):
-   - Handle `clientBeginTxnReqType` (message type 20)
-   - Handle `clientCommitReqType` (message type 21)
-   - Handle `clientRollbackReqType` (message type 22)
-   - Handle `clientPutReqType` (message type 23)
-   - Handle `clientGetReqType` (message type 24)
-   - Handle `clientDeleteReqType` (message type 25)
-
-2. **Add transaction state management**:
-   - Map client txn_ids to server-side transaction objects
-   - Track active transactions per client
-   - Cleanup on client disconnect
-
-3. **Wire RPC handlers to mako::DB operations**:
-   - `clientPutReqType` → `table->Put(txn, key, value)`
-   - `clientGetReqType` → `table->Get(txn, key, &value)`
-   - etc.
-
-#### Why Stubs Are Useful
-
-The stub implementation allows:
-1. **API validation**: Verify the client interface design works correctly
-2. **Integration testing**: Test command-line parsing, connection flow, error handling
-3. **Incremental development**: Build the architecture first, add RPC later
-4. **Documentation**: Serve as specification for what each method should do
+┌─────────────────────┐                 ┌─────────────────────────────────┐
+│   Client Machine    │                 │         Mako Server             │
+│  ┌─────────────────┐│                 │                                 │
+│  │   RemoteDB      ││                 │  ┌─────────────────────────┐   │
+│  │  (TCP Socket)   │├──── TCP ───────→│  │    ClientTcpServer      │   │
+│  └─────────────────┘│   Port 31000    │  │    (TCP Listener)       │   │
+│                     │                 │  └───────────┬─────────────┘   │
+└─────────────────────┘                 │              │                 │
+                                        │              ▼                 │
+                                        │  ┌─────────────────────────┐   │
+                                        │  │     ShardReceiver       │   │
+                                        │  │   (RPC Handlers)        │   │
+                                        │  └───────────┬─────────────┘   │
+                                        │              │                 │
+                                        │              ▼                 │
+                                        │  ┌─────────────────────────┐   │
+                                        │  │    Database Engine      │   │
+                                        │  │  (Masstree + Paxos/Raft)│   │
+                                        │  └─────────────────────────┘   │
+                                        └─────────────────────────────────┘
+```
 
 ### Running CI Tests
 

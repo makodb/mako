@@ -254,3 +254,66 @@ void mako::stop_erpc_server()
   }
   std::cerr << "[STOP_SERVER] All server transports stopped" << std::endl;
 }
+
+// ============================================================================
+// Client TCP Server for RemoteDB connections
+// ============================================================================
+
+#include "lib/client_tcp_server.h"
+
+namespace {
+// Global pointer to client TCP server (singleton)
+mako::ClientTcpServer* g_client_tcp_server = nullptr;
+std::mutex g_client_tcp_server_mu;
+}  // anonymous namespace
+
+bool mako::setup_client_tcp_server(int port)
+{
+  std::lock_guard<std::mutex> lock(g_client_tcp_server_mu);
+
+  if (g_client_tcp_server) {
+    std::cerr << "[CLIENT_TCP] Server already running" << std::endl;
+    return false;
+  }
+
+  // Get the first available ShardReceiver from helper servers
+  ShardReceiver* receiver = nullptr;
+  {
+    std::lock_guard<std::mutex> helper_lock(g_helper_mu);
+    if (!g_helper_servers.empty()) {
+      receiver = g_helper_servers[0]->GetReceiver();
+    }
+  }
+
+  if (!receiver) {
+    std::cerr << "[CLIENT_TCP] No ShardReceiver available - call setup_helper() first" << std::endl;
+    return false;
+  }
+
+  // Create and start the TCP server
+  g_client_tcp_server = new ClientTcpServer(port);
+  g_client_tcp_server->SetReceiver(receiver);
+
+  if (!g_client_tcp_server->Start()) {
+    std::cerr << "[CLIENT_TCP] Failed to start server on port " << port << std::endl;
+    delete g_client_tcp_server;
+    g_client_tcp_server = nullptr;
+    return false;
+  }
+
+  std::cerr << "[CLIENT_TCP] Server started on port " << port << std::endl;
+  return true;
+}
+
+void mako::stop_client_tcp_server()
+{
+  std::lock_guard<std::mutex> lock(g_client_tcp_server_mu);
+
+  if (g_client_tcp_server) {
+    std::cerr << "[CLIENT_TCP] Stopping server..." << std::endl;
+    g_client_tcp_server->Stop();
+    delete g_client_tcp_server;
+    g_client_tcp_server = nullptr;
+    std::cerr << "[CLIENT_TCP] Server stopped" << std::endl;
+  }
+}

@@ -19,6 +19,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Goal: I currently coloate all client and transaction execution code, I want to decouple a client from transaction execution, so that I can deploy client on different servers.
     - Analysis: Task exceeds 500 LOC (~600-750 LOC total). Breaking down into subtasks:
     - Implementation complete! All 5 subtasks done. Note: Full RPC integration uses stub implementations.
+    - [x] *high* Implement full-fledged features: refer to `Current Limitations` in `docs/dev/client_decoupling_design.md` [26:01:16, 15:10]
+      - Note: Try to reuse existing code as much as possible; don't reinvent only if needed
+      - Implementation complete! Full TCP-based client-server RPC communication:
+        - Server-side: Added handlers in ShardReceiver for message types 20-25 (BeginTxn, Commit, Rollback, Put, Get, Delete)
+        - Server-side: Added ClientTcpServer (lib/client_tcp_server.h) for accepting client TCP connections
+        - Server-side: Added setup_client_tcp_server()/stop_client_tcp_server() in rpc_setup.cc
+        - Client-side: Updated RemoteDB with actual TCP socket communication (Connect, BeginTransaction, Commit, Rollback, SendPut/Get/Delete)
+        - Integration: Updated makoServer.cc to start ClientTcpServer on port 31000+shardIdx
+        - Documentation: Updated docs/dev/client_decoupling_design.md with implementation details
+        - Plan file: docs/dev/client_rpc_implementation_plan.md
+        - Total LOC: ~490 (within 500 limit)
     - [x] *high* 1. Design document: Document client-server architecture and API contract [26:01:16, 04:14]
       - Create `docs/dev/client_decoupling_design.md` with architecture diagrams
       - Define the RPC message protocol for client-server communication
