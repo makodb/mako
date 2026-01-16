@@ -17,6 +17,7 @@ typedef std::pair<std::string, std::string> kv_pair;
 // Color codes for terminal output
 #define GREEN "\033[32m"
 #define RED "\033[31m"
+#define YELLOW "\033[33m"
 #define RESET "\033[0m"
 
 // Verification macros with colored output

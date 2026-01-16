@@ -177,7 +177,15 @@ namespace mako
     const uint8_t controlReqType = 12;
     // reserved for watermark exchange between follower data center
     const uint8_t watermarkReqType = 13;
-    
+
+    // --------------------------- Remote client API (for decoupled clients)
+    // These message types enable clients to run on different servers
+    const uint8_t clientBeginTxnReqType = 20;
+    const uint8_t clientCommitReqType = 21;
+    const uint8_t clientRollbackReqType = 22;
+    const uint8_t clientPutReqType = 23;
+    const uint8_t clientGetReqType = 24;
+    const uint8_t clientDeleteReqType = 25;
 
     const size_t max_key_length = 64;
 #if defined(MEGA_BENCHMARK)
@@ -385,6 +393,58 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+    };
+
+    // --------------------------- Remote client API structures
+    // Used for decoupled client-server communication
+
+    // Request to begin a new transaction on the server
+    struct client_begin_txn_request_t
+    {
+        uint32_t req_nr;
+        uint64_t client_id;         // Unique client identifier
+    };
+
+    // Response to begin transaction - contains server-assigned txn_id
+    struct client_begin_txn_response_t
+    {
+        uint32_t req_nr;
+        uint64_t txn_id;            // Server-assigned transaction ID
+        int status;
+    };
+
+    // Request for Put/Get/Delete operations
+    struct client_kv_request_t
+    {
+        uint32_t req_nr;
+        uint64_t txn_id;            // Transaction ID from begin_txn
+        uint16_t table_id;          // Target table
+        uint16_t klen;              // Key length
+        uint16_t vlen;              // Value length (0 for Get/Delete)
+        char key_and_value[max_key_length + max_value_length];
+    };
+
+    // Response for Put/Get/Delete operations
+    struct client_kv_response_t
+    {
+        uint32_t req_nr;
+        uint16_t vlen;              // Value length (for Get response)
+        int status;
+        char value[max_value_length];
+    };
+
+    // Request to commit a transaction
+    struct client_commit_request_t
+    {
+        uint32_t req_nr;
+        uint64_t txn_id;            // Transaction ID to commit
+    };
+
+    // Response to commit/rollback
+    struct client_commit_response_t
+    {
+        uint32_t req_nr;
+        int status;
     };
 
     class ErrorCode

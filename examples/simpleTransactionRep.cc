@@ -1,14 +1,20 @@
 //
 // Simple Transaction Tests for Mako Database
 //
+// This program can run in two modes:
+// 1. Server mode (default): Runs as a standalone database server with tests
+// 2. Client mode (--client): Connects to a remote server via RemoteDB
+//
 
 #include <iostream>
 #include <chrono>
 #include <thread>
 #include <vector>
 #include <map>
+#include <cstring>
 #include <mako.hh>
 #include "db.hh"
+#include "remote_db.hh"
 #include "examples/common.h"
 #include "examples/test_verification.h"
 #include "benchmarks/rpc_setup.h"
@@ -859,13 +865,100 @@ bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
     return !failed;
 }
 
+// @safe - Print client mode usage
+static void print_client_usage(const char* program_name) {
+    printf("Client Mode Usage: %s --client <server_host> <server_port>\n", program_name);
+    printf("Example: %s --client localhost 31000\n", program_name);
+}
+
+// @unsafe - Runs client mode, connecting to remote server
+static int run_client_mode(const char* server_host, int server_port) {
+    printf("=== Mako Client Mode ===\n");
+    printf("Connecting to server at %s:%d...\n", server_host, server_port);
+
+    // Create RemoteDB connection options
+    mako::RemoteOptions opts;
+    opts.server_host = server_host;
+    opts.server_port = server_port;
+
+    // Connect to remote server
+    mako::RemoteDB* remote_db = nullptr;
+    mako::Status status = mako::RemoteDB::Connect(opts, &remote_db);
+    if (!status.ok()) {
+        printf(RED "Failed to connect to server: %s" RESET "\n", status.ToString().c_str());
+        return 1;
+    }
+
+    printf(GREEN "Connected to server successfully!" RESET "\n");
+
+    // Get a table proxy
+    mako::RemoteTable* table = remote_db->GetTable("customer_0");
+    printf("Created table proxy: %s (table_id=%d)\n",
+           table->GetName().c_str(), table->GetTableId());
+
+    // Demonstrate transaction API (will return error due to stub implementation)
+    printf("\n--- Testing Remote Transaction API ---\n");
+    void* txn = remote_db->BeginTransaction();
+    if (txn) {
+        printf("BeginTransaction: OK (txn_handle=%p)\n", txn);
+
+        // Try a Put operation (will fail with stub error)
+        std::string test_key = "test_key_001";
+        std::string test_value = mako::Encode("test_value_001");
+        status = table->Put(txn, test_key, test_value);
+        if (!status.ok()) {
+            printf(YELLOW "Put: %s (expected - stub implementation)" RESET "\n",
+                   status.ToString().c_str());
+        } else {
+            printf("Put: OK\n");
+        }
+
+        // Try a Get operation (will fail with stub error)
+        std::string retrieved_value;
+        status = table->Get(txn, test_key, retrieved_value);
+        if (!status.ok()) {
+            printf(YELLOW "Get: %s (expected - stub implementation)" RESET "\n",
+                   status.ToString().c_str());
+        } else {
+            printf("Get: OK, value=%s\n", retrieved_value.c_str());
+        }
+
+        // Commit (will be no-op due to stub)
+        remote_db->Commit(txn);
+        printf("Commit: OK\n");
+    } else {
+        printf(RED "BeginTransaction: Failed" RESET "\n");
+    }
+
+    printf("\n--- Client Mode Summary ---\n");
+    printf("The RemoteDB API is functional. RPC operations return stub errors\n");
+    printf("because the full RPC integration is not yet implemented.\n");
+    printf("This demonstrates the client-server decoupling architecture.\n");
+
+    delete remote_db;
+    return 0;
+}
+
 int main(int argc, char **argv) {
+
+    // Check for client mode flag
+    if (argc >= 2 && strcmp(argv[1], "--client") == 0) {
+        if (argc != 4) {
+            print_client_usage(argv[0]);
+            return 1;
+        }
+        const char* server_host = argv[2];
+        int server_port = std::stoi(argv[3]);
+        return run_client_mode(server_host, server_port);
+    }
 
     // All necessary parameters expected from users
     if (argc < 6 || argc > 7) {
         printf("Usage: %s <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
+        printf("       %s --client <server_host> <server_port>\n", argv[0]);
         printf("Example: %s 2 0 6 localhost 1\n", argv[0]);
         printf("Example with Raft: %s 2 0 6 localhost 1 raft\n", argv[0]);
+        printf("Example client mode: %s --client localhost 31000\n", argv[0]);
         return 1;
     }
 
