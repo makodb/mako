@@ -106,7 +106,10 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Est. ~100 LOC
       - Added: ci/test_client_server.sh integration test script
       - Tests: Client mode, usage help verification, makoServer binary
-    - [ ] *medium* In `test_client_server.sh`, Test 4 skipped. Please verify if this test is not supported; if not supported, remove this test case.
+    - [x] *medium* In `test_client_server.sh`, Test 4 skipped. Please verify if this test is not supported; if not supported, remove this test case. [DONE 2026-01-17, 01:15]
+      - Removed dead code (disabled `if false` block with 80+ lines)
+      - Test 4 not supported in single-shard mode by design: client TCP server requires helper servers which only exist in multi-shard (nshards > 1) deployments
+      - Updated test script with clear documentation pointing to multi-shard tests (shard2Replication, multiShardSingleProcess)
     - [x] *medium* Using existing RPC framework (see `rpc_setup.cc`) instead of reinventing it via raw socket. Expected results: avoid using any raw socket invoke in `remote_db.hh`, such as `::write`, `::socket` etc. [DONE 2026-01-17, 00:25]
       - Upstream commit 1886cab7 refactored from raw TCP sockets to RRR RPC framework
       - remote_db.hh now uses rrr::Client, rrr::PollThread, MakoClientProxy
