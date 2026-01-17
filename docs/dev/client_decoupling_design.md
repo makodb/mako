@@ -681,9 +681,22 @@ t8      Get(k1) returns "valueB"    ← Lost update!
 - ❌ Production ACID requirements
 - ❌ Distributed transactions across shards
 
+## Performance Considerations
+
+For detailed performance analysis, evaluation metrics, and deployment recommendations,
+see **[Client-Server Evaluation](client_server_evaluation.md)**.
+
+Key highlights:
+- **Throughput**: ~16,000 ops/sec cluster-wide (2-shard, 6 threads/shard)
+- **Single-client**: ~10,000 ops/sec (localhost TCP)
+- **Scalability**: Up to `nthreads × nshards` concurrent clients
+- **Memory overhead**: ~65KB per connected client
+- **Rejection handling**: Clients receive SERVER_BUSY when at capacity
+
 ## References
 
 - Existing RPC implementation: `src/mako/lib/client.h`
 - Transport backends: `doc/transport_backends.md`
 - Architecture overview: `doc/architecture.md`
 - Implementation plan with detailed notes: `docs/dev/client_rpc_implementation_plan.md`
+- Performance evaluation: `docs/dev/client_server_evaluation.md`

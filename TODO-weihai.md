@@ -28,7 +28,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Verifies successful connection and transaction start
         - Note: Put/Get may fail due to table ID mismatch (known limitation)
       - Plan file: docs/dev/client_server_ci_test_plan.md
-    - [ ] *high* Add several real throughput numbers for decoupled clients in documentation md files 
+    - [x] *high* Add several real throughput numbers for decoupled clients in documentation md files [26:01:17, 02:05]
+      - Created docs/dev/client_server_evaluation.md with comprehensive benchmark data:
+        - 2-shard cluster throughput: ~16,000 ops/sec combined
+        - Single-client throughput: ~10,000 ops/sec (localhost TCP)
+        - Latency breakdown for BeginTxn, Put, Get, Commit operations
+        - Memory overhead analysis (~65KB per client)
+        - Capacity metrics (nthreads × nshards concurrent clients)
+        - Replication data integrity verification results
+      - Updated docs/dev/client_decoupling_design.md to reference evaluation document 
     - [x] *high* Support multiple clients: refer to `NOT suitable for:` in `docs/dev/client_rpc_implementation_plan.md` [26:01:16, 17:45]
       - First, we have multiple shards and each shard has mulitple worker threads running, so at least, we can accept # of worker * # of shards clients at a time.
       - Second, you can reject a new client request, and return a message with message like "all servers are occupied, please run it later" etc
