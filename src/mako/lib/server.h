@@ -67,6 +67,14 @@ namespace mako
         void HandleClientGetRequest(char *reqBuf, char *respBuf, size_t &respLen);
         void HandleClientDeleteRequest(char *reqBuf, char *respBuf, size_t &respLen);
 
+        // @safe - Get open tables mapping for client service
+        const map<int, abstract_ordered_index *>& GetOpenTables() const {
+            return open_tables_table_id;
+        }
+
+        // @safe - Get database reference
+        abstract_db* GetDb() const { return db; }
+
     protected:
         inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 

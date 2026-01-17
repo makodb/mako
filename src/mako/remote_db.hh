@@ -36,7 +36,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/option.hpp>
 #include "rrr/rpc/client.hpp"
-#include "rrr/rpc/pollthread.hpp"
+#include "rrr/reactor/reactor.h"
 #include <string>
 #include <atomic>
 #include <unordered_map>

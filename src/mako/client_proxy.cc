@@ -1,6 +1,5 @@
 // @safe - RRR RPC client proxy implementation for Mako client API
 #include "client_proxy.h"
-#include "rrr/utils/logger.h"
 
 namespace mako {
 

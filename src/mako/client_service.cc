@@ -2,7 +2,6 @@
 #include "client_service.h"
 #include "lib/common.h"
 #include "rrr/misc/marshal.hpp"
-#include "rrr/utils/logger.h"
 
 namespace mako {
 
@@ -141,8 +140,8 @@ void MakoClientService::HandlePut(rusty::Box<rrr::Request> req,
     rrr::i32 status = ErrorCode::SUCCESS;
 
     // Get table and perform Put using shard_put (same as ShardReceiver)
-    auto it = receiver_->open_tables_table_id.find(table_id);
-    if (it == receiver_->open_tables_table_id.end() || it->second == nullptr) {
+    auto it = receiver_->GetOpenTables().find(table_id);
+    if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
         status = ErrorCode::ERROR;
         Log_warn("MakoClientService::HandlePut: table %d not found", table_id);
     } else {
@@ -181,8 +180,8 @@ void MakoClientService::HandleGet(rusty::Box<rrr::Request> req,
     std::string value;
 
     // Get table and perform Get using shard_get (same as ShardReceiver)
-    auto it = receiver_->open_tables_table_id.find(table_id);
-    if (it == receiver_->open_tables_table_id.end() || it->second == nullptr) {
+    auto it = receiver_->GetOpenTables().find(table_id);
+    if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
         status = ErrorCode::ERROR;
         Log_warn("MakoClientService::HandleGet: table %d not found", table_id);
     } else {
@@ -224,8 +223,8 @@ void MakoClientService::HandleDelete(rusty::Box<rrr::Request> req,
     rrr::i32 status = ErrorCode::SUCCESS;
 
     // Get table and perform Delete using shard_put with empty value (same as ShardReceiver)
-    auto it = receiver_->open_tables_table_id.find(table_id);
-    if (it == receiver_->open_tables_table_id.end() || it->second == nullptr) {
+    auto it = receiver_->GetOpenTables().find(table_id);
+    if (it == receiver_->GetOpenTables().end() || it->second == nullptr) {
         status = ErrorCode::ERROR;
         Log_warn("MakoClientService::HandleDelete: table %d not found", table_id);
     } else {

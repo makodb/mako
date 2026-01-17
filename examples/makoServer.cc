@@ -25,8 +25,6 @@
 #include "benchmarks/rpc_setup.h"
 #include "../src/mako/benchmarks/mbta_sharded_ordered_index.hh"
 #include "deptran/replication_helper.h"
-#include "rrr/rpc/server.hpp"
-#include "client_service.h"
 
 using namespace std;
 using namespace mako;
@@ -145,10 +143,6 @@ int main(int argc, char **argv) {
     abstract_db* db = mako_db->GetDB();
     auto& benchConfig = BenchmarkConfig::getInstance();
 
-    // RPC server for client API (using RRR RPC framework)
-    rusty::Option<rusty::Arc<rrr::Server>> client_rpc_server = rusty::None;
-    rusty::Option<rusty::Arc<rrr::PollThread>> client_poll_thread = rusty::None;
-
     // Setup RPC server and helper threads (leader nodes only)
     if (benchConfig.getLeaderConfig()) {
         // Start eRPC server for handling client requests
@@ -164,33 +158,15 @@ int main(int argc, char **argv) {
         }
         mako::setup_helper(db, std::ref(open_tables));
 
-        // Start RRR RPC server for RemoteDB client connections
+        // Start TCP server for RemoteDB client connections
+        // Note: In single-shard mode (nshards=1), no helper servers are created
+        // so the client TCP server won't start. This is expected - the TCP-based
+        // client interface is designed for multi-shard setups.
         int client_port = 31000 + shardIdx;  // Different port per shard
-        std::string client_addr = "0.0.0.0:" + std::to_string(client_port);
-
-        // Create poll thread for RPC server
-        client_poll_thread = rusty::Some(rrr::PollThread::create());
-
-        // Create RPC server with poll thread
-        auto server = rusty::Arc<rrr::Server>::make(client_poll_thread);
-
-        // Get the ShardReceiver to pass to the service
-        ShardReceiver* receiver = mako::get_shard_receiver();
-        if (receiver) {
-            // Create and register MakoClientService
-            auto client_service = rusty::Box<mako::MakoClientService>::make(receiver);
-            server->reg_service(std::move(client_service));
-
-            // Start the RPC server
-            int ret = server->start(client_addr.c_str());
-            if (ret == 0) {
-                printf("Client RPC server (RRR) started on %s\n", client_addr.c_str());
-                client_rpc_server = rusty::Some(server);
-            } else {
-                printf("Warning: Failed to start client RPC server (error: %d)\n", ret);
-            }
+        if (mako::setup_client_tcp_server(client_port)) {
+            printf("Client TCP server started on port %d\n", client_port);
         } else {
-            printf("Warning: No ShardReceiver available for client RPC service\n");
+            printf("Note: Client TCP server not available (single-shard mode)\n");
         }
 
         printf("RPC server started, waiting for client connections...\n");
@@ -208,12 +184,9 @@ int main(int argc, char **argv) {
 
     printf("\nShutting down server...\n");
 
-    // Cleanup: stop client RPC server, helper and eRPC server threads
+    // Cleanup: stop client TCP server, helper and eRPC server threads
     if (benchConfig.getLeaderConfig()) {
-        // Shutdown RRR RPC server for client connections
-        if (client_rpc_server.is_some()) {
-            client_rpc_server.as_ref().unwrap()->do_shutdown();
-        }
+        mako::stop_client_tcp_server();
         mako::stop_erpc_server();
     }
 

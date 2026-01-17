@@ -44,6 +44,18 @@ void initialize_per_thread(abstract_db *db) ;
 // @return true if started successfully
 bool setup_client_tcp_server(int port = 31000);
 
+// Start TCP server with explicit database and table mappings.
+// Use this overload in single-shard mode where no helper servers exist.
+// @param db - Database handle for transaction processing
+// @param open_tables - Table ID to index mappings
+// @param port - TCP port to listen on (default 31000)
+// @return true if started successfully
+// @unsafe - Creates ShardReceiver that requires external lifetime management
+bool setup_client_tcp_server(
+  abstract_db *db,
+  const std::map<int, abstract_ordered_index *> &open_tables,
+  int port = 31000);
+
 // Stop the client TCP server.
 void stop_client_tcp_server();
 
