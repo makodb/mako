@@ -832,3 +832,21 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC combined reliability tests - interaction between all reliability components
+[[target]]
+name = "rpc_combined_reliability_test"
+type = "executable"
+sources = [
+    "test/rpc_combined_reliability_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
