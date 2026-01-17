@@ -850,3 +850,18 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Transaction timeout tests - timeout constants and shard failure controller, uses gtest
+[[target]]
+name = "test_txn_timeout"
+type = "executable"
+sources = ["test/deptran/txn_timeout_test.cc"]
+includes = [
+    "src",
+    "src/rrr",
+    "src/deptran",
+    "src/mako",
+    "src/mako/benchmarks",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
