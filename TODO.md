@@ -29,7 +29,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Modified: test/rpc_partition_test.cc - added `generate_random_base_port()` function
     - Note: Other RPC tests may have same issue (rpc_chaos_test, rpc_reconnect_integration_test, etc.)
     - Future: Consider creating shared test helper for random port allocation
-  - [x] *high* decouple client: decouple client (`./examples/simpleTransactionRep.cc`) from transaction execution [26:01:16, 04:50]
+  - [ ] *high* decouple client: decouple client (`./examples/simpleTransactionRep.cc`) from transaction execution [26:01:16, 04:50]
     - Goal: I currently coloate all client and transaction execution code, I want to decouple a client from transaction execution, so that I can deploy client on different servers.
     - Analysis: Task exceeds 500 LOC (~600-750 LOC total). Breaking down into subtasks:
     - Implementation complete! All 5 subtasks done. Note: Full RPC integration uses stub implementations.
@@ -106,6 +106,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Est. ~100 LOC
       - Added: ci/test_client_server.sh integration test script
       - Tests: Client mode, usage help verification, makoServer binary
+    - [ ] *medium* Using existing RPC framework (see `rpc_setup.cc`) instead of reinventing it via raw socket. Expected results: avoid using any raw socket invoke in `remote_db.hh`, such as `::write`, `::socket` etc.
+    - [ ] *medium* revise decoupled client implementations (commits between `6a5f8ad0e4b4ec8f06a92300381fba2ba760420d` and `1a049ce36ee68795756754a5a13abf467f07a0e2`) to satisfy rusty safe code.
   - [x] *high* Rocksdb interface: expose rocksdb-like interface to users 
     - Note: refer to `RocksDB_Guide.md` for rocksdb interfaces 
     - Note: expose your interfaces via `./src/mako/db.hh` (you can change other files for sure)
