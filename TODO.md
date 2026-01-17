@@ -29,7 +29,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Modified: test/rpc_partition_test.cc - added `generate_random_base_port()` function
     - Note: Other RPC tests may have same issue (rpc_chaos_test, rpc_reconnect_integration_test, etc.)
     - Future: Consider creating shared test helper for random port allocation
-  - [ ] *high* decouple client: decouple client (`./examples/simpleTransactionRep.cc`) from transaction execution [DONE 2026-01-17, 00:30]
+  - [x] *high* decouple client: decouple client (`./examples/simpleTransactionRep.cc`) from transaction execution [DONE 2026-01-17, 00:30]
     - Goal: I currently coloate all client and transaction execution code, I want to decouple a client from transaction execution, so that I can deploy client on different servers.
     - Analysis: Task exceeds 500 LOC (~600-750 LOC total). Breaking down into subtasks:
     - Implementation complete! All 5 subtasks done. Note: Full RPC integration uses stub implementations.
