@@ -34,6 +34,7 @@
 #include "status.hh"
 #include "client_proxy.h"
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
 #include <rusty/option.hpp>
 #include "rrr/rpc/client.hpp"
 #include "rrr/reactor/reactor.h"
@@ -201,13 +202,13 @@ private:
     // RRR RPC client components
     rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_ = rusty::None;
     rusty::Option<rusty::Arc<rrr::Client>> rpc_client_ = rusty::None;
-    std::unique_ptr<MakoClientProxy> proxy_;
+    // @safe - Using rusty::Option<rusty::Box> for proxy ownership
+    rusty::Option<rusty::Box<MakoClientProxy>> proxy_ = rusty::None;
     std::mutex rpc_mutex_;  // Protect RPC operations
 
     // Table cache (name -> RemoteTable)
-    // Note: Using unique_ptr because rusty::Box doesn't support default construction
-    // required by std::unordered_map. This is acceptable since tables_ is internal state.
-    std::unordered_map<std::string, std::unique_ptr<RemoteTable>> tables_;
+    // @safe - Using rusty::Option<rusty::Box> for table ownership
+    std::unordered_map<std::string, rusty::Option<rusty::Box<RemoteTable>>> tables_;
     std::mutex tables_mutex_;
 
     // Next table ID counter
@@ -257,14 +258,14 @@ inline Status RemoteTable::Delete(void* txn, const std::string& key) {
 inline RemoteTable* RemoteDB::GetTable(const std::string& name) {
     std::lock_guard<std::mutex> lock(tables_mutex_);
     auto it = tables_.find(name);
-    if (it != tables_.end()) {
-        return it->second.get();
+    if (it != tables_.end() && it->second.is_some()) {
+        return it->second.as_ref().unwrap().get();
     }
     // Create new table proxy
     uint16_t table_id = next_table_id_++;
-    auto table = std::make_unique<RemoteTable>(this, name, table_id);
+    auto table = rusty::make_box<RemoteTable>(this, name, table_id);
     RemoteTable* ptr = table.get();
-    tables_[name] = std::move(table);
+    tables_[name] = rusty::Some(std::move(table));
     return ptr;
 }
 
@@ -300,7 +301,7 @@ inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) 
     }
 
     // Create the proxy wrapper
-    db->proxy_ = std::make_unique<MakoClientProxy>(client);
+    db->proxy_ = rusty::Some(rusty::make_box<MakoClientProxy>(client));
 
     db->is_connected_.store(true);
     *dbptr = db;
@@ -311,9 +312,9 @@ inline RemoteDB::~RemoteDB() {
     is_connected_.store(false);
 
     // Close RPC client
-    if (proxy_) {
-        proxy_->close();
-        proxy_.reset();
+    if (proxy_.is_some()) {
+        proxy_.as_mut().unwrap()->close();
+        proxy_ = rusty::None;
     }
 
     // Clear RRR components
@@ -325,14 +326,14 @@ inline RemoteDB::~RemoteDB() {
 
 // @safe - Uses RRR RPC
 inline void* RemoteDB::BeginTransaction() {
-    if (!is_connected_.load() || !proxy_) {
+    if (!is_connected_.load() || proxy_.is_none()) {
         return nullptr;
     }
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     rrr::i64 txn_id = 0;
-    rrr::i32 ret = proxy_->BeginTxn(static_cast<rrr::i64>(client_id_), &txn_id);
+    rrr::i32 ret = proxy_.as_ref().unwrap()->BeginTxn(static_cast<rrr::i64>(client_id_), &txn_id);
 
     if (ret != 0) {
         return nullptr;
@@ -343,40 +344,40 @@ inline void* RemoteDB::BeginTransaction() {
 
 // @safe - Uses RRR RPC
 inline void RemoteDB::Commit(void* txn) {
-    if (!txn || !is_connected_.load() || !proxy_) {
+    if (!txn || !is_connected_.load() || proxy_.is_none()) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     uint64_t txn_id = DecodeTxnHandle(txn);
-    proxy_->Commit(static_cast<rrr::i64>(txn_id));
+    proxy_.as_ref().unwrap()->Commit(static_cast<rrr::i64>(txn_id));
     // Ignore return value for commit (best effort)
 }
 
 // @safe - Uses RRR RPC
 inline void RemoteDB::Rollback(void* txn) {
-    if (!txn || !is_connected_.load() || !proxy_) {
+    if (!txn || !is_connected_.load() || proxy_.is_none()) {
         return;
     }
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     uint64_t txn_id = DecodeTxnHandle(txn);
-    proxy_->Rollback(static_cast<rrr::i64>(txn_id));
+    proxy_.as_ref().unwrap()->Rollback(static_cast<rrr::i64>(txn_id));
     // Ignore return value for rollback (best effort)
 }
 
 // @safe - Uses RRR RPC
 inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
                                 const std::string& key, const std::string& value) {
-    if (!is_connected_.load() || !proxy_) {
+    if (!is_connected_.load() || proxy_.is_none()) {
         return Status::IOError("Not connected to server");
     }
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i32 ret = proxy_->Put(
+    rrr::i32 ret = proxy_.as_ref().unwrap()->Put(
         static_cast<rrr::i64>(txn_id),
         static_cast<rrr::i32>(table_id),
         key,
@@ -393,13 +394,13 @@ inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
 // @safe - Uses RRR RPC
 inline Status RemoteDB::SendGet(uint64_t txn_id, uint16_t table_id,
                                 const std::string& key, std::string& value) {
-    if (!is_connected_.load() || !proxy_) {
+    if (!is_connected_.load() || proxy_.is_none()) {
         return Status::IOError("Not connected to server");
     }
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i32 ret = proxy_->Get(
+    rrr::i32 ret = proxy_.as_ref().unwrap()->Get(
         static_cast<rrr::i64>(txn_id),
         static_cast<rrr::i32>(table_id),
         key,
@@ -416,13 +417,13 @@ inline Status RemoteDB::SendGet(uint64_t txn_id, uint16_t table_id,
 // @safe - Uses RRR RPC
 inline Status RemoteDB::SendDelete(uint64_t txn_id, uint16_t table_id,
                                    const std::string& key) {
-    if (!is_connected_.load() || !proxy_) {
+    if (!is_connected_.load() || proxy_.is_none()) {
         return Status::IOError("Not connected to server");
     }
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i32 ret = proxy_->Delete(
+    rrr::i32 ret = proxy_.as_ref().unwrap()->Delete(
         static_cast<rrr::i64>(txn_id),
         static_cast<rrr::i32>(table_id),
         key

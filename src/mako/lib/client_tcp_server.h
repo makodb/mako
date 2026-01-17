@@ -170,7 +170,11 @@ private:
     std::atomic<bool> stop_requested_{false};
     ShardReceiver* receiver_ = nullptr;
 
-    // Worker pool (using unique_ptr because WorkerSlot is not copyable/movable)
+    // Worker pool - using std::unique_ptr because:
+    // 1. WorkerSlot contains std::thread and atomics which are not copyable
+    // 2. rusty::Box::make() requires the type to be move-constructible
+    // 3. std::make_unique can construct the object in-place without moves
+    // @note: This is an acceptable use of std::unique_ptr per CLAUDE.md guidelines
     size_t max_clients_;
     std::vector<std::unique_ptr<WorkerSlot>> worker_slots_;
     std::mutex slots_mutex_;  // Protects thread join operations
