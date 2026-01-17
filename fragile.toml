@@ -167,7 +167,7 @@ includes = [
     "src/rrr/reactor",
 ]
 deps = ["librrr"]
-libs = ["pthread"]
+libs = ["pthread", "boost_context"]
 
 # Lambda test - uses rrr.hpp, tests std::function performance
 [[target]]

@@ -9,22 +9,23 @@ using namespace rrr;
 using namespace std::chrono;
 
 int main() {
-    // Test basic PollThread creation
-    PollThread* poll_mgr = new PollThread(1);  // Create with 1 thread
-    
-    if (poll_mgr != nullptr) {
+    // Test basic PollThread creation (now uses factory method returning Arc)
+    auto poll_mgr = PollThread::create();
+
+    if (poll_mgr) {
         std::cout << "PollThread created successfully" << std::endl;
-        std::cout << "Number of threads: " << poll_mgr->n_threads_ << std::endl;
+        // Note: n_threads_ member no longer exists in new API design
+        // The new design uses a single worker thread per PollThread
     }
-    
-    // Test basic Reactor creation
+
+    // Test basic Reactor creation (returns Rc)
     auto reactor = Reactor::get_reactor();
-    if (reactor != nullptr) {
+    if (reactor) {
         std::cout << "Reactor created successfully" << std::endl;
     }
-    
-    // Clean up
-    delete poll_mgr;
-    
+
+    // Shutdown the poll thread (Arc handles cleanup)
+    poll_mgr->shutdown();
+
     return 0;
 }
