@@ -904,3 +904,57 @@ includes = [
 deps = ["libmako_core", "librrr"]
 libs = ["pthread", "numa"]
 
+# RPC chaos tests - chaos engineering tests for reliability
+[[target]]
+name = "rpc_chaos_test"
+type = "executable"
+sources = [
+    "test/rpc_chaos_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC partition tests - network partition simulation
+[[target]]
+name = "test_rpc_partition"
+type = "executable"
+sources = [
+    "test/rpc_partition_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC stress crash tests - stress tests for crash recovery
+[[target]]
+name = "rpc_stress_crash_test"
+type = "executable"
+sources = [
+    "test/rpc_stress_crash_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
