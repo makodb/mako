@@ -732,3 +732,49 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC graceful shutdown tests - shutdown phases and draining
+[[target]]
+name = "rpc_graceful_shutdown_test"
+type = "executable"
+sources = ["test/rpc_graceful_shutdown_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC restart detection tests - server instance ID and restart detection
+[[target]]
+name = "rpc_restart_detection_test"
+type = "executable"
+sources = ["test/rpc_restart_detection_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC circuit breaker integration tests - circuit breaker with actual RPC
+[[target]]
+name = "rpc_circuit_breaker_integration_test"
+type = "executable"
+sources = [
+    "test/rpc_circuit_breaker_integration_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
