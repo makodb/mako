@@ -778,3 +778,57 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC reconnect integration tests - reconnection policy with actual RPC
+[[target]]
+name = "rpc_reconnect_integration_test"
+type = "executable"
+sources = [
+    "test/rpc_reconnect_integration_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC error integration tests - structured error handling with actual RPC
+[[target]]
+name = "rpc_error_integration_test"
+type = "executable"
+sources = [
+    "test/rpc_error_integration_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC state integration tests - connection state machine with actual RPC
+[[target]]
+name = "rpc_state_integration_test"
+type = "executable"
+sources = [
+    "test/rpc_state_integration_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
