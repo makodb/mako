@@ -958,3 +958,35 @@ includes = [
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
 
+# bench_future - Future/promise benchmark with RPC
+[[target]]
+name = "bench_future"
+type = "executable"
+sources = ["test/bench_future.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# rpcbench - RPC benchmark (server/client mode)
+[[target]]
+name = "rpcbench"
+type = "executable"
+sources = [
+    "test/rpcbench.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "boost_context"]
+
