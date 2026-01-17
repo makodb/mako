@@ -865,3 +865,13 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Transport backend stress tests - mock-based stress testing, uses gtest
+[[target]]
+name = "stress_transport_backend"
+type = "executable"
+sources = ["test/stress_transport_backend.cc"]
+includes = []
+deps = []
+libs = ["pthread", "gtest", "gtest_main"]
+
