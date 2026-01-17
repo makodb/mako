@@ -613,20 +613,32 @@ deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
 
 # Full RPC server/client tests - requires benchmark_service, uses gtest
-# BLOCKED: JoinHandle<pair> template interaction with std::vector stub fails
-# TODO: Fix vector stub to handle complex templates like JoinHandle<std::pair<int,int>>
-# [[target]]
-# name = "test_rpc"
-# type = "executable"
-# sources = [
-#     "test/test_rpc.cc",
-#     "test/benchmark_service.cc",
-# ]
-# includes = [
-#     "src/rrr",
-#     "src/rrr/rpc",
-#     "test",
-#     "third-party/rusty-cpp/include",
-# ]
-# deps = ["librrr"]
-# libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+[[target]]
+name = "test_rpc"
+type = "executable"
+sources = [
+    "test/test_rpc.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Future API tests - async/await patterns, uses gtest
+[[target]]
+name = "test_future"
+type = "executable"
+sources = ["test/test_future.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
