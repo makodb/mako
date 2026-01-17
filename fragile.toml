@@ -1,0 +1,632 @@
+# Fragile build configuration for Mako project
+# This defines how to build Mako using the Fragile compiler
+
+[project]
+name = "mako"
+version = "0.1.0"
+
+[compiler]
+std = "c++20"
+# Global includes shared by all targets
+includes = [
+    ".",
+    "src",
+    "src/mako",
+    "third-party/rusty-cpp/include",
+    "third-party/erpc/src",
+    "third-party/erpc/src/third-party/asio/include",
+]
+# Global defines
+defines = [
+    "CONFIG_H=\"mako/config/config-perf.h\"",
+    "NDEBUG",
+]
+
+# ============================================================================
+# Libraries
+# ============================================================================
+
+[[target]]
+name = "librrr"
+type = "static_library"
+sources = [
+    "src/rrr/base/basetypes.cpp",
+    "src/rrr/base/debugging.cpp",
+    "src/rrr/base/logging.cpp",
+    "src/rrr/base/misc.cpp",
+    "src/rrr/base/strop.cpp",
+    "src/rrr/base/threading.cpp",
+    "src/rrr/base/unittest.cpp",
+    "src/rrr/misc/alock.cpp",
+    "src/rrr/misc/marshal.cpp",
+    "src/rrr/misc/rand.cpp",
+    "src/rrr/misc/recorder.cpp",
+    "src/rrr/rpc/client.cpp",
+    "src/rrr/rpc/server.cpp",
+    "src/rrr/rpc/utils.cpp",
+    "src/rrr/reactor/epoll_wrapper.cc",
+    "src/rrr/reactor/event.cc",
+    "src/rrr/reactor/fiber_impl.cc",
+    "src/rrr/reactor/quorum_event.cc",
+    "src/rrr/reactor/reactor.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/base",
+    "src/rrr/misc",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+]
+libs = ["pthread"]
+
+[[target]]
+name = "libmako_core"
+type = "static_library"
+sources = [
+    "src/mako/allocator.cc",
+    "src/mako/btree.cc",
+    "src/mako/core.cc",
+    "src/mako/counter.cc",
+    "src/mako/db.cc",
+    # "src/mako/disk.cpp",  # Excluded: contains test main()
+    "src/mako/memory.cc",
+    "src/mako/rcu.cc",
+    "src/mako/silo_runtime.cc",
+    "src/mako/ticker.cc",
+    "src/mako/tuple.cc",
+    "src/mako/varint.cc",
+    # Masstree sources
+    "src/mako/masstree/compiler.cc",
+    "src/mako/masstree/str.cc",
+    "src/mako/masstree/string.cc",
+    "src/mako/masstree/straccum.cc",
+    "src/mako/masstree/json.cc",
+    "src/mako/masstree/kvthread.cc",
+    "src/mako/masstree/masstree_context.cc",
+]
+includes = [
+    "src/mako",
+    # Note: NOT including "src/mako/lib" here to avoid assert.h conflict
+    # If libmako_core sources need lib headers, include as "lib/foo.h"
+]
+deps = ["librrr"]
+
+[[target]]
+name = "libmako_lib"
+type = "static_library"
+sources = [
+    "src/mako/lib/configuration.cc",
+    "src/mako/lib/memory.cc",
+    "src/mako/lib/message.cc",
+    "src/mako/lib/promise.cc",
+    "src/mako/lib/timestamp.cc",
+    "src/mako/lib/transport.cc",
+]
+includes = [
+    # Note: Use "src/mako" NOT "src/mako/lib" to avoid shadowing system <assert.h>
+    # Source files include as "lib/assert.h" which resolves correctly from src/mako
+    ".",
+    "src",
+    "src/mako",
+    "third-party/rusty-cpp/include",
+    # NOT including third-party/erpc/src - lib sources use stub rpc.h instead
+]
+# Don't inherit global includes - this avoids pulling in full eRPC headers
+# which the core lib sources don't need (they only use minimal rpc.h types)
+inherit_includes = false
+deps = ["libmako_core"]
+
+# ============================================================================
+# Executables
+# ============================================================================
+
+[[target]]
+name = "simpleTransaction"
+type = "executable"
+sources = ["examples/simpleTransaction.cc"]
+includes = [
+    "examples",
+]
+deps = ["libmako_lib", "libmako_core", "librrr"]
+libs = ["pthread", "numa"]
+
+[[target]]
+name = "simplePaxos"
+type = "executable"
+sources = ["examples/simplePaxos.cc"]
+includes = [
+    "examples",
+]
+deps = ["libmako_lib", "libmako_core", "librrr"]
+libs = ["pthread", "numa"]
+
+# ============================================================================
+# Test Executables (librrr-only, no libmako_lib dependency)
+# ============================================================================
+
+# Simple reactor test - minimal dependencies, no gtest
+[[target]]
+name = "test_reactor_minimal"
+type = "executable"
+sources = ["test/test_reactor_minimal.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/base",
+    "src/rrr/reactor",
+]
+deps = ["librrr"]
+libs = ["pthread"]
+
+# Lambda test - uses rrr.hpp, tests std::function performance
+[[target]]
+name = "test_lambda"
+type = "executable"
+sources = ["test/test_lambda.cc"]
+includes = [
+    "src/rrr",
+]
+deps = ["librrr"]
+libs = ["pthread"]
+
+# Alock tests - lock primitives, uses gtest
+[[target]]
+name = "test_alock"
+type = "executable"
+sources = ["test/test_alock.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/misc",
+    "src/rrr/base",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# And-event tests - reactor event composition, uses gtest
+[[target]]
+name = "test_and_event"
+type = "executable"
+sources = ["test/test_and_event.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/reactor",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Minimal Fragile test - tests basic rrr functions with no edge cases
+[[target]]
+name = "test_fragile_minimal"
+type = "executable"
+sources = ["test/test_fragile_minimal.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/base",
+]
+deps = ["librrr"]
+libs = ["pthread"]
+
+# Minimal mako_core test - tests varint, counter, without gtest
+[[target]]
+name = "test_mako_core_minimal"
+type = "executable"
+sources = ["test/test_mako_core_minimal.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/base",
+    "src/mako",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread"]
+
+# Fiber/coroutine tests - uses gtest
+[[target]]
+name = "test_fiber"
+type = "executable"
+sources = ["test/fiber_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/reactor",
+    "src/rrr/base",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC error tests - uses gtest
+[[target]]
+name = "test_rpc_errors"
+type = "executable"
+sources = ["test/rpc_errors_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Marshal tests - serialization/deserialization, uses gtest
+[[target]]
+name = "test_marshal"
+type = "executable"
+sources = ["test/test_marshal.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/misc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Config schema tests - configuration serialization, uses gtest
+[[target]]
+name = "test_config_schema"
+type = "executable"
+sources = ["test/config_schema_test.cc"]
+includes = [
+    "src",
+    "src/rrr",
+    "src/rrr/misc",
+    "src/deptran",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Sharding policy tests - range-based sharding, uses gtest
+[[target]]
+name = "test_sharding_policy"
+type = "executable"
+sources = ["test/sharding_policy_test.cc"]
+includes = [
+    "src",
+    "src/rrr",
+    "src/rrr/misc",
+    "src/deptran",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Idempotency tests - RPC idempotency primitives, uses gtest
+[[target]]
+name = "test_idempotency"
+type = "executable"
+sources = ["test/test_idempotency.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Completion tracker tests - request completion tracking, uses gtest
+[[target]]
+name = "test_completion_tracker"
+type = "executable"
+sources = ["test/test_completion_tracker.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Masstree tests - concurrent B-tree index, uses gtest
+[[target]]
+name = "test_masstree"
+type = "executable"
+sources = ["test/test_masstree.cc"]
+includes = [
+    "src",
+    "src/mako",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Masstree internals tests - threadinfo, context, RCU, uses gtest
+[[target]]
+name = "test_masstree_internals"
+type = "executable"
+sources = ["test/test_masstree_internals.cc"]
+includes = [
+    "src",
+    "src/mako",
+    "src/mako/masstree",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Masstree multi-instance tests - isolation stress tests, uses gtest
+[[target]]
+name = "test_masstree_multi_instance"
+type = "executable"
+sources = ["test/test_masstree_multi_instance.cc"]
+includes = [
+    "src",
+    "src/mako",
+    "src/mako/masstree",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Silo varint tests - varint encoding/decoding, uses gtest
+[[target]]
+name = "test_silo_varint"
+type = "executable"
+sources = ["test/test_silo_varint.cc"]
+includes = [
+    "src/mako",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Silo runtime tests - per-site runtime context, uses gtest
+[[target]]
+name = "test_silo_runtime"
+type = "executable"
+sources = ["test/test_silo_runtime.cc"]
+includes = [
+    "src",
+    "src/mako",
+    "src/mako/masstree",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Silo allocator and tuple tests - memory allocator, uses gtest
+# BLOCKED: needs g_proto_version_str from txn.cc
+# [[target]]
+# name = "test_silo_allocator_tuple"
+# type = "executable"
+# sources = ["test/test_silo_allocator_tuple.cc"]
+# includes = [
+#     "src/mako",
+#     "src/rrr",
+# ]
+# deps = ["libmako_core", "librrr"]
+# libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Silo RCU tests - RCU memory management, uses gtest
+[[target]]
+name = "test_silo_rcu_thread"
+type = "executable"
+sources = ["test/test_silo_rcu_thread.cc"]
+includes = [
+    "src/mako",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Silo multi-site stress tests - heavy load multi-site tests, uses gtest
+[[target]]
+name = "test_silo_multi_site_stress"
+type = "executable"
+sources = ["test/test_silo_multi_site_stress.cc"]
+includes = [
+    "src",
+    "src/mako",
+    "src/mako/masstree",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# STO TRcu tests - transactional RCU, uses gtest
+# BLOCKED: TRcu.hh has parsing issues
+# [[target]]
+# name = "test_sto_transaction"
+# type = "executable"
+# sources = ["test/test_sto_transaction.cc"]
+# includes = [
+#     "src/mako",
+#     "src/mako/benchmarks",
+#     "src/rrr",
+# ]
+# deps = ["libmako_core", "librrr"]
+# libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# Rusty-cpp Arc/Mutex thread tests - smart pointer concurrency, uses gtest
+[[target]]
+name = "test_arc_mutex_thread"
+type = "executable"
+sources = ["test/test_arc_mutex_thread.cc"]
+includes = [
+    "src/rrr",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Silo allocator + tuple tests - memory allocation and tuple system, uses gtest
+# Uses libmako_lib for transport/config code paths
+[[target]]
+name = "test_silo_allocator_tuple"
+type = "executable"
+sources = [
+    "test/test_silo_allocator_tuple.cc",
+    "test/test_stubs.cc",  # Provides g_proto_version_str stub
+]
+includes = [
+    "src",
+    "src/mako",
+    "src/mako/masstree",
+    "src/rrr",
+]
+deps = ["libmako_lib", "libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+
+# RPC connection state tests - state machine transitions, uses gtest
+[[target]]
+name = "rpc_connection_state_test"
+type = "executable"
+sources = ["test/rpc_connection_state_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC circuit breaker tests - failure detection, uses gtest
+[[target]]
+name = "rpc_circuit_breaker_test"
+type = "executable"
+sources = ["test/rpc_circuit_breaker_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC reconnect policy tests - backoff/retry strategies, uses gtest
+[[target]]
+name = "rpc_reconnect_policy_test"
+type = "executable"
+sources = ["test/rpc_reconnect_policy_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC request queue tests - request queuing/overflow, uses gtest
+[[target]]
+name = "rpc_request_queue_test"
+type = "executable"
+sources = ["test/rpc_request_queue_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC callbacks tests - callback management, uses gtest
+[[target]]
+name = "rpc_callbacks_test"
+type = "executable"
+sources = ["test/rpc_callbacks_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC heartbeat tests - keep-alive pings, uses gtest
+[[target]]
+name = "rpc_heartbeat_test"
+type = "executable"
+sources = ["test/rpc_heartbeat_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC timeout/retry tests - request options, uses gtest
+[[target]]
+name = "rpc_timeout_retry_test"
+type = "executable"
+sources = ["test/rpc_timeout_retry_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC request buffering tests - queue/overflow strategies, uses gtest
+[[target]]
+name = "rpc_request_buffering_test"
+type = "executable"
+sources = ["test/rpc_request_buffering_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC log storage tests - log entries, uses gtest
+[[target]]
+name = "rpc_log_storage_test"
+type = "executable"
+sources = ["test/rpc_log_storage_test.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/misc",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Reactor timeout race tests - event timing, uses gtest
+[[target]]
+name = "test_timeout_race"
+type = "executable"
+sources = ["test/test_timeout_race.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/reactor",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Reactor core tests - basic reactor functionality, uses gtest
+[[target]]
+name = "test_reactor"
+type = "executable"
+sources = ["test/test_reactor.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/reactor",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Reactor extended tests - socket pairs, coroutines, uses gtest
+[[target]]
+name = "test_reactor_extended"
+type = "executable"
+sources = ["test/test_reactor_extended.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/reactor",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Transport backend tests - mock transport interface, uses gtest
+[[target]]
+name = "test_transport_backend"
+type = "executable"
+sources = ["test/test_transport_backend.cc"]
+includes = [
+    "src/rrr",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Full RPC server/client tests - requires benchmark_service, uses gtest
+# BLOCKED: JoinHandle<pair> template interaction with std::vector stub fails
+# TODO: Fix vector stub to handle complex templates like JoinHandle<std::pair<int,int>>
+# [[target]]
+# name = "test_rpc"
+# type = "executable"
+# sources = [
+#     "test/test_rpc.cc",
+#     "test/benchmark_service.cc",
+# ]
+# includes = [
+#     "src/rrr",
+#     "src/rrr/rpc",
+#     "test",
+#     "third-party/rusty-cpp/include",
+# ]
+# deps = ["librrr"]
+# libs = ["pthread", "gtest", "gtest_main", "boost_context"]
