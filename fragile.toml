@@ -135,6 +135,9 @@ type = "executable"
 sources = ["examples/simpleTransaction.cc"]
 includes = [
     "examples",
+    "src/mako/benchmarks",
+    "src/mako/benchmarks/sto",
+    "src/mako/benchmarks/sto/masstree-beta",
 ]
 deps = ["libmako_lib", "libmako_core", "librrr"]
 libs = ["pthread", "numa"]
