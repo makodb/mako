@@ -20,6 +20,15 @@ includes = [
 defines = [
     "CONFIG_H=\"mako/config/config-perf.h\"",
     "NDEBUG",
+    # C++ feature macros for modern C++ (C++11/14/17/20)
+    # These prevent compiler.hh from redefining static_assert/constexpr
+    "HAVE_CXX_STATIC_ASSERT=1",
+    "HAVE_CXX_CONSTEXPR=1",
+    "HAVE_CXX_RVALUE_REFERENCES=1",
+    "HAVE_CXX_TEMPLATE_ALIAS=1",
+    "HAVE_TYPE_TRAITS=1",
+    "HAVE_STD_IS_TRIVIALLY_COPYABLE=1",
+    "HAVE_STD_IS_TRIVIALLY_DESTRUCTIBLE=1",
 ]
 
 # ============================================================================
@@ -413,18 +422,21 @@ deps = ["libmako_core", "librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
 
 # STO TRcu tests - transactional RCU, uses gtest
-# BLOCKED: TRcu.hh has parsing issues
-# [[target]]
-# name = "test_sto_transaction"
-# type = "executable"
-# sources = ["test/test_sto_transaction.cc"]
-# includes = [
-#     "src/mako",
-#     "src/mako/benchmarks",
-#     "src/rrr",
-# ]
-# deps = ["libmako_core", "librrr"]
-# libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
+[[target]]
+name = "test_sto_transaction"
+type = "executable"
+sources = [
+    "test/test_sto_transaction.cc",
+    "src/mako/benchmarks/sto/TRcu.cc",
+]
+includes = [
+    "src/mako",
+    "src/mako/benchmarks",
+    "src/mako/benchmarks/sto",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context", "numa"]
 
 # Rusty-cpp Arc/Mutex thread tests - smart pointer concurrency, uses gtest
 [[target]]
