@@ -106,8 +106,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Est. ~100 LOC
       - Added: ci/test_client_server.sh integration test script
       - Tests: Client mode, usage help verification, makoServer binary
-    - [ ] *medium* Using existing RPC framework (see `rpc_setup.cc`) instead of reinventing it via raw socket. Expected results: avoid using any raw socket invoke in `remote_db.hh`, such as `::write`, `::socket` etc.
-    - [ ] *medium* revise decoupled client implementations (commits between `6a5f8ad0e4b4ec8f06a92300381fba2ba760420d` and `1a049ce36ee68795756754a5a13abf467f07a0e2`) to satisfy rusty safe code.
+    - [x] *medium* Using existing RPC framework (see `rpc_setup.cc`) instead of reinventing it via raw socket. Expected results: avoid using any raw socket invoke in `remote_db.hh`, such as `::write`, `::socket` etc. [DONE 2026-01-17, 00:25]
+      - Upstream commit 1886cab7 refactored from raw TCP sockets to RRR RPC framework
+      - remote_db.hh now uses rrr::Client, rrr::PollThread, MakoClientProxy
+      - No raw socket calls (::write, ::socket, ::read, ::connect) remain in remote_db.hh
+      - Also converted std::unique_ptr to rusty::Option<rusty::Box> for proxy_ and tables_
+    - [x] *medium* revise decoupled client implementations (commits between `6a5f8ad0e4b4ec8f06a92300381fba2ba760420d` and `1a049ce36ee68795756754a5a13abf467f07a0e2`) to satisfy rusty safe code. [DONE 2026-01-17, 00:30]
+      - Verified all new files are properly annotated with @safe comments
+      - client_proxy.h/cc: Uses rusty::Arc<rrr::Client>, all methods marked @safe
+      - client_service.h/cc: Uses rusty::Box<rrr::Request>, all handlers marked @safe
+      - remote_db.hh: Converted std::unique_ptr to rusty::Option<rusty::Box>
+      - client_tcp_server.h: Documented acceptable std::unique_ptr usage for non-movable types
   - [x] *high* Rocksdb interface: expose rocksdb-like interface to users 
     - Note: refer to `RocksDB_Guide.md` for rocksdb interfaces 
     - Note: expose your interfaces via `./src/mako/db.hh` (you can change other files for sure)
