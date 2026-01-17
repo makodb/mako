@@ -29,7 +29,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Modified: test/rpc_partition_test.cc - added `generate_random_base_port()` function
     - Note: Other RPC tests may have same issue (rpc_chaos_test, rpc_reconnect_integration_test, etc.)
     - Future: Consider creating shared test helper for random port allocation
-  - [x] *high* decouple client: decouple client (`./examples/simpleTransactionRep.cc`) from transaction execution [DONE 2026-01-17, 00:30]
+  - [ ] *high* decouple client: decouple client (`./examples/simpleTransactionRep.cc`) from transaction execution [DONE 2026-01-17, 00:30]
     - Goal: I currently coloate all client and transaction execution code, I want to decouple a client from transaction execution, so that I can deploy client on different servers.
     - Analysis: Task exceeds 500 LOC (~600-750 LOC total). Breaking down into subtasks:
     - Implementation complete! All 5 subtasks done. Note: Full RPC integration uses stub implementations.
@@ -106,6 +106,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Est. ~100 LOC
       - Added: ci/test_client_server.sh integration test script
       - Tests: Client mode, usage help verification, makoServer binary
+    - [ ] *medium* In `test_client_server.sh`, Test 4 skipped. Please verify if this test is not supported; if not supported, remove this test case.
     - [x] *medium* Using existing RPC framework (see `rpc_setup.cc`) instead of reinventing it via raw socket. Expected results: avoid using any raw socket invoke in `remote_db.hh`, such as `::write`, `::socket` etc. [DONE 2026-01-17, 00:25]
       - Upstream commit 1886cab7 refactored from raw TCP sockets to RRR RPC framework
       - remote_db.hh now uses rrr::Client, rrr::PollThread, MakoClientProxy
