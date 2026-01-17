@@ -47,6 +47,12 @@ bool setup_client_tcp_server(int port = 31000);
 // Stop the client TCP server.
 void stop_client_tcp_server();
 
+// Get the ShardReceiver instance for the current shard.
+// Returns nullptr if not initialized.
+// Used by MakoClientService for RPC-based client connections.
+class ShardReceiver;  // Forward declaration
+ShardReceiver* get_shard_receiver();
+
 } // namespace mako
 
 #endif // MAKO_BENCHMARKS_RPC_SETUP_H

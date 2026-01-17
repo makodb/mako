@@ -10,7 +10,7 @@
  * - Same API as mako::DB for easy migration
  * - All transaction operations are proxied to the server
  * - Transaction state is managed on the server side
- * - Uses synchronous TCP sockets for RPC communication
+ * - Uses RRR RPC framework for communication (replaces raw TCP sockets)
  *
  * Usage:
  *   // Connect to remote server
@@ -32,23 +32,16 @@
  */
 
 #include "status.hh"
-#include "lib/common.h"
-#include <rusty/cell.hpp>
+#include "client_proxy.h"
+#include <rusty/arc.hpp>
+#include <rusty/option.hpp>
+#include "rrr/rpc/client.hpp"
+#include "rrr/rpc/pollthread.hpp"
 #include <string>
 #include <atomic>
 #include <unordered_map>
 #include <mutex>
 #include <memory>
-#include <cstring>
-
-// Socket includes
-// @unsafe { POSIX socket API requires raw pointer handling }
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <netdb.h>
-#include <errno.h>
 
 namespace mako {
 
@@ -76,7 +69,7 @@ struct RemoteOptions {
 // @safe - Proxy class with no local state mutation
 class RemoteTable {
 public:
-    // @unsafe - Constructor takes raw pointer to parent (borrowing)
+    // @safe - Constructor takes raw pointer to parent (borrowing)
     RemoteTable(RemoteDB* db, const std::string& name, uint16_t table_id)
         : db_(db), name_(name), table_id_(table_id) {}
 
@@ -120,7 +113,7 @@ private:
  * RemoteDB - Remote database client proxy
  *
  * This class mirrors the mako::DB interface but proxies all operations
- * to a remote server via RPC. Transaction state is managed on the server.
+ * to a remote server via RRR RPC. Transaction state is managed on the server.
  */
 // Forward declaration for friend
 class RemoteTable;
@@ -184,7 +177,7 @@ public:
     void Rollback(void* txn);
 
     // Internal: Send Put/Get/Delete request to server (used by RemoteTable)
-    // @unsafe - These call into RPC layer
+    // @safe - These use RRR RPC
     Status SendPut(uint64_t txn_id, uint16_t table_id,
                    const std::string& key, const std::string& value);
     Status SendGet(uint64_t txn_id, uint16_t table_id,
@@ -204,11 +197,12 @@ private:
     std::atomic<bool> is_connected_{false};
     RemoteOptions options_;
     uint64_t client_id_ = 0;
-    int socket_fd_ = -1;  // TCP socket file descriptor
-    std::mutex socket_mutex_;  // Protect socket operations
 
-    // Request counter for RPC correlation
-    std::atomic<uint32_t> req_counter_{0};
+    // RRR RPC client components
+    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_ = rusty::None;
+    rusty::Option<rusty::Arc<rrr::Client>> rpc_client_ = rusty::None;
+    std::unique_ptr<MakoClientProxy> proxy_;
+    std::mutex rpc_mutex_;  // Protect RPC operations
 
     // Table cache (name -> RemoteTable)
     // Note: Using unique_ptr because rusty::Box doesn't support default construction
@@ -218,10 +212,6 @@ private:
 
     // Next table ID counter
     uint16_t next_table_id_ = 1;
-
-    // Helper: Generate unique request ID
-    // @safe - Atomic increment
-    uint32_t GetNextReqId() { return ++req_counter_; }
 
     // Helper: Encode txn_id into opaque handle
     // @safe - Pure function
@@ -234,22 +224,6 @@ private:
     static uint64_t DecodeTxnHandle(void* handle) {
         return reinterpret_cast<uint64_t>(handle);
     }
-
-    // Helper: Send raw bytes over socket
-    // @unsafe - POSIX socket write
-    bool SendBytes(const void* data, size_t len);
-
-    // Helper: Receive raw bytes from socket
-    // @unsafe - POSIX socket read
-    bool RecvBytes(void* data, size_t len);
-
-    // Helper: Send RPC request with message type
-    // @unsafe - Socket I/O
-    bool SendRequest(uint8_t msg_type, const void* data, size_t len);
-
-    // Helper: Receive RPC response
-    // @unsafe - Socket I/O
-    bool RecvResponse(void* data, size_t len);
 };
 
 // ============================================================================
@@ -294,60 +268,7 @@ inline RemoteTable* RemoteDB::GetTable(const std::string& name) {
     return ptr;
 }
 
-// @unsafe - POSIX socket write
-inline bool RemoteDB::SendBytes(const void* data, size_t len) {
-    const char* ptr = static_cast<const char*>(data);
-    size_t remaining = len;
-    while (remaining > 0) {
-        ssize_t sent = ::write(socket_fd_, ptr, remaining);  // @unsafe
-        if (sent <= 0) {
-            return false;
-        }
-        ptr += sent;
-        remaining -= static_cast<size_t>(sent);
-    }
-    return true;
-}
-
-// @unsafe - POSIX socket read
-inline bool RemoteDB::RecvBytes(void* data, size_t len) {
-    char* ptr = static_cast<char*>(data);
-    size_t remaining = len;
-    while (remaining > 0) {
-        ssize_t received = ::read(socket_fd_, ptr, remaining);  // @unsafe
-        if (received <= 0) {
-            return false;
-        }
-        ptr += received;
-        remaining -= static_cast<size_t>(received);
-    }
-    return true;
-}
-
-// @unsafe - Socket I/O
-inline bool RemoteDB::SendRequest(uint8_t msg_type, const void* data, size_t len) {
-    // Send message type first (1 byte)
-    if (!SendBytes(&msg_type, sizeof(msg_type))) {
-        return false;
-    }
-    // Send data length (4 bytes)
-    uint32_t data_len = static_cast<uint32_t>(len);
-    if (!SendBytes(&data_len, sizeof(data_len))) {
-        return false;
-    }
-    // Send data
-    if (len > 0 && !SendBytes(data, len)) {
-        return false;
-    }
-    return true;
-}
-
-// @unsafe - Socket I/O
-inline bool RemoteDB::RecvResponse(void* data, size_t len) {
-    return RecvBytes(data, len);
-}
-
-// @unsafe - POSIX socket connect
+// @safe - Uses RRR RPC for connection
 inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) {
     *dbptr = nullptr;
 
@@ -359,49 +280,27 @@ inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) 
     db->client_id_ = static_cast<uint64_t>(std::hash<std::string>{}(
         options.server_host + ":" + std::to_string(options.server_port)
     )) ^ static_cast<uint64_t>(time(nullptr)) ^
-       static_cast<uint64_t>(getpid());  // @unsafe
+       static_cast<uint64_t>(getpid());
 
-    // Create TCP socket
-    // @unsafe { POSIX socket API }
-    db->socket_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (db->socket_fd_ < 0) {
-        delete db;
-        return Status::IOError("Failed to create socket: " + std::string(strerror(errno)));
-    }
+    // Create RRR poll thread for async I/O
+    db->poll_thread_ = rusty::Some(rrr::PollThread::create());
 
-    // Resolve hostname
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));  // @unsafe
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(static_cast<uint16_t>(options.server_port));
+    // Create RRR client
+    auto client = rrr::Client::create(db->poll_thread_.as_ref().unwrap());
+    db->rpc_client_ = rusty::Some(client);
 
-    // Try to parse as IP address first
-    if (inet_pton(AF_INET, options.server_host.c_str(), &server_addr.sin_addr) <= 0) {
-        // Not a valid IP, try to resolve as hostname
-        struct hostent* he = gethostbyname(options.server_host.c_str());  // @unsafe
-        if (he == nullptr) {
-            ::close(db->socket_fd_);  // @unsafe
-            delete db;
-            return Status::IOError("Failed to resolve hostname: " + options.server_host);
-        }
-        memcpy(&server_addr.sin_addr, he->h_addr_list[0], static_cast<size_t>(he->h_length));  // @unsafe
-    }
+    // Build server address
+    std::string server_addr = options.server_host + ":" + std::to_string(options.server_port);
 
     // Connect to server
-    // @unsafe { POSIX connect }
-    if (::connect(db->socket_fd_, reinterpret_cast<struct sockaddr*>(&server_addr),
-                  sizeof(server_addr)) < 0) {
-        ::close(db->socket_fd_);  // @unsafe
+    int ret = client->connect(server_addr.c_str());
+    if (ret != 0) {
         delete db;
-        return Status::IOError("Failed to connect to server: " + std::string(strerror(errno)));
+        return Status::IOError("Failed to connect to server: " + server_addr);
     }
 
-    // Set socket timeout
-    struct timeval tv;
-    tv.tv_sec = options.timeout_ms / 1000;
-    tv.tv_usec = (options.timeout_ms % 1000) * 1000;
-    setsockopt(db->socket_fd_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));  // @unsafe
-    setsockopt(db->socket_fd_, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));  // @unsafe
+    // Create the proxy wrapper
+    db->proxy_ = std::make_unique<MakoClientProxy>(client);
 
     db->is_connected_.store(true);
     *dbptr = db;
@@ -410,252 +309,129 @@ inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) 
 
 inline RemoteDB::~RemoteDB() {
     is_connected_.store(false);
-    if (socket_fd_ >= 0) {
-        ::close(socket_fd_);  // @unsafe
-        socket_fd_ = -1;
+
+    // Close RPC client
+    if (proxy_) {
+        proxy_->close();
+        proxy_.reset();
     }
+
+    // Clear RRR components
+    rpc_client_ = rusty::None;
+    poll_thread_ = rusty::None;
+
     tables_.clear();
 }
 
-// @unsafe - Socket I/O
+// @safe - Uses RRR RPC
 inline void* RemoteDB::BeginTransaction() {
-    if (!is_connected_.load()) {
+    if (!is_connected_.load() || !proxy_) {
         return nullptr;
     }
 
-    std::lock_guard<std::mutex> lock(socket_mutex_);
+    std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    // Prepare request
-    client_begin_txn_request_t req;
-    req.req_nr = GetNextReqId();
-    req.client_id = client_id_;
+    rrr::i64 txn_id = 0;
+    rrr::i32 ret = proxy_->BeginTxn(static_cast<rrr::i64>(client_id_), &txn_id);
 
-    // Send request
-    if (!SendRequest(clientBeginTxnReqType, &req, sizeof(req))) {
+    if (ret != 0) {
         return nullptr;
     }
 
-    // Receive response
-    client_begin_txn_response_t resp;
-    if (!RecvResponse(&resp, sizeof(resp))) {
-        return nullptr;
-    }
-
-    // Check status
-    if (resp.status != ErrorCode::SUCCESS) {
-        return nullptr;
-    }
-
-    return EncodeTxnHandle(resp.txn_id);
+    return EncodeTxnHandle(static_cast<uint64_t>(txn_id));
 }
 
-// @unsafe - Socket I/O
+// @safe - Uses RRR RPC
 inline void RemoteDB::Commit(void* txn) {
-    if (!txn || !is_connected_.load()) {
+    if (!txn || !is_connected_.load() || !proxy_) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(socket_mutex_);
+    std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     uint64_t txn_id = DecodeTxnHandle(txn);
-
-    // Prepare request
-    client_commit_request_t req;
-    req.req_nr = GetNextReqId();
-    req.txn_id = txn_id;
-
-    // Send request
-    if (!SendRequest(clientCommitReqType, &req, sizeof(req))) {
-        return;
-    }
-
-    // Receive response
-    client_commit_response_t resp;
-    RecvResponse(&resp, sizeof(resp));
-    // Ignore response status for commit (best effort)
+    proxy_->Commit(static_cast<rrr::i64>(txn_id));
+    // Ignore return value for commit (best effort)
 }
 
-// @unsafe - Socket I/O
+// @safe - Uses RRR RPC
 inline void RemoteDB::Rollback(void* txn) {
-    if (!txn || !is_connected_.load()) {
+    if (!txn || !is_connected_.load() || !proxy_) {
         return;
     }
 
-    std::lock_guard<std::mutex> lock(socket_mutex_);
+    std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     uint64_t txn_id = DecodeTxnHandle(txn);
-
-    // Prepare request
-    client_commit_request_t req;
-    req.req_nr = GetNextReqId();
-    req.txn_id = txn_id;
-
-    // Send request
-    if (!SendRequest(clientRollbackReqType, &req, sizeof(req))) {
-        return;
-    }
-
-    // Receive response
-    client_commit_response_t resp;
-    RecvResponse(&resp, sizeof(resp));
-    // Ignore response status for rollback (best effort)
+    proxy_->Rollback(static_cast<rrr::i64>(txn_id));
+    // Ignore return value for rollback (best effort)
 }
 
-// @unsafe - Socket I/O
+// @safe - Uses RRR RPC
 inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
                                 const std::string& key, const std::string& value) {
-    if (!is_connected_.load()) {
+    if (!is_connected_.load() || !proxy_) {
         return Status::IOError("Not connected to server");
     }
 
-    // Validate key/value sizes
-    if (key.length() > max_key_length) {
-        return Status::InvalidArgument("Key too long");
-    }
-    if (value.length() > max_value_length) {
-        return Status::InvalidArgument("Value too long");
-    }
+    std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    std::lock_guard<std::mutex> lock(socket_mutex_);
+    rrr::i32 ret = proxy_->Put(
+        static_cast<rrr::i64>(txn_id),
+        static_cast<rrr::i32>(table_id),
+        key,
+        value
+    );
 
-    // Prepare request
-    client_kv_request_t req;
-    req.req_nr = GetNextReqId();
-    req.txn_id = txn_id;
-    req.table_id = table_id;
-    req.klen = static_cast<uint16_t>(key.length());
-    req.vlen = static_cast<uint16_t>(value.length());
-    memcpy(req.key_and_value, key.data(), key.length());  // @unsafe
-    memcpy(req.key_and_value + key.length(), value.data(), value.length());  // @unsafe
-
-    // Calculate actual request size (header + key + value)
-    size_t req_size = offsetof(client_kv_request_t, key_and_value) + key.length() + value.length();
-
-    // Send request
-    if (!SendRequest(clientPutReqType, &req, req_size)) {
-        return Status::IOError("Failed to send put request");
-    }
-
-    // Receive response
-    client_kv_response_t resp;
-    size_t resp_size = sizeof(client_kv_response_t) - max_value_length;  // No value in put response
-    if (!RecvResponse(&resp, resp_size)) {
-        return Status::IOError("Failed to receive put response");
-    }
-
-    // Check status
-    if (resp.status == ErrorCode::SUCCESS) {
+    if (ret == 0) {
         return Status::OK();
-    } else if (resp.status == ErrorCode::ABORT) {
-        return Status::IOError("Transaction aborted");
     } else {
-        return Status::IOError("Put operation failed");
+        return Status::IOError("Put operation failed (RPC error: " + std::to_string(ret) + ")");
     }
 }
 
-// @unsafe - Socket I/O
+// @safe - Uses RRR RPC
 inline Status RemoteDB::SendGet(uint64_t txn_id, uint16_t table_id,
                                 const std::string& key, std::string& value) {
-    if (!is_connected_.load()) {
+    if (!is_connected_.load() || !proxy_) {
         return Status::IOError("Not connected to server");
     }
 
-    // Validate key size
-    if (key.length() > max_key_length) {
-        return Status::InvalidArgument("Key too long");
-    }
+    std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    std::lock_guard<std::mutex> lock(socket_mutex_);
+    rrr::i32 ret = proxy_->Get(
+        static_cast<rrr::i64>(txn_id),
+        static_cast<rrr::i32>(table_id),
+        key,
+        &value
+    );
 
-    // Prepare request
-    client_kv_request_t req;
-    req.req_nr = GetNextReqId();
-    req.txn_id = txn_id;
-    req.table_id = table_id;
-    req.klen = static_cast<uint16_t>(key.length());
-    req.vlen = 0;  // No value in get request
-    memcpy(req.key_and_value, key.data(), key.length());  // @unsafe
-
-    // Calculate actual request size (header + key only)
-    size_t req_size = offsetof(client_kv_request_t, key_and_value) + key.length();
-
-    // Send request
-    if (!SendRequest(clientGetReqType, &req, req_size)) {
-        return Status::IOError("Failed to send get request");
-    }
-
-    // Receive response header first
-    client_kv_response_t resp;
-    size_t header_size = sizeof(client_kv_response_t) - max_value_length;
-    if (!RecvResponse(&resp, header_size)) {
-        return Status::IOError("Failed to receive get response header");
-    }
-
-    // Receive value if present
-    if (resp.vlen > 0 && resp.vlen <= max_value_length) {
-        value.resize(resp.vlen);
-        if (!RecvResponse(value.data(), resp.vlen)) {
-            return Status::IOError("Failed to receive get response value");
-        }
-    } else {
-        value.clear();
-    }
-
-    // Check status
-    if (resp.status == ErrorCode::SUCCESS) {
+    if (ret == 0) {
         return Status::OK();
-    } else if (resp.status == ErrorCode::ABORT) {
-        return Status::NotFound("Key not found");
     } else {
-        return Status::IOError("Get operation failed");
+        return Status::NotFound("Get operation failed (RPC error: " + std::to_string(ret) + ")");
     }
 }
 
-// @unsafe - Socket I/O
+// @safe - Uses RRR RPC
 inline Status RemoteDB::SendDelete(uint64_t txn_id, uint16_t table_id,
                                    const std::string& key) {
-    if (!is_connected_.load()) {
+    if (!is_connected_.load() || !proxy_) {
         return Status::IOError("Not connected to server");
     }
 
-    // Validate key size
-    if (key.length() > max_key_length) {
-        return Status::InvalidArgument("Key too long");
-    }
+    std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    std::lock_guard<std::mutex> lock(socket_mutex_);
+    rrr::i32 ret = proxy_->Delete(
+        static_cast<rrr::i64>(txn_id),
+        static_cast<rrr::i32>(table_id),
+        key
+    );
 
-    // Prepare request
-    client_kv_request_t req;
-    req.req_nr = GetNextReqId();
-    req.txn_id = txn_id;
-    req.table_id = table_id;
-    req.klen = static_cast<uint16_t>(key.length());
-    req.vlen = 0;  // No value in delete request
-    memcpy(req.key_and_value, key.data(), key.length());  // @unsafe
-
-    // Calculate actual request size (header + key only)
-    size_t req_size = offsetof(client_kv_request_t, key_and_value) + key.length();
-
-    // Send request
-    if (!SendRequest(clientDeleteReqType, &req, req_size)) {
-        return Status::IOError("Failed to send delete request");
-    }
-
-    // Receive response
-    client_kv_response_t resp;
-    size_t resp_size = sizeof(client_kv_response_t) - max_value_length;  // No value in delete response
-    if (!RecvResponse(&resp, resp_size)) {
-        return Status::IOError("Failed to receive delete response");
-    }
-
-    // Check status
-    if (resp.status == ErrorCode::SUCCESS) {
+    if (ret == 0) {
         return Status::OK();
-    } else if (resp.status == ErrorCode::ABORT) {
-        return Status::IOError("Transaction aborted");
     } else {
-        return Status::IOError("Delete operation failed");
+        return Status::IOError("Delete operation failed (RPC error: " + std::to_string(ret) + ")");
     }
 }
 

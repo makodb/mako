@@ -322,3 +322,13 @@ void mako::stop_client_tcp_server()
     std::cerr << "[CLIENT_TCP] Server stopped" << std::endl;
   }
 }
+
+// Get the ShardReceiver instance for the current shard
+ShardReceiver* mako::get_shard_receiver()
+{
+  std::lock_guard<std::mutex> lock(g_helper_mu);
+  if (!g_helper_servers.empty()) {
+    return g_helper_servers[0]->GetReceiver();
+  }
+  return nullptr;
+}

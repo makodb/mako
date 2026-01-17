@@ -28,6 +28,27 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Verifies successful connection and transaction start
         - Note: Put/Get may fail due to table ID mismatch (known limitation)
       - Plan file: docs/dev/client_server_ci_test_plan.md
+    - [ ] *high* You failed to pass added testcases, please fix it
+    - [x] *high* You should use our RRR rpc framework to connect client and your server instead of socket directly, please revise your code [26:01:17, 02:55]
+      - Replaced raw TCP sockets with RRR RPC framework for client-server communication
+      - Created MakoClientService (server-side, src/mako/client_service.h/.cc):
+        - Implements rrr::Service interface with RPC IDs 20-25 for client operations
+        - Handlers: HandleBeginTxn, HandleCommit, HandleRollback, HandlePut, HandleGet, HandleDelete
+        - Uses ShardReceiver's shard_put/shard_get for table operations (same pattern as existing code)
+      - Created MakoClientProxy (client-side, src/mako/client_proxy.h/.cc):
+        - Wraps rrr::Client for type-safe RPC calls
+        - Provides both sync and async API (BeginTxn, Commit, Rollback, Put, Get, Delete)
+        - Uses Marshal for serialization instead of raw buffers
+      - Updated remote_db.hh:
+        - Replaced socket_fd_ with rusty::Arc<rrr::Client> and MakoClientProxy
+        - Removed raw TCP socket code (SendBytes, RecvBytes, SendRequest, RecvResponse)
+        - Uses RRR poll thread for async I/O
+      - Updated makoServer.cc:
+        - Uses rrr::Server instead of ClientTcpServer
+        - Registers MakoClientService with server
+        - Listens on port 31000+shardIdx for client connections
+      - Added get_shard_receiver() to rpc_setup.h/.cc for accessing ShardReceiver
+      - Plan file: docs/dev/rrr_rpc_refactoring_plan.md
     - [x] *high* Add several real throughput numbers for decoupled clients in documentation md files [26:01:17, 02:05]
       - Created docs/dev/client_server_evaluation.md with comprehensive benchmark data:
         - 2-shard cluster throughput: ~16,000 ops/sec combined
