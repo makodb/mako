@@ -990,3 +990,17 @@ includes = [
 deps = ["librrr"]
 libs = ["pthread", "boost_context"]
 
+# Transport integration tests - RPC network I/O
+[[target]]
+name = "test_transport_integration"
+type = "executable"
+sources = ["test/test_transport_integration.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
