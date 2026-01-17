@@ -24,6 +24,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Investigation: Ran shard2Replication locally 10 consecutive times - all passed (throughput ~8760 ops/sec, abort ratio <2.5%)
     - GitHub CI check: No failed runs found in last 20 workflow runs (#465-#441)
     - Conclusion: Issue not reproducible locally. May be environment-specific (CI server load, timing). Monitoring continues via hourly CI checks.
+  - [ ] *high* bug. shard2ReplicationErpc still fails on ci server (run via ./ci/ci.sh shard2ReplicationErpc) from time to time, please investigate and fix. verify fix by running it 10 times. The error occurs in latest ci running: https://github.com/makodb/mako/actions/runs/21097851242/job/60677766173.
   - [x] *medium* CI stability: Add memory limit (30GB max) for shard2SingleProcessReplication test to prevent CI server crashes due to memory overuse. [DONE 2026-01-14]
     - Added `run_with_memory_limit` helper function to ci/ci.sh using `ulimit -v`
     - Applied 30GB (31457280KB) limit to shard2SingleProcessReplication test
