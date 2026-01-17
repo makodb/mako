@@ -875,3 +875,17 @@ includes = []
 deps = []
 libs = ["pthread", "gtest", "gtest_main"]
 
+# Masstree performance benchmark - B-tree performance tests, no gtest
+[[target]]
+name = "masstree_perf"
+type = "executable"
+sources = ["test/masstree_perf.cc"]
+includes = [
+    "src",
+    "src/mako",
+    "src/mako/masstree",
+    "src/rrr",
+]
+deps = ["libmako_core", "librrr"]
+libs = ["pthread", "numa"]
+
