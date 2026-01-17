@@ -696,3 +696,39 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC metrics tests - connection health metrics tracking
+[[target]]
+name = "rpc_metrics_test"
+type = "executable"
+sources = [
+    "test/rpc_metrics_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC client pool tests - pool configuration and health management
+[[target]]
+name = "rpc_client_pool_test"
+type = "executable"
+sources = [
+    "test/rpc_client_pool_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
