@@ -14,7 +14,7 @@ includes = [
     "src/mako",
     "third-party/rusty-cpp/include",
     "third-party/erpc/src",
-    "third-party/erpc/src/third-party/asio/include",
+    "third-party/erpc/third_party/asio/include",
 ]
 # Global defines
 defines = [
