@@ -642,3 +642,57 @@ includes = [
 ]
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Load balancer tests - client pool load balancing strategies, uses gtest
+[[target]]
+name = "test_load_balancer"
+type = "executable"
+sources = [
+    "test/test_load_balancer.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# Extended RPC tests - advanced scenarios, error handling, uses gtest
+[[target]]
+name = "test_rpc_extended"
+type = "executable"
+sources = [
+    "test/test_rpc_extended.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
+# RPC validation tests - TCP keepalive, idle detection, connection validation
+[[target]]
+name = "rpc_validation_test"
+type = "executable"
+sources = [
+    "test/rpc_validation_test.cc",
+    "test/benchmark_service.cc",
+]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "test",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
