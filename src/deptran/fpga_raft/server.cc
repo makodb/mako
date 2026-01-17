@@ -345,7 +345,7 @@ void FpgaRaftServer::StartTimer()
 {
     if(!init_ ){
         resetTimer() ;
-        Coroutine::create_run([&]() {
+        Fiber::create_run([&]() {
             Log_debug("start timer for election") ;
             int32_t duration = randDuration() ;
             while(!stop_)

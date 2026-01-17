@@ -20,6 +20,6 @@ namespace helloworld_client {
         
     public:
         int counter_read = 0;
-        std::shared_ptr<Coroutine> first_req {};
+        std::shared_ptr<Fiber> first_req {};
     } ;
 } // namespace helloworld_client

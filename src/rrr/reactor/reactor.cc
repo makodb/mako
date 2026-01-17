@@ -33,7 +33,7 @@ const int64_t n_max_coroutine = 2000;
 
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_reactor_th_{};
 thread_local rusty::Option<rusty::Rc<Reactor>> Reactor::sp_disk_reactor_th_{};
-thread_local rusty::RefCell<rusty::Option<rusty::Rc<Coroutine>>> Reactor::sp_running_coro_th_{};
+thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> Reactor::sp_running_coro_th_{};
 thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> Reactor::clients_{};
 
 // Thread-local storage for PollThreadWorker (raw pointer for direct access)
@@ -111,7 +111,7 @@ Reactor::get_disk_reactor() {
 // =============================================================================
 
 // @safe - Gets a recycled coroutine or creates a new one
-rusty::Rc<Coroutine>
+rusty::Rc<Fiber>
 Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   // @unsafe
   {
@@ -122,13 +122,13 @@ Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file,
       available_guard->pop_back();
       // Use Cell/RefCell for interior mutability (safe: single-threaded)
       const auto& coro_ref = *coro;
-      const_cast<Coroutine&>(coro_ref).id = Coroutine::global_id++;  // id is not Cell yet
+      const_cast<Fiber&>(coro_ref).id = Fiber::global_id++;  // id is not Cell yet
       *coro_ref.func_.borrow_mut() = std::move(func);
       *coro_ref.boost_coro_task_.borrow_mut() = rusty::None;
-      coro_ref.status_.set(Coroutine::INIT);
+      coro_ref.status_.set(Fiber::INIT);
       return coro;
     } else {
-      auto coro = rusty::Rc<Coroutine>::make(std::move(func));
+      auto coro = rusty::Rc<Fiber>::make(std::move(func));
       n_created_coroutines_.set(n_created_coroutines_.get() + 1);
       if (n_created_coroutines_.get() % 1024 == 0) {
         Log_debug("created %d, busy %d, idle %d coroutines on server %d, recent %s:%lld",
@@ -145,7 +145,7 @@ Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file,
 }
 
 // @safe - Saves current running coroutine to allow nesting
-rusty::Option<rusty::Rc<Coroutine>>
+rusty::Option<rusty::Rc<Fiber>>
 Reactor::save_running_coroutine() const {
   // @unsafe
   {
@@ -153,12 +153,12 @@ Reactor::save_running_coroutine() const {
     if ((*guard).is_some()) {
       return rusty::Some((*guard).as_ref().unwrap().clone());
     }
-    return rusty::Option<rusty::Rc<Coroutine>>{};
+    return rusty::Option<rusty::Rc<Fiber>>{};
   }
 }
 
 // @safe - Restores previously saved running coroutine
-void Reactor::restore_running_coroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const {
+void Reactor::restore_running_coroutine(rusty::Option<rusty::Rc<Fiber>> old_coro) const {
   // @unsafe
   {
     *sp_running_coro_th_.borrow_mut() = std::move(old_coro);
@@ -166,7 +166,7 @@ void Reactor::restore_running_coroutine(rusty::Option<rusty::Rc<Coroutine>> old_
 }
 
 // @safe - Sets the current running coroutine
-void Reactor::set_running_coroutine(const rusty::Rc<Coroutine>& coro) const {
+void Reactor::set_running_coroutine(const rusty::Rc<Fiber>& coro) const {
   // @unsafe
   {
     *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
@@ -174,7 +174,7 @@ void Reactor::set_running_coroutine(const rusty::Rc<Coroutine>& coro) const {
 }
 
 // @safe - Registers coroutine in the active set
-void Reactor::register_coroutine(const rusty::Rc<Coroutine>& coro) const {
+void Reactor::register_coroutine(const rusty::Rc<Fiber>& coro) const {
   // BTreeSet::insert returns bool (true if newly inserted)
   auto coros_guard = coros_.borrow_mut();
   bool inserted = coros_guard->insert(coro.clone());
@@ -197,7 +197,7 @@ void Reactor::register_coroutine(const rusty::Rc<Coroutine>& coro) const {
  * @return
  */
 // @safe - Creates and runs coroutine using safe helper functions
-rusty::Rc<Coroutine>
+rusty::Rc<Fiber>
 Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, int64_t line) const {
   // Step 1: Get or create a coroutine
   auto coro = get_or_create_coroutine(std::move(func), file, line);
@@ -384,7 +384,7 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
           if (!coros_.borrow()->contains(coro)) {
             continue;
           }
-          verify(coro->status_.get() == Coroutine::PAUSED);
+          verify(coro->status_.get() == Fiber::PAUSED);
           if (ev->status_.get() == Event::READY) {
             ev->status_.set(Event::DONE);
           } else {
@@ -403,19 +403,19 @@ void Reactor::loop(bool infinite, bool do_check_timeout) const {
 }
 
 // @safe - Continues execution of a paused coroutine
-void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
+void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
   // Save current running coroutine for nesting support
-  rusty::Option<rusty::Rc<Coroutine>> old_coro;
+  rusty::Option<rusty::Rc<Fiber>> old_coro;
   {
     auto guard = sp_running_coro_th_.borrow();
     old_coro = (*guard).is_some()
       ? rusty::Some((*guard).as_ref().unwrap().clone())
-      : rusty::Option<rusty::Rc<Coroutine>>{};
+      : rusty::Option<rusty::Rc<Fiber>>{};
   }
 
   *sp_running_coro_th_.borrow_mut() = rusty::Some(coro.clone());
 
-  // @unsafe - Coroutine::finished() is not marked @safe
+  // @unsafe - Fiber::finished() is not marked @safe
   {
     auto guard = sp_running_coro_th_.borrow();
     verify(!(*guard).as_ref().unwrap()->finished());
@@ -423,14 +423,14 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
 
   n_active_coroutines_.set(n_active_coroutines_.get() + 1);
 
-  if (coro->status_.get() == Coroutine::INIT) {
+  if (coro->status_.get() == Fiber::INIT) {
     coro->run();
   } else {
     auto guard = sp_running_coro_th_.borrow();
     (*guard).as_ref().unwrap()->continue_();
   }
 
-  // @unsafe - Coroutine::finished() is not marked @safe
+  // @unsafe - Fiber::finished() is not marked @safe
   {
     auto guard = sp_running_coro_th_.borrow();
     if ((*guard).as_ref().unwrap()->finished()) {
@@ -443,12 +443,12 @@ void Reactor::continue_coro(rusty::Rc<Coroutine> coro) const {
 }
 
 // @unsafe - Uses RefCell interior mutability (rusty-cpp doesn't fully support RefCell semantics)
-void Reactor::recycle(rusty::Rc<Coroutine>& coro) const {
+void Reactor::recycle(rusty::Rc<Fiber>& coro) const {
   // This fixes the bug that coroutines are not recycling if they don't finish immediately.
   if (REUSING_CORO) {
     // Use Cell/RefCell for interior mutability (safe: single-threaded)
     const auto& coro_ref = *coro;
-    coro_ref.status_.set(Coroutine::RECYCLED);
+    coro_ref.status_.set(Fiber::RECYCLED);
     *coro_ref.func_.borrow_mut() = {};
     n_idle_coroutines_.set(n_idle_coroutines_.get() + 1);
     available_coros_.borrow_mut()->push_back(coro.clone());  // @unsafe
@@ -593,7 +593,7 @@ void PollThreadWorker::trigger_job() {
     Job* job_ptr = const_cast<Job*>(job.get());
     if (job_ptr->Ready()) {
       // Capture job by value to keep the Arc alive
-      Coroutine::create_run([job]() {
+      Fiber::create_run([job]() {
         Job* job_ptr = const_cast<Job*>(job.get());
         job_ptr->Work();
       });

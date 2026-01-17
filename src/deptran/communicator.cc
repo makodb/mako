@@ -588,7 +588,7 @@ std::shared_ptr<IntEvent> Communicator::BroadcastDispatch(
     Coordinator* coo,
     TxData* txn) {
   int total = cmds_by_par.size();
-  //std::shared_ptr<AndEvent> e = Reactor::create_sp_event<AndEvent>();
+  //std::shared_ptr<WaitAll> e = Reactor::create_sp_event<WaitAll>();
   std::shared_ptr<IntEvent> e = Reactor::create_sp_event<IntEvent>();
 	e->value_ = 0;
 	e->target_ = total;
@@ -734,14 +734,14 @@ void Communicator::SendStart(SimpleCommand& cmd,
   verify(0);
 }
 
-shared_ptr<AndEvent>
+shared_ptr<WaitAll>
 Communicator::SendPrepare(Coordinator* coo,
                           txnid_t tid,
                           std::vector<int32_t>& sids){
 	int32_t res_ = 10;
   TxData* cmd = (TxData*) coo->cmd_;
   auto n = cmd->partition_ids_.size();
-  auto e = Reactor::create_sp_event<AndEvent>();
+  auto e = Reactor::create_sp_event<WaitAll>();
   auto phase = coo->phase_;
   int n_total = 1;
   int quorum_id = 0;
@@ -845,7 +845,7 @@ void Communicator::___LogSent(parid_t pid, txnid_t tid) {
   }
 }
 
-shared_ptr<AndEvent>
+shared_ptr<WaitAll>
 Communicator::SendCommit(Coordinator* coo,
                               txnid_t tid) {
 #ifdef LOG_LEVEL_AS_DEBUG
@@ -854,7 +854,7 @@ Communicator::SendCommit(Coordinator* coo,
 	TxData* cmd = (TxData*) coo->cmd_;
   int n_total = 1;
   auto n = cmd->GetPartitionIds().size();
-  auto e = Reactor::create_sp_event<AndEvent>();
+  auto e = Reactor::create_sp_event<WaitAll>();
   
   for(auto& rp : cmd->partition_ids_){
     auto leader_id = LeaderProxyForPartition(rp).first;
@@ -975,7 +975,7 @@ Communicator::SendCommit(Coordinator* coo,
   Future::safe_release(proxy->async_Commit(tid, 0, fuattr));
 }*/
 
-shared_ptr<AndEvent>
+shared_ptr<WaitAll>
 Communicator::SendAbort(Coordinator* coo,
                               txnid_t tid) {
 #ifdef LOG_LEVEL_AS_DEBUG
@@ -984,7 +984,7 @@ Communicator::SendAbort(Coordinator* coo,
   TxData* cmd = (TxData*) coo->cmd_;
   int n_total = 1;
   auto n = cmd->GetPartitionIds().size();
-  auto e = Reactor::create_sp_event<AndEvent>();
+  auto e = Reactor::create_sp_event<WaitAll>();
   for(auto& rp : cmd->partition_ids_){
     auto proxies = rpc_par_proxies_[rp];
     auto leader_id = LeaderProxyForPartition(rp).first;

@@ -13,7 +13,7 @@ namespace rrr {
 using std::function;
 
 uint64_t Event::get_coro_id(){
-  auto coro_opt = Coroutine::current_coroutine();
+  auto coro_opt = Fiber::current_coroutine();
   verify(coro_opt.is_some());
   return coro_opt.unwrap()->id;
 }
@@ -38,7 +38,7 @@ bool Event::is_slow() {
 //     // the event may be created in a different coroutine.
 //     // this value is set when wait is called.
 //     // for now only one coroutine can wait on an event.
-//     auto sp_coro = Coroutine::current_coroutine();
+//     auto sp_coro = Fiber::current_coroutine();
 // //    verify(sp_coro);
 // //    verify(_dbg_p_scheduler_ == nullptr);
 // //    _dbg_p_scheduler_ = Reactor::get_reactor().get();
@@ -69,7 +69,7 @@ void Event::wait(uint64_t timeout) {
     // the event may be created in a different coroutine.
     // this value is set when wait is called.
     // for now only one coroutine can wait on an event.
-    auto coro_opt = Coroutine::current_coroutine();
+    auto coro_opt = Fiber::current_coroutine();
     verify(coro_opt.is_some());  // Can't wait outside a coroutine
     auto coro = coro_opt.unwrap();
 
@@ -77,7 +77,7 @@ void Event::wait(uint64_t timeout) {
     auto reactor_rc = Reactor::get_reactor();
     reactor_rc->waiting_events_.borrow_mut()->push_back(get_self());
 
-    // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
+    // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
     // Add them to a separate queue that gets scanned (much smaller than all events)
     // Regular RPC events (Raft) self-notify via test() - zero overhead!
     if (is_composite_event()) {
@@ -116,7 +116,7 @@ void Event::wait(uint64_t timeout) {
     wp_coro_ = coro;
     status_.set(WAIT);
     auto coro_status = coro->status_.get();
-    verify(coro_status != Coroutine::FINISHED && coro_status != Coroutine::RECYCLED);
+    verify(coro_status != Fiber::FINISHED && coro_status != Fiber::RECYCLED);
     coro->yield_();
 #ifdef EVENT_TIMEOUT_CHECK
     if (__debug_timeout_ && status_.get() == TIMEOUT) {
@@ -164,7 +164,7 @@ bool Event::test() {
 }
 
 Event::Event() {
-  auto coro_opt = Coroutine::current_coroutine();
+  auto coro_opt = Fiber::current_coroutine();
   // It's OK if no coroutine is running - event might be created outside a coroutine
   // and Wait() called later from within one
   if (coro_opt.is_some()) {

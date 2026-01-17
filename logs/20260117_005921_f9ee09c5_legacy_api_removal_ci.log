@@ -1,0 +1,1744 @@
+=========================================
+Running: ./ci/ci.sh compile
+=========================================
+cmake -S . -B build
+-- RustyCpp parallel jobs: 64
+CMake Warning at third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake:272 (message):
+  RustyCpp build target not created.  Checker may not be available.
+Call Stack (most recent call first):
+  third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake:452 (ensure_checker_built)
+  CMakeLists.txt:28 (include)
+
+
+-- Rusty C++ Checker submodule found at: /home/shuai/workspace/mako/third-party/rusty-cpp
+-- Checker will be built on demand at: /home/shuai/workspace/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- C++ Borrow Checking enabled
+-- Checker will be built at: /home/shuai/workspace/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- Build type: release
+-- Checking RustyCpp dependencies...
+-- Found cargo: /home/shuai/.cargo/bin/cargo
+-- Found libclang: /usr/lib/llvm-16/lib/libclang.so
+-- Found libclang headers: /usr/lib/llvm-16/include
+-- Found llvm-config: /usr/lib/llvm-19/bin/llvm-config
+-- Found Z3: /usr/lib/x86_64-linux-gnu/libz3.so
+-- Found Z3 headers: /usr/include
+CMake Warning (dev) at CMakeLists.txt:62 (find_package):
+  Policy CMP0167 is not set: The FindBoost module is removed.  Run "cmake
+  --help-policy CMP0167" for policy details.  Use the cmake_policy command to
+  set the policy and suppress this warning.
+
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- I: /home/shuai/workspace/mako/third-party/erpc
+-- environment: eth
+CMake Deprecation Warning at third-party/erpc/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Compilation optimized for performance.
+-- Debugging is disabled.
+CMake Deprecation Warning at third-party/erpc/third_party/HdrHistogram_c/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Deprecation Warning at third-party/erpc/third_party/googletest/CMakeLists.txt:4 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Deprecation Warning at third-party/erpc/third_party/googletest/googlemock/CMakeLists.txt:45 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Deprecation Warning at third-party/erpc/third_party/googletest/googletest/CMakeLists.txt:56 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Deprecation Warning at third-party/erpc/third_party/gflags/CMakeLists.txt:73 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- Profile-guided optimization is disabled.
+-- Logging level = none.
+-- Testing is disabled, so tests may fail.
+-- Selected transport = fake.
+-- Compiling app = latency
+-- DPDK not needed to build eRPC
+STATUS,server compiles
+-- Reuse coroutine enabled
+-- --- Configuring Mako Root & STO Borrow Checks ---
+-- Found 0 files to check in src/mako/ and benchmarks/sto/
+-- --- End Mako Borrow Checks Configuration ---
+-- GoogleTest found via find_package
+-- Test targets configured:
+--   RRR Framework Tests:
+--     - test_marshal: Marshal/Unmarshal tests
+--     - test_rpc: RPC client/server tests
+--     - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)
+--     - test_future: Future/async operation tests
+--     - test_masstree: Core Masstree b-tree regression tests
+--     - test_reactor: Reactor/event system tests
+--     - test_reactor_extended: Extended reactor tests (events, coroutines, load)
+--     - rpcbench: RPC performance benchmark test
+--   Silo/STO Tests:
+--     - test_silo_varint: Varint encoding/decoding (22 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run Silo/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done (0.4s)
+-- Generating done (0.6s)
+-- Build files have been written to: /home/shuai/workspace/mako/build
+Building with 32 parallel jobs...
+cmake --build build --parallel 32
+gmake[1]: Entering directory '/home/shuai/workspace/mako/build'
+gmake[1]: warning: -j32 forced in submake: resetting jobserver mode.
+[  1%] Built target rust_build
+[  1%] Building rusty-cpp-checker (release mode, 64 jobs) with environment: LIBCLANG_PATH=/usr/lib/llvm-16/lib;LLVM_CONFIG_PATH=/usr/lib/llvm-19/bin/llvm-config;Z3_SYS_Z3_HEADER=/usr/include/z3.h
+[  1%] Built target rcc_rpc_gen
+[  1%] Borrow checking src/deptran/communicator.cc (from deptran_borrow)
+[  1%] Borrow checking src/deptran/paxos_worker.cc (from deptran_borrow)
+[  2%] Borrow checking src/deptran/empty.cc (from deptran_borrow)
+[  2%] Borrow checking src/deptran/executor.cc (from deptran_borrow)
+[  2%] Borrow checking src/deptran/workload.cc (from deptran_borrow)
+[  2%] Borrow checking src/deptran/stats_registry.cc (from deptran_borrow)
+[  3%] Built target hdr_histogram_static
+[  3%] Built target gflags_nothreads_static
+[  4%] Built target hdr_histogram
+[  4%] Built target gtest
+[  5%] Built target gflags_nothreads_shared
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/deptran/paxos_worker.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/deptran/executor.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/deptran/communicator.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/deptran/workload.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/deptran/empty.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/deptran/stats_registry.cc
+[  6%] Linking CXX shared library ../../../../../lib/libgtest_main.so
+[  6%] Linking CXX shared library ../../../../../lib/libgmock.so
+warning: a `-j` argument was passed to Cargo but Cargo is also configured with an external jobserver in its environment, ignoring the `-j` parameter
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+✓ rusty-cpp: no violations found!
+Auto-detected 8 C++ include path(s)
+[  6%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/debugging.cpp.o
+[  6%] Built target borrow_check_deptran_borrow_empty
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/basetypes.cpp.o
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/logging.cpp.o
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/misc.cpp.o
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/strop.cpp.o
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/misc/alock.cpp.o
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/unittest.cpp.o
+[  7%] Building CXX object CMakeFiles/rrr.dir/src/rrr/base/threading.cpp.o
+[  8%] Building CXX object CMakeFiles/rrr.dir/src/rrr/misc/recorder.cpp.o
+[  8%] Building CXX object CMakeFiles/rrr.dir/src/rrr/misc/marshal.cpp.o
+[  8%] Building CXX object CMakeFiles/rrr.dir/src/rrr/misc/rand.cpp.o
+[  8%] Building CXX object CMakeFiles/rrr.dir/src/rrr/reactor/epoll_wrapper.cc.o
+[  8%] Building CXX object CMakeFiles/rrr.dir/src/rrr/reactor/fiber_impl.cc.o
+[  8%] Building CXX object CMakeFiles/rrr.dir/src/rrr/reactor/event.cc.o
+[ 10%] Building CXX object CMakeFiles/rrr.dir/src/rrr/reactor/quorum_event.cc.o
+[ 10%] Building CXX object CMakeFiles/rrr.dir/src/rrr/reactor/reactor.cc.o
+[ 10%] Building CXX object CMakeFiles/rrr.dir/src/rrr/rpc/client.cpp.o
+[ 10%] Building CXX object CMakeFiles/rrr.dir/src/rrr/rpc/server.cpp.o
+[ 10%] Building CXX object CMakeFiles/rrr.dir/src/rrr/rpc/utils.cpp.o
+[ 10%] Built target gtest_main
+[ 11%] Built target gmock
+[ 16%] Built target erpc
+[ 16%] Linking CXX shared library ../../../../../lib/libgmock_main.so
+[ 22%] Built target latency
+[ 22%] Building CXX object CMakeFiles/test_erpc_integration.dir/test/test_erpc_integration.cc.o
+[ 22%] Built target hello_server
+[ 23%] Built target hello_client
+[ 23%] Built target gmock_main
+[ 23%] Building CXX object CMakeFiles/mako.dir/src/mako/allocator.cc.o
+[ 24%] Building CXX object CMakeFiles/mako.dir/src/mako/btree.cc.o
+[ 24%] Building CXX object CMakeFiles/mako.dir/src/mako/counter.cc.o
+[ 24%] Building CXX object CMakeFiles/mako.dir/src/mako/core.cc.o
+[ 24%] Building CXX object CMakeFiles/mako.dir/src/mako/memory.cc.o
+    Finished `release` profile [optimized] target(s) in 0.86s
+[ 24%] Built target build_rusty_cpp_checker
+[ 24%] Building CXX object CMakeFiles/mako.dir/src/mako/rocksdb_persistence.cc.o
+[ 24%] Building CXX object CMakeFiles/mako.dir/src/mako/rcu.cc.o
+[ 25%] Borrow checking src/mako/masstree/masstree_context.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/mako/masstree/masstree_context.cc
+[ 25%] Borrow checking src/mako/masstree/kvthread.cc
+[ 25%] Borrow checking src/mako/masstree/value_versioned_array.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/mako/masstree/value_versioned_array.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/mako/masstree/kvthread.cc
+[ 25%] Borrow checking src/mako/masstree/query_masstree.cc
+Rusty C++ Checker
+Analyzing: /home/shuai/workspace/mako/src/mako/masstree/query_masstree.cc
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+Auto-detected 8 C++ include path(s)
+[ 25%] Building CXX object CMakeFiles/mako.dir/src/mako/stats_server.cc.o
+[ 26%] Building CXX object CMakeFiles/mako.dir/src/mako/ticker.cc.o
+[ 26%] Building CXX object CMakeFiles/mako.dir/src/mako/thread.cc.o
+[ 26%] Building CXX object CMakeFiles/txlog.dir/src/bench/micro/procedure.cc.o
+[ 26%] Building CXX object CMakeFiles/mako.dir/src/mako/tuple.cc.o
+[ 26%] Building CXX object CMakeFiles/mako.dir/src/mako/txn_btree.cc.o
+[ 26%] Building CXX object CMakeFiles/mako.dir/src/mako/txn.cc.o
+[ 26%] Building CXX object CMakeFiles/mako.dir/src/mako/txn_proto2_impl.cc.o
+[ 27%] Building CXX object CMakeFiles/mako.dir/src/mako/varint.cc.o
+[ 27%] Building CXX object CMakeFiles/txlog.dir/src/bench/micro/workload.cc.o
+[ 27%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/compiler.cc.o
+[ 27%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/str.cc.o
+[ 27%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/string.cc.o
+[ 27%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/straccum.cc.o
+[ 27%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/json.cc.o
+[ 28%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/kvthread.cc.o
+[ 28%] Building CXX object CMakeFiles/mako.dir/src/mako/masstree/masstree_context.cc.o
+[ 28%] Building CXX object CMakeFiles/mako.dir/src/mako/silo_runtime.cc.o
+[ 28%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/bench.cc.o
+[ 28%] Building CXX object CMakeFiles/txlog.dir/src/bench/rw/procedure.cc.o
+[ 28%] Building CXX object CMakeFiles/txlog.dir/src/bench/rw/workload.cc.o
+[ 28%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpca/payment.cc.o
+[ 28%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpca/sharding.cc.o
+✓ rusty-cpp: no violations found!
+[ 28%] Built target borrow_check_kvthread
+[ 30%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpca/workload.cc.o
+[ 30%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/delivery.cc.o
+[ 30%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/new_order.cc.o
+[ 30%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/order_status.cc.o
+[ 30%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/encstress.cc.o
+[ 30%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/bid.cc.o
+✓ rusty-cpp: no violations found!
+[ 30%] Built target borrow_check_masstree_context
+[ 31%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/queue.cc.o
+[ 31%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/payment.cc.o
+[ 32%] Linking CXX executable test_erpc_integration
+[ 32%] Built target test_erpc_integration
+[ 32%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/procedure.cc.o
+[ 32%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/tpcc.cc.o
+[ 32%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/rpc_setup.cc.o
+[ 33%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/sharding.cc.o
+[ 33%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sync_util_init.cc.o
+[ 33%] Linking CXX static library librrr.a
+[ 33%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/Transaction.cc.o
+[ 33%] Built target rrr
+[ 33%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/MassTrans.cc.o
+[ 33%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/stock_level.cc.o
+[ 33%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/common.cc.o
+[ 33%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc/workload.cc.o
+✓ rusty-cpp: no violations found!
+[ 33%] Built target borrow_check_value_versioned_array
+[ 33%] Building CXX object CMakeFiles/memdb.dir/src/memdb/MurmurHash3.cc.o
+[ 33%] Building CXX object CMakeFiles/memdb.dir/src/memdb/row.cc.o
+[ 34%] Building CXX object CMakeFiles/memdb.dir/src/memdb/schema.cc.o
+[ 34%] Building CXX object CMakeFiles/memdb.dir/src/memdb/table.cc.o
+[ 34%] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn.cc.o
+[ 34%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_dist/procedure.cc.o
+[ 34%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_real_dist/delivery.cc.o
+[ 34%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_real_dist/new_order.cc.o
+[ 35%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/TRcu.cc.o
+[ 35%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/Packer.cc.o
+[ 35%] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_2pl.cc.o
+[ 35%] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_nested.cc.o
+[ 36%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_real_dist/payment.cc.o
+[ 36%] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_occ.cc.o
+[ 36%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_real_dist/procedure.cc.o
+[ 37%] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_unsafe.cc.o
+[ 37%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/ReplayDB.cc.o
+[ 37%] Building CXX object CMakeFiles/memdb.dir/src/memdb/utils.cc.o
+[ 37%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_real_dist/sharding.cc.o
+[ 37%] Building CXX object CMakeFiles/memdb.dir/src/memdb/value.cc.o
+[ 37%] Building CXX object CMakeFiles/txlog.dir/src/bench/tpcc_real_dist/workload.cc.o
+[ 37%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sto/ThreadPool.cc.o
+[ 37%] Building CXX object CMakeFiles/memdb.dir/src/memdb/xxhash.cc.o
+[ 37%] Building CXX object CMakeFiles/txlog.dir/src/deptran/2pl/scheduler.cc.o
+[ 37%] Building CXX object CMakeFiles/txlog.dir/src/deptran/2pl/tx.cc.o
+[ 37%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/lookup3.cc.o
+[ 37%] Building CXX object CMakeFiles/txlog.dir/src/deptran/RW_command.cc.o
+[ 37%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/kv_store.cc.o
+[ 38%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/rust_wrapper.cc.o
+[ 40%] Building CXX object CMakeFiles/txlog.dir/src/deptran/benchmark_control_rpc.cc.o
+[ 40%] Building CXX object CMakeFiles/txlog.dir/src/deptran/carousel/commo.cc.o
+[ 40%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/message.cc.o
+[ 40%] Building CXX object CMakeFiles/txlog.dir/src/deptran/carousel/coordinator.cc.o
+[ 40%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/memory.cc.o
+[ 40%] Building CXX object CMakeFiles/txlog.dir/src/deptran/carousel/frame.cc.o
+[ 40%] Building CXX object CMakeFiles/txlog.dir/src/deptran/carousel/scheduler.cc.o
+[ 40%] Building CXX object CMakeFiles/txlog.dir/src/deptran/carousel/tx.cc.o
+[ 40%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/helper_queue.cc.o
+[ 41%] Building CXX object CMakeFiles/txlog.dir/src/deptran/classic/coordinator.cc.o
+[ 41%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/transport.cc.o
+[ 41%] Building CXX object CMakeFiles/txlog.dir/src/deptran/classic/scheduler.cc.o
+[ 41%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/fasttransport.cc.o
+[ 41%] Building CXX object CMakeFiles/txlog.dir/src/deptran/classic/tpc_command.cc.o
+[ 42%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/erpc_backend.cc.o
+[ 42%] Linking CXX static library libmemdb.a
+[ 42%] Built target memdb
+[ 42%] Building CXX object CMakeFiles/rpcbench.dir/test/benchmark_service.cc.o
+[ 42%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/rrr_rpc_backend.cc.o
+[ 42%] Building CXX object CMakeFiles/rpcbench.dir/test/rpcbench.cc.o
+[ 42%] Building CXX object CMakeFiles/test_marshal.dir/test/test_marshal.cc.o
+[ 42%] Building CXX object CMakeFiles/txlog.dir/src/deptran/client_status.cc.o
+[ 42%] Building CXX object CMakeFiles/test_config_schema.dir/test/config_schema_test.cc.o
+[ 42%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/multi_transport_manager.cc.o
+[ 42%] Building CXX object CMakeFiles/test_sharding_policy.dir/test/sharding_policy_test.cc.o
+[ 42%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/configuration.cc.o
+[ 42%] Building CXX object CMakeFiles/test_fiber.dir/test/fiber_test.cc.o
+[ 42%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/timestamp.cc.o
+[ 42%] Building CXX object CMakeFiles/txlog.dir/src/deptran/client_worker.cc.o
+[ 42%] Building CXX object CMakeFiles/test_rpc.dir/test/benchmark_service.cc.o
+[ 42%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/promise.cc.o
+[ 42%] Building CXX object CMakeFiles/test_rpc.dir/test/test_rpc.cc.o
+[ 42%] Building CXX object CMakeFiles/test_load_balancer.dir/test/benchmark_service.cc.o
+[ 42%] Building CXX object CMakeFiles/txlog.dir/src/deptran/command_marshaler.cc.o
+[ 43%] Building CXX object CMakeFiles/test_load_balancer.dir/test/test_load_balancer.cc.o
+[ 43%] Linking CXX executable rpcbench
+[ 43%] Building CXX object CMakeFiles/test_idempotency.dir/test/test_idempotency.cc.o
+[ 43%] Linking CXX executable test_config_schema
+[ 43%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/client.cc.o
+[ 43%] Building CXX object CMakeFiles/test_completion_tracker.dir/test/test_completion_tracker.cc.o
+[ 44%] Building CXX object CMakeFiles/txlog.dir/src/deptran/communicator.cc.o
+[ 44%] Building CXX object CMakeFiles/txlog.dir/src/deptran/config.cc.o
+[ 44%] Building CXX object CMakeFiles/rpc_chaos_test.dir/test/benchmark_service.cc.o
+[ 45%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/shardClient.cc.o
+[ 45%] Building CXX object CMakeFiles/txlog.dir/src/deptran/config_client.cc.o
+[ 45%] Building CXX object CMakeFiles/rpc_chaos_test.dir/test/rpc_chaos_test.cc.o
+[ 45%] Building CXX object CMakeFiles/test_future.dir/test/test_future.cc.o
+[ 45%] Building CXX object CMakeFiles/bench_future.dir/test/bench_future.cc.o
+[ 45%] Building CXX object CMakeFiles/mako.dir/src/mako/lib/server.cc.o
+[ 45%] Building CXX object CMakeFiles/txlog.dir/src/deptran/config_node_init.cc.o
+[ 45%] Linking CXX executable test_fiber
+[ 45%] Building CXX object CMakeFiles/test_reactor.dir/test/test_reactor.cc.o
+[ 45%] Linking CXX executable test_marshal
+[ 45%] Building CXX object CMakeFiles/txlog.dir/src/deptran/config_service.cc.o
+[ 45%] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/abstract_db.cc.o
+[ 45%] Linking CXX executable test_sharding_policy
+[ 45%] Building CXX object CMakeFiles/txlog.dir/src/deptran/config_store.cc.o
+✓ rusty-cpp: no violations found!
+[ 45%] Built target borrow_check_query_masstree
+[ 45%] Building CXX object CMakeFiles/mako.dir/src/mako/db.cc.o
+[ 45%] Building CXX object CMakeFiles/mako.dir/src/mako/client_service.cc.o
+[ 45%] Building CXX object CMakeFiles/test_coroutine.dir/test/coroutine.cc.o
+[ 45%] Linking CXX executable test_idempotency
+[ 45%] Building CXX object CMakeFiles/mako.dir/src/mako/client_proxy.cc.o
+[ 45%] Building CXX object CMakeFiles/test_rpc_extended.dir/test/benchmark_service.cc.o
+[ 45%] Linking CXX executable test_completion_tracker
+[ 45%] Linking CXX executable test_load_balancer
+[ 46%] Building CXX object CMakeFiles/txlog.dir/src/deptran/coordinator.cc.o
+[ 47%] Building CXX object CMakeFiles/test_rpc_extended.dir/test/test_rpc_extended.cc.o
+[ 47%] Building CXX object CMakeFiles/txlog.dir/src/deptran/copilot/commo.cc.o
+[ 47%] Linking CXX executable test_reactor
+[ 47%] Building CXX object CMakeFiles/test_reactor_extended.dir/test/test_reactor_extended.cc.o
+[ 47%] Linking CXX executable test_rpc
+[ 48%] Building CXX object CMakeFiles/test_arc_mutex_thread.dir/test/test_arc_mutex_thread.cc.o
+[ 48%] Linking CXX executable bench_future
+[ 50%] Building CXX object CMakeFiles/test_timeout_race.dir/test/test_timeout_race.cc.o
+[ 50%] Building CXX object CMakeFiles/test_and_event.dir/test/test_and_event.cc.o
+[ 50%] Linking CXX executable test_coroutine
+[ 51%] Linking CXX executable rpc_chaos_test
+[ 51%] Linking CXX executable test_future
+[ 51%] Building CXX object CMakeFiles/txlog.dir/src/deptran/copilot/coordinator.cc.o
+[ 51%] Building CXX object CMakeFiles/test_transport_backend.dir/test/test_transport_backend.cc.o
+[ 51%] Built target rpcbench
+[ 51%] Building CXX object CMakeFiles/stress_transport_backend.dir/test/stress_transport_backend.cc.o
+[ 52%] Linking CXX static library libmako.a
+[ 52%] Built target test_config_schema
+[ 52%] Building CXX object CMakeFiles/txlog.dir/src/deptran/copilot/frame.cc.o
+[ 53%] Building CXX object CMakeFiles/test_transport_integration.dir/test/test_transport_integration.cc.o
+[ 53%] Built target mako
+[ 53%] Building CXX object CMakeFiles/txlog.dir/src/deptran/copilot/server.cc.o
+[ 53%] Linking CXX executable test_reactor_extended
+[ 53%] Linking CXX executable test_arc_mutex_thread
+[ 53%] Linking CXX executable test_and_event
+[ 53%] Linking CXX executable test_timeout_race
+[ 54%] Building CXX object CMakeFiles/test_rpc_connection_state.dir/test/rpc_connection_state_test.cc.o
+[ 54%] Building CXX object CMakeFiles/test_rpc_reconnect_policy.dir/test/rpc_reconnect_policy_test.cc.o
+[ 54%] Linking CXX executable test_rpc_extended
+[ 54%] Built target test_sharding_policy
+[ 54%] Building CXX object CMakeFiles/test_rpc_circuit_breaker.dir/test/rpc_circuit_breaker_test.cc.o
+[ 54%] Linking CXX executable test_transport_backend
+[ 54%] Built target test_fiber
+[ 54%] Building CXX object CMakeFiles/txlog.dir/src/deptran/copilot/service.cc.o
+[ 54%] Built target test_marshal
+[ 54%] Building CXX object CMakeFiles/txlog.dir/src/deptran/empty.cc.o
+[ 55%] Building CXX object CMakeFiles/txlog.dir/src/deptran/executor.cc.o
+[ 55%] Linking CXX executable stress_transport_backend
+[ 55%] Linking CXX executable test_rpc_connection_state
+[ 55%] Building CXX object CMakeFiles/test_rpc_heartbeat.dir/test/rpc_heartbeat_test.cc.o
+[ 56%] Linking CXX executable test_rpc_reconnect_policy
+[ 56%] Built target test_idempotency
+[ 56%] Building CXX object CMakeFiles/test_rpc_errors.dir/test/rpc_errors_test.cc.o
+[ 56%] Linking CXX executable test_rpc_circuit_breaker
+[ 56%] Building CXX object CMakeFiles/txlog.dir/src/deptran/extern_c/frame.cc.o
+[ 56%] Built target test_load_balancer
+[ 56%] Building CXX object CMakeFiles/test_rpc_callbacks.dir/test/rpc_callbacks_test.cc.o
+[ 56%] Built target test_completion_tracker
+[ 56%] Building CXX object CMakeFiles/test_rpc_request_queue.dir/test/rpc_request_queue_test.cc.o
+[ 56%] Built target test_reactor
+[ 56%] Building CXX object CMakeFiles/test_rpc_request_buffering.dir/test/rpc_request_buffering_test.cc.o
+[ 56%] Building CXX object CMakeFiles/txlog.dir/src/deptran/extern_c/sched.cc.o
+[ 56%] Linking CXX executable test_transport_integration
+[ 57%] Linking CXX executable test_rpc_heartbeat
+[ 57%] Built target bench_future
+[ 57%] Building CXX object CMakeFiles/txlog.dir/src/deptran/februus/commo.cc.o
+[ 57%] Building CXX object CMakeFiles/test_rpc_timeout_retry.dir/test/rpc_timeout_retry_test.cc.o
+[ 57%] Built target test_rpc
+[ 57%] Building CXX object CMakeFiles/txlog.dir/src/deptran/februus/coordinator.cc.o
+[ 57%] Built target test_coroutine
+[ 57%] Building CXX object CMakeFiles/txlog.dir/src/deptran/februus/frame.cc.o
+[ 57%] Linking CXX executable test_rpc_errors
+[ 58%] Building CXX object CMakeFiles/txlog.dir/src/deptran/februus/scheduler.cc.o
+[ 58%] Built target test_future
+[ 58%] Building CXX object CMakeFiles/test_rpc_state_integration.dir/test/benchmark_service.cc.o
+[ 58%] Building CXX object CMakeFiles/test_rpc_reconnect_integration.dir/test/benchmark_service.cc.o
+[ 60%] Linking CXX executable test_rpc_callbacks
+[ 60%] Built target rpc_chaos_test
+[ 60%] Building CXX object CMakeFiles/test_rpc_state_integration.dir/test/rpc_state_integration_test.cc.o
+[ 60%] Linking CXX executable test_rpc_request_queue
+[ 60%] Built target test_reactor_extended
+[ 60%] Building CXX object CMakeFiles/txlog.dir/src/deptran/fpga_raft/commo.cc.o
+[ 60%] Building CXX object CMakeFiles/test_rpc_reconnect_integration.dir/test/rpc_reconnect_integration_test.cc.o
+[ 60%] Building CXX object CMakeFiles/test_rpc_circuit_breaker_integration.dir/test/benchmark_service.cc.o
+[ 60%] Linking CXX executable test_rpc_timeout_retry
+[ 60%] Built target test_arc_mutex_thread
+[ 60%] Building CXX object CMakeFiles/test_rpc_circuit_breaker_integration.dir/test/rpc_circuit_breaker_integration_test.cc.o
+[ 60%] Built target test_timeout_race
+[ 60%] Building CXX object CMakeFiles/txlog.dir/src/deptran/fpga_raft/coordinator.cc.o
+[ 60%] Building CXX object CMakeFiles/test_rpc_error_integration.dir/test/benchmark_service.cc.o
+[ 60%] Linking CXX executable test_rpc_request_buffering
+[ 60%] Building CXX object CMakeFiles/test_rpc_error_integration.dir/test/rpc_error_integration_test.cc.o
+[ 60%] Built target test_and_event
+[ 60%] Building CXX object CMakeFiles/test_rpc_combined_reliability.dir/test/benchmark_service.cc.o
+[ 60%] Built target test_rpc_extended
+[ 60%] Building CXX object CMakeFiles/txlog.dir/src/deptran/fpga_raft/exec.cc.o
+[ 60%] Building CXX object CMakeFiles/txlog.dir/src/deptran/fpga_raft/frame.cc.o
+[ 60%] Built target stress_transport_backend
+[ 60%] Building CXX object CMakeFiles/txlog.dir/src/deptran/fpga_raft/server.cc.o
+[ 60%] Built target test_transport_backend
+[ 60%] Building CXX object CMakeFiles/test_rpc_combined_reliability.dir/test/rpc_combined_reliability_test.cc.o
+[ 60%] Built target test_rpc_connection_state
+[ 60%] Building CXX object CMakeFiles/test_rpc_graceful_shutdown.dir/test/rpc_graceful_shutdown_test.cc.o
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/fpga_raft/service.cc.o
+[ 61%] Building CXX object CMakeFiles/test_rpc_restart_detection.dir/test/rpc_restart_detection_test.cc.o
+[ 61%] Building CXX object CMakeFiles/test_rpc_validation.dir/test/benchmark_service.cc.o
+[ 61%] Built target test_rpc_reconnect_policy
+[ 61%] Building CXX object CMakeFiles/test_rpc_metrics.dir/test/benchmark_service.cc.o
+[ 61%] Linking CXX executable test_rpc_state_integration
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/frame.cc.o
+[ 61%] Built target test_rpc_circuit_breaker
+[ 61%] Building CXX object CMakeFiles/test_rpc_metrics.dir/test/rpc_metrics_test.cc.o
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/helloworld_client/helloworld_impl.cc.o
+[ 61%] Building CXX object CMakeFiles/test_rpc_validation.dir/test/rpc_validation_test.cc.o
+[ 61%] Linking CXX executable test_rpc_reconnect_integration
+✓ rusty-cpp: no violations found!
+[ 61%] Built target borrow_check_deptran_borrow_executor
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/janus/commo.cc.o
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/janus/coordinator.cc.o
+[ 61%] Linking CXX executable test_rpc_circuit_breaker_integration
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/janus/frame.cc.o
+[ 61%] Built target test_rpc_heartbeat
+[ 61%] Built target test_transport_integration
+[ 61%] Building CXX object CMakeFiles/txlog.dir/src/deptran/janus/scheduler.cc.o
+[ 62%] Building CXX object CMakeFiles/txlog.dir/src/deptran/janus/tx.cc.o
+[ 62%] Built target test_rpc_errors
+[ 62%] Building CXX object CMakeFiles/test_rpc_client_pool.dir/test/benchmark_service.cc.o
+[ 63%] Linking CXX executable test_rpc_restart_detection
+[ 63%] Linking CXX executable test_rpc_error_integration
+[ 63%] Building CXX object CMakeFiles/txlog.dir/src/deptran/marshal-value.cc.o
+[ 64%] Building CXX object CMakeFiles/test_rpc_client_pool.dir/test/rpc_client_pool_test.cc.o
+[ 64%] Linking CXX executable test_rpc_graceful_shutdown
+[ 64%] Building CXX object CMakeFiles/txlog.dir/src/deptran/mencius/commo.cc.o
+[ 64%] Building CXX object CMakeFiles/txlog.dir/src/deptran/mencius/coordinator.cc.o
+✓ rusty-cpp: no violations found!
+[ 64%] Built target borrow_check_deptran_borrow_stats_registry
+[ 64%] Building CXX object CMakeFiles/txlog.dir/src/deptran/mencius/exec.cc.o
+[ 64%] Built target test_rpc_callbacks
+[ 64%] Building CXX object CMakeFiles/txlog.dir/src/deptran/mencius/frame.cc.o
+[ 64%] Built target test_rpc_request_queue
+[ 64%] Building CXX object CMakeFiles/test_rpc_log_storage.dir/test/rpc_log_storage_test.cc.o
+[ 64%] Linking CXX executable test_rpc_combined_reliability
+[ 64%] Built target test_rpc_timeout_retry
+[ 64%] Building CXX object CMakeFiles/test_rpc_rocksdb_log_storage.dir/test/rpc_rocksdb_log_storage_test.cc.o
+[ 65%] Building CXX object CMakeFiles/txlog.dir/src/deptran/mencius/server.cc.o
+[ 65%] Building CXX object CMakeFiles/test_txn_timeout.dir/test/deptran/txn_timeout_test.cc.o
+[ 66%] Linking CXX executable test_rpc_validation
+[ 66%] Building CXX object CMakeFiles/test_rpc_stress_crash.dir/test/benchmark_service.cc.o
+[ 66%] Linking CXX executable test_rpc_metrics
+[ 66%] Building CXX object CMakeFiles/test_rpc_partition.dir/test/benchmark_service.cc.o
+[ 67%] Building CXX object CMakeFiles/test_rpc_partition.dir/test/rpc_partition_test.cc.o
+[ 67%] Building CXX object CMakeFiles/test_masstree.dir/test/test_masstree.cc.o
+[ 67%] Built target test_rpc_request_buffering
+[ 67%] Building CXX object CMakeFiles/txlog.dir/src/deptran/mencius/service.cc.o
+✓ rusty-cpp: no violations found!
+[ 67%] Building CXX object CMakeFiles/txlog.dir/src/deptran/multi_value.cc.o
+[ 67%] Built target borrow_check_deptran_borrow_paxos_worker
+[ 67%] Building CXX object CMakeFiles/txlog.dir/src/deptran/network_client/network_impl.cc.o
+[ 67%] Linking CXX executable test_txn_timeout
+[ 67%] Building CXX object CMakeFiles/txlog.dir/src/deptran/none/coordinator.cc.o
+[ 67%] Building CXX object CMakeFiles/txlog.dir/src/deptran/none/scheduler.cc.o
+[ 67%] Linking CXX executable test_rpc_client_pool
+[ 67%] Linking CXX executable test_rpc_log_storage
+[ 68%] Building CXX object CMakeFiles/txlog.dir/src/deptran/none_copilot/commo.cc.o
+[ 68%] Building CXX object CMakeFiles/test_masstree_internals.dir/test/test_masstree_internals.cc.o
+[ 68%] Built target test_rpc_state_integration
+[ 70%] Building CXX object CMakeFiles/test_rpc_stress_crash.dir/test/rpc_stress_crash_test.cc.o
+[ 70%] Building CXX object CMakeFiles/test_masstree_multi_instance.dir/test/test_masstree_multi_instance.cc.o
+[ 70%] Building CXX object CMakeFiles/test_silo_runtime.dir/test/test_silo_runtime.cc.o
+[ 70%] Building CXX object CMakeFiles/txlog.dir/src/deptran/none_copilot/scheduler.cc.o
+[ 70%] Building CXX object CMakeFiles/txlog.dir/src/deptran/occ/scheduler.cc.o
+[ 70%] Building CXX object CMakeFiles/txlog.dir/src/deptran/occ/tx.cc.o
+[ 70%] Built target test_rpc_reconnect_integration
+[ 70%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos/commo.cc.o
+[ 71%] Linking CXX executable test_masstree
+[ 71%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos/coordinator.cc.o
+[ 71%] Linking CXX executable test_rpc_rocksdb_log_storage
+[ 71%] Built target test_masstree
+[ 71%] Building CXX object CMakeFiles/test_silo_multi_site_stress.dir/test/test_silo_multi_site_stress.cc.o
+[ 71%] Built target test_rpc_circuit_breaker_integration
+[ 71%] Building CXX object CMakeFiles/masstree_perf.dir/test/masstree_perf.cc.o
+[ 71%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos/exec.cc.o
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos/frame.cc.o
+[ 72%] Built target test_rpc_restart_detection
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos/server.cc.o
+[ 72%] Linking CXX executable test_rpc_partition
+[ 72%] Linking CXX executable test_masstree_internals
+[ 72%] Built target test_rpc_graceful_shutdown
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos/service.cc.o
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos_main_helper.cc.o
+[ 72%] Built target test_rpc_rocksdb_log_storage
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/paxos_worker.cc.o
+[ 72%] Built target test_rpc_error_integration
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/procedure.cc.o
+[ 72%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/commo.cc.o
+[ 72%] Linking CXX executable test_silo_runtime
+[ 72%] Built target test_rpc_combined_reliability
+[ 73%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/coordinator.cc.o
+[ 73%] Linking CXX executable test_masstree_multi_instance
+[ 73%] Built target test_silo_runtime
+[ 73%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/exec.cc.o
+[ 73%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/frame.cc.o
+[ 73%] Built target test_masstree_multi_instance
+[ 73%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/raft_worker.cc.o
+[ 73%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/server.cc.o
+[ 73%] Built target test_rpc_validation
+[ 73%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/service.cc.o
+[ 74%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/test.cc.o
+[ 74%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft/testconf.cc.o
+[ 74%] Linking CXX executable test_rpc_stress_crash
+[ 74%] Linking CXX executable masstree_perf
+[ 74%] Built target test_rpc_metrics
+[ 75%] Building CXX object CMakeFiles/txlog.dir/src/deptran/raft_main_helper.cc.o
+[ 75%] Built target masstree_perf
+[ 75%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/commo.cc.o
+[ 75%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/coord.cc.o
+[ 75%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/dep_graph.cc.o
+[ 75%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/frame.cc.o
+[ 76%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/graph_marshaler.cc.o
+[ 76%] Built target test_txn_timeout
+[ 76%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/row.cc.o
+[ 77%] Linking CXX executable test_silo_multi_site_stress
+[ 77%] Built target test_silo_multi_site_stress
+[ 77%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/server.cc.o
+[ 77%] Built target test_rpc_client_pool
+[ 77%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rcc/tx.cc.o
+[ 77%] Building CXX object CMakeFiles/txlog.dir/src/deptran/replication_helper.cc.o
+[ 77%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rule/commo.cc.o
+[ 77%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rule/coordinator.cc.o
+[ 77%] Building CXX object CMakeFiles/txlog.dir/src/deptran/rule/frame.cc.o
+[ 77%] Built target test_rpc_log_storage
+[ 78%] Building CXX object CMakeFiles/txlog.dir/src/deptran/scheduler.cc.o
+[ 78%] Building CXX object CMakeFiles/txlog.dir/src/deptran/server_worker.cc.o
+[ 78%] Building CXX object CMakeFiles/txlog.dir/src/deptran/service.cc.o
+[ 78%] Building CXX object CMakeFiles/txlog.dir/src/deptran/shard_router.cc.o
+[ 78%] Building CXX object CMakeFiles/txlog.dir/src/deptran/sharding.cc.o
+[ 78%] Building CXX object CMakeFiles/txlog.dir/src/deptran/sharding_policy_cache.cc.o
+[ 78%] Built target test_rpc_partition
+[ 80%] Building CXX object CMakeFiles/txlog.dir/src/deptran/snow/ro6.cc.o
+[ 80%] Building CXX object CMakeFiles/txlog.dir/src/deptran/snow/ro6_coord.cc.o
+[ 80%] Built target test_masstree_internals
+[ 80%] Building CXX object CMakeFiles/txlog.dir/src/deptran/snow/ro6_row.cc.o
+[ 80%] Building CXX object CMakeFiles/txlog.dir/src/deptran/stats_registry.cc.o
+[ 80%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tapir/commo.cc.o
+[ 80%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tapir/coordinator.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tapir/frame.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tapir/scheduler.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tapir/tx.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tpcc_sharding.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/troad/commo.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/troad/coordinator.cc.o
+[ 81%] Building CXX object CMakeFiles/txlog.dir/src/deptran/troad/scheduler.cc.o
+[ 82%] Building CXX object CMakeFiles/txlog.dir/src/deptran/troad/troad.cc.o
+[ 82%] Building CXX object CMakeFiles/txlog.dir/src/deptran/troad/tx.cc.o
+[ 82%] Building CXX object CMakeFiles/txlog.dir/src/deptran/tx.cc.o
+[ 82%] Built target test_rpc_stress_crash
+[ 82%] Building CXX object CMakeFiles/txlog.dir/src/deptran/txn_reg.cc.o
+[ 82%] Building CXX object CMakeFiles/txlog.dir/src/deptran/workload.cc.o
+[ 83%] Building CXX object CMakeFiles/txlog.dir/src/memdb/MurmurHash3.cc.o
+[ 83%] Building CXX object CMakeFiles/txlog.dir/src/memdb/row.cc.o
+[ 83%] Building CXX object CMakeFiles/txlog.dir/src/memdb/schema.cc.o
+[ 83%] Building CXX object CMakeFiles/txlog.dir/src/memdb/table.cc.o
+[ 83%] Building CXX object CMakeFiles/txlog.dir/src/memdb/txn.cc.o
+[ 83%] Building CXX object CMakeFiles/txlog.dir/src/memdb/txn_2pl.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/memdb/txn_nested.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/memdb/txn_occ.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/memdb/txn_unsafe.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/memdb/utils.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/memdb/value.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/memdb/xxhash.cc.o
+[ 84%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/basetypes.cpp.o
+[ 85%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/debugging.cpp.o
+[ 85%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/logging.cpp.o
+[ 85%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/misc.cpp.o
+[ 85%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/strop.cpp.o
+[ 85%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/threading.cpp.o
+[ 85%] Building CXX object CMakeFiles/txlog.dir/src/rrr/base/unittest.cpp.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/misc/alock.cpp.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/misc/marshal.cpp.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/misc/rand.cpp.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/misc/recorder.cpp.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/pylib/simplerpc/_pyrpc.cpp.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/reactor/epoll_wrapper.cc.o
+[ 86%] Building CXX object CMakeFiles/txlog.dir/src/rrr/reactor/event.cc.o
+[ 87%] Building CXX object CMakeFiles/txlog.dir/src/rrr/reactor/fiber_impl.cc.o
+[ 87%] Building CXX object CMakeFiles/txlog.dir/src/rrr/reactor/quorum_event.cc.o
+[ 87%] Building CXX object CMakeFiles/txlog.dir/src/rrr/reactor/reactor.cc.o
+[ 87%] Building CXX object CMakeFiles/txlog.dir/src/rrr/rpc/client.cpp.o
+[ 87%] Building CXX object CMakeFiles/txlog.dir/src/rrr/rpc/server.cpp.o
+[ 87%] Building CXX object CMakeFiles/txlog.dir/src/rrr/rpc/utils.cpp.o
+✓ rusty-cpp: no violations found!
+[ 87%] Built target borrow_check_deptran_borrow_communicator
+[ 88%] Linking CXX shared library libtxlog.so
+[ 88%] Built target txlog
+[ 90%] Building CXX object CMakeFiles/test_rocksdb_persistence.dir/examples/test_rocksdb_persistence.cc.o
+[ 90%] Building CXX object CMakeFiles/test_silo_varint.dir/test/test_silo_varint.cc.o
+[ 90%] Building CXX object CMakeFiles/test_callback_demo.dir/examples/test_callback_demo.cc.o
+[ 90%] Building CXX object CMakeFiles/test_ordered_callbacks.dir/examples/test_ordered_callbacks.cc.o
+[ 90%] Building CXX object CMakeFiles/test_sto_transaction.dir/test/test_sto_transaction.cc.o
+[ 90%] Building CXX object CMakeFiles/test_stress_partitioned_queues.dir/examples/test_stress_partitioned_queues.cc.o
+[ 90%] Building CXX object CMakeFiles/test_silo_allocator_tuple.dir/test/test_silo_allocator_tuple.cc.o
+[ 90%] Building CXX object CMakeFiles/test_silo_rcu_thread.dir/test/test_silo_rcu_thread.cc.o
+[ 90%] Building CXX object CMakeFiles/test_partitioned_queues.dir/examples/test_partitioned_queues.cc.o
+[ 90%] Building CXX object CMakeFiles/test_config_store.dir/test/config_store_test.cc.o
+[ 90%] Building CXX object CMakeFiles/test_sto_transaction_real.dir/test/test_sto_transaction_real.cc.o
+[ 90%] Building CXX object CMakeFiles/paxos_async_commit_test.dir/src/mako/benchmarks/paxos_async_commit_test.cc.o
+[ 90%] Building CXX object CMakeFiles/simpleTransaction.dir/examples/simpleTransaction.cc.o
+[ 90%] Building CXX object CMakeFiles/erpc_server.dir/src/mako/benchmarks/ut/erpc_server.cc.o
+[ 91%] Building CXX object CMakeFiles/erpc_client.dir/src/mako/benchmarks/ut/erpc_client.cc.o
+[ 91%] Building CXX object CMakeFiles/simplePaxos.dir/examples/simplePaxos.cc.o
+[ 91%] Building CXX object CMakeFiles/makoCon.dir/examples/makoCon.cc.o
+[ 91%] Building CXX object CMakeFiles/makoConDBBench.dir/examples/makoConDBBench.cc.o
+[ 91%] Building CXX object CMakeFiles/rocksdb_replay_app.dir/src/mako/benchmarks/rocksdb_replay_app.cc.o
+[ 91%] Building CXX object CMakeFiles/makoConMultiTrd.dir/examples/makoConMultiTrd.cc.o
+[ 91%] Building CXX object CMakeFiles/continuousTransactions.dir/examples/continuousTransactions.cc.o
+[ 91%] Building CXX object CMakeFiles/makoServer.dir/examples/makoServer.cc.o
+[ 91%] Building CXX object CMakeFiles/test_tpcc_sharding.dir/test/tpcc_sharding_test.cc.o
+[ 92%] Building CXX object CMakeFiles/simpleTransactionRep.dir/examples/simpleTransactionRep.cc.o
+[ 92%] Building CXX object CMakeFiles/test_shard_router.dir/test/shard_router_test.cc.o
+[ 92%] Building CXX object CMakeFiles/test_config_service.dir/test/config_service_test.cc.o
+[ 92%] Building CXX object CMakeFiles/test_sharding_policy_cache.dir/test/sharding_policy_cache_test.cc.o
+[ 92%] Building CXX object CMakeFiles/basic.dir/src/mako/benchmarks/ut/basic.cc.o
+[ 92%] Building CXX object CMakeFiles/test_config_failure.dir/test/config_failure_test.cc.o
+[ 92%] Building CXX object CMakeFiles/test_sharding_startup.dir/test/sharding_startup_test.cc.o
+[ 92%] Building CXX object CMakeFiles/test_config_client.dir/test/config_client_test.cc.o
+[ 92%] Linking CXX executable test_sto_transaction
+[ 92%] Built target test_sto_transaction
+[ 92%] Linking CXX executable test_rocksdb_persistence
+[ 92%] Linking CXX executable test_callback_demo
+[ 93%] Linking CXX executable test_silo_varint
+[ 93%] Built target test_silo_varint
+[ 93%] Linking CXX executable test_stress_partitioned_queues
+[ 93%] Linking CXX executable test_partitioned_queues
+[ 94%] Linking CXX executable test_ordered_callbacks
+[ 94%] Linking CXX executable test_silo_rcu_thread
+[ 94%] Linking CXX executable test_silo_allocator_tuple
+[ 94%] Built target test_silo_rcu_thread
+[ 94%] Built target test_silo_allocator_tuple
+[ 94%] Linking CXX executable erpc_server
+[ 94%] Linking CXX executable erpc_client
+[ 94%] Linking CXX executable test_sto_transaction_real
+[ 95%] Linking CXX executable paxos_async_commit_test
+[ 95%] Built target erpc_server
+[ 95%] Built target erpc_client
+✓ rusty-cpp: no violations found!
+[ 95%] Built target borrow_check_deptran_borrow_workload
+[ 95%] Built target borrow_check_all_deptran_borrow
+[ 95%] Running borrow checker on Deptran worker sources
+[ 95%] Built target borrow_check_deptran
+[ 95%] Building CXX object CMakeFiles/dbtest.dir/src/mako/benchmarks/dbtest.cc.o
+[ 95%] Built target test_sto_transaction_real
+[ 95%] Built target paxos_async_commit_test
+[ 95%] Linking CXX executable basic
+[ 95%] Linking CXX executable test_config_store
+[ 95%] Built target test_callback_demo
+[ 95%] Built target test_rocksdb_persistence
+[ 95%] Built target test_config_store
+[ 95%] Built target basic
+[ 95%] Built target test_stress_partitioned_queues
+[ 95%] Built target test_partitioned_queues
+[ 95%] Built target test_ordered_callbacks
+[ 95%] Linking CXX executable simpleTransaction
+[ 95%] Linking CXX executable test_tpcc_sharding
+[ 95%] Linking CXX executable makoConDBBench
+[ 96%] Linking CXX executable test_sharding_policy_cache
+[ 96%] Built target simpleTransaction
+[ 96%] Linking CXX executable simplePaxos
+[ 97%] Linking CXX executable makoConMultiTrd
+[ 97%] Built target test_tpcc_sharding
+[ 97%] Built target test_sharding_policy_cache
+[ 97%] Built target makoConDBBench
+[ 97%] Linking CXX executable rocksdb_replay_app
+[ 97%] Linking CXX executable makoCon
+[ 97%] Linking CXX executable test_shard_router
+[ 97%] Linking CXX executable test_sharding_startup
+[ 97%] Linking CXX executable test_config_failure
+[ 97%] Linking CXX executable continuousTransactions
+[ 97%] Built target simplePaxos
+[ 97%] Linking CXX executable makoServer
+[ 98%] Linking CXX executable test_config_client
+[ 98%] Built target test_config_failure
+[ 98%] Built target test_shard_router
+[ 98%] Built target rocksdb_replay_app
+[ 98%] Built target test_sharding_startup
+[ 98%] Built target makoConMultiTrd
+[ 98%] Built target continuousTransactions
+[ 98%] Built target test_config_client
+[ 98%] Built target makoCon
+[ 98%] Built target makoServer
+[100%] Linking CXX executable test_config_service
+[100%] Linking CXX executable simpleTransactionRep
+[100%] Built target test_config_service
+[100%] Built target simpleTransactionRep
+[100%] Linking CXX executable dbtest
+[100%] Built target dbtest
+gmake[1]: Leaving directory '/home/shuai/workspace/mako/build'
+using partitions:  10
+using partitions:  10
+using partitions:  10
+[{'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}]
+work on template:  template_local-shards1-warehouses1.yml
+work on template:  template_local-shards2-warehouses1.yml
+work on template:  template_local-shards3-warehouses1.yml
+work on template:  template_local-shards4-warehouses1.yml
+work on template:  template_local-shards5-warehouses1.yml
+work on template:  template_local-shards6-warehouses1.yml
+work on template:  template_local-shards7-warehouses1.yml
+work on template:  template_local-shards8-warehouses1.yml
+work on template:  template_local-shards9-warehouses1.yml
+work on template:  template_local-shards10-warehouses1.yml
+using partitions:  10
+=========================================
+Running: ./ci/ci.sh rrrTests
+=========================================
+Test project /home/shuai/workspace/mako/build
+      Start  1: test_marshal
+ 1/65 Test  #1: test_marshal ...........................   Passed    0.01 sec
+      Start  2: test_config_schema
+ 2/65 Test  #2: test_config_schema .....................   Passed    0.00 sec
+      Start  3: test_sharding_policy
+ 3/65 Test  #3: test_sharding_policy ...................   Passed    0.01 sec
+      Start  4: test_sharding_policy_cache
+ 4/65 Test  #4: test_sharding_policy_cache .............   Passed    0.02 sec
+      Start  5: test_shard_router
+ 5/65 Test  #5: test_shard_router ......................   Passed    0.02 sec
+      Start  6: test_tpcc_sharding
+ 6/65 Test  #6: test_tpcc_sharding .....................   Passed    0.02 sec
+      Start  7: test_fiber
+ 7/65 Test  #7: test_fiber .............................   Passed    0.01 sec
+      Start  8: test_config_store
+ 8/65 Test  #8: test_config_store ......................   Passed    0.55 sec
+      Start  9: test_config_service
+ 9/65 Test  #9: test_config_service ....................   Passed    0.65 sec
+      Start 10: test_config_client
+10/65 Test #10: test_config_client .....................   Passed    2.60 sec
+      Start 11: test_config_failure
+11/65 Test #11: test_config_failure ....................   Passed    1.11 sec
+      Start 12: test_sharding_startup
+12/65 Test #12: test_sharding_startup ..................   Passed    0.87 sec
+      Start 13: test_rpc
+13/65 Test #13: test_rpc ...............................   Passed    3.43 sec
+      Start 14: test_load_balancer
+14/65 Test #14: test_load_balancer .....................   Passed    0.51 sec
+      Start 15: test_idempotency
+15/65 Test #15: test_idempotency .......................   Passed    0.01 sec
+      Start 16: test_completion_tracker
+16/65 Test #16: test_completion_tracker ................   Passed    0.01 sec
+      Start 17: rpc_chaos_test
+17/65 Test #17: rpc_chaos_test .........................   Passed    4.63 sec
+      Start 18: test_future
+18/65 Test #18: test_future ............................   Passed    2.29 sec
+      Start 19: test_masstree
+19/65 Test #19: test_masstree ..........................   Passed    0.01 sec
+      Start 20: test_masstree_internals
+20/65 Test #20: test_masstree_internals ................   Passed    0.02 sec
+      Start 21: test_masstree_multi_instance
+21/65 Test #21: test_masstree_multi_instance ...........   Passed    0.02 sec
+      Start 22: test_silo_runtime
+22/65 Test #22: test_silo_runtime ......................   Passed    0.01 sec
+      Start 23: test_silo_multi_site_stress
+23/65 Test #23: test_silo_multi_site_stress ............   Passed    0.93 sec
+      Start 24: test_reactor
+24/65 Test #24: test_reactor ...........................   Passed    1.78 sec
+      Start 25: test_coroutine
+25/65 Test #25: test_coroutine .........................   Passed    1.01 sec
+      Start 26: test_rpc_extended
+26/65 Test #26: test_rpc_extended ......................   Passed    5.85 sec
+      Start 27: test_reactor_extended
+27/65 Test #27: test_reactor_extended ..................   Passed    0.18 sec
+      Start 28: test_arc_mutex_thread
+28/65 Test #28: test_arc_mutex_thread ..................   Passed    0.01 sec
+      Start 29: test_timeout_race
+29/65 Test #29: test_timeout_race ......................   Passed    0.40 sec
+      Start 30: test_and_event
+30/65 Test #30: test_and_event .........................   Passed    0.26 sec
+      Start 31: test_transport_backend
+31/65 Test #31: test_transport_backend .................   Passed    0.06 sec
+      Start 32: stress_transport_backend
+32/65 Test #32: stress_transport_backend ...............   Passed    5.54 sec
+      Start 33: test_transport_integration
+33/65 Test #33: test_transport_integration .............   Passed   12.76 sec
+      Start 34: test_erpc_integration
+34/65 Test #34: test_erpc_integration ..................   Passed    0.30 sec
+      Start 35: test_rpc_connection_state
+35/65 Test #35: test_rpc_connection_state ..............   Passed    0.01 sec
+      Start 36: test_rpc_reconnect_policy
+36/65 Test #36: test_rpc_reconnect_policy ..............   Passed    0.00 sec
+      Start 37: test_rpc_circuit_breaker
+37/65 Test #37: test_rpc_circuit_breaker ...............   Passed    0.31 sec
+      Start 38: test_rpc_heartbeat
+38/65 Test #38: test_rpc_heartbeat .....................   Passed    0.16 sec
+      Start 39: test_rpc_errors
+39/65 Test #39: test_rpc_errors ........................   Passed    0.00 sec
+      Start 40: test_rpc_callbacks
+40/65 Test #40: test_rpc_callbacks .....................   Passed    0.01 sec
+      Start 41: test_rpc_request_queue
+41/65 Test #41: test_rpc_request_queue .................   Passed    0.24 sec
+      Start 42: test_rpc_request_buffering
+42/65 Test #42: test_rpc_request_buffering .............   Passed    0.28 sec
+      Start 43: test_rpc_timeout_retry
+43/65 Test #43: test_rpc_timeout_retry .................   Passed    0.01 sec
+      Start 44: test_rpc_state_integration
+44/65 Test #44: test_rpc_state_integration .............   Passed    1.37 sec
+      Start 45: test_rpc_reconnect_integration
+45/65 Test #45: test_rpc_reconnect_integration .........   Passed    0.86 sec
+      Start 46: test_rpc_circuit_breaker_integration
+46/65 Test #46: test_rpc_circuit_breaker_integration ...   Passed    0.43 sec
+      Start 47: test_rpc_error_integration
+47/65 Test #47: test_rpc_error_integration .............   Passed    0.16 sec
+      Start 48: test_rpc_combined_reliability
+48/65 Test #48: test_rpc_combined_reliability ..........   Passed    0.96 sec
+      Start 49: test_rpc_graceful_shutdown
+49/65 Test #49: test_rpc_graceful_shutdown .............   Passed    0.29 sec
+      Start 50: test_rpc_restart_detection
+50/65 Test #50: test_rpc_restart_detection .............   Passed    0.02 sec
+      Start 51: test_rpc_validation
+51/65 Test #51: test_rpc_validation ....................   Passed    1.14 sec
+      Start 52: test_rpc_metrics
+52/65 Test #52: test_rpc_metrics .......................   Passed    0.23 sec
+      Start 53: test_rpc_client_pool
+53/65 Test #53: test_rpc_client_pool ...................   Passed    0.18 sec
+      Start 54: test_rpc_log_storage
+54/65 Test #54: test_rpc_log_storage ...................   Passed    0.01 sec
+      Start 55: test_rpc_rocksdb_log_storage
+55/65 Test #55: test_rpc_rocksdb_log_storage ...........   Passed    2.41 sec
+      Start 56: test_txn_timeout
+56/65 Test #56: test_txn_timeout .......................   Passed    0.00 sec
+      Start 57: test_rpc_stress_crash
+57/65 Test #57: test_rpc_stress_crash ..................   Passed    3.38 sec
+      Start 58: test_rpc_partition
+58/65 Test #58: test_rpc_partition .....................   Passed    7.83 sec
+      Start 59: simpleTransaction
+59/65 Test #59: simpleTransaction ......................   Passed    1.02 sec
+      Start 60: rpcbench
+60/65 Test #60: rpcbench ...............................   Passed    5.09 sec
+      Start 61: SiloVarintTests
+61/65 Test #61: SiloVarintTests ........................   Passed    0.00 sec
+      Start 62: SiloRCUThreadTests
+62/65 Test #62: SiloRCUThreadTests .....................   Passed    0.01 sec
+      Start 63: SiloAllocatorTupleTests
+63/65 Test #63: SiloAllocatorTupleTests ................   Passed    0.04 sec
+      Start 64: STOTransactionTests
+64/65 Test #64: STOTransactionTests ....................   Passed    0.01 sec
+      Start 65: STOTransactionRealTests
+65/65 Test #65: STOTransactionRealTests ................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 65
+
+Label Time Summary:
+chaos     =   4.63 sec*proc (1 test)
+stress    =  11.22 sec*proc (2 tests)
+
+Total Test time (real) =  72.38 sec
+=========================================
+Running: ./ci/ci.sh simpleTransaction
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+20260017-00:40.32-97635(us) 2768767 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20260017-00:40.32-97999(us) 2768767 * thread_init     (mbta_wrapper.hh:1048): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=0
+20260017-00:40.32-98296(us) 2768767 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20260017-00:40.32-98597(us) 2768767 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+=== Mako Transaction Tests  ===
+[TRANSPORT] Using default: rrr
+20260017-00:40.32-98772(us) 2768767 * Initialize      (rrr_rpc_backend.cc:65): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260017-00:40.32-98930(us) 2768767 * Initialize      (rrr_rpc_backend.cc:95): RrrRpcBackend initialized on 127.0.0.1:31000 (listening on 0.0.0.0:31000)
+20260017-00:40.32-98941(us) 2768767 * FastTransport   (fasttransport.cc:116): FastTransport initialized with rrr/rpc backend on 127.0.0.1:31000
+20260017-00:40.32-99246(us) 2768767 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+
+--- Testing Basic Transactions ---
+new table is createded with name: customer_0, table-id: 1, on shard-server id:0
+existing table is createded with name: customer_0, table-id: 1, on shard-server id:0
+[[32mPASS[0m] Write 5 records
+[[32mPASS[0m] Read and verify 5 records
+[[32mPASS[0m] Table scan verification
+
+--- Testing OverwrittenOperations ---
+new table is createded with name: overwritten_table, table-id: 2, on shard-server id:0
+[[32mPASS[0m] value check
+
+[32mAll tests completed successfully![0m
+=========================================
+Running: ./ci/ci.sh clientServer
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Client-Server Integration Test
+=========================================
+
+Cleaning up...
+
+--- Test 1: Usage Help Verification ---
+Testing that usage help is displayed correctly...
+[32mPASS: Client mode documented in usage[0m
+[32mPASS: Server mode documented in usage[0m
+
+--- Test 2: makoServer Help Verification ---
+Testing makoServer usage help...
+[32mPASS: makoServer usage help works[0m
+
+--- Test 3: Client Connection Without Server ---
+Testing client gracefully handles missing server...
+[32mPASS: Client reports connection failure gracefully[0m
+
+--- Test 4: Full End-to-End Client-Server Communication ---
+Note: Test 4 requires multi-shard setup for client TCP server.
+      In single-shard mode (nshards=1), the client TCP server is not available
+      because no helper servers are created. This is by design - the TCP-based
+      client interface is intended for multi-shard deployments.
+
+[33mSKIP: Test 4 skipped (single-shard mode doesn't support client TCP server)[0m
+
+=========================================
+[32mAll client-server integration tests passed![0m
+=========================================
+
+Summary:
+  - Test 1: Usage help - PASS (Both modes documented)
+  - Test 2: makoServer help - PASS (Standalone server binary works)
+  - Test 3: Client error handling - PASS (Graceful failure when no server)
+  - Test 4: End-to-end communication - SKIP (single-shard mode)
+
+Cleaning up...
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh simplePaxos
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+using partitions:  10
+using partitions:  10
+using partitions:  10
+[{'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}]
+work on template:  template_local-shards1-warehouses1.yml
+work on template:  template_local-shards2-warehouses1.yml
+work on template:  template_local-shards3-warehouses1.yml
+work on template:  template_local-shards4-warehouses1.yml
+work on template:  template_local-shards5-warehouses1.yml
+work on template:  template_local-shards6-warehouses1.yml
+work on template:  template_local-shards7-warehouses1.yml
+work on template:  template_local-shards8-warehouses1.yml
+work on template:  template_local-shards9-warehouses1.yml
+work on template:  template_local-shards10-warehouses1.yml
+using partitions:  10
+Starting p1 (follower)...
+Starting p2 (follower)...
+Starting learner...
+Starting localhost (leader)...
+Waiting for completion...
+==> a1.log <==
+[[32mPASS[0m] committed logs count verify
+
+==> a2.log <==
+[[32mPASS[0m] committed logs count verify
+
+==> a3.log <==
+[[32mPASS[0m] committed logs count verify
+
+==> a4.log <==
+[[32mPASS[0m] committed logs count verify
+
+Checking test results...
+a1.log: PASS found ✓
+a2.log: PASS found ✓
+a3.log: PASS found ✓
+a4.log: PASS found ✓
+All checks passed!
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shardNoReplication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup without replication
+=========================================
+Starting shard 0...
+Starting shard 1...
+Running experiments for 30 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_no_replication.sh_rrr_shard0-6.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768628509006)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8919.63 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.63702 (< 20%)
+
+Checking test_2shard_no_replication.sh_rrr_shard1-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8853.53 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.27132 (< 20%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shardNoReplicationErpc
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup without replication
+=========================================
+Starting shard 0...
+Starting shard 1...
+Running experiments for 30 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_no_replication.sh_erpc_shard0-6.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768628572307)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 73462.5 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 6.81965 (< 20%)
+
+Checking test_2shard_no_replication.sh_erpc_shard1-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 72039.3 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 8.09254 (< 20%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1Replication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with replication
+=========================================
+Starting shard 0...
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+Benchmark completed after 39s
+Stopping shards (graceful)...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_1shard_replication.sh_shard0-localhost-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 103779 ops/sec
+  ✓ NewOrder_remote_abort_ratio: -nan (< 20%)
+
+Checking test_1shard_replication.sh_shard0-p1-6.log:
+-----------------
+  ✓ replay_batch: 12846 (> 1000)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2Replication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with replication
+=========================================
+Starting shard 0...
+Starting shard 1...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+  ... waiting (40s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 40s
+Stopping shards (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication.sh_rrr_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768628719075)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8755.96 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.42972 (< 40%)
+
+Checking test_2shard_replication.sh_rrr_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8791.36 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.03757 (< 40%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationErpc
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with replication
+=========================================
+Starting shard 0...
+Starting shard 1...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+  ... waiting (40s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 41s
+Stopping shards (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication.sh_erpc_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768628782652)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 46860.5 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 16.1366 (< 40%)
+
+Checking test_2shard_replication.sh_erpc_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 59584.9 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 5.89287 (< 40%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1ReplicationSimple
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with replication using simpleTransactionRep
+=========================================
+Starting shard 0...
+Running experiments
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 6 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationSimple
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with replication using simpleTransactionRep
+=========================================
+Starting shard 0 and shard 1 simultaneously...
+Running experiments for 90 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking simple-shard1-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+  ✓ simple-shard1-learner.log: Data integrity verified
+  ✓ simple-shard1-p2.log: Data integrity verified
+  ✓ simple-shard1-p1.log: Data integrity verified
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1ReplicationRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with RAFT replication
+=========================================
+Starting shard 0 with Raft...
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+Benchmark completed after 38s
+Stopping shards (graceful)...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_1shard_replication_raft.sh_shard0-localhost-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 60239.3 ops/sec
+  ✓ NewOrder_remote_abort_ratio: -nan (< 20%)
+
+Checking test_1shard_replication_raft.sh_shard0-p1-6.log:
+-----------------
+  ✓ replay_batch: 1497 (> 1000)
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with RAFT replication
+=========================================
+Starting shard 0 with Raft...
+Starting shard 1 with Raft...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 38s
+Stopping shards (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication_raft.sh_rrr_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768629081939)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8476.31 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.09308 (< 40%)
+
+Checking test_2shard_replication_raft.sh_rrr_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8420.99 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.37165 (< 40%)
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1ReplicationSimpleRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with RAFT replication using simpleTransactionRep
+=========================================
+Starting shard 0 with Raft...
+Running experiments
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 6 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationSimpleRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with RAFT replication using simpleTransactionRep
+=========================================
+Starting shard 0 and shard 1 simultaneously with Raft...
+Running experiments for 90 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking simple-shard1-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+  ✓ simple-shard1-learner.log: Data integrity verified
+  ✓ simple-shard1-p2.log: Data integrity verified
+  ✓ simple-shard1-p1.log: Data integrity verified
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh rocksdbTests
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=== RocksDB Persistence Test Script ===
+
+1. Cleaning test RocksDB directories...
+2. Running RocksDB persistence tests...
+   ✓ Basic persistence tests passed
+
+Test output summary:
+=====================================
+=== Test 1: Basic Persistence ===
+=== Test 2: Concurrent Writes ===
+=== Test 3: Large Data Persistence ===
+=== Test 4: Key Generation ===
+=== All Tests Complete ===
+
+Time taken: 8 ms
+Throughput: 50000 writes/sec
+Time taken: 5313 microseconds
+
+3. Running callback demonstration test...
+   ✓ Callback demo passed
+
+Callback demo output:
+=== RocksDB Callback Demonstration ===
+  ✓ Callback 0: Write successful! (Total successes: 1)
+  ✓ Callback 1: Write successful! (Total successes: 2)
+  ✓ Callback 2: Write successful! (Total successes: 3)
+  ✓ Callback 3: Write successful! (Total successes: 4)
+  ✓ Callback 4: Write successful! (Total successes: 5)
+  ✓ Callback 5: Write successful! (Total successes: 6)
+  ✓ Callback 6: Write successful! (Total successes: 7)
+  ✓ Callback 7: Write successful! (Total successes: 8)
+  ✓ Callback 8: Write successful! (Total successes: 9)
+  ✓ Callback 9: Write successful! (Total successes: 10)
+=== Final Statistics ===
+Total callbacks executed: 10/10
+=== Simulating Transaction.hh Usage ===
+  Persisted: 5 transaction logs
+  Failed: 0 transaction logs
+=== Demo Complete ===
+
+4. Running ordered callbacks test...
+   ✓ Ordered callbacks test passed
+
+Ordered callbacks output:
+=== RocksDB Ordered Callbacks Test ===
+=== Testing Ordered Callbacks ===
+✓ All callbacks executed in correct order!
+=== Testing Unordered Callbacks (for comparison) ===
+=== Testing Multiple Partitions (Independence) ===
+✓ All partitions processed independently and correctly!
+=== Test Complete ===
+
+5. Running partitioned queues test...
+   ✓ Partitioned queues test passed
+
+Partitioned queues output:
+=== RocksDB Partitioned Queues Test Suite ===
+=== Test: Partitioned Request Queues ===
+=== Per-Partition Statistics ===
+=== Overall Statistics ===
+✓ SUCCESS: All partitions processed their requests independently!
+✓ Partitioned queues are working correctly!
+=== Queue Isolation Verification ===
+  Worker 0 handles partitions: 0 4 
+  Worker 1 handles partitions: 1 5 
+  Worker 2 handles partitions: 2 6 
+  Worker 3 handles partitions: 3 7 
+✓ No contention between partitions - each has its own queue!
+=== Test: Contention Comparison (Before vs After) ===
+  - Workers may block each other even for different partitions
+  - Workers can process different partitions in parallel
+=== Concurrent Write Test ===
+Throughput: 3846 writes/sec
+✓ All writes completed successfully with partitioned queues!
+=== All Partitioned Queue Tests Complete ===
+
+6. Running complex stress test (20 threads, 10 partitions, mixed load)...
+   ✓ Stress test passed
+
+Stress test summary:
+=== RocksDB Partitioned Queues Stress Test ===
+=== Complex Stress Test: 20 Threads, 10 Partitions ===
+=== Per-Partition Statistics ===
+Partition | Received | Completed | Failed | Large Msgs | Small Msgs | Total Bytes
+=== Overall Performance Statistics ===
+Total submission time: 364 ms
+Total execution time: 665 ms
+Total messages: 2000 (expected: 2000)
+Total data persisted: 955.582 MB
+Throughput: 3007.52 messages/sec
+Throughput: 1436.96 MB/sec
+=== Test Results ===
+✓ SUCCESS: All 2000/2000 messages persisted successfully!
+✓ SUCCESS: Correct message distribution (Large: 1000, Small: 1000)
+=== Worker Load Distribution ===
+  Worker 0 handles partitions: 0 8 (msgs: 400, data: 191.12 MB)
+  Worker 1 handles partitions: 1 9 (msgs: 400, data: 191.12 MB)
+  Worker 2 handles partitions: 2 (msgs: 200, data: 95.56 MB)
+  Worker 3 handles partitions: 3 (msgs: 200, data: 95.56 MB)
+  Worker 4 handles partitions: 4 (msgs: 200, data: 95.56 MB)
+  Worker 5 handles partitions: 5 (msgs: 200, data: 95.56 MB)
+  Worker 6 handles partitions: 6 (msgs: 200, data: 95.56 MB)
+  Worker 7 handles partitions: 7 (msgs: 200, data: 95.56 MB)
+=== Stress Test Complete ===
+
+7. Verifying RocksDB persistence files...
+   ✓ RocksDB database files created successfully
+   Database locations:
+     - /tmp/shuai_test_rocksdb_concurrent_partition0 (69K)
+     - /tmp/shuai_test_rocksdb_concurrent_partition1 (69K)
+     - /tmp/shuai_test_rocksdb_concurrent_partition2 (69K)
+     - /tmp/shuai_test_rocksdb_concurrent_partition3 (69K)
+     - /tmp/shuai_test_rocksdb_large_partition0 (1.2M)
+     - /tmp/shuai_test_rocksdb_large_partition1 (56K)
+     - /tmp/shuai_test_rocksdb_large_partition2 (56K)
+     - /tmp/shuai_test_rocksdb_large_partition3 (56K)
+     - /tmp/shuai_test_rocksdb_partition0 (56K)
+     - /tmp/shuai_test_rocksdb_partition1 (60K)
+     - /tmp/shuai_rocksdb_ordered_test_2786664_partition0 (64K)
+     - /tmp/shuai_rocksdb_ordered_test_2786664_partition1 (64K)
+     - /tmp/shuai_rocksdb_ordered_test_2786664_partition2 (60K)
+     - /tmp/shuai_rocksdb_ordered_test_2786664_partition3 (56K)
+     - /tmp/shuai_test_stress_partitioned_partition0 (96M)
+     - /tmp/shuai_test_stress_partitioned_partition1 (28K)
+     - /tmp/shuai_test_stress_partitioned_partition2 (44M)
+     - /tmp/shuai_test_stress_partitioned_partition3 (96M)
+     - /tmp/shuai_test_stress_partitioned_partition4 (96M)
+     - /tmp/shuai_test_stress_partitioned_partition5 (5.4M)
+     - /tmp/shuai_test_stress_partitioned_partition6 (16K)
+     - /tmp/shuai_test_stress_partitioned_partition7 (6.1M)
+     - /tmp/shuai_test_stress_partitioned_partition8 (48K)
+     - /tmp/shuai_test_stress_partitioned_partition9 (21M)
+
+=== All tests completed successfully! ===
+
+Tests executed:
+  ✓ Basic RocksDB persistence test (test_rocksdb_persistence)
+  ✓ Callback demonstration test (test_callback_demo)
+  ✓ Ordered callbacks test (test_ordered_callbacks)
+  ✓ Partitioned queues test (test_partitioned_queues)
+  ✓ Complex stress test (test_stress_partitioned_queues)
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh multiShardSingleProcess
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing multi-shard single process mode
+=========================================
+
+Configuration:
+-----------------
+  Number of threads: 6
+  Local shards:      0,1 (multi-shard mode)
+  Config file:       /home/shuai/workspace/mako/src/mako/config/local-shards2-warehouses6.yml
+  Log file:          test_multi_shard_single_process.sh_rrr_multi_shard-6.log
+
+Command: ./build/dbtest --num-threads 6 --shard-config /home/shuai/workspace/mako/src/mako/config/local-shards2-warehouses6.yml -P localhost -L 0,1
+
+Starting multi-shard single process...
+Running experiments for 30 seconds...
+Stopping process...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_multi_shard_single_process.sh_rrr_multi_shard-6.log:
+-----------------
+  ✓ Multi-shard mode initialization detected (2 shards)
+  ✓ SiloRuntime assigned to shard 0
+    20260017-00:55.14-192347(us) 2788040 * main            (dbtest.cc:394):    Assigned shared SiloRuntime 0 to shard 0
+  ✓ SiloRuntime assigned to shard 1
+    20260017-00:55.14-192923(us) 2788040 * main            (dbtest.cc:394):    Assigned shared SiloRuntime 0 to shard 1
+  ✓ ShardContext initialized for shard 0
+  ✓ ShardContext initialized for shard 1
+  ✓ Shard 0 listed in multi-shard output
+  ✓ Shard 1 listed in multi-shard output
+  ✓ Workers running in parallel thread for shard 0
+  ✓ Workers running in parallel thread for shard 1
+  ✓ Benchmark started (2 shard(s))
+  ✓ Found 'agg_persist_throughput' keyword (system running)
+    agg_persist_throughput: 309077 ops/sec
+
+=========================================
+All checks passed!
+Multi-shard single process mode is working correctly.
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2SingleProcess
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard single process mode (no replication)
+=========================================
+
+Configuration:
+-----------------
+  Number of threads: 6
+  Local shards:      0,1 (single process mode)
+  Replication:       disabled
+  Config file:       /home/shuai/workspace/mako/src/mako/config/local-shards2-warehouses6.yml
+  Log file:          test_2shard_single_process.sh_rrr_2shard_single-6.log
+
+Command: ./build/dbtest --num-threads 6 --shard-config /home/shuai/workspace/mako/src/mako/config/local-shards2-warehouses6.yml -P localhost -L 0,1
+
+Starting 2-shard single process...
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+Benchmark completed after 34s
+Stopping process...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_single_process.sh_rrr_2shard_single-6.log:
+-----------------
+  OK TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768629374461)
+  OK Multi-shard mode initialization detected (2 shards)
+  OK Shared SiloRuntime created for multi-shard mode
+    20260017-00:56.14-453916(us) 2788862 * main            (dbtest.cc:385):    Created shared SiloRuntime 0 for multi-shard mode
+  OK ShardContext initialized for shard 0
+  OK ShardContext initialized for shard 1
+  OK Workers running in parallel thread for shard 0
+  OK Workers running in parallel thread for shard 1
+  OK Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 313967 ops/sec
+
+=========================================
+All checks passed!
+2-shard single process mode (no replication) working correctly.
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2SingleProcessReplication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+[Memory limit] Setting virtual memory limit to 30GB (31457280KB)
+=========================================
+Testing 2-shard single process mode WITH replication
+=========================================
+
+Configuration:
+-----------------
+  Number of threads: 6
+  Local shards:      0,1 (single leader process)
+  Replication:       enabled (Paxos)
+  Processes:         7 total (1 combined leader + 6 followers)
+
+Starting follower processes...
+Starting combined leader process for shards 0 and 1...
+Command: ./build/dbtest --num-threads 6 --shard-config /home/shuai/workspace/mako/src/mako/config/local-shards2-warehouses6.yml -F config/1leader_2followers/paxos6_shardidx0.yml -F config/1leader_2followers/paxos6_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated
+
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+  ... waiting (40s elapsed)
+  ... waiting (50s elapsed)
+  ... waiting (60s elapsed)
+  ... waiting (70s elapsed)
+  ... waiting (80s elapsed)
+  ... waiting (90s elapsed)
+  ... waiting (100s elapsed)
+  ... waiting (110s elapsed)
+  ... waiting (120s elapsed)
+Warning: Benchmark did not complete within 120s timeout
+Stopping processes (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_single_process_replication.sh_rrr_leader.log (combined leader):
+-----------------
+  OK TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1768629427874)
+  OK Multi-shard mode initialization detected (2 shards)
+  OK Shared SiloRuntime created for multi-shard mode
+  OK ShardContext initialized for shard 0
+  OK ShardContext initialized for shard 1
+  OK Workers running for shard 0
+  OK Workers running for shard 1
+  WARN 'agg_persist_throughput' keyword not found (may need more time)
+  OK No transaction abort panics
+
+=========================================
+All checks passed!
+2-shard single process mode WITH replication working correctly.
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+All CI steps completed successfully!

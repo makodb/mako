@@ -35,63 +35,10 @@
 namespace rrr {
 
 // =============================================================================
-// Type Alias: Fiber = Coroutine
+// Fiber is the primary class for stackful coroutines
 // =============================================================================
-
-/**
- * Fiber is an alias for Coroutine, providing clearer terminology.
- *
- * "Coroutine" is kept for backward compatibility, but "Fiber" is preferred
- * for new code as it accurately describes our stackful execution model.
- */
-using Fiber = Coroutine;
-
-// =============================================================================
-// Event Combinator Aliases (Clearer Naming)
-// =============================================================================
-
-/**
- * WaitAll waits for all child events to complete (AND semantics).
- *
- * Example:
- *   auto event1 = Reactor::create_sp_event<IntEvent>();
- *   auto event2 = Reactor::create_sp_event<IntEvent>();
- *   auto wait_all = Reactor::create_sp_event<WaitAll>(event1, event2);
- *   wait_all->wait();  // Blocks until both event1 and event2 are ready
- *
- * @safe - This is just a type alias
- */
-using WaitAll = AndEvent;
-
-/**
- * WaitAny waits for any child event to complete (OR semantics).
- *
- * Example:
- *   auto event1 = Reactor::create_sp_event<IntEvent>();
- *   auto event2 = Reactor::create_sp_event<IntEvent>();
- *   auto wait_any = Reactor::create_sp_event<WaitAny>(event1, event2);
- *   wait_any->wait();  // Blocks until either event1 or event2 is ready
- *
- * @safe - This is just a type alias
- */
-using WaitAny = OrEvent;
-
-/**
- * WaitN waits for N child events to complete (N-of-M semantics).
- *
- * Example:
- *   auto event1 = Reactor::create_sp_event<IntEvent>();
- *   auto event2 = Reactor::create_sp_event<IntEvent>();
- *   auto event3 = Reactor::create_sp_event<IntEvent>();
- *   auto wait_n = Reactor::create_sp_event<WaitN>(2);  // Wait for 2 events
- *   wait_n->add(event1);
- *   wait_n->add(event2);
- *   wait_n->add(event3);
- *   wait_n->wait();  // Blocks until any 2 of the 3 events are ready
- *
- * @safe - This is just a type alias
- */
-using WaitN = NEvent;
+// Fiber class is defined in fiber_impl.h (included via coroutine.h)
+// WaitAll, WaitAny, WaitN are defined in event.h
 
 // =============================================================================
 // this_fiber Namespace (like std::this_thread for threads)

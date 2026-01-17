@@ -406,7 +406,7 @@ TEST_F(ReactorTest, CoroutineWithYield) {
     
     auto sp_coro = reactor->create_run_coroutine([&value]() {
         value = 1;
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         value = 2;
     });
     

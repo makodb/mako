@@ -93,7 +93,7 @@ namespace rrr {
 using std::make_unique;
 using std::make_shared;
 
-// Note: Coroutine is a type alias for Fiber (defined in fiber_impl.h)
+// Note: Fiber is the primary class (defined in fiber_impl.h)
 // The full definition is available via #include "coroutine.h" above
 
 /**
@@ -113,9 +113,9 @@ using std::make_shared;
  *    - mutable containers: STL containers with const method access
  *
  * 3. SMART POINTER USAGE
- *    - Rc<Coroutine>: Single-threaded reference counting for coroutines
+ *    - Rc<Fiber>: Single-threaded reference counting for fibers
  *    - shared_ptr<Event>: For polymorphic event types
- *    - Weak<Coroutine>: Events hold weak refs to avoid cycles
+ *    - Weak<Fiber>: Events hold weak refs to avoid cycles
  *
  * 4. SYNCHRONIZATION
  *    - All reactor operations are single-threaded (no locks needed)
@@ -145,7 +145,7 @@ class Reactor {
   static thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;
   // Thread-local current coroutine with single-threaded Rc
   // Wrapped in RefCell for explicit interior mutability (Cell<T> requires trivially_copyable)
-  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Coroutine>>> sp_running_coro_th_;
+  static thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_coro_th_;
 
   // Jetpack: Server ID for logging/debugging (set by server_worker.cc)
   // Using Cell for safe interior mutability (int is trivially copyable)
@@ -160,13 +160,13 @@ class Reactor {
   rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> all_events_{};
   rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> waiting_events_{};
   rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> timeout_events_{};
-  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> composite_events_{}; // AndEvent, OrEvent, QuorumEvent
+  rusty::RefCell<rusty::VecDeque<std::shared_ptr<Event>>> composite_events_{}; // WaitAll, WaitAny, QuorumEvent
   // Note: network_events_ and ready_network_events_ were removed as dead code (never used)
-  // Coroutines managed with single-threaded Rc
+  // Fibers managed with single-threaded Rc
   // Using rusty::BTreeSet for @safe contains() checks
   // Using RefCell for safe interior mutability in const methods
-  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Coroutine>>> coros_{};
-  rusty::RefCell<std::vector<rusty::Rc<Coroutine>>> available_coros_{};
+  rusty::RefCell<rusty::BTreeSet<rusty::Rc<Fiber>>> coros_{};
+  rusty::RefCell<std::vector<rusty::Rc<Fiber>>> available_coros_{};
   // Note: processors_ and opened_files_ were removed as dead code (never used)
   static thread_local std::unordered_map<std::string, std::vector<rusty::Arc<rrr::Pollable>>> clients_;
   static thread_local std::unordered_set<std::string> dangling_ips_;
@@ -197,7 +197,7 @@ class Reactor {
   // @safe - Creates and runs a new coroutine with rusty::Rc ownership
   // Refactored into smaller safe helper functions for clarity and safety.
   // Jetpack: file/line parameters for debugging coroutine creation location
-  rusty::Rc<Coroutine> create_run_coroutine(rusty::Function<void()> func,
+  rusty::Rc<Fiber> create_run_coroutine(rusty::Function<void()> func,
                                             const char* file = "",
                                             int64_t line = 0) const;
 
@@ -205,28 +205,28 @@ class Reactor {
   // Helper functions for create_run_coroutine - each is @safe with internal @unsafe blocks
 
   // @safe - Gets a recycled coroutine or creates a new one
-  rusty::Rc<Coroutine> get_or_create_coroutine(rusty::Function<void()> func,
+  rusty::Rc<Fiber> get_or_create_coroutine(rusty::Function<void()> func,
                                                const char* file,
                                                int64_t line) const;
 
   // @safe - Saves current running coroutine to allow nesting
-  rusty::Option<rusty::Rc<Coroutine>> save_running_coroutine() const;
+  rusty::Option<rusty::Rc<Fiber>> save_running_coroutine() const;
 
   // @safe - Restores previously saved running coroutine
-  void restore_running_coroutine(rusty::Option<rusty::Rc<Coroutine>> old_coro) const;
+  void restore_running_coroutine(rusty::Option<rusty::Rc<Fiber>> old_coro) const;
 
   // @safe - Sets the current running coroutine
-  void set_running_coroutine(const rusty::Rc<Coroutine>& coro) const;
+  void set_running_coroutine(const rusty::Rc<Fiber>& coro) const;
 
   // @safe - Registers coroutine in the active set
-  void register_coroutine(const rusty::Rc<Coroutine>& coro) const;
+  void register_coroutine(const rusty::Rc<Fiber>& coro) const;
 
  public:
   // @safe - Main event loop
   void loop(bool infinite = false, bool do_check_timeout = true) const;
   // @safe - Continues execution of a paused coroutine
-  void continue_coro(rusty::Rc<Coroutine> coro) const;
-  void recycle(rusty::Rc<Coroutine>& coro) const;
+  void continue_coro(rusty::Rc<Fiber> coro) const;
+  void recycle(rusty::Rc<Fiber>& coro) const;
   void display_waiting_ev() const;
 
   ~Reactor() {

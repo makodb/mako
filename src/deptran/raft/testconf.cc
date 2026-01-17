@@ -62,7 +62,7 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
   bool isleader;
   
   for (int retry = 0; retry < 10; retry++) {
-    Coroutine::sleep(ELECTIONTIMEOUT/10);
+    Fiber::sleep(ELECTIONTIMEOUT/10);
     leader = -1;
     mostRecentTerm = 0;
     for (auto& pair : replicas) {
@@ -215,7 +215,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
   // Log_info("DoAgreement: Starting agreement for command %d, expecting %d servers, retry=%s", cmd, n, retry ? "true" : "false");
   auto start = chrono::steady_clock::now();
   while ((chrono::steady_clock::now() - start) < chrono::seconds{10}) {
-    // Coroutine::sleep(50000);
+    // Fiber::sleep(50000);
     usleep(50000);
     // Call Start() to all servers until leader is found
     siteid_t ldr = -1;
@@ -270,7 +270,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
           break;
         }
         // Log_info("DoAgreement: Waiting... only %d/%d servers committed index %ld for command %d", nc, n, index, cmd);
-        // Coroutine::sleep(50000);
+        // Fiber::sleep(50000);
         usleep(20000);
       }
       // Log_info("DoAgreement: Agreement wait loop ended - %d committed server at index %ld for command %d", nc, index, cmd);
@@ -281,7 +281,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
     } else {
       // If no leader found, sleep and retry.
       // Log_info("DoAgreement: No leader found for command %d, sleeping and retrying", cmd);
-      // Coroutine::sleep(50000)
+      // Fiber::sleep(50000)
       usleep(50000);
     }
   }
@@ -507,7 +507,7 @@ void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
 }
 
 void RaftTestConfig::slow(siteid_t svr, uint32_t msec) {
-  // Instead of using reactor's slow mode, use Coroutine::Sleep
+  // Instead of using reactor's slow mode, use Fiber::Sleep
   // This will introduce the same delay but without needing reactor changes
   usleep(msec * 1000);  // Convert msec to microseconds
 }

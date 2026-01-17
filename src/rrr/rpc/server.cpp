@@ -44,7 +44,7 @@
 //   std::vector::operator[]: [safe]
 //   rusty::sync::Weak::Weak: [safe]
 //   rrr::WeakServerConnection: [safe]
-//   rrr::Coroutine::CreateRun: [safe]
+//   rrr::Fiber::CreateRun: [safe]
 //   rrr::Reactor::get_reactor: [safe]
 //   rrr::Reactor::Loop: [safe]
 // }
@@ -232,7 +232,7 @@ bool ServerConnection::handle_read() {
                 size_t svc_index = it->second;
                 auto weak_this = weak_self_;
                 auto ctx = ctx_.clone();  // Clone Arc for the coroutine
-                Coroutine::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
+                Fiber::create_run([ctx, svc_index, rpc_id, req = std::move(req), weak_this]() mutable {
                     // Borrow inside coroutine - guard released when lambda exits
                     // (*guard) dereferences RefMut to get Box<Service>&
                     // (*guard)-> calls Box::operator-> to get Service*

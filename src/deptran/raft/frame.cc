@@ -32,7 +32,7 @@ RaftFrame::~RaftFrame() {
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-std::shared_ptr<Coroutine> RaftFrame::raft_test_coro_ = nullptr;
+std::shared_ptr<Fiber> RaftFrame::raft_test_coro_ = nullptr;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
@@ -144,7 +144,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
     verify(raft_test_coro_ == nullptr);
     Log_info("Creating Raft test coroutine");
     
-    raft_test_coro_ = Coroutine::create_run([this] () {
+    raft_test_coro_ = Fiber::create_run([this] () {
       Log_info("Test coroutine: Starting execution");
       Log_info("Test coroutine: Thread ID = %lu", std::this_thread::get_id());
       {
@@ -154,7 +154,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
 
       // Yield until all 5 communicators are initialized
       Log_info("Test coroutine: About to yield");
-      auto current_coro = Coroutine::current_coroutine();
+      auto current_coro = Fiber::current_coroutine();
       if (current_coro.is_some()) {
         current_coro.unwrap()->yield_();
       }

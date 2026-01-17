@@ -71,7 +71,7 @@ void MenciusServiceImpl::Suggest(const uint64_t& slot,
   }
   sched_->g_mutex.unlock();
 
-  auto coro = Coroutine::create_run([&] () {
+  auto coro = Fiber::create_run([&] () {
     sched_->OnSuggest(slot,
 		                 time,
                      ballot,

@@ -5,7 +5,7 @@
 
 namespace janus {
 
-using rrr::Coroutine;
+using rrr::Fiber;
 using rrr::Time;
 
 QuorumEvent::QuorumEvent(int n_total, int quorum)
@@ -20,7 +20,7 @@ void QuorumEvent::finalize(
     function<bool(vector<std::pair<uint16_t, rrr::i64> > &)> finalize_func) {
   
   
-  Coroutine::create_run([timeout, finalize_func, this]() {
+  Fiber::create_run([timeout, finalize_func, this]() {
     bool ret = false;
     
     auto final_ev = finalize_event_;  // have to make a copy of finalized event (for reason, see comment A)

@@ -25,28 +25,24 @@ protected:
 // Type Alias Tests
 // =============================================================================
 
-TEST_F(FiberTest, FiberAliasIsSameAsCoroutine) {
-    // Verify Fiber is the same type as Coroutine
-    static_assert(std::is_same<Fiber, Coroutine>::value,
-                  "Fiber must be an alias for Coroutine");
+TEST_F(FiberTest, FiberIsDefined) {
+    // Verify Fiber class is defined and usable
+    static_assert(sizeof(Fiber) > 0, "Fiber must be a defined class");
 }
 
-TEST_F(FiberTest, WaitAllIsSameAsAndEvent) {
-    // Verify WaitAll is the same type as AndEvent
-    static_assert(std::is_same<WaitAll, AndEvent>::value,
-                  "WaitAll must be an alias for AndEvent");
+TEST_F(FiberTest, WaitAllIsDefined) {
+    // Verify WaitAll class is defined and usable
+    static_assert(sizeof(WaitAll) > 0, "WaitAll must be a defined class");
 }
 
-TEST_F(FiberTest, WaitAnyIsSameAsOrEvent) {
-    // Verify WaitAny is the same type as OrEvent
-    static_assert(std::is_same<WaitAny, OrEvent>::value,
-                  "WaitAny must be an alias for OrEvent");
+TEST_F(FiberTest, WaitAnyIsDefined) {
+    // Verify WaitAny class is defined and usable
+    static_assert(sizeof(WaitAny) > 0, "WaitAny must be a defined class");
 }
 
-TEST_F(FiberTest, WaitNIsSameAsNEvent) {
-    // Verify WaitN is the same type as NEvent
-    static_assert(std::is_same<WaitN, NEvent>::value,
-                  "WaitN must be an alias for NEvent");
+TEST_F(FiberTest, WaitNIsDefined) {
+    // Verify WaitN class is defined and usable
+    static_assert(sizeof(WaitN) > 0, "WaitN must be a defined class");
 }
 
 // =============================================================================

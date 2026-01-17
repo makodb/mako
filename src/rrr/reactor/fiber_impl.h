@@ -11,7 +11,7 @@
  *   - Future/Promise for async value delivery
  *   - WaitAll/WaitAny/WaitN event combinators
  *
- * Backward compatibility: Coroutine is an alias for Fiber.
+ * Fiber is the primary class for stackful coroutines.
  */
 
 #pragma once
@@ -169,17 +169,5 @@ class Fiber {
   // @unsafe - Creates and runs a new fiber (uses raw pointer operations)
   static rusty::Rc<Fiber> create_run_impl(rusty::Function<void()> func, const char* file, int64_t line);
 };
-
-// =============================================================================
-// Backward Compatibility Alias
-// =============================================================================
-
-/**
- * Coroutine is an alias for Fiber.
- *
- * "Fiber" is the preferred name for stackful coroutines, but "Coroutine"
- * is kept for backward compatibility with existing code.
- */
-using Coroutine = Fiber;
 
 } // namespace rrr
