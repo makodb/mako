@@ -1004,3 +1004,17 @@ includes = [
 deps = ["librrr"]
 libs = ["pthread", "gtest", "gtest_main", "boost_context"]
 
+# Coroutine tests - Fiber/Reactor coroutine tests
+[[target]]
+name = "test_coroutine"
+type = "executable"
+sources = ["test/coroutine.cc"]
+includes = [
+    "src/rrr",
+    "src/rrr/rpc",
+    "src/rrr/reactor",
+    "third-party/rusty-cpp/include",
+]
+deps = ["librrr"]
+libs = ["pthread", "gtest", "gtest_main", "boost_context"]
+
