@@ -118,10 +118,17 @@ FastTransport::FastTransport(std::string file,
 }
 
 FastTransport::~FastTransport() {
-    if (backend_) {
-        backend_->Shutdown();
-        delete backend_;
-        backend_ = nullptr;
+    // Set shutdown flag first to prevent any new accesses
+    shutting_down_.store(true, std::memory_order_release);
+
+    // Acquire lock to ensure no concurrent stats() calls in progress
+    {
+        std::lock_guard<std::mutex> guard(backend_mutex_);
+        if (backend_) {
+            backend_->Shutdown();
+            delete backend_;
+            backend_ = nullptr;
+        }
     }
 
     if (eventBase) {
@@ -130,13 +137,29 @@ FastTransport::~FastTransport() {
     }
 }
 
+// @safe - Thread-safe stats access
 void FastTransport::stats() {
+    // Check shutdown flag first (relaxed ordering OK - just an optimization)
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // Acquire lock to prevent race with destructor
+    std::lock_guard<std::mutex> guard(backend_mutex_);
     if (backend_) {
         backend_->PrintStats();
     }
 }
 
+// @safe - Thread-safe statistics access
 void FastTransport::Statistics() {
+    // Check shutdown flag first (relaxed ordering OK - just an optimization)
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // Acquire lock to prevent race with destructor
+    std::lock_guard<std::mutex> guard(backend_mutex_);
     if (backend_) {
         backend_->PrintStats();
     }
