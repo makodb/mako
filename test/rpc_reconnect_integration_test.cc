@@ -14,13 +14,11 @@
 #include "rpc/reconnect_policy.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
-
-// Atomic counter for dynamic port allocation
-static std::atomic<int> g_reconnect_test_port{12000};
 
 // Simple test service for integration tests
 class ReconnectTestService : public benchmark::BenchmarkService {
@@ -57,7 +55,7 @@ protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int test_port_;
 
-    ReconnectIntegrationTest() : test_port_(g_reconnect_test_port.fetch_add(1)) {}
+    ReconnectIntegrationTest() : test_port_(test_ports::get_port()) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());

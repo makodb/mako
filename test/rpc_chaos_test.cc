@@ -22,14 +22,12 @@
 #include "rpc/reconnect_policy.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace rrr::chaos;
 using namespace benchmark;
 using namespace std::chrono;
-
-// @safe - Atomic counter for port allocation
-static std::atomic<int> g_chaos_test_port{20000};
 
 // ============================================================================
 // Chaos Test Service
@@ -77,7 +75,7 @@ protected:
     int current_port_ = 0;
     std::mutex server_mutex_;
 
-    ChaosTest() : base_port_(g_chaos_test_port.fetch_add(100)) {}
+    ChaosTest() : base_port_(test_ports::reserve_ports(100)) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());

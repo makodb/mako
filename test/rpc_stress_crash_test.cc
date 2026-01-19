@@ -20,17 +20,11 @@
 #include "rpc/connection_metrics.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
-
-// @safe - Atomic counter for port allocation
-// Use modulo to wrap around and stay within valid port range (18000-63999)
-// This prevents port exhaustion when running many test iterations
-static std::atomic<int> g_stress_test_port{0};
-constexpr int PORT_BASE = 18000;
-constexpr int PORT_RANGE = 46000;  // 18000 + 46000 = 64000 (stays well below 65535)
 
 // ============================================================================
 // Stress Test Service - tracks request counts for verification
@@ -130,8 +124,8 @@ protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int base_port_;
 
-    // @safe - Wrap port allocation to prevent exceeding valid port range
-    StressCrashTest() : base_port_(PORT_BASE + (g_stress_test_port.fetch_add(100) % PORT_RANGE)) {}
+    // @safe - Reserve port range for this test fixture
+    StressCrashTest() : base_port_(test_ports::reserve_ports(100)) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());

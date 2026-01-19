@@ -14,8 +14,6 @@
 #include <chrono>
 #include <thread>
 #include <vector>
-#include <random>
-#include <unistd.h>  // for getpid()
 #include <rusty/arc.hpp>
 #include "reactor/reactor.h"
 #include "rpc/client.hpp"
@@ -26,32 +24,11 @@
 #include "rpc/connection_metrics.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
-
-// @safe - Generate a random base port to avoid collisions when multiple test
-// processes run in parallel. Uses PID and high-resolution time to seed.
-// Returns a port that gives ~1500 port range per test (14 tests * ~100 ports each)
-static int generate_random_base_port() {
-    // Use process ID and time to create a unique seed for each process
-    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-    std::seed_seq seq{static_cast<unsigned>(getpid()),
-                      static_cast<unsigned>(now & 0xFFFFFFFF),
-                      static_cast<unsigned>(now >> 32)};
-    std::mt19937 gen(seq);
-    // Use port range 10000-60000 (50000 ports available)
-    // Each test run uses ~1500 ports (14 tests * 100 ports each)
-    // With ~33 non-overlapping ranges, collision probability is low even with TIME_WAIT
-    std::uniform_int_distribution<> dist(10000, 60000);
-    return dist(gen);
-}
-
-// @safe - Atomic counter for port allocation with random base to avoid
-// port collisions when running multiple test instances in parallel (CI)
-// Each test fixture reserves 100 ports (fetch_add(100))
-static std::atomic<int> g_partition_test_port{generate_random_base_port()};
 
 // ============================================================================
 // Partition Test Service
@@ -115,7 +92,7 @@ protected:
     int base_port_;
     int port_offset_{0};  // Per-fixture offset to avoid port reuse within a test
 
-    PartitionTest() : base_port_(g_partition_test_port.fetch_add(100)) {}
+    PartitionTest() : base_port_(test_ports::reserve_ports(100)) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());

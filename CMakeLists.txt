@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
+
+# Suppress CMake policy warnings for deprecated modules
+# CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
+endif()
+
 # using g++
 set(CMAKE_C_COMPILER "gcc" CACHE STRING "C compiler")
 set(CMAKE_CXX_COMPILER "g++" CACHE STRING "C++ compiler")

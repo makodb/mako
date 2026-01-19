@@ -18,13 +18,11 @@
 #include "rpc/errors.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
-
-// Atomic counter for dynamic port allocation
-static std::atomic<int> g_combined_test_port{15000};
 
 // Test service for combined tests
 class CombinedTestService : public benchmark::BenchmarkService {
@@ -61,7 +59,7 @@ protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int test_port_;
 
-    CombinedReliabilityTest() : test_port_(g_combined_test_port.fetch_add(1)) {}
+    CombinedReliabilityTest() : test_port_(test_ports::get_port()) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
