@@ -77,6 +77,17 @@ FastTransport::FastTransport(std::string file,
         eventBase = event_base_new();
         evthread_make_base_notifiable(eventBase);
 
+        // Create signal handlers for graceful shutdown
+        // @unsafe - evsignal_new calls non-borrow-checked libevent code
+        event *sigterm_event = evsignal_new(eventBase, SIGTERM, SignalCallback, this);
+        event *sigint_event = evsignal_new(eventBase, SIGINT, SignalCallback, this);
+        if (sigterm_event) {
+            signalEvents.push_back(sigterm_event);
+        }
+        if (sigint_event) {
+            signalEvents.push_back(sigint_event);
+        }
+
         for (event *x : signalEvents)
         {
             event_add(x, NULL);
@@ -130,6 +141,16 @@ FastTransport::~FastTransport() {
             backend_ = nullptr;
         }
     }
+
+    // Clean up signal event handlers
+    // @unsafe - event_free calls non-borrow-checked libevent code
+    for (event *ev : signalEvents) {
+        if (ev) {
+            event_del(ev);
+            event_free(ev);
+        }
+    }
+    signalEvents.clear();
 
     if (eventBase) {
         event_base_free(eventBase);
