@@ -27,6 +27,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Fix: Added backend_mutex_ and shutting_down_ atomic flag to protect concurrent access
     - Files changed: src/mako/lib/fasttransport.h, src/mako/lib/fasttransport.cc
     - Verified: 5 consecutive shard2Replication runs + rrrTests (65/65 pass)
+  - [ ] *high* Avoid duplication in decoupled client-server. Read first `./docs/dev/client_decoupling_design.md`, `docs/dev/client_rpc_implementation_plan.md` and `docs/dev/multi_client_support_plan.md`, `docs/dev/rrr_rpc_refactoring_plan.md` carefully to understand current code implementation. 
+    - Problem: newly added `makoServer.cc` is duplicated with `simpleTransactionRep.cc`. simpleTransactionRep.cc is supposed to be client if with `--client`, then in client mode; if `--server` then in server mode, if both enabled, we run client-server together. Before you mark it done: (1) Donot forget to update corresponding md files; (2) Pass all ci server tests.
   - [x] *high* bug. shard2Replication still fails on ci server (run via ./ci/ci.sh shard2Replication) from time to time, please investigate and fix. verify fix by running it 10 times. [INVESTIGATED 2026-01-17, 11:10]
     - Investigation: Ran shard2Replication locally 10 consecutive times - all passed (throughput ~8760 ops/sec, abort ratio <2.5%)
     - GitHub CI check: No failed runs found in last 20 workflow runs (#465-#441)
