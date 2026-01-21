@@ -88,8 +88,8 @@ This section provides a walkthrough of the implementation and how the code flows
 ```
 mako/
 ├── examples/
-│   ├── makoServer.cc              # Standalone server binary (NEW)
-│   └── simpleTransactionRep.cc    # Updated with --client mode
+│   └── simpleTransactionRep.cc    # Combined server + client binary
+│                                   # Modes: --server, --client, or default (tests)
 ├── src/mako/
 │   ├── remote_db.hh               # RemoteDB client library (NEW)
 │   ├── db.hh                      # Local DB interface (existing)
@@ -98,6 +98,9 @@ mako/
 └── ci/
     └── test_client_server.sh      # Integration tests (NEW)
 ```
+
+**Note**: The standalone `makoServer.cc` was consolidated into `simpleTransactionRep.cc` with `--server` flag
+to eliminate code duplication. Use `./simpleTransactionRep --server <args>` for server-only mode.
 
 ### How It Works: Server Mode Flow
 
@@ -123,8 +126,8 @@ When running in **server mode** (default), the flow is:
 │     - Creates helper threads for remote warehouse operations    │
 │                         ↓                                        │
 │  5. Run tests / Wait for requests                               │
-│     - simpleTransactionRep: runs TransactionWorker tests        │
-│     - makoServer: waits for shutdown signal                     │
+│     - Default mode: runs TransactionWorker tests                │
+│     - --server mode: waits for shutdown signal                  │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -242,7 +245,7 @@ db->Commit(txn);
 | RemoteDB class | ✅ Complete | Full interface with TCP socket RPC |
 | RemoteTable class | ✅ Complete | Put/Get/Delete via RPC |
 | Transaction handles | ✅ Complete | Encoding/decoding works |
-| makoServer binary | ✅ Complete | Standalone server with TCP listener |
+| Server-only mode | ✅ Complete | `--server` flag for standalone server |
 | Client mode flag | ✅ Complete | `--client <host> <port>` |
 | RPC message types | ✅ Complete | Defined in common.h |
 | Actual RPC calls | ✅ Complete | TCP socket communication implemented |
@@ -251,24 +254,27 @@ db->Commit(txn);
 
 ## Component Design
 
-### 1. Server Component (`makoServer`)
+### 1. Server Component (simpleTransactionRep --server)
 
-A standalone server binary that:
+The server mode is integrated into `simpleTransactionRep.cc` with `--server` flag:
 - Opens the database using `mako::DB::Open()`
 - Sets up RPC server (reuses `setup_erpc_server()`)
+- Starts TCP server for client connections
 - Handles client RPC requests
-- Manages Paxos replication (if enabled)
+- Manages Paxos/Raft replication (if enabled)
+- Waits for shutdown signal (Ctrl+C)
 
-**Entry Point**: `examples/makoServer.cc`
+**Entry Point**: `examples/simpleTransactionRep.cc --server`
 
 ```cpp
-int main(int argc, char** argv) {
-    // 1. Parse config (shards, replication, etc.)
-    // 2. Open database: mako::DB::Open(options, path, &db)
-    // 3. Start RPC server: mako::setup_erpc_server()
-    // 4. Register client handler: mako::setup_client_handler(db)
-    // 5. Wait for shutdown signal
-}
+// With --server flag, main() does:
+// 1. Parse --server flag and offset subsequent arguments
+// 2. Parse config (shards, replication, etc.)
+// 3. Open database: mako::DB::Open(options, path, &db)
+// 4. Start RPC server: mako::setup_erpc_server()
+// 5. Start TCP server: mako::setup_client_tcp_server()
+// 6. Wait for shutdown signal (SIGINT/SIGTERM)
+// 7. Cleanup and exit
 ```
 
 ### 2. Client Library (`mako::RemoteDB`)
@@ -346,10 +352,11 @@ std::unordered_map<RemoteTxnId, void*> active_transactions_;
 - Est: ~50 LOC (documentation)
 
 ### Phase 2: Server Entry Point ✅
-- [x] Create `examples/makoServer.cc`
+- [x] Add `--server` mode to `examples/simpleTransactionRep.cc`
 - [x] Add client handler that processes RPC requests
 - [x] Wire up with existing `setup_erpc_server()` and `setup_helper()`
 - Est: ~150 LOC (actual: ~186 LOC)
+- Note: Originally created `makoServer.cc`, later consolidated into `simpleTransactionRep.cc`
 
 ### Phase 3: Client Library ✅
 - [x] Create `src/mako/remote_db.hh`
@@ -373,8 +380,15 @@ std::unordered_map<RemoteTxnId, void*> active_transactions_;
 - [x] Add server-side handlers for client requests (`HandleClientPutRequest`, etc.)
 - [x] Add transaction state management on server (`client_transactions_` map)
 - [x] Add `ClientTcpServer` for accepting client connections
-- [x] Integrated TCP server into `makoServer.cc` via `setup_client_tcp_server()`
+- [x] Integrated TCP server via `setup_client_tcp_server()` in server-only mode
 - Est: ~500 LOC (actual: ~490 LOC)
+
+### Phase 7: Code Consolidation ✅
+- [x] Consolidated `makoServer.cc` functionality into `simpleTransactionRep.cc`
+- [x] Added `--server` flag for server-only mode
+- [x] Removed duplicate `makoServer.cc`
+- [x] Updated CI tests to use new unified interface
+- Net change: ~-89 LOC (removed duplication)
 
 ## API Usage Example
 
@@ -467,20 +481,20 @@ This section explains how to use the client-server decoupling feature.
 **Option 3: Standalone Server (Database Only, No Tests)**
 ```bash
 # Run standalone server that hosts database and waits for clients
-./build/makoServer <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
+./build/simpleTransactionRep --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
 
 # Examples:
-./build/makoServer 2 0 6 localhost 1       # 2-shard server with Paxos
-./build/makoServer 1 0 4 localhost 0       # 1-shard server, no replication
+./build/simpleTransactionRep --server 2 0 6 localhost 1       # 2-shard server with Paxos
+./build/simpleTransactionRep --server 1 0 4 localhost 0       # 1-shard server, no replication
 ```
 
 ### Command Reference
 
 | Binary | Mode | Command | Description |
 |--------|------|---------|-------------|
-| `simpleTransactionRep` | Server | `./build/simpleTransactionRep 2 0 6 localhost 1` | Run DB + tests locally |
+| `simpleTransactionRep` | Server + Tests | `./build/simpleTransactionRep 2 0 6 localhost 1` | Run DB + tests locally |
+| `simpleTransactionRep` | Server Only | `./build/simpleTransactionRep --server 2 0 6 localhost 1` | Standalone DB server |
 | `simpleTransactionRep` | Client | `./build/simpleTransactionRep --client localhost 31000` | Connect to remote server |
-| `makoServer` | Server | `./build/makoServer 2 0 6 localhost 1` | Standalone DB server |
 
 ### Parameter Reference
 
@@ -503,8 +517,8 @@ This section explains how to use the client-server decoupling feature.
 
 **Scenario 2: Client-Server on Same Machine (Testing)**
 ```bash
-# Terminal 1: Start server
-./build/makoServer 1 0 4 localhost 0
+# Terminal 1: Start server in standalone mode
+./build/simpleTransactionRep --server 1 0 4 localhost 0
 
 # Terminal 2: Run client
 ./build/simpleTransactionRep --client localhost 31000
@@ -513,7 +527,7 @@ This section explains how to use the client-server decoupling feature.
 **Scenario 3: Distributed Deployment**
 ```bash
 # On server machine (192.168.1.100):
-./build/makoServer 2 0 6 localhost 1
+./build/simpleTransactionRep --server 2 0 6 localhost 1
 
 # On client machine:
 ./build/simpleTransactionRep --client 192.168.1.100 31000

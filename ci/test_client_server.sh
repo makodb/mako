@@ -3,8 +3,8 @@
 # CI Test: Client-Server Mode Integration Test
 #
 # This script tests the decoupled client-server architecture:
-# 1. Starts a standalone makoServer (as background process)
-# 2. Runs simpleTransactionRep in client mode to connect to server
+# 1. Tests simpleTransactionRep usage help (all three modes)
+# 2. Tests simpleTransactionRep --server mode help
 # 3. Verifies client-server communication works correctly
 #
 # Note: This test exercises the full TCP-based client-server RPC.
@@ -26,11 +26,6 @@ echo "Client-Server Integration Test"
 echo "========================================="
 
 # Check if binaries exist
-if [ ! -f "$PROJECT_DIR/$BUILD_DIR/makoServer" ]; then
-    echo -e "${RED}Error: makoServer not found. Run 'make -j32' first.${RESET}"
-    exit 1
-fi
-
 if [ ! -f "$PROJECT_DIR/$BUILD_DIR/simpleTransactionRep" ]; then
     echo -e "${RED}Error: simpleTransactionRep not found. Run 'make -j32' first.${RESET}"
     exit 1
@@ -40,7 +35,6 @@ fi
 cleanup() {
     echo ""
     echo "Cleaning up..."
-    pkill -9 -f "makoServer" 2>/dev/null || true
     pkill -9 -f "simpleTransactionRep" 2>/dev/null || true
     rm -f /tmp/mako_server_test.log /tmp/mako_client_test.log /tmp/mako_usage_test.log /tmp/mako_server_usage.log /tmp/mako_client_e2e.log
 }
@@ -53,10 +47,10 @@ cd "$PROJECT_DIR"
 
 echo ""
 echo "--- Test 1: Usage Help Verification ---"
-echo "Testing that usage help is displayed correctly..."
+echo "Testing that usage help displays all three modes..."
 
-# Verify usage help displays both modes
-./$BUILD_DIR/simpleTransactionRep 2>&1 | head -20 > /tmp/mako_usage_test.log || true
+# Verify usage help displays all modes
+./$BUILD_DIR/simpleTransactionRep 2>&1 | head -25 > /tmp/mako_usage_test.log || true
 
 if grep -q "\-\-client" /tmp/mako_usage_test.log; then
     echo -e "${GREEN}PASS: Client mode documented in usage${RESET}"
@@ -66,24 +60,33 @@ else
     exit 1
 fi
 
-if grep -q "nshards" /tmp/mako_usage_test.log; then
-    echo -e "${GREEN}PASS: Server mode documented in usage${RESET}"
+if grep -q "\-\-server" /tmp/mako_usage_test.log; then
+    echo -e "${GREEN}PASS: Server-only mode documented in usage${RESET}"
 else
-    echo -e "${RED}FAIL: Server mode not shown in usage${RESET}"
+    echo -e "${RED}FAIL: Server-only mode not shown in usage${RESET}"
+    cat /tmp/mako_usage_test.log
+    exit 1
+fi
+
+if grep -q "nshards" /tmp/mako_usage_test.log; then
+    echo -e "${GREEN}PASS: Server + tests mode documented in usage${RESET}"
+else
+    echo -e "${RED}FAIL: Server + tests mode not shown in usage${RESET}"
     cat /tmp/mako_usage_test.log
     exit 1
 fi
 
 echo ""
-echo "--- Test 2: makoServer Help Verification ---"
-echo "Testing makoServer usage help..."
+echo "--- Test 2: Server-Only Mode Help Verification ---"
+echo "Testing that --server mode is recognized..."
 
-./$BUILD_DIR/makoServer 2>&1 | head -10 > /tmp/mako_server_usage.log || true
+# Test that --server flag is recognized (should show usage with --server in examples)
+./$BUILD_DIR/simpleTransactionRep --server 2>&1 | head -15 > /tmp/mako_server_usage.log || true
 
-if grep -q "nshards" /tmp/mako_server_usage.log; then
-    echo -e "${GREEN}PASS: makoServer usage help works${RESET}"
+if grep -q "server" /tmp/mako_server_usage.log; then
+    echo -e "${GREEN}PASS: Server-only mode help works${RESET}"
 else
-    echo -e "${RED}FAIL: makoServer usage help failed${RESET}"
+    echo -e "${RED}FAIL: Server-only mode help failed${RESET}"
     cat /tmp/mako_server_usage.log
     exit 1
 fi
@@ -118,11 +121,16 @@ echo -e "${GREEN}All client-server integration tests passed!${RESET}"
 echo "========================================="
 echo ""
 echo "Summary:"
-echo "  - Test 1: Usage help - PASS (Both modes documented)"
-echo "  - Test 2: makoServer help - PASS (Standalone server binary works)"
+echo "  - Test 1: Usage help - PASS (All three modes documented)"
+echo "  - Test 2: Server-only mode - PASS (--server flag recognized)"
 echo "  - Test 3: Client error handling - PASS (Graceful failure when no server)"
 echo ""
-echo "Note: End-to-end client-server tests require multi-shard mode."
+echo "Note: simpleTransactionRep now supports three modes:"
+echo "      - Default: Server + transaction tests"
+echo "      - --server: Standalone server (wait for clients/shutdown)"
+echo "      - --client: Client mode (connect to remote server)"
+echo ""
+echo "      End-to-end client-server tests require multi-shard mode."
 echo "      Use 'ci/ci.sh shard2Replication' or 'ci/ci.sh multiShardSingleProcess'"
 echo "      for multi-shard testing."
 

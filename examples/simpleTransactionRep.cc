@@ -1,9 +1,15 @@
 //
-// Simple Transaction Tests for Mako Database
+// Mako Database Server and Transaction Tests
 //
-// This program can run in two modes:
-// 1. Server mode (default): Runs as a standalone database server with tests
-// 2. Client mode (--client): Connects to a remote server via RemoteDB
+// This program can run in three modes:
+// 1. Server + Tests (default): Runs database server and executes transaction tests
+// 2. Server-only (--server): Runs standalone database server, waits for clients
+// 3. Client mode (--client): Connects to a remote server via RemoteDB
+//
+// Usage:
+//   ./simpleTransactionRep <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
+//   ./simpleTransactionRep --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
+//   ./simpleTransactionRep --client <server_host> <server_port>
 //
 
 #include <iostream>
@@ -12,6 +18,8 @@
 #include <vector>
 #include <map>
 #include <cstring>
+#include <signal.h>
+#include <atomic>
 #include <mako.hh>
 #include "db.hh"
 #include "remote_db.hh"
@@ -24,6 +32,15 @@
 
 using namespace std;
 using namespace mako;
+
+// @safe - Global shutdown flag with atomic access for server-only mode
+static std::atomic<bool> g_shutdown_requested{false};
+
+// @safe - Signal handler for graceful shutdown in server-only mode
+void shutdown_signal_handler(int signum) {
+    printf("\nReceived signal %d, initiating shutdown...\n", signum);
+    g_shutdown_requested.store(true);
+}
 
 class TransactionWorker {
 public:
@@ -952,28 +969,51 @@ int main(int argc, char **argv) {
         return run_client_mode(server_host, server_port);
     }
 
+    // Check for server-only mode flag (--server)
+    bool server_only_mode = false;
+    int arg_offset = 0;
+    if (argc >= 2 && strcmp(argv[1], "--server") == 0) {
+        server_only_mode = true;
+        arg_offset = 1;
+    }
+
     // All necessary parameters expected from users
-    if (argc < 6 || argc > 7) {
+    int effective_argc = argc - arg_offset;
+    if (effective_argc < 6 || effective_argc > 7) {
         printf("Usage: %s <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
+        printf("       %s --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
         printf("       %s --client <server_host> <server_port>\n", argv[0]);
-        printf("Example: %s 2 0 6 localhost 1\n", argv[0]);
-        printf("Example with Raft: %s 2 0 6 localhost 1 raft\n", argv[0]);
-        printf("Example client mode: %s --client localhost 31000\n", argv[0]);
+        printf("\nModes:\n");
+        printf("  Default:  Run database server with transaction tests\n");
+        printf("  --server: Run standalone database server only (wait for clients/shutdown)\n");
+        printf("  --client: Run as client, connect to remote server\n");
+        printf("\nExamples:\n");
+        printf("  %s 2 0 6 localhost 1              # Server + tests (Paxos)\n", argv[0]);
+        printf("  %s 2 0 6 localhost 1 raft         # Server + tests (Raft)\n", argv[0]);
+        printf("  %s --server 2 0 6 localhost 1     # Server only (Paxos)\n", argv[0]);
+        printf("  %s --server 1 0 4 localhost 0     # Server only (no replication)\n", argv[0]);
+        printf("  %s --client localhost 31000       # Client mode\n", argv[0]);
         return 1;
     }
 
-    int nshards = std::stoi(argv[1]);
-    int shardIdx = std::stoi(argv[2]);
-    int nthreads = std::stoi(argv[3]);
-    std::string paxos_proc_name = std::string(argv[4]);
-    int is_replicated = std::stoi(argv[5]);
+    int nshards = std::stoi(argv[1 + arg_offset]);
+    int shardIdx = std::stoi(argv[2 + arg_offset]);
+    int nthreads = std::stoi(argv[3 + arg_offset]);
+    std::string paxos_proc_name = std::string(argv[4 + arg_offset]);
+    int is_replicated = std::stoi(argv[5 + arg_offset]);
 
     // Set replication type if provided (default is paxos)
     std::string replication_type = "paxos";
-    if (argc == 7) {
-        replication_type = argv[6];
+    if (effective_argc == 7) {
+        replication_type = argv[6 + arg_offset];
         janus::set_replication_type_from_string(replication_type);
         printf("Using replication type: %s\n", replication_type.c_str());
+    }
+
+    // Install signal handlers for graceful shutdown in server-only mode
+    if (server_only_mode) {
+        signal(SIGINT, shutdown_signal_handler);
+        signal(SIGTERM, shutdown_signal_handler);
     }
 
     // Build config path - fix the format string to use std::to_string
@@ -1013,7 +1053,17 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("=== Mako Transaction Tests  ===\n");
+    if (server_only_mode) {
+        printf("=== Mako Server (standalone mode) ===\n");
+    } else {
+        printf("=== Mako Transaction Tests ===\n");
+    }
+    printf("Configuration:\n");
+    printf("  Shards: %d (this shard: %d)\n", nshards, shardIdx);
+    printf("  Threads: %d\n", nthreads);
+    printf("  Process role: %s\n", paxos_proc_name.c_str());
+    printf("  Replication: %s\n", is_replicated ? replication_type.c_str() : "disabled");
+    printf("  Mode: %s\n", server_only_mode ? "server-only" : "server + tests");
 
     // Get the underlying abstract_db for operations
     abstract_db* db = mako_db->GetDB();
@@ -1031,45 +1081,87 @@ int main(int argc, char **argv) {
         }
         mako::setup_helper(db, std::ref(open_tables));
 
+        // Start TCP server for RemoteDB client connections (server-only mode)
+        if (server_only_mode) {
+            int client_port = 31000 + shardIdx;
+            if (mako::setup_client_tcp_server(client_port)) {
+                printf("Client TCP server started on port %d\n", client_port);
+            } else {
+                printf("Note: Client TCP server not available (single-shard mode)\n");
+            }
+        }
+
         std::this_thread::sleep_for(std::chrono::seconds(5)); // Wait all shards finish setup
     }
 
-    if (benchConfig.getLeaderConfig()) {
-        run_tests(mako_db);
-    }
+    // Handle different modes
+    if (server_only_mode) {
+        // Server-only mode: wait for clients or shutdown signal
+        if (benchConfig.getLeaderConfig()) {
+            printf("\nServer running. Press Ctrl+C to shutdown.\n");
+            fflush(stdout);
 
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+            while (!g_shutdown_requested.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
 
-    // Data integrity verification on followers and learners only
-    // Must be done BEFORE db_close() which shuts down Raft/Paxos infrastructure
-    // Note: Leaders are skipped because:
-    // 1. They are the source of data and may have cleanup issues during cross-shard operations
-    // 2. The test script only checks follower logs for verification results
-    // 3. Leader crashes during verification disrupt Raft and prevent followers from completing
-    if (!benchConfig.getLeaderConfig()) {
-        // Wait for replication to complete before verifying data integrity
-        // Without this, verification runs before any data is replicated!
-        wait_for_termination();
-        bool verification_passed = verify_data_integrity(db, nshards, nthreads);
+            printf("\nShutting down server...\n");
+        } else {
+            // Non-leader in server-only mode: wait for replication data
+            printf("Running as %s, waiting for replication data...\n", paxos_proc_name.c_str());
+            printf("Press Ctrl+C to shutdown.\n");
+            fflush(stdout);
 
-        if (!verification_passed) {
-            printf("\n" RED "VERIFICATION FAILED - Database integrity compromised!" RESET "\n");
-            db_close();
-            delete mako_db;
-            return 1;
+            while (!g_shutdown_requested.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
-    }
+    } else {
+        // Default mode: run tests
+        if (benchConfig.getLeaderConfig()) {
+            run_tests(mako_db);
+        }
 
-    printf("\n" GREEN "All tests completed successfully!" RESET "\n");
-    std::cout.flush();
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+
+        // Data integrity verification on followers and learners only
+        // Must be done BEFORE db_close() which shuts down Raft/Paxos infrastructure
+        // Note: Leaders are skipped because:
+        // 1. They are the source of data and may have cleanup issues during cross-shard operations
+        // 2. The test script only checks follower logs for verification results
+        // 3. Leader crashes during verification disrupt Raft and prevent followers from completing
+        if (!benchConfig.getLeaderConfig()) {
+            // Wait for replication to complete before verifying data integrity
+            // Without this, verification runs before any data is replicated!
+            wait_for_termination();
+            bool verification_passed = verify_data_integrity(db, nshards, nthreads);
+
+            if (!verification_passed) {
+                printf("\n" RED "VERIFICATION FAILED - Database integrity compromised!" RESET "\n");
+                db_close();
+                delete mako_db;
+                return 1;
+            }
+        }
+
+        printf("\n" GREEN "All tests completed successfully!" RESET "\n");
+        std::cout.flush();
+    }
 
     // Cleanup: stop helper and eRPC server threads before closing DB on leaders
     if (benchConfig.getLeaderConfig()) {
+        if (server_only_mode) {
+            mako::stop_client_tcp_server();
+        }
         mako::stop_erpc_server();
     }
 
     db_close();
 
     delete mako_db;
+
+    if (server_only_mode) {
+        printf("Server shutdown complete.\n");
+    }
     return 0;
 }

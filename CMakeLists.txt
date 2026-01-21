@@ -1020,7 +1020,8 @@ add_apps(test_stress_partitioned_queues examples/test_stress_partitioned_queues.
 add_apps(makoCon examples/makoCon.cc)
 add_apps(makoConDBBench examples/makoConDBBench.cc)
 add_apps(makoConMultiTrd examples/makoConMultiTrd.cc)
-add_apps(makoServer examples/makoServer.cc)
+# Note: makoServer functionality has been consolidated into simpleTransactionRep.cc
+#       Use: ./simpleTransactionRep --server <args> for server-only mode
 
 # Raft test executables (only when MAKO_USE_RAFT is enabled)
 if(MAKO_USE_RAFT)

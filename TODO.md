@@ -16,7 +16,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. [last checked: 2026-01-20, 00:07 - All 3 most recent runs SUCCESS: #21128908052, #21126911873, #21126901605. CI health: GOOD.]
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. [last checked: 2026-01-20, 22:10 - Run #484 queued (a9612351), #483, #482, #481, #480 all SUCCESS. CI health: GOOD.]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-01-20, 00:10 - all borrow_check_all targets pass with no violations]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-01-20, 00:12 - checked 9 commits from last 48 hours. FastTransport fix (e00d802f) uses std::mutex and std::atomic, signal handlers (747d8596) use libevent, port allocation (2e9d9417) uses std random. All are acceptable for synchronization/system primitives. No unsafe patterns found.]
     - [ ] for every day, run all the ci tests listed in github ci workflow, make sure no test fail. If failed tests found, investigate and fix. Repeat until no failures are detected. Don't cheat by removing or weakening tests. Also, double check the github ci test and the "ci all" have the same tests; if one misses something, add it. [last done: 2026-01-20, 00:33 - ALL TESTS PASSED. rrrTests 65/65, simpleTransaction, simplePaxos, clientServer, shardNoReplication, shardNoReplicationErpc, shard1Replication, shard2Replication, shard2ReplicationErpc, rocksdbTests, multiShardSingleProcess, shard1ReplicationRaft, shard2ReplicationRaft, shard1ReplicationSimple, shard2ReplicationSimple, shard2SingleProcessReplication. GitHub CI also shows all tests passing. See logs/20260120_003326_5764543d_ci_daily.log.]
@@ -27,8 +27,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Fix: Added backend_mutex_ and shutting_down_ atomic flag to protect concurrent access
     - Files changed: src/mako/lib/fasttransport.h, src/mako/lib/fasttransport.cc
     - Verified: 5 consecutive shard2Replication runs + rrrTests (65/65 pass)
-  - [ ] *high* Avoid duplication in decoupled client-server. Read first `./docs/dev/client_decoupling_design.md`, `docs/dev/client_rpc_implementation_plan.md` and `docs/dev/multi_client_support_plan.md`, `docs/dev/rrr_rpc_refactoring_plan.md` carefully to understand current code implementation. 
-    - Problem: newly added `makoServer.cc` is duplicated with `simpleTransactionRep.cc`. simpleTransactionRep.cc is supposed to be client if with `--client`, then in client mode; if `--server` then in server mode, if both enabled, we run client-server together. Before you mark it done: (1) Donot forget to update corresponding md files; (2) Pass all ci server tests.
+  - [x] *high* Avoid duplication in decoupled client-server. [DONE 2026-01-20, 22:40]
+    - Problem: `makoServer.cc` was duplicated with `simpleTransactionRep.cc`
+    - Solution: Consolidated into `simpleTransactionRep.cc` with three modes:
+      - Default: Server + transaction tests
+      - `--server`: Standalone server (wait for clients/shutdown)
+      - `--client`: Client mode (connect to remote server)
+    - Files changed: `examples/simpleTransactionRep.cc`, `CMakeLists.txt`, `ci/test_client_server.sh`
+    - Removed: `examples/makoServer.cc`
+    - Updated docs: `docs/dev/client_decoupling_design.md`
+    - Plan: `docs/dev/avoid_duplication_client_server_plan.md`
+    - CI tests: All passed. See logs/20260120_223950_a9612351_avoid_duplication_ci_test.log
   - [x] *high* bug. shard2Replication still fails on ci server (run via ./ci/ci.sh shard2Replication) from time to time, please investigate and fix. verify fix by running it 10 times. [INVESTIGATED 2026-01-17, 11:10]
     - Investigation: Ran shard2Replication locally 10 consecutive times - all passed (throughput ~8760 ops/sec, abort ratio <2.5%)
     - GitHub CI check: No failed runs found in last 20 workflow runs (#465-#441)
