@@ -1,0 +1,153 @@
+# Client-Server Architecture
+
+This document describes Mako's client-server architecture that enables decoupled deployment where clients run on different machines from database servers.
+
+## Overview
+
+Mako supports three operating modes in `simpleTransactionRep`:
+
+| Mode | Command | Description |
+|------|---------|-------------|
+| Default | `./simpleTransactionRep <args>` | Server + transaction tests |
+| Server-only | `./simpleTransactionRep --server <args>` | Standalone server waiting for clients |
+| Client | `./simpleTransactionRep --client <host> <port>` | Remote client connecting to server |
+
+## Quick Start
+
+### Server Mode (Standalone)
+```bash
+# Start server on shard 0 with 6 threads, Paxos replication
+./build/simpleTransactionRep --server 2 0 6 localhost 1
+
+# Or without replication
+./build/simpleTransactionRep --server 1 0 4 localhost 0
+```
+
+### Client Mode
+```bash
+# Connect to server at localhost:31000
+./build/simpleTransactionRep --client localhost 31000
+```
+
+## Client API
+
+The remote client uses `mako::RemoteDB` which mirrors the local `mako::DB` interface:
+
+```cpp
+#include "remote_db.hh"
+
+// Connect to remote server
+mako::RemoteOptions opts;
+opts.server_host = "192.168.1.100";
+opts.server_port = 31000;
+
+mako::RemoteDB* db = nullptr;
+mako::Status s = mako::RemoteDB::Connect(opts, &db);
+if (!s.ok()) { /* handle error */ }
+
+// Get table proxy
+RemoteTable* table = db->GetTable("customer_0");
+
+// Transaction operations (same as local DB)
+void* txn = db->BeginTransaction();
+table->Put(txn, "key", value);
+table->Get(txn, "key", retrieved_value);
+db->Commit(txn);
+
+delete db;
+```
+
+## Architecture
+
+```
+┌─────────────────────┐                  ┌─────────────────────┐
+│   Client Process    │                  │   Server Process    │
+│                     │                  │                     │
+│  ┌───────────────┐  │      TCP/RPC     │  ┌───────────────┐  │
+│  │  RemoteDB     │──┼──────────────────┼──│ ClientHandler │  │
+│  └───────────────┘  │                  │  └───────────────┘  │
+│         │           │                  │         │           │
+│  ┌───────────────┐  │                  │  ┌───────────────┐  │
+│  │ RemoteTable   │  │                  │  │  abstract_db  │  │
+│  └───────────────┘  │                  │  └───────────────┘  │
+└─────────────────────┘                  └─────────────────────┘
+```
+
+### Key Components
+
+| Component | File | Description |
+|-----------|------|-------------|
+| RemoteDB | `src/mako/remote_db.hh` | Client-side database proxy |
+| RemoteTable | `src/mako/remote_db.hh` | Client-side table proxy |
+| MakoClientProxy | `src/mako/client_proxy.h` | RRR RPC client wrapper |
+| ClientTcpServer | `src/mako/lib/client_tcp_server.h` | Server-side TCP listener |
+
+### RPC Protocol
+
+The client-server communication uses 6 message types defined in `common.h`:
+
+| Type ID | Operation | Request Fields | Response Fields |
+|---------|-----------|----------------|-----------------|
+| 20 | BeginTxn | client_id | txn_id, status |
+| 21 | Commit | txn_id | status |
+| 22 | Rollback | txn_id | status |
+| 23 | Put | txn_id, table_id, key, value | status |
+| 24 | Get | txn_id, table_id, key | value, status |
+| 25 | Delete | txn_id, table_id, key | status |
+
+### Transaction Handle Encoding
+
+Transaction IDs are encoded as 64-bit integers:
+- Upper 32 bits: client_id (unique per client connection)
+- Lower 32 bits: per-client transaction counter
+
+The client passes opaque `void*` handles that encode this txn_id.
+
+## Known Limitations
+
+### Transaction Isolation
+
+**The current implementation does NOT guarantee transaction isolation for concurrent clients.**
+
+Safe use cases:
+- Single client performing transactions
+- Read-only workloads (multiple readers, no writers)
+- Testing and development
+
+Unsafe use cases:
+- Multiple clients writing concurrently (lost updates possible)
+- Production workloads requiring ACID guarantees
+
+See [Client-Server Roadmap](client_server_roadmap.md) for planned isolation improvements.
+
+### Single Shard Only
+
+The client TCP server currently only works in multi-shard configurations where helper servers exist. For single-shard deployments, use local `mako::DB` instead.
+
+## Configuration
+
+### Server Configuration
+
+Server listens on port `31000 + shardIdx`:
+- Shard 0: port 31000
+- Shard 1: port 31001
+- etc.
+
+### Client Configuration
+
+```cpp
+struct RemoteOptions {
+    std::string server_host = "localhost";
+    int server_port = 31000;
+    int shard_index = 0;
+    int num_shards = 1;
+    uint32_t timeout_ms = 5000;  // RPC timeout
+};
+```
+
+## History
+
+The client-server architecture was implemented in January 2026:
+- Phase 1-5: Design, server, client library, examples, CI tests
+- Phase 6-7: RRR RPC integration, code consolidation
+- `makoServer.cc` was merged into `simpleTransactionRep.cc` with `--server` flag

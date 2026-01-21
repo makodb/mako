@@ -32,6 +32,7 @@
  */
 
 #include "status.hh"
+#include "idb.hh"
 #include "client_proxy.h"
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -66,9 +67,10 @@ struct RemoteOptions {
  *
  * Provides Put/Get/Delete operations that are forwarded to the server.
  * All operations require a valid transaction handle from BeginTransaction().
+ * Implements ITable interface for unified access.
  */
 // @safe - Proxy class with no local state mutation
-class RemoteTable {
+class RemoteTable : public ITable {
 public:
     // @safe - Constructor takes raw pointer to parent (borrowing)
     RemoteTable(RemoteDB* db, const std::string& name, uint16_t table_id)
@@ -81,7 +83,7 @@ public:
      * @param value - Value to write (should be encoded with mako::Encode())
      * @return Status::OK() on success
      */
-    Status Put(void* txn, const std::string& key, const std::string& value);
+    Status Put(void* txn, const std::string& key, const std::string& value) override;
 
     /**
      * Get a value by key
@@ -90,7 +92,7 @@ public:
      * @param value - Output: value read from database
      * @return Status::OK() on success, Status::NotFound() if key doesn't exist
      */
-    Status Get(void* txn, const std::string& key, std::string& value);
+    Status Get(void* txn, const std::string& key, std::string& value) override;
 
     /**
      * Delete a key from the table
@@ -98,10 +100,10 @@ public:
      * @param key - Key to delete
      * @return Status::OK() on success
      */
-    Status Delete(void* txn, const std::string& key);
+    Status Delete(void* txn, const std::string& key) override;
 
-    // @safe - Accessor methods
-    const std::string& GetName() const { return name_; }
+    // @safe - Accessor methods (implements ITable)
+    const std::string& GetName() const override { return name_; }
     uint16_t GetTableId() const { return table_id_; }
 
 private:
@@ -115,11 +117,12 @@ private:
  *
  * This class mirrors the mako::DB interface but proxies all operations
  * to a remote server via RRR RPC. Transaction state is managed on the server.
+ * Implements IDatabase interface for unified access with local DB.
  */
 // Forward declaration for friend
 class RemoteTable;
 
-class RemoteDB {
+class RemoteDB : public IDatabase {
     friend class RemoteTable;  // Allow RemoteTable to access private methods
 public:
     /**
@@ -136,46 +139,66 @@ public:
      */
     ~RemoteDB();
 
-    /**
-     * Check if connected to server
-     */
-    // @safe - Read-only access
-    bool IsConnected() const { return is_connected_.load(); }
+    // =========================================================================
+    // IDatabase Interface Implementation
+    // =========================================================================
 
     /**
-     * Get or create a table proxy
+     * Check if connected to server (implements IDatabase)
+     */
+    // @safe - Read-only access
+    bool IsConnected() const override { return is_connected_.load(); }
+
+    /**
+     * Get or create a table proxy (implements IDatabase)
      * Note: Unlike local DB, this doesn't create the table on the server.
      * The table must already exist on the server.
      *
      * @param name - Table name
-     * @return Pointer to RemoteTable proxy (owned by RemoteDB)
+     * @return Pointer to ITable (RemoteTable proxy owned by RemoteDB)
      */
-    RemoteTable* GetTable(const std::string& name);
+    ITable* GetTable(const std::string& name) override;
 
     /**
-     * Begin a new transaction
+     * Begin a new transaction (implements IDatabase)
      * Sends RPC to server to create transaction context.
      *
      * @return Transaction handle (opaque pointer encoding txn_id)
      *         nullptr on failure
      */
-    void* BeginTransaction();
+    void* BeginTransaction() override;
 
     /**
-     * Commit a transaction
+     * Commit a transaction (implements IDatabase)
      * Sends RPC to server to commit the transaction.
      *
      * @param txn - Transaction handle from BeginTransaction()
      */
-    void Commit(void* txn);
+    void Commit(void* txn) override;
 
     /**
-     * Rollback/abort a transaction
+     * Rollback/abort a transaction (implements IDatabase)
      * Sends RPC to server to abort the transaction.
      *
      * @param txn - Transaction handle from BeginTransaction()
      */
-    void Rollback(void* txn);
+    void Rollback(void* txn) override;
+
+    /**
+     * Connect to database (implements IDatabase)
+     * For RemoteDB, returns OK if already connected
+     */
+    Status Connect() override { return is_connected_.load() ? Status::OK() : Status::IOError("Not connected"); }
+
+    /**
+     * Disconnect from database (implements IDatabase)
+     */
+    void Disconnect() override;
+
+    /**
+     * Initialize thread (no-op for remote, implements IDatabase)
+     */
+    void InitThread() override {}
 
     // Internal: Send Put/Get/Delete request to server (used by RemoteTable)
     // @safe - These use RRR RPC
@@ -255,7 +278,7 @@ inline Status RemoteTable::Delete(void* txn, const std::string& key) {
     return db_->SendDelete(txn_id, table_id_, key);
 }
 
-inline RemoteTable* RemoteDB::GetTable(const std::string& name) {
+inline ITable* RemoteDB::GetTable(const std::string& name) {
     std::lock_guard<std::mutex> lock(tables_mutex_);
     auto it = tables_.find(name);
     if (it != tables_.end() && it->second.is_some()) {
@@ -309,6 +332,13 @@ inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) 
 }
 
 inline RemoteDB::~RemoteDB() {
+    Disconnect();
+}
+
+inline void RemoteDB::Disconnect() {
+    if (!is_connected_.load()) {
+        return;
+    }
     is_connected_.store(false);
 
     // Close RPC client
