@@ -27,6 +27,11 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Fix: Added backend_mutex_ and shutting_down_ atomic flag to protect concurrent access
     - Files changed: src/mako/lib/fasttransport.h, src/mako/lib/fasttransport.cc
     - Verified: 5 consecutive shard2Replication runs + rrrTests (65/65 pass)
+  - [ ] *high* Avoid duplication in decoupled client-server.
+    - Setting: Read first `./docs/dev/client_decoupling_design.md`, `docs/dev/client_rpc_implementation_plan.md` and `docs/dev/multi_client_support_plan.md`, `docs/dev/rrr_rpc_refactoring_plan.md`, `docs/dev/avoid_duplication_client_server_plan.md` carefully to understand current code implementation.  
+    - Problems:
+      - First, merge the five markdown files into 1–2 up-to-date docs. Keep only current decisions and the latest plan; remove outdated/repeated sections. Avoid creating a new doc for each small sub-task going forward. 
+      - Second, in `simpleTransactionRep.cc`, I want to unify how users interact with db and remote_db. Currently, the client mode forces users onto a separate path (run_client_mode) and exposes a slightly different interface. Instead, both modes should provide the same interface so that all tests can be reused without special handling. The only unique part of remote_db is the connection interface, so db should also expose that interface as a no-op. Then, depending on whether we are in client mode or not, we simply instantiate db_ with the appropriate implementation (something like db_ = remote_db if in client mode), and the rest of the code should not branch on mode. After this change, we no longer need a dedicated client-mode test path; all tests should run uniformly through the same interface. Please keep changes minimal.
   - [x] *high* Avoid duplication in decoupled client-server. [DONE 2026-01-20, 22:40]
     - Problem: `makoServer.cc` was duplicated with `simpleTransactionRep.cc`
     - Solution: Consolidated into `simpleTransactionRep.cc` with three modes:
