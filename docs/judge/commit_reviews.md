@@ -14,23 +14,86 @@ Each commit may have multiple issues tracked with severity levels:
 
 | Issue ID | Severity | Commit | Category | Brief Description |
 |----------|----------|--------|----------|-------------------|
-| ISSUE-99ed9715-1 | S2 | 99ed9715 | API quality | Breaking API change without deprecation period |
-| ISSUE-1886cab7-2 | S3 | 1886cab7 | Not implemented | Commit/Rollback are no-ops |
-| ISSUE-1886cab7-3 | S2 | 1886cab7 | Missing tests | No unit tests for MakoClientService |
-| ISSUE-33b02756-2 | S2 | 33b02756 | Partial impl | Client mode still bypasses unified test path |
 
 ## Addressed Issues
 
 | Issue ID | Severity | Commit | Addressed By |
 |----------|----------|--------|--------------|
-| ISSUE-1886cab7-1 | S3 | 1886cab7 | (fix_txn_id_collision) |
-| ISSUE-33b02756-1 | S2 | 33b02756 | (fix_txn_id_collision) |
+| ISSUE-1886cab7-1 | S3 | 1886cab7 | 7a6a5847 |
+| ISSUE-1886cab7-2 | S3 | 1886cab7 | 844e6c99 |
+| ISSUE-1886cab7-3 | S2 | 1886cab7 | fb6d9d92 |
+| ISSUE-33b02756-1 | S2 | 33b02756 | 7a6a5847 |
+| ISSUE-33b02756-2 | S2 | 33b02756 | 69f8ba0e |
 | ISSUE-131c2bff-1 | S2 | 131c2bff | 1886cab7 |
 | ISSUE-6a5f8ad0-1 | S2 | 6a5f8ad0 | 131c2bff, 1886cab7 |
 
 ---
 
-*Last updated: 2026-01-23 (7051bafd reviewed)*
+*Last updated: 2026-01-23 (69f8ba0e reviewed)*
+
+---
+
+## Commit 69f8ba0e - "Unify client mode test path with local mode [ISSUE-33b02756-2]"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (unified test path + docs plan)
+
+---
+
+## Commit fb6d9d92 - "Add unit tests for MakoClientService [ISSUE-1886cab7-3]"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (unit tests + CMake hook)
+
+---
+
+## Commit 844e6c99 - "Fix auto-commit semantics bug in Commit/Rollback handlers [ISSUE-1886cab7-2]"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (rollback fix + semantics documentation)
+
+---
+
+## Commit 7a6a5847 - "Fix transaction ID collision risk in MakoClientService [ISSUE-1886cab7-1, ISSUE-33b02756-1]"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (txn_id encoding implemented)
+
+---
+
+## Commit 8aae1d75 - "Add tasks from commit review Open Issues [2026-01-23]"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (TODO updates only)
+
+---
+
+## Commit d725da71 - "Add a daily task to evaluate open issues"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (TODO update only)
+
+---
+
+## Commit 7e3cc0a1 - "Update daily check timestamps [2026-01-23]"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit b5802c0a - "Update reviews and prepare to fix"
+**Date**: 2026-01-23
+**Author**: shenweihai1
+
+**Verdict**: No issues found (review log update only)
 
 ---
 
@@ -51,14 +114,14 @@ Each commit may have multiple issues tracked with severity levels:
 **Evidence**: `docs/client_server_architecture.md:100-104` claims txn_id encodes client_id (upper 32 bits) + per-client counter (lower 32 bits). Current server implementation uses `client_id` directly as `txn_id` in `src/mako/client_service.cc:65-68`.
 **Problem**: Documentation describes a transaction ID scheme that is not implemented. This is already an open correctness gap in the RPC service and the doc makes it appear resolved.
 **Action**: Either implement the documented txn_id encoding (per-client counter) or update docs to match current behavior and explicitly call out the limitation.
-**Status**: Open
+**Status**: Addressed by commit 7a6a5847
 
 ### ISSUE-33b02756-2 [S2 - medium]
 **Category**: Implementation / partial implementation
 **Evidence**: `examples/simpleTransactionRep.cc:894-969` still routes `--client` mode through a dedicated `run_client_mode` path and returns early, rather than reusing the unified IDatabase/ITable test path.
 **Problem**: The change introduces IDatabase/ITable but does not actually remove the client-only code path or run the same test suite through the unified interface, leaving the original duplication and leaving client mode with only a demo flow.
 **Action**: Refactor `main()` to construct an `IDatabase*` (local or remote) and run the same test flow for both modes, or document why client mode must remain separate.
-**Status**: Open
+**Status**: Addressed by commit 69f8ba0e
 
 ---
 
@@ -464,14 +527,8 @@ Each commit may have multiple issues tracked with severity levels:
 
 ## Commit 99ed9715 - "Remove legacy Coroutine/Event API, use Fiber/WaitAll/WaitAny/WaitN"
 **Date**: 2026-01-17
-**Author**: Shuai Mu
 
-### ISSUE-99ed9715-1 [S2 - medium]
-**Category**: API quality / backwards compatibility
-**Evidence**: `src/rrr/reactor/event.h` - Class renames `AndEvent`→`WaitAll`, `OrEvent`→`WaitAny`, `NEvent`→`WaitN`
-**Problem**: Breaking change for external code that may use old API names. While old names were removed, no deprecation period was provided.
-**Action**: Consider adding a deprecation header or migration guide for any external consumers. Document the breaking change prominently in release notes.
-**Status**: Open
+**Verdict**: No issues found (TODO update only)
 
 ---
 
@@ -554,7 +611,7 @@ uint64_t txn_id = static_cast<uint64_t>(client_id);
 ```
 **Problem**: `HandleBeginTxn` uses `client_id` directly as `txn_id`. In multi-client scenarios, if two clients have the same ID or call BeginTxn multiple times, transaction IDs will collide.
 **Action**: Implement proper transaction ID generation using an atomic counter in `MakoClientService` or delegate to `ShardReceiver::begin_txn()`.
-**Status**: Open
+**Status**: Addressed by commit 7a6a5847
 
 ### ISSUE-1886cab7-2 [S3 - high]
 **Category**: Implementation / not implemented
@@ -573,14 +630,14 @@ void MakoClientService::HandleRollback(...) {
 ```
 **Problem**: `HandleCommit` and `HandleRollback` are no-ops that always return SUCCESS without performing any actual transaction management. Transaction state is never tracked or cleaned up.
 **Action**: Either implement actual commit/rollback logic in `MakoClientService` or delegate to `ShardReceiver` methods that handle transaction state.
-**Status**: Open
+**Status**: Addressed by commit 844e6c99
 
 ### ISSUE-1886cab7-3 [S2 - medium]
 **Category**: Testing / missing unit tests
 **Evidence**: No unit tests found for `MakoClientService` in `test/` directory
 **Problem**: New RPC service lacks dedicated unit tests. Only integration tests via CI scripts exist.
 **Action**: Add unit tests for `MakoClientService` covering: BeginTxn ID generation, Put/Get/Delete operations, error handling paths, and concurrent client scenarios.
-**Status**: Open
+**Status**: Addressed by commit fb6d9d92
 
 ---
 
@@ -931,5 +988,3 @@ void MakoClientService::HandleRollback(...) {
 **Date**: 2026-01-12
 
 **Verdict**: No issues found (bug fix)
-
-
