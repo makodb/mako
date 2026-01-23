@@ -1,6 +1,7 @@
 // @safe - RRR RPC service for Mako client API
 #pragma once
 
+#include <atomic>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include "rrr/rpc/server.hpp"
@@ -36,9 +37,9 @@ public:
      * Constructor
      * @param receiver Reference to ShardReceiver for DB operations
      */
-    // @safe - Simple member initialization
+    // @safe - Simple member initialization with atomic counter
     explicit MakoClientService(ShardReceiver* receiver)
-        : receiver_(receiver) {}
+        : receiver_(receiver), next_txn_counter_(0) {}
 
     // @safe - Virtual destructor
     ~MakoClientService() override = default;
@@ -122,6 +123,10 @@ public:
 
 private:
     ShardReceiver* receiver_;  // Not owned, must outlive this service
+
+    // Atomic counter for generating unique transaction IDs
+    // txn_id = (client_id << 32) | counter, ensuring uniqueness per BeginTxn call
+    std::atomic<uint32_t> next_txn_counter_;
 };
 
 } // namespace mako

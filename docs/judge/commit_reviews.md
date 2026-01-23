@@ -15,16 +15,16 @@ Each commit may have multiple issues tracked with severity levels:
 | Issue ID | Severity | Commit | Category | Brief Description |
 |----------|----------|--------|----------|-------------------|
 | ISSUE-99ed9715-1 | S2 | 99ed9715 | API quality | Breaking API change without deprecation period |
-| ISSUE-1886cab7-1 | S3 | 1886cab7 | Partial impl | BeginTxn uses client_id as txn_id (collision risk) |
 | ISSUE-1886cab7-2 | S3 | 1886cab7 | Not implemented | Commit/Rollback are no-ops |
 | ISSUE-1886cab7-3 | S2 | 1886cab7 | Missing tests | No unit tests for MakoClientService |
-| ISSUE-33b02756-1 | S2 | 33b02756 | Docs | Txn ID encoding documented but not implemented |
 | ISSUE-33b02756-2 | S2 | 33b02756 | Partial impl | Client mode still bypasses unified test path |
 
 ## Addressed Issues
 
 | Issue ID | Severity | Commit | Addressed By |
 |----------|----------|--------|--------------|
+| ISSUE-1886cab7-1 | S3 | 1886cab7 | (fix_txn_id_collision) |
+| ISSUE-33b02756-1 | S2 | 33b02756 | (fix_txn_id_collision) |
 | ISSUE-131c2bff-1 | S2 | 131c2bff | 1886cab7 |
 | ISSUE-6a5f8ad0-1 | S2 | 6a5f8ad0 | 131c2bff, 1886cab7 |
 

@@ -62,19 +62,17 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
     rrr::i64 client_id;
     req->m >> client_id;
 
-    // Generate transaction ID (same logic as ShardReceiver)
-    // Use client_id as the transaction ID since we're in single-client mode
-    // For multi-client support, we'd need a counter in receiver_
-    uint64_t txn_id = static_cast<uint64_t>(client_id);
-
-    // Track transaction in receiver (if needed)
-    // Note: For now, we don't have direct access to receiver_'s internal state
-    // This is a simplified implementation - full integration would need receiver_ methods
+    // Generate unique transaction ID using documented encoding:
+    // Upper 32 bits: client_id (unique per client connection)
+    // Lower 32 bits: per-service atomic counter (unique per BeginTxn call)
+    // This ensures uniqueness even with multiple BeginTxn calls from same client
+    uint32_t counter = next_txn_counter_.fetch_add(1, std::memory_order_relaxed);
+    uint64_t txn_id = (static_cast<uint64_t>(client_id) << 32) | counter;
 
     rrr::i32 status = ErrorCode::SUCCESS;
 
-    Log_debug("MakoClientService::HandleBeginTxn: client_id=%ld, txn_id=%lu",
-              client_id, txn_id);
+    Log_debug("MakoClientService::HandleBeginTxn: client_id=%ld, counter=%u, txn_id=%lu",
+              client_id, counter, txn_id);
 
     // Send response
     auto sconn_opt = sconn.upgrade();

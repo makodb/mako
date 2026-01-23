@@ -99,7 +99,13 @@ The client-server communication uses 6 message types defined in `common.h`:
 
 Transaction IDs are encoded as 64-bit integers:
 - Upper 32 bits: client_id (unique per client connection)
-- Lower 32 bits: per-client transaction counter
+- Lower 32 bits: per-service atomic counter (ensures uniqueness across all BeginTxn calls)
+
+Implementation in `MakoClientService::HandleBeginTxn`:
+```cpp
+uint32_t counter = next_txn_counter_.fetch_add(1, std::memory_order_relaxed);
+uint64_t txn_id = (static_cast<uint64_t>(client_id) << 32) | counter;
+```
 
 The client passes opaque `void*` handles that encode this txn_id.
 
