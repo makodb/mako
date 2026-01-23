@@ -62,12 +62,11 @@ void MakoClientService::HandleBeginTxn(rusty::Box<rrr::Request> req,
     rrr::i64 client_id;
     req->m >> client_id;
 
-    // Generate unique transaction ID using documented encoding:
-    // Upper 32 bits: client_id (unique per client connection)
-    // Lower 32 bits: per-service atomic counter (unique per BeginTxn call)
-    // This ensures uniqueness even with multiple BeginTxn calls from same client
+    // Generate unique transaction ID and register with ShardReceiver for tracking
+    // Using atomic counter ensures uniqueness per BeginTxn call
     uint32_t counter = next_txn_counter_.fetch_add(1, std::memory_order_relaxed);
-    uint64_t txn_id = (static_cast<uint64_t>(client_id) << 32) | counter;
+    uint64_t txn_id = receiver_->BeginClientTransaction(
+        static_cast<uint64_t>(client_id), counter);
 
     rrr::i32 status = ErrorCode::SUCCESS;
 
@@ -91,7 +90,8 @@ void MakoClientService::HandleCommit(rusty::Box<rrr::Request> req,
     rrr::i64 txn_id;
     req->m >> txn_id;
 
-    rrr::i32 status = ErrorCode::SUCCESS;
+    // Commit transaction through ShardReceiver (removes from tracking)
+    rrr::i32 status = receiver_->CommitClientTransaction(static_cast<uint64_t>(txn_id));
 
     Log_debug("MakoClientService::HandleCommit: txn_id=%ld, status=%d", txn_id, status);
 
@@ -111,7 +111,8 @@ void MakoClientService::HandleRollback(rusty::Box<rrr::Request> req,
     rrr::i64 txn_id;
     req->m >> txn_id;
 
-    rrr::i32 status = ErrorCode::SUCCESS;
+    // Rollback transaction through ShardReceiver (aborts and removes from tracking)
+    rrr::i32 status = receiver_->RollbackClientTransaction(static_cast<uint64_t>(txn_id));
 
     Log_debug("MakoClientService::HandleRollback: txn_id=%ld, status=%d", txn_id, status);
 

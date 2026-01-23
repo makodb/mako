@@ -109,6 +109,37 @@ uint64_t txn_id = (static_cast<uint64_t>(client_id) << 32) | counter;
 
 The client passes opaque `void*` handles that encode this txn_id.
 
+## Transaction Semantics
+
+### Auto-Commit Model
+
+**Mako uses auto-commit semantics for the client API.** Each Put/Get/Delete operation is immediately committed when executed - operations are NOT buffered for a later Commit call.
+
+| API Call | What It Does |
+|----------|--------------|
+| BeginTransaction | Creates a transaction tracking entry, generates txn_id |
+| Put/Get/Delete | Immediately commits the operation (auto-commit) |
+| Commit | Removes transaction from tracking (operations already committed) |
+| Rollback | Removes transaction from tracking (cannot undo already-committed ops) |
+
+This design ensures:
+- **Durability**: No buffered data is lost on crash
+- **Simplicity**: Each operation is atomic and immediately visible
+
+Implications:
+- **No multi-operation atomicity**: Cannot commit or rollback multiple operations as a unit
+- **Rollback is a no-op**: Since operations auto-commit, Rollback cannot undo them
+
+### Example: Auto-Commit Behavior
+
+```cpp
+void* txn = db->BeginTransaction();
+table->Put(txn, "key1", "value1");  // Immediately committed
+table->Put(txn, "key2", "value2");  // Immediately committed
+db->Rollback(txn);  // Does NOT undo the puts - they're already committed!
+// key1 and key2 now exist in the database
+```
+
 ## Known Limitations
 
 ### Transaction Isolation

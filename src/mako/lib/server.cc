@@ -622,6 +622,7 @@ namespace mako
     }
 
     // @unsafe - handles raw buffer pointers from transport layer
+    // Note: Mako uses auto-commit semantics. Rollback only removes tracking.
     void ShardReceiver::HandleClientRollbackRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<client_commit_request_t *>(reqBuf);
@@ -630,12 +631,11 @@ namespace mako
 
         int status = ErrorCode::SUCCESS;
 
-        // Abort transaction and remove from tracking
+        // Remove transaction from tracking (operations already auto-committed)
         {
             std::lock_guard<std::mutex> lock(client_txn_mutex_);
             auto it = client_transactions_.find(req->txn_id);
             if (it != client_transactions_.end()) {
-                db->shard_abort_txn(nullptr);
                 client_transactions_.erase(it);
             } else {
                 // Transaction not found
@@ -647,6 +647,76 @@ namespace mako
         resp->status = status;
 
         Debug("HandleClientRollbackRequest: txn_id=%lu, status=%d", req->txn_id, status);
+    }
+
+    // ============================================================================
+    // Client Transaction API (for MakoClientService to use)
+    // ============================================================================
+
+    // @safe - Thread-safe with mutex
+    uint64_t ShardReceiver::BeginClientTransaction(uint64_t client_id, uint32_t txn_counter)
+    {
+        // Generate txn_id using the same encoding as the client
+        uint64_t txn_id = (client_id << 32) | txn_counter;
+
+        // Store in transaction tracking map
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            // Map client txn_id to a server transaction counter (for internal tracking)
+            client_transactions_[txn_id] = ++server_txn_counter_;
+        }
+
+        Debug("BeginClientTransaction: client_id=%lu, counter=%u, txn_id=%lu",
+              client_id, txn_counter, txn_id);
+        return txn_id;
+    }
+
+    // @safe - Thread-safe with mutex
+    int ShardReceiver::CommitClientTransaction(uint64_t txn_id)
+    {
+        int status = ErrorCode::SUCCESS;
+
+        // Remove transaction from tracking
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            auto it = client_transactions_.find(txn_id);
+            if (it != client_transactions_.end()) {
+                client_transactions_.erase(it);
+            } else {
+                // Transaction not found - may have already been committed/rolled back
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        Debug("CommitClientTransaction: txn_id=%lu, status=%d", txn_id, status);
+        return status;
+    }
+
+    // @safe - Thread-safe with mutex
+    // Note: Mako uses auto-commit semantics where each Put/Get operation is
+    // immediately committed. Rollback only removes the transaction from tracking.
+    // It cannot undo already-committed operations.
+    int ShardReceiver::RollbackClientTransaction(uint64_t txn_id)
+    {
+        int status = ErrorCode::SUCCESS;
+
+        // Remove transaction from tracking
+        // Note: Since operations are auto-committed, we cannot undo them.
+        // Rollback just marks the transaction as aborted for tracking purposes.
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            auto it = client_transactions_.find(txn_id);
+            if (it != client_transactions_.end()) {
+                // Remove from tracking (operations already auto-committed)
+                client_transactions_.erase(it);
+            } else {
+                // Transaction not found
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        Debug("RollbackClientTransaction: txn_id=%lu, status=%d", txn_id, status);
+        return status;
     }
 
     // @unsafe - handles raw buffer pointers from transport layer

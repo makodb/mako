@@ -75,6 +75,35 @@ namespace mako
         // @safe - Get database reference
         abstract_db* GetDb() const { return db; }
 
+        // ============================================================================
+        // Client Transaction API (for MakoClientService to use)
+        // ============================================================================
+
+        /**
+         * Begin a client transaction
+         * @param client_id Client identifier
+         * @param txn_counter Per-client transaction counter (for unique txn_id)
+         * @return Generated txn_id = (client_id << 32) | txn_counter
+         */
+        // @safe - Thread-safe with mutex
+        uint64_t BeginClientTransaction(uint64_t client_id, uint32_t txn_counter);
+
+        /**
+         * Commit a client transaction
+         * @param txn_id Transaction ID from BeginClientTransaction
+         * @return ErrorCode::SUCCESS if found and removed, ERROR if not found
+         */
+        // @safe - Thread-safe with mutex
+        int CommitClientTransaction(uint64_t txn_id);
+
+        /**
+         * Rollback/abort a client transaction
+         * @param txn_id Transaction ID from BeginClientTransaction
+         * @return ErrorCode::SUCCESS if found and aborted, ERROR if not found
+         */
+        // @safe - Thread-safe with mutex
+        int RollbackClientTransaction(uint64_t txn_id);
+
     protected:
         inline void *txn_buf() { return (void *) txn_obj_buf.data(); }
 
