@@ -18,6 +18,8 @@ Each commit may have multiple issues tracked with severity levels:
 | ISSUE-1886cab7-1 | S3 | 1886cab7 | Partial impl | BeginTxn uses client_id as txn_id (collision risk) |
 | ISSUE-1886cab7-2 | S3 | 1886cab7 | Not implemented | Commit/Rollback are no-ops |
 | ISSUE-1886cab7-3 | S2 | 1886cab7 | Missing tests | No unit tests for MakoClientService |
+| ISSUE-33b02756-1 | S2 | 33b02756 | Docs | Txn ID encoding documented but not implemented |
+| ISSUE-33b02756-2 | S2 | 33b02756 | Partial impl | Client mode still bypasses unified test path |
 
 ## Addressed Issues
 
@@ -28,7 +30,139 @@ Each commit may have multiple issues tracked with severity levels:
 
 ---
 
-*Last updated: 2026-01-18 (c0cb648b reviewed)*
+*Last updated: 2026-01-23 (7051bafd reviewed)*
+
+---
+
+## Commit 7051bafd - "Update daily check timestamps [2026-01-22]"
+**Date**: 2026-01-22
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 33b02756 - "Unify IDatabase/ITable interfaces and consolidate client-server docs"
+**Date**: 2026-01-21
+**Author**: Shuai Mu
+
+### ISSUE-33b02756-1 [S2 - medium]
+**Category**: Docs / correctness
+**Evidence**: `docs/client_server_architecture.md:100-104` claims txn_id encodes client_id (upper 32 bits) + per-client counter (lower 32 bits). Current server implementation uses `client_id` directly as `txn_id` in `src/mako/client_service.cc:65-68`.
+**Problem**: Documentation describes a transaction ID scheme that is not implemented. This is already an open correctness gap in the RPC service and the doc makes it appear resolved.
+**Action**: Either implement the documented txn_id encoding (per-client counter) or update docs to match current behavior and explicitly call out the limitation.
+**Status**: Open
+
+### ISSUE-33b02756-2 [S2 - medium]
+**Category**: Implementation / partial implementation
+**Evidence**: `examples/simpleTransactionRep.cc:894-969` still routes `--client` mode through a dedicated `run_client_mode` path and returns early, rather than reusing the unified IDatabase/ITable test path.
+**Problem**: The change introduces IDatabase/ITable but does not actually remove the client-only code path or run the same test suite through the unified interface, leaving the original duplication and leaving client mode with only a demo flow.
+**Action**: Refactor `main()` to construct an `IDatabase*` (local or remote) and run the same test flow for both modes, or document why client mode must remain separate.
+**Status**: Open
+
+---
+
+## Commit ccf067d0 - "Add a subtask"
+**Date**: 2026-01-21
+**Author**: shenweihai1
+
+**Verdict**: No issues found (TODO update only)
+
+---
+
+## Commit dffefe39 - "Update daily check timestamps [2026-01-21]"
+**Date**: 2026-01-21
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit bc20cf50 - "Consolidate makoServer.cc into simpleTransactionRep.cc with --server flag"
+**Date**: 2026-01-20
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (feature consolidation with docs/CI updates)
+
+---
+
+## Commit a9612351 - "Add a task to avoid duplication"
+**Date**: 2026-01-21
+**Author**: shenweihai1
+
+**Verdict**: No issues found (TODO update only)
+
+---
+
+## Commit 429e47f9 - "Update daily check timestamps [2026-01-20]"
+**Date**: 2026-01-20
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 5764543d - "Update daily check timestamps [2026-01-19]"
+**Date**: 2026-01-19
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 747d8596 - "Add signal handlers for graceful shutdown in FastTransport"
+**Date**: 2026-01-19
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (graceful shutdown fix)
+
+---
+
+## Commit f4d078c4 - "Update TODO.md: Mark shard2Replication race condition bug as fixed"
+**Date**: 2026-01-19
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (TODO update only)
+
+---
+
+## Commit e00d802f - "Fix race condition in FastTransport causing intermittent segfault during shutdown"
+**Date**: 2026-01-19
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (race fix with locking)
+
+---
+
+## Commit 2e9d9417 - "Refactor RPC test port allocation to prevent parallel test collisions"
+**Date**: 2026-01-19
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (test infrastructure refactor)
+
+---
+
+## Commit 3de005ca - "Fix shard1ReplicationRaft CI flakiness by lowering replay_batch threshold"
+**Date**: 2026-01-19
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (test threshold adjustment with justification)
+
+---
+
+## Commit 2fb665e0 - "Add a fix task"
+**Date**: 2026-01-19
+**Author**: shenweihai1
+
+**Verdict**: No issues found (TODO update only)
+
+---
+
+## Commit 7c65518a - "Add reviews via judge"
+**Date**: 2026-01-18
+**Author**: shenweihai1
+
+**Verdict**: No issues found (docs/judge bootstrap)
 
 ---
 
