@@ -34,9 +34,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Documented: Added "Transaction Semantics" section to docs/client_server_architecture.md explaining auto-commit model.
     - Updated: docs/dev/fix_commit_rollback_plan.md with full analysis.
     - All CI tests passed. See logs/20260123_053348_7a6a5847_fix_commit_rollback_ci.log.
-  - [ ] *medium* Add unit tests for MakoClientService. [ISSUE-1886cab7-3]
-    - Problem: New RPC service lacks dedicated unit tests. Only integration tests via CI scripts exist.
-    - Fix: Add unit tests covering BeginTxn ID generation, Put/Get/Delete operations, error handling, concurrent clients.
+  - [x] *medium* Add unit tests for MakoClientService. [ISSUE-1886cab7-3] [DONE 2026-01-23, 06:15]
+    - Added test/test_client_service.cc with 12 tests covering:
+      - Transaction ID encoding/decoding roundtrip
+      - Uniqueness guarantees for different client IDs and counters
+      - Edge cases (max values, zero values)
+      - Atomic counter sequential and concurrent behavior
+      - Multi-service counter independence
+    - Plan: docs/dev/test_client_service_plan.md
+    - All CI tests passed (19 suites + new test_client_service, 65/65 rrrTests).
   - [ ] *medium* Unify client mode test path with local mode. [ISSUE-33b02756-2]
     - Problem: `examples/simpleTransactionRep.cc:894-969` routes --client mode through dedicated `run_client_mode` path instead of using unified IDatabase interface.
     - Fix: Refactor main() to construct IDatabase* (local or remote) and run same test flow for both modes.
