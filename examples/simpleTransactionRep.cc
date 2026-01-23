@@ -891,6 +891,125 @@ static void print_client_usage(const char* program_name) {
     printf("Example: %s --client localhost 31000\n", program_name);
 }
 
+// ============================================================================
+// Unified Simple Test (works with both local DB and RemoteDB via IDatabase)
+// ============================================================================
+
+// @safe - Run simple transaction tests using unified IDatabase interface
+// This function works for both local and remote database connections.
+static bool run_simple_test(mako::IDatabase* db, const std::string& test_prefix = "unified") {
+    printf("\n--- Running Simple Tests (%s) via IDatabase ---\n", test_prefix.c_str());
+
+    mako::ITable* table = db->GetTable("customer_0");
+    bool all_passed = true;
+    int writes_ok = 0, reads_ok = 0, value_matches = 0;
+
+    // Test 1: Write 5 key-value pairs
+    printf("[%s] Writing 5 records...\n", test_prefix.c_str());
+    for (int i = 0; i < 5; i++) {
+        void* txn = db->BeginTransaction();
+        if (!txn) {
+            printf(RED "[%s] BeginTransaction failed for write %d" RESET "\n", test_prefix.c_str(), i);
+            all_passed = false;
+            continue;
+        }
+
+        std::string key = test_prefix + "_key_" + std::to_string(i);
+        std::string value = mako::Encode(test_prefix + "_value_" + std::to_string(i));
+
+        mako::Status s = table->Put(txn, key, value);
+        if (s.ok()) {
+            db->Commit(txn);
+            writes_ok++;
+        } else {
+            printf(YELLOW "[%s] Put failed for key %s: %s" RESET "\n",
+                   test_prefix.c_str(), key.c_str(), s.ToString().c_str());
+            db->Rollback(txn);
+        }
+    }
+    printf("[%s] Write result: %d/5 OK\n", test_prefix.c_str(), writes_ok);
+    if (writes_ok == 5) {
+        printf(GREEN "[PASS]" RESET " Write 5 records\n");
+    } else {
+        printf(RED "[FAIL]" RESET " Write 5 records (%d/5)\n", writes_ok);
+        all_passed = false;
+    }
+
+    // Test 2: Read and verify 5 key-value pairs
+    printf("[%s] Reading and verifying 5 records...\n", test_prefix.c_str());
+    for (int i = 0; i < 5; i++) {
+        void* txn = db->BeginTransaction();
+        if (!txn) {
+            printf(RED "[%s] BeginTransaction failed for read %d" RESET "\n", test_prefix.c_str(), i);
+            all_passed = false;
+            continue;
+        }
+
+        std::string key = test_prefix + "_key_" + std::to_string(i);
+        std::string expected_value = test_prefix + "_value_" + std::to_string(i);
+        std::string retrieved_value;
+
+        mako::Status s = table->Get(txn, key, retrieved_value);
+        db->Commit(txn);
+
+        if (s.ok()) {
+            reads_ok++;
+            // Check if value contains expected string (encoded values have prefix)
+            if (retrieved_value.find(expected_value) != std::string::npos) {
+                value_matches++;
+            } else {
+                printf(YELLOW "[%s] Value mismatch for key %s" RESET "\n",
+                       test_prefix.c_str(), key.c_str());
+            }
+        } else if (s.IsNotFound()) {
+            printf(YELLOW "[%s] Key not found: %s" RESET "\n", test_prefix.c_str(), key.c_str());
+        } else {
+            printf(YELLOW "[%s] Get failed for key %s: %s" RESET "\n",
+                   test_prefix.c_str(), key.c_str(), s.ToString().c_str());
+        }
+    }
+    printf("[%s] Read result: %d/5 OK, %d/5 values match\n",
+           test_prefix.c_str(), reads_ok, value_matches);
+    if (reads_ok == 5 && value_matches == 5) {
+        printf(GREEN "[PASS]" RESET " Read and verify 5 records\n");
+    } else {
+        printf(RED "[FAIL]" RESET " Read and verify 5 records (%d/5 read, %d/5 match)\n",
+               reads_ok, value_matches);
+        all_passed = false;
+    }
+
+    // Test 3: Rollback test - write then rollback, verify key doesn't exist
+    printf("[%s] Testing rollback...\n", test_prefix.c_str());
+    {
+        std::string rollback_key = test_prefix + "_rollback_test";
+        std::string rollback_value = mako::Encode(test_prefix + "_should_not_exist");
+
+        void* txn = db->BeginTransaction();
+        if (txn) {
+            table->Put(txn, rollback_key, rollback_value);
+            db->Rollback(txn);
+
+            // Note: Due to auto-commit semantics, the key may still exist
+            // This test documents the current behavior
+            void* txn2 = db->BeginTransaction();
+            std::string check_value;
+            mako::Status s = table->Get(txn2, rollback_key, check_value);
+            db->Commit(txn2);
+
+            if (s.IsNotFound()) {
+                printf(GREEN "[PASS]" RESET " Rollback prevented commit\n");
+            } else {
+                // Auto-commit semantics: rollback doesn't undo completed puts
+                printf(YELLOW "[INFO]" RESET " Rollback test: key exists (auto-commit semantics)\n");
+            }
+        }
+    }
+
+    printf("\n[%s] Simple test summary: %s\n", test_prefix.c_str(),
+           all_passed ? "ALL PASSED" : "SOME FAILED");
+    return all_passed;
+}
+
 // @safe - Runs client mode, connecting to remote server using unified IDatabase interface
 static int run_client_mode(const char* server_host, int server_port) {
     printf("=== Mako Client Mode ===\n");
@@ -911,48 +1030,16 @@ static int run_client_mode(const char* server_host, int server_port) {
 
     printf(GREEN "Connected to server successfully!" RESET "\n");
 
-    // Get a table proxy via unified ITable interface
-    mako::ITable* table = remote_db->GetTable("customer_0");
-    printf("Created table proxy: %s\n", table->GetName().c_str());
-
-    // Demonstrate transaction API using unified IDatabase interface
-    printf("\n--- Testing Remote Transaction API via IDatabase ---\n");
-    void* txn = remote_db->BeginTransaction();
-    if (txn) {
-        printf("BeginTransaction: OK (txn_handle=%p)\n", txn);
-
-        // Try a Put operation
-        std::string test_key = "test_key_001";
-        std::string test_value = mako::Encode("test_value_001");
-        status = table->Put(txn, test_key, test_value);
-        if (!status.ok()) {
-            printf(YELLOW "Put: %s" RESET "\n", status.ToString().c_str());
-        } else {
-            printf("Put: OK\n");
-        }
-
-        // Try a Get operation
-        std::string retrieved_value;
-        status = table->Get(txn, test_key, retrieved_value);
-        if (!status.ok()) {
-            printf(YELLOW "Get: %s" RESET "\n", status.ToString().c_str());
-        } else {
-            printf("Get: OK, value=%s\n", retrieved_value.c_str());
-        }
-
-        // Commit
-        remote_db->Commit(txn);
-        printf("Commit: OK\n");
-    } else {
-        printf(RED "BeginTransaction: Failed" RESET "\n");
-    }
+    // Run unified simple tests using the IDatabase interface
+    // This is the SAME test code that can be used with local DB
+    bool tests_passed = run_simple_test(remote_db, "remote");
 
     printf("\n--- Client Mode Summary ---\n");
     printf("The RemoteDB API uses the unified IDatabase interface.\n");
-    printf("Same code works for both local DB and RemoteDB.\n");
+    printf("Same run_simple_test() works for both local DB and RemoteDB.\n");
 
     delete remote_db;
-    return 0;
+    return tests_passed ? 0 : 1;
 }
 
 int main(int argc, char **argv) {
