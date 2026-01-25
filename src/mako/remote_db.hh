@@ -33,6 +33,7 @@
 
 #include "status.hh"
 #include "idb.hh"
+#include "db.hh"  // For mako::Options, ClientConfig
 #include "client_proxy.h"
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -53,6 +54,9 @@ class RemoteTable;
 
 /**
  * Options for connecting to a remote Mako server
+ *
+ * @deprecated Use mako::Options with client.enabled = true instead.
+ * This struct is kept for backward compatibility.
  */
 struct RemoteOptions {
     std::string server_host = "localhost";
@@ -60,6 +64,16 @@ struct RemoteOptions {
     int shard_index = 0;
     int num_shards = 1;
     uint32_t timeout_ms = 5000;  // RPC timeout in milliseconds
+
+    // @safe - Convert to ClientConfig (for internal use)
+    ClientConfig to_client_config() const {
+        ClientConfig config;
+        config.server_hosts.push_back(server_host);
+        config.server_ports.push_back(server_port);
+        config.enabled = true;
+        config.timeout_ms = timeout_ms;
+        return config;
+    }
 };
 
 /**
@@ -126,8 +140,31 @@ class RemoteDB : public IDatabase {
     friend class RemoteTable;  // Allow RemoteTable to access private methods
 public:
     /**
-     * Connect to a remote Mako server
+     * Connect to a remote Mako server using unified Options
      *
+     * This is the preferred method for creating client connections.
+     * Uses options.client for connection settings.
+     *
+     * @param options - Unified options with client.enabled = true
+     * @param shard_index - Which shard to connect to (index into client.server_hosts)
+     * @param dbptr - Output: pointer to connected RemoteDB instance
+     * @return Status::OK() on success, error status on failure
+     *
+     * Example:
+     *   mako::Options opts;
+     *   opts.client.enabled = true;
+     *   opts.client.server_hosts = {"host1", "host2"};
+     *   opts.client.server_ports = {31000, 31001};
+     *
+     *   mako::RemoteDB* db = nullptr;
+     *   mako::Status s = mako::RemoteDB::Connect(opts, 0, &db);  // Connect to shard 0
+     */
+    static Status Connect(const Options& options, int shard_index, RemoteDB** dbptr);
+
+    /**
+     * Connect to a remote Mako server (deprecated - use Options overload)
+     *
+     * @deprecated Use Connect(const Options&, int, RemoteDB**) instead.
      * @param options - Connection options (host, port, etc.)
      * @param dbptr - Output: pointer to connected RemoteDB instance
      * @return Status::OK() on success, error status on failure
@@ -292,7 +329,38 @@ inline ITable* RemoteDB::GetTable(const std::string& name) {
     return ptr;
 }
 
-// @safe - Uses RRR RPC for connection
+// @safe - Uses RRR RPC for connection (new unified Options overload)
+inline Status RemoteDB::Connect(const Options& options, int shard_index, RemoteDB** dbptr) {
+    *dbptr = nullptr;
+
+    // Validate client config
+    if (!options.client.enabled) {
+        return Status::InvalidArgument("Client mode not enabled in options (set client.enabled = true)");
+    }
+    if (options.client.server_hosts.empty()) {
+        return Status::InvalidArgument("No server hosts configured in options.client");
+    }
+    if (shard_index < 0 || static_cast<size_t>(shard_index) >= options.client.server_hosts.size()) {
+        return Status::InvalidArgument("Invalid shard_index: " + std::to_string(shard_index) +
+                                       " (max: " + std::to_string(options.client.server_hosts.size() - 1) + ")");
+    }
+    if (options.client.server_hosts.size() != options.client.server_ports.size()) {
+        return Status::InvalidArgument("Mismatched server_hosts and server_ports count");
+    }
+
+    // Convert to RemoteOptions for internal use (maintains existing logic)
+    RemoteOptions remote_opts;
+    remote_opts.server_host = options.client.server_hosts[shard_index];
+    remote_opts.server_port = options.client.server_ports[shard_index];
+    remote_opts.shard_index = shard_index;
+    remote_opts.num_shards = static_cast<int>(options.client.server_hosts.size());
+    remote_opts.timeout_ms = options.client.timeout_ms;
+
+    // Delegate to existing Connect implementation
+    return Connect(remote_opts, dbptr);
+}
+
+// @safe - Uses RRR RPC for connection (deprecated RemoteOptions overload)
 inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) {
     *dbptr = nullptr;
 

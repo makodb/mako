@@ -1,15 +1,21 @@
 //
 // Mako Database Server and Transaction Tests
 //
-// This program can run in three modes:
-// 1. Server + Tests (default): Runs database server and executes transaction tests
-// 2. Server-only (--server): Runs standalone database server, waits for clients
-// 3. Client mode (--client): Connects to a remote server via RemoteDB
+// This program can run in three modes using unified mako::Options:
+// 1. COLOCATE (default): Server + Tests - runs database server and executes transaction tests
+// 2. SERVER_ONLY (--server): Standalone server - waits for clients/shutdown signal
+// 3. CLIENT_ONLY (--client): Remote client - connects to server(s) via RemoteDB
+//
+// The unified Options pattern allows both local DB and RemoteDB to use the same
+// mako::Options struct, with mode-specific configuration in options.client.
 //
 // Usage:
 //   ./simpleTransactionRep <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
 //   ./simpleTransactionRep --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
 //   ./simpleTransactionRep --client <server_host> <server_port>
+//
+// See docs/client_server_architecture.md for architecture details.
+// See docs/dev/unify_client_server_interface_plan.md for implementation plan.
 //
 
 #include <iostream>
@@ -34,6 +40,21 @@
 
 using namespace std;
 using namespace mako;
+
+// ============================================================================
+// Run Mode Configuration
+// ============================================================================
+
+/**
+ * Run mode enum for clean separation of initialization logic
+ *
+ * @safe - Simple enum definition
+ */
+enum class RunMode {
+    CLIENT_ONLY,   // Connect to remote server(s) via RemoteDB
+    SERVER_ONLY,   // Run standalone server, wait for clients
+    COLOCATE       // Run server + tests (default)
+};
 
 // @safe - Global shutdown flag with atomic access for server-only mode
 static std::atomic<bool> g_shutdown_requested{false};
@@ -1010,19 +1031,24 @@ static bool run_simple_test(mako::IDatabase* db, const std::string& test_prefix 
     return all_passed;
 }
 
-// @safe - Runs client mode, connecting to remote server using unified IDatabase interface
-static int run_client_mode(const char* server_host, int server_port) {
-    printf("=== Mako Client Mode ===\n");
-    printf("Connecting to server at %s:%d...\n", server_host, server_port);
+// @safe - Runs client mode using unified mako::Options
+// Uses the new Connect(Options, shard_index) overload
+static int run_client_mode(const mako::Options& opts, int shard_index = 0) {
+    printf("=== Mako Client Mode (Unified Options) ===\n");
 
-    // Create RemoteDB connection options
-    mako::RemoteOptions opts;
-    opts.server_host = server_host;
-    opts.server_port = server_port;
+    if (!opts.client.is_valid()) {
+        printf(RED "Error: Invalid client configuration" RESET "\n");
+        return 1;
+    }
 
-    // Connect to remote server
+    printf("Connecting to shard %d at %s:%d...\n",
+           shard_index,
+           opts.client.server_hosts[shard_index].c_str(),
+           opts.client.server_ports[shard_index]);
+
+    // Connect to remote server using unified Options
     mako::RemoteDB* remote_db = nullptr;
-    mako::Status status = mako::RemoteDB::Connect(opts, &remote_db);
+    mako::Status status = mako::RemoteDB::Connect(opts, shard_index, &remote_db);
     if (!status.ok()) {
         printf(RED "Failed to connect to server: %s" RESET "\n", status.ToString().c_str());
         return 1;
@@ -1035,33 +1061,56 @@ static int run_client_mode(const char* server_host, int server_port) {
     bool tests_passed = run_simple_test(remote_db, "remote");
 
     printf("\n--- Client Mode Summary ---\n");
-    printf("The RemoteDB API uses the unified IDatabase interface.\n");
+    printf("Using unified mako::Options with client.enabled = true\n");
     printf("Same run_simple_test() works for both local DB and RemoteDB.\n");
 
     delete remote_db;
     return tests_passed ? 0 : 1;
 }
 
+// @safe - Legacy run_client_mode using deprecated RemoteOptions (backward compatible)
+static int run_client_mode_legacy(const char* server_host, int server_port) {
+    printf("=== Mako Client Mode (Legacy) ===\n");
+    printf("Connecting to server at %s:%d...\n", server_host, server_port);
+
+    // Convert to unified Options
+    mako::Options opts;
+    opts.client.enabled = true;
+    opts.client.server_hosts.push_back(server_host);
+    opts.client.server_ports.push_back(server_port);
+
+    return run_client_mode(opts, 0);
+}
+
 int main(int argc, char **argv) {
 
-    // Check for client mode flag
+    // ========================================================================
+    // Determine run mode from command-line flags
+    // ========================================================================
+    RunMode mode = RunMode::COLOCATE;  // Default: server + tests
+    int arg_offset = 0;
+
+    // Check for --client flag
     if (argc >= 2 && strcmp(argv[1], "--client") == 0) {
+        mode = RunMode::CLIENT_ONLY;
         if (argc != 4) {
             print_client_usage(argv[0]);
             return 1;
         }
+        // Use legacy function for backward compatibility with simple --client host port
         const char* server_host = argv[2];
         int server_port = std::stoi(argv[3]);
-        return run_client_mode(server_host, server_port);
+        return run_client_mode_legacy(server_host, server_port);
     }
 
-    // Check for server-only mode flag (--server)
-    bool server_only_mode = false;
-    int arg_offset = 0;
+    // Check for --server flag
     if (argc >= 2 && strcmp(argv[1], "--server") == 0) {
-        server_only_mode = true;
+        mode = RunMode::SERVER_ONLY;
         arg_offset = 1;
     }
+
+    // For backward compatibility, keep the server_only_mode variable
+    bool server_only_mode = (mode == RunMode::SERVER_ONLY);
 
     // All necessary parameters expected from users
     int effective_argc = argc - arg_offset;
@@ -1069,16 +1118,19 @@ int main(int argc, char **argv) {
         printf("Usage: %s <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
         printf("       %s --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
         printf("       %s --client <server_host> <server_port>\n", argv[0]);
-        printf("\nModes:\n");
-        printf("  Default:  Run database server with transaction tests\n");
-        printf("  --server: Run standalone database server only (wait for clients/shutdown)\n");
-        printf("  --client: Run as client, connect to remote server\n");
+        printf("\nModes (RunMode enum):\n");
+        printf("  COLOCATE (default):  Run database server with transaction tests\n");
+        printf("  SERVER_ONLY (--server): Run standalone database server only (wait for clients/shutdown)\n");
+        printf("  CLIENT_ONLY (--client): Run as client, connect to remote server via unified Options\n");
+        printf("\nUnified Options Pattern:\n");
+        printf("  Both local DB and RemoteDB use mako::Options struct.\n");
+        printf("  Client mode sets options.client.enabled = true\n");
         printf("\nExamples:\n");
-        printf("  %s 2 0 6 localhost 1              # Server + tests (Paxos)\n", argv[0]);
-        printf("  %s 2 0 6 localhost 1 raft         # Server + tests (Raft)\n", argv[0]);
-        printf("  %s --server 2 0 6 localhost 1     # Server only (Paxos)\n", argv[0]);
-        printf("  %s --server 1 0 4 localhost 0     # Server only (no replication)\n", argv[0]);
-        printf("  %s --client localhost 31000       # Client mode\n", argv[0]);
+        printf("  %s 2 0 6 localhost 1              # COLOCATE + Paxos\n", argv[0]);
+        printf("  %s 2 0 6 localhost 1 raft         # COLOCATE + Raft\n", argv[0]);
+        printf("  %s --server 2 0 6 localhost 1     # SERVER_ONLY + Paxos\n", argv[0]);
+        printf("  %s --server 1 0 4 localhost 0     # SERVER_ONLY (no replication)\n", argv[0]);
+        printf("  %s --client localhost 31000       # CLIENT_ONLY\n", argv[0]);
         return 1;
     }
 
@@ -1139,17 +1191,27 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (server_only_mode) {
-        printf("=== Mako Server (standalone mode) ===\n");
+    // @safe - Helper to get mode name string
+    auto mode_name = [](RunMode m) -> const char* {
+        switch (m) {
+            case RunMode::CLIENT_ONLY: return "CLIENT_ONLY";
+            case RunMode::SERVER_ONLY: return "SERVER_ONLY";
+            case RunMode::COLOCATE: return "COLOCATE";
+            default: return "UNKNOWN";
+        }
+    };
+
+    if (mode == RunMode::SERVER_ONLY) {
+        printf("=== Mako Server (RunMode::SERVER_ONLY) ===\n");
     } else {
-        printf("=== Mako Transaction Tests ===\n");
+        printf("=== Mako Transaction Tests (RunMode::COLOCATE) ===\n");
     }
     printf("Configuration:\n");
+    printf("  RunMode: %s\n", mode_name(mode));
     printf("  Shards: %d (this shard: %d)\n", nshards, shardIdx);
     printf("  Threads: %d\n", nthreads);
     printf("  Process role: %s\n", paxos_proc_name.c_str());
     printf("  Replication: %s\n", is_replicated ? replication_type.c_str() : "disabled");
-    printf("  Mode: %s\n", server_only_mode ? "server-only" : "server + tests");
 
     // Get the underlying abstract_db for operations
     abstract_db* db = mako_db->GetDB();

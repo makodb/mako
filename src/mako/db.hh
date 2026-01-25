@@ -63,12 +63,45 @@ struct ReplicationConfig {
 };
 
 /**
+ * Client configuration for connecting to remote shard servers
+ */
+struct ClientConfig {
+    // Server addresses (one per shard in multi-shard mode)
+    std::vector<std::string> server_hosts;
+    std::vector<int> server_ports;
+
+    // Enable client mode (connect to remote servers instead of local DB)
+    bool enabled = false;
+
+    // RPC timeout in milliseconds
+    uint32_t timeout_ms = 5000;
+
+    // @safe - Check if client config is valid
+    bool is_valid() const {
+        return enabled &&
+               !server_hosts.empty() &&
+               server_hosts.size() == server_ports.size();
+    }
+
+    // @safe - Get number of configured shards
+    size_t num_shards() const {
+        return server_hosts.size();
+    }
+};
+
+/**
  * Database options (RocksDB-like)
  *
  * Configure the database before opening. The options determine:
  * - Basic settings: thread count, create behavior
  * - Sharding: multi-shard configuration
  * - Replication: Paxos/Raft settings
+ * - Client mode: connect to remote servers
+ *
+ * Unified Options pattern:
+ * - SERVER_ONLY: replication/transport settings, client.enabled = false
+ * - CLIENT_ONLY: client.enabled = true, client.server_hosts/ports set
+ * - COLOCATE: Both server and client settings configured
  */
 struct Options {
     // Basic options
@@ -83,6 +116,9 @@ struct Options {
 
     // Mako-specific: replication
     ReplicationConfig replication;
+
+    // Client mode configuration (for connecting to remote servers)
+    ClientConfig client;
 
     // Legacy: load configuration from YAML file
     // If set, this overrides other options
