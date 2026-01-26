@@ -90,6 +90,25 @@ namespace mako
         case batchLockReqType:
             HandleBatchLockRequest(reqBuf, respBuf, respLen);
             break;
+        // Client API handlers (for decoupled client-server mode)
+        case clientBeginTxnReqType:
+            HandleClientBeginTxnRequest(reqBuf, respBuf, respLen);
+            break;
+        case clientCommitReqType:
+            HandleClientCommitRequest(reqBuf, respBuf, respLen);
+            break;
+        case clientRollbackReqType:
+            HandleClientRollbackRequest(reqBuf, respBuf, respLen);
+            break;
+        case clientPutReqType:
+            HandleClientPutRequest(reqBuf, respBuf, respLen);
+            break;
+        case clientGetReqType:
+            HandleClientGetRequest(reqBuf, respBuf, respLen);
+            break;
+        case clientDeleteReqType:
+            HandleClientDeleteRequest(reqBuf, respBuf, respLen);
+            break;
         default:
             Warning("Unrecognized rquest type: %d", reqType);
         }
@@ -543,6 +562,321 @@ namespace mako
         memcpy(resp->value, obj_v.c_str(), obj_v.length());
 #endif
     }
+
+    // ============================================================================
+    // Client API Handlers (for decoupled client-server mode)
+    // ============================================================================
+
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleClientBeginTxnRequest(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_begin_txn_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_begin_txn_response_t *>(respBuf);
+        respLen = sizeof(client_begin_txn_response_t);
+
+        // Generate unique server-side transaction ID
+        uint64_t server_txn_id = ++server_txn_counter_;
+
+        // Store mapping from client txn_id to server txn_id
+        // The client txn_id is composed of client_id and request number
+        uint64_t client_txn_id = (req->client_id << 32) | req->req_nr;
+
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            client_transactions_[client_txn_id] = server_txn_id;
+        }
+
+        resp->req_nr = req->req_nr;
+        resp->txn_id = client_txn_id;  // Return the client txn_id for tracking
+        resp->status = ErrorCode::SUCCESS;
+
+        Debug("HandleClientBeginTxnRequest: client_id=%lu, txn_id=%lu",
+              req->client_id, client_txn_id);
+    }
+
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleClientCommitRequest(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_commit_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_commit_response_t *>(respBuf);
+        respLen = sizeof(client_commit_response_t);
+
+        int status = ErrorCode::SUCCESS;
+
+        // Remove transaction from tracking
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            auto it = client_transactions_.find(req->txn_id);
+            if (it != client_transactions_.end()) {
+                client_transactions_.erase(it);
+            } else {
+                // Transaction not found - may have already been committed/rolled back
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        resp->req_nr = req->req_nr;
+        resp->status = status;
+
+        Debug("HandleClientCommitRequest: txn_id=%lu, status=%d", req->txn_id, status);
+    }
+
+    // @unsafe - handles raw buffer pointers from transport layer
+    // Note: Mako uses auto-commit semantics. Rollback only removes tracking.
+    void ShardReceiver::HandleClientRollbackRequest(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_commit_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_commit_response_t *>(respBuf);
+        respLen = sizeof(client_commit_response_t);
+
+        int status = ErrorCode::SUCCESS;
+
+        // Remove transaction from tracking (operations already auto-committed)
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            auto it = client_transactions_.find(req->txn_id);
+            if (it != client_transactions_.end()) {
+                client_transactions_.erase(it);
+            } else {
+                // Transaction not found
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        resp->req_nr = req->req_nr;
+        resp->status = status;
+
+        Debug("HandleClientRollbackRequest: txn_id=%lu, status=%d", req->txn_id, status);
+    }
+
+    // ============================================================================
+    // Client Transaction API (for MakoClientService to use)
+    // ============================================================================
+
+    // @safe - Thread-safe with mutex
+    uint64_t ShardReceiver::BeginClientTransaction(uint64_t client_id, uint32_t txn_counter)
+    {
+        // Generate txn_id using the same encoding as the client
+        uint64_t txn_id = (client_id << 32) | txn_counter;
+
+        // Store in transaction tracking map
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            // Map client txn_id to a server transaction counter (for internal tracking)
+            client_transactions_[txn_id] = ++server_txn_counter_;
+        }
+
+        Debug("BeginClientTransaction: client_id=%lu, counter=%u, txn_id=%lu",
+              client_id, txn_counter, txn_id);
+        return txn_id;
+    }
+
+    // @safe - Thread-safe with mutex
+    int ShardReceiver::CommitClientTransaction(uint64_t txn_id)
+    {
+        int status = ErrorCode::SUCCESS;
+
+        // Remove transaction from tracking
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            auto it = client_transactions_.find(txn_id);
+            if (it != client_transactions_.end()) {
+                client_transactions_.erase(it);
+            } else {
+                // Transaction not found - may have already been committed/rolled back
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        Debug("CommitClientTransaction: txn_id=%lu, status=%d", txn_id, status);
+        return status;
+    }
+
+    // @safe - Thread-safe with mutex
+    // Note: Mako uses auto-commit semantics where each Put/Get operation is
+    // immediately committed. Rollback only removes the transaction from tracking.
+    // It cannot undo already-committed operations.
+    int ShardReceiver::RollbackClientTransaction(uint64_t txn_id)
+    {
+        int status = ErrorCode::SUCCESS;
+
+        // Remove transaction from tracking
+        // Note: Since operations are auto-committed, we cannot undo them.
+        // Rollback just marks the transaction as aborted for tracking purposes.
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            auto it = client_transactions_.find(txn_id);
+            if (it != client_transactions_.end()) {
+                // Remove from tracking (operations already auto-committed)
+                client_transactions_.erase(it);
+            } else {
+                // Transaction not found
+                status = ErrorCode::ERROR;
+            }
+        }
+
+        Debug("RollbackClientTransaction: txn_id=%lu, status=%d", txn_id, status);
+        return status;
+    }
+
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleClientPutRequest(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_kv_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+        respLen = sizeof(client_kv_response_t) - max_value_length;  // No value in put response
+
+        int status = ErrorCode::SUCCESS;
+
+        // Verify transaction exists
+        bool txn_exists = false;
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            txn_exists = (client_transactions_.find(req->txn_id) != client_transactions_.end());
+        }
+
+        if (!txn_exists) {
+            resp->req_nr = req->req_nr;
+            resp->vlen = 0;
+            resp->status = ErrorCode::ERROR;
+            return;
+        }
+
+        // Extract key and value from request
+        obj_key0.assign(req->key_and_value, req->klen);
+        obj_v.assign(req->key_and_value + req->klen, req->vlen);
+
+        // Perform put operation
+        if (req->table_id > 0) {
+            auto it = open_tables_table_id.find(req->table_id);
+            if (it != open_tables_table_id.end() && it->second != nullptr) {
+                try {
+                    it->second->shard_put(obj_key0, obj_v);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    status = ErrorCode::ABORT;
+                }
+            } else {
+                status = ErrorCode::ERROR;  // Table not found
+            }
+        }
+
+        resp->req_nr = req->req_nr;
+        resp->vlen = 0;
+        resp->status = status;
+
+        Debug("HandleClientPutRequest: txn_id=%lu, table=%d, key_len=%d, val_len=%d, status=%d",
+              req->txn_id, req->table_id, req->klen, req->vlen, status);
+    }
+
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleClientGetRequest(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_kv_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+
+        int status = ErrorCode::SUCCESS;
+        obj_v.clear();
+
+        // Verify transaction exists
+        bool txn_exists = false;
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            txn_exists = (client_transactions_.find(req->txn_id) != client_transactions_.end());
+        }
+
+        if (!txn_exists) {
+            resp->req_nr = req->req_nr;
+            resp->vlen = 0;
+            resp->status = ErrorCode::ERROR;
+            respLen = sizeof(client_kv_response_t) - max_value_length;
+            return;
+        }
+
+        // Extract key from request
+        obj_key0.assign(req->key_and_value, req->klen);
+
+        // Perform get operation
+        if (req->table_id > 0) {
+            auto it = open_tables_table_id.find(req->table_id);
+            if (it != open_tables_table_id.end() && it->second != nullptr) {
+                try {
+                    bool found = it->second->shard_get(obj_key0, obj_v);
+                    if (!found) {
+                        status = ErrorCode::ABORT;  // Key not found
+                    }
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    status = ErrorCode::ABORT;
+                }
+            } else {
+                status = ErrorCode::ERROR;  // Table not found
+            }
+        }
+
+        resp->req_nr = req->req_nr;
+        resp->vlen = static_cast<uint16_t>(obj_v.length());
+        resp->status = status;
+        if (!obj_v.empty() && obj_v.length() <= max_value_length) {
+            memcpy(resp->value, obj_v.c_str(), obj_v.length());
+        }
+        respLen = sizeof(client_kv_response_t) - max_value_length + obj_v.length();
+
+        Debug("HandleClientGetRequest: txn_id=%lu, table=%d, key_len=%d, val_len=%d, status=%d",
+              req->txn_id, req->table_id, req->klen, resp->vlen, status);
+    }
+
+    // @unsafe - handles raw buffer pointers from transport layer
+    void ShardReceiver::HandleClientDeleteRequest(char *reqBuf, char *respBuf, size_t &respLen)
+    {
+        auto *req = reinterpret_cast<client_kv_request_t *>(reqBuf);
+        auto *resp = reinterpret_cast<client_kv_response_t *>(respBuf);
+        respLen = sizeof(client_kv_response_t) - max_value_length;  // No value in delete response
+
+        int status = ErrorCode::SUCCESS;
+
+        // Verify transaction exists
+        bool txn_exists = false;
+        {
+            std::lock_guard<std::mutex> lock(client_txn_mutex_);
+            txn_exists = (client_transactions_.find(req->txn_id) != client_transactions_.end());
+        }
+
+        if (!txn_exists) {
+            resp->req_nr = req->req_nr;
+            resp->vlen = 0;
+            resp->status = ErrorCode::ERROR;
+            return;
+        }
+
+        // Extract key from request
+        obj_key0.assign(req->key_and_value, req->klen);
+
+        // Perform delete operation (put empty value)
+        if (req->table_id > 0) {
+            auto it = open_tables_table_id.find(req->table_id);
+            if (it != open_tables_table_id.end() && it->second != nullptr) {
+                try {
+                    // Delete by putting empty value (or use shard_remove if available)
+                    obj_v.clear();
+                    it->second->shard_put(obj_key0, obj_v);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    status = ErrorCode::ABORT;
+                }
+            } else {
+                status = ErrorCode::ERROR;  // Table not found
+            }
+        }
+
+        resp->req_nr = req->req_nr;
+        resp->vlen = 0;
+        resp->status = status;
+
+        Debug("HandleClientDeleteRequest: txn_id=%lu, table=%d, key_len=%d, status=%d",
+              req->txn_id, req->table_id, req->klen, status);
+    }
+
+    // ============================================================================
+    // End of Client API Handlers
+    // ============================================================================
 
     /**
      * file: configuration fileName

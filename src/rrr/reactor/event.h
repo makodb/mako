@@ -79,7 +79,7 @@ class Event {
   // In this case there is no shared pointer to the event.
   // When the stack that contains the event frees, the event frees.
   // Weak reference to coroutine using rusty::rc::Weak with proper reference counting
-  rusty::rc::Weak<Coroutine> wp_coro_{};
+  rusty::rc::Weak<Fiber> wp_coro_{};
 
   // @unsafe
   virtual void wait(uint64_t timeout=0) final;
@@ -101,7 +101,7 @@ class Event {
     return test_(0);
   }
 
-  // Composite events (AndEvent, OrEvent, QuorumEvent) need periodic polling
+  // Composite events (WaitAll, WaitAny, QuorumEvent) need periodic polling
   // Added at END to preserve vtable layout for binary compatibility
   virtual bool is_composite_event() { return false; }
 
@@ -206,7 +206,7 @@ class TimeoutEvent : public Event {
   }
 };
 
-class OrEvent : public Event {
+class WaitAny : public Event {
  public:
   vector<std::shared_ptr<Event>> events_;
 
@@ -221,7 +221,7 @@ class OrEvent : public Event {
   }
 
   template<typename... Args>
-  OrEvent(Args&&... args) {
+  WaitAny(Args&&... args) {
     add_event(args...);
   }
 
@@ -233,15 +233,15 @@ class OrEvent : public Event {
   bool is_composite_event() override { return true; }
 };
 
-class AndEvent : public Event {
+class WaitAll : public Event {
  public:
   vector<std::shared_ptr<Event>> events_;
 
   // Default constructor (mako-dev)
-  AndEvent() {}
+  WaitAll() {}
 
   // Constructor for vector of events
-  explicit AndEvent(const vector<std::shared_ptr<Event>>& evs) : events_(evs) {}
+  explicit WaitAll(const vector<std::shared_ptr<Event>>& evs) : events_(evs) {}
 
   void add_event() {
     // empty func for recursive variadic parameters
@@ -254,7 +254,7 @@ class AndEvent : public Event {
   }
 
   template<typename... Args>
-  AndEvent(std::shared_ptr<Event> first, Args... rest) {
+  WaitAll(std::shared_ptr<Event> first, Args... rest) {
     add_event(std::move(first), rest...);
   }
 
@@ -265,7 +265,7 @@ class AndEvent : public Event {
   }
 
   bool is_ready() override {
-    // All events must be ready (or DONE) for AndEvent to be ready
+    // All events must be ready (or DONE) for WaitAll to be ready
     // Include null check for safety
     return std::all_of(events_.begin(), events_.end(),
                        [](const std::shared_ptr<Event>& e) {
@@ -277,7 +277,7 @@ class AndEvent : public Event {
   bool is_composite_event() override { return true; }
 };
 
-class NEvent : public Event {
+class WaitN : public Event {
  public:
   vector<std::shared_ptr<Event>> events_;
   int number;
@@ -293,7 +293,7 @@ class NEvent : public Event {
   }
 
   template<typename... Args>
-  NEvent(std::shared_ptr<Event> first, Args... rest) {
+  WaitN(std::shared_ptr<Event> first, Args... rest) {
     add_event(std::move(first), rest...);
   }
 

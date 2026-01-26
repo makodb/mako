@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.10)
+
+# Suppress CMake policy warnings for deprecated modules
+# CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 OLD)  # Use deprecated FindBoost for compatibility
+endif()
+
 # using g++
 set(CMAKE_C_COMPILER "gcc" CACHE STRING "C compiler")
 set(CMAKE_CXX_COMPILER "g++" CACHE STRING "C++ compiler")
@@ -566,6 +573,8 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/benchmarks/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/db.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_service.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_proxy.cc"
 )
 
 # Benchmark flags
@@ -1014,6 +1023,8 @@ add_apps(test_stress_partitioned_queues examples/test_stress_partitioned_queues.
 add_apps(makoCon examples/makoCon.cc)
 add_apps(makoConDBBench examples/makoConDBBench.cc)
 add_apps(makoConMultiTrd examples/makoConMultiTrd.cc)
+# Note: makoServer functionality has been consolidated into simpleTransactionRep.cc
+#       Use: ./simpleTransactionRep --server <args> for server-only mode
 
 # Raft test executables (only when MAKO_USE_RAFT is enabled)
 if(MAKO_USE_RAFT)
@@ -1246,6 +1257,13 @@ if(BUILD_TESTS)
     target_compile_options(test_marshal PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_marshal ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_marshal COMMAND test_marshal)
+
+    # MakoClientService Unit Tests
+    add_executable(test_client_service test/test_client_service.cc)
+    target_include_directories(test_client_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_client_service PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_client_service COMMAND test_client_service)
 
     # Config Schema Serialization Tests
     add_executable(test_config_schema test/config_schema_test.cc)

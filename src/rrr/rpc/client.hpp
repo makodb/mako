@@ -35,7 +35,7 @@ Marshal& operator>>(rusty::RefMut<Marshal>&& guard, U& value) {
 } // namespace rrr
 
 // External safety annotations for system functions and STL operations
-// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 //
 // SAFETY AUDIT: STL container operations are marked [safe] because:

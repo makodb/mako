@@ -103,7 +103,7 @@ int RaftLabTest::testPersistence(void) {
   Init2(12, "Persistence across server kill and restart (single)");
 
   Log_info("TEST 12: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 12: Leader elected: %d", leader);
@@ -130,7 +130,7 @@ int RaftLabTest::testPersistence(void) {
   Log_info("TEST 12: Server %d killed", victim);
 
   // Sleep to ensure it's really gone
-  Coroutine::sleep(ELECTIONTIMEOUT / 2);
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Commit more entries with remaining servers
   Log_info("TEST 12: Committing entries with %d servers", NSERVERS - 1);
@@ -144,7 +144,7 @@ int RaftLabTest::testPersistence(void) {
   Log_info("TEST 12: Server %d restarted", victim);
 
   // Give it time to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   Log_info("TEST 12: After Sleep for ELECTIONTIMEOUT");
 
@@ -187,7 +187,7 @@ int RaftLabTest::testPersistence(void) {
   Log_info("TEST 12: Leader %d killed", leader);
 
   // Wait for new leader election
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int new_leader = config_->OneLeader();
   AssertOneLeader(new_leader);
   AssertReElection(new_leader, leader);
@@ -203,7 +203,7 @@ int RaftLabTest::testPersistence(void) {
   Log_info("TEST 12: Old leader %d restarted", leader);
 
   // Give it time to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   // Verify old leader recovered
   leader_server = config_->GetServer(leader);
@@ -227,7 +227,7 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   Init2(13, "Persistence across two follower kill and restart");
 
   Log_info("TEST 13: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 13: Leader elected: %d", leader);
@@ -261,7 +261,7 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   Log_info("TEST 13: Server %d killed", victim2);
 
   // Sleep to ensure they're really gone
-  Coroutine::sleep(ELECTIONTIMEOUT / 2);
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // We still have quorum (3 out of 5), commit more entries
   Log_info("TEST 13: Committing entries with %d servers", NSERVERS - 2);
@@ -275,7 +275,7 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   Log_info("TEST 13: Server %d restarted", victim1);
 
   // Give it time to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT / 2);
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Restart victim2
   Log_info("TEST 13: Restarting server %d", victim2);
@@ -283,7 +283,7 @@ int RaftLabTest::testTwoFollowerPersistence(void) {
   Log_info("TEST 13: Server %d restarted", victim2);
 
   // Give both time to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   Log_info("TEST 13: Both servers restarted, verifying state");
 
@@ -332,7 +332,7 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   Init2(14, "Persistence across leader + follower kill and restart");
 
   Log_info("TEST 14: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 14: Leader elected: %d", leader);
@@ -367,7 +367,7 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
 
   // Wait for new leader election among remaining 3 servers
   Log_info("TEST 14: Waiting for new leader election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   int new_leader = config_->OneLeader();
   AssertOneLeader(new_leader);
@@ -387,7 +387,7 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   Log_info("TEST 14: Follower %d restarted", victim_follower);
 
   // Give it time to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT / 2);
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
 
   // Restart the old leader
   Log_info("TEST 14: Restarting old leader %d", victim_leader);
@@ -395,7 +395,7 @@ int RaftLabTest::testLeaderFollowerPersistence(void) {
   Log_info("TEST 14: Old leader %d restarted", victim_leader);
 
   // Give both time to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   Log_info("TEST 14: Both servers restarted, verifying state");
 
@@ -444,7 +444,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
   Init2(15, "Comprehensive crash-recovery with random server selection");
 
   Log_info("TEST 15: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 15: Initial leader elected: %d", leader);
@@ -496,7 +496,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     config_->Kill(victim2);
 
     // Wait for potential leader election if we killed the leader
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
 
     // Verify we still have a leader among surviving servers
     leader = config_->OneLeader();
@@ -519,7 +519,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     config_->Restart(restart1);
 
     // Wait for it to catch up
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
 
     // Verify leader and commit
     leader = config_->OneLeader();
@@ -555,7 +555,7 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
     config_->Kill(victim3);
 
     // Wait for potential leader election
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
 
     leader = config_->OneLeader();
     AssertOneLeader(leader);
@@ -575,11 +575,11 @@ int RaftLabTest::testComprehensiveCrashRecovery(void) {
       alive_servers.insert(svr);
 
       // Small delay between restarts
-      Coroutine::sleep(ELECTIONTIMEOUT / 2);
+      Fiber::sleep(ELECTIONTIMEOUT / 2);
     }
 
     // Wait for all servers to catch up
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
 
     // Verify all servers are working
     leader = config_->OneLeader();
@@ -616,7 +616,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   Init2(16, "Partition plus restart - one server partitioned, another killed/restarted");
 
   Log_info("TEST 16: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 16: Initial leader elected: %d", leader);
@@ -664,7 +664,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   config_->Kill(killed_server);
 
   // Wait for potential leader re-election (if we killed/partitioned the leader)
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   // Verify cluster still works with 3 servers (quorum)
   leader = config_->OneLeader();
@@ -681,7 +681,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
   config_->Restart(killed_server);
 
   // Wait for server B to catch up
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
 
   // Verify cluster works with 4 servers
   leader = config_->OneLeader();
@@ -700,7 +700,7 @@ int RaftLabTest::testPartitionPlusRestart(void) {
 
   // Wait for server A to catch up and for NotifyRestart retry to work
   Log_info("TEST 16: Waiting for partition to heal and connections to refresh...");
-  Coroutine::sleep(ELECTIONTIMEOUT * 2);
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   // Verify all 5 servers are working
   leader = config_->OneLeader();
@@ -726,7 +726,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   Init2(17, "Sequential partitions plus restart - two servers partitioned at different times while one restarts");
 
   Log_info("TEST 17: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 17: Initial leader elected: %d", leader);
@@ -768,7 +768,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   Log_info("TEST 17: Step 1 - Partitioning server A (%d)", server_A);
   config_->Disconnect(server_A);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 17: Leader after partitioning A: %d", leader);
@@ -783,7 +783,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
   Log_info("TEST 17: Step 2 - Killing server B (%d)", server_B);
   config_->Kill(server_B);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 17: Leader after killing B: %d", leader);
@@ -799,7 +799,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
            server_B, server_A);
   config_->Restart(server_B);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 17: Leader after restarting B: %d", leader);
@@ -815,7 +815,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
            server_C, server_A);
   config_->Disconnect(server_C);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 17: Leader after partitioning C: %d", leader);
@@ -833,7 +833,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
 
   // Wait for A to catch up and for B's retry mechanism to fix A's stale connection
   Log_info("TEST 17: Waiting for A to reconnect and B's retry to fix stale connection...");
-  Coroutine::sleep(ELECTIONTIMEOUT * 2);
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
@@ -852,7 +852,7 @@ int RaftLabTest::testSequentialPartitionsPlusRestart(void) {
 
   // Wait for C to catch up and for B's retry mechanism to fix C's stale connection
   Log_info("TEST 17: Waiting for C to reconnect and B's retry to fix stale connection...");
-  Coroutine::sleep(ELECTIONTIMEOUT * 2);
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
@@ -878,7 +878,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Init2(18, "Multiple restarts plus partition - server restarts multiple times while another is partitioned");
 
   Log_info("TEST 18: Waiting for initial election");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   int leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Initial leader elected: %d", leader);
@@ -920,7 +920,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 1 - Partitioning server A (%d)", server_A);
   config_->Disconnect(server_A);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after partitioning A: %d", leader);
@@ -933,7 +933,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 2 - Killing server B (%d) [first time]", server_B);
   config_->Kill(server_B);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after killing B: %d", leader);
@@ -946,7 +946,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 3 - Restarting server B (%d) [first time]", server_B);
   config_->Restart(server_B);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after restarting B [first time]: %d", leader);
@@ -960,7 +960,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 4 - Killing server B (%d) [second time] - retry state will be lost!", server_B);
   config_->Kill(server_B);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after killing B [second time]: %d", leader);
@@ -973,7 +973,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 5 - Restarting server B (%d) [second time]", server_B);
   config_->Restart(server_B);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after restarting B [second time]: %d", leader);
@@ -989,7 +989,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
 
   // Wait for A to catch up and for B's retry mechanism to fix A's stale connection
   Log_info("TEST 18: Waiting for A to reconnect and B's retry to fix stale connection...");
-  Coroutine::sleep(ELECTIONTIMEOUT * 2);
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
 
   leader = config_->OneLeader();
   AssertOneLeader(leader);
@@ -1005,7 +1005,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 7 - Killing server C (%d)", server_C);
   config_->Kill(server_C);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after killing C: %d", leader);
@@ -1018,7 +1018,7 @@ int RaftLabTest::testMultipleRestartsPlusPartition(void) {
   Log_info("TEST 18: Step 8 - Restarting server C (%d)", server_C);
   config_->Restart(server_C);
 
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   leader = config_->OneLeader();
   AssertOneLeader(leader);
   Log_info("TEST 18: Leader after restarting C: %d", leader);
@@ -1053,7 +1053,7 @@ int RaftLabTest::testInitialElection(void) {
   // }
   
   // Wait a bit for election timers to start and elections to begin
-  Coroutine::sleep(ELECTIONTIMEOUT / 10);
+  Fiber::sleep(ELECTIONTIMEOUT / 10);
   
   // Initial election: is there one leader?
   int leader = config_->OneLeader();
@@ -1112,7 +1112,7 @@ int RaftLabTest::testReElection(void) {
   config_->Disconnect(leader);
   int oldLeader = leader;
   // Log_info("TEST 2: Old leader %d disconnected, sleeping for election timeout", oldLeader);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   
   // Log_info("TEST 2: Finding new leader after old leader disconnected");
   leader = config_->OneLeader();
@@ -1132,7 +1132,7 @@ int RaftLabTest::testReElection(void) {
   // Log_info("TEST 2: Reconnecting old leader %d", oldLeader);
   config_->Reconnect(oldLeader);
   // Log_info("TEST 2: Old leader reconnected, sleeping for election timeout");
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   AssertOneLeader(config_->OneLeader(leader));
   
   // no quorum -> no leader
@@ -1158,7 +1158,7 @@ int RaftLabTest::testReElection(void) {
   siteid_t reconnect_server = config_->getNextServerId(leader, 2);
   // Log_info("TEST 2: Reconnecting server %d", reconnect_server);
   config_->Reconnect(reconnect_server);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   AssertOneLeader(config_->OneLeader());
   
   // rejoin all servers
@@ -1169,7 +1169,7 @@ int RaftLabTest::testReElection(void) {
   
   // Log_info("TEST 2: Rejoining leader %d", leader);
   config_->Reconnect(leader);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   AssertOneLeader(config_->OneLeader());
   
   // Log carryover context after test 2
@@ -1229,14 +1229,14 @@ int RaftLabTest::testFailAgree(void) {
   Log_debug("try commit a few commands after disconnect");
   DoAgreeAndAssertIndex(401, NSERVERS - 2, index_++);
   DoAgreeAndAssertIndex(402, NSERVERS - 2, index_++);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   DoAgreeAndAssertIndex(403, NSERVERS - 2, index_++);
   DoAgreeAndAssertIndex(404, NSERVERS - 2, index_++);
   // reconnect followers
   Log_debug("reconnect servers");
   config_->Reconnect(config_->getNextServerId(leader, 1));
   config_->Reconnect(config_->getNextServerId(leader, 2));
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   Log_debug("try commit a few commands after reconnect");
   DoAgreeAndAssertWaitSuccess(405, NSERVERS);
   DoAgreeAndAssertWaitSuccess(406, NSERVERS);
@@ -1257,14 +1257,14 @@ int RaftLabTest::testFailNoAgree(void) {
   Assert2(index == index_++ && term > 0,
           "Start() returned unexpected index (%ld, expected %ld) and/or term (%ld, expected >0)",
           index, index_-1, term);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   AssertNoneCommitted(index);
   // reconnect followers
   config_->Reconnect(config_->getNextServerId(leader, 1));
   config_->Reconnect(config_->getNextServerId(leader, 2));
   config_->Reconnect(config_->getNextServerId(leader, 3));
   // do agreement in restored quorum
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   DoAgreeAndAssertWaitSuccess(502, NSERVERS);
   Passed2();
 }
@@ -1276,7 +1276,7 @@ int RaftLabTest::testRejoin(void) {
   auto leader1 = config_->OneLeader();
   AssertOneLeader(leader1);
   config_->Disconnect(leader1);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   // Make old leader try to agree on some entries (these should not commit)
   uint64_t index, term;
   AssertStartOk(config_->Start(leader1, 602, &index, &term));
@@ -1293,7 +1293,7 @@ int RaftLabTest::testRejoin(void) {
   // reconnect old leader
   config_->Reconnect(leader1);
   // wait for new election
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   auto leader3 = config_->OneLeader();
   AssertOneLeader(leader3);
   AssertReElection(leader3, leader2);
@@ -1410,7 +1410,7 @@ int RaftLabTest::testBackup(void) {
   for (int i = 0; i < 50; i++) {
     AssertStartOk(config_->Start(leader1, 800 + i, &index, &term));
   }
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   // disconnect the leader and its 1 follower, then reconnect the 3 servers
   Log_debug("disconnect the leader and its 1 follower, reconnect the 3 followers");
   config_->Disconnect(config_->getNextServerId(leader1, 1));
@@ -1419,7 +1419,7 @@ int RaftLabTest::testBackup(void) {
   config_->Reconnect(config_->getNextServerId(leader1, 3));
   config_->Reconnect(config_->getNextServerId(leader1, 4));
   // do a bunch of agreements among the new quorum
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   Log_debug("try to commit a lot of commands");
   for (int i = 1; i <= 50; i++) {
     DoAgreeAndAssertIndex(800 + i, NSERVERS - 2, index_++);
@@ -1428,7 +1428,7 @@ int RaftLabTest::testBackup(void) {
   Log_debug("reconnect the old leader and the follower");
   config_->Reconnect(config_->getNextServerId(leader1, 1));
   config_->Reconnect(leader1);
-  Coroutine::sleep(ELECTIONTIMEOUT);
+  Fiber::sleep(ELECTIONTIMEOUT);
   // do an agreement all together to check the old leader's incorrect
   // entries are replaced in a timely manner
   int leader2 = config_->OneLeader();
@@ -1436,7 +1436,7 @@ int RaftLabTest::testBackup(void) {
   AssertStartOk(config_->Start(leader2, 851, &index, &term));
   index_++;
   // 10 seconds should be enough to back up 50 incorrect logs
-  Coroutine::sleep(2*ELECTIONTIMEOUT);
+  Fiber::sleep(2*ELECTIONTIMEOUT);
   Log_debug("check if the old leader has enough committed");
   AssertNCommitted(index, NSERVERS);
   Passed2();
@@ -1609,7 +1609,7 @@ int RaftLabTest::testFigure8(void) {
       config_->Reconnect(config_->getNextServerId(leader1, 3));
       continue;
     }
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     // C1 is at index i1 for S1 and S2
     AssertNoneCommitted(index1);
     // Elect new leader (S3) among other 3 servers
@@ -1623,7 +1623,7 @@ int RaftLabTest::testFigure8(void) {
     // let old leader (S1) and follower (S2) become a follower in the new term
     config_->Reconnect(config_->getNextServerId(leader1, 4));
     config_->Reconnect(leader1);
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     AssertOneLeader(config_->OneLeader(leader2));
     Log_debug("disconnect all followers and Start() a cmd (C2) to isolated new leader");
     for (int i = 0; i < NSERVERS; i++) {
@@ -1642,7 +1642,7 @@ int RaftLabTest::testFigure8(void) {
     // C2 is at index i1 for S3, C1 still at index i1 for S1 & S2
     Assert2(index2 == index1, "Start() returned index %ld (%ld expected)", index2, index1);
     Assert2(term2 > term1, "Start() returned term %ld (%ld expected)", term2, term1);
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     AssertNoneCommitted(index1);
     // Let first leader (S1) or its initial follower (S2) become next leader
     config_->Disconnect(leader2);
@@ -1659,7 +1659,7 @@ int RaftLabTest::testFigure8(void) {
       continue; // failed this step with a 1/3 chance. just start over until success.
     }
     // give leader3 more than enough time to replicate index1 to a third server
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     // Make sure initial Start() value isn't getting committed at this point
     AssertNoneCommitted(index1);
     // Commit a new index in the current term
@@ -1729,11 +1729,11 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
       config_->Restart(killed1);
       config_->Restart(killed2);
       config_->Restart(killed3);
-      Coroutine::sleep(ELECTIONTIMEOUT);
+      Fiber::sleep(ELECTIONTIMEOUT);
       continue;
     }
     Log_info("TEST 19: Started C1 (1901) at index %ld, term %ld - should NOT be committed", index1, term1);
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
 
     // C1 is at index1 for S1 and S2, but NOT committed (only 2 servers)
     AssertNoneCommitted(index1);
@@ -1748,7 +1748,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     config_->Restart(killed3);
 
     // 5. New leader S3 elected among the 3 restarted servers
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     auto leader2 = config_->OneLeader();
     AssertOneLeader(leader2);
     Log_info("TEST 19: New leader S3 elected: %d", leader2);
@@ -1758,7 +1758,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
              leader1, follower_s2);
     config_->Restart(leader1);
     config_->Restart(follower_s2);
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
 
     // S3 should still be leader
     int current_leader = config_->OneLeader();
@@ -1787,7 +1787,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
       for (siteid_t svr : killed_in_step7) {
         config_->Restart(svr);
       }
-      Coroutine::sleep(ELECTIONTIMEOUT);
+      Fiber::sleep(ELECTIONTIMEOUT);
       continue;
     }
 
@@ -1795,7 +1795,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
     Log_info("TEST 19: Started C2 (1902) at index %ld, term %ld", index2, term2);
     Assert2(index2 == index1, "Start() returned index %ld (%ld expected)", index2, index1);
     Assert2(term2 > term1, "Start() returned term %ld (expected > %ld)", term2, term1);
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     AssertNoneCommitted(index1);
     Log_info("TEST 19: Verified neither C1 nor C2 is committed yet");
 
@@ -1818,7 +1818,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
       }
     }
 
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     auto leader3 = config_->OneLeader();
     AssertOneLeader(leader3);
     Log_info("TEST 19: New leader after S3 killed: %d", leader3);
@@ -1834,13 +1834,13 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
           config_->Restart(svr);
         }
       }
-      Coroutine::sleep(ELECTIONTIMEOUT);
+      Fiber::sleep(ELECTIONTIMEOUT);
       continue;
     }
 
     // 9. C1 should NOT be committed yet - it's from a previous term
     //    Leader cannot commit entries from previous terms directly
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     AssertNoneCommitted(index1);
     Log_info("TEST 19: Verified C1 still not committed (correct - from previous term)");
 
@@ -1867,7 +1867,7 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
         config_->Restart(svr);
       }
     }
-    Coroutine::sleep(ELECTIONTIMEOUT);
+    Fiber::sleep(ELECTIONTIMEOUT);
     break;
   }
 

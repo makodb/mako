@@ -15,8 +15,8 @@ using namespace rrr;
 
 //TEST(coroutine, hello) {
 //  ASSERT_EQ(1, 1);
-//  Coroutine::Create([] () {ASSERT_EQ(1, 1);});
-////  Coroutine::Create([] () {ASSERT_NE(1, 1);});
+//  Fiber::Create([] () {ASSERT_EQ(1, 1);});
+////  Fiber::Create([] () {ASSERT_NE(1, 1);});
 //}
 //
 //void cooperative(boost_coro_yield_t &yield)
@@ -70,17 +70,17 @@ using namespace rrr;
 #include "gtest/gtest.h"
 
 TEST(CoroutineTest, helloworld) {
-  Coroutine::create_run([] () {ASSERT_EQ(1, 1);});
-  Coroutine::create_run([] () {ASSERT_NE(1, 2);});
+  Fiber::create_run([] () {ASSERT_EQ(1, 1);});
+  Fiber::create_run([] () {ASSERT_NE(1, 2);});
 }
 
 TEST(CoroutineTest, yield) {
   int x = 0;
-  auto coro1 = Coroutine::create_run([&x] () {
+  auto coro1 = Fiber::create_run([&x] () {
     x = 1;
-    Coroutine::current_coroutine().unwrap()->yield_();
+    Fiber::current_coroutine().unwrap()->yield_();
     x = 2;
-    Coroutine::current_coroutine().unwrap()->yield_();
+    Fiber::current_coroutine().unwrap()->yield_();
     x = 3;
   });
   ASSERT_EQ(x, 1);
@@ -90,17 +90,17 @@ TEST(CoroutineTest, yield) {
   ASSERT_EQ(x, 3);
 }
 
-rusty::Rc<Coroutine> xxx() {
+rusty::Rc<Fiber> xxx() {
     int x;
-    auto coro1 = Coroutine::create_run([&x] () {
+    auto coro1 = Fiber::create_run([&x] () {
         x = 1;
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
     });
     return coro1;
 }
 
 TEST(CoroutineTest, destruct) {
-    rusty::Rc<Coroutine> c = xxx();
+    rusty::Rc<Fiber> c = xxx();
     c->continue_();
 }
 
@@ -112,19 +112,19 @@ TEST(CoroutineTest, destroy_paused_coroutine) {
     int step = 0;
 
     {
-        auto coro = Coroutine::create_run([&step, &destructor_called] () {
+        auto coro = Fiber::create_run([&step, &destructor_called] () {
             std::cout << "Coroutine: Starting execution, step=" << step << std::endl;
             step = 1;
 
             std::cout << "Coroutine: About to yield (step=1)" << std::endl;
-            Coroutine::current_coroutine().unwrap()->yield_();
+            Fiber::current_coroutine().unwrap()->yield_();
 
             // This should NOT be reached if we destroy the coroutine
             std::cout << "Coroutine: Resumed after first yield, step=" << step << std::endl;
             step = 2;
 
             std::cout << "Coroutine: About to yield again (step=2)" << std::endl;
-            Coroutine::current_coroutine().unwrap()->yield_();
+            Fiber::current_coroutine().unwrap()->yield_();
 
             // This should definitely NOT be reached
             std::cout << "Coroutine: Final execution, step=" << step << std::endl;
@@ -140,7 +140,7 @@ TEST(CoroutineTest, destroy_paused_coroutine) {
         std::cout << "Main: About to destroy paused coroutine" << std::endl;
     }
 
-    // After scope exit, the Rc<Coroutine> is destroyed
+    // After scope exit, the Rc<Fiber> is destroyed
     std::cout << "Main: Coroutine destroyed, step=" << step << std::endl;
     std::cout << "Main: destructor_called=" << destructor_called << std::endl;
 
@@ -159,13 +159,13 @@ TEST(CoroutineTest, destroy_paused_coroutine_with_cleanup) {
     int cleanup_step = 0;
 
     {
-        auto coro = Coroutine::create_run([&cleanup_step, heap_flag] () {
+        auto coro = Fiber::create_run([&cleanup_step, heap_flag] () {
             std::cout << "Coroutine: Allocating local resource" << std::endl;
             int local_var = 42;
             cleanup_step = 1;
 
             std::cout << "Coroutine: local_var=" << local_var << ", yielding..." << std::endl;
-            Coroutine::current_coroutine().unwrap()->yield_();
+            Fiber::current_coroutine().unwrap()->yield_();
 
             // If this runs, it means the coroutine was properly resumed
             std::cout << "Coroutine: Resumed! Setting heap flag" << std::endl;
@@ -188,16 +188,16 @@ TEST(CoroutineTest, destroy_paused_coroutine_with_cleanup) {
 
 TEST(CoroutineTest, wait_die_lock) {
   WaitDieALock a;
-  auto coro1 = Coroutine::create_run([&a] () {
+  auto coro1 = Fiber::create_run([&a] () {
     uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id, true);
-    Coroutine::current_coroutine().unwrap()->yield_();
+    Fiber::current_coroutine().unwrap()->yield_();
     Log_debug("aborting lock from coroutine 1.");
     a.abort(req_id);
   });
 
   int x = 0;
-  auto coro2 = Coroutine::create_run([&] () {
+  auto coro2 = Fiber::create_run([&] () {
     uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
     ASSERT_EQ(req_id, false);
     x = 1;
@@ -205,7 +205,7 @@ TEST(CoroutineTest, wait_die_lock) {
   ASSERT_EQ(x, 1);
 
   int y = 0;
-  auto coro3 = Coroutine::create_run([&] () {
+  auto coro3 = Fiber::create_run([&] () {
     uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);
     ASSERT_GT(req_id, 0);
     Log_debug("acquired lock from coroutine 3.");
@@ -218,7 +218,7 @@ TEST(CoroutineTest, wait_die_lock) {
 }
 
 TEST(CoroutineTest, timeout) {
-  auto coro1 = Coroutine::create_run([](){
+  auto coro1 = Fiber::create_run([](){
     auto t1 = Time::now(true);
     auto timeout = 1 * 1000000;
     auto sp_e = Reactor::create_sp_event<TimeoutEvent>(timeout);
@@ -234,16 +234,16 @@ TEST(CoroutineTest, timeout) {
 
 TEST(CoroutineTest, orevent) {
   auto inte = Reactor::create_sp_event<IntEvent>();
-  auto coro1 = Coroutine::create_run([&inte](){
+  auto coro1 = Fiber::create_run([&inte](){
     auto t1 = Time::now(true);
     auto timeout = 10 * 1000000;
     auto sp_e1 = Reactor::create_sp_event<TimeoutEvent>(timeout);
-    auto sp_e2 = Reactor::create_sp_event<OrEvent>(sp_e1, inte);
+    auto sp_e2 = Reactor::create_sp_event<WaitAny>(sp_e1, inte);
     sp_e2->wait();
     auto t2 = Time::now(true);
     ASSERT_GT(t1 + timeout, t2);
   });
-  auto coro2 = Coroutine::create_run([&inte](){
+  auto coro2 = Fiber::create_run([&inte](){
     inte->set(1);
   });
 }

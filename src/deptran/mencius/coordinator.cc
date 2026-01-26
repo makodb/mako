@@ -121,7 +121,7 @@ void CoordinatorMencius::Suggest() {
   commo()->svr_workers_g = svr_workers_g;
   auto sp_quorum = commo()->BroadcastSuggest(par_id_, slot_id_, curr_ballot_, cmd_);
   sp_quorum->id_ = dep_id_;
-	//Log_info("current coroutine's dep_id: %d", Coroutine::current_coroutine()->dep_id_);
+	//Log_info("current coroutine's dep_id: %d", Fiber::current_coroutine()->dep_id_);
   //Log_info("Suggest(): dep_id:%d, slot_id:%d, site: %d", dep_id_, slot_id_, frame_->site_info_->id);
 
   sp_quorum->wait();

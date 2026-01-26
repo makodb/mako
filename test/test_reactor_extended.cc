@@ -171,9 +171,9 @@ TEST_F(ExtendedReactorTest, CoroutineYieldContinue) {
     
     auto coro = reactor->create_run_coroutine([&counter]() {
         counter = 1;
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         counter = 2;
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         counter = 3;
     });
     
@@ -223,17 +223,17 @@ TEST_F(ExtendedReactorTest, MultipleYields) {
     
     auto coro1 = reactor->create_run_coroutine([&execution_order]() {
         execution_order.push_back(1);
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         execution_order.push_back(3);
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         execution_order.push_back(5);
     });
     
     auto coro2 = reactor->create_run_coroutine([&execution_order]() {
         execution_order.push_back(2);
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         execution_order.push_back(4);
-        Coroutine::current_coroutine().unwrap()->yield_();
+        Fiber::current_coroutine().unwrap()->yield_();
         execution_order.push_back(6);
     });
     
@@ -312,18 +312,18 @@ TEST_F(ExtendedReactorTest, EventRecycling) {
     EXPECT_TRUE(true);
 }
 
-// Test 11: OrEvent conditions
+// Test 11: WaitAny conditions
 TEST_F(ExtendedReactorTest, OrEventConditions) {
     auto reactor = Reactor::get_reactor();
     
-    // Test OrEvent - waits for any event
+    // Test WaitAny - waits for any event
     auto event1 = Reactor::create_sp_event<IntEvent>();
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
-    // Trigger one event before creating OrEvent
+    // Trigger one event before creating WaitAny
     event1->set(1);
     
-    auto sp_or_event = Reactor::create_sp_event<OrEvent>(event1, event2);
+    auto sp_or_event = Reactor::create_sp_event<WaitAny>(event1, event2);
     
     std::atomic<bool> or_triggered{false};
     reactor->create_run_coroutine([sp_or_event, &or_triggered]() {
@@ -340,7 +340,7 @@ TEST_F(ExtendedReactorTest, OrEventConditions) {
     // Trigger second event (use default target=1)
     event4->set(1);
     
-    auto sp_or_event2 = Reactor::create_sp_event<OrEvent>(event3, event4);
+    auto sp_or_event2 = Reactor::create_sp_event<WaitAny>(event3, event4);
     
     std::atomic<bool> or_triggered2{false};
     reactor->create_run_coroutine([sp_or_event2, &or_triggered2]() {

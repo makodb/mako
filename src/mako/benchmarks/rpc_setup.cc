@@ -254,3 +254,134 @@ void mako::stop_erpc_server()
   }
   std::cerr << "[STOP_SERVER] All server transports stopped" << std::endl;
 }
+
+// ============================================================================
+// Client TCP Server for RemoteDB connections
+// ============================================================================
+
+#include "lib/client_tcp_server.h"
+
+namespace {
+// Global pointer to client TCP server (singleton)
+mako::ClientTcpServer* g_client_tcp_server = nullptr;
+std::mutex g_client_tcp_server_mu;
+
+// Global pointer to standalone ShardReceiver for single-shard mode
+// @unsafe - Requires manual cleanup in stop_client_tcp_server
+mako::ShardReceiver* g_standalone_receiver = nullptr;
+}  // anonymous namespace
+
+bool mako::setup_client_tcp_server(int port)
+{
+  std::lock_guard<std::mutex> lock(g_client_tcp_server_mu);
+
+  if (g_client_tcp_server) {
+    std::cerr << "[CLIENT_TCP] Server already running" << std::endl;
+    return false;
+  }
+
+  // Get the first available ShardReceiver from helper servers
+  ShardReceiver* receiver = nullptr;
+  {
+    std::lock_guard<std::mutex> helper_lock(g_helper_mu);
+    if (!g_helper_servers.empty()) {
+      receiver = g_helper_servers[0]->GetReceiver();
+    }
+  }
+
+  if (!receiver) {
+    std::cerr << "[CLIENT_TCP] No ShardReceiver available - call setup_helper() first" << std::endl;
+    return false;
+  }
+
+  // Get configuration for worker pool size
+  auto& cfg = BenchmarkConfig::getInstance();
+  size_t max_clients = cfg.getNthreads();  // One client per worker thread
+
+  // Create and start the TCP server with worker pool
+  g_client_tcp_server = new ClientTcpServer(port, max_clients);
+  g_client_tcp_server->SetReceiver(receiver);
+
+  if (!g_client_tcp_server->Start()) {
+    std::cerr << "[CLIENT_TCP] Failed to start server on port " << port << std::endl;
+    delete g_client_tcp_server;
+    g_client_tcp_server = nullptr;
+    return false;
+  }
+
+  std::cerr << "[CLIENT_TCP] Server started on port " << port
+            << " (max " << max_clients << " concurrent clients)" << std::endl;
+  return true;
+}
+
+// @unsafe - Creates ShardReceiver for single-shard mode
+bool mako::setup_client_tcp_server(
+  abstract_db *db,
+  const std::map<int, abstract_ordered_index *> &open_tables,
+  int port)
+{
+  std::lock_guard<std::mutex> lock(g_client_tcp_server_mu);
+
+  if (g_client_tcp_server) {
+    std::cerr << "[CLIENT_TCP] Server already running" << std::endl;
+    return false;
+  }
+
+  // Get configuration for worker pool size
+  auto& cfg = BenchmarkConfig::getInstance();
+  size_t max_clients = cfg.getNthreads();  // One client per worker thread
+
+  // Create a standalone ShardReceiver for single-shard mode
+  // @unsafe { dynamic memory allocation, requires cleanup }
+  g_standalone_receiver = new ShardReceiver(cfg.getConfig()->configFile);
+  g_standalone_receiver->Register(db, open_tables);
+
+  std::cerr << "[CLIENT_TCP] Created standalone ShardReceiver for single-shard mode" << std::endl;
+
+  // Create and start the TCP server with worker pool
+  g_client_tcp_server = new ClientTcpServer(port, max_clients);
+  g_client_tcp_server->SetReceiver(g_standalone_receiver);
+
+  if (!g_client_tcp_server->Start()) {
+    std::cerr << "[CLIENT_TCP] Failed to start server on port " << port << std::endl;
+    delete g_client_tcp_server;
+    g_client_tcp_server = nullptr;
+    delete g_standalone_receiver;
+    g_standalone_receiver = nullptr;
+    return false;
+  }
+
+  std::cerr << "[CLIENT_TCP] Server started on port " << port
+            << " (max " << max_clients << " concurrent clients, single-shard mode)" << std::endl;
+  return true;
+}
+
+void mako::stop_client_tcp_server()
+{
+  std::lock_guard<std::mutex> lock(g_client_tcp_server_mu);
+
+  if (g_client_tcp_server) {
+    std::cerr << "[CLIENT_TCP] Stopping server..." << std::endl;
+    g_client_tcp_server->Stop();
+    delete g_client_tcp_server;
+    g_client_tcp_server = nullptr;
+    std::cerr << "[CLIENT_TCP] Server stopped" << std::endl;
+  }
+
+  // Clean up standalone receiver if created (single-shard mode)
+  if (g_standalone_receiver) {
+    delete g_standalone_receiver;
+    g_standalone_receiver = nullptr;
+    std::cerr << "[CLIENT_TCP] Standalone ShardReceiver cleaned up" << std::endl;
+  }
+}
+
+// Get the ShardReceiver instance for the current shard
+ShardReceiver* mako::get_shard_receiver()
+{
+  std::lock_guard<std::mutex> lock(g_helper_mu);
+  if (!g_helper_servers.empty()) {
+    return g_helper_servers[0]->GetReceiver();
+  }
+  return nullptr;
+}

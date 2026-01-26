@@ -35,7 +35,8 @@ public:
     }
 
     // Main verification
-    bool verify(const std::vector<kv_pair>& records) {
+    // Note: Named 'run_verification' to avoid collision with rrr 'verify' macro
+    bool run_verification(const std::vector<kv_pair>& records) {
         printf("\n");
         printf("========================================\n");
         printf("=== %s INTEGRITY VERIFICATION ===\n", test_name_.c_str());

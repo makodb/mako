@@ -11,9 +11,7 @@
 #include "rpc/server.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
-
-// Atomic counter for dynamic port allocation to avoid conflicts when tests run in parallel
-static std::atomic<int> g_next_port{10000};
+#include "rpc_test_ports.h"
 
 // External safety annotations for STL functions
 // @external: {
@@ -81,7 +79,7 @@ protected:
     rusty::Option<rusty::Arc<Client>> client;
     int test_port_;  // Dynamic port for this test instance
 
-    RPCTest() : test_port_(g_next_port.fetch_add(1)) {
+    RPCTest() : test_port_(test_ports::get_port()) {
         fprintf(stderr, "D [test_rpc] | [TEST] Constructor: Starting... (port=%d)\n", test_port_);
         fflush(stderr);
         fprintf(stderr, "D [test_rpc] | [TEST] Constructor: Complete!\n");

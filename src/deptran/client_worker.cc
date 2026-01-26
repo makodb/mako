@@ -86,7 +86,7 @@ void ClientWorker::RequestDone(Coordinator* coo, TxReply& txn_reply) {
     free_coordinators_.push_back(coo);
   } else if (have_more_time && config_->client_type_ == Config::Closed) {
     Log_debug("there is still time to issue another request. continue.");
-    Coroutine::create_run([this,coo]() {
+    Fiber::create_run([this,coo]() {
       DispatchRequest(coo);
     });
   } else if (!have_more_time) {
@@ -324,7 +324,7 @@ void ClientWorker::Work() {
           auto sp_event = Reactor::create_sp_event<NeverEvent>();
           wait_recordplace(sp_event, wait(pow(10, 6)));
         }
-        Coroutine::create_run([this, coo](){
+        Fiber::create_run([this, coo](){
           verify(coo->_inuse_);
           auto ev = coo->sp_ev_done_;
           wait_recordplace(ev, wait());

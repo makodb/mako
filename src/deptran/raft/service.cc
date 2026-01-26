@@ -6,7 +6,7 @@
 // @external: {
 //   rrr::RandomGenerator::rand_double: [unsafe, (double, double) -> double]
 //   std::make_shared: [unsafe, (...) -> owned]
-//   rrr::Coroutine::CreateRun: [unsafe, (...) -> owned]
+//   rrr::Fiber::CreateRun: [unsafe, (...) -> owned]
 // }
 
 namespace janus {
@@ -107,7 +107,7 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
     return;
   }
 
-  Coroutine::create_run([=, defer = std::move(defer)]() mutable {
+  Fiber::create_run([=, defer = std::move(defer)]() mutable {
     svr->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,
@@ -148,7 +148,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
     return;
   }
   std::shared_ptr<Marshallable> cmd = nullptr;
-  Coroutine::create_run([=, defer = std::move(defer)]() mutable {
+  Fiber::create_run([=, defer = std::move(defer)]() mutable {
     svr->OnAppendEntries(slot,
                             ballot,
                             leaderCurrentTerm,

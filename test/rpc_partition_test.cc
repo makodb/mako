@@ -14,8 +14,6 @@
 #include <chrono>
 #include <thread>
 #include <vector>
-#include <random>
-#include <unistd.h>  // for getpid()
 #include <rusty/arc.hpp>
 #include "reactor/reactor.h"
 #include "rpc/client.hpp"
@@ -26,28 +24,11 @@
 #include "rpc/connection_metrics.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
-
-// @safe - Generate a random base port to avoid collisions when multiple test
-// processes run in parallel. Uses PID and high-resolution time to seed.
-static int generate_random_base_port() {
-    // Use process ID and time to create a unique seed for each process
-    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-    std::seed_seq seq{static_cast<unsigned>(getpid()),
-                      static_cast<unsigned>(now & 0xFFFFFFFF),
-                      static_cast<unsigned>(now >> 32)};
-    std::mt19937 gen(seq);
-    // Use port range 20000-50000 to avoid conflicts with other services
-    std::uniform_int_distribution<> dist(20000, 50000);
-    return dist(gen);
-}
-
-// @safe - Atomic counter for port allocation with random base to avoid
-// port collisions when running multiple test instances in parallel (CI)
-static std::atomic<int> g_partition_test_port{generate_random_base_port()};
 
 // ============================================================================
 // Partition Test Service
@@ -109,8 +90,9 @@ class PartitionTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int base_port_;
+    int port_offset_{0};  // Per-fixture offset to avoid port reuse within a test
 
-    PartitionTest() : base_port_(g_partition_test_port.fetch_add(100)) {}
+    PartitionTest() : base_port_(test_ports::reserve_ports(100)) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
@@ -121,20 +103,81 @@ protected:
     }
 
     int next_port() {
-        static std::atomic<int> offset{0};
-        return base_port_ + offset.fetch_add(1);
+        // Use per-fixture offset instead of static to avoid cross-test accumulation
+        return base_port_ + port_offset_++;
     }
 
-    Server* create_server(int port) {
+    // @safe - Create server using ephemeral port assignment (port 0)
+    // The OS kernel picks an available port, avoiding TIME_WAIT issues
+    // Returns pair of (server*, actual_port) or (nullptr, 0) on failure
+    std::pair<Server*, int> create_server_ephemeral() {
         auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
         auto service_box = rusty::make_box<PartitionTestService>();
         server->reg_service(std::move(service_box));
-        std::string addr = "0.0.0.0:" + std::to_string(port);
-        if (server->start(addr.c_str()) != 0) {
-            delete server;
-            return nullptr;
+        // Use port 0 to let the OS assign an available ephemeral port
+        std::string addr = "0.0.0.0:0";
+        if (server->start(addr.c_str()) == 0) {
+            int port = server->get_bound_port();
+            if (port > 0) {
+                return {server, port};
+            }
         }
-        return server;
+        delete server;
+        return {nullptr, 0};
+    }
+
+    // @safe - Create server, retrying with different ports if binding fails
+    // Returns pair of (server*, actual_port) or (nullptr, 0) on failure
+    // Uses larger spacing between retries to skip over TIME_WAIT port clusters
+    std::pair<Server*, int> create_server_retry(int initial_port, int max_retries = 50) {
+        // First, try ephemeral port assignment - most reliable
+        auto [server, port] = create_server_ephemeral();
+        if (server != nullptr) {
+            return {server, port};
+        }
+
+        // Fall back to explicit port with retry if ephemeral fails
+        for (int retry = 0; retry < max_retries; retry++) {
+            // Skip by 10 ports each retry to jump over TIME_WAIT clusters
+            int try_port = initial_port + (retry * 10);
+            // Ensure port is within valid range
+            if (try_port > 65000) {
+                try_port = 10000 + (try_port % 55000);  // Wrap around
+            }
+            auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            auto service_box = rusty::make_box<PartitionTestService>();
+            server->reg_service(std::move(service_box));
+            std::string addr = "0.0.0.0:" + std::to_string(try_port);
+            if (server->start(addr.c_str()) == 0) {
+                // Advance port_offset_ to account for any skipped ports
+                port_offset_ = std::max(port_offset_, initial_port - base_port_ + (retry * 10) + 1);
+                return {server, try_port};
+            }
+            delete server;
+        }
+        return {nullptr, 0};
+    }
+
+    // @safe - Create server on a specific port (for restart scenarios)
+    // This does NOT use ephemeral port allocation since the caller needs
+    // the server to restart on the same port for reconnection tests.
+    // Retries with brief delays to wait for TIME_WAIT sockets to clear.
+    // Returns nullptr if binding fails after all retries.
+    Server* create_server(int port, int max_retries = 10, int retry_delay_ms = 100) {
+        for (int retry = 0; retry < max_retries; retry++) {
+            if (retry > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
+            }
+            auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+            auto service_box = rusty::make_box<PartitionTestService>();
+            server->reg_service(std::move(service_box));
+            std::string addr = "0.0.0.0:" + std::to_string(port);
+            if (server->start(addr.c_str()) == 0) {
+                return server;
+            }
+            delete server;
+        }
+        return nullptr;
     }
 
     rusty::Arc<Client> create_client() {
@@ -164,13 +207,12 @@ protected:
 // ============================================================================
 
 TEST_F(PartitionTest, TemporaryPartition) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
     PartitionStats stats;
 
-    // Start server
-    auto server = create_server(port);
+    // Start server with retry to handle TIME_WAIT ports
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -207,11 +249,9 @@ TEST_F(PartitionTest, TemporaryPartition) {
 }
 
 TEST_F(PartitionTest, ShortPartitionRecovery) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -246,11 +286,9 @@ TEST_F(PartitionTest, ShortPartitionRecovery) {
 // ============================================================================
 
 TEST_F(PartitionTest, LongPartition) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -275,16 +313,14 @@ TEST_F(PartitionTest, LongPartition) {
 }
 
 TEST_F(PartitionTest, LongPartitionWithCircuitBreaker) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 3;
     cb_config.timeout_ms = 200;
     CircuitBreaker cb(cb_config);
 
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -332,11 +368,9 @@ TEST_F(PartitionTest, LongPartitionWithCircuitBreaker) {
 // ============================================================================
 
 TEST_F(PartitionTest, PartialPartition) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     // Create two clients
     auto client1 = create_client();
@@ -370,11 +404,9 @@ TEST_F(PartitionTest, PartialPartition) {
 }
 
 TEST_F(PartitionTest, PartialPartitionMultipleClients) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     const int NUM_CLIENTS = 6;
     std::vector<rusty::Arc<Client>> clients;
@@ -419,11 +451,9 @@ TEST_F(PartitionTest, PartialPartitionMultipleClients) {
 TEST_F(PartitionTest, AsymmetricPartitionSimulation) {
     // Simulates a case where client can reach server but not vice versa
     // In practice, this manifests as requests timing out
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -460,11 +490,9 @@ TEST_F(PartitionTest, AsymmetricPartitionSimulation) {
 // ============================================================================
 
 TEST_F(PartitionTest, FlakyNetworkSimulation) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -503,11 +531,9 @@ TEST_F(PartitionTest, FlakyNetworkSimulation) {
 }
 
 TEST_F(PartitionTest, IntermittentConnectivity) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
 
@@ -547,16 +573,13 @@ TEST_F(PartitionTest, IntermittentConnectivity) {
 
 TEST_F(PartitionTest, SplitBrainSimulation) {
     // Simulate split brain: two groups of clients can reach different servers
-    int port1 = next_port();
-    int port2 = next_port();
+    // Two servers (simulating partition between server groups)
+    auto [server1, port1] = create_server_retry(next_port());
+    ASSERT_NE(server1, nullptr);
+    auto [server2, port2] = create_server_retry(next_port());
+    ASSERT_NE(server2, nullptr);
     std::string addr1 = "127.0.0.1:" + std::to_string(port1);
     std::string addr2 = "127.0.0.1:" + std::to_string(port2);
-
-    // Two servers (simulating partition between server groups)
-    auto server1 = create_server(port1);
-    auto server2 = create_server(port2);
-    ASSERT_NE(server1, nullptr);
-    ASSERT_NE(server2, nullptr);
 
     // Group 1 clients connect to server1
     auto client1a = create_client();
@@ -619,18 +642,20 @@ TEST_F(PartitionTest, SplitBrainSimulation) {
 // ============================================================================
 
 TEST_F(PartitionTest, ReconnectionDuringPartition) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    // Start with no server
+    // Start with no server, try to connect - should fail
     auto client = create_client();
 
-    // Try to connect - should fail (partition)
-    EXPECT_NE(client->connect(addr.c_str()), 0);
+    // Get a port that we know isn't in use by anyone else
+    int temp_port = next_port();
+    std::string temp_addr = "127.0.0.1:" + std::to_string(temp_port);
 
-    // Start server (heal partition)
-    auto server = create_server(port);
+    // Try to connect - should fail (no server)
+    EXPECT_NE(client->connect(temp_addr.c_str()), 0);
+
+    // Start server (heal partition) - use retry to find available port
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     // Should be able to connect now
     EXPECT_EQ(client->connect(addr.c_str()), 0);
@@ -643,26 +668,28 @@ TEST_F(PartitionTest, ReconnectionDuringPartition) {
 }
 
 TEST_F(PartitionTest, MultipleReconnectAttempts) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    // Use a temp port for failed connection attempts (no server yet)
+    int temp_port = next_port();
+    std::string temp_addr = "127.0.0.1:" + std::to_string(temp_port);
 
     auto client = create_client();
 
     // Multiple failed connection attempts (partition)
     int fail_count = 0;
     for (int i = 0; i < 3; i++) {
-        if (client->connect(addr.c_str()) != 0) {
+        if (client->connect(temp_addr.c_str()) != 0) {
             fail_count++;
         }
         std::this_thread::sleep_for(milliseconds(20));
     }
     EXPECT_EQ(fail_count, 3);
 
-    // Start server
-    auto server = create_server(port);
+    // Start server with retry to find available port
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
-    // Should succeed now
+    // Should succeed now on the server's actual port
     EXPECT_EQ(client->connect(addr.c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
@@ -677,11 +704,9 @@ TEST_F(PartitionTest, MultipleReconnectAttempts) {
 // ============================================================================
 
 TEST_F(PartitionTest, PartitionWithPendingRequests) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -727,11 +752,9 @@ TEST_F(PartitionTest, PartitionWithPendingRequests) {
 // ============================================================================
 
 TEST_F(PartitionTest, MetricsDuringPartition) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
-
-    auto server = create_server(port);
+    auto [server, port] = create_server_retry(next_port());
     ASSERT_NE(server, nullptr);
+    std::string addr = "127.0.0.1:" + std::to_string(port);
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);

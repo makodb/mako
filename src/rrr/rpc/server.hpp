@@ -24,7 +24,7 @@
 #include "utils.hpp"
 
 // External safety annotations for system functions and STL operations
-// Note: Marshal, Log, SpinLock, PollThread, Reactor, Coroutine, and rusty-cpp types
+// Note: Marshal, Log, SpinLock, PollThread, Reactor, Fiber, and rusty-cpp types
 // now have in-place annotations in their respective headers.
 //
 // SAFETY AUDIT: STL container operations are marked [safe] because:
@@ -368,7 +368,7 @@ public:
 
     // @safe - Reads and processes RPC requests
     // Memory-safe: Uses Box for request ownership, virtual dispatch for handlers,
-    // Arc for shared context, RefCell for interior mutability, Coroutine::CreateRun for async.
+    // Arc for shared context, RefCell for interior mutability, Fiber::create_run for async.
     bool handle_read() override;  // Batching mode: reads ALL available requests
 
     // @safe - Error handler
@@ -670,6 +670,15 @@ public:
     std::string addr() const {
         return ctx_.as_ref().unwrap()->addr;
     }
+
+    /**
+     * Get the actual port the server is bound to.
+     * Useful when starting with port 0 (ephemeral port assignment).
+     * Must be called after start().
+     * @return The bound port number, or -1 if not yet started
+     */
+    // @unsafe - Calls getsockname
+    int get_bound_port() const;
 };
 
 } // namespace rrr

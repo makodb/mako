@@ -68,7 +68,7 @@ int RaftTestConfig::waitOneLeader(bool want_leader, int expected) {
   bool isleader;
   
   for (int retry = 0; retry < 10; retry++) {
-    Coroutine::sleep(ELECTIONTIMEOUT/10);
+    Fiber::sleep(ELECTIONTIMEOUT/10);
     leader = -1;
     mostRecentTerm = 0;
     for (auto& pair : replicas) {
@@ -214,7 +214,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
   Log_info("DoAgreement: Starting agreement for command %d, expecting %d servers, retry=%s", cmd, n, retry ? "true" : "false");
   auto start = chrono::steady_clock::now();
   while ((chrono::steady_clock::now() - start) < chrono::seconds{10}) {
-    // Coroutine::sleep(50000);
+    // Fiber::sleep(50000);
     usleep(50000);
     // Call Start() to all servers until leader is found
     siteid_t ldr = -1;
@@ -269,7 +269,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
           break;
         }
         // Log_info("DoAgreement: Waiting... only %d/%d servers committed index %ld for command %d", nc, n, index, cmd);
-        // Coroutine::sleep(50000);
+        // Fiber::sleep(50000);
         usleep(20000);
       }
       // Log_info("DoAgreement: Agreement wait loop ended - %d committed server at index %ld for command %d", nc, index, cmd);
@@ -280,7 +280,7 @@ uint64_t RaftTestConfig::DoAgreement(int cmd, int n, bool retry) {
     } else {
       // If no leader found, sleep and retry.
       // Log_info("DoAgreement: No leader found for command %d, sleeping and retrying", cmd);
-      // Coroutine::sleep(50000)
+      // Fiber::sleep(50000)
       usleep(50000);
     }
   }
@@ -506,7 +506,7 @@ void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
 }
 
 void RaftTestConfig::slow(siteid_t svr, uint32_t msec) {
-  // Instead of using reactor's slow mode, use Coroutine::Sleep
+  // Instead of using reactor's slow mode, use Fiber::Sleep
   // This will introduce the same delay but without needing reactor changes
   usleep(msec * 1000);  // Convert msec to microseconds
 }
@@ -666,7 +666,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
   // Start the heartbeat loop and election timer manually since we're skipping Setup()
   // CRITICAL (Fix 2 part 2): Must add coroutines to the CORRECT poll thread!
-  // Using Coroutine::create_run would schedule on the current reactor (site 0's test thread),
+  // Using Fiber::create_run would schedule on the current reactor (site 0's test thread),
   // not on this server's poll thread. We must use poll_thread->add() instead.
 #ifdef RAFT_TEST_CORO
   if (frame->svr_->heartbeat_ && frame->commo_->rpc_poll_.is_some()) {
@@ -674,7 +674,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
 
     // Add HeartbeatLoop as a job to the correct poll thread
     auto hb_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
-      Coroutine::create_run([frame]() {
+      Fiber::create_run([frame]() {
         frame->svr_->HeartbeatLoop();
       });
     }));
@@ -683,7 +683,7 @@ void RaftTestConfig::Restart(siteid_t svr) {
     // Add election timer as a job to the correct poll thread
     if (frame->svr_->failover_) {
       auto election_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([frame]() {
-        Coroutine::create_run([frame]() {
+        Fiber::create_run([frame]() {
           frame->svr_->StartElectionTimer();
         });
       }));

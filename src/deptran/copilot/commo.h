@@ -8,7 +8,7 @@
 namespace janus {
 
 class CopilotFastAcceptQuorumEvent : public QuorumEvent {
-  // TODO: use OrEvent to express fastpath vs. slowpath?
+  // TODO: use WaitAny to express fastpath vs. slowpath?
   vector<uint64_t> ret_deps_;
   int32_t n_fastac_ok_{0};
   int32_t n_fastac_reply_{0};

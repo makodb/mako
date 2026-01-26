@@ -104,6 +104,12 @@ private:
     // Transport backend (eRPC, rrr/rpc, etc.)
     mako::TransportBackend* backend_{nullptr};
 
+    // Mutex to protect backend_ during concurrent access (stats vs destructor)
+    mutable std::mutex backend_mutex_;
+
+    // Flag indicating shutdown is in progress - prevents use-after-free
+    std::atomic<bool> shutting_down_{false};
+
     // Configuration of the shards
     transport::Configuration config_;
 

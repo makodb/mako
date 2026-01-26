@@ -26,6 +26,8 @@
  */
 
 #include "status.hh"
+#include "idb.hh"
+#include "local_table.hh"
 #include "benchmarks/abstract_db.h"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/bench.h"
@@ -34,6 +36,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <mutex>
 
 namespace mako {
 
@@ -59,12 +63,45 @@ struct ReplicationConfig {
 };
 
 /**
+ * Client configuration for connecting to remote shard servers
+ */
+struct ClientConfig {
+    // Server addresses (one per shard in multi-shard mode)
+    std::vector<std::string> server_hosts;
+    std::vector<int> server_ports;
+
+    // Enable client mode (connect to remote servers instead of local DB)
+    bool enabled = false;
+
+    // RPC timeout in milliseconds
+    uint32_t timeout_ms = 5000;
+
+    // @safe - Check if client config is valid
+    bool is_valid() const {
+        return enabled &&
+               !server_hosts.empty() &&
+               server_hosts.size() == server_ports.size();
+    }
+
+    // @safe - Get number of configured shards
+    size_t num_shards() const {
+        return server_hosts.size();
+    }
+};
+
+/**
  * Database options (RocksDB-like)
  *
  * Configure the database before opening. The options determine:
  * - Basic settings: thread count, create behavior
  * - Sharding: multi-shard configuration
  * - Replication: Paxos/Raft settings
+ * - Client mode: connect to remote servers
+ *
+ * Unified Options pattern:
+ * - SERVER_ONLY: replication/transport settings, client.enabled = false
+ * - CLIENT_ONLY: client.enabled = true, client.server_hosts/ports set
+ * - COLOCATE: Both server and client settings configured
  */
 struct Options {
     // Basic options
@@ -79,6 +116,9 @@ struct Options {
 
     // Mako-specific: replication
     ReplicationConfig replication;
+
+    // Client mode configuration (for connecting to remote servers)
+    ClientConfig client;
 
     // Legacy: load configuration from YAML file
     // If set, this overrides other options
@@ -101,8 +141,10 @@ struct Options {
  * This class wraps the Mako database and provides a familiar Open() pattern.
  * All actual database operations are performed through the underlying
  * abstract_db pointer obtained via GetDB().
+ *
+ * Implements IDatabase interface for unified access with RemoteDB.
  */
-class DB {
+class DB : public IDatabase {
 public:
     /**
      * Open a Mako database
@@ -165,23 +207,49 @@ public:
      * Example:
      *   mako_db->InitThread();
      */
-    void InitThread();
+    void InitThread() override;
 
     /**
      * Begin a new transaction
      * Returns void* txn pointer (same as abstract_db->new_txn())
      */
-    void* BeginTransaction();
+    void* BeginTransaction() override;
 
     /**
      * Commit a transaction
      */
-    void Commit(void* txn);
+    void Commit(void* txn) override;
 
     /**
      * Rollback a transaction
      */
-    void Rollback(void* txn);
+    void Rollback(void* txn) override;
+
+    // =========================================================================
+    // IDatabase Interface Implementation
+    // =========================================================================
+
+    /**
+     * Get a table by name (implements IDatabase interface)
+     * Returns LocalTable wrapper around mbta_sharded_ordered_index
+     */
+    ITable* GetTable(const std::string& name) override;
+
+    /**
+     * Connect to the database (no-op for local DB)
+     * Implements IDatabase interface - always returns OK
+     */
+    Status Connect() override { return Status::OK(); }
+
+    /**
+     * Disconnect from the database (no-op for local DB)
+     */
+    void Disconnect() override {}
+
+    /**
+     * Check if connected (always true for local DB)
+     */
+    bool IsConnected() const override { return is_open_; }
 
 private:
     // Private constructor - use Open() to create instances
@@ -195,6 +263,10 @@ private:
     abstract_db* db_ = nullptr;
     bool is_open_ = false;
     bool owns_db_ = true;  // Whether we should delete db_ on close
+
+    // Table cache (name -> LocalTable wrapper)
+    std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
+    std::mutex tables_mutex_;
 
     // Thread-local helpers for BeginTransaction
     str_arena& get_arena();
@@ -347,6 +419,7 @@ inline void* DB::BeginTransaction() {
     }
     str_arena& arena = get_arena();
     std::string& txn_buf = get_txn_buf();
+    // Note: mbta_wrapper::new_txn() returns NULL, using thread-local state instead
     return db_->new_txn(0, arena, txn_buf.data());
 }
 
@@ -360,6 +433,30 @@ inline void DB::Rollback(void* txn) {
     //if (txn && db_) {
         db_->abort_txn(txn);
     //}
+}
+
+inline ITable* DB::GetTable(const std::string& name) {
+    if (!is_open_ || !db_) {
+        return nullptr;
+    }
+
+    std::lock_guard<std::mutex> lock(tables_mutex_);
+    auto it = tables_.find(name);
+    if (it != tables_.end()) {
+        return it->second.get();
+    }
+
+    // Create new LocalTable wrapper around mbta_sharded_ordered_index
+    // @unsafe { Calls open_sharded_index which uses raw pointers }
+    mbta_sharded_ordered_index* index = db_->open_sharded_index(name);
+    if (!index) {
+        return nullptr;
+    }
+
+    auto table = std::make_unique<LocalTable>(index, name);
+    LocalTable* ptr = table.get();
+    tables_[name] = std::move(table);
+    return ptr;
 }
 
 #endif  // _MAKO_COMMON_H_

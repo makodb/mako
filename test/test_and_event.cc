@@ -16,9 +16,9 @@ TEST(AndEventTest, BasicAndEvent) {
     auto event1 = Reactor::create_sp_event<IntEvent>();
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
-    // Create AndEvent that waits for both
+    // Create WaitAll that waits for both
     std::vector<std::shared_ptr<Event>> events = {event1, event2};
-    auto and_event = Reactor::create_sp_event<AndEvent>(events);
+    auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> and_triggered{false};
     
@@ -27,12 +27,12 @@ TEST(AndEventTest, BasicAndEvent) {
         and_triggered = true;
     });
     
-    // Set only first event - AndEvent should NOT trigger
+    // Set only first event - WaitAll should NOT trigger
     event1->set(1);
     reactor->loop(false);
     EXPECT_FALSE(and_triggered);
     
-    // Set second event - now AndEvent should trigger (use target value)
+    // Set second event - now WaitAll should trigger (use target value)
     event2->set(1);
     reactor->loop(false);
     EXPECT_TRUE(and_triggered);
@@ -46,7 +46,7 @@ TEST(AndEventTest, ThreeEventAnd) {
     auto event3 = Reactor::create_sp_event<IntEvent>();
     
     std::vector<std::shared_ptr<Event>> events = {event1, event2, event3};
-    auto and_event = Reactor::create_sp_event<AndEvent>(events);
+    auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<int> completion_value{0};
     
@@ -77,7 +77,7 @@ TEST(AndEventTest, AndWithTimeout) {
     auto event2 = Reactor::create_sp_event<IntEvent>();
     
     std::vector<std::shared_ptr<Event>> events = {event1, event2};
-    auto and_event = Reactor::create_sp_event<AndEvent>(events);
+    auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> timed_out{false};
     std::atomic<bool> completed{false};
@@ -111,7 +111,7 @@ TEST(AndEventTest, VariadicConstructor) {
     auto event3 = Reactor::create_sp_event<IntEvent>();
     
     // Test variadic constructor
-    auto and_event = Reactor::create_sp_event<AndEvent>(event1, event2, event3);
+    auto and_event = Reactor::create_sp_event<WaitAll>(event1, event2, event3);
     
     std::atomic<bool> completed{false};
     
@@ -137,7 +137,7 @@ TEST(AndEventTest, MixedEventTypes) {
     auto timeout_event = Reactor::create_sp_event<TimeoutEvent>(100000); // 100ms
     
     std::vector<std::shared_ptr<Event>> events = {int_event, timeout_event};
-    auto and_event = Reactor::create_sp_event<AndEvent>(events);
+    auto and_event = Reactor::create_sp_event<WaitAll>(events);
     
     std::atomic<bool> completed{false};
     

@@ -77,6 +77,17 @@ FastTransport::FastTransport(std::string file,
         eventBase = event_base_new();
         evthread_make_base_notifiable(eventBase);
 
+        // Create signal handlers for graceful shutdown
+        // @unsafe - evsignal_new calls non-borrow-checked libevent code
+        event *sigterm_event = evsignal_new(eventBase, SIGTERM, SignalCallback, this);
+        event *sigint_event = evsignal_new(eventBase, SIGINT, SignalCallback, this);
+        if (sigterm_event) {
+            signalEvents.push_back(sigterm_event);
+        }
+        if (sigint_event) {
+            signalEvents.push_back(sigint_event);
+        }
+
         for (event *x : signalEvents)
         {
             event_add(x, NULL);
@@ -118,11 +129,28 @@ FastTransport::FastTransport(std::string file,
 }
 
 FastTransport::~FastTransport() {
-    if (backend_) {
-        backend_->Shutdown();
-        delete backend_;
-        backend_ = nullptr;
+    // Set shutdown flag first to prevent any new accesses
+    shutting_down_.store(true, std::memory_order_release);
+
+    // Acquire lock to ensure no concurrent stats() calls in progress
+    {
+        std::lock_guard<std::mutex> guard(backend_mutex_);
+        if (backend_) {
+            backend_->Shutdown();
+            delete backend_;
+            backend_ = nullptr;
+        }
     }
+
+    // Clean up signal event handlers
+    // @unsafe - event_free calls non-borrow-checked libevent code
+    for (event *ev : signalEvents) {
+        if (ev) {
+            event_del(ev);
+            event_free(ev);
+        }
+    }
+    signalEvents.clear();
 
     if (eventBase) {
         event_base_free(eventBase);
@@ -130,13 +158,29 @@ FastTransport::~FastTransport() {
     }
 }
 
+// @safe - Thread-safe stats access
 void FastTransport::stats() {
+    // Check shutdown flag first (relaxed ordering OK - just an optimization)
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // Acquire lock to prevent race with destructor
+    std::lock_guard<std::mutex> guard(backend_mutex_);
     if (backend_) {
         backend_->PrintStats();
     }
 }
 
+// @safe - Thread-safe statistics access
 void FastTransport::Statistics() {
+    // Check shutdown flag first (relaxed ordering OK - just an optimization)
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    // Acquire lock to prevent race with destructor
+    std::lock_guard<std::mutex> guard(backend_mutex_);
     if (backend_) {
         backend_->PrintStats();
     }
