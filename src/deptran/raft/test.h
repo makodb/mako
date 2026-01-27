@@ -87,6 +87,9 @@ class RaftLabTest {
   // Test that speculative entries survive leader crash if new leader has them
   int testSpeculativeEntriesSurviveCrash(void);
 
+  // Test that voter crash before VoteDurable fsync is handled correctly
+  int testVoterCrashBeforeVoteFsync(void);
+
   void wait(uint64_t microseconds);
 
 };

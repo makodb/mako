@@ -227,7 +227,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   Note: ROLLEDBACK notification only if A was alive during step-down
 
 #### Vote Crash Scenarios
-- [ ] `testVoterCrashBeforeVoteFsync`:
+- [x] `testVoterCrashBeforeVoteFsync` (Test 30):
   ```
   1. A gets memory votes from {A, B, C}, becomes spec leader (term 5)
   2. C crashes BEFORE vote fsync

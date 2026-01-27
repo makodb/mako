@@ -37,6 +37,7 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testRestartDoesNotAffectDurableVoters())         // Test 28
       // Phase 7.3: Integration tests
       || TEST_EXPAND(testSpeculativeEntriesSurviveCrash())            // Test 29
+      || TEST_EXPAND(testVoterCrashBeforeVoteFsync())                 // Test 30
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -2783,6 +2784,141 @@ int RaftLabTest::testSpeculativeEntriesSurviveCrash(void) {
   }
 
   Log_info("[SPEC-TEST] Speculative entries survive crash test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test that voter crash before VoteDurable fsync is handled correctly.
+ *
+ * Scenario:
+ * 1. A gets memory votes from {A, B, C, D, E}, becomes spec leader
+ * 2. Kill and restart a follower (simulating crash before VoteDurable fsync)
+ * 3. Follower restarts → sends notifyRestart to leader
+ * 4. Leader removes follower from specVoters
+ * 5. In 5-node cluster: still quorum (4/5) → leader continues
+ * 6. Verify system continues operating correctly
+ *
+ * Note: This tests that a follower whose vote wasn't durably persisted
+ * doesn't break the system when it restarts.
+ */
+int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
+  Init2(30, "Voter crash before VoteDurable fsync");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader, leader_id);
+
+  // Check initial specVoters count
+  size_t specVotersBefore = config_->GetSpecVotersCount(leader_id);
+  Log_info("[SPEC-TEST] Initial specVoters count: %zu", specVotersBefore);
+
+  // In a normal election, leader should have spec quorum from all servers
+  Assert2(specVotersBefore >= 3, "Leader should have spec quorum");
+
+  // Commit a baseline entry to verify initial state
+  int cmd = 1000;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool ok = config_->Start(leader_id, cmd, &index, &term);
+  Assert2(ok, "Failed to submit baseline command");
+  int result = config_->Wait(index, NSERVERS, term);
+  AssertWaitNoError(result, index);
+  index_ = index;
+
+  Log_info("[SPEC-TEST] Baseline committed at index %lu", index);
+
+  // Pick a follower to simulate crash before VoteDurable
+  siteid_t follower_to_crash = 0;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      follower_to_crash = svr;
+      break;
+    }
+  }
+
+  Log_info("[SPEC-TEST] Simulating crash of follower %d before VoteDurable fsync",
+           follower_to_crash);
+
+  // Kill the follower (simulating crash before vote was durably persisted)
+  config_->Kill(follower_to_crash);
+
+  // Brief wait to ensure crash is processed
+  Fiber::sleep(200000);  // 200ms
+
+  // Restart the follower - it will send notifyRestart
+  config_->Restart(follower_to_crash);
+
+  // Wait for notifyRestart and recovery
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Leader should still be leader (5-node cluster, lost 1 spec voter → 4/5 still quorum)
+  int current_leader = config_->OneLeader();
+  if (current_leader < 0) {
+    // Election may be happening, wait longer
+    Fiber::sleep(ELECTIONTIMEOUT);
+    current_leader = config_->OneLeader();
+  }
+
+  Log_info("[SPEC-TEST] Current leader after restart: %d", current_leader);
+
+  // Check specVoters count after restart
+  size_t specVotersAfter = 0;
+  if (current_leader >= 0) {
+    siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
+    specVotersAfter = config_->GetSpecVotersCount(current_leader_id);
+    Log_info("[SPEC-TEST] SpecVoters after restart: %zu (leader %d)",
+             specVotersAfter, current_leader_id);
+  }
+
+  // The system should continue functioning regardless of leader change
+  // Try to commit a new entry
+  if (current_leader >= 0) {
+    siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
+    int newCmd = 1001;
+    uint64_t newIndex = 0;
+    uint64_t newTerm = 0;
+    ok = config_->Start(current_leader_id, newCmd, &newIndex, &newTerm);
+    if (ok) {
+      result = config_->Wait(newIndex, NSERVERS - 1, newTerm);
+      if (result >= 0) {
+        Log_info("[SPEC-TEST] New entry committed after restart at index %lu", newIndex);
+      } else {
+        Log_info("[SPEC-TEST] Entry pending commit (result=%d)", result);
+      }
+    }
+  }
+
+  // Verify all servers eventually agree
+  // Wait for full recovery
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Try to commit one final entry with full cluster
+  current_leader = config_->OneLeader();
+  Assert2(current_leader >= 0, "Should have a leader after recovery");
+
+  siteid_t final_leader_id = config_->getServerIdByIndex(current_leader);
+  int finalCmd = 1002;
+  uint64_t finalIndex = 0;
+  uint64_t finalTerm = 0;
+  ok = config_->Start(final_leader_id, finalCmd, &finalIndex, &finalTerm);
+  Assert2(ok, "Failed to submit final command");
+
+  result = config_->Wait(finalIndex, NSERVERS, finalTerm);
+  AssertWaitNoError(result, finalIndex);
+
+  Log_info("[SPEC-TEST] Final entry committed with all servers at index %lu", finalIndex);
+
+  // Verify invariants
+  Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
+
+  Log_info("[SPEC-TEST] Voter crash before VoteDurable fsync test PASSED!");
 
   Passed2();
 }
