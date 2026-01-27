@@ -845,5 +845,22 @@ class RaftServer : public TxLogServer {
    */
   // @safe - Read-only check
   void VerifySpeculativeInvariants() const;
+
+  /**
+   * Handle notification that a peer has restarted.
+   *
+   * Called when we receive notifyRestart from another server. For speculative
+   * replication, this means the restarted server has lost:
+   * 1. Its memory vote (if it voted but didn't fsync)
+   * 2. Memory-acked log entries (not yet fsynced)
+   *
+   * This method invalidates any speculative state that depended on the
+   * restarted server and may trigger step-down if we're an unsecured leader
+   * who has lost speculative quorum.
+   *
+   * @param restarted_site_id - Site ID of the server that restarted
+   */
+  // @unsafe - Modifies speculative state
+  void OnPeerRestart(siteid_t restarted_site_id);
 };
 } // namespace janus

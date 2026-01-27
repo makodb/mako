@@ -255,6 +255,13 @@ void RaftServiceImpl::HandleNotifyRestart(const siteid_t& restartedSiteId,
     Log_warn("[NOTIFY-RESTART] commo is null, cannot reconnect to site %d", restartedSiteId);
   }
 
+  // ==================================================================
+  // SPECULATIVE REPLICATION: Invalidate speculative state for peer
+  // ==================================================================
+  // When a peer restarts, it loses its in-memory state (memory vote,
+  // memory-acked entries). The leader must update its speculative state.
+  svr->OnPeerRestart(restartedSiteId);
+
   defer.reply();
 }
 

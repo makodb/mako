@@ -64,14 +64,16 @@ Implementation plan: docs/dev/phase3_appendentries_rpc_plan.md
 - [x] Add `ackType: enum { Memory, Durable }` to `AppendEntriesResponse`
 - [x] Add `AppendEntriesDurable` RPC for durable ack notification
 
-## Phase 4: notifyRestart Integration
+## Phase 4: notifyRestart Integration [COMPLETED 2026-01-27]
 
-### 4.1 Leader Handler for notifyRestart
-- [ ] On receiving `notifyRestart` from server `s`:
-  - [ ] Remove `s` from `specVoters` (vote is no longer reliable)
-  - [ ] Remove `s` from `memoryAcks[i]` for all `i > securedLogIndex`
-  - [ ] If `!securedLeader && |specVoters| < quorum`:
-    - [ ] Call `stepDown(UnsecuredFailure)`
+Implementation plan: docs/dev/phase4_notifyrestart_plan.md
+
+### 4.1 Leader Handler for notifyRestart [DONE 2026-01-27, 04:45]
+- [x] On receiving `notifyRestart` from server `s`:
+  - [x] Remove `s` from `specVoters` (vote is no longer reliable)
+  - [x] Remove `s` from `memoryAcks[i]` for all `i > securedLogIndex`
+  - [x] If `!securedLeader && |specVoters| < quorum`:
+    - [x] Log warning (full stepDown deferred to Phase 5)
 
 ## Phase 5: Step Down and Client Notification
 

@@ -2241,4 +2241,71 @@ void RaftServer::VerifySpeculativeInvariants() const {
             site_id_, securedLogIndex_, specCommitIndex_, lastLogIndex);
 }
 
+// ============================================================================
+// OnPeerRestart - Handle speculative state invalidation on peer restart
+// ============================================================================
+
+void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Only process if we're the leader
+  if (!is_leader_) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring peer restart from %d - not leader",
+              site_id_, restarted_site_id);
+    return;
+  }
+
+  Log_info("[SPEC-RAFT] Site %d: Handling peer restart from site %d",
+           site_id_, restarted_site_id);
+
+  // Remove from specVoters (their memory vote is no longer reliable)
+  size_t removed_from_voters = specVoters_.erase(restarted_site_id);
+  if (removed_from_voters > 0) {
+    Log_info("[SPEC-RAFT] Site %d: Removed site %d from specVoters (now size=%zu)",
+             site_id_, restarted_site_id, specVoters_.size());
+  }
+
+  // Remove from memoryAcks for unsecured entries only
+  // Entries at or below securedLogIndex are already durably committed,
+  // so removing the restarted server doesn't affect their status
+  size_t entries_affected = 0;
+  for (auto& entry : memoryAcks_) {
+    uint64_t idx = entry.first;
+    if (idx > securedLogIndex_) {
+      if (entry.second.erase(restarted_site_id) > 0) {
+        entries_affected++;
+      }
+    }
+  }
+  if (entries_affected > 0) {
+    Log_info("[SPEC-RAFT] Site %d: Removed site %d from memoryAcks for %zu unsecured entries",
+             site_id_, restarted_site_id, entries_affected);
+  }
+
+  // Check if we've lost speculative vote quorum (only matters if not secured)
+  if (!securedLeader_) {
+    size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+    // +1 for our own vote
+    size_t vote_count = specVoters_.size() + 1;
+    if (vote_count < quorum) {
+      // We've lost speculative quorum as an unsecured leader
+      // This is a critical situation - we should step down
+      Log_warn("[SPEC-RAFT] Site %d: Lost speculative vote quorum (%zu < %zu) - unsecured leader should step down",
+               site_id_, vote_count, quorum);
+      // TODO (Phase 5): Implement stepDown(UnsecuredFailure)
+      // For now, just log the warning. Full step-down implementation
+      // with client notification is deferred to Phase 5.
+    }
+  }
+
+  // Note: We don't remove from durableVoters or durableAcks because:
+  // 1. durableVoters represents votes that were persisted to disk BEFORE the crash
+  //    - If the vote was durable, it survives the crash
+  //    - If it wasn't durable, it was never in durableVoters
+  // 2. durableAcks represents entries that were persisted to disk
+  //    - Same logic: durable acks survive crashes by definition
+
+  VerifySpeculativeInvariants();
+}
+
 } // namespace janus
