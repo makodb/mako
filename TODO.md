@@ -21,22 +21,24 @@ Implementation plan: docs/dev/phase1_speculative_state_plan.md
 - [x] Ensure `securedLogIndex <= specCommitIndex <= log.lastIndex()`
 - [x] Ensure `durableVoters ⊆ specVoters` (initially, before crashes)
 
-## Phase 2: Vote RPC Changes
+## Phase 2: Vote RPC Changes [COMPLETED 2026-01-27]
 
-### 2.1 Follower Side (RequestVote Handler)
-- [ ] On granting vote: update `votedFor` in memory immediately
-- [ ] Return `VoteGranted` response immediately (don't wait for fsync)
-- [ ] Start async fsync of `(currentTerm, votedFor)`
-- [ ] On fsync complete: send new `VoteDurable` message to candidate
+Implementation plan: docs/dev/phase2_vote_rpc_plan.md
 
-### 2.2 Leader Side (Vote Response Handler)
-- [ ] On receiving `VoteGranted`: add voter to `specVoters`
-- [ ] If `|specVoters| >= quorum`: become speculative leader, start accepting requests
-- [ ] On receiving `VoteDurable`: add voter to `durableVoters`
-- [ ] If `|durableVoters| >= quorum`: set `securedLeader = true`
+### 2.1 Follower Side (RequestVote Handler) [DONE 2026-01-27, 03:21]
+- [x] On granting vote: update `votedFor` in memory immediately
+- [x] Return `VoteGranted` response immediately (don't wait for fsync)
+- [x] Start async fsync of `(currentTerm, votedFor)` - uses detached thread
+- [x] On fsync complete: send new `VoteDurable` message to candidate
 
-### 2.3 New Message Type
-- [ ] Define `VoteDurable { term: u64, voterId: NodeId }` message
+### 2.2 Leader Side (Vote Response Handler) [DONE 2026-01-27, 03:21]
+- [x] On receiving `VoteGranted`: add voter to `specVoters` (via RaftVoteQuorumEvent)
+- [x] If `|specVoters| >= quorum`: become speculative leader, start accepting requests
+- [x] On receiving `VoteDurable`: add voter to `durableVoters` (via OnVoteDurable)
+- [x] If `|durableVoters| >= quorum`: set `securedLeader = true`
+
+### 2.3 New Message Type [DONE 2026-01-27, 03:21]
+- [x] Define `VoteDurable { term: u64, voterId: NodeId }` message (in rcc_rpc.rpc)
 
 ## Phase 3: AppendEntries RPC Changes
 

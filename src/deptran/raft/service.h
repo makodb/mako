@@ -57,6 +57,15 @@ class RaftServiceImpl : public RaftService {
     *vote_granted = false;
   }
 
+  // VoteDurable - Received after follower has durably persisted its vote
+  // Enables speculative voting: leader tracks durable vs memory votes
+  RpcHandler(VoteDurable, 3,
+             const ballot_t&, term,
+             const siteid_t&, voter_id,
+             bool_t*, acknowledged) {
+    *acknowledged = false;
+  }
+
   RpcHandler(AppendEntries, 12,
              const uint64_t&, slot,
              const ballot_t&, ballot,

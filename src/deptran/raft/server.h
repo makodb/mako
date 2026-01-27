@@ -171,6 +171,7 @@ class RaftServer : public TxLogServer {
 	void HeartbeatLoop() ;
 
   // @unsafe
+  // SPECULATIVE VOTING: Respond immediately, then persist and send VoteDurable async
   void doVote(const slotid_t& lst_log_idx,
               const ballot_t& lst_log_term,
               const siteid_t& can_id,
@@ -186,21 +187,20 @@ class RaftServer : public TxLogServer {
       Log_info("[RAFT_VOTE] server %d (loc %d) vote=%d candidate=%d can_term=%lu cur_term=%lu prev_vote_for=%d is_leader=%d lst_idx=%lu lst_term=%lu",
                site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
 #endif
-                    
+
       if( can_term > currentTerm)
       {
-          // is_leader_ = false ;  // TODO recheck
           // Any higher term seen means we must immediately step down.
           setIsLeader(false);
           auto prev_term = currentTerm;
           currentTerm = can_term ;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
 
-          // CRITICAL: Persist term before responding to vote request
+          // SPECULATIVE: Still persist term change synchronously for correctness
+          // (term changes must be durable before we can proceed)
           PersistState(currentTerm, vote_for_, "doVote: observed higher term");
 
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
-          // PersistState() already called above - no need for duplicate persistence
       }
 
       if(vote)
@@ -208,16 +208,40 @@ class RaftServer : public TxLogServer {
           setIsLeader(false) ;
           vote_for_ = can_id ;
 
-          // CRITICAL: Persist vote BEFORE responding to candidate
-          PersistState(currentTerm, vote_for_, "doVote: granting vote");
-
 #ifdef RAFT_LEADER_ELECTION_DEBUG
           Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
 #endif
-          // PersistState() already called above - no need for duplicate persistence
-          //reset timeout
+          // Reset timeout
           resetTimer("granted vote");
+
+          // SPECULATIVE VOTING: Respond IMMEDIATELY (memory vote)
+          // Then start async persistence and send VoteDurable after fsync
+          n_vote_++ ;
+          cb() ;  // Respond now - this is the memory vote
+
+          // Start async vote persistence
+          // Capture necessary state for the async operation
+          ballot_t term_copy = currentTerm;
+          siteid_t voter_copy = site_id_;
+          siteid_t can_id_copy = can_id;
+          parid_t par_id_copy = partition_id_;
+
+          // Use a detached thread for async fsync + VoteDurable send
+          // TODO: Consider using event loop integration for production
+          std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+              // Persist the vote durably
+              PersistState(term_copy, can_id_copy, "doVote: async vote persist");
+
+              // Send VoteDurable RPC to candidate
+              auto c = commo();
+              if (c != nullptr) {
+                  c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
+              }
+          }).detach();
+
+          return;  // Already called cb() above
       }
+
       n_vote_++ ;
       cb() ;
   }
@@ -558,6 +582,24 @@ class RaftServer : public TxLogServer {
                      ballot_t *reply_term,
                      bool_t *vote_granted,
                      rusty::Function<void()> cb) ;
+
+  /**
+   * VoteDurable RPC Handler - Speculative Voting Protocol
+   *
+   * Receives VoteDurable RPC from a follower after it has durably persisted
+   * its vote to disk. This allows the leader to track durable votes separately
+   * from memory votes, enabling speculative leader election.
+   *
+   * @param term - Term of the vote (must match current term)
+   * @param voter_id - Site ID of the voter
+   * @param acknowledged - [OUT] true if vote was recorded
+   * @param cb - Callback to invoke when handling complete
+   */
+  // @unsafe - Modifies durableVoters_ and securedLeader_
+  void OnVoteDurable(const ballot_t& term,
+                     const siteid_t& voter_id,
+                     bool_t* acknowledged,
+                     rusty::Function<void()> cb);
 
   // @unsafe
   void OnAppendEntries(const slotid_t slot_id,

@@ -1149,6 +1149,33 @@ bool RaftServer::RequestVote() {
 #endif
       return false;
     }
+
+    // =========================================================================
+    // SPECULATIVE VOTING: Initialize specVoters from vote responses
+    // =========================================================================
+    // These are memory votes - not yet durable
+    specVoters_ = sp_quorum->GetSpecVoters();
+    specVoters_.insert(site_id_);  // Add self vote
+
+    // Self vote is always durable (we persisted before broadcasting)
+    durableVoters_.clear();
+    durableVoters_.insert(site_id_);
+
+    // Reset commit indices
+    specCommitIndex_ = commitIndex;
+    securedLogIndex_ = commitIndex;
+
+    // Clear ack tracking maps for new term
+    memoryAcks_.clear();
+    durableAcks_.clear();
+
+    // Start as unsecured leader until we receive VoteDurable from quorum
+    securedLeader_ = false;
+
+    Log_info("[SPEC-RAFT] Site %d: Won election term %lu - specVoters=%zu durableVoters=%zu",
+             site_id_, term, specVoters_.size(), durableVoters_.size());
+    // =========================================================================
+
     // become a leader
     setIsLeader(true) ;
     // verify(currentTerm == term); // [Jetpack] Comment this since in failure recovery test this will fail after experiment end.
@@ -1282,6 +1309,52 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
   doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
 
+}
+
+// ============================================================================
+// VoteDurable RPC Handler - Speculative Voting Protocol
+// ============================================================================
+
+void RaftServer::OnVoteDurable(const ballot_t& term,
+                                const siteid_t& voter_id,
+                                bool_t* acknowledged,
+                                rusty::Function<void()> cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Reject stale votes from old terms
+  if (term != currentTerm) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - term mismatch (got %lu, current %lu)",
+              site_id_, voter_id, term, currentTerm);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Only process if we're the leader
+  if (!is_leader_) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring VoteDurable from %d - not leader",
+              site_id_, voter_id);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Add voter to durable voters set
+  durableVoters_.insert(voter_id);
+  *acknowledged = true;
+
+  Log_info("[SPEC-RAFT] Site %d: Received VoteDurable from %d - durableVoters size=%zu",
+           site_id_, voter_id, durableVoters_.size());
+
+  // Check if we've achieved secured leader status
+  size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+  if (!securedLeader_ && durableVoters_.size() >= quorum) {
+    securedLeader_ = true;
+    Log_info("[SPEC-RAFT] Site %d: Became SECURED leader with %zu durable votes (quorum=%zu)",
+             site_id_, durableVoters_.size(), quorum);
+  }
+
+  cb();
 }
 
 // @safe - Calls undeclared Fiber::create_run()

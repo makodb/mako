@@ -208,8 +208,8 @@ RaftCommo::BroadcastVote(parid_t par_id,
       bool_t vote = false ;
       fu->get_reply() >> term;
       fu->get_reply() >> vote ;
-      e->FeedResponse(vote, term);
-      // TODO add max accepted value.
+      // SPECULATIVE VOTING: Track which site voted yes
+      e->FeedResponse(vote, term, site_id);
     };
     Call_Async(proxy, Vote, lst_log_idx, lst_log_term, self_id, cur_term, fuattr);
   }
@@ -293,6 +293,58 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
 
 // ============================================================================
 // NotifyRestart RPC - Reconnection Protocol
+// ============================================================================
+
+// ============================================================================
+// VoteDurable RPC - Speculative Voting Protocol
+// ============================================================================
+
+/**
+ * SendVoteDurable - Send VoteDurable RPC to candidate after vote is persisted
+ *
+ * Called after a follower has durably persisted its vote to disk.
+ * This notifies the candidate that this vote is now durable.
+ */
+// @safe
+void RaftCommo::SendVoteDurable(siteid_t candidate_id,
+                                 parid_t par_id,
+                                 ballot_t term,
+                                 siteid_t voter_id) {
+  auto& proxies = rpc_par_proxies_[par_id];
+
+  // Find the proxy for the candidate
+  RaftProxy* proxy = nullptr;
+  for (auto& p : proxies) {
+    if (p.first == candidate_id) {
+      proxy = (RaftProxy*) p.second;
+      break;
+    }
+  }
+
+  if (proxy == nullptr) {
+    Log_warn("[SPEC-RAFT] SendVoteDurable: No proxy found for candidate %d", candidate_id);
+    return;
+  }
+  FutureAttr fuattr;
+  fuattr.callback = [candidate_id, term, voter_id](rusty::Arc<Future> fu) {
+    if (fu->get_error_code() != 0) {
+      Log_debug("[SPEC-RAFT] VoteDurable RPC to %d failed with error %d",
+                candidate_id, fu->get_error_code());
+      return;
+    }
+    bool_t ack = false;
+    fu->get_reply() >> ack;
+    Log_debug("[SPEC-RAFT] VoteDurable RPC to %d completed, ack=%d", candidate_id, ack);
+  };
+
+  Log_info("[SPEC-RAFT] Sending VoteDurable to candidate %d (term=%lu, voter=%d)",
+           candidate_id, term, voter_id);
+
+  Call_Async(proxy, VoteDurable, term, voter_id, fuattr);
+}
+
+// ============================================================================
+// NotifyRestart RPC - Recovery Protocol
 // ============================================================================
 
 /**

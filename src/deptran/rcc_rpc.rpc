@@ -133,6 +133,12 @@ abstract service Raft {
                 ballot_t max_ballot,
                 bool_t vote_granted );
 
+  // VoteDurable - Sent by follower AFTER vote is persisted to disk
+  // Enables speculative voting: leader knows when vote is durable
+  defer VoteDurable(ballot_t term,
+                    siteid_t voter_id |
+                    bool_t acknowledged );
+
   defer AppendEntries(uint64_t slot,
                       ballot_t ballot,
                       uint64_t leaderCurrentTerm,

@@ -25,6 +25,11 @@ enum class NotifyRestartStatus {
 };
 
 class RaftVoteQuorumEvent: public QuorumEvent {
+ private:
+  // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
+  std::set<siteid_t> spec_voters_;
+  std::mutex voters_mtx_;
+
  public:
   using QuorumEvent::QuorumEvent;
   // @safe
@@ -32,11 +37,16 @@ class RaftVoteQuorumEvent: public QuorumEvent {
     return false;
   }
 
-  // @safe
-  void FeedResponse(bool y, ballot_t term) {
+  // @safe - Extended to track voter site IDs for speculative voting
+  void FeedResponse(bool y, ballot_t term, siteid_t voter_id = 0) {
     if (y) {
       // @unsafe
       { vote_yes(); }  // 1 unsafe line: calls @unsafe parent method
+      // Track the voter for speculative voting
+      if (voter_id != 0) {
+        std::lock_guard<std::mutex> lock(voters_mtx_);
+        spec_voters_.insert(voter_id);
+      }
     } else {
       // @unsafe
       { vote_no(); }   // 1 unsafe line: calls @unsafe parent method
@@ -47,9 +57,20 @@ class RaftVoteQuorumEvent: public QuorumEvent {
     }
   }
 
+  // Legacy overload for backward compatibility
+  void FeedResponse(bool y, ballot_t term) {
+    FeedResponse(y, term, 0);
+  }
+
   // @safe
   int64_t Term() {
     return highest_term_;
+  }
+
+  // @safe - Get the set of sites that voted yes (memory votes)
+  std::set<siteid_t> GetSpecVoters() {
+    std::lock_guard<std::mutex> lock(voters_mtx_);
+    return spec_voters_;
   }
 };
 
@@ -152,6 +173,24 @@ friend class RaftProxy;
                       uint64_t leader_term,
                       siteid_t leader_site_id,
                       std::function<void(bool success, uint64_t follower_term)> callback);
+
+  /**
+   * SendVoteDurable - Send VoteDurable RPC to candidate after vote is persisted
+   *
+   * Called after a follower has durably persisted its vote to disk.
+   * Enables speculative voting by notifying the candidate that this vote
+   * is now durable and can count towards secured leader status.
+   *
+   * @param candidate_id - The site ID of the candidate who received the vote
+   * @param par_id - Partition ID
+   * @param term - Term of the vote
+   * @param voter_id - Our own site ID (the voter)
+   */
+  // @safe
+  void SendVoteDurable(siteid_t candidate_id,
+                       parid_t par_id,
+                       ballot_t term,
+                       siteid_t voter_id);
 
   /**
    * SendNotifyRestart - Broadcast restart notification to all peers

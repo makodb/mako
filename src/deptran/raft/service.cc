@@ -83,6 +83,23 @@ void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                     [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
+// @safe - Handle VoteDurable RPC for speculative voting
+// Received when a follower has durably persisted its vote to disk
+void RaftServiceImpl::HandleVoteDurable(const ballot_t& term,
+                                         const siteid_t& voter_id,
+                                         bool_t* acknowledged,
+                                         rrr::DeferredReply defer) {
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *acknowledged = false;
+    defer.reply();
+    return;
+  }
+  svr->OnVoteDurable(term, voter_id, acknowledged,
+                     [defer = std::move(defer)]() mutable { defer.reply(); });
+}
+
 // @safe
 void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         const ballot_t& ballot,
