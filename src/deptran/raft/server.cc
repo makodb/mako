@@ -2250,9 +2250,13 @@ void RaftServer::VerifySpeculativeInvariants() const {
     verify(specCommitIndex_ <= lastLogIndex);
   }
 
-  // Note: durableVoters ⊆ specVoters is NOT strictly enforced after crashes,
-  // because a crashed node loses its memory vote but keeps its durable vote.
+  // Note (Phase 6): durableVoters ⊆ specVoters is NOT strictly enforced after crashes.
+  // A crashed node loses its memory vote but keeps its durable vote on disk.
   // This is expected behavior, not an invariant violation.
+  //
+  // Key insight: |durableVoters| >= quorum is sufficient for securedLeader = true.
+  // Once durable quorum is reached, specVoters quorum is no longer required.
+  // See docs/dev/phase6_relax_invariant_plan.md for full safety argument.
 
   Log_debug("[SPEC-RAFT] Site %d: Invariants OK - securedLogIndex=%lu specCommitIndex=%lu lastLogIndex=%lu",
             site_id_, securedLogIndex_, specCommitIndex_, lastLogIndex);
@@ -2306,15 +2310,32 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   // 2. durableAcks represents entries that were persisted to disk
   //    - Same logic: durable acks survive crashes by definition
 
-  // Check if we've lost speculative vote quorum (only matters if not secured)
+  // Check if we need to become secured or step down
+  // Phase 6: Relaxed invariant - durableVoters and specVoters are independent after crashes
   if (!securedLeader_ && is_leader_) {
     size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
-    // +1 for our own vote
-    size_t vote_count = specVoters_.size() + 1;
-    if (vote_count < quorum) {
-      // We've lost speculative quorum as an unsecured leader
-      stepDown(StepDownReason::UnsecuredFailure);
-      return;  // Don't verify invariants after stepping down
+
+    // NEW (Phase 6.4.1): Check if durable quorum is sufficient for secured status
+    // +1 for our own durable vote (self-vote is always durable - see server.cc:1176-1177)
+    size_t durable_vote_count = durableVoters_.size() + 1;
+    if (durable_vote_count >= quorum) {
+      // We have durable quorum - become secured leader
+      // Safety: durableVoters have votedFor=us on disk, can't vote for others in this term
+      securedLeader_ = true;
+      Log_info("[SPEC-RAFT] Site %d: Became secured via durable quorum (%zu/%zu) "
+               "despite spec quorum loss (specVoters=%zu)",
+               site_id_, durable_vote_count, quorum, specVoters_.size());
+    } else {
+      // No durable quorum yet - check speculative quorum
+      // +1 for our own vote
+      size_t vote_count = specVoters_.size() + 1;
+      if (vote_count < quorum) {
+        // No durable quorum AND no speculative quorum - must step down
+        Log_info("[SPEC-RAFT] Site %d: Lost both spec quorum (%zu/%zu) and durable quorum (%zu/%zu) - stepping down",
+                 site_id_, vote_count, quorum, durable_vote_count, quorum);
+        stepDown(StepDownReason::UnsecuredFailure);
+        return;  // Don't verify invariants after stepping down
+      }
     }
   }
 

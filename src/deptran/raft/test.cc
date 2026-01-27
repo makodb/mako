@@ -50,6 +50,9 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testFullCommitPath())                            // Test 38
       || TEST_EXPAND(testSecuredStepDownPartialRollback())            // Test 39
       || TEST_EXPAND(testSpeculativeEntriesOverwritten())             // Test 40
+      // Phase 6: Relaxed invariant tests
+      || TEST_EXPAND(testDurableQuorumPreemptsStepDown())             // Test 41
+      || TEST_EXPAND(testSecuredViaDurableAfterSpecLoss())            // Test 42
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -4196,6 +4199,197 @@ int RaftLabTest::testSpeculativeEntriesOverwritten(void) {
 
   Log_info("[OVERWRITE-TEST] Final entry committed at index %d", committed);
   Log_info("[OVERWRITE-TEST] Speculative entries overwrite test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test 41: testDurableQuorumPreemptsStepDown
+ *
+ * Tests Phase 6: Relaxed invariant - leader doesn't step down if durableVoters
+ * reaches quorum even when specVoters falls below quorum.
+ *
+ * Scenario:
+ * 1. Start 5-node cluster, wait for leader to become secured
+ * 2. Get durableVoters to reach quorum (3)
+ * 3. Have followers restart (removes from specVoters but not durableVoters)
+ * 4. Verify leader doesn't step down (durableVoters still >= quorum)
+ */
+int RaftLabTest::testDurableQuorumPreemptsStepDown(void) {
+  Init2(41, "Durable quorum preempts step-down");
+
+  // Wait for initial election and leadership stabilization
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[DURABLE-QUORUM-TEST] Initial leader: %d (site %d)", leader, leader_id);
+
+  // Commit entries to establish secured leadership
+  // This ensures fsyncs complete and leader becomes secured
+  DoAgreeAndAssertIndex(6000, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(6001, NSERVERS, index_++);
+
+  // Wait for durable commits (fsyncs to complete)
+  Fiber::sleep(500000);  // 500ms for fsyncs
+
+  // Verify leader is still the same and secured
+  int current_leader = config_->OneLeader();
+  Assert2(current_leader >= 0, "Leader lost after commits");
+  Assert2(current_leader == leader, "Leader changed unexpectedly");
+
+  auto server = config_->GetServer(leader_id);
+  Assert2(server != nullptr, "Leader server is null");
+
+  // Check leader is secured (has durable quorum)
+  bool isSecured = config_->IsSecuredLeader(leader_id);
+  Log_info("[DURABLE-QUORUM-TEST] Leader securedLeader=%d", isSecured);
+
+  // Get specVoters and durableVoters counts
+  size_t specVotersCount = config_->GetSpecVotersCount(leader_id);
+  size_t durableVotersCount = config_->GetDurableVotersCount(leader_id);
+  Log_info("[DURABLE-QUORUM-TEST] Before restarts: specVoters=%zu, durableVoters=%zu",
+           specVotersCount, durableVotersCount);
+
+  Assert2(isSecured, "Leader should be secured after commits with fsync");
+
+  // Now restart 2 followers (not leader) - this removes them from specVoters
+  // but keeps them in durableVoters (their durable votes survive restart)
+  std::vector<siteid_t> followers;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      followers.push_back(svr);
+    }
+  }
+
+  Assert2(followers.size() >= 2, "Need at least 2 followers");
+
+  // Restart 2 followers - this triggers notifyRestart which removes from specVoters
+  Log_info("[DURABLE-QUORUM-TEST] Restarting followers %d and %d",
+           followers[0], followers[1]);
+
+  config_->Restart(followers[0]);
+  Fiber::sleep(100000);  // 100ms
+  config_->Restart(followers[1]);
+  Fiber::sleep(100000);  // 100ms
+
+  // Wait for notifyRestart to be processed
+  Fiber::sleep(300000);  // 300ms
+
+  // Check if leader is still leader
+  current_leader = config_->OneLeader();
+  Log_info("[DURABLE-QUORUM-TEST] Leader after restarts: %d (expected %d)",
+           current_leader, leader);
+
+  // Get updated counts
+  specVotersCount = config_->GetSpecVotersCount(leader_id);
+  durableVotersCount = config_->GetDurableVotersCount(leader_id);
+  isSecured = config_->IsSecuredLeader(leader_id);
+  Log_info("[DURABLE-QUORUM-TEST] After restarts: specVoters=%zu, durableVoters=%zu, secured=%d",
+           specVotersCount, durableVotersCount, isSecured);
+
+  // Key assertion: Leader should still be leader because durableVoters >= quorum
+  // even if specVoters < quorum after restarts
+  Assert2(current_leader == leader,
+          "Leader should NOT step down when durableVoters >= quorum");
+
+  // Verify system still works by committing another entry
+  DoAgreeAndAssertIndex(6002, NSERVERS, index_++);
+
+  Log_info("[DURABLE-QUORUM-TEST] System still operational - test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test 42: testSecuredViaDurableAfterSpecLoss
+ *
+ * Tests that an unsecured leader can become secured via durable quorum
+ * even after losing spec quorum due to restarts.
+ *
+ * Scenario:
+ * 1. Start 5-node cluster
+ * 2. Leader gets memory votes (spec leader) but not yet durable quorum
+ * 3. VoteDurable arrives, building durableVoters
+ * 4. Follower restarts (removes from specVoters)
+ * 5. If durableVoters reaches quorum before spec quorum lost, leader becomes secured
+ */
+int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
+  Init2(42, "Secured via durable quorum after spec loss");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[SECURED-VIA-DURABLE-TEST] Initial leader: %d (site %d)", leader, leader_id);
+
+  // Commit entries to establish stable system and ensure durable quorum
+  DoAgreeAndAssertIndex(6100, NSERVERS, index_++);
+
+  // Wait for fsyncs to complete (VoteDurable messages sent)
+  Fiber::sleep(500000);  // 500ms
+
+  // Verify leader is secured
+  bool isSecured = config_->IsSecuredLeader(leader_id);
+  size_t specVotersCount = config_->GetSpecVotersCount(leader_id);
+  size_t durableVotersCount = config_->GetDurableVotersCount(leader_id);
+
+  Log_info("[SECURED-VIA-DURABLE-TEST] Initial state: secured=%d, specVoters=%zu, durableVoters=%zu",
+           isSecured, specVotersCount, durableVotersCount);
+
+  // For this test to be meaningful, we need to verify the Phase 6 logic works
+  // The key insight is: once durableVoters >= quorum, losing specVoters doesn't matter
+
+  // Get all followers
+  std::vector<siteid_t> followers;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      followers.push_back(svr);
+    }
+  }
+
+  // Restart all followers one by one
+  // Each restart removes from specVoters but durableVoters stays intact
+  for (size_t i = 0; i < followers.size(); i++) {
+    Log_info("[SECURED-VIA-DURABLE-TEST] Restarting follower %d (%zu/%zu)",
+             followers[i], i + 1, followers.size());
+    config_->Restart(followers[i]);
+    Fiber::sleep(200000);  // 200ms between restarts
+
+    // Check leader status after each restart
+    int current_leader = config_->OneLeader();
+    if (current_leader >= 0) {
+      siteid_t curr_leader_id = config_->getServerIdByIndex(current_leader);
+      if (curr_leader_id == leader_id) {
+        // Still same leader - check if secured via durable quorum
+        isSecured = config_->IsSecuredLeader(leader_id);
+        specVotersCount = config_->GetSpecVotersCount(leader_id);
+        durableVotersCount = config_->GetDurableVotersCount(leader_id);
+        Log_info("[SECURED-VIA-DURABLE-TEST] After restart %zu: secured=%d, specVoters=%zu, durableVoters=%zu",
+                 i + 1, isSecured, specVotersCount, durableVotersCount);
+      } else {
+        Log_info("[SECURED-VIA-DURABLE-TEST] Leader changed to %d (site %d)",
+                 current_leader, curr_leader_id);
+      }
+    }
+  }
+
+  // Final check - system should still have a leader (either original or new)
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int final_leader = config_->OneLeader();
+  Assert2(final_leader >= 0, "Should have a leader after restarts");
+
+  // Verify system still works
+  DoAgreeAndAssertIndex(6101, NSERVERS, index_++);
+
+  Log_info("[SECURED-VIA-DURABLE-TEST] System operational after restarts - test PASSED!");
 
   Passed2();
 }

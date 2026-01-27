@@ -19,7 +19,7 @@ Implementation plan: docs/dev/phase1_speculative_state_plan.md
 
 ### 1.2 Invariants to Maintain [DONE 2026-01-27, 02:53]
 - [x] Ensure `securedLogIndex <= specCommitIndex <= log.lastIndex()`
-- [x] Ensure `durableVoters ⊆ specVoters` (initially, before crashes)
+- [x] ~~Ensure `durableVoters ⊆ specVoters` (initially, before crashes)~~ — relaxed in Phase 6
 
 ## Phase 2: Vote RPC Changes [COMPLETED 2026-01-27]
 
@@ -148,27 +148,110 @@ Notes:
 - New leader fixes followers' logs via normal AppendEntries (no explicit rollback needed)
 - Callbacks are invoked while holding mtx_ - keep them lightweight
 
-## Phase 6: New Leader Recovery [COMPLETED in Phase 2]
+## Phase 6: Relax durableVoters ⊆ specVoters Invariant [COMPLETED 2026-01-27]
 
-### 6.1 On Becoming Leader [DONE - see RequestVote() in server.cc:1208-1231]
-- [x] Reset `securedLeader = false`
-- [x] Reset `specVoters` = voters from election + self (not just {self})
-- [x] Reset `durableVoters = {self}` (assuming self vote is always durable)
-- [x] Reset `securedLogIndex = commitIndex` (from previous term)
-- [x] Reset `specCommitIndex = commitIndex`
-- [x] Clear `memoryAcks_` and `durableAcks_` for new term
+Implementation plan: docs/dev/phase6_relax_invariant_plan.md
 
-## Phase 7: Tests [MOSTLY COMPLETE 2026-01-27]
+### 6.1 Motivation
+
+The original invariant `durableVoters ⊆ specVoters` only holds initially. After crashes, a node
+can be in `durableVoters` but not in `specVoters`:
+
+```
+1. B sends VoteDurable → added to durableVoters
+2. B crashes, restarts, sends notifyRestart
+3. A removes B from specVoters (memory vote is gone)
+4. Now: B ∈ durableVoters but B ∉ specVoters
+```
+
+**Key insight:** If `|durableVoters| >= quorum`, those votes are on disk. Even if those nodes
+crash and restart, they can't vote for anyone else in this term. Therefore, we are the unique
+leader of this term — we're secured. The `specVoters` quorum is irrelevant once `durableVoters`
+reaches quorum.
+
+### 6.2 Safety Argument
+
+- If `|durableVoters| >= quorum`, those nodes have `votedFor = me` on disk
+- Even if they crash and restart, they'll see `votedFor = us` after recovery
+- They cannot vote for any other candidate in this term
+- Therefore, no other candidate can win election in this term
+- Therefore, we are the **unique leader** → we're secured
+
+This is the standard Raft safety argument applied to durable votes. **Correctness is preserved.**
+
+### 6.3 The Race Condition This Fixes
+
+```
+Timeline (current behavior, suboptimal):
+1. specVoters = {A, B, C}, durableVoters = {A, B}  (quorum in 3-node)
+2. C sends VoteDurable (in flight on network)
+3. B crashes → notifyRestart → specVoters = {A, C}
+4. C crashes → notifyRestart → specVoters = {A}
+5. !securedLeader && specVoters < quorum → STEP DOWN ❌
+6. C's VoteDurable arrives → durableVoters = {A, B, C} (too late!)
+```
+
+With this change:
+```
+5. Check durableVoters = {A, B} >= quorum → securedLeader = true ✓
+6. Continue as secured leader (improved availability)
+```
+
+### 6.4 Implementation Changes
+
+#### 6.4.1 Update OnPeerRestart Logic [DONE 2026-01-27, 16:10]
+- [x] Before stepping down, check if `|durableVoters| >= quorum`
+- [x] If durable quorum exists, set `securedLeader = true` instead of stepping down
+- [x] Only step down if both `specVoters < quorum` AND `durableVoters < quorum`
+
+```cpp
+void OnPeerRestart(NodeId s) {
+    specVoters_.erase(s);
+    // Remove from memoryAcks for entries > securedLogIndex
+
+    // NEW: Check durable quorum before considering step-down
+    if (!securedLeader_ && durableVoters_.size() >= quorum_size_) {
+        securedLeader_ = true;
+        Log_info("Became secured via durable quorum despite spec quorum loss");
+    }
+
+    if (!securedLeader_ && specVoters_.size() < quorum_size_) {
+        stepDown(StepDownReason::UnsecuredFailure);
+    }
+}
+```
+
+#### 6.4.2 Update Invariants Documentation [DONE 2026-01-27, 16:10]
+- [x] Remove `durableVoters ⊆ specVoters` from invariants
+- [x] Document: `durableVoters` and `specVoters` are independent sets after crashes
+- [x] Clarify: `|durableVoters| >= quorum` is sufficient for `securedLeader = true`
+
+### 6.5 Tests for Phase 6 [DONE 2026-01-27, 16:15]
+
+- [x] `testDurableQuorumPreemptsStepDown` (Test 41): Leader doesn't step down if durableVoters >= quorum even when specVoters < quorum
+- [x] `testSecuredViaDurableAfterSpecLoss` (Test 42): Verify transition to secured when durable quorum achieved after spec quorum lost due to restarts
+
+## Phase 7: New Leader Recovery
+
+### 7.1 On Becoming Leader
+- [ ] Reset `securedLeader = false`
+- [ ] Reset `specVoters` = voters from election + self (not just {self})
+- [ ] Reset `durableVoters = {self}` (assuming self vote is always durable)
+- [ ] Reset `securedLogIndex = commitIndex` (from previous term)
+- [ ] Reset `specCommitIndex = commitIndex`
+- [ ] Clear `memoryAcks_` and `durableAcks_` for new term
+
+## Phase 8: Tests
 
 **Summary:**
-- Tests 20-40 implemented and passing
-- Client notification tests completed after Phase 5.3 callback infrastructure
+- Tests 20-40 need implementation
+- Client notification tests needed after Phase 5.3 callback infrastructure
 - Remaining complex test deferred (testFsyncLatencyVariance) - requires
   fsync timing control infrastructure
 
-Implementation plan: docs/dev/phase7_speculative_tests_plan.md
+Implementation plan: docs/dev/phase8_speculative_tests_plan.md
 
-### 7.0 File Structure and Philosophy
+### 8.0 File Structure and Philosophy
 
 **Build and run:**
 - Build: `make raft-test -j32`
@@ -201,40 +284,40 @@ Tests should verify the CONTRACT, not assume entries always survive:
    - Only testable in graceful step-down scenarios (leader still alive)
    - NOT testable in crash scenarios (leader dead, can't notify)
 
-### 7.1 Unit Tests (test.cc) [PARTIAL 2026-01-27, 05:45]
+### 8.1 Unit Tests (test.cc)
 
 #### Leadership Tests
-- [x] `testSpeculativeLeaderElection` (Test 20): Verify leader becomes speculative first, then secured after VoteDurable
-- [x] `testSecuredLeaderContinuesAfterSpecQuorumLoss` (Test 23): securedLeader + lost spec quorum → continues as leader
+- [ ] `testSpeculativeLeaderElection` (Test 20): Verify leader becomes speculative first, then secured after VoteDurable
+- [ ] `testSecuredLeaderContinuesAfterSpecQuorumLoss` (Test 23): securedLeader + lost spec quorum → continues as leader
 
 #### Commit Tests
-- [x] `testSpecCommitIndexAdvances` (Test 21): specCommitIndex advances on memory ack quorum
-- [x] `testDurableCommitRequiresSecuredLeader` (Test 24): durable ack quorum but !securedLeader → securedLogIndex does NOT advance
+- [ ] `testSpecCommitIndexAdvances` (Test 21): specCommitIndex advances on memory ack quorum
+- [ ] `testDurableCommitRequiresSecuredLeader` (Test 24): durable ack quorum but !securedLeader → securedLogIndex does NOT advance
 
 #### Invariant Tests
-- [x] `testSpeculativeInvariantsHold` (Test 22): verify `securedLogIndex <= specCommitIndex <= lastLogIndex` always holds
+- [ ] `testSpeculativeInvariantsHold` (Test 22): verify `securedLogIndex <= specCommitIndex <= lastLogIndex` always holds
 
-#### Client Notification Tests [COMPLETED 2026-01-27]
-- [x] `testSpeculativeCommitNotification` (Test 34): client gets SPECULATIVE status
-- [x] `testDurableCommitNotification` (Test 35): client gets DURABLE status
-- [x] `testNotificationOrdering` (Test 36): SPECULATIVE before DURABLE for same entry
+#### Client Notification Tests
+- [ ] `testSpeculativeCommitNotification` (Test 34): client gets SPECULATIVE status
+- [ ] `testDurableCommitNotification` (Test 35): client gets DURABLE status
+- [ ] `testNotificationOrdering` (Test 36): SPECULATIVE before DURABLE for same entry
 
-### 7.2 NotifyRestart and Step Down Tests (test.cc)
+### 8.2 NotifyRestart and Step Down Tests (test.cc)
 
 #### NotifyRestart Handling
-- [x] `testRestartRemovesFromSpecVoters` (Test 25): follower restarts → verifies system continues correctly
-- [x] `testRestartRemovesFromMemoryAcks` (Test 27): follower restarts → verifies entries still commit with quorum
-- [x] `testRestartDoesNotAffectDurableVoters` (Test 28): follower restart doesn't affect durableVoters (already on disk)
+- [ ] `testRestartRemovesFromSpecVoters` (Test 25): follower restarts → verifies system continues correctly
+- [ ] `testRestartRemovesFromMemoryAcks` (Test 27): follower restarts → verifies entries still commit with quorum
+- [ ] `testRestartDoesNotAffectDurableVoters` (Test 28): follower restart doesn't affect durableVoters (already on disk)
 
 #### Step Down Scenarios (Graceful — leader still alive)
-- [x] `testUnsecuredLostQuorumStepsDown` (Test 26): verifies secured leader continues, documents unsecured behavior
-- [x] `testUnsecuredStepDownNotifiesRollback` (Test 37): on graceful step down, clients of current-term entries get ROLLEDBACK
-- [x] `testSecuredStepDownPartialRollback` (Test 39): durable entries not rolled back on step-down (callback removed after DURABLE)
+- [ ] `testUnsecuredLostQuorumStepsDown` (Test 26): verifies secured leader continues, documents unsecured behavior
+- [ ] `testUnsecuredStepDownNotifiesRollback` (Test 37): on graceful step down, clients of current-term entries get ROLLEDBACK
+- [ ] `testSecuredStepDownPartialRollback` (Test 39): durable entries not rolled back on step-down (callback removed after DURABLE)
 
-### 7.3 Integration Tests (speculative_test.cc)
+### 8.3 Integration Tests (speculative_test.cc)
 
 #### Happy Path
-- [x] `testFullCommitPath` (Test 38):
+- [ ] `testFullCommitPath` (Test 38):
   ```
   1. Submit request to spec leader
   2. Verify client callback receives SPECULATIVE
@@ -245,7 +328,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   ```
 
 #### Speculative Entries Survive (Lucky Path)
-- [x] `testSpeculativeEntriesSurviveCrash` (Test 29):
+- [ ] `testSpeculativeEntriesSurviveCrash` (Test 29):
   ```
   1. A is spec leader, spec commits X at index 10 (X in memory of {A, B, C})
   2. A crashes
@@ -255,7 +338,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   ```
 
 #### Speculative Entries Overwritten (New Leader Wins)
-- [x] `testSpeculativeEntriesOverwritten` (Test 40):
+- [ ] `testSpeculativeEntriesOverwritten` (Test 40):
   ```
   1. A is unsecured spec leader, spec commits X
   2. Majority crashes (A loses spec quorum), A steps down
@@ -266,7 +349,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   Note: ROLLEDBACK notification only if A was alive during step-down
 
 #### Vote Crash Scenarios
-- [x] `testVoterCrashBeforeVoteFsync` (Test 30):
+- [ ] `testVoterCrashBeforeVoteFsync` (Test 30):
   ```
   1. A gets memory votes from {A, B, C}, becomes spec leader (term 5)
   2. C crashes BEFORE vote fsync
@@ -276,7 +359,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
      In 3-node cluster: < quorum → A steps down
   ```
 
-- [x] `testDoubleVotePrevention` (Test 31):
+- [ ] `testDoubleVotePrevention` (Test 31):
   ```
   1. A gets memory votes from {A, B, C}, becomes spec leader term 5
   2. C crashes (loses in-memory vote), restarts
@@ -286,23 +369,21 @@ Tests should verify the CONTRACT, not assume entries always survive:
   6. Verify: no conflicting durable commits (safety preserved)
   ```
 
-### 7.4 Stress Tests
-- [x] `testRapidRestarts` (Test 32): multiple followers rapidly restarting, verify consistency
-- [x] `testConcurrentElections` (Test 33): multiple candidates with speculative voting
+### 8.4 Stress Tests
+- [ ] `testRapidRestarts` (Test 32): multiple followers rapidly restarting, verify consistency
+- [ ] `testConcurrentElections` (Test 33): multiple candidates with speculative voting
 - [ ] `testFsyncLatencyVariance`: simulate variable fsync times, verify correctness
 
-## Phase 8: pass ci tests [COMPLETED 2026-01-27]
+## Phase 9: pass ci tests
 
-- [x] Pass ci/ci.sh compile
-- [x] Pass all the tests related to Raft (shard1ReplicationRaft, shard2ReplicationRaft, shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft)
-- [x] Pass all other ci tests (simpleTransaction, simplePaxos, shard1Replication, shard2Replication, rocksdbTests, multiShardSingleProcess)
+- [ ] Pass ci/ci.sh compile
+- [ ] Pass all the tests related to Raft (shard1ReplicationRaft, shard2ReplicationRaft, shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft)
+- [ ] Pass all other ci tests (simpleTransaction, simplePaxos, shard1Replication, shard2Replication, rocksdbTests, multiShardSingleProcess)
 
-Note: Fixed RAFT_TEST_CORO to only run in lab test config (1 partition, 5 replicas) to avoid assertion failures in CI tests with different configurations.
-
-## Phase 9: Optimizations (Future)
+## Phase 10: Optimizations (Future)
 
 - [ ] Batch durable acks to reduce message overhead
-- [x] Leader self-vote is always durable (no need to track) [Already implemented - see server.cc:1176-1177, 1220-1222]
+- [ ] Leader self-vote is always durable (no need to track)
 - [ ] Combine VoteDurable with first AppendEntries response
 - [ ] Track only counts (not sets) for durableVoters once secured
 

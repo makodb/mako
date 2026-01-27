@@ -128,6 +128,17 @@ class RaftLabTest {
   // Test speculative entries overwritten when new leader commits at same index
   int testSpeculativeEntriesOverwritten(void);
 
+  // ===========================================================================
+  // PHASE 6: Relaxed Invariant Tests
+  // ===========================================================================
+  // Tests for durableVoters ⊆ specVoters relaxation
+
+  // Test that leader doesn't step down if durableVoters >= quorum (even when specVoters < quorum)
+  int testDurableQuorumPreemptsStepDown(void);
+
+  // Test transition to secured via durable quorum after spec quorum lost due to restarts
+  int testSecuredViaDurableAfterSpecLoss(void);
+
   void wait(uint64_t microseconds);
 
 };
