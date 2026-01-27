@@ -73,28 +73,22 @@ Implementation plan: docs/dev/phase4_notifyrestart_plan.md
   - [x] Remove `s` from `specVoters` (vote is no longer reliable)
   - [x] Remove `s` from `memoryAcks[i]` for all `i > securedLogIndex`
   - [x] If `!securedLeader && |specVoters| < quorum`:
-    - [x] Log warning (full stepDown deferred to Phase 5)
+    - [x] Call `stepDown(UnsecuredFailure)` (implemented in Phase 5)
 
-## Phase 5: Step Down and Client Notification
+## Phase 5: Step Down and Client Notification [PARTIAL 2026-01-27]
 
-### 5.1 Step Down Handler
-- [ ] Add `StepDownReason: enum { UnsecuredFailure, SecuredFailure, HigherTerm }`
-- [ ] Implement `stepDown(reason)`:
-  ```
-  // Best-effort rollback notification (only possible if leader is still alive)
-  if reason == UnsecuredFailure:
-      notifyClientsRollback(all entries from currentTerm)  // best-effort
-  else if reason == SecuredFailure:
-      notifyClientsRollback(entries in (securedLogIndex, specCommitIndex])  // best-effort
-  // Note: HigherTerm doesn't necessarily mean our entries are invalid
+Implementation plan: docs/dev/phase5_stepdown_plan.md
 
-  // Log truncation is OPTIONAL - new leader will fix via AppendEntries anyway
-  // truncateLog(...)
-
-  resetLeaderState()
-  becomeFollower()
-  startElectionTimer()
-  ```
+### 5.1 Step Down Handler [DONE 2026-01-27, 05:10]
+- [x] Add `StepDownReason: enum { UnsecuredFailure, SecuredFailure, HigherTerm }`
+- [x] Implement `stepDown(reason)`:
+  - [x] Log step-down event with reason
+  - [x] Reset speculative state via ResetSpeculativeState()
+  - [x] Transition to follower via setIsLeader(false)
+  - [x] Reset election timer
+  - [ ] Client rollback notification (deferred - requires callback infrastructure)
+- [x] Update OnPeerRestart to call stepDown(UnsecuredFailure) when losing quorum
+- [x] Update HeartbeatLoop to call stepDown(HigherTerm) when seeing higher term
 
 ### 5.2 Client Notification Contract
 
@@ -133,6 +127,12 @@ Only sequential failure of the entire memory quorum prevents ANY notification.
 ## Phase 7: Tests
 
 ### 7.0 File Structure and Philosophy
+
+**Compile cammand**
+
+The original src/deptran/raft/test.cc is compiled by 'make raft-test -j32'. And run with './build/deptran_server ./config/raft_lab_test.ym' with macro for disk turned on. 
+
+Determine your way of compile and running the newly added test.
 
 **File structure:**
 ```

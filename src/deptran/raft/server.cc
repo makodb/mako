@@ -941,8 +941,8 @@ void RaftServer::HeartbeatLoop() {
           if (currentTerm == pending.sent_term) {
             Log_info("[STEPDOWN] Site %d: Stepping down due to higher term from follower %d (my_term=%lu, follower_term=%lu)",
                      site_id_, pending.follower_id, pending.sent_term, resp.term);
-            setIsLeader(false);
             currentTerm = resp.term;
+            stepDown(StepDownReason::HigherTerm);
             mtx_.unlock();
             break;  // Stop processing - we're no longer leader
           }
@@ -2282,22 +2282,6 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
              site_id_, restarted_site_id, entries_affected);
   }
 
-  // Check if we've lost speculative vote quorum (only matters if not secured)
-  if (!securedLeader_) {
-    size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
-    // +1 for our own vote
-    size_t vote_count = specVoters_.size() + 1;
-    if (vote_count < quorum) {
-      // We've lost speculative quorum as an unsecured leader
-      // This is a critical situation - we should step down
-      Log_warn("[SPEC-RAFT] Site %d: Lost speculative vote quorum (%zu < %zu) - unsecured leader should step down",
-               site_id_, vote_count, quorum);
-      // TODO (Phase 5): Implement stepDown(UnsecuredFailure)
-      // For now, just log the warning. Full step-down implementation
-      // with client notification is deferred to Phase 5.
-    }
-  }
-
   // Note: We don't remove from durableVoters or durableAcks because:
   // 1. durableVoters represents votes that were persisted to disk BEFORE the crash
   //    - If the vote was durable, it survives the crash
@@ -2305,7 +2289,70 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
   // 2. durableAcks represents entries that were persisted to disk
   //    - Same logic: durable acks survive crashes by definition
 
+  // Check if we've lost speculative vote quorum (only matters if not secured)
+  if (!securedLeader_ && is_leader_) {
+    size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+    // +1 for our own vote
+    size_t vote_count = specVoters_.size() + 1;
+    if (vote_count < quorum) {
+      // We've lost speculative quorum as an unsecured leader
+      stepDown(StepDownReason::UnsecuredFailure);
+      return;  // Don't verify invariants after stepping down
+    }
+  }
+
   VerifySpeculativeInvariants();
+}
+
+// ============================================================================
+// stepDown - Central leader step-down function
+// ============================================================================
+
+static const char* StepDownReasonToString(StepDownReason reason) {
+  switch (reason) {
+    case StepDownReason::UnsecuredFailure: return "UnsecuredFailure";
+    case StepDownReason::SecuredFailure: return "SecuredFailure";
+    case StepDownReason::HigherTerm: return "HigherTerm";
+    default: return "Unknown";
+  }
+}
+
+void RaftServer::stepDown(StepDownReason reason) {
+  // Must be called with mtx_ held (caller's responsibility)
+  // Most callers already hold the lock
+
+  Log_info("[SPEC-RAFT] Site %d: Stepping down as leader (reason=%s, term=%lu, "
+           "securedLeader=%d, specVoters=%zu, durableVoters=%zu)",
+           site_id_, StepDownReasonToString(reason), currentTerm,
+           securedLeader_, specVoters_.size(), durableVoters_.size());
+
+  // TODO (future): Notify pending clients based on reason
+  // The client notification infrastructure is deferred to a future phase.
+  // For now, just log the step-down reason.
+  //
+  // Future implementation outline:
+  // if (reason == StepDownReason::UnsecuredFailure) {
+  //     // All current-term entries are suspect
+  //     notifyClientsRollback(commitIndex + 1, lastLogIndex);
+  // } else if (reason == StepDownReason::SecuredFailure) {
+  //     // Only unsecured entries are suspect
+  //     notifyClientsRollback(securedLogIndex_ + 1, specCommitIndex_);
+  // }
+  // // HigherTerm: no automatic rollback - entries may still commit
+
+  // Reset speculative state
+  // This clears specVoters_, durableVoters_, etc.
+  ResetSpeculativeState();
+
+  // Transition to follower state
+  // This handles view updates, callback notifications, etc.
+  setIsLeader(false);
+
+  // Reset election timer
+  // Important: Give other servers time to elect a new leader
+  resetTimer("stepDown");
+
+  Log_info("[SPEC-RAFT] Site %d: Step-down complete, now follower", site_id_);
 }
 
 } // namespace janus

@@ -18,6 +18,23 @@ class CmdData;
 #define NUM_BATCH_TIMER_RESET  (100)
 #define SEC_BATCH_TIMER_RESET  (1)
 
+/**
+ * StepDownReason - Why the leader is stepping down
+ *
+ * Used by stepDown() to determine what action to take:
+ * - UnsecuredFailure: Lost speculative quorum while unsecured leader.
+ *   All current-term entries are suspect, clients should be notified.
+ * - SecuredFailure: Lost quorum but was secured leader.
+ *   Only unsecured entries (specCommitIndex, securedLogIndex] are suspect.
+ * - HigherTerm: Saw higher term from another server.
+ *   Entries may still be valid, no automatic rollback notification.
+ */
+enum class StepDownReason {
+  UnsecuredFailure,  // Lost spec quorum while unsecured
+  SecuredFailure,    // Lost quorum but was secured
+  HigherTerm         // Saw higher term from another server
+};
+
 struct RaftData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
@@ -862,5 +879,25 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - Modifies speculative state
   void OnPeerRestart(siteid_t restarted_site_id);
+
+  /**
+   * Step down as leader with specified reason.
+   *
+   * This is the central function for leader step-down in speculative Raft.
+   * It handles:
+   * 1. Logging the step-down event with reason
+   * 2. Resetting speculative state
+   * 3. Transitioning to follower state
+   * 4. Resetting election timer
+   *
+   * Future: Will also notify pending clients based on reason:
+   * - UnsecuredFailure: Rollback all current-term entries
+   * - SecuredFailure: Rollback only unsecured entries
+   * - HigherTerm: No automatic rollback (entries may still be valid)
+   *
+   * @param reason - Why the leader is stepping down
+   */
+  // @unsafe - Modifies state, calls setIsLeader
+  void stepDown(StepDownReason reason);
 };
 } // namespace janus
