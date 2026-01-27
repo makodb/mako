@@ -1944,4 +1944,67 @@ void RaftServer::InitiateLeadershipTransfer() {
   }
 }
 
+// ============================================================================
+// SPECULATIVE REPLICATION STATE (Phase 1.1)
+// ============================================================================
+
+void RaftServer::ResetSpeculativeState() {
+  // Note: caller must hold mtx_ lock
+
+  if (is_leader_) {
+    // On becoming leader: initialize with self votes
+    specVoters_.clear();
+    specVoters_.insert(site_id_);  // voted for self
+    durableVoters_.clear();
+    durableVoters_.insert(site_id_);  // self vote is always durable
+
+    // Reset commit indices to current commitIndex (from previous term)
+    securedLogIndex_ = commitIndex;
+    specCommitIndex_ = commitIndex;
+
+    // Leader starts unsecured until durable vote quorum is achieved
+    securedLeader_ = false;
+
+    Log_info("[SPEC-RAFT] Site %d: Reset speculative state as new leader - "
+             "specVoters={%d} durableVoters={%d} securedLogIndex=%lu specCommitIndex=%lu",
+             site_id_, site_id_, site_id_, securedLogIndex_, specCommitIndex_);
+  } else {
+    // On stepping down: clear all speculative state
+    specVoters_.clear();
+    durableVoters_.clear();
+    securedLogIndex_ = 0;
+    specCommitIndex_ = 0;
+    securedLeader_ = false;
+
+    Log_info("[SPEC-RAFT] Site %d: Cleared speculative state (stepped down)",
+             site_id_);
+  }
+
+  // Clear ack tracking maps
+  memoryAcks_.clear();
+  durableAcks_.clear();
+}
+
+void RaftServer::VerifySpeculativeInvariants() const {
+  // Invariant 1: securedLogIndex <= specCommitIndex <= lastLogIndex
+  if (securedLogIndex_ > specCommitIndex_) {
+    Log_error("[SPEC-RAFT] INVARIANT VIOLATION: securedLogIndex (%lu) > specCommitIndex (%lu)",
+              securedLogIndex_, specCommitIndex_);
+    verify(securedLogIndex_ <= specCommitIndex_);
+  }
+
+  if (specCommitIndex_ > lastLogIndex) {
+    Log_error("[SPEC-RAFT] INVARIANT VIOLATION: specCommitIndex (%lu) > lastLogIndex (%lu)",
+              specCommitIndex_, lastLogIndex);
+    verify(specCommitIndex_ <= lastLogIndex);
+  }
+
+  // Note: durableVoters ⊆ specVoters is NOT strictly enforced after crashes,
+  // because a crashed node loses its memory vote but keeps its durable vote.
+  // This is expected behavior, not an invariant violation.
+
+  Log_debug("[SPEC-RAFT] Site %d: Invariants OK - securedLogIndex=%lu specCommitIndex=%lu lastLogIndex=%lu",
+            site_id_, securedLogIndex_, specCommitIndex_, lastLogIndex);
+}
+
 } // namespace janus

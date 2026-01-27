@@ -125,6 +125,30 @@ class RaftServer : public TxLogServer {
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
+  // ============================================================================
+  // SPECULATIVE REPLICATION STATE (Phase 1.1)
+  // ============================================================================
+  // Enables separation of "speculative" (memory quorum) from "secured" (durable
+  // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
+
+  // Leader security status - true when durable vote quorum achieved
+  // When securedLeader_ = true, a quorum has votedFor = me on disk,
+  // so no other candidate can win election in this term.
+  bool securedLeader_ = false;
+
+  // Vote tracking for current term (as candidate/leader)
+  std::set<siteid_t> specVoters_;     // servers that have memory-voted for us
+  std::set<siteid_t> durableVoters_;  // servers that have durably-voted for us
+
+  // Log commit tracking
+  // Invariant: securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
+  uint64_t securedLogIndex_ = 0;      // highest index with durable ack quorum
+  uint64_t specCommitIndex_ = 0;      // highest index with memory ack quorum
+
+  // Acknowledgment tracking per log index
+  // Key: log index, Value: set of nodes that have acked at that level
+  std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
+  std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
   // @unsafe - Uses INVALID_SITEID macro with integer cast
   bool AmIPreferredLeader() const {
@@ -659,5 +683,105 @@ class RaftServer : public TxLogServer {
    * Stop leadership transfer monitoring
    */
   void StopLeadershipTransferMonitoring();
+
+  // ============================================================================
+  // PUBLIC API: Speculative Replication State (Phase 1.1)
+  // ============================================================================
+
+  /**
+   * Check if this leader has achieved secured status (durable vote quorum).
+   * When securedLeader_ = true, a quorum has votedFor = me on disk,
+   * so no other candidate can win election in this term.
+   * @return true if leader has durable vote quorum
+   */
+  // @safe - Read-only accessor
+  bool IsSecuredLeader() const {
+    return securedLeader_;
+  }
+
+  /**
+   * Get the speculative commit index (highest index with memory ack quorum).
+   * @return specCommitIndex value
+   */
+  // @safe - Read-only accessor
+  uint64_t GetSpecCommitIndex() const {
+    return specCommitIndex_;
+  }
+
+  /**
+   * Get the secured log index (highest index with durable ack quorum).
+   * Invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
+   * @return securedLogIndex value
+   */
+  // @safe - Read-only accessor
+  uint64_t GetSecuredLogIndex() const {
+    return securedLogIndex_;
+  }
+
+  /**
+   * Get the set of servers that have memory-voted for us in current term.
+   * @return copy of specVoters set
+   */
+  // @safe - Returns copy, read-only access
+  std::set<siteid_t> GetSpecVoters() const {
+    return specVoters_;
+  }
+
+  /**
+   * Get the set of servers that have durably-voted for us in current term.
+   * @return copy of durableVoters set
+   */
+  // @safe - Returns copy, read-only access
+  std::set<siteid_t> GetDurableVoters() const {
+    return durableVoters_;
+  }
+
+  /**
+   * Get the number of memory acks for a specific log index.
+   * @param index Log index to query
+   * @return Number of nodes that have memory-acked this index
+   */
+  // @safe - Read-only accessor
+  size_t GetMemoryAckCount(uint64_t index) const {
+    auto it = memoryAcks_.find(index);
+    return it != memoryAcks_.end() ? it->second.size() : 0;
+  }
+
+  /**
+   * Get the number of durable acks for a specific log index.
+   * @param index Log index to query
+   * @return Number of nodes that have durably-acked this index
+   */
+  // @safe - Read-only accessor
+  size_t GetDurableAckCount(uint64_t index) const {
+    auto it = durableAcks_.find(index);
+    return it != durableAcks_.end() ? it->second.size() : 0;
+  }
+
+  /**
+   * Reset speculative state when becoming leader or stepping down.
+   * Called during leadership transitions.
+   *
+   * On becoming leader:
+   * - specVoters = {self}  (voted for self)
+   * - durableVoters = {self}  (self vote is always durable)
+   * - securedLogIndex = commitIndex (from previous term)
+   * - specCommitIndex = commitIndex
+   *
+   * On stepping down:
+   * - All speculative state is cleared
+   */
+  // @unsafe - Modifies state
+  void ResetSpeculativeState();
+
+  /**
+   * Verify speculative state invariants.
+   * Debug helper - asserts if invariants are violated.
+   * Invariants:
+   * - securedLogIndex <= specCommitIndex <= lastLogIndex
+   * - durableVoters ⊆ specVoters (conceptually, not strictly enforced after crashes)
+   */
+  // @safe - Read-only check
+  void VerifySpeculativeInvariants() const;
 };
 } // namespace janus
