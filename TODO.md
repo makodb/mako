@@ -252,11 +252,13 @@ Tests should verify the CONTRACT, not assume entries always survive:
 - [ ] `testConcurrentElections`: multiple candidates with speculative voting
 - [ ] `testFsyncLatencyVariance`: simulate variable fsync times, verify correctness
 
-## Phase 8: pass ci tests
+## Phase 8: pass ci tests [COMPLETED 2026-01-27]
 
-- [ ] Pass ci/ci.sh compile. 
-- [ ] Pass all the tests related to Raft. At this time failure of Raft server is not enabled, so no (speculatively) committed entries will be lost.
-- [ ] Pass all other ci tests as well.
+- [x] Pass ci/ci.sh compile
+- [x] Pass all the tests related to Raft (shard1ReplicationRaft, shard2ReplicationRaft, shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft)
+- [x] Pass all other ci tests (simpleTransaction, simplePaxos, shard1Replication, shard2Replication, rocksdbTests, multiShardSingleProcess)
+
+Note: Fixed RAFT_TEST_CORO to only run in lab test config (1 partition, 5 replicas) to avoid assertion failures in CI tests with different configurations.
 
 ## Phase 9: Optimizations (Future)
 
