@@ -47,6 +47,7 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testDurableCommitNotification())                 // Test 35
       || TEST_EXPAND(testNotificationOrdering())                      // Test 36
       || TEST_EXPAND(testUnsecuredStepDownNotifiesRollback())         // Test 37
+      || TEST_EXPAND(testFullCommitPath())                            // Test 38
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -3755,6 +3756,144 @@ int RaftLabTest::testUnsecuredStepDownNotifiesRollback(void) {
   Assert2(final_leader >= 0, "Should have leader after recovery");
 
   Log_info("[CALLBACK-TEST] Unsecured step-down rollback test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test the full commit path: SPECULATIVE -> DURABLE -> persist after restart.
+ *
+ * Happy path scenario:
+ * 1. Submit request to secured leader
+ * 2. Verify client callback receives SPECULATIVE
+ * 3. Wait for fsyncs to complete
+ * 4. Verify client callback receives DURABLE
+ * 5. Crash/restart all servers
+ * 6. Verify entry persisted correctly
+ */
+int RaftLabTest::testFullCommitPath(void) {
+  Init2(38, "Full commit path (SPECULATIVE -> DURABLE -> persist)");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[FULL-PATH-TEST] Leader: %d (site %d)", leader, leader_id);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  Assert2(secured, "Leader should be secured for full path test");
+
+  // Track callback invocations with timestamps
+  std::atomic<bool> gotSpeculative{false};
+  std::atomic<bool> gotDurable{false};
+  std::atomic<uint64_t> specTime{0};
+  std::atomic<uint64_t> durableTime{0};
+
+  // Submit entry with callback
+  int cmd = 4400;
+  uint64_t index = 0;
+  uint64_t term = 0;
+
+  Log_info("[FULL-PATH-TEST] Submitting command %d with callback", cmd);
+
+  bool ok = config_->StartWithCallback(leader_id, cmd, &index, &term,
+    [&](CommitStatus status) {
+      uint64_t now = Time::now();
+      Log_info("[FULL-PATH-TEST] Callback received: status=%d time=%lu",
+               static_cast<int>(status), now);
+      if (status == CommitStatus::SPECULATIVE) {
+        gotSpeculative = true;
+        specTime = now;
+      } else if (status == CommitStatus::DURABLE) {
+        gotDurable = true;
+        durableTime = now;
+      }
+    });
+
+  Assert2(ok, "Failed to submit command with callback");
+  Log_info("[FULL-PATH-TEST] Submitted command %d at index %lu term %lu", cmd, index, term);
+
+  // Step 2: Wait for SPECULATIVE (memory quorum)
+  // Should be very fast
+  Fiber::sleep(200000);  // 200ms
+  Log_info("[FULL-PATH-TEST] After 200ms: spec=%d durable=%d",
+           gotSpeculative.load(), gotDurable.load());
+
+  // Step 3: Wait for DURABLE (disk quorum with secured leader)
+  // This requires fsync to complete
+  Fiber::sleep(1000000);  // 1s total
+  Log_info("[FULL-PATH-TEST] After 1s: spec=%d durable=%d",
+           gotSpeculative.load(), gotDurable.load());
+
+  // Step 4: Verify both notifications received
+  Assert2(gotSpeculative.load(), "Should have received SPECULATIVE notification");
+  Assert2(gotDurable.load(), "Should have received DURABLE notification");
+
+  // Verify SPECULATIVE came before DURABLE
+  if (specTime.load() > 0 && durableTime.load() > 0) {
+    Assert2(specTime.load() <= durableTime.load(),
+            "SPECULATIVE should come before or at DURABLE");
+    Log_info("[FULL-PATH-TEST] Spec time: %lu, Durable time: %lu, delta: %lu us",
+             specTime.load(), durableTime.load(), durableTime.load() - specTime.load());
+  }
+
+  // Step 5: Restart all servers to verify persistence
+  Log_info("[FULL-PATH-TEST] Restarting all servers...");
+
+  // First, kill all servers
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    config_->Kill(svr);
+  }
+
+  Fiber::sleep(200000);  // 200ms
+
+  // Restart all servers
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    config_->Restart(svr);
+  }
+
+  // Wait for election
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+  // Step 6: Verify entry persisted
+  int new_leader = config_->OneLeader();
+  if (new_leader < 0) {
+    Fiber::sleep(ELECTIONTIMEOUT);
+    new_leader = config_->OneLeader();
+  }
+  Assert2(new_leader >= 0, "Should have leader after restart");
+
+  Log_info("[FULL-PATH-TEST] New leader after restart: %d", new_leader);
+
+  // Check if entry is committed on servers
+  int nCommitted = config_->NCommitted(index);
+  Log_info("[FULL-PATH-TEST] Servers with entry at index %lu: %d", index, nCommitted);
+
+  // The entry should be committed on all servers (it was durably committed)
+  Assert2(nCommitted >= 3, "Entry should be committed on majority after restart");
+
+  // Submit another entry to verify system is operational
+  siteid_t new_leader_id = config_->getServerIdByIndex(new_leader);
+  int finalCmd = 4401;
+  uint64_t finalIndex = 0;
+  uint64_t finalTerm = 0;
+
+  ok = config_->Start(new_leader_id, finalCmd, &finalIndex, &finalTerm);
+  Assert2(ok, "Failed to submit final command");
+
+  int result = config_->Wait(finalIndex, NSERVERS, finalTerm);
+  AssertWaitNoError(result, finalIndex);
+
+  Log_info("[FULL-PATH-TEST] Final entry committed at index %lu", finalIndex);
+  Log_info("[FULL-PATH-TEST] Full commit path test PASSED!");
 
   Passed2();
 }

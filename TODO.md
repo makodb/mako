@@ -232,7 +232,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
 ### 7.3 Integration Tests (speculative_test.cc)
 
 #### Happy Path
-- [ ] `testFullCommitPath`:
+- [x] `testFullCommitPath` (Test 38):
   ```
   1. Submit request to spec leader
   2. Verify client callback receives SPECULATIVE

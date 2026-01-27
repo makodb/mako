@@ -119,6 +119,9 @@ class RaftLabTest {
   // Test that unsecured leader step-down notifies ROLLEDBACK
   int testUnsecuredStepDownNotifiesRollback(void);
 
+  // Test full commit path: SPECULATIVE -> DURABLE -> persist after restart
+  int testFullCommitPath(void);
+
   void wait(uint64_t microseconds);
 
 };
