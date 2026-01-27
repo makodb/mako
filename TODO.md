@@ -115,14 +115,15 @@ Only sequential failure of the entire memory quorum prevents ANY notification.
 - [ ] On step down (if still alive): invoke callbacks with `ROLLEDBACK` for uncommitted entries
 - [ ] New leader fixes followers' logs via normal AppendEntries (no explicit rollback needed)
 
-## Phase 6: New Leader Recovery
+## Phase 6: New Leader Recovery [COMPLETED in Phase 2]
 
-### 6.1 On Becoming Leader
-- [ ] Reset `securedLeader = false`
-- [ ] Reset `specVoters = {self}` (voted for self)
-- [ ] Reset `durableVoters = {self}` (assuming self vote is always durable)
-- [ ] Reset `securedLogIndex = commitIndex` (from previous term)
-- [ ] Reset `specCommitIndex = commitIndex`
+### 6.1 On Becoming Leader [DONE - see RequestVote() in server.cc:1208-1231]
+- [x] Reset `securedLeader = false`
+- [x] Reset `specVoters` = voters from election + self (not just {self})
+- [x] Reset `durableVoters = {self}` (assuming self vote is always durable)
+- [x] Reset `securedLogIndex = commitIndex` (from previous term)
+- [x] Reset `specCommitIndex = commitIndex`
+- [x] Clear `memoryAcks_` and `durableAcks_` for new term
 
 ## Phase 7: Tests
 
