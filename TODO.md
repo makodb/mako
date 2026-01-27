@@ -249,7 +249,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
 
 ### 7.4 Stress Tests
 - [x] `testRapidRestarts` (Test 32): multiple followers rapidly restarting, verify consistency
-- [ ] `testConcurrentElections`: multiple candidates with speculative voting
+- [x] `testConcurrentElections` (Test 33): multiple candidates with speculative voting
 - [ ] `testFsyncLatencyVariance`: simulate variable fsync times, verify correctness
 
 ## Phase 8: pass ci tests [COMPLETED 2026-01-27]

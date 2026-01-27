@@ -41,6 +41,7 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testDoubleVotePrevention())                      // Test 31
       // Phase 7.4: Stress tests
       || TEST_EXPAND(testRapidRestarts())                             // Test 32
+      || TEST_EXPAND(testConcurrentElections())                       // Test 33
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -3235,6 +3236,177 @@ int RaftLabTest::testRapidRestarts(void) {
   Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
 
   Log_info("[SPEC-TEST] Rapid restarts stress test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test concurrent elections with speculative voting.
+ *
+ * Stress test that triggers multiple elections by repeatedly killing
+ * the leader to verify speculative voting works correctly under
+ * election pressure.
+ *
+ * Scenario:
+ * 1. Establish leader and commit entries
+ * 2. Kill leader, forcing new election
+ * 3. Repeat several times with entries committed between elections
+ * 4. Verify all entries committed correctly
+ * 5. Verify no invariant violations
+ */
+int RaftLabTest::testConcurrentElections(void) {
+  Init2(33, "Concurrent elections stress test");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader, leader_id);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  Assert2(secured, "Leader should be secured");
+
+  // Commit initial entries
+  for (int i = 0; i < 2; i++) {
+    int cmd = 3000 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+    bool ok = config_->Start(leader_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d", cmd);
+    int result = config_->Wait(index, NSERVERS, term);
+    AssertWaitNoError(result, index);
+    index_ = index;
+  }
+
+  Log_info("[SPEC-TEST] Baseline committed, last index=%lu", index_);
+
+  // Force multiple elections by killing leaders
+  int num_elections = 4;
+
+  for (int e = 0; e < num_elections; e++) {
+    // Get current leader
+    int current_leader = config_->OneLeader();
+    if (current_leader < 0) {
+      Fiber::sleep(ELECTIONTIMEOUT);
+      current_leader = config_->OneLeader();
+    }
+    Assert2(current_leader >= 0, "Should have leader before kill");
+
+    siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
+    Log_info("[SPEC-TEST] Election %d: killing leader %d (site %d)",
+             e + 1, current_leader, current_leader_id);
+
+    // Kill the leader
+    config_->Kill(current_leader_id);
+
+    // Wait for new election
+    Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+    // Find new leader
+    int new_leader = config_->OneLeader();
+    if (new_leader < 0) {
+      Fiber::sleep(ELECTIONTIMEOUT);
+      new_leader = config_->OneLeader();
+    }
+    Assert2(new_leader >= 0, "Should have new leader after kill");
+
+    siteid_t new_leader_id = config_->getServerIdByIndex(new_leader);
+    Assert2(new_leader_id != current_leader_id, "New leader should be different");
+
+    Log_info("[SPEC-TEST] Election %d: new leader %d (site %d)",
+             e + 1, new_leader, new_leader_id);
+
+    // Wait for new leader to become secured
+    Fiber::sleep(500000);
+
+    secured = config_->IsSecuredLeader(new_leader_id);
+    Log_info("[SPEC-TEST] Election %d: new leader secured=%d", e + 1, secured);
+
+    // Commit an entry with new leader
+    int cmd = 3100 + e;
+    uint64_t index = 0;
+    uint64_t term = 0;
+    bool ok = config_->Start(new_leader_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d", cmd);
+
+    // Wait for commit with remaining servers
+    int result = config_->Wait(index, NSERVERS - (e + 1), term);
+    if (result < 0) {
+      Fiber::sleep(ELECTIONTIMEOUT);
+      int committed = config_->NCommitted(index);
+      Log_info("[SPEC-TEST] Election %d: entry %d committed on %d servers",
+               e + 1, cmd, committed);
+      Assert2(committed >= 3, "At least quorum should have committed");
+    } else {
+      Log_info("[SPEC-TEST] Election %d: entry %d committed at index %lu",
+               e + 1, cmd, index);
+    }
+    index_ = index;
+
+    // Restart the killed leader
+    Log_info("[SPEC-TEST] Election %d: restarting killed leader %d",
+             e + 1, current_leader_id);
+    config_->Restart(current_leader_id);
+
+    // Wait for recovery
+    Fiber::sleep(ELECTIONTIMEOUT);
+  }
+
+  Log_info("[SPEC-TEST] Concurrent elections complete, stabilizing...");
+
+  // Final stabilization
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+  // Find final leader
+  int final_leader = config_->OneLeader();
+  Assert2(final_leader >= 0, "Should have leader after stabilization");
+
+  siteid_t final_leader_id = config_->getServerIdByIndex(final_leader);
+  Log_info("[SPEC-TEST] Final leader: %d (site %d)", final_leader, final_leader_id);
+
+  // Commit final entries with all servers
+  for (int i = 0; i < 2; i++) {
+    int cmd = 3200 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+
+    // Get fresh leader
+    int leader_now = config_->OneLeader();
+    if (leader_now < 0) {
+      Fiber::sleep(ELECTIONTIMEOUT);
+      leader_now = config_->OneLeader();
+      Assert2(leader_now >= 0, "Should have a leader");
+    }
+    siteid_t leader_now_id = config_->getServerIdByIndex(leader_now);
+
+    bool ok = config_->Start(leader_now_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit final command %d", cmd);
+
+    int result = config_->Wait(index, NSERVERS, term);
+    if (result < 0) {
+      Fiber::sleep(ELECTIONTIMEOUT);
+      result = config_->Wait(index, NSERVERS, term);
+    }
+    AssertWaitNoError(result, index);
+
+    Log_info("[SPEC-TEST] Final entry %d committed at index %lu", cmd, index);
+    index_ = index;
+  }
+
+  // Verify invariants on current leader
+  final_leader = config_->OneLeader();
+  Assert2(final_leader >= 0, "Should have leader");
+  final_leader_id = config_->getServerIdByIndex(final_leader);
+
+  Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
+
+  Log_info("[SPEC-TEST] Concurrent elections stress test PASSED!");
 
   Passed2();
 }

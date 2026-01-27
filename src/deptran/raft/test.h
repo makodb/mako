@@ -100,6 +100,9 @@ class RaftLabTest {
   // Test rapid follower restarts
   int testRapidRestarts(void);
 
+  // Test concurrent elections with speculative voting
+  int testConcurrentElections(void);
+
   void wait(uint64_t microseconds);
 
 };
