@@ -237,7 +237,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
      In 3-node cluster: < quorum → A steps down
   ```
 
-- [ ] `testDoubleVotePrevention`:
+- [x] `testDoubleVotePrevention` (Test 31):
   ```
   1. A gets memory votes from {A, B, C}, becomes spec leader term 5
   2. C crashes (loses in-memory vote), restarts

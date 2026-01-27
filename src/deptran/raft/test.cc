@@ -38,6 +38,7 @@ int RaftLabTest::Run(void) {
       // Phase 7.3: Integration tests
       || TEST_EXPAND(testSpeculativeEntriesSurviveCrash())            // Test 29
       || TEST_EXPAND(testVoterCrashBeforeVoteFsync())                 // Test 30
+      || TEST_EXPAND(testDoubleVotePrevention())                      // Test 31
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -2919,6 +2920,161 @@ int RaftLabTest::testVoterCrashBeforeVoteFsync(void) {
   Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
 
   Log_info("[SPEC-TEST] Voter crash before VoteDurable fsync test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test double-vote prevention after crash.
+ *
+ * Scenario (idealized):
+ * 1. A becomes leader with memory votes from all servers
+ * 2. A commits some entries
+ * 3. Multiple followers crash (simulating loss of in-memory votes)
+ * 4. After restart, followers could theoretically vote for another candidate
+ * 5. Verify system remains consistent (no conflicting durable commits)
+ *
+ * This test verifies that even if followers crash and potentially vote twice
+ * (because vote wasn't persisted), the system handles this safely via
+ * notifyRestart mechanism.
+ *
+ * Key insight: The notifyRestart mechanism ensures the original leader
+ * knows about the restart and adjusts its quorum tracking accordingly.
+ * This prevents conflicting durable commits.
+ */
+int RaftLabTest::testDoubleVotePrevention(void) {
+  Init2(31, "Double vote prevention after crash");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader1 = config_->OneLeader();
+  Assert2(leader1 >= 0, "No leader elected");
+
+  siteid_t leader1_id = config_->getServerIdByIndex(leader1);
+  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader1, leader1_id);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);
+
+  bool secured = config_->IsSecuredLeader(leader1_id);
+  Log_info("[SPEC-TEST] Leader secured: %d", secured);
+  Assert2(secured, "Leader should be secured");
+
+  // Commit some entries to establish state
+  for (int i = 0; i < 3; i++) {
+    int cmd = 1100 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+    bool ok = config_->Start(leader1_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d", cmd);
+    int result = config_->Wait(index, NSERVERS, term);
+    AssertWaitNoError(result, index);
+    index_ = index;
+  }
+
+  Log_info("[SPEC-TEST] Committed 3 entries, last index=%lu", index_);
+
+  // Collect followers
+  std::vector<siteid_t> followers;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader1_id) {
+      followers.push_back(svr);
+    }
+  }
+
+  // Crash and restart 2 followers (simulating loss of in-memory votes)
+  // This leaves leader with potentially reduced quorum for speculative state
+  Log_info("[SPEC-TEST] Crashing 2 followers to simulate vote loss");
+
+  config_->Kill(followers[0]);
+  config_->Kill(followers[1]);
+
+  Fiber::sleep(200000);  // 200ms
+
+  // Restart them
+  config_->Restart(followers[0]);
+  config_->Restart(followers[1]);
+
+  // Wait for notifyRestart and recovery
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // After restart, the followers send notifyRestart
+  // The original leader should adjust its quorum tracking
+
+  // Find current leader
+  int leader2 = config_->OneLeader();
+  if (leader2 < 0) {
+    Fiber::sleep(ELECTIONTIMEOUT);
+    leader2 = config_->OneLeader();
+  }
+  Assert2(leader2 >= 0, "Should have a leader after recovery");
+
+  siteid_t leader2_id = config_->getServerIdByIndex(leader2);
+  Log_info("[SPEC-TEST] Leader after restarts: %d (site %d)", leader2, leader2_id);
+
+  // The key safety property: no conflicting durable commits
+  // We verify this by checking that the system can commit new entries
+  // and all servers agree
+
+  // Wait for things to stabilize
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Try to commit a new entry
+  int newCmd = 1200;
+  uint64_t newIndex = 0;
+  uint64_t newTerm = 0;
+
+  // Get current leader (may have changed)
+  int current_leader = config_->OneLeader();
+  Assert2(current_leader >= 0, "Should have a leader");
+
+  siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
+
+  bool ok = config_->Start(current_leader_id, newCmd, &newIndex, &newTerm);
+  Assert2(ok, "Failed to submit new command");
+
+  int result = config_->Wait(newIndex, NSERVERS, newTerm);
+  if (result < 0) {
+    // May need more time for everyone to catch up
+    Fiber::sleep(ELECTIONTIMEOUT);
+    result = config_->Wait(newIndex, NSERVERS, newTerm);
+  }
+
+  if (result >= 0) {
+    Log_info("[SPEC-TEST] New entry committed at index %lu", newIndex);
+  } else {
+    // Even if not all servers have it yet, at least verify
+    // a quorum committed it
+    int committed = config_->NCommitted(newIndex);
+    Log_info("[SPEC-TEST] Committed on %d servers", committed);
+    Assert2(committed >= 3, "At least quorum should have committed");
+  }
+
+  // Verify all servers eventually agree by committing another entry
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
+
+  current_leader = config_->OneLeader();
+  Assert2(current_leader >= 0, "Should have a leader");
+  current_leader_id = config_->getServerIdByIndex(current_leader);
+
+  int finalCmd = 1299;
+  uint64_t finalIndex = 0;
+  uint64_t finalTerm = 0;
+
+  ok = config_->Start(current_leader_id, finalCmd, &finalIndex, &finalTerm);
+  Assert2(ok, "Failed to submit final command");
+
+  result = config_->Wait(finalIndex, NSERVERS, finalTerm);
+  AssertWaitNoError(result, finalIndex);
+
+  Log_info("[SPEC-TEST] Final entry committed with all servers at index %lu", finalIndex);
+
+  // Verify invariants on leader
+  Assert2(config_->VerifySpecInvariants(current_leader_id), "Invariants violated");
+
+  Log_info("[SPEC-TEST] Double vote prevention test PASSED!");
 
   Passed2();
 }

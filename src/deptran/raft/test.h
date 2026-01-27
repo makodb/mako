@@ -90,6 +90,9 @@ class RaftLabTest {
   // Test that voter crash before VoteDurable fsync is handled correctly
   int testVoterCrashBeforeVoteFsync(void);
 
+  // Test double-vote prevention after crash
+  int testDoubleVotePrevention(void);
+
   void wait(uint64_t microseconds);
 
 };
