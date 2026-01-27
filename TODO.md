@@ -54,11 +54,11 @@ Implementation plan: docs/dev/phase3_appendentries_rpc_plan.md
 - [x] On receiving `ackType: Memory`: add follower to `memoryAcks[index]`
 - [x] If `|memoryAcks[index]| >= quorum`:
   - [x] Update `specCommitIndex = max(specCommitIndex, index)`
-  - [ ] Notify client with `SPECULATIVE` status (deferred to Phase 5)
+  - [x] Notify client with `SPECULATIVE` status (implemented in Phase 5.3)
 - [x] On receiving `AppendEntriesDurable` RPC: add follower to `durableAcks[index]`
 - [x] If `securedLeader && |durableAcks[index]| >= quorum`:
   - [x] Update `securedLogIndex = max(securedLogIndex, index)`
-  - [ ] Notify client with `DURABLE` status (deferred to Phase 5)
+  - [x] Notify client with `DURABLE` status (implemented in Phase 5.3)
 
 ### 3.3 Modify Message Type [DONE 2026-01-27, 04:25]
 - [x] Add `ackType: enum { Memory, Durable }` to `AppendEntriesResponse`
@@ -75,7 +75,7 @@ Implementation plan: docs/dev/phase4_notifyrestart_plan.md
   - [x] If `!securedLeader && |specVoters| < quorum`:
     - [x] Call `stepDown(UnsecuredFailure)` (implemented in Phase 5)
 
-## Phase 5: Step Down and Client Notification [PARTIAL 2026-01-27]
+## Phase 5: Step Down and Client Notification [COMPLETED 2026-01-27]
 
 Implementation plan: docs/dev/phase5_stepdown_plan.md
 
@@ -86,7 +86,7 @@ Implementation plan: docs/dev/phase5_stepdown_plan.md
   - [x] Reset speculative state via ResetSpeculativeState()
   - [x] Transition to follower via setIsLeader(false)
   - [x] Reset election timer
-  - [ ] Client rollback notification (deferred - requires callback infrastructure)
+  - [x] Client rollback notification (implemented in Phase 5.3)
 - [x] Update OnPeerRestart to call stepDown(UnsecuredFailure) when losing quorum
 - [x] Update HeartbeatLoop to call stepDown(HigherTerm) when seeing higher term
 
