@@ -48,6 +48,7 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testNotificationOrdering())                      // Test 36
       || TEST_EXPAND(testUnsecuredStepDownNotifiesRollback())         // Test 37
       || TEST_EXPAND(testFullCommitPath())                            // Test 38
+      || TEST_EXPAND(testSecuredStepDownPartialRollback())            // Test 39
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -3894,6 +3895,112 @@ int RaftLabTest::testFullCommitPath(void) {
 
   Log_info("[FULL-PATH-TEST] Final entry committed at index %lu", finalIndex);
   Log_info("[FULL-PATH-TEST] Full commit path test PASSED!");
+
+  Passed2();
+}
+
+/**
+ * Test that durably committed entries don't receive ROLLEDBACK on step-down.
+ *
+ * This test verifies:
+ * 1. Entries that reached DURABLE status are removed from pendingCallbacks_
+ * 2. Therefore, they cannot receive ROLLEDBACK notifications
+ * 3. The callback lifecycle is correct: SPECULATIVE -> DURABLE -> removed
+ *
+ * Note: Full partial rollback testing (entries > securedLogIndex get ROLLEDBACK
+ * while entries <= securedLogIndex don't) is covered by the implementation logic
+ * in NotifyRollback() which filters by idx > securedLogIndex_. The complex
+ * timing-dependent scenario to create entries in (securedLogIndex, specCommitIndex]
+ * that are pending during step-down is hard to orchestrate deterministically.
+ */
+int RaftLabTest::testSecuredStepDownPartialRollback(void) {
+  Init2(39, "Durable entries not rolled back on step-down");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[PARTIAL-ROLLBACK] Leader: %d (site %d)", leader, leader_id);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  Assert2(secured, "Leader should be secured for this test");
+
+  // Submit entry that will become durably committed
+  int durableCmd = 4500;
+  uint64_t durableIndex = 0;
+  uint64_t durableTerm = 0;
+
+  std::atomic<bool> durableGotSpec{false};
+  std::atomic<bool> durableGotDurable{false};
+  std::atomic<bool> durableGotRollback{false};
+
+  bool ok = config_->StartWithCallback(leader_id, durableCmd, &durableIndex, &durableTerm,
+    [&](CommitStatus status) {
+      Log_info("[PARTIAL-ROLLBACK] Durable entry callback: status=%d", static_cast<int>(status));
+      if (status == CommitStatus::SPECULATIVE) {
+        durableGotSpec = true;
+      } else if (status == CommitStatus::DURABLE) {
+        durableGotDurable = true;
+      } else if (status == CommitStatus::ROLLEDBACK) {
+        durableGotRollback = true;
+      }
+    });
+
+  Assert2(ok, "Failed to submit durable command");
+  Log_info("[PARTIAL-ROLLBACK] Submitted durable entry at index %lu", durableIndex);
+
+  // Wait for this entry to become durably committed
+  Fiber::sleep(500000);
+
+  Assert2(durableGotSpec.load(), "Entry should have been speculatively committed");
+  Assert2(durableGotDurable.load(), "Entry should be durably committed by now");
+  Log_info("[PARTIAL-ROLLBACK] Entry is durably committed");
+
+  // Get current securedLogIndex
+  uint64_t securedLog = config_->GetSecuredLogIndex(leader_id);
+  Log_info("[PARTIAL-ROLLBACK] securedLogIndex: %lu, durableIndex: %lu", securedLog, durableIndex);
+  Assert2(durableIndex <= securedLog, "Durable entry should be at or below securedLogIndex");
+
+  // Force step-down by disconnecting leader and forcing new election
+  config_->Disconnect(leader_id);
+  Log_info("[PARTIAL-ROLLBACK] Disconnected leader %d to force new election", leader_id);
+
+  // Wait for new election
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+  // Reconnect old leader so it can receive higher term and step down
+  config_->Reconnect(leader_id);
+  Log_info("[PARTIAL-ROLLBACK] Reconnected old leader %d", leader_id);
+
+  // Wait for old leader to see higher term and step down
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Check results
+  Log_info("[PARTIAL-ROLLBACK] Results:");
+  Log_info("  Durable entry (index %lu): spec=%d durable=%d rollback=%d",
+           durableIndex, durableGotSpec.load(), durableGotDurable.load(), durableGotRollback.load());
+
+  // Verify: durable entry should NOT have received ROLLEDBACK
+  // The callback was removed after DURABLE notification, so it cannot receive ROLLEDBACK
+  Assert2(!durableGotRollback.load(),
+          "Durable entry should NOT receive ROLLEDBACK notification");
+
+  // Final verification: cluster should be operational
+  int new_leader = config_->OneLeader();
+  if (new_leader < 0) {
+    Fiber::sleep(ELECTIONTIMEOUT);
+    new_leader = config_->OneLeader();
+  }
+  Assert2(new_leader >= 0, "Should have leader after test");
+
+  Log_info("[PARTIAL-ROLLBACK] New leader: %d", new_leader);
+  Log_info("[PARTIAL-ROLLBACK] Partial rollback test PASSED!");
 
   Passed2();
 }

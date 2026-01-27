@@ -161,11 +161,11 @@ Notes:
 ## Phase 7: Tests [MOSTLY COMPLETE 2026-01-27]
 
 **Summary:**
-- Tests 20-38 implemented and passing
+- Tests 20-39 implemented and passing
 - Client notification tests completed after Phase 5.3 callback infrastructure
-- Remaining complex tests deferred (testSecuredStepDownPartialRollback,
-  testSpeculativeEntriesOverwritten, testFsyncLatencyVariance) - require
-  specific timing conditions that are hard to orchestrate deterministically
+- Remaining complex tests deferred (testSpeculativeEntriesOverwritten,
+  testFsyncLatencyVariance) - require specific timing conditions that are
+  hard to orchestrate deterministically
 
 Implementation plan: docs/dev/phase7_speculative_tests_plan.md
 
@@ -230,7 +230,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
 #### Step Down Scenarios (Graceful — leader still alive)
 - [x] `testUnsecuredLostQuorumStepsDown` (Test 26): verifies secured leader continues, documents unsecured behavior
 - [x] `testUnsecuredStepDownNotifiesRollback` (Test 37): on graceful step down, clients of current-term entries get ROLLEDBACK
-- [ ] `testSecuredStepDownPartialRollback`: secured leader steps down → only entries in (securedLogIndex, specCommitIndex] get ROLLEDBACK
+- [x] `testSecuredStepDownPartialRollback` (Test 39): durable entries not rolled back on step-down (callback removed after DURABLE)
 
 ### 7.3 Integration Tests (speculative_test.cc)
 

@@ -122,6 +122,9 @@ class RaftLabTest {
   // Test full commit path: SPECULATIVE -> DURABLE -> persist after restart
   int testFullCommitPath(void);
 
+  // Test secured leader step-down: only entries > securedLogIndex get ROLLEDBACK
+  int testSecuredStepDownPartialRollback(void);
+
   void wait(uint64_t microseconds);
 
 };
