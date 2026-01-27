@@ -103,6 +103,19 @@ class RaftLabTest {
   // Test concurrent elections with speculative voting
   int testConcurrentElections(void);
 
+  // ===========================================================================
+  // PHASE 5.3: Client Notification Tests
+  // ===========================================================================
+
+  // Test that client gets SPECULATIVE notification
+  int testSpeculativeCommitNotification(void);
+
+  // Test that client gets DURABLE notification
+  int testDurableCommitNotification(void);
+
+  // Test that SPECULATIVE comes before DURABLE for same entry
+  int testNotificationOrdering(void);
+
   void wait(uint64_t microseconds);
 
 };

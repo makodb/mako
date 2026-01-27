@@ -108,12 +108,45 @@ Implementation plan: docs/dev/phase5_stepdown_plan.md
 **Key insight:** `ROLLEDBACK` is best-effort. If leader crashes, client just times out.
 Only sequential failure of the entire memory quorum prevents ANY notification.
 
-### 5.3 Implementation Notes
-- [ ] Track pending client callbacks: `Map<Index, ClientCallback>`
-- [ ] On spec commit: invoke callback with `SPECULATIVE`
-- [ ] On durable commit: invoke callback with `DURABLE`
-- [ ] On step down (if still alive): invoke callbacks with `ROLLEDBACK` for uncommitted entries
-- [ ] New leader fixes followers' logs via normal AppendEntries (no explicit rollback needed)
+### 5.3 Client Callback Implementation [COMPLETED 2026-01-27]
+
+Implementation plan: docs/dev/phase5_3_client_callbacks_plan.md
+
+#### 5.3.1 Add CommitStatus enum and callback storage
+- [x] Add `CommitStatus` enum: `{ SPECULATIVE, DURABLE, ROLLEDBACK }`
+- [x] Add `pendingCallbacks_: Map<Index, Callback>` to RaftServer
+- [x] Add tracking indices for notification progress
+
+#### 5.3.2 Implement RegisterCommitCallback()
+- [x] Store callback in pendingCallbacks_ map
+- [x] Handle edge case: if already committed, invoke immediately
+
+#### 5.3.3 Notify on specCommitIndex advance
+- [x] In OnAppendEntriesReply, when specCommitIndex advances
+- [x] Call SPECULATIVE for newly committed indices
+
+#### 5.3.4 Notify on securedLogIndex advance
+- [x] In OnAppendEntriesDurable, when securedLogIndex advances
+- [x] Call DURABLE for newly secured indices
+
+#### 5.3.5 Notify on step-down
+- [x] In stepDown(), for entries > securedLogIndex_
+- [x] Call ROLLEDBACK and clear callbacks
+
+#### 5.3.6 Clean up callbacks
+- [x] Remove callback from map after DURABLE notification
+
+#### 5.3.7 Update testconf for callback registration
+- [x] Add StartWithCallback() to RaftTestConfig
+
+#### 5.3.8 Add client notification tests
+- [x] testSpeculativeCommitNotification (Test 34)
+- [x] testDurableCommitNotification (Test 35)
+- [x] testNotificationOrdering (Test 36)
+
+Notes:
+- New leader fixes followers' logs via normal AppendEntries (no explicit rollback needed)
+- Callbacks are invoked while holding mtx_ - keep them lightweight
 
 ## Phase 6: New Leader Recovery [COMPLETED in Phase 2]
 
@@ -179,10 +212,10 @@ Tests should verify the CONTRACT, not assume entries always survive:
 #### Invariant Tests
 - [x] `testSpeculativeInvariantsHold` (Test 22): verify `securedLogIndex <= specCommitIndex <= lastLogIndex` always holds
 
-#### Client Notification Tests (deferred - requires callback infrastructure)
-- [ ] `testSpeculativeCommitNotification`: client gets SPECULATIVE status
-- [ ] `testDurableCommitNotification`: client gets DURABLE status
-- [ ] `testNotificationOrdering`: SPECULATIVE before DURABLE for same entry
+#### Client Notification Tests [COMPLETED 2026-01-27]
+- [x] `testSpeculativeCommitNotification` (Test 34): client gets SPECULATIVE status
+- [x] `testDurableCommitNotification` (Test 35): client gets DURABLE status
+- [x] `testNotificationOrdering` (Test 36): SPECULATIVE before DURABLE for same entry
 
 ### 7.2 NotifyRestart and Step Down Tests (test.cc)
 

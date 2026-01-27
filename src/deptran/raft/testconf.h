@@ -160,6 +160,11 @@ class RaftTestConfig {
   // Returns true if svr committed a log entry at index with value cmd
   bool ServerCommitted(siteid_t svr, uint64_t index, int cmd);
 
+  // Starts a command with a callback for commit status notification
+  // Returns same values as Start()
+  bool StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
+                         std::function<void(CommitStatus)> callback);
+
  private:
   // vars & subroutine for unreliable network setting
   std::thread th_;

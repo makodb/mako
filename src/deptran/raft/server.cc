@@ -1078,12 +1078,17 @@ void RaftServer::HeartbeatLoop() {
         }
 
         if (newSpecCommitIndex > specCommitIndex_) {
+          uint64_t oldSpecCommitIndex = specCommitIndex_;
           Log_info("[SPEC-RAFT] Site %d: Advancing specCommitIndex %lu -> %lu",
                    site_id_, specCommitIndex_, newSpecCommitIndex);
           specCommitIndex_ = newSpecCommitIndex;
 
-          // TODO (Phase 5): Notify clients with SPECULATIVE status for entries
-          // from old specCommitIndex+1 to new specCommitIndex
+          // Phase 5.3: Notify clients with SPECULATIVE status for newly committed entries
+          if (lastSpecNotifiedIndex_ < newSpecCommitIndex) {
+            uint64_t notifyFrom = std::max(lastSpecNotifiedIndex_, oldSpecCommitIndex);
+            NotifyCallbacks(notifyFrom, newSpecCommitIndex, CommitStatus::SPECULATIVE);
+            lastSpecNotifiedIndex_ = newSpecCommitIndex;
+          }
         }
 
         // Verify invariants
@@ -1469,12 +1474,17 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
     }
 
     if (newSecuredIndex > securedLogIndex_) {
+      uint64_t oldSecuredLogIndex = securedLogIndex_;
       Log_info("[SPEC-RAFT] Site %d: Advancing securedLogIndex %lu -> %lu",
                site_id_, securedLogIndex_, newSecuredIndex);
       securedLogIndex_ = newSecuredIndex;
 
-      // TODO (Phase 5): Notify clients with DURABLE status for entries
-      // from old securedLogIndex+1 to new securedLogIndex
+      // Phase 5.3: Notify clients with DURABLE status for newly secured entries
+      if (lastDurableNotifiedIndex_ < newSecuredIndex) {
+        uint64_t notifyFrom = std::max(lastDurableNotifiedIndex_, oldSecuredLogIndex);
+        NotifyCallbacks(notifyFrom, newSecuredIndex, CommitStatus::DURABLE);
+        lastDurableNotifiedIndex_ = newSecuredIndex;
+      }
     }
   }
 
@@ -2217,6 +2227,13 @@ void RaftServer::ResetSpeculativeState() {
   // Clear ack tracking maps
   memoryAcks_.clear();
   durableAcks_.clear();
+
+  // Reset callback notification tracking
+  // Note: We don't clear pendingCallbacks_ here because:
+  // - On becoming leader: there shouldn't be any pending callbacks yet
+  // - On stepping down: NotifyRollback() handles clearing after notification
+  lastSpecNotifiedIndex_ = commitIndex;  // Don't re-notify already-committed entries
+  lastDurableNotifiedIndex_ = commitIndex;
 }
 
 void RaftServer::VerifySpeculativeInvariants() const {
@@ -2353,6 +2370,78 @@ void RaftServer::stepDown(StepDownReason reason) {
   resetTimer("stepDown");
 
   Log_info("[SPEC-RAFT] Site %d: Step-down complete, now follower", site_id_);
+
+  // Notify pending callbacks of rollback (Phase 5.3)
+  NotifyRollback();
+}
+
+// ============================================================================
+// CLIENT NOTIFICATION CALLBACKS (Phase 5.3)
+// ============================================================================
+
+void RaftServer::RegisterCommitCallback(uint64_t index,
+                                        std::function<void(CommitStatus)> callback) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // If already speculatively committed, invoke immediately
+  if (index <= specCommitIndex_) {
+    Log_debug("[SPEC-CALLBACK] Index %lu already spec-committed, notifying SPECULATIVE",
+              index);
+    callback(CommitStatus::SPECULATIVE);
+  }
+
+  // If already durably committed, invoke immediately
+  if (securedLeader_ && index <= securedLogIndex_) {
+    Log_debug("[SPEC-CALLBACK] Index %lu already durable-committed, notifying DURABLE",
+              index);
+    callback(CommitStatus::DURABLE);
+    return;  // No need to track - already fully committed
+  }
+
+  // Store callback for future notification
+  pendingCallbacks_[index] = std::move(callback);
+  Log_debug("[SPEC-CALLBACK] Registered callback for index %lu", index);
+}
+
+void RaftServer::NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status) {
+  // Note: Caller must hold mtx_
+  // Notify callbacks for indices in (from, to]
+
+  for (uint64_t idx = from + 1; idx <= to; ++idx) {
+    auto it = pendingCallbacks_.find(idx);
+    if (it != pendingCallbacks_.end()) {
+      Log_debug("[SPEC-CALLBACK] Notifying index %lu with status %d",
+                idx, static_cast<int>(status));
+      it->second(status);
+
+      // If DURABLE, remove callback (fully committed)
+      if (status == CommitStatus::DURABLE) {
+        pendingCallbacks_.erase(it);
+      }
+    }
+  }
+}
+
+void RaftServer::NotifyRollback() {
+  // Note: Caller must hold mtx_
+  // Notify all pending callbacks above securedLogIndex_ with ROLLEDBACK
+
+  Log_info("[SPEC-CALLBACK] Notifying rollback for %zu pending callbacks (securedLogIndex=%lu)",
+           pendingCallbacks_.size(), securedLogIndex_);
+
+  for (auto& [idx, callback] : pendingCallbacks_) {
+    if (idx > securedLogIndex_) {
+      Log_debug("[SPEC-CALLBACK] Notifying index %lu with ROLLEDBACK", idx);
+      callback(CommitStatus::ROLLEDBACK);
+    }
+  }
+
+  // Clear all pending callbacks after notification
+  pendingCallbacks_.clear();
+
+  // Reset notification tracking
+  lastSpecNotifiedIndex_ = 0;
+  lastDurableNotifiedIndex_ = 0;
 }
 
 } // namespace janus

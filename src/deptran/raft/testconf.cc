@@ -159,12 +159,12 @@ int RaftTestConfig::NCommitted(uint64_t index) {
 
 bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *term) {
   auto it = replicas.find(svr);
-  if (it == replicas.end()) 
+  if (it == replicas.end())
   {
     Log_error("Server %d not found in replicas map", svr);
     return false;
   }
-  
+
   // Construct an empty TpcCommitCommand containing cmd as its tx_id_
   auto cmdptr = std::make_shared<TpcCommitCommand>();
   auto vpd_p = std::make_shared<VecPieceData>();
@@ -175,8 +175,25 @@ bool RaftTestConfig::Start(siteid_t svr, int cmd, uint64_t *index, uint64_t *ter
   // call Start()
   // Log_info("Start: Calling Start() on server %d for command %d", svr, cmd);
   bool result = it->second->svr_->Start(cmdptr_m, index, term);
-  // Log_info("Start: Server %d Start() for command %d returned %s, index=%ld, term=%ld", 
+  // Log_info("Start: Server %d Start() for command %d returned %s, index=%ld, term=%ld",
   //          svr, cmd, result ? "SUCCESS" : "FAILED", *index, *term);
+  return result;
+}
+
+bool RaftTestConfig::StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
+                                       std::function<void(CommitStatus)> callback) {
+  // First, call Start to submit the command
+  bool result = Start(svr, cmd, index, term);
+  if (!result) {
+    return false;
+  }
+
+  // If successful, register the callback for commit notifications
+  auto it = replicas.find(svr);
+  if (it != replicas.end()) {
+    it->second->svr_->RegisterCommitCallback(*index, std::move(callback));
+  }
+
   return result;
 }
 

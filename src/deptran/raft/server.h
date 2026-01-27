@@ -35,6 +35,20 @@ enum class StepDownReason {
   HigherTerm         // Saw higher term from another server
 };
 
+/**
+ * CommitStatus - Notification status for client callbacks
+ *
+ * Used by client callback infrastructure to notify clients of entry status:
+ * - SPECULATIVE: Entry reached memory quorum, likely to commit
+ * - DURABLE: Entry reached disk quorum with secured leader, guaranteed
+ * - ROLLEDBACK: Entry will not commit (leader stepped down gracefully)
+ */
+enum class CommitStatus {
+  SPECULATIVE,  // Entry reached memory quorum
+  DURABLE,      // Entry reached disk quorum with secured leader
+  ROLLEDBACK    // Entry will not commit (best-effort notification)
+};
+
 struct RaftData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
@@ -166,6 +180,14 @@ class RaftServer : public TxLogServer {
   // Key: log index, Value: set of nodes that have acked at that level
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
+
+  // Client notification callbacks
+  // Key: log index, Value: callback to notify on commit status change
+  // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
+  // or ROLLEDBACK (leader stepped down gracefully)
+  std::map<uint64_t, std::function<void(CommitStatus)>> pendingCallbacks_;
+  uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
+  uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
 
   // @unsafe - Uses INVALID_SITEID macro with integer cast
   bool AmIPreferredLeader() const {
@@ -926,5 +948,46 @@ class RaftServer : public TxLogServer {
    */
   // @unsafe - Modifies state, calls setIsLeader
   void stepDown(StepDownReason reason);
+
+  // ===========================================================================
+  // CLIENT NOTIFICATION CALLBACKS
+  // ===========================================================================
+
+  /**
+   * Register a callback to be notified when an entry's commit status changes.
+   *
+   * The callback will be invoked with:
+   * - SPECULATIVE: When entry reaches memory quorum (specCommitIndex advances)
+   * - DURABLE: When entry reaches disk quorum with secured leader
+   * - ROLLEDBACK: If leader steps down gracefully (best-effort)
+   *
+   * Note: Callback is invoked while holding mtx_, keep it lightweight.
+   * If index is already at or past the requested state, callback is invoked
+   * immediately.
+   *
+   * @param index - Log index to monitor
+   * @param callback - Function to call on status change
+   */
+  // @unsafe - Modifies pendingCallbacks_
+  void RegisterCommitCallback(uint64_t index,
+                              std::function<void(CommitStatus)> callback);
+
+  /**
+   * Notify all registered callbacks for indices in range (from, to] with status.
+   * Used internally by specCommitIndex/securedLogIndex advancement handlers.
+   *
+   * @param from - Exclusive lower bound
+   * @param to - Inclusive upper bound
+   * @param status - Commit status to notify
+   */
+  // @unsafe - Invokes callbacks, modifies pendingCallbacks_
+  void NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status);
+
+  /**
+   * Notify rollback for all pending callbacks above securedLogIndex.
+   * Called during step-down when leader is still alive.
+   */
+  // @unsafe - Invokes callbacks, clears pendingCallbacks_
+  void NotifyRollback();
 };
 } // namespace janus
