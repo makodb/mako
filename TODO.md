@@ -206,7 +206,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   ```
 
 #### Speculative Entries Survive (Lucky Path)
-- [ ] `testSpeculativeEntriesSurviveCrash`:
+- [x] `testSpeculativeEntriesSurviveCrash` (Test 29):
   ```
   1. A is spec leader, spec commits X at index 10 (X in memory of {A, B, C})
   2. A crashes

@@ -79,6 +79,14 @@ class RaftLabTest {
   // Test that restart does not affect durableVoters
   int testRestartDoesNotAffectDurableVoters(void);
 
+  // ===========================================================================
+  // PHASE 7.3: Integration Tests
+  // ===========================================================================
+  // Crash and recovery integration scenarios
+
+  // Test that speculative entries survive leader crash if new leader has them
+  int testSpeculativeEntriesSurviveCrash(void);
+
   void wait(uint64_t microseconds);
 
 };
