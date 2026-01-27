@@ -25,6 +25,9 @@ class RaftFrame : public Frame {
   static bool all_sites_created_s;
   static bool tests_done_;
   static uint16_t n_commo_created_;
+  static bool is_lab_test_config_;        // True if running raft lab test (1 partition, 5 replicas)
+  static bool lab_test_config_checked_;   // True once we've checked the config
+  static bool IsRaftLabTestConfig();      // Check if we're in lab test configuration
 #endif
  public:
   RaftFrame(int mode);
