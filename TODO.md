@@ -125,7 +125,11 @@ Only sequential failure of the entire memory quorum prevents ANY notification.
 - [x] Reset `specCommitIndex = commitIndex`
 - [x] Clear `memoryAcks_` and `durableAcks_` for new term
 
-## Phase 7: Tests [PARTIAL 2026-01-27]
+## Phase 7: Tests [MOSTLY COMPLETE 2026-01-27]
+
+**Summary:**
+- Tests 20-33 implemented and passing
+- Client notification tests deferred (require callback infrastructure from Phase 5.3)
 
 Implementation plan: docs/dev/phase7_speculative_tests_plan.md
 
@@ -138,8 +142,8 @@ Implementation plan: docs/dev/phase7_speculative_tests_plan.md
 **File structure (updated):**
 ```
 src/deptran/raft/
-  test.h              # Extended: added speculative test declarations
-  test.cc             # Extended: added speculative test implementations (Tests 20-22)
+  test.h              # Extended: added speculative test declarations (Tests 20-33)
+  test.cc             # Extended: added speculative test implementations (Tests 20-33)
   testconf.h          # Extended: added speculative state query methods
   testconf.cc         # Extended: implemented speculative state queries
 ```
