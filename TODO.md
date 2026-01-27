@@ -161,8 +161,11 @@ Notes:
 ## Phase 7: Tests [MOSTLY COMPLETE 2026-01-27]
 
 **Summary:**
-- Tests 20-33 implemented and passing
-- Client notification tests deferred (require callback infrastructure from Phase 5.3)
+- Tests 20-38 implemented and passing
+- Client notification tests completed after Phase 5.3 callback infrastructure
+- Remaining complex tests deferred (testSecuredStepDownPartialRollback,
+  testSpeculativeEntriesOverwritten, testFsyncLatencyVariance) - require
+  specific timing conditions that are hard to orchestrate deterministically
 
 Implementation plan: docs/dev/phase7_speculative_tests_plan.md
 
