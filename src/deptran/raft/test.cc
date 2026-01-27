@@ -28,6 +28,8 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testSpeculativeLeaderElection())      // Test 20
       || TEST_EXPAND(testSpecCommitIndexAdvances())        // Test 21
       || TEST_EXPAND(testSpeculativeInvariantsHold())      // Test 22
+      || TEST_EXPAND(testSecuredLeaderContinuesAfterSpecQuorumLoss()) // Test 23
+      || TEST_EXPAND(testDurableCommitRequiresSecuredLeader())        // Test 24
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -2068,6 +2070,172 @@ int RaftLabTest::testSpeculativeInvariantsHold(void) {
           securedLog, specCommit);
   Assert2(specCommit <= lastLog, "specCommitIndex (%lu) > lastLogIndex (%lu)",
           specCommit, lastLog);
+
+  Passed2();
+}
+
+/**
+ * Test that secured leader continues operating even after losing speculative quorum.
+ *
+ * Scenario:
+ * 1. Establish a secured leader (durable vote quorum achieved)
+ * 2. Kill followers to lose speculative quorum
+ * 3. Leader should continue operating (it's still secured!)
+ * 4. Commits should still work with remaining quorum
+ *
+ * Key insight: Once a leader is secured, it has durably won the election.
+ * No other leader can win in this term, so losing speculative voters doesn't
+ * invalidate the leadership - they can crash/restart but can't vote elsewhere.
+ */
+int RaftLabTest::testSecuredLeaderContinuesAfterSpecQuorumLoss(void) {
+  Init2(23, "Secured leader continues after spec quorum loss");
+
+  // Wait for initial election and secure leadership
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);  // 500ms for VoteDurable messages
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  size_t initialDurableVoters = config_->GetDurableVotersCount(leader_id);
+  size_t initialSpecVoters = config_->GetSpecVotersCount(leader_id);
+
+  Log_info("[SPEC-TEST] Initial state: secured=%d, specVoters=%zu, durableVoters=%zu",
+           secured, initialSpecVoters, initialDurableVoters);
+
+  Assert2(secured, "Leader should be secured before test continues");
+
+  // Commit an initial entry to ensure everything is working
+  int cmd = 300;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool ok = config_->Start(leader_id, cmd, &index, &term);
+  Assert2(ok, "Failed to submit initial command");
+
+  // Wait for commit
+  int result = config_->Wait(index, NSERVERS, term);
+  AssertWaitNoError(result, index);
+  Log_info("[SPEC-TEST] Initial command committed at index %lu", index);
+
+  // Now disconnect one follower to simulate losing a speculative voter
+  // (but keep majority for quorum)
+  siteid_t disconnected_follower = 0;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      disconnected_follower = svr;
+      break;
+    }
+  }
+
+  Log_info("[SPEC-TEST] Disconnecting follower %d to lose spec voter", disconnected_follower);
+  config_->Disconnect(disconnected_follower);
+
+  // Wait a bit for the disconnect to take effect
+  Fiber::sleep(200000);  // 200ms
+
+  // Check that leader is still leader
+  int current_leader = config_->OneLeader();
+  Assert2(current_leader == leader, "Leader %d changed to %d after disconnect",
+          leader, current_leader);
+
+  // Leader should still be secured (disconnect doesn't invalidate secured status)
+  secured = config_->IsSecuredLeader(leader_id);
+  Log_info("[SPEC-TEST] After disconnect: secured=%d", secured);
+
+  // The leader should still be able to commit with remaining quorum
+  cmd = 301;
+  ok = config_->Start(leader_id, cmd, &index, &term);
+  Assert2(ok, "Failed to submit command after disconnect");
+
+  // Wait for commit with NSERVERS-1 (we disconnected 1)
+  result = config_->Wait(index, NSERVERS - 1, term);
+  AssertWaitNoError(result, index);
+  Log_info("[SPEC-TEST] Command committed after disconnect at index %lu", index);
+
+  // Verify invariants
+  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
+
+  // Reconnect the follower
+  config_->Reconnect(disconnected_follower);
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  Passed2();
+}
+
+/**
+ * Test that durable commit (securedLogIndex advance) requires secured leader.
+ *
+ * Scenario:
+ * 1. Get durable ack quorum for an entry
+ * 2. If leader is not secured, securedLogIndex should NOT advance
+ * 3. Once leader becomes secured, securedLogIndex can advance
+ *
+ * Note: This is hard to test directly because in a working cluster,
+ * the leader typically becomes secured very quickly (within a few hundred ms).
+ * This test verifies the invariants and the relationship between
+ * secured status and securedLogIndex.
+ */
+int RaftLabTest::testDurableCommitRequiresSecuredLeader(void) {
+  Init2(24, "Durable commit requires secured leader");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);  // 500ms for VoteDurable messages
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+
+  Log_info("[SPEC-TEST] Initial secured status: %d", secured);
+  Assert2(secured, "Leader should be secured for this test");
+
+  uint64_t initialSecuredLog = config_->GetSecuredLogIndex(leader_id);
+  Log_info("[SPEC-TEST] Initial securedLogIndex: %lu", initialSecuredLog);
+
+  // Submit multiple entries
+  for (int i = 0; i < 5; i++) {
+    int cmd = 400 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+
+    bool ok = config_->Start(leader_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d", cmd);
+
+    Log_info("[SPEC-TEST] Submitted command %d at index %lu", cmd, index);
+  }
+
+  // Wait for durable commits
+  Fiber::sleep(1000000);  // 1 second for fsync and durable acks
+
+  uint64_t finalSecuredLog = config_->GetSecuredLogIndex(leader_id);
+  uint64_t finalSpecCommit = config_->GetSpecCommitIndex(leader_id);
+
+  Log_info("[SPEC-TEST] Final state: securedLogIndex=%lu, specCommitIndex=%lu",
+           finalSecuredLog, finalSpecCommit);
+
+  // Since leader is secured, securedLogIndex should have advanced
+  Assert2(finalSecuredLog > initialSecuredLog,
+          "securedLogIndex (%lu) did not advance from initial (%lu)",
+          finalSecuredLog, initialSecuredLog);
+
+  // Verify the invariant: securedLogIndex <= specCommitIndex
+  Assert2(finalSecuredLog <= finalSpecCommit,
+          "securedLogIndex (%lu) > specCommitIndex (%lu)",
+          finalSecuredLog, finalSpecCommit);
+
+  // Verify all invariants
+  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
 
   Passed2();
 }

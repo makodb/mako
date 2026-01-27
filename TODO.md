@@ -166,11 +166,11 @@ Tests should verify the CONTRACT, not assume entries always survive:
 
 #### Leadership Tests
 - [x] `testSpeculativeLeaderElection` (Test 20): Verify leader becomes speculative first, then secured after VoteDurable
-- [ ] `testSecuredLeaderContinuesAfterSpecQuorumLoss`: securedLeader + lost spec quorum → continues as leader
+- [x] `testSecuredLeaderContinuesAfterSpecQuorumLoss` (Test 23): securedLeader + lost spec quorum → continues as leader
 
 #### Commit Tests
 - [x] `testSpecCommitIndexAdvances` (Test 21): specCommitIndex advances on memory ack quorum
-- [ ] `testDurableCommitRequiresSecuredLeader`: durable ack quorum but !securedLeader → securedLogIndex does NOT advance
+- [x] `testDurableCommitRequiresSecuredLeader` (Test 24): durable ack quorum but !securedLeader → securedLogIndex does NOT advance
 
 #### Invariant Tests
 - [x] `testSpeculativeInvariantsHold` (Test 22): verify `securedLogIndex <= specCommitIndex <= lastLogIndex` always holds

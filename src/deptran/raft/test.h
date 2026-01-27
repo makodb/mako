@@ -56,6 +56,12 @@ class RaftLabTest {
   // Test that invariants hold throughout operations
   int testSpeculativeInvariantsHold(void);
 
+  // Test that secured leader continues even after losing speculative quorum
+  int testSecuredLeaderContinuesAfterSpecQuorumLoss(void);
+
+  // Test that durable commit requires secured leader
+  int testDurableCommitRequiresSecuredLeader(void);
+
   void wait(uint64_t microseconds);
 
 };
