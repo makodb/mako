@@ -125,6 +125,9 @@ class RaftLabTest {
   // Test secured leader step-down: only entries > securedLogIndex get ROLLEDBACK
   int testSecuredStepDownPartialRollback(void);
 
+  // Test speculative entries overwritten when new leader commits at same index
+  int testSpeculativeEntriesOverwritten(void);
+
   void wait(uint64_t microseconds);
 
 };

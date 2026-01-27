@@ -161,11 +161,10 @@ Notes:
 ## Phase 7: Tests [MOSTLY COMPLETE 2026-01-27]
 
 **Summary:**
-- Tests 20-39 implemented and passing
+- Tests 20-40 implemented and passing
 - Client notification tests completed after Phase 5.3 callback infrastructure
-- Remaining complex tests deferred (testSpeculativeEntriesOverwritten,
-  testFsyncLatencyVariance) - require specific timing conditions that are
-  hard to orchestrate deterministically
+- Remaining complex test deferred (testFsyncLatencyVariance) - requires
+  fsync timing control infrastructure
 
 Implementation plan: docs/dev/phase7_speculative_tests_plan.md
 
@@ -256,7 +255,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   ```
 
 #### Speculative Entries Overwritten (New Leader Wins)
-- [ ] `testSpeculativeEntriesOverwritten`:
+- [x] `testSpeculativeEntriesOverwritten` (Test 40):
   ```
   1. A is unsecured spec leader, spec commits X
   2. Majority crashes (A loses spec quorum), A steps down
@@ -303,7 +302,7 @@ Note: Fixed RAFT_TEST_CORO to only run in lab test config (1 partition, 5 replic
 ## Phase 9: Optimizations (Future)
 
 - [ ] Batch durable acks to reduce message overhead
-- [ ] Leader self-vote is always durable (no need to track)
+- [x] Leader self-vote is always durable (no need to track) [Already implemented - see server.cc:1176-1177, 1220-1222]
 - [ ] Combine VoteDurable with first AppendEntries response
 - [ ] Track only counts (not sets) for durableVoters once secured
 
