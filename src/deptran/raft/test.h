@@ -73,6 +73,12 @@ class RaftLabTest {
   // Test that unsecured leader steps down when losing spec quorum
   int testUnsecuredLostQuorumStepsDown(void);
 
+  // Test that restart removes from memoryAcks for unsecured entries
+  int testRestartRemovesFromMemoryAcks(void);
+
+  // Test that restart does not affect durableVoters
+  int testRestartDoesNotAffectDurableVoters(void);
+
   void wait(uint64_t microseconds);
 
 };

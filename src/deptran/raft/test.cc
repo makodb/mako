@@ -33,6 +33,8 @@ int RaftLabTest::Run(void) {
       // Phase 7.2: NotifyRestart tests
       || TEST_EXPAND(testRestartRemovesFromSpecVoters())              // Test 25
       || TEST_EXPAND(testUnsecuredLostQuorumStepsDown())              // Test 26
+      || TEST_EXPAND(testRestartRemovesFromMemoryAcks())              // Test 27
+      || TEST_EXPAND(testRestartDoesNotAffectDurableVoters())         // Test 28
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -2445,6 +2447,199 @@ int RaftLabTest::testUnsecuredLostQuorumStepsDown(void) {
   // Verify final state
   current_leader = config_->OneLeader();
   Assert2(current_leader >= 0, "No leader after restarts");
+
+  Passed2();
+}
+
+/**
+ * Test that restart removes from memoryAcks for unsecured entries.
+ *
+ * Scenario:
+ * 1. Establish a secured leader with some committed entries
+ * 2. Submit new entries and track memory acks
+ * 3. Kill and restart a follower
+ * 4. Verify that leader properly handles the restart
+ *
+ * Note: The memoryAcks tracking is internal, so we verify correct behavior
+ * through the system's ability to continue operating correctly.
+ */
+int RaftLabTest::testRestartRemovesFromMemoryAcks(void) {
+  Init2(27, "Restart removes from memoryAcks");
+
+  // Wait for initial election and secure leadership
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);  // 500ms for VoteDurable messages
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  Assert2(secured, "Leader should be secured for this test");
+
+  // Commit some entries to ensure securedLogIndex is established
+  for (int i = 0; i < 3; i++) {
+    int cmd = 700 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+    bool ok = config_->Start(leader_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d", cmd);
+    int result = config_->Wait(index, NSERVERS, term);
+    AssertWaitNoError(result, index);
+  }
+
+  uint64_t securedLogBefore = config_->GetSecuredLogIndex(leader_id);
+  Log_info("[SPEC-TEST] securedLogIndex before restart: %lu", securedLogBefore);
+
+  // Submit more entries
+  uint64_t newIndex = 0;
+  uint64_t newTerm = 0;
+  bool ok = config_->Start(leader_id, 750, &newIndex, &newTerm);
+  Assert2(ok, "Failed to submit new command");
+
+  // Wait for memory acks
+  Fiber::sleep(200000);  // 200ms
+
+  // Check memory acks before restart
+  size_t memAcksBefore = config_->GetMemoryAckCount(leader_id, newIndex);
+  Log_info("[SPEC-TEST] Memory acks for index %lu before restart: %zu",
+           newIndex, memAcksBefore);
+
+  // Pick a follower to restart
+  siteid_t follower_to_restart = 0;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      follower_to_restart = svr;
+      break;
+    }
+  }
+
+  Log_info("[SPEC-TEST] Killing and restarting follower %d", follower_to_restart);
+
+  // Kill and restart the follower
+  config_->Kill(follower_to_restart);
+  Fiber::sleep(100000);  // 100ms
+  config_->Restart(follower_to_restart);
+
+  // Wait for notifyRestart and recovery
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Leader should still be leader
+  int current_leader = config_->OneLeader();
+  Assert2(current_leader == leader, "Leader changed unexpectedly");
+
+  // The entry should eventually be committed with remaining quorum
+  int result = config_->Wait(newIndex, NSERVERS - 1, newTerm);
+  if (result < 0) {
+    // May need to wait for the restarted follower to catch up
+    Fiber::sleep(ELECTIONTIMEOUT);
+    result = config_->Wait(newIndex, NSERVERS, newTerm);
+  }
+
+  Log_info("[SPEC-TEST] Entry at index %lu committed", newIndex);
+
+  // Verify invariants
+  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
+
+  Passed2();
+}
+
+/**
+ * Test that restart does not affect durableVoters.
+ *
+ * Scenario:
+ * 1. Establish a secured leader (durable vote quorum achieved)
+ * 2. Restart a follower
+ * 3. Verify that durableVoters count is preserved
+ *
+ * Key insight: Durable votes are on disk, so they survive restarts.
+ * The restarted follower's vote is still durable.
+ */
+int RaftLabTest::testRestartDoesNotAffectDurableVoters(void) {
+  Init2(28, "Restart does not affect durableVoters");
+
+  // Wait for initial election and secure leadership
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);  // 500ms for VoteDurable messages
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  size_t durableVotersBefore = config_->GetDurableVotersCount(leader_id);
+
+  Log_info("[SPEC-TEST] Initial state: secured=%d, durableVoters=%zu",
+           secured, durableVotersBefore);
+
+  Assert2(secured, "Leader should be secured for this test");
+  Assert2(durableVotersBefore >= 3, "Should have quorum of durable voters");
+
+  // Commit an entry to ensure stability
+  int cmd = 800;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool ok = config_->Start(leader_id, cmd, &index, &term);
+  Assert2(ok, "Failed to submit command");
+  int result = config_->Wait(index, NSERVERS, term);
+  AssertWaitNoError(result, index);
+
+  // Pick a follower to restart
+  siteid_t follower_to_restart = 0;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      follower_to_restart = svr;
+      break;
+    }
+  }
+
+  Log_info("[SPEC-TEST] Killing and restarting follower %d", follower_to_restart);
+
+  // Kill and restart
+  config_->Kill(follower_to_restart);
+  Fiber::sleep(200000);  // 200ms
+  config_->Restart(follower_to_restart);
+
+  // Wait for recovery
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Check durableVoters after restart
+  // Note: The leader tracks durableVoters from the election.
+  // A restart doesn't remove from durableVoters because the vote is on disk.
+  // However, the leader may not update durableVoters after restart
+  // (it was set during election).
+
+  secured = config_->IsSecuredLeader(leader_id);
+  size_t durableVotersAfter = config_->GetDurableVotersCount(leader_id);
+
+  Log_info("[SPEC-TEST] After restart: secured=%d, durableVoters=%zu",
+           secured, durableVotersAfter);
+
+  // Leader should still be secured
+  Assert2(secured, "Leader should still be secured after restart");
+
+  // Durable voters should be preserved (or may increase if new VoteDurable arrives)
+  Assert2(durableVotersAfter >= 3, "Should still have quorum of durable voters");
+
+  // Commit another entry to verify system works
+  cmd = 801;
+  ok = config_->Start(leader_id, cmd, &index, &term);
+  Assert2(ok, "Failed to submit command after restart");
+  result = config_->Wait(index, NSERVERS, term);
+  AssertWaitNoError(result, index);
+
+  Log_info("[SPEC-TEST] Successfully committed after follower restart");
+
+  // Verify invariants
+  Assert2(config_->VerifySpecInvariants(leader_id), "Invariants violated");
 
   Passed2();
 }

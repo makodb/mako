@@ -866,6 +866,22 @@ bool RaftTestConfig::VerifySpecInvariants(siteid_t svr) {
   return true;
 }
 
+size_t RaftTestConfig::GetMemoryAckCount(siteid_t svr, uint64_t index) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return 0;
+  }
+  return server->GetMemoryAckCount(index);
+}
+
+size_t RaftTestConfig::GetDurableAckCount(siteid_t svr, uint64_t index) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return 0;
+  }
+  return server->GetDurableAckCount(index);
+}
+
 #endif
 
 }

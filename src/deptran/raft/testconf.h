@@ -229,6 +229,22 @@ class RaftTestConfig {
    */
   bool VerifySpecInvariants(siteid_t svr);
 
+  /**
+   * Get the memory ack count for a specific log index.
+   * @param svr Server ID
+   * @param index Log index to query
+   * @return Number of memory acks for that index, or 0 if not available
+   */
+  size_t GetMemoryAckCount(siteid_t svr, uint64_t index);
+
+  /**
+   * Get the durable ack count for a specific log index.
+   * @param svr Server ID
+   * @param index Log index to query
+   * @return Number of durable acks for that index, or 0 if not available
+   */
+  size_t GetDurableAckCount(siteid_t svr, uint64_t index);
+
 };
 
 #endif

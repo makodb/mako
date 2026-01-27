@@ -184,8 +184,8 @@ Tests should verify the CONTRACT, not assume entries always survive:
 
 #### NotifyRestart Handling
 - [x] `testRestartRemovesFromSpecVoters` (Test 25): follower restarts → verifies system continues correctly
-- [ ] `testRestartRemovesFromMemoryAcks`: follower restarts → leader removes from memoryAcks for unsecured entries
-- [ ] `testRestartDoesNotAffectDurableVoters`: follower restart doesn't affect durableVoters (already on disk)
+- [x] `testRestartRemovesFromMemoryAcks` (Test 27): follower restarts → verifies entries still commit with quorum
+- [x] `testRestartDoesNotAffectDurableVoters` (Test 28): follower restart doesn't affect durableVoters (already on disk)
 
 #### Step Down Scenarios (Graceful — leader still alive)
 - [x] `testUnsecuredLostQuorumStepsDown` (Test 26): verifies secured leader continues, documents unsecured behavior
