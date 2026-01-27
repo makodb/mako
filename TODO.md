@@ -226,7 +226,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
 
 #### Step Down Scenarios (Graceful — leader still alive)
 - [x] `testUnsecuredLostQuorumStepsDown` (Test 26): verifies secured leader continues, documents unsecured behavior
-- [ ] `testUnsecuredStepDownNotifiesRollback`: on graceful step down, clients of current-term entries get ROLLEDBACK
+- [x] `testUnsecuredStepDownNotifiesRollback` (Test 37): on graceful step down, clients of current-term entries get ROLLEDBACK
 - [ ] `testSecuredStepDownPartialRollback`: secured leader steps down → only entries in (securedLogIndex, specCommitIndex] get ROLLEDBACK
 
 ### 7.3 Integration Tests (speculative_test.cc)

@@ -116,6 +116,9 @@ class RaftLabTest {
   // Test that SPECULATIVE comes before DURABLE for same entry
   int testNotificationOrdering(void);
 
+  // Test that unsecured leader step-down notifies ROLLEDBACK
+  int testUnsecuredStepDownNotifiesRollback(void);
+
   void wait(uint64_t microseconds);
 
 };
