@@ -182,6 +182,53 @@ class RaftTestConfig {
  public:
   RaftServer *GetServer(siteid_t svr);
 
+  // ============================================================================
+  // SPECULATIVE RAFT STATE QUERIES (Phase 7)
+  // ============================================================================
+  // Query speculative state from servers for testing
+
+  /**
+   * Check if a server is a secured leader (has durable vote quorum).
+   * @param svr Server ID
+   * @return true if server is leader and has secured status
+   */
+  bool IsSecuredLeader(siteid_t svr);
+
+  /**
+   * Get the speculative commit index for a server.
+   * @param svr Server ID
+   * @return specCommitIndex value, or 0 if server is not leader
+   */
+  uint64_t GetSpecCommitIndex(siteid_t svr);
+
+  /**
+   * Get the secured log index for a server.
+   * @param svr Server ID
+   * @return securedLogIndex value, or 0 if server is not leader
+   */
+  uint64_t GetSecuredLogIndex(siteid_t svr);
+
+  /**
+   * Get the count of speculative voters for a server.
+   * @param svr Server ID
+   * @return Number of servers in specVoters, or 0 if not leader
+   */
+  size_t GetSpecVotersCount(siteid_t svr);
+
+  /**
+   * Get the count of durable voters for a server.
+   * @param svr Server ID
+   * @return Number of servers in durableVoters, or 0 if not leader
+   */
+  size_t GetDurableVotersCount(siteid_t svr);
+
+  /**
+   * Verify speculative invariants hold for a server.
+   * @param svr Server ID
+   * @return true if securedLogIndex <= specCommitIndex <= lastLogIndex
+   */
+  bool VerifySpecInvariants(siteid_t svr);
+
 };
 
 #endif

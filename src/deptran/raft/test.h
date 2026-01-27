@@ -42,6 +42,20 @@ class RaftLabTest {
   int testFigure8(void);
   int testFigure8CrashRecovery(void);
 
+  // ===========================================================================
+  // SPECULATIVE RAFT TESTS (Phase 7)
+  // ===========================================================================
+  // Tests for speculative replication functionality
+
+  // Test that leader becomes speculative first, then secured after VoteDurable
+  int testSpeculativeLeaderElection(void);
+
+  // Test that specCommitIndex advances on memory ack quorum
+  int testSpecCommitIndexAdvances(void);
+
+  // Test that invariants hold throughout operations
+  int testSpeculativeInvariantsHold(void);
+
   void wait(uint64_t microseconds);
 
 };

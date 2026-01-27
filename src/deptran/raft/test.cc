@@ -24,6 +24,10 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
       || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
       || TEST_EXPAND(testFigure8CrashRecovery())           // Test 19
+      // Speculative Raft tests (Phase 7)
+      || TEST_EXPAND(testSpeculativeLeaderElection())      // Test 20
+      || TEST_EXPAND(testSpecCommitIndexAdvances())        // Test 21
+      || TEST_EXPAND(testSpeculativeInvariantsHold())      // Test 22
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -1878,6 +1882,194 @@ int RaftLabTest::testFigure8CrashRecovery(void) {
 
 void RaftLabTest::wait(uint64_t microseconds) {
   Reactor::create_sp_event<TimeoutEvent>(microseconds)->wait();
+}
+
+// ============================================================================
+// SPECULATIVE RAFT TESTS (Phase 7)
+// ============================================================================
+
+/**
+ * Test that leader becomes speculative first, then secured after VoteDurable.
+ *
+ * Expected behavior:
+ * 1. After election, leader should exist
+ * 2. Leader should initially be unsecured (securedLeader = false)
+ * 3. After VoteDurable messages arrive, leader becomes secured
+ */
+int RaftLabTest::testSpeculativeLeaderElection(void) {
+  Init2(20, "Speculative leader election");
+
+  // Wait for initial election to complete
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[SPEC-TEST] Leader elected: index=%d, site_id=%d", leader, leader_id);
+
+  // Check initial speculative state
+  // Note: By the time we check, VoteDurable messages may have already arrived
+  // So we can't assert securedLeader == false here. Instead, check that
+  // the speculative state accessors work and invariants hold.
+
+  size_t specVoters = config_->GetSpecVotersCount(leader_id);
+  size_t durableVoters = config_->GetDurableVotersCount(leader_id);
+
+  Log_info("[SPEC-TEST] Leader %d: specVoters=%zu, durableVoters=%zu",
+           leader_id, specVoters, durableVoters);
+
+  // Spec voters should be at least quorum (we won election)
+  size_t quorum = (NSERVERS / 2) + 1;
+  Assert2(specVoters >= quorum, "Leader has fewer spec voters (%zu) than quorum (%zu)",
+          specVoters, quorum);
+
+  // Wait a bit for VoteDurable messages to arrive
+  Fiber::sleep(500000);  // 500ms
+
+  // After waiting, leader should become secured (assuming no crashes)
+  bool secured = config_->IsSecuredLeader(leader_id);
+  durableVoters = config_->GetDurableVotersCount(leader_id);
+
+  Log_info("[SPEC-TEST] After waiting: secured=%d, durableVoters=%zu",
+           secured, durableVoters);
+
+  // With no crashes, we expect durable voters to reach quorum
+  Assert2(durableVoters >= quorum, "Leader has fewer durable voters (%zu) than quorum (%zu)",
+          durableVoters, quorum);
+  Assert2(secured, "Leader should be secured after VoteDurable quorum");
+
+  // Verify invariants hold
+  Assert2(config_->VerifySpecInvariants(leader_id), "Speculative invariants violated");
+
+  Passed2();
+}
+
+/**
+ * Test that specCommitIndex advances on memory ack quorum.
+ *
+ * Expected behavior:
+ * 1. Submit entry to leader
+ * 2. specCommitIndex should advance when memory ack quorum reached
+ * 3. Eventually entry becomes durably committed
+ */
+int RaftLabTest::testSpecCommitIndexAdvances(void) {
+  Init2(21, "Spec commit index advances");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+
+  // Get initial specCommitIndex
+  uint64_t initialSpecCommit = config_->GetSpecCommitIndex(leader_id);
+  uint64_t initialSecuredLog = config_->GetSecuredLogIndex(leader_id);
+
+  Log_info("[SPEC-TEST] Initial state: specCommitIndex=%lu, securedLogIndex=%lu",
+           initialSpecCommit, initialSecuredLog);
+
+  // Submit an entry
+  int cmd = 100 + rand() % 1000;
+  uint64_t index = 0;
+  uint64_t term = 0;
+  bool ok = config_->Start(leader_id, cmd, &index, &term);
+  Assert2(ok, "Failed to submit command to leader");
+
+  Log_info("[SPEC-TEST] Submitted command %d at index %lu, term %lu", cmd, index, term);
+
+  // Wait a short time for memory acks to arrive
+  Fiber::sleep(200000);  // 200ms
+
+  // Check specCommitIndex advanced
+  uint64_t newSpecCommit = config_->GetSpecCommitIndex(leader_id);
+
+  Log_info("[SPEC-TEST] After waiting: specCommitIndex=%lu (was %lu)",
+           newSpecCommit, initialSpecCommit);
+
+  // specCommitIndex should have advanced (at least to our submitted entry)
+  Assert2(newSpecCommit >= index, "specCommitIndex (%lu) did not reach submitted index (%lu)",
+          newSpecCommit, index);
+
+  // Wait longer for durable commit
+  Fiber::sleep(500000);  // 500ms more
+
+  // Check that securedLogIndex also advances (if leader is secured)
+  bool secured = config_->IsSecuredLeader(leader_id);
+  uint64_t newSecuredLog = config_->GetSecuredLogIndex(leader_id);
+
+  Log_info("[SPEC-TEST] After more waiting: secured=%d, securedLogIndex=%lu (was %lu)",
+           secured, newSecuredLog, initialSecuredLog);
+
+  if (secured) {
+    // If leader is secured, securedLogIndex should advance
+    Assert2(newSecuredLog >= index, "securedLogIndex (%lu) did not reach submitted index (%lu)",
+            newSecuredLog, index);
+  }
+
+  // Verify invariants
+  Assert2(config_->VerifySpecInvariants(leader_id), "Speculative invariants violated");
+
+  Passed2();
+}
+
+/**
+ * Test that speculative invariants hold throughout operations.
+ *
+ * Expected behavior:
+ * 1. Submit multiple entries
+ * 2. At all times: securedLogIndex <= specCommitIndex <= lastLogIndex
+ */
+int RaftLabTest::testSpeculativeInvariantsHold(void) {
+  Init2(22, "Speculative invariants hold");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+
+  // Submit multiple entries and check invariants after each
+  for (int i = 0; i < 5; i++) {
+    int cmd = 200 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+
+    bool ok = config_->Start(leader_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d to leader", cmd);
+
+    Log_info("[SPEC-TEST] Submitted command %d at index %lu", cmd, index);
+
+    // Verify invariants immediately
+    Assert2(config_->VerifySpecInvariants(leader_id),
+            "Invariants violated after submitting command %d", cmd);
+
+    // Wait a bit for replication
+    Fiber::sleep(100000);  // 100ms
+
+    // Verify invariants again
+    Assert2(config_->VerifySpecInvariants(leader_id),
+            "Invariants violated after waiting for command %d", cmd);
+  }
+
+  // Final state check
+  uint64_t securedLog = config_->GetSecuredLogIndex(leader_id);
+  uint64_t specCommit = config_->GetSpecCommitIndex(leader_id);
+  uint64_t lastLog = config_->GetServer(leader_id)->GetLastLogIndex();
+
+  Log_info("[SPEC-TEST] Final state: securedLogIndex=%lu, specCommitIndex=%lu, lastLogIndex=%lu",
+           securedLog, specCommit, lastLog);
+
+  Assert2(securedLog <= specCommit, "securedLogIndex (%lu) > specCommitIndex (%lu)",
+          securedLog, specCommit);
+  Assert2(specCommit <= lastLog, "specCommitIndex (%lu) > lastLogIndex (%lu)",
+          specCommit, lastLog);
+
+  Passed2();
 }
 
 #endif

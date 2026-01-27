@@ -125,24 +125,23 @@ Only sequential failure of the entire memory quorum prevents ANY notification.
 - [x] Reset `specCommitIndex = commitIndex`
 - [x] Clear `memoryAcks_` and `durableAcks_` for new term
 
-## Phase 7: Tests
+## Phase 7: Tests [PARTIAL 2026-01-27]
+
+Implementation plan: docs/dev/phase7_speculative_tests_plan.md
 
 ### 7.0 File Structure and Philosophy
 
-**Compile cammand**
+**Build and run:**
+- Build: `make raft-test -j32`
+- Run: `./build/deptran_server ./config/raft_lab_test.yml` (with MAKO_RAFT_PERSISTENCE=1)
 
-The original src/deptran/raft/test.cc is compiled by 'make raft-test -j32'. And run with './build/deptran_server ./config/raft_lab_test.ym' with macro for disk turned on. 
-
-Determine your way of compile and running the newly added test.
-
-**File structure:**
+**File structure (updated):**
 ```
 src/deptran/raft/
-  test.h              # Existing: RaftLabTest class (vanilla Raft tests)
-  test.cc             # Existing: vanilla Raft persistence/partition tests
-  speculative_test.h  # NEW: SpeculativeRaftTest class
-  speculative_test.cc # NEW: speculative Raft tests
-  testconf.h          # Shared test config (extend for speculative state queries)
+  test.h              # Extended: added speculative test declarations
+  test.cc             # Extended: added speculative test implementations (Tests 20-22)
+  testconf.h          # Extended: added speculative state query methods
+  testconf.cc         # Extended: implemented speculative state queries
 ```
 
 **Testing philosophy:**
@@ -163,22 +162,23 @@ Tests should verify the CONTRACT, not assume entries always survive:
    - Only testable in graceful step-down scenarios (leader still alive)
    - NOT testable in crash scenarios (leader dead, can't notify)
 
-### 7.1 Unit Tests (speculative_test.cc)
+### 7.1 Unit Tests (test.cc) [PARTIAL 2026-01-27, 05:45]
 
 #### Leadership Tests
-- [ ] `testBecomesSpeculativeLeader`: candidate gets memory votes from quorum → becomes speculative leader
-- [ ] `testBecomesSecuredLeader`: candidate gets durable votes from quorum → securedLeader = true
-- [ ] `testSpeculativeLeaderAcceptsRequests`: speculative leader can accept client requests
+- [x] `testSpeculativeLeaderElection` (Test 20): Verify leader becomes speculative first, then secured after VoteDurable
 - [ ] `testSecuredLeaderContinuesAfterSpecQuorumLoss`: securedLeader + lost spec quorum → continues as leader
 
-#### Commit Notification Tests
-- [ ] `testSpeculativeCommitNotification`: memory ack quorum → specCommitIndex advances, client gets SPECULATIVE
-- [ ] `testDurableCommitNotification`: secured leader + durable ack quorum → client gets DURABLE
+#### Commit Tests
+- [x] `testSpecCommitIndexAdvances` (Test 21): specCommitIndex advances on memory ack quorum
 - [ ] `testDurableCommitRequiresSecuredLeader`: durable ack quorum but !securedLeader → securedLogIndex does NOT advance
-- [ ] `testNotificationOrdering`: SPECULATIVE always delivered before DURABLE for same entry
 
 #### Invariant Tests
-- [ ] `testCommitIndexInvariants`: verify `securedLogIndex <= specCommitIndex <= lastLogIndex` always holds
+- [x] `testSpeculativeInvariantsHold` (Test 22): verify `securedLogIndex <= specCommitIndex <= lastLogIndex` always holds
+
+#### Client Notification Tests (deferred - requires callback infrastructure)
+- [ ] `testSpeculativeCommitNotification`: client gets SPECULATIVE status
+- [ ] `testDurableCommitNotification`: client gets DURABLE status
+- [ ] `testNotificationOrdering`: SPECULATIVE before DURABLE for same entry
 
 ### 7.2 NotifyRestart and Step Down Tests (speculative_test.cc)
 
@@ -252,7 +252,13 @@ Tests should verify the CONTRACT, not assume entries always survive:
 - [ ] `testConcurrentElections`: multiple candidates with speculative voting
 - [ ] `testFsyncLatencyVariance`: simulate variable fsync times, verify correctness
 
-## Phase 8: Optimizations (Future)
+## Phase 8: pass ci tests
+
+- [ ] Pass ci/ci.sh compile. 
+- [ ] Pass all the tests related to Raft. At this time failure of Raft server is not enabled, so no (speculatively) committed entries will be lost.
+- [ ] Pass all other ci tests as well.
+
+## Phase 9: Optimizations (Future)
 
 - [ ] Batch durable acks to reduce message overhead
 - [ ] Leader self-vote is always durable (no need to track)

@@ -794,8 +794,76 @@ siteid_t RaftTestConfig::getNextServerId(siteid_t current_server_id, int offset)
     // This should not happen in normal operation, but provides safety
     return current_server_id;
   }
-  
+
   return result;
+}
+
+// ============================================================================
+// SPECULATIVE RAFT STATE QUERIES (Phase 7)
+// ============================================================================
+
+bool RaftTestConfig::IsSecuredLeader(siteid_t svr) {
+  auto server = GetServer(svr);
+  if (!server || !server->IsLeader()) {
+    return false;
+  }
+  return server->IsSecuredLeader();
+}
+
+uint64_t RaftTestConfig::GetSpecCommitIndex(siteid_t svr) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return 0;
+  }
+  return server->GetSpecCommitIndex();
+}
+
+uint64_t RaftTestConfig::GetSecuredLogIndex(siteid_t svr) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return 0;
+  }
+  return server->GetSecuredLogIndex();
+}
+
+size_t RaftTestConfig::GetSpecVotersCount(siteid_t svr) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return 0;
+  }
+  return server->GetSpecVotersCount();
+}
+
+size_t RaftTestConfig::GetDurableVotersCount(siteid_t svr) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return 0;
+  }
+  return server->GetDurableVotersCount();
+}
+
+bool RaftTestConfig::VerifySpecInvariants(siteid_t svr) {
+  auto server = GetServer(svr);
+  if (!server) {
+    return true;  // Non-existent server trivially satisfies invariants
+  }
+
+  uint64_t securedLogIndex = server->GetSecuredLogIndex();
+  uint64_t specCommitIndex = server->GetSpecCommitIndex();
+  uint64_t lastLogIndex = server->GetLastLogIndex();
+
+  // Invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
+  if (securedLogIndex > specCommitIndex) {
+    Log_error("[SPEC-TEST] Invariant violation: securedLogIndex (%lu) > specCommitIndex (%lu)",
+              securedLogIndex, specCommitIndex);
+    return false;
+  }
+  if (specCommitIndex > lastLogIndex) {
+    Log_error("[SPEC-TEST] Invariant violation: specCommitIndex (%lu) > lastLogIndex (%lu)",
+              specCommitIndex, lastLogIndex);
+    return false;
+  }
+  return true;
 }
 
 #endif

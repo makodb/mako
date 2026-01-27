@@ -807,12 +807,39 @@ class RaftServer : public TxLogServer {
   }
 
   /**
+   * Get the count of servers that have memory-voted for us in current term.
+   * @return Number of servers in specVoters
+   */
+  // @safe - Read-only accessor
+  size_t GetSpecVotersCount() const {
+    return specVoters_.size();
+  }
+
+  /**
    * Get the set of servers that have durably-voted for us in current term.
    * @return copy of durableVoters set
    */
   // @safe - Returns copy, read-only access
   std::set<siteid_t> GetDurableVoters() const {
     return durableVoters_;
+  }
+
+  /**
+   * Get the count of servers that have durably-voted for us in current term.
+   * @return Number of servers in durableVoters
+   */
+  // @safe - Read-only accessor
+  size_t GetDurableVotersCount() const {
+    return durableVoters_.size();
+  }
+
+  /**
+   * Get the last log index.
+   * @return lastLogIndex value
+   */
+  // @safe - Read-only accessor
+  uint64_t GetLastLogIndex() const {
+    return lastLogIndex;
   }
 
   /**
