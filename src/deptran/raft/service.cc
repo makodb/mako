@@ -113,6 +113,7 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         uint64_t *followerAppendOK,
                                         uint64_t *followerCurrentTerm,
                                         uint64_t *followerLastLogIndex,
+                                        uint64_t *followerAckType,
                                         rrr::DeferredReply defer) {
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
@@ -120,9 +121,13 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
     *followerAppendOK = 0;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
+    *followerAckType = 0;  // Memory
     defer.reply();
     return;
   }
+
+  // Set ackType to Memory - this response is sent before fsync
+  *followerAckType = 0;  // Memory
 
   Fiber::create_run([=, defer = std::move(defer)]() mutable {
     svr->OnAppendEntries(slot,
@@ -153,6 +158,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerAppendOK,
                                              uint64_t *followerCurrentTerm,
                                              uint64_t *followerLastLogIndex,
+                                             uint64_t *followerAckType,
                                              rrr::DeferredReply defer) {
   Log_info("RaftServiceImpl: HandleEmptyAppendEntries answering leader %d", leaderSiteId);
   RaftServer* svr = GetServer();
@@ -161,9 +167,14 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
     *followerAppendOK = 0;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
+    *followerAckType = 0;  // Memory
     defer.reply();
     return;
   }
+
+  // Set ackType to Memory - this response is sent before fsync
+  *followerAckType = 0;  // Memory
+
   std::shared_ptr<Marshallable> cmd = nullptr;
   Fiber::create_run([=, defer = std::move(defer)]() mutable {
     svr->OnAppendEntries(slot,
@@ -181,6 +192,24 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                             [defer = std::move(defer)]() mutable { defer.reply(); },
                             trigger_election_now);
   });
+}
+
+// @safe - Handle AppendEntriesDurable RPC for speculative commits
+// Received when a follower has durably persisted log entries to disk
+void RaftServiceImpl::HandleAppendEntriesDurable(const ballot_t& term,
+                                                  const siteid_t& follower_id,
+                                                  const uint64_t& lastLogIndex,
+                                                  bool_t* acknowledged,
+                                                  rrr::DeferredReply defer) {
+  RaftServer* svr = GetServer();
+  if (svr == nullptr) {
+    // Server is killed, return failure
+    *acknowledged = false;
+    defer.reply();
+    return;
+  }
+  svr->OnAppendEntriesDurable(term, follower_id, lastLogIndex, acknowledged,
+                              [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 // @safe

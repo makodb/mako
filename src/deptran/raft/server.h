@@ -618,6 +618,26 @@ class RaftServer : public TxLogServer {
                        bool trigger_election_now = false);
 
   /**
+   * AppendEntriesDurable RPC Handler - Speculative Commit Protocol
+   *
+   * Receives AppendEntriesDurable RPC from a follower after it has durably
+   * persisted log entries to disk. This allows the leader to track durable
+   * acknowledgments separately from memory acks, enabling speculative commits.
+   *
+   * @param term - Term when entries were persisted (must match current term)
+   * @param follower_id - Site ID of the follower
+   * @param lastLogIndex - Highest log index that is now durable on follower
+   * @param acknowledged - [OUT] true if ack was recorded
+   * @param cb - Callback to invoke when handling complete
+   */
+  // @unsafe - Modifies durableAcks_ and securedLogIndex_
+  void OnAppendEntriesDurable(const ballot_t& term,
+                              const siteid_t& follower_id,
+                              const uint64_t& lastLogIndex,
+                              bool_t* acknowledged,
+                              rusty::Function<void()> cb);
+
+  /**
    * TimeoutNow RPC Handler - Leadership Transfer Protocol
    *
    * Receives TimeoutNow RPC from current leader instructing this replica

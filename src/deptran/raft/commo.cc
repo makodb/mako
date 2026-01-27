@@ -59,9 +59,9 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
         Log_debug("[APPEND_RPC] Error response from site %d, error_code=%d", site_id, fu->get_error_code());
         return;
       }
-      fu->get_reply() >> response->status >> response->term >> response->last_log_index;
-      Log_info("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu",
-               site_id, response->status, response->term, response->last_log_index);
+      fu->get_reply() >> response->status >> response->term >> response->last_log_index >> response->ack_type;
+      Log_info("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
+               site_id, response->status, response->term, response->last_log_index, response->ack_type);
       response->event->set(1);
     };
 
@@ -136,8 +136,9 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       fu->get_reply() >> res->ok;
       fu->get_reply() >> res->followerTerm;
       fu->get_reply() >> res->followerLastLogIndex;
+      fu->get_reply() >> res->followerAckType;
       res->empty = (cmd == nullptr);
-      // false, 0, 0 is the return value reserved to simulate a lost RPC.
+      // false, 0, 0, 0 is the return value reserved to simulate a lost RPC.
       // only set res->done if it's not a lost RPC
       if (res->ok == false && res->followerTerm == 0 && res->followerLastLogIndex == 0) {
         res->done = false;
@@ -341,6 +342,56 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
            candidate_id, term, voter_id);
 
   Call_Async(proxy, VoteDurable, term, voter_id, fuattr);
+}
+
+// ============================================================================
+// AppendEntriesDurable RPC - Speculative Commit Protocol
+// ============================================================================
+
+/**
+ * SendAppendEntriesDurable - Send durable ack to leader after log fsync
+ *
+ * Called after a follower has durably persisted log entries to disk.
+ * This notifies the leader that entries up to lastLogIndex are now durable.
+ */
+// @safe
+void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
+                                          parid_t par_id,
+                                          ballot_t term,
+                                          siteid_t follower_id,
+                                          uint64_t lastLogIndex) {
+  auto& proxies = rpc_par_proxies_[par_id];
+
+  // Find the proxy for the leader
+  RaftProxy* proxy = nullptr;
+  for (auto& p : proxies) {
+    if (p.first == leader_id) {
+      proxy = (RaftProxy*) p.second;
+      break;
+    }
+  }
+
+  if (proxy == nullptr) {
+    Log_warn("[SPEC-RAFT] SendAppendEntriesDurable: No proxy found for leader %d", leader_id);
+    return;
+  }
+
+  FutureAttr fuattr;
+  fuattr.callback = [leader_id, term, follower_id, lastLogIndex](rusty::Arc<Future> fu) {
+    if (fu->get_error_code() != 0) {
+      Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to %d failed with error %d",
+                leader_id, fu->get_error_code());
+      return;
+    }
+    bool_t ack = false;
+    fu->get_reply() >> ack;
+    Log_debug("[SPEC-RAFT] AppendEntriesDurable RPC to %d completed, ack=%d", leader_id, ack);
+  };
+
+  Log_info("[SPEC-RAFT] Sending AppendEntriesDurable to leader %d (term=%lu, follower=%d, lastIdx=%lu)",
+           leader_id, term, follower_id, lastLogIndex);
+
+  Call_Async(proxy, AppendEntriesDurable, term, follower_id, lastLogIndex, fuattr);
 }
 
 // ============================================================================

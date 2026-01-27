@@ -66,7 +66,7 @@ class RaftServiceImpl : public RaftService {
     *acknowledged = false;
   }
 
-  RpcHandler(AppendEntries, 12,
+  RpcHandler(AppendEntries, 13,
              const uint64_t&, slot,
              const ballot_t&, ballot,
              const uint64_t&, leaderCurrentTerm,
@@ -78,13 +78,15 @@ class RaftServiceImpl : public RaftService {
              const uint64_t&, leaderNextLogTerm,
              uint64_t*, followerAppendOK,
              uint64_t*, followerCurrentTerm,
-             uint64_t*, followerLastLogIndex) {
+             uint64_t*, followerLastLogIndex,
+             uint64_t*, followerAckType) {
     *followerAppendOK = false;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
+    *followerAckType = 0;  // Memory ack by default
   }
 
-  RpcHandler(EmptyAppendEntries, 11,
+  RpcHandler(EmptyAppendEntries, 12,
              const uint64_t&, slot,
              const ballot_t&, ballot,
              const uint64_t&, leaderCurrentTerm,
@@ -95,10 +97,22 @@ class RaftServiceImpl : public RaftService {
              const bool_t&, trigger_election_now,
              uint64_t*, followerAppendOK,
              uint64_t*, followerCurrentTerm,
-             uint64_t*, followerLastLogIndex) {
+             uint64_t*, followerLastLogIndex,
+             uint64_t*, followerAckType) {
     *followerAppendOK = false;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
+    *followerAckType = 0;  // Memory ack by default
+  }
+
+  // AppendEntriesDurable - Received after follower has durably persisted log entries
+  // Enables speculative commits: leader tracks durable vs memory acks
+  RpcHandler(AppendEntriesDurable, 4,
+             const ballot_t&, term,
+             const siteid_t&, follower_id,
+             const uint64_t&, lastLogIndex,
+             bool_t*, acknowledged) {
+    *acknowledged = false;
   }
 
   RpcHandler(TimeoutNow, 4,

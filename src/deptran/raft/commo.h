@@ -81,7 +81,19 @@ class SendAppendEntriesResults {
   uint64_t ok = 0;
   uint64_t followerTerm = 0;
   uint64_t followerLastLogIndex = 0;
+  uint64_t followerAckType = 0;  // 0=Memory, 1=Durable
   bool empty = true;
+};
+
+/**
+ * AckType - Speculative Replication acknowledgment type
+ *
+ * Memory: Entry appended to in-memory log (immediate response)
+ * Durable: Entry persisted to disk (sent via AppendEntriesDurable RPC)
+ */
+enum class AckType : uint64_t {
+  Memory = 0,
+  Durable = 1
 };
 
 // Response data for async AppendEntries RPC
@@ -91,6 +103,7 @@ struct AppendEntriesResponse {
   uint64_t status = 0;
   uint64_t term = 0;
   uint64_t last_log_index = 0;
+  uint64_t ack_type = 0;  // 0=Memory, 1=Durable (see AckType enum)
 };
 
 
@@ -191,6 +204,26 @@ friend class RaftProxy;
                        parid_t par_id,
                        ballot_t term,
                        siteid_t voter_id);
+
+  /**
+   * SendAppendEntriesDurable - Send durable ack to leader after log fsync
+   *
+   * Called after a follower has durably persisted log entries to disk.
+   * Enables speculative commits by notifying the leader that entries up to
+   * lastLogIndex are now durable and can count towards secured commit.
+   *
+   * @param leader_id - The site ID of the current leader
+   * @param par_id - Partition ID
+   * @param term - Current term when entries were persisted
+   * @param follower_id - Our own site ID (the follower)
+   * @param lastLogIndex - Highest log index that is now durable
+   */
+  // @safe
+  void SendAppendEntriesDurable(siteid_t leader_id,
+                                parid_t par_id,
+                                ballot_t term,
+                                siteid_t follower_id,
+                                uint64_t lastLogIndex);
 
   /**
    * SendNotifyRestart - Broadcast restart notification to all peers

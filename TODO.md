@@ -40,26 +40,29 @@ Implementation plan: docs/dev/phase2_vote_rpc_plan.md
 ### 2.3 New Message Type [DONE 2026-01-27, 03:21]
 - [x] Define `VoteDurable { term: u64, voterId: NodeId }` message (in rcc_rpc.rpc)
 
-## Phase 3: AppendEntries RPC Changes
+## Phase 3: AppendEntries RPC Changes [COMPLETED 2026-01-27]
 
-### 3.1 Follower Side (AppendEntries Handler)
-- [ ] Append entries to in-memory log immediately
-- [ ] Return `AppendEntriesResponse` immediately with `ackType: Memory`
-- [ ] Start async fsync of log entries
-- [ ] On fsync complete: send `AppendEntriesResponse` with `ackType: Durable`
+Implementation plan: docs/dev/phase3_appendentries_rpc_plan.md
 
-### 3.2 Leader Side (AppendEntries Response Handler)
-- [ ] On receiving `ackType: Memory`: add follower to `memoryAcks[index]`
-- [ ] If `|memoryAcks[index]| >= quorum`: 
-  - [ ] Update `specCommitIndex = max(specCommitIndex, index)`
-  - [ ] Notify client with `SPECULATIVE` status
-- [ ] On receiving `ackType: Durable`: add follower to `durableAcks[index]`
-- [ ] If `securedLeader && |durableAcks[index]| >= quorum`:
-  - [ ] Update `securedLogIndex = max(securedLogIndex, index)`
-  - [ ] Notify client with `DURABLE` status
+### 3.1 Follower Side (AppendEntries Handler) [DONE 2026-01-27, 04:25]
+- [x] Append entries to in-memory log immediately
+- [x] Return `AppendEntriesResponse` immediately with `ackType: Memory`
+- [x] Start async fsync of log entries in detached thread
+- [x] On fsync complete: send `AppendEntriesDurable` RPC to leader
 
-### 3.3 Modify Message Type
-- [ ] Add `ackType: enum { Memory, Durable }` to `AppendEntriesResponse`
+### 3.2 Leader Side (AppendEntries Response Handler) [DONE 2026-01-27, 04:25]
+- [x] On receiving `ackType: Memory`: add follower to `memoryAcks[index]`
+- [x] If `|memoryAcks[index]| >= quorum`:
+  - [x] Update `specCommitIndex = max(specCommitIndex, index)`
+  - [ ] Notify client with `SPECULATIVE` status (deferred to Phase 5)
+- [x] On receiving `AppendEntriesDurable` RPC: add follower to `durableAcks[index]`
+- [x] If `securedLeader && |durableAcks[index]| >= quorum`:
+  - [x] Update `securedLogIndex = max(securedLogIndex, index)`
+  - [ ] Notify client with `DURABLE` status (deferred to Phase 5)
+
+### 3.3 Modify Message Type [DONE 2026-01-27, 04:25]
+- [x] Add `ackType: enum { Memory, Durable }` to `AppendEntriesResponse`
+- [x] Add `AppendEntriesDurable` RPC for durable ack notification
 
 ## Phase 4: notifyRestart Integration
 

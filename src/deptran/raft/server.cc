@@ -968,6 +968,21 @@ void RaftServer::HeartbeatLoop() {
         } else {
           // case 3: AppendEntries accepted
           verify(resp.status == true);
+
+          // ==================================================================
+          // SPECULATIVE REPLICATION: Track memory acks
+          // ack_type=0 means Memory ack (immediate response before fsync)
+          // ack_type=1 means Durable ack (handled via AppendEntriesDurable RPC)
+          // ==================================================================
+          if (resp.ack_type == 0) {  // Memory ack
+            // Add follower to memoryAcks for all indices up to last_log_index
+            for (uint64_t idx = 1; idx <= resp.last_log_index; ++idx) {
+              memoryAcks_[idx].insert(pending.follower_id);
+            }
+            Log_debug("[SPEC-RAFT] Memory ack from follower %d for index %lu",
+                      pending.follower_id, resp.last_log_index);
+          }
+
           if (pending.cmd == nullptr) {
             Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
             if (resp.last_log_index > match_index) {
@@ -1034,6 +1049,46 @@ void RaftServer::HeartbeatLoop() {
         }
         if (commitIndex > executeIndex)
           applyLogs();
+
+        // ==================================================================
+        // SPECULATIVE REPLICATION: Update specCommitIndex based on memory acks
+        // ==================================================================
+        size_t quorum = (nservers / 2) + 1;
+
+        // Find the highest index with memory ack quorum
+        // Leader's own entry counts as a memory ack
+        uint64_t newSpecCommitIndex = specCommitIndex_;
+        for (uint64_t idx = specCommitIndex_ + 1; idx <= lastLogIndex; ++idx) {
+          // Check if we have quorum for this index
+          auto it = memoryAcks_.find(idx);
+          size_t ack_count = (it != memoryAcks_.end()) ? it->second.size() : 0;
+          // Leader's own log counts as an ack (we have the entry)
+          ack_count += 1;  // +1 for leader's own entry
+
+          if (ack_count >= quorum) {
+            // Verify the entry is from current term
+            auto instance = GetRaftInstance(idx);
+            if (instance && instance->term == currentTerm) {
+              newSpecCommitIndex = idx;
+            }
+          } else {
+            // Stop at first index without quorum (monotonic advance)
+            break;
+          }
+        }
+
+        if (newSpecCommitIndex > specCommitIndex_) {
+          Log_info("[SPEC-RAFT] Site %d: Advancing specCommitIndex %lu -> %lu",
+                   site_id_, specCommitIndex_, newSpecCommitIndex);
+          specCommitIndex_ = newSpecCommitIndex;
+
+          // TODO (Phase 5): Notify clients with SPECULATIVE status for entries
+          // from old specCommitIndex+1 to new specCommitIndex
+        }
+
+        // Verify invariants
+        VerifySpeculativeInvariants();
+
         mtx_.unlock();
       }
     }
@@ -1357,6 +1412,78 @@ void RaftServer::OnVoteDurable(const ballot_t& term,
   cb();
 }
 
+// ============================================================================
+// AppendEntriesDurable RPC Handler - Speculative Commit Protocol
+// ============================================================================
+
+void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
+                                         const siteid_t& follower_id,
+                                         const uint64_t& lastLogIndex,
+                                         bool_t* acknowledged,
+                                         rusty::Function<void()> cb) {
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
+
+  // Reject stale acks from old terms
+  if (term != currentTerm) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - term mismatch (got %lu, current %lu)",
+              site_id_, follower_id, term, currentTerm);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Only process if we're the leader
+  if (!is_leader_) {
+    Log_debug("[SPEC-RAFT] Site %d: Ignoring AppendEntriesDurable from %d - not leader",
+              site_id_, follower_id);
+    *acknowledged = false;
+    cb();
+    return;
+  }
+
+  // Add follower to durable acks for all indices up to lastLogIndex
+  // We track this for all indices since the follower has durably persisted everything up to lastLogIndex
+  for (uint64_t idx = 1; idx <= lastLogIndex; ++idx) {
+    durableAcks_[idx].insert(follower_id);
+  }
+  *acknowledged = true;
+
+  Log_info("[SPEC-RAFT] Site %d: Received AppendEntriesDurable from %d for index=%lu",
+           site_id_, follower_id, lastLogIndex);
+
+  // Check if we can advance securedLogIndex
+  // Only if we're a secured leader (have durable vote quorum)
+  if (securedLeader_) {
+    size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
+
+    // Find the highest index with durable ack quorum
+    uint64_t newSecuredIndex = securedLogIndex_;
+    for (uint64_t idx = securedLogIndex_ + 1; idx <= lastLogIndex && idx <= specCommitIndex_; ++idx) {
+      auto it = durableAcks_.find(idx);
+      if (it != durableAcks_.end() && it->second.size() >= quorum) {
+        newSecuredIndex = idx;
+      } else {
+        // Stop at first index without quorum (monotonic advance)
+        break;
+      }
+    }
+
+    if (newSecuredIndex > securedLogIndex_) {
+      Log_info("[SPEC-RAFT] Site %d: Advancing securedLogIndex %lu -> %lu",
+               site_id_, securedLogIndex_, newSecuredIndex);
+      securedLogIndex_ = newSecuredIndex;
+
+      // TODO (Phase 5): Notify clients with DURABLE status for entries
+      // from old securedLogIndex+1 to new securedLogIndex
+    }
+  }
+
+  // Verify invariants in debug mode
+  VerifySpeculativeInvariants();
+
+  cb();
+}
+
 // @safe - Calls undeclared Fiber::create_run()
 void RaftServer::StartElectionTimer() {
   resetTimer("start election timer");
@@ -1511,6 +1638,15 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       //              site_id_, prev_leader, leaderSiteId, leaderCurrentTerm, currentTerm);
       // }
 
+      // ==================================================================
+      // SPECULATIVE REPLICATION: Append to memory, respond immediately,
+      // then persist asynchronously and send AppendEntriesDurable
+      // ==================================================================
+
+      // Capture state for async persistence before modifying in-memory state
+      std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>> entries_to_persist;
+      uint64_t log_index_for_durable_ack = 0;
+
       if (cmd != nullptr) {
 #ifndef RAFT_BATCH_OPTIMIZATION
         lastLogIndex = leaderPrevLogIndex + 1;
@@ -1518,14 +1654,9 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         instance->log_ = cmd;
         instance->term = leaderNextLogTerm;
 
-        // CRITICAL: Persist log entry before responding AppendEntries OK
-        PersistLogEntry(lastLogIndex, *instance, "OnAppendEntries: follower entry");
-        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted log entry at index %ld, term=%ld, lastLogIndex now=%ld",
-        //          this->loc_id_, lastLogIndex, leaderNextLogTerm, lastLogIndex);
-        // // Log the command that was accepted
-        // auto cmd_accepted = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-        // Log_debug("[APPEND_ENTRIES_ACCEPTED] Follower %d: accepted command %d at index %ld",
-        //          this->loc_id_, cmd_accepted ? cmd_accepted->tx_id_ : -1, lastLogIndex);
+        // Capture entry for async persistence
+        entries_to_persist.push_back({lastLogIndex, instance});
+        log_index_for_durable_ack = lastLogIndex;
 #endif
 #ifdef RAFT_BATCH_OPTIMIZATION
         auto cmds = dynamic_pointer_cast<TpcBatchCommand>(cmd);
@@ -1537,9 +1668,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           instance->log_ = c;
           instance->term = dynamic_pointer_cast<TpcCommitCommand>(c)->term;
 
-          // CRITICAL: Persist each log entry in batch
-          PersistLogEntry(lastLogIndex, *instance, "OnAppendEntries: batch entry");
+          // Capture entry for async persistence
+          entries_to_persist.push_back({lastLogIndex, instance});
         }
+        log_index_for_durable_ack = lastLogIndex;  // Highest index in batch
 #endif
       }
 
@@ -1549,15 +1681,19 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
 
-        // Persist commit index (can be async, not critical for safety)
-        PersistCommitIndex(commitIndex, "OnAppendEntries: follower commit");
-
         need_apply = true;
       }
 
       *followerAppendOK = 1;
       *followerCurrentTerm = this->currentTerm;
       *followerLastLogIndex = this->lastLogIndex;
+
+      // Capture state needed for async persistence thread
+      ballot_t term_copy = currentTerm;
+      siteid_t follower_id_copy = site_id_;
+      siteid_t leader_id_copy = leaderSiteId;
+      parid_t par_id_copy = partition_id_;
+      uint64_t commit_index_copy = commitIndex;
 
       // CRITICAL FIX: Release mutex before applying logs!
       // This allows concurrent AppendEntries to be processed
@@ -1566,6 +1702,31 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
       if (need_apply) {
         applyLogs();  // Now called WITHOUT holding the mutex!
+      }
+
+      // ==================================================================
+      // SPECULATIVE REPLICATION: Start async persistence and durable ack
+      // ==================================================================
+      if (!entries_to_persist.empty()) {
+        // Capture entries by move to avoid dangling references
+        std::thread([this, entries = std::move(entries_to_persist),
+                     log_index_for_durable_ack, term_copy, follower_id_copy,
+                     leader_id_copy, par_id_copy, commit_index_copy]() {
+          // Persist all log entries
+          for (const auto& entry : entries) {
+            PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
+          }
+
+          // Also persist commit index (async is fine for commit index)
+          PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
+
+          // Send AppendEntriesDurable RPC to leader
+          auto c = commo();
+          if (c != nullptr) {
+            c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
+                                        follower_id_copy, log_index_for_durable_ack);
+          }
+        }).detach();
       }
 
       // Re-acquire mutex before returning (to handle remaining code safely)
