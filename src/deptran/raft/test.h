@@ -62,6 +62,17 @@ class RaftLabTest {
   // Test that durable commit requires secured leader
   int testDurableCommitRequiresSecuredLeader(void);
 
+  // ===========================================================================
+  // PHASE 7.2: NotifyRestart Tests
+  // ===========================================================================
+  // Tests for notifyRestart and step-down behavior
+
+  // Test that follower restart removes from specVoters
+  int testRestartRemovesFromSpecVoters(void);
+
+  // Test that unsecured leader steps down when losing spec quorum
+  int testUnsecuredLostQuorumStepsDown(void);
+
   void wait(uint64_t microseconds);
 
 };

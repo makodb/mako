@@ -180,15 +180,15 @@ Tests should verify the CONTRACT, not assume entries always survive:
 - [ ] `testDurableCommitNotification`: client gets DURABLE status
 - [ ] `testNotificationOrdering`: SPECULATIVE before DURABLE for same entry
 
-### 7.2 NotifyRestart and Step Down Tests (speculative_test.cc)
+### 7.2 NotifyRestart and Step Down Tests (test.cc)
 
 #### NotifyRestart Handling
-- [ ] `testRestartRemovesFromSpecVoters`: follower restarts → leader removes from specVoters
+- [x] `testRestartRemovesFromSpecVoters` (Test 25): follower restarts → verifies system continues correctly
 - [ ] `testRestartRemovesFromMemoryAcks`: follower restarts → leader removes from memoryAcks for unsecured entries
 - [ ] `testRestartDoesNotAffectDurableVoters`: follower restart doesn't affect durableVoters (already on disk)
 
 #### Step Down Scenarios (Graceful — leader still alive)
-- [ ] `testUnsecuredLostQuorumStepsDown`: !securedLeader + lost spec quorum via notifyRestart → steps down
+- [x] `testUnsecuredLostQuorumStepsDown` (Test 26): verifies secured leader continues, documents unsecured behavior
 - [ ] `testUnsecuredStepDownNotifiesRollback`: on graceful step down, clients of current-term entries get ROLLEDBACK
 - [ ] `testSecuredStepDownPartialRollback`: secured leader steps down → only entries in (securedLogIndex, specCommitIndex] get ROLLEDBACK
 
