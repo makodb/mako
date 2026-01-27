@@ -248,7 +248,7 @@ Tests should verify the CONTRACT, not assume entries always survive:
   ```
 
 ### 7.4 Stress Tests
-- [ ] `testRapidRestarts`: multiple followers rapidly restarting, verify consistency
+- [x] `testRapidRestarts` (Test 32): multiple followers rapidly restarting, verify consistency
 - [ ] `testConcurrentElections`: multiple candidates with speculative voting
 - [ ] `testFsyncLatencyVariance`: simulate variable fsync times, verify correctness
 

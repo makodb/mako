@@ -93,6 +93,13 @@ class RaftLabTest {
   // Test double-vote prevention after crash
   int testDoubleVotePrevention(void);
 
+  // ===========================================================================
+  // PHASE 7.4: Stress Tests
+  // ===========================================================================
+
+  // Test rapid follower restarts
+  int testRapidRestarts(void);
+
   void wait(uint64_t microseconds);
 
 };

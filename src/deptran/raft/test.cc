@@ -39,6 +39,8 @@ int RaftLabTest::Run(void) {
       || TEST_EXPAND(testSpeculativeEntriesSurviveCrash())            // Test 29
       || TEST_EXPAND(testVoterCrashBeforeVoteFsync())                 // Test 30
       || TEST_EXPAND(testDoubleVotePrevention())                      // Test 31
+      // Phase 7.4: Stress tests
+      || TEST_EXPAND(testRapidRestarts())                             // Test 32
       // testInitialElection()
       // || TEST_EXPAND(testReElection())
       // || TEST_EXPAND(testBasicAgree())
@@ -3075,6 +3077,164 @@ int RaftLabTest::testDoubleVotePrevention(void) {
   Assert2(config_->VerifySpecInvariants(current_leader_id), "Invariants violated");
 
   Log_info("[SPEC-TEST] Double vote prevention test PASSED!");
+
+  Passed2();
+}
+
+// ============================================================================
+// PHASE 7.4: Stress Tests
+// ============================================================================
+
+/**
+ * Test rapid follower restarts.
+ *
+ * Stress test that rapidly restarts followers to verify the system
+ * maintains consistency under churn.
+ *
+ * Scenario:
+ * 1. Establish leader and commit some entries
+ * 2. Rapidly restart multiple followers in sequence
+ * 3. Continue committing entries during the chaos
+ * 4. Verify all entries eventually committed on all servers
+ * 5. Verify no invariant violations
+ */
+int RaftLabTest::testRapidRestarts(void) {
+  Init2(32, "Rapid follower restarts stress test");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  siteid_t leader_id = config_->getServerIdByIndex(leader);
+  Log_info("[SPEC-TEST] Initial leader: %d (site %d)", leader, leader_id);
+
+  // Wait for leader to become secured
+  Fiber::sleep(500000);
+
+  bool secured = config_->IsSecuredLeader(leader_id);
+  Assert2(secured, "Leader should be secured");
+
+  // Commit initial entries
+  for (int i = 0; i < 3; i++) {
+    int cmd = 2000 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+    bool ok = config_->Start(leader_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit command %d", cmd);
+    int result = config_->Wait(index, NSERVERS, term);
+    AssertWaitNoError(result, index);
+    index_ = index;
+  }
+
+  Log_info("[SPEC-TEST] Baseline committed, last index=%lu", index_);
+
+  // Collect followers
+  std::vector<siteid_t> followers;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t svr = config_->getServerIdByIndex(i);
+    if (svr != leader_id) {
+      followers.push_back(svr);
+    }
+  }
+
+  // Rapid restart sequence: cycle through followers
+  int num_restarts = 8;  // Total number of restarts
+  int restart_delay_ms = 200;  // Delay between restarts
+
+  Log_info("[SPEC-TEST] Starting %d rapid restarts...", num_restarts);
+
+  for (int r = 0; r < num_restarts; r++) {
+    // Pick follower to restart (cycle through)
+    siteid_t follower_to_restart = followers[r % followers.size()];
+
+    Log_info("[SPEC-TEST] Restart %d: killing follower %d", r + 1, follower_to_restart);
+    config_->Kill(follower_to_restart);
+
+    // Brief delay
+    Fiber::sleep(restart_delay_ms * 1000);  // Convert to microseconds
+
+    // Restart
+    config_->Restart(follower_to_restart);
+
+    // Try to commit an entry while things are churning
+    int current_leader = config_->OneLeader();
+    if (current_leader >= 0) {
+      siteid_t current_leader_id = config_->getServerIdByIndex(current_leader);
+      int cmd = 2100 + r;
+      uint64_t index = 0;
+      uint64_t term = 0;
+      bool ok = config_->Start(current_leader_id, cmd, &index, &term);
+      if (ok) {
+        // Don't wait for full quorum during chaos, just verify it started
+        Fiber::sleep(100000);  // 100ms
+        int committed = config_->NCommitted(index);
+        Log_info("[SPEC-TEST] Restart %d: entry %d started, committed on %d servers",
+                 r + 1, cmd, committed);
+        index_ = index;
+      }
+    }
+
+    // Brief delay before next restart
+    Fiber::sleep(restart_delay_ms * 1000);
+  }
+
+  Log_info("[SPEC-TEST] Rapid restarts complete, stabilizing...");
+
+  // Wait for system to stabilize
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+  // Find leader after chaos
+  int final_leader = config_->OneLeader();
+  Assert2(final_leader >= 0, "Should have leader after stabilization");
+
+  siteid_t final_leader_id = config_->getServerIdByIndex(final_leader);
+  Log_info("[SPEC-TEST] Leader after chaos: %d (site %d)", final_leader, final_leader_id);
+
+  // Commit final entries to verify full recovery
+  for (int i = 0; i < 3; i++) {
+    int cmd = 2200 + i;
+    uint64_t index = 0;
+    uint64_t term = 0;
+
+    // Get fresh leader (may have changed)
+    int leader_now = config_->OneLeader();
+    if (leader_now < 0) {
+      Fiber::sleep(ELECTIONTIMEOUT);
+      leader_now = config_->OneLeader();
+      Assert2(leader_now >= 0, "Should have a leader");
+    }
+    siteid_t leader_now_id = config_->getServerIdByIndex(leader_now);
+
+    bool ok = config_->Start(leader_now_id, cmd, &index, &term);
+    Assert2(ok, "Failed to submit final command %d", cmd);
+
+    int result = config_->Wait(index, NSERVERS, term);
+    if (result < 0) {
+      // May need more time
+      Fiber::sleep(ELECTIONTIMEOUT);
+      result = config_->Wait(index, NSERVERS, term);
+    }
+
+    if (result >= 0) {
+      Log_info("[SPEC-TEST] Final entry %d committed at index %lu", cmd, index);
+    } else {
+      int committed = config_->NCommitted(index);
+      Log_info("[SPEC-TEST] Final entry %d: committed on %d servers", cmd, committed);
+      Assert2(committed >= 3, "At least quorum should have committed");
+    }
+    index_ = index;
+  }
+
+  // Verify invariants on current leader
+  final_leader = config_->OneLeader();
+  Assert2(final_leader >= 0, "Should have leader");
+  final_leader_id = config_->getServerIdByIndex(final_leader);
+
+  Assert2(config_->VerifySpecInvariants(final_leader_id), "Invariants violated");
+
+  Log_info("[SPEC-TEST] Rapid restarts stress test PASSED!");
 
   Passed2();
 }
