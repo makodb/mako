@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [ mako-dev, mako-weihai ]
+  pull_request:
+    branches: [ mako-dev, mako-weihai ]
   workflow_dispatch:
 
 # comment out so we run test for every commit, otherwise new commit will cancel old (pending test) commit.
