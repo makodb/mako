@@ -29,7 +29,91 @@ Each commit may have multiple issues tracked with severity levels:
 
 ---
 
-*Last updated: 2026-01-23 (69f8ba0e reviewed)*
+*Last updated: 2026-02-03 (a6bed72c reviewed)*
+
+---
+
+## Commit a6bed72c - "Reorganize documentation structure"
+**Date**: 2026-02-03
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (documentation reorganization only - no code changes)
+
+Major cleanup moving docs to organized subdirectories (getting-started/, architecture/, developer/, rpc/, migration/, plans/, etc.). Removed stubs and outdated docs. Updated index.md navigation.
+
+**CI Note**: Run #21649096526 failed with intermittent segfault in shardNoReplication test. Investigation shows this is NOT caused by this commit (no C++ changes). Test passes consistently locally (4/4 runs). The failure is an intermittent race condition in RrrRpcBackend::Stop during shutdown, likely triggered by CI environment timing.
+
+---
+
+## Commit a5d3c01c - "Move doc/ to docs/ and enable CI on PRs"
+**Date**: 2026-02-03
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (directory rename + CI trigger addition)
+
+---
+
+## Commit ff7de45d - "Update daily CI check timestamps [2026-02-01]"
+**Date**: 2026-02-01
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 183413a9 - "Update daily CI check timestamps [2026-01-31]"
+**Date**: 2026-01-31
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit de5b9ec9 - "Update daily CI check timestamps [2026-01-29]"
+**Date**: 2026-01-29
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 92c58460 - "Unify client-server interfaces with RunMode enum [issue-1.md]"
+**Date**: 2026-01-25
+**Author**: shenweihai1
+
+**Verdict**: No issues found (clean API unification)
+
+Good implementation:
+- Added `ClientConfig` struct to `mako::Options` in db.hh with proper @safe annotations
+- Added `RemoteDB::Connect(const Options&, int, RemoteDB**)` overload with comprehensive validation
+- Properly deprecated `RemoteOptions` instead of removing it (backward compat)
+- Added `RunMode` enum for cleaner mode handling in simpleTransactionRep.cc
+- Clean delegation pattern: new API converts to old RemoteOptions internally
+- Well-documented with usage examples in plan file
+
+---
+
+## Commit 5226e4c3 - "Update submodules and hourly CI check [2026-01-24]"
+**Date**: 2026-01-24
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (submodule update + timestamp only)
+
+---
+
+## Commit 9b5b7357 - "Update daily check timestamps [2026-01-24]"
+**Date**: 2026-01-24
+**Author**: Shuai Mu
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit f79fd97e - "Updated commit_reviews"
+**Date**: 2026-01-24
+**Author**: shenweihai1
+
+**Verdict**: No issues found (review log update only)
 
 ---
 
