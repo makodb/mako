@@ -13,18 +13,24 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Lock-free point lookup implementation for Masstree
+// Performs optimistic traversal with version validation and retry
+// SAFETY: Raw pointer traversal, optimistic read with memory fences
+
 #ifndef MASSTREE_GET_HH
 #define MASSTREE_GET_HH 1
 #include "masstree_tcursor.hh"
 #include "masstree_key.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 
 template <typename P>
+// @unsafe { Traverses tree via raw pointers without locks, uses memory fences }
 bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 {
     int match;
     key_indexed_position kx;
-    node_base<P>* root = const_cast<node_base<P>*>(root_);
+    rusty::MutPtr<node_base<P>> root = const_cast<node_base<P>*>(root_);
 
  retry:
     n_ = root->reach_leaf(ka_, v_, ti);
@@ -57,6 +63,7 @@ bool unlocked_tcursor<P>::find_unlocked(threadinfo& ti)
 }
 
 template <typename P>
+// @unsafe { Calls find_unlocked() which traverses via raw pointers }
 inline bool basic_table<P>::get(Str key, value_type &value,
                                 threadinfo& ti) const
 {
@@ -68,9 +75,10 @@ inline bool basic_table<P>::get(Str key, value_type &value,
 }
 
 template <typename P>
+// @unsafe { Locks nodes, traverses via raw pointers, uses fence() }
 bool tcursor<P>::find_locked(threadinfo& ti)
 {
-    node_base<P>* root = const_cast<node_base<P>*>(root_);
+    rusty::MutPtr<node_base<P>> root = root_;
     nodeversion_type v;
     permuter_type perm;
 
@@ -110,7 +118,7 @@ bool tcursor<P>::find_locked(threadinfo& ti)
         goto retry;
     } else if (unlikely(n_->deleted_layer())) {
         ka_.unshift_all();
-        root = const_cast<node_base<P>*>(root_);
+        root = root_;
         goto retry;
     }
     return state_;

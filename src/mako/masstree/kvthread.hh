@@ -13,13 +13,19 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Thread-local state and memory allocation for Masstree
+// Provides per-thread memory pools, epoch tracking, and RCU-style reclamation
+// SAFETY: Uses malloc/mmap, pthread TLS, and epoch-based memory management
+
 #ifndef KVTHREAD_HH
 #define KVTHREAD_HH 1
+#include "masstree_context.h"
 #include "mtcounters.hh"
 #include "compiler.hh"
 #include "circular_int.hh"
 #include "timestamp.hh"
 #include "memdebug.hh"
+#include <rusty/ptr.hpp>
 #include <assert.h>
 #include <pthread.h>
 #include <sys/mman.h>
@@ -31,7 +37,10 @@ class loginfo;
 typedef uint64_t mrcu_epoch_type;
 typedef int64_t mrcu_signed_epoch_type;
 
-extern volatile mrcu_epoch_type globalepoch;  // global epoch, updated regularly
+// globalepoch is now per-context in MasstreeContext for our code.
+// We still declare the extern for backward compatibility with external code
+// (like STO benchmarks) that defines and uses their own globalepoch.
+extern volatile mrcu_epoch_type globalepoch;
 
 struct limbo_element {
     void* ptr_;
@@ -80,68 +89,90 @@ class threadinfo {
         TI_MAIN, TI_PROCESS, TI_LOG, TI_CHECKPOINT
     };
 
-    static threadinfo* allthreads;
+    // allthreads is now per-context in MasstreeContext
 
-    threadinfo* next() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<threadinfo> next() const {
         return next_;
     }
+    // @safe - Takes rusty::MutPtr parameter
+    void set_next(rusty::MutPtr<threadinfo> n) {
+        next_ = n;
+    }
 
-    static threadinfo* make(int purpose, int index);
+    // @unsafe { Factory uses placement new }
+    static rusty::MutPtr<threadinfo> make(int purpose, int index);
     // XXX destructor
 
     // thread information
+    // @safe - Returns value copy
     int purpose() const {
         return purpose_;
     }
+    // @safe - Returns value copy
     int index() const {
         return index_;
     }
-    loginfo* logger() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<MasstreeContext> context() const {
+        return context_;
+    }
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<loginfo> logger() const {
         return logger_;
     }
-    void set_logger(loginfo* logger) {
+    // @safe - Takes rusty::MutPtr parameter
+    void set_logger(rusty::MutPtr<loginfo> logger) {
         assert(!logger_ && logger);
         logger_ = logger;
     }
 
     // timestamps
+    // @unsafe { timestamp() is not borrow-checked }
     kvtimestamp_t operation_timestamp() const {
         return timestamp();
     }
+    // @safe - Returns value copy
     kvtimestamp_t update_timestamp() const {
         return ts_;
     }
+    // @safe - Returns value copy (ts_ is mutable for internal use)
     kvtimestamp_t update_timestamp(kvtimestamp_t x) const {
         if (circular_int<kvtimestamp_t>::less_equal(ts_, x))
             // x might be a marker timestamp; ensure result is not
             ts_ = (x | 1) + 1;
         return ts_;
     }
+    // @unsafe { Accesses raw pointer member of N }
     template <typename N> void observe_phantoms(N* n) {
         if (circular_int<kvtimestamp_t>::less(ts_, n->phantom_epoch_[0]))
             ts_ = n->phantom_epoch_[0];
     }
 
     // event counters
+    // @safe - Modifies owned counter array
     void mark(threadcounter ci) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             ++counters_[ci];
     }
+    // @safe - Modifies owned counter array
     void mark(threadcounter ci, int64_t delta) {
         if (has_threadcounter<int(ncounters)>::test(ci))
             counters_[ci] += delta;
     }
+    // @unsafe { has_threadcounter::test is not borrow-checked }
     bool has_counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci);
     }
+    // @safe - Returns value copy
     uint64_t counter(threadcounter ci) const {
         return has_threadcounter<int(ncounters)>::test(ci) ? counters_[ci] : 0;
     }
 
     struct accounting_relax_fence_function {
-        threadinfo* ti_;
+        rusty::MutPtr<threadinfo> ti_;
         threadcounter ci_;
-        accounting_relax_fence_function(threadinfo* ti, threadcounter ci)
+        accounting_relax_fence_function(rusty::MutPtr<threadinfo> ti, threadcounter ci)
             : ti_(ti), ci_(ci) {
         }
         void operator()() {
@@ -158,8 +189,8 @@ class threadinfo {
     }
 
     struct stable_accounting_relax_fence_function {
-        threadinfo* ti_;
-        stable_accounting_relax_fence_function(threadinfo* ti)
+        rusty::MutPtr<threadinfo> ti_;
+        stable_accounting_relax_fence_function(rusty::MutPtr<threadinfo> ti)
             : ti_(ti) {
         }
         template <typename V>
@@ -181,13 +212,18 @@ class threadinfo {
     }
 
     // memory allocation
+    // @unsafe
+    // @lifetime: owned
     void* allocate(size_t sz, memtag tag) {
+        // @unsafe {
         void* p = malloc(sz + memdebug_size);
         p = memdebug::make(p, sz, tag);
         if (p)
             mark(threadcounter(tc_alloc + (tag > memtag_value)), sz);
         return p;
+        // }
     }
+    // @unsafe - frees raw heap memory using memdebug headers
     void deallocate(void* p, size_t sz, memtag tag) {
         // in C++ allocators, 'p' must be nonnull
         assert(p);
@@ -195,6 +231,7 @@ class threadinfo {
         free(p);
         mark(threadcounter(tc_alloc + (tag > memtag_value)), -sz);
     }
+    // @unsafe - defers free via RCU list; caller promises pointer validity
     void deallocate_rcu(void* p, size_t sz, memtag tag) {
         assert(p);
         memdebug::check_rcu(p, sz, tag);
@@ -202,7 +239,10 @@ class threadinfo {
         mark(threadcounter(tc_alloc + (tag > memtag_value)), -sz);
     }
 
+    // @unsafe
+    // @lifetime: owned
     void* pool_allocate(size_t sz, memtag tag) {
+        // @unsafe {
         int nl = (sz + memdebug_size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         assert(nl <= pool_max_nlines);
         if (unlikely(!pool_[nl - 1]))
@@ -215,7 +255,9 @@ class threadinfo {
                  nl * CACHE_LINE_SIZE);
         }
         return p;
+        // }
     }
+    // @unsafe - returns raw memory to freelist; assumes caller-provided size/tag
     void pool_deallocate(void* p, size_t sz, memtag tag) {
         int nl = (sz + memdebug_size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         assert(p && nl <= pool_max_nlines);
@@ -228,6 +270,7 @@ class threadinfo {
         mark(threadcounter(tc_alloc + (tag > memtag_value)),
              -nl * CACHE_LINE_SIZE);
     }
+    // @unsafe - queues pool frees for later RCU reclamation
     void pool_deallocate_rcu(void* p, size_t sz, memtag tag) {
         int nl = (sz + memdebug_size + CACHE_LINE_SIZE - 1) / CACHE_LINE_SIZE;
         assert(p && nl <= pool_max_nlines);
@@ -237,35 +280,44 @@ class threadinfo {
              -nl * CACHE_LINE_SIZE);
     }
 
-    // RCU
+    // RCU - Read-Copy-Update memory reclamation
+    // @unsafe { Reads epoch from context raw pointer }
     void rcu_start() {
-        if (gc_epoch_ != globalepoch)
-            gc_epoch_ = globalepoch;
+        mrcu_epoch_type current = context_->get_epoch();
+        if (gc_epoch_ != current)
+            gc_epoch_ = current;
     }
+    // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_stop() {
         if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 1)
             hard_rcu_quiesce();
         gc_epoch_ = 0;
     }
+    // @unsafe { May call hard_rcu_quiesce which frees memory }
     void rcu_quiesce() {
         rcu_start();
         if (limbo_epoch_ && (gc_epoch_ - limbo_epoch_) > 2)
             hard_rcu_quiesce();
     }
     typedef ::mrcu_callback mrcu_callback;
-    void rcu_register(mrcu_callback* cb) {
+    // @unsafe { record_rcu is not borrow-checked }
+    void rcu_register(rusty::MutPtr<mrcu_callback> cb) {
         record_rcu(cb, memtag(-1));
     }
 
     // thread management
+    // @unsafe { Returns mutable reference to pthread_t }
     pthread_t& pthread() {
         return pthreadid_;
     }
+    // @unsafe { Returns pthread_t value from non-borrow-checked member }
     pthread_t pthread() const {
         return pthreadid_;
     }
 
+    // @unsafe { Accepts raw pointer for debug output }
     void report_rcu(void* ptr) const;
+    // @unsafe { Accepts raw pointer for debug output }
     static void report_rcu_all(void* ptr);
 
   private:
@@ -273,14 +325,15 @@ class threadinfo {
         struct {
             mrcu_epoch_type gc_epoch_;
             mrcu_epoch_type limbo_epoch_;
-            loginfo *logger_;
+            rusty::MutPtr<loginfo> logger_;
 
-            threadinfo *next_;
+            rusty::MutPtr<threadinfo> next_;
             int purpose_;
             int index_;         // the index of a udp, logging, tcp,
                                 // checkpoint or recover thread
 
             pthread_t pthreadid_;
+            rusty::MutPtr<MasstreeContext> context_;  // The context this threadinfo belongs to
         };
         char padding1[CACHE_LINE_SIZE];
     };
@@ -299,6 +352,7 @@ class threadinfo {
     void refill_pool(int nl);
     void refill_rcu();
 
+    // @unsafe - reclaims memory with manual header checks and freelist rewrites
     void free_rcu(void *p, memtag tag) {
         if ((tag & memtag_pool_mask) == 0) {
             p = memdebug::check_free_after_rcu(p, tag);
@@ -313,10 +367,11 @@ class threadinfo {
         }
     }
 
+    // @unsafe - enqueues raw pointers for later epoch-based free
     void record_rcu(void* ptr, memtag tag) {
         if (limbo_tail_->tail_ == limbo_tail_->capacity)
             refill_rcu();
-        uint64_t epoch = globalepoch;
+        uint64_t epoch = context_->get_epoch();
         limbo_tail_->push_back(ptr, tag, epoch);
         if (!limbo_epoch_)
             limbo_epoch_ = epoch;

@@ -12,7 +12,7 @@ void ASSERT_EQ(bool a) { if (!a) throw; }
 
 void coroutine_basic() {
   int x = 0;
-  Coroutine::CreateRun([&x] () {
+  Fiber::CreateRun([&x] () {
     x = 1;
     sleep(2);
     x = 2;
@@ -21,59 +21,59 @@ void coroutine_basic() {
 }
 void coroutine_yield() {
   int x = 0;
-  auto coro1 = Coroutine::CreateRun([&x] () {
+  auto coro1 = Fiber::CreateRun([&x] () {
     x = 1;
-    Coroutine::CurrentCoroutine()->Yield();
+    Fiber::CurrentCoroutine()->Yield();
     x = 2;
-    Coroutine::CurrentCoroutine()->Yield();
+    Fiber::CurrentCoroutine()->Yield();
     x = 3;
   });
   ASSERT_EQ(x == 1);
-  Reactor::GetReactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->ContinueCoro(coro1);
   ASSERT_EQ(x == 2);
-  Reactor::GetReactor()->ContinueCoro(coro1);
+  Reactor::get_reactor()->ContinueCoro(coro1);
   ASSERT_EQ(x == 3);
 }
-shared_ptr<Coroutine> coroutine_yield_2_sub() {
+shared_ptr<Fiber> coroutine_yield_2_sub() {
   int x;
-  auto coro1 = Coroutine::CreateRun([&x] () {
+  auto coro1 = Fiber::CreateRun([&x] () {
       x = 1;
-      Coroutine::CurrentCoroutine()->Yield();
+      Fiber::CurrentCoroutine()->Yield();
   });
   return coro1;
 }
 void coroutine_yield_2() {
-  shared_ptr<Coroutine> c = coroutine_yield_2_sub();
+  shared_ptr<Fiber> c = coroutine_yield_2_sub();
   c->Continue();
 }
 void coroutine_wait_die_lock() {
   WaitDieALock a;
-  auto coro1 = Coroutine::CreateRun([&a] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 10);
+  auto coro1 = Fiber::CreateRun([&a] () {
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 10);
     ASSERT_EQ(req_id == true);
-    Coroutine::CurrentCoroutine()->Yield();
+    Fiber::CurrentCoroutine()->Yield();
     Log_info("aborting lock from coroutine 1.");
     a.abort(req_id);
   });
 
   int x = 0;
-  auto coro2 = Coroutine::CreateRun([&] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 11);
+  auto coro2 = Fiber::CreateRun([&] () {
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 11);
     ASSERT_EQ(req_id == false);
     x = 1;
   });
   ASSERT_EQ(x == 1);
 
   int y = 0;
-  auto coro3 = Coroutine::CreateRun([&] () {
-    uint64_t req_id = a.Lock(0, ALock::WLOCK, 8);  // yield
+  auto coro3 = Fiber::CreateRun([&] () {
+    uint64_t req_id = a.lock_sync(0, ALock::WLOCK, 8);  // yield
     ASSERT_EQ(req_id > 0);
     Log_info("acquired lock from coroutine 3.");
     y = 1;
   });
   ASSERT_EQ(y == 0);
   coro1->Continue();
-  Reactor::GetReactor()->Loop();
+  Reactor::get_reactor()->loop();
   ASSERT_EQ(y == 1);
 }
 

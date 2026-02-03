@@ -13,10 +13,24 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// Fixed-column array value type for Masstree rows
+// All functions use raw allocator and memset/memcpy - @unsafe
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: circular_int::*
+// @external_unsafe: lcdf::String_base::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: lcdf::Json::*
+// @external_unsafe: threadinfo::*
+// @external_unsafe: memset
+// @external_unsafe: memcpy
+
 #include "kvrow.hh"
 #include "value_array.hh"
 #include <string.h>
 
+// @unsafe - uses threadinfo allocator for raw memory and memset() without RAII
 value_array* value_array::make_sized_row(int ncol, kvtimestamp_t ts,
                                          threadinfo& ti) {
     value_array *tv;
@@ -27,6 +41,7 @@ value_array* value_array::make_sized_row(int ncol, kvtimestamp_t ts,
     return tv;
 }
 
+// @unsafe - uses threadinfo allocator and memcpy()/memset() on raw column data
 value_array* value_array::update(const Json* first, const Json* last,
                                  kvtimestamp_t ts, threadinfo& ti) const {
     masstree_precondition(ts >= ts_);
@@ -41,24 +56,28 @@ value_array* value_array::update(const Json* first, const Json* last,
     return row;
 }
 
+// @unsafe - calls threadinfo::deallocate() to free raw memory without tracking
 void value_array::deallocate(threadinfo& ti) {
     for (short i = 0; i < ncol_; ++i)
         deallocate_column(cols_[i], ti);
     ti.deallocate(this, shallow_size(), memtag_value);
 }
 
+// @unsafe - schedules deferred free via RCU without ownership verification
 void value_array::deallocate_rcu(threadinfo& ti) {
     for (short i = 0; i < ncol_; ++i)
         deallocate_column_rcu(cols_[i], ti);
     ti.deallocate_rcu(this, shallow_size(), memtag_value);
 }
 
+// @unsafe - iterates Json* range and frees columns via RCU without bounds checking
 void value_array::deallocate_rcu_after_update(const Json* first, const Json* last, threadinfo& ti) {
     for (; first != last && first[0].as_u() < unsigned(ncol_); first += 2)
         deallocate_column_rcu(cols_[first[0].as_u()], ti);
     ti.deallocate_rcu(this, shallow_size(), memtag_value);
 }
 
+// @unsafe - iterates Json* range and frees columns directly without RAII
 void value_array::deallocate_after_failed_update(const Json* first, const Json* last, threadinfo& ti) {
     for (; first != last; first += 2)
         deallocate_column(cols_[first[0].as_u()], ti);

@@ -13,6 +13,13 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe
+namespace value_string_safe_file {} // Skip STL header checks (file has no functions - just includes)
+// Single-string value type for Masstree rows
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+
 #include "kvrow.hh"
 #include "value_string.hh"
 #include <string.h>

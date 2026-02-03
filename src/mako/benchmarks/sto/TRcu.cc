@@ -1,5 +1,6 @@
 #include "TRcu.hh"
 
+// @unsafe: calls unsafe TRcuGroup::make
 TRcuSet::TRcuSet()
     : clean_epoch_(0) {
     unsigned capacity = (4080 - sizeof(TRcuGroup)) / sizeof(TRcuGroup::TRcuElement);
@@ -7,6 +8,7 @@ TRcuSet::TRcuSet()
     // ngroups_ = 1;
 }
 
+// @unsafe: calls unsafe TRcuGroup::free
 TRcuSet::~TRcuSet() {
     while (first_) {
         TRcuGroup* next = first_->next_;
@@ -17,6 +19,7 @@ TRcuSet::~TRcuSet() {
     // ngroups_ = 0;
 }
 
+// @safe
 void TRcuSet::check() {
     // check invariants
     TRcuGroup* first = first_;
@@ -39,6 +42,7 @@ void TRcuSet::check() {
     // assert(ngroups_ > 0);
 }
 
+// @unsafe: calls unsafe TRcuGroup::make
 void TRcuSet::grow() {
     if (!current_->next_) {
         unsigned capacity = (16368 - sizeof(TRcuGroup)) / sizeof(TRcuGroup::TRcuElement);
@@ -49,6 +53,7 @@ void TRcuSet::grow() {
     assert(current_->head_ == 0 && current_->tail_ == 0);
 }
 
+// @unsafe: calls function pointers stored in array
 inline bool TRcuGroup::clean_until(epoch_type max_epoch) {
     while (head_ != tail_ && signed_epoch_type(max_epoch - e_[head_].u.epoch) > 0) {
         ++head_;
@@ -64,6 +69,7 @@ inline bool TRcuGroup::clean_until(epoch_type max_epoch) {
         return false;
 }
 
+// @unsafe: calls unsafe clean_until
 void TRcuSet::hard_clean_until(epoch_type max_epoch) {
     TRcuGroup* empty_head = nullptr;
     TRcuGroup* empty_tail = nullptr;

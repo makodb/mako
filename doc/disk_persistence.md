@@ -11,7 +11,7 @@ uint32_t shard_id = BenchmarkConfig::getInstance().getShardIndex();
 static std::atomic<uint64_t> persist_success_count{0};
 static std::atomic<uint64_t> persist_fail_count{0};
 
-persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getPartitionID(),
+persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getLocalPartitionID(),
     [](bool success) {
         if (success) {
             persist_success_count.fetch_add(1, std::memory_order_relaxed);
@@ -36,7 +36,7 @@ uint32_t shard_id = BenchmarkConfig::getInstance().getShardIndex();
 static std::atomic<uint64_t> helper_persist_success{0};
 static std::atomic<uint64_t> helper_persist_fail{0};
 
-persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getPartitionID(),
+persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getLocalPartitionID(),
     [](bool success) {
         if (success) {
             helper_persist_success.fetch_add(1, std::memory_order_relaxed);

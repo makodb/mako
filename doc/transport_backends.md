@@ -164,6 +164,7 @@ This design allows:
 - Works on any Linux/Unix system
 - Easy to debug with standard network tools (tcpdump, wireshark)
 - Suitable for development and testing
+- **Built-in reliability features** (see below)
 
 **Characteristics:**
 - Moderate latency (~10-50 μs round-trip)
@@ -175,6 +176,37 @@ This design allows:
 - Testing on laptops/VMs without RDMA
 - Deployment on cloud instances without RDMA
 - Cross-platform compatibility
+
+## rrr/rpc Reliability Features
+
+The rrr/rpc backend includes comprehensive reliability features for production deployments:
+
+### Connection Management
+- **Connection State Machine** - Tracks connection lifecycle (NEW, CONNECTING, CONNECTED, DISCONNECTING, DISCONNECTED, FAILED)
+- **Automatic Reconnection** - Configurable retry with exponential backoff and jitter
+- **Circuit Breaker** - Fail-fast pattern to prevent cascade failures
+
+### Request Handling
+- **Request Buffering** - Queue requests during disconnection for replay after reconnection
+- **Timeout Configuration** - Per-request timeout with retry support
+- **Idempotent Retry** - Safe retry for idempotent operations with backoff
+
+### Health Monitoring
+- **Heartbeat/Keep-Alive** - Track connection liveness
+- **TCP Keepalive** - Detect dead connections at OS level
+- **Connection Validation** - Proactive health checks
+
+### Server Features
+- **Graceful Shutdown** - Drain pending requests before stopping
+- **Request Tracking** - Track pending requests for clean shutdown
+- **Restart Detection** - Clients detect server restarts via instance IDs
+
+### Observability
+- **Connection Metrics** - Track latency, success/failure rates, bytes transferred
+- **Event Callbacks** - Hook into connection state changes
+- **Structured Errors** - Detailed error types for handling
+
+For detailed documentation, see [RPC Reliability Features](rpc_reliability.md).
 
 ## Verified Performance
 

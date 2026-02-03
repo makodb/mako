@@ -25,7 +25,6 @@ transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
@@ -39,9 +38,9 @@ sleep 1
 nohup bash bash/shard.sh 2 0 $trd p1 0 1 > ${log_prefix}_shard0-p1.log 2>&1 &
 SHARD0_P1_PID=$!
 
-sleep 2
+sleep 5
 
-# Start shard 1 in background
+# Start shard 1 in background (delayed start ensures shard1 stays running while shard0 shuts down)
 echo "Starting shard 1..."
 nohup bash bash/shard.sh 2 1 $trd localhost 0 1 > ${log_prefix}_shard1-localhost.log 2>&1 &
 SHARD1_LOCALHOST_PID=$!
@@ -53,17 +52,55 @@ sleep 1
 nohup bash bash/shard.sh 2 1 $trd p1 0 1 > ${log_prefix}_shard1-p1.log 2>&1 &
 SHARD1_P1_PID=$!
 
-# Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 70
+# Wait for benchmarks to complete (poll for completion markers)
+echo "Waiting for benchmarks to complete..."
+log_file0="${log_prefix}_shard0-localhost.log"
+log_file1="${log_prefix}_shard1-localhost.log"
+max_wait=120  # Maximum wait time in seconds
+wait_count=0
 
-# Kill the processes - FORCE KILL ALL
-echo "Stopping shards..."
+while [ $wait_count -lt $max_wait ]; do
+    shard0_done=0
+    shard1_done=0
+
+    # Check if throughput output appeared for each shard
+    if [ -f "$log_file0" ] && grep -q "agg_persist_throughput" "$log_file0" 2>/dev/null; then
+        shard0_done=1
+    fi
+    if [ -f "$log_file1" ] && grep -q "agg_persist_throughput" "$log_file1" 2>/dev/null; then
+        shard1_done=1
+    fi
+
+    if [ $shard0_done -eq 1 ] && [ $shard1_done -eq 1 ]; then
+        echo "Both benchmarks completed after ${wait_count}s"
+        sleep 2  # Give a moment for final output
+        break
+    fi
+
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed, shard0=$shard0_done, shard1=$shard1_done)"
+    fi
+done
+
+if [ $wait_count -ge $max_wait ]; then
+    echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
+fi
+
+# Graceful shutdown: SIGTERM first
+echo "Stopping shards (graceful)..."
 
 # First, kill the parent bash scripts to prevent them from respawning dbtest
-pkill -9 -f "bash/shard.sh" 2>/dev/null || true
+pkill -TERM -f "bash/shard.sh" 2>/dev/null || true
 
-# Kill all dbtest processes immediately with SIGKILL
+# Send SIGTERM to all dbtest processes
+pkill -TERM dbtest 2>/dev/null || true
+sleep 3
+
+# Force kill any remaining processes
+echo "Force killing remaining processes..."
+pkill -9 -f "bash/shard.sh" 2>/dev/null || true
 pkill -9 dbtest 2>/dev/null || true
 killall -9 dbtest 2>/dev/null || true
 
@@ -112,7 +149,19 @@ for i in 0 1; do
         failed=1
         continue
     fi
-    
+
+    # Check for TPC-C sharding policy initialization (only for shard 0, as policy is shared)
+    if [ "$i" -eq 0 ]; then
+        if grep -q "TPC-C Sharding: Initialized policy" "$log"; then
+            echo "  ✓ TPC-C sharding policy initialized"
+            # Show the initialization line for reference
+            grep "TPC-C Sharding: Initialized policy" "$log" | tail -n 1 | sed 's/^/    /'
+        else
+            echo "  ✗ TPC-C sharding policy not initialized"
+            failed=1
+        fi
+    fi
+
     # Check for agg_persist_throughput keyword
     if grep -q "agg_persist_throughput" "$log"; then
         echo "  ✓ Found 'agg_persist_throughput' keyword"
@@ -167,4 +216,3 @@ else
 fi
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simplePaxos | awk "{print \$2}" | xargs kill -9 2>/dev/null

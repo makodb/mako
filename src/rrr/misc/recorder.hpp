@@ -16,7 +16,7 @@ private:
     int fd_;
     //    string path_ = "deptran_recorder";
 
-    Mutex mtx_;
+    std::mutex mtx_;
     Timer timer_;  
 
 //    io_context_t ctx_;
@@ -31,8 +31,8 @@ public:
     std::list<io_req_t*> *flush_reqs_;
     std::list<io_req_t*> *callback_reqs_;
 
-    Mutex mtx_cd_flush_;
-    CondVar cd_flush_;
+    std::mutex mtx_cd_flush_;
+    std::condition_variable cd_flush_;
     std::thread *th_flush_;
 
     AvgStat stat_cnt_;
@@ -65,7 +65,7 @@ public:
         if (timer_.elapsed() * 1000000 > batch_time_) {
         //if (true) {
             // trigger the flush thread to do the dirty work.
-            cd_flush_.signal();
+            cd_flush_.notify_one();
             timer_.start();
         }
     }

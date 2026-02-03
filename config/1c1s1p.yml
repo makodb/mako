@@ -23,14 +23,13 @@ site:
 
 # site_name - process_name map
 process:
-  s101: localhost
-  s201: localhost
-  s301: localhost
-  s401: localhost
-  s501: localhost
+  s101: localhost 
+#  s102: localhost
+#  s103: localhost
   c101: localhost
 
 # process_name - host_addr map
 host:
-  localhost: 127.0.0.1
+        #localhost: 127.0.0.1
+  v1: 10.128.0.20
 

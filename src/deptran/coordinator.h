@@ -6,13 +6,13 @@
 //#include "all.h"
 #include "msg.h"
 #include "communicator.h"
-// #include "client_worker.h"
+#include "scheduler.h"
+#include "client_worker.h"
+#include "client_status.h"
 
 namespace janus {
-class ClientControlServiceImpl;
 
 enum ForwardRequestState { NONE=0, PROCESS_FORWARD_REQUEST, FORWARD_TO_LEADER };
-enum CoordinatorStage { HANDOUT, PREPARE, FINISH };
 
 //class CoordinatorBase {
 //public:
@@ -28,18 +28,39 @@ enum CoordinatorStage { HANDOUT, PREPARE, FINISH };
 
 class Coordinator {
  public:
+  void *svr_workers_g{nullptr};
+
+  static std::mutex _dbg_txid_lock_;
+  static std::unordered_set<txid_t> _dbg_txid_set_;
+  bool _inuse_{false};
   uint32_t n_start_ = 0;
   locid_t loc_id_ = -1;
   uint32_t coo_id_;
+  uint32_t offset_;
+  uint32_t cli_id_;
+  uint32_t coro_id_;
+	i64 dep_id_ = -1;
+	int concurrent;
+  std::vector<int> ids_;
   parid_t par_id_ = -1;
   slotid_t slot_id_ = 0;
   ballot_t curr_ballot_ = 1;
 
+  std::shared_ptr<SingleRPCEvent> rpc_event;
+	std::vector<shared_ptr<QuorumEvent>> quorum_events_;
+  std::shared_ptr<QuorumEvent> sp_quorum_event;
+  std::shared_ptr<IntEvent> sp_int_event;
   int benchmark_;
-  ClientControlServiceImpl *ccsi_ = nullptr;
+  // Shared client status for statistics tracking
+  rusty::Option<rusty::Arc<ClientStatus>> client_status_;
+  // Transaction timeout in microseconds (from config, default 30 seconds)
+  uint64_t txn_timeout_{30000000};
   uint32_t thread_id_;
   bool batch_optimal_ = false;
+	bool slow_ = false;
   bool retry_wait_;
+  shared_ptr<IntEvent> sp_ev_commit_{};
+  shared_ptr<IntEvent> sp_ev_done_{};
 
   std::atomic<uint64_t> next_pie_id_;
   std::atomic<uint64_t> next_txn_id_;
@@ -54,6 +75,7 @@ class Coordinator {
   shared_ptr<TxnRegistry> txn_reg_{nullptr};
   Communicator* commo_ = nullptr;
   Frame* frame_ = nullptr;
+  ClientWorker* client_worker_ = nullptr;
 
   txid_t ongoing_tx_id_{0};
   ForwardRequestState forward_status_ = NONE;
@@ -62,8 +84,10 @@ class Coordinator {
   uint32_t n_retry_ = 0;
   // below should be reset on retry.
   bool committed_ = false;
+  bool commit_reported_ = false;
   bool validation_result_{true};
   bool aborted_ = false;
+	bool repeat_ = false;
   uint32_t n_dispatch_ = 0;
   uint32_t n_dispatch_ack_ = 0;
   uint32_t n_prepare_req_ = 0;
@@ -74,9 +98,21 @@ class Coordinator {
   std::vector<int> site_commit_;
   std::vector<int> site_abort_;
   std::vector<int> site_piece_;
-  std::function<void()> commit_callback_ = [] () {verify(0);};
-  std::function<void()> exe_callback_ = [] () {verify(0);};
+  rusty::Function<void()> commit_callback_ = [] () {verify(0);};
+  rusty::Function<void()> exe_callback_ = [] () {verify(0);};
   // above should be reset
+
+  /******global unique id begin********/
+  int cmd_in_client_count = 0;
+  /******global unique id end********/
+
+  double created_time_ = SimpleRWCommand::GetCurrentMsTime();
+  
+#ifdef LATENCY_DEBUG
+  Distribution client2leader_, client2test_point_, client2leader_send_;
+#endif
+
+  bool go_to_fastpath_;
 
 #ifdef TXN_STAT
   typedef struct txn_stat_t {
@@ -113,9 +149,10 @@ class Coordinator {
   } txn_stat_t;
   std::unordered_map<int32_t, txn_stat_t> txn_stats_;
 #endif /* ifdef TXN_STAT */
+  // Constructor takes Arc<ClientStatus> for statistics tracking
   Coordinator(uint32_t coo_id,
               int benchmark,
-              ClientControlServiceImpl *ccsi = NULL,
+              rusty::Option<rusty::Arc<ClientStatus>> client_status = rusty::None,
               uint32_t thread_id = 0);
 
   virtual ~Coordinator();
@@ -127,13 +164,23 @@ class Coordinator {
 
   /** thread unsafe */
   uint64_t next_txn_id() {
-    return this->next_txn_id_++;
+    auto ret = next_txn_id_++;
+#ifdef DEBUG_CHECK
+    _dbg_txid_lock_.lock();
+    verify(_dbg_txid_set_.count(ret) == 0);
+    _dbg_txid_set_.insert(ret);
+    _dbg_txid_lock_.unlock();
+#endif
+    return ret;
   }
 
   virtual void DoTxAsync(TxRequest &) = 0;
+  virtual void SetNewLeader(parid_t, volatile locid_t*) { verify(0); };
+  virtual void FailoverPauseSocketOut(parid_t, locid_t) { verify(0); };
+  virtual void FailoverResumeSocketOut(parid_t, locid_t) { verify(0); };
   virtual void Submit(shared_ptr<Marshallable>& cmd,
-                      const std::function<void()>& commit_callback = [](){},
-                      const std::function<void()>& exe_callback = [](){}) {
+                      rusty::Function<void()> commit_callback = {},
+                      rusty::Function<void()> exe_callback = {}) {
     verify(0);
   }
 
@@ -142,13 +189,14 @@ class Coordinator {
   }
 
   virtual void BulkSubmit(shared_ptr<Marshallable>& cmd,
-                           const std::function<void()>& commit_callback = [](){},
-                           const std::function<void()>& exe_callback = [](){}){
+                           rusty::Function<void()> commit_callback = {},
+                           rusty::Function<void()> exe_callback = {}){
     verify(0);
   }
 
   virtual void Reset() {
     committed_ = false;
+    commit_reported_ = false;
     aborted_ = false;
     n_dispatch_ = 0;
     n_dispatch_ack_ = 0;

@@ -6,8 +6,9 @@
 3. [The Reactor Pattern](#the-reactor-pattern)
 4. [Using RRR Coroutines](#using-rrr-coroutines)
 5. [The Event System](#the-event-system)
-6. [Common Patterns and Best Practices](#common-patterns-and-best-practices)
-7. [Pitfalls to Avoid](#pitfalls-to-avoid)
+6. [The Scheduler: Why Coroutines Need Resume](#the-scheduler-why-coroutines-need-resume)
+7. [Common Patterns and Best Practices](#common-patterns-and-best-practices)
+8. [Pitfalls to Avoid](#pitfalls-to-avoid)
 
 ## Introduction: Why Coroutines?
 
@@ -314,10 +315,10 @@ reactor->CreateRunCoroutine([and_event]() {
 ```cpp
 reactor->CreateRunCoroutine([reactor]() {
     auto event = Reactor::CreateSpEvent<IntEvent>();
-    
+
     // Wait with timeout (microseconds)
     event->Wait(1000000);  // 1 second timeout
-    
+
     if (event->status_ == Event::TIMEOUT) {
         std::cout << "Operation timed out" << std::endl;
     } else if (event->status_ == Event::DONE) {
@@ -325,6 +326,73 @@ reactor->CreateRunCoroutine([reactor]() {
     }
 });
 ```
+
+### The Scheduler: Why Coroutines Need Resume
+
+A key concept to understand is that **coroutines require explicit resumption** to continue execution. When a coroutine yields (via `Yield()` or `Wait()`), it doesn't magically wake up on its own - something must call `Resume()` on it.
+
+This is where the **scheduler** comes in. The reactor's event loop acts as a scheduler that:
+1. Checks which events are ready (satisfied or timed out)
+2. Calls `Resume()` on coroutines waiting for those events
+3. Runs resumed coroutines until they yield again
+
+Without a running event loop, coroutines will yield and never wake up!
+
+#### Starting the Scheduler
+
+One common pattern is to start a dedicated thread that runs the reactor loop forever:
+
+```cpp
+// Create a thread dedicated to running coroutines
+std::thread scheduler_thread([]() {
+    auto reactor = Reactor::GetReactor();
+
+    // Create some initial coroutines
+    reactor->CreateRunCoroutine([]() {
+        std::cout << "Initial coroutine running" << std::endl;
+        // ... do work, launching new coroutines, wait on events, etc.
+    });
+
+    // continuously checks events and resumes coroutines
+    while (true) {
+        sleep(1)
+        reactor->check_resume();
+        // the actual api in the rrr reactor is Loop(false), it does the check once
+    }
+    // the rrr api has Loop(true), equivalent to the above loop. 
+    // reactor->Loop(true);  // true = run forever
+});
+```
+
+The loop continuously:
+- Checks timeout conditions
+- Resumes coroutines whose events are satisfied
+
+#### How It Works in RRR: PollThread
+
+In the actual RRR codebase, this scheduler is triggered in `PollThread`. Each `PollThread` owns a reactor and runs the event loop in its thread:
+
+```cpp
+// Simplified view of how PollThread works
+class PollThread {
+    Reactor* reactor_;
+
+    void Run() {
+        // This is where the scheduler runs!
+        // It processes events and resumes coroutines
+        while (running_) {
+            reactor_->Loop(false);  // Process pending events
+            // ... poll for I/O, handle timeouts ...
+        }
+    }
+};
+```
+
+When you use the RPC framework, `PollMgr` creates `PollThread` instances that handle coroutine scheduling automatically. You don't need to manually call `Loop()` - the poll threads do it for you.
+
+#### Key Takeaway
+
+Always remember: **a coroutine that yields is dead until something resumes it**. That "something" is the reactor's event loop running in a thread. Whether you call `reactor->Loop()` directly or let `PollThread` handle it, there must be an active scheduler checking events and resuming coroutines.
 
 ## Common Patterns and Best Practices
 

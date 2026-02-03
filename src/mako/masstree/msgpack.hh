@@ -1,3 +1,7 @@
+// @unsafe - MessagePack binary serialization format implementation
+// Provides streaming parser/unparser for efficient binary encoding
+// SAFETY: Raw byte manipulation, format tag parsing, buffer management
+
 #ifndef GSTORE_MSGPACK_HH
 #define GSTORE_MSGPACK_HH
 #include "json.hh"
@@ -58,6 +62,7 @@ inline bool is_fixmap(uint8_t x) {
     return in_range(x, ffixmap, nfixmap);
 }
 
+// @unsafe - encodes into caller-managed buffers; capacity must be provided by caller
 inline char* write_null(char* s) {
     *s++ = fnull;
     return s;
@@ -154,6 +159,7 @@ inline char* write_double(char* s, double x) {
     *s++ = ffloat64;
     return write_in_net_order<double>(s, x);
 }
+// @unsafe - performs unchecked memcpy into raw buffer
 inline char* write_string(char* s, const char *data, int len) {
     if (len < nfixstr)
         *s++ = 0xA0 + len;
@@ -225,6 +231,7 @@ inline object_t object(uint32_t size) {
     return object_t(size);
 }
 
+// @unsafe - writes msgpack bytes directly to the provided output buffer without extra checks
 template <typename T>
 class unparser {
   public:
@@ -336,6 +343,7 @@ class unparser {
     T& base_;
 };
 
+// @unsafe - consumes raw byte streams and advances internal pointer manually
 class streaming_parser {
   public:
     inline streaming_parser();
@@ -372,6 +380,7 @@ class streaming_parser {
     Json jokey_;
 };
 
+// @unsafe - parses directly from raw msgpack buffers using unchecked pointer arithmetic
 class parser {
   public:
     explicit inline parser(const char* s)
@@ -578,17 +587,20 @@ unparser<T>& unparser<T>::operator<<(const Json& j) {
     return *this;
 }
 
+// @unsafe - transfers ownership of StringAccum buffer via take_string()
 inline String unparse(const Json& j) {
     StringAccum sa;
     unparser<StringAccum>(sa, j);
     return sa.take_string();
 }
 template <typename T, typename X>
+// @lifetime: (&'a mut, const X&) -> &'a mut
 inline T& unparse(T& s, const X& x) {
     unparser<T>(s) << x;
     return s;
 }
 template <typename T, typename X>
+// @lifetime: (&'a mut, const X&) -> &'a mut
 inline T& unparse_wide(T& s, const X& x) {
     unparser<T>(s).write_wide(x);
     return s;

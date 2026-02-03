@@ -1,6 +1,8 @@
 #include <Python.h>
 
 #include <string>
+#include <memory>
+#include <map>
 
 #include "rpc/server.hpp"
 #include "rpc/client.hpp"
@@ -16,12 +18,62 @@
 
 using namespace rrr;
 
-// Wrapper to hold Arc<Mutex<>> for Python binding
-struct PollThreadWorkerWrapper {
-    rusty::Arc<PollThreadWorker> arc;
+// Forward declaration
+class GILHelper;
 
-    PollThreadWorkerWrapper() {
-        arc = PollThreadWorker::create();
+/**
+ * PythonRpcService: Service implementation for Python RPC bindings
+ *
+ * Accumulates handlers via add_handler(), then registers all RPC IDs
+ * when the service is registered with the server.
+ * IMPORTANT: All handlers must be added before calling server->start()
+ */
+class PythonRpcService : public Service {
+public:
+    ~PythonRpcService() {
+        // Release Python references
+        for (auto& [rpc_id, func] : handlers_) {
+            Py_XDECREF(func);
+        }
+    }
+
+    // Add a handler for an RPC ID (must be called before registration)
+    void add_handler(i32 rpc_id, PyObject* func) {
+        Py_XINCREF(func);
+        handlers_[rpc_id] = func;
+    }
+
+    // @safe - with @unsafe block for loop
+    int __reg_to__(Server& svr, size_t svc_index) override {
+        // @unsafe - loop iteration
+        {
+            for (auto& [rpc_id, func] : handlers_) {
+                int ret = svr.reg_rpc(rpc_id, svc_index);
+                if (ret != 0) {
+                    // Unregister on failure
+                    for (auto& [id, _] : handlers_) {
+                        if (id >= rpc_id) break;
+                        svr.unreg(id);
+                    }
+                    return ret;
+                }
+            }
+        }
+        return 0;
+    }
+
+    // @safe
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override;
+
+private:
+    std::map<i32, PyObject*> handlers_;
+};
+
+// Wrapper to hold Arc<Mutex<>> for Python binding
+struct PollThreadWrapper {
+    rusty::Arc<PollThread> arc;
+
+    PollThreadWrapper() : arc(PollThread::create()) {
     }
 };
 
@@ -38,16 +90,66 @@ public:
     }
 };
 
+// PythonRpcService::__dispatch__ implementation
+// @safe
+void PythonRpcService::__dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) {
+    auto it = handlers_.find(rpc_id);
+    if (it == handlers_.end()) {
+        return;  // Unknown RPC ID
+    }
+
+    PyObject* func = it->second;
+    Marshal* output_m = NULL;
+    int error_code = 0;
+    {
+        unsigned long inner_u = (unsigned long) &req->m;
+        GILHelper inner_gil_helper;
+        PyObject* params = Py_BuildValue("(k)", inner_u);
+        PyObject* result = PyObject_CallObject(func, params);
+        if (result == NULL) {
+            // exception handling
+            error_code = -1;
+            if (PyErr_ExceptionMatches(PyExc_NotImplementedError)) {
+                error_code = ENOSYS;
+            }
+            PyErr_Clear();
+        } else {
+            output_m = (Marshal*) PyLong_AsLong(result);
+            Py_XDECREF(params);
+            Py_XDECREF(result);
+        }
+    }
+
+    auto sconn_opt = weak_sconn.upgrade();
+    if (sconn_opt.is_some()) {
+        auto sconn = sconn_opt.unwrap();
+        if (output_m != NULL) {
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code, [&](Marshal& out) {
+                out.read_from_marshal(*output_m, output_m->content_size());
+            });
+            delete output_m;
+        } else {
+            const_cast<ServerConnection&>(*sconn).reply(*req, error_code);
+        }
+    } else {
+        if (output_m != NULL) {
+            delete output_m;
+        }
+    }
+}
+
+// Map from Server* to its PythonRpcService* (before registration)
+// The service is moved to the Server when server_start is called
+static std::map<Server*, PythonRpcService*> pending_python_services_;
+
 static PyObject* _pyrpc_init_server(PyObject* self, PyObject* args) {
     GILHelper gil_helper;
     unsigned long n_threads;
     if (!PyArg_ParseTuple(args, "k", &n_threads))
         return NULL;
-    auto poll_arc = PollThreadWorker::create();
-    ThreadPool* thrpool = new ThreadPool(n_threads);
-    Log_debug("created rrr::Server with %d worker threads", n_threads);
-    Server* svr = new Server(poll_arc, thrpool);
-    thrpool->release();
+    auto poll_arc = PollThread::create();
+    Log_debug("created rrr::Server");
+    Server* svr = new Server(rusty::Some(poll_arc));
     // poll_thread_worker is now managed by Server's Arc
     return Py_BuildValue("k", svr);
 }
@@ -59,13 +161,20 @@ static PyObject* _pyrpc_fini_server(PyObject* self, PyObject* args) {
         return NULL;
 
     Py_BEGIN_ALLOW_THREADS {
-
         Server* svr = (Server*) u;
+
+        // Clean up any pending (unregistered) service
+        auto it = pending_python_services_.find(svr);
+        if (it != pending_python_services_.end()) {
+            delete it->second;
+            pending_python_services_.erase(it);
+        }
+
         delete svr;
     }
     Py_END_ALLOW_THREADS
 
-        Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 
 static PyObject* _pyrpc_server_start(PyObject* self, PyObject* args) {
@@ -75,6 +184,15 @@ static PyObject* _pyrpc_server_start(PyObject* self, PyObject* args) {
     if (!PyArg_ParseTuple(args, "ks", &u, &addr))
         return NULL;
     Server* svr = (Server*) u;
+
+    // Register any pending Python service before starting
+    auto it = pending_python_services_.find(svr);
+    if (it != pending_python_services_.end()) {
+        // Transfer ownership to Server via Box
+        svr->reg_service(rusty::Box<Service>(it->second));
+        pending_python_services_.erase(it);
+    }
+
     int ret = svr->start(addr);
     return Py_BuildValue("i", ret);
 }
@@ -99,58 +217,27 @@ static PyObject* _pyrpc_server_reg(PyObject* self, PyObject* args) {
         return NULL;
     Server* svr = (Server*) u;
 
-    // incr ref_count on PyObject func
-    // This reference count will be decreased when shutting down server
-    Py_XINCREF(func);
+    // Get or create the pending PythonRpcService for this server
+    auto it = pending_python_services_.find(svr);
+    PythonRpcService* svc;
+    if (it == pending_python_services_.end()) {
+        svc = new PythonRpcService();
+        pending_python_services_[svr] = svc;
+    } else {
+        svc = it->second;
+    }
 
-    int ret = svr->reg(rpc_id, [func](rusty::Box<Request> req, WeakServerConnection weak_sconn) {
-        Marshal* output_m = NULL;
-        int error_code = 0;
-        {
-            unsigned long inner_u = (unsigned long) &req->m;
-            GILHelper inner_gil_helper;
-            PyObject* params = Py_BuildValue("(k)", inner_u);
-            PyObject* result = PyObject_CallObject(func, params);
-            if (result == NULL) {
-                // exception handling
-                error_code = -1; // generic error code
-                if (PyErr_ExceptionMatches(PyExc_NotImplementedError)) {
-                    error_code = ENOSYS;
-                }
-                PyErr_Clear();
-            } else {
-                output_m = (Marshal*) PyLong_AsLong(result);
-                Py_XDECREF(params);
-                Py_XDECREF(result);
-            }
-        }
+    // Add the handler to the service (increments ref count internally)
+    svc->add_handler(rpc_id, func);
 
-        auto sconn_opt = weak_sconn.upgrade();
-        if (sconn_opt.is_some()) {
-            auto sconn = sconn_opt.unwrap();
-            const_cast<ServerConnection&>(*sconn).begin_reply(*req, error_code);
-            if (output_m != NULL) {
-                const_cast<ServerConnection&>(*sconn) << *output_m;
-            }
-            const_cast<ServerConnection&>(*sconn).end_reply();
-        }
-
-        if (output_m != NULL) {
-            delete output_m;
-        }
-
-        // cleanup automatic via rusty::Box
-        // sconn automatically released by Arc
-    });
-
-    return Py_BuildValue("i", ret);
+    return Py_BuildValue("i", 0);  // Success
 }
 
 static PyObject* _pyrpc_init_poll_thread_worker(PyObject* self, PyObject* args) {
     GILHelper gil_helper;
-    // Create wrapper that holds Arc<PollThreadWorker>
+    // Create wrapper that holds Arc<PollThread>
     // Python will manage this wrapper's lifetime
-    auto* wrapper = new PollThreadWorkerWrapper();
+    auto* wrapper = new PollThreadWrapper();
     return Py_BuildValue("k", wrapper);
 }
 
@@ -159,7 +246,7 @@ static PyObject* _pyrpc_init_client(PyObject* self, PyObject* args) {
     unsigned long u;
     if (!PyArg_ParseTuple(args, "k", &u))
         return NULL;
-    auto* wrapper = (PollThreadWorkerWrapper*) u;
+    auto* wrapper = (PollThreadWrapper*) u;
     Client* clnt = new Client(wrapper->arc);
     return Py_BuildValue("k", clnt);
 }
@@ -198,20 +285,25 @@ static PyObject* _pyrpc_client_async_call(PyObject* self, PyObject* args) {
     Client* clnt = (Client*) u;
     Marshal* m = (Marshal*) m_id;
 
-    Future* fu = clnt->begin_request(rpc_id);
-    if (fu != NULL) {
+    bool valid_id = m->valid_id;
+    auto fu_result = clnt->request(rpc_id, [&](Marshal& out) {
         // NOTE: We use Marshal as a buffer to packup an RPC message, then push it into
         //       client side buffer. Here is the only place that we are using Marshal's
         //       read_from_marshal function with non-empty Marshal object.
-        *clnt << *m;
+        out.read_from_marshal(*m, m->content_size());
+    });
+    if (fu_result.is_ok()) {
+        clnt->set_valid(valid_id);
     }
-    clnt->end_request();
 
-    if (fu == NULL) {
+    if (fu_result.is_err()) {
         // ENOTCONN
         Py_RETURN_NONE;
     } else {
-        return Py_BuildValue("k", fu);
+        // TODO: Python bindings need proper Arc handling
+        // For now, leak the Arc by converting to raw pointer
+        auto fu = fu_result.unwrap();
+        return Py_BuildValue("k", new rusty::Arc<Future>(fu));
     }
 }
 
@@ -230,25 +322,26 @@ static PyObject* _pyrpc_client_sync_call(PyObject* self, PyObject* args) {
     Client* clnt = (Client*) u;
     Marshal* m = (Marshal*) m_id;
 
-    Future* fu = clnt->begin_request(rpc_id);
-    if (fu != NULL) {
+    auto fu_result = clnt->request(rpc_id, [&](Marshal& out) {
         // NOTE: We use Marshal as a buffer to packup an RPC message, then push it into
         //       client side buffer. Here is the only place that we are using Marshal's
         //       read_from_marshal function with non-empty Marshal object.
-        *clnt << *m;
-    }
-    clnt->end_request();
+        out.read_from_marshal(*m, m->content_size());
+    });
 
     Marshal* m_rep = new Marshal;
     int error_code;
-    if (fu == NULL) {
+    if (fu_result.is_err()) {
         error_code = ENOTCONN;
     } else {
+        auto fu = fu_result.unwrap();
         error_code = fu->get_error_code();
         if (error_code == 0) {
-            m_rep->read_from_marshal(fu->get_reply(), fu->get_reply().content_size());
+            auto reply_guard = fu->get_reply();
+            m_rep->read_from_marshal(*reply_guard, reply_guard->content_size());
         }
-        fu->release();
+        // TODO: Python bindings need rework for Arc<Future>
+        // Arc will be automatically released
     }
 
     PyEval_RestoreThread(_save);
@@ -452,8 +545,11 @@ static PyObject* _pyrpc_marshal_write_str(PyObject* self, PyObject* args) {
     GILHelper gil_helper;
     unsigned long u;
     PyObject* str_obj;
-    if (!PyArg_ParseTuple(args, "kO", &u, &str_obj))
+    if (!PyArg_ParseTuple(args, "kO", &u, &str_obj)){
         return NULL;
+		}
+		
+		//Log_info("writing string: %d", u);
     Marshal* m = (Marshal*) u;
     std::string str(PyBytes_AsString(str_obj), PyBytes_Size(str_obj));
     *m << str;
@@ -490,9 +586,11 @@ static PyObject* _pyrpc_future_wait(PyObject* self, PyObject* args) {
     } else {
         error_code = fu->get_error_code();
         if (error_code == 0) {
-            m_rep->read_from_marshal(fu->get_reply(), fu->get_reply().content_size());
+            auto reply_guard = fu->get_reply();
+            m_rep->read_from_marshal(*reply_guard, reply_guard->content_size());
         }
-        fu->release();
+        // TODO: Python bindings need rework for Arc<Future>
+        // Arc will be automatically released
     }
 
     PyEval_RestoreThread(_save);
@@ -522,9 +620,11 @@ static PyObject* _pyrpc_future_timedwait(PyObject* self, PyObject* args) {
         fu->timed_wait(wait_sec);
         error_code = fu->get_error_code();
         if (error_code == 0) {
-            m_rep->read_from_marshal(fu->get_reply(), fu->get_reply().content_size());
+            auto reply_guard = fu->get_reply();
+            m_rep->read_from_marshal(*reply_guard, reply_guard->content_size());
         }
-        fu->release();
+        // TODO: Python bindings need rework for Arc<Future>
+        // Arc will be automatically released
     }
 
     PyEval_RestoreThread(_save);

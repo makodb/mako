@@ -1,3 +1,4 @@
+// @unsafe: file uses complex template instantiations with unknown functions
 #include <unistd.h>
 #include <limits>
 #include <memory>
@@ -73,6 +74,7 @@ AssertFailedCommit(P &t)
   ALWAYS_ASSERT_COND_IN_TXN(t, !t.commit(false));
 }
 
+// @unsafe: interprets an arbitrary byte buffer as a value of type T for equality checks
 template <typename T>
 inline void
 AssertByteEquality(const T &t, const uint8_t * v, size_t sz)
@@ -86,6 +88,7 @@ AssertByteEquality(const T &t, const uint8_t * v, size_t sz)
   }
 }
 
+// @unsafe: calls unsafe AssertByteEquality
 template <typename T>
 inline void
 AssertByteEquality(const T &t, const string &v)
@@ -712,6 +715,7 @@ namespace mp_stress_test_allocator_ns {
       : txn_btree_worker<TxnType>(btr, txn_flags),
         id(id), commits(0), aborts(0) {}
     ~worker() {}
+    // @unsafe - mutates tuple payloads via raw rec pointers shared across threads
     virtual void run()
     {
       rcu::s_instance.pin_current_thread(id);
@@ -843,6 +847,7 @@ namespace mp_test1_ns {
     worker(txn_btree<TxnType> &btr, uint64_t txn_flags)
       : txn_btree_worker<TxnType>(btr, txn_flags) {}
     ~worker() {}
+    // @unsafe - casts string-backed tuple bytes to rec for in-place arithmetic
     virtual void run()
     {
       for (size_t i = 0; i < niters; i++) {
@@ -1020,6 +1025,7 @@ namespace mp_test2_ns {
   class counting_scan_callback : public txn_btree<Protocol>::search_range_callback {
   public:
     virtual bool
+    // @unsafe - decodes key/value buffers via raw casts to rec without borrow tracking
     invoke(const typename txn_btree<Protocol>::keystring_type &k,
            const string &v)
     {
@@ -1045,6 +1051,7 @@ namespace mp_test2_ns {
   public:
     mutate_worker(txn_btree<TxnType> &btr, uint64_t flags)
       : txn_btree_worker<TxnType>(btr, flags), naborts(0) {}
+    // @unsafe - copies control records out of raw tuple buffers and mutates them directly
     virtual void run()
     {
       while (running) {
@@ -1116,6 +1123,7 @@ namespace mp_test2_ns {
     reader_worker(txn_btree<TxnType> &btr, uint64_t flags, bool reverse)
       : txn_btree_worker<TxnType>(btr, flags),
         reverse_(reverse), validations(0), naborts(0) {}
+    // @unsafe - compares control records by casting raw tuple buffers to structs
     virtual void run()
     {
       while (running) {
@@ -1162,6 +1170,7 @@ namespace mp_test2_ns {
 }
 
 template <template <typename> class TxnType, typename Traits>
+// @unsafe - validates tuples by casting value buffers to control_rec without lifetime enforcement
 static void
 mp_test2()
 {
@@ -1267,6 +1276,7 @@ namespace mp_test3_ns {
   public:
     transfer_worker(txn_btree<TxnType> &btr, uint64_t flags, unsigned long seed)
       : txn_btree_worker<TxnType>(btr, flags), seed(seed) {}
+    // @unsafe - transfers balances by reinterpreting tuple payloads as rec structs
     virtual void run()
     {
       fast_random r(seed);
@@ -1308,6 +1318,7 @@ namespace mp_test3_ns {
     invariant_worker_scan(txn_btree<TxnType> &btr, uint64_t flags)
       : txn_btree_worker<TxnType>(btr, flags), running(true),
         validations(0), naborts(0), sum(0) {}
+    // @unsafe - accumulates sums by casting raw tuple bytes during scans
     virtual void run()
     {
       while (running) {
@@ -1324,6 +1335,7 @@ namespace mp_test3_ns {
         }
       }
     }
+    // @unsafe - interprets tuple buffer as rec without borrow/lifetime checks
     virtual bool invoke(const typename txn_btree<TxnType>::keystring_type &k,
                         const string &v)
     {
@@ -1342,6 +1354,7 @@ namespace mp_test3_ns {
     invariant_worker_1by1(txn_btree<TxnType> &btr, uint64_t flags)
       : txn_btree_worker<TxnType>(btr, flags), running(true),
         validations(0), naborts(0) {}
+    // @unsafe - iterates tuples and casts value buffers to rec for validation
     virtual void run()
     {
       while (running) {
@@ -1430,6 +1443,7 @@ namespace mp_test_simple_write_skew_ns {
   public:
     get_worker(unsigned int d, txn_btree<TxnType> &btr, uint64_t txn_flags)
       : txn_btree_worker<TxnType>(btr, txn_flags), n(0), d(d) {}
+    // @unsafe - decodes tuple payloads as rec structures while iterating without extra synchronization
     virtual void run()
     {
       while (running) {
@@ -1473,6 +1487,7 @@ namespace mp_test_simple_write_skew_ns {
   public:
     scan_worker(unsigned int d, txn_btree<TxnType> &btr, uint64_t txn_flags)
       : txn_btree_worker<TxnType>(btr, txn_flags), n(0), d(d), ctr(0) {}
+    // @unsafe - reads raw tuple bytes into rec views during concurrent scans
     virtual void run()
     {
       while (running) {
@@ -1496,6 +1511,7 @@ namespace mp_test_simple_write_skew_ns {
         }
       }
     }
+    // @unsafe - casts value buffers to rec and advances a counter without borrow tokens
     virtual bool invoke(const typename txn_btree<TxnType>::keystring_type &k,
                         const string &v)
     {
@@ -1591,6 +1607,7 @@ namespace mp_test_batch_processing_ns {
   public:
     report_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
       : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags), n(0), m(0), sum(0) {}
+    // @unsafe - reads and aggregates tuple payloads by casting raw buffers to rec during scans
     virtual void run()
     {
       while (running) {
@@ -1619,6 +1636,7 @@ namespace mp_test_batch_processing_ns {
         }
       }
     }
+    // @unsafe - interprets value bytes as rec to accumulate sums without checker-visible lifetimes
     virtual bool invoke(const typename txn_btree<TxnType>::keystring_type &k,
                         const string &v)
     {
@@ -1647,6 +1665,7 @@ namespace mp_test_batch_processing_ns {
     new_receipt_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
       : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags),
         n(0), last_bid(0), last_rid(0) {}
+    // @unsafe - derives keys and control flow from rec views over raw tuple bytes
     virtual void run()
     {
       while (running) {
@@ -1689,6 +1708,7 @@ namespace mp_test_batch_processing_ns {
   public:
     incr_worker(txn_btree<TxnType> &ctrl, txn_btree<TxnType> &receipts, uint64_t txn_flags)
       : ctrl(&ctrl), receipts(&receipts), txn_flags(txn_flags), n(0) {}
+    // @unsafe - increments counters by decoding tuple buffers directly into rec structs
     virtual void run()
     {
       struct timespec t;

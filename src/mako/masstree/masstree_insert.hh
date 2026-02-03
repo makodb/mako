@@ -13,13 +13,19 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Insertion and update operations for Masstree
+// Performs locked node modification with potential split handling
+// SAFETY: Acquires write locks, allocates nodes, may trigger splits
+
 #ifndef MASSTREE_INSERT_HH
 #define MASSTREE_INSERT_HH
 #include "masstree_get.hh"
 #include "masstree_split.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 
 template <typename P>
+// @unsafe { Performs raw-node inserts under locks, may split }
 bool tcursor<P>::find_insert(threadinfo& ti)
 {
     find_locked(ti);
@@ -59,16 +65,17 @@ bool tcursor<P>::find_insert(threadinfo& ti)
 }
 
 template <typename P>
+// @unsafe { Allocates new leaf nodes, manipulates raw pointers }
 bool tcursor<P>::make_new_layer(threadinfo& ti) {
     key_type oka(n_->ksuf(kx_.p));
     ka_.shift();
     int kcmp = oka.compare(ka_);
 
     // Create a twig of nodes until the suffixes diverge
-    leaf_type* twig_head = n_;
-    leaf_type* twig_tail = n_;
+    rusty::MutPtr<leaf_type> twig_head = n_;
+    rusty::MutPtr<leaf_type> twig_tail = n_;
     while (kcmp == 0) {
-        leaf_type* nl = leaf_type::make_root(0, twig_tail, ti);
+        rusty::MutPtr<leaf_type> nl = leaf_type::make_root(0, twig_tail, ti);
         nl->assign_initialize_for_layer(0, oka);
         if (twig_head != n_)
             twig_tail->lv_[0] = nl;
@@ -90,7 +97,7 @@ bool tcursor<P>::make_new_layer(threadinfo& ti) {
             + n_->iksuf_[0].overhead(n_->width);
     else
         ksufsize = 0;
-    leaf_type *nl = leaf_type::make_root(ksufsize, twig_tail, ti);
+    rusty::MutPtr<leaf_type> nl = leaf_type::make_root(ksufsize, twig_tail, ti);
     nl->assign_initialize(0, kcmp < 0 ? oka : ka_, ti);
     nl->assign_initialize(1, kcmp < 0 ? ka_ : oka, ti);
     nl->lv_[kcmp > 0] = n_->lv_[kx_.p];
@@ -126,6 +133,7 @@ bool tcursor<P>::make_new_layer(threadinfo& ti) {
 }
 
 template <typename P>
+// @unsafe { Modifies node permutation via raw pointer }
 void tcursor<P>::finish_insert()
 {
     permuter_type perm(n_->permutation_);
@@ -136,6 +144,7 @@ void tcursor<P>::finish_insert()
 }
 
 template <typename P>
+// @unsafe { May remove or insert; unlocks raw node pointer }
 inline void tcursor<P>::finish(int state, threadinfo& ti)
 {
     if (state < 0 && state_ == 1) {
@@ -152,6 +161,7 @@ inline void tcursor<P>::finish(int state, threadinfo& ti)
 }
 
 template <typename P> template <typename F>
+// @unsafe { Locks nodes, calls user callback f }
 inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 {
     tcursor<P> lp(*this, key);
@@ -166,6 +176,7 @@ inline int basic_table<P>::modify(Str key, F& f, threadinfo& ti)
 }
 
 template <typename P> template <typename F>
+// @unsafe { Locks nodes, may insert, calls user callback f }
 inline int basic_table<P>::modify_insert(Str key, F& f, threadinfo& ti)
 {
     tcursor<P> lp(*this, key);

@@ -1,3 +1,4 @@
+// @unsafe: uses template instantiations with unknown key functions and returns references
 #include "ThreadPool.h"
 #include <stdexcept>
 #include <algorithm>
@@ -11,6 +12,7 @@ thread_local void *buf = NULL;
 thread_local string obj_k;
 thread_local string obj_v;
 
+// @unsafe: uses memcpy and reinterpret_cast with raw pointers
 void keystore_encode3_v2(std::string& s, uint32_t x) {
     assert(s.length()>mako::EXTRA_BITS_FOR_VALUE);
     memcpy ((void *)(s.data() + s.length() - mako::EXTRA_BITS_FOR_VALUE), &x, mako::BITS_OF_TT);
@@ -19,12 +21,14 @@ void keystore_encode3_v2(std::string& s, uint32_t x) {
     header->data_size = 0;
 }
 
+// @unsafe: uses memcpy with raw pointers
 inline uint32_t keystore_decode3_v2(const std::string& s){
     uint32_t cid=0;
     memcpy (&cid, (void *) (s.data () + s.length() - mako::EXTRA_BITS_FOR_VALUE), mako::BITS_OF_TT);
     return cid;
 }
 
+// @unsafe: calls unsafe keystore_decode3_v2
 bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
 {
     uint32_t commit_id_new = keystore_decode3_v2(newValue);
@@ -33,6 +37,7 @@ bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
     return (commit_id_new%10 > commit_id_old%10) || (commit_id_new/10 > commit_id_old/10);
 }
 
+// @unsafe: uses reinterpret_cast and memcpy with raw pointers
 size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                                                  uint32_t cid,  /* timestamp on current shard */
                                                  unsigned short int count,
@@ -58,8 +63,10 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
         offset += sizeof(unsigned short int) ;
 
         // 4. content of V, add an extra sizeof(uint64) bytes
-        //obj_v.assign(buffer + offset, *len_of_V + mako::EXTRA_BITS_FOR_VALUE); // might cause coredump due to freed memory
         obj_v.resize(*len_of_V + mako::EXTRA_BITS_FOR_VALUE);
+        // reset next_ptr on followers (no multi-version)
+        mako::Node *next_ptr = reinterpret_cast<mako::Node *>((char*)(obj_v.data()+obj_v.length()-mako::BITS_OF_NODE));
+        next_ptr->data_size = 0;
         memcpy((char*)obj_v.c_str(),buffer+offset, *len_of_V);
         offset += *len_of_V;
 

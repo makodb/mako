@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <limits>
+#include <chrono>
 #include<iostream>
 #include <inttypes.h>
 #include <string.h>
@@ -17,13 +18,18 @@
 #include "base/all.hpp"
 #include "rusty/arc.hpp"
 
+// External safety annotations for pure functions
+// @external: {
+//   std::min: [safe]
+// }
 
 namespace rrr {
 
-// @unsafe - Wrapper for std::min to satisfy borrow checker
+// @safe - Wrapper for std::min (pure function, no side effects)
 template<typename T>
 inline T safe_min(const T& a, const T& b) {
-  return std::min(a, b);
+  // @unsafe
+  { return std::min(a, b); }
 }
 
 #ifdef RPC_STATISTICS
@@ -51,22 +57,22 @@ class Marshallable {
   };
   // @safe
   // @lifetime: (&'a, &'b mut) -> &'b mut
-  virtual Marshal& ToMarshal(Marshal& m) const;
+  virtual Marshal& to_marshal(Marshal& m) const;
   // @safe
   // @lifetime: (&'a mut, &'b mut) -> &'b mut
-  virtual Marshal& FromMarshal(Marshal& m);
-  virtual size_t EntitySize() const {
+  virtual Marshal& from_marshal(Marshal& m);
+  virtual size_t entity_size() const {
     verify(0);
     return 0;
   }
   // @unsafe
-  virtual size_t WriteToFd(int fd, size_t written_to_socket) const {
+  virtual size_t write_to_fd(int fd, size_t written_to_socket) const {
     verify(0);
     return 0;
   }
 
   // virtual size_t need_to_write(){
-  //   return EntitySize() ; - written_to_socket;
+  //   return entity_size() ; - written_to_socket;
   // }
 
   // virtual void reset_write_offsets(){
@@ -85,10 +91,10 @@ class MarshallDeputy {
     // @safe - Returns reference to global factory registry
     // SAFETY: Protected by mutex, returns reference to static container
     // @lifetime: () -> &'static
-    static MarContainer& GetInitializers();
+    static MarContainer& get_initializers();
     // @unsafe - Registers initializer with mutex locking
-    static int RegInitializer(int32_t, std::function<Marshallable*()>);
-    static std::function<Marshallable*()> GetInitializer(int32_t);
+    static int reg_initializer(int32_t, std::function<Marshallable*()>);
+    static std::function<Marshallable*()> get_initializer(int32_t);
 
   public:
     bool bypass_to_socket_ = false;
@@ -111,7 +117,16 @@ class MarshallDeputy {
       CMD_SYNCREQ_PXS=10,
       CMD_SYNCRESP_PXS=11,
       CMD_SYNCNOOP_PXS=12,
-      CMD_PREP_PXS=13
+      CMD_PREP_PXS=13,
+      CMD_TPC_EMPTY=14,
+      CMD_NOOP=15,
+      CMD_TPC_BATCH=16,
+      CMD_TPC_PREPARE_CAROUSEL=17,
+      CMD_MULTI_STRING=18,
+      CMD_REC_VEC=19,
+      CMD_VIEW_DATA=20,
+      CMD_KV=21,
+      CMD_KEY_CMD_BATCH=22
     };
     /**
      * This should be called by the rpc layer.
@@ -131,7 +146,8 @@ class MarshallDeputy {
       //written_to_socket = 0;
     }
 
-    // Template constructor for derived types
+    // @unsafe - Template constructor for derived types
+    // Uses raw pointer dereference through shared_ptr->member
     template<typename T>
     explicit MarshallDeputy(std::shared_ptr<T> sp_m)
       requires std::is_base_of_v<rrr::Marshallable, T>
@@ -148,17 +164,17 @@ class MarshallDeputy {
     //   sp_data_->reset_write_offsets();
     // }
 
-    rrr::Marshal& CreateActualObjectFrom(rrr::Marshal& m);
+    rrr::Marshal& create_actual_object_from(rrr::Marshal& m);
     // @unsafe - Setter accepts shared_ptr<Marshallable> with polymorphism support
     // SAFETY: Validates nullptr before setting, updates kind_ atomically, calls std::shared_ptr::operator=
-    void SetMarshallable(std::shared_ptr<rrr::Marshallable> m) {
+    void set_marshallable(std::shared_ptr<rrr::Marshallable> m) {
       verify(sp_data_ == nullptr);
       sp_data_ = m;
       kind_ = m->kind_;
     }
 
-    virtual size_t EntitySize() const {
-      return sizeof(int32_t) + sp_data_->EntitySize();
+    virtual size_t entity_size() const {
+      return sizeof(int32_t) + sp_data_->entity_size();
     }
 
     // @unsafe
@@ -175,11 +191,11 @@ class MarshallDeputy {
 
     // virtual size_t need_to_write(){
     //   // for marshalldeputy we only write headers. The rest is handled by Marshallable
-    //   return EntitySize() - written_to_socket;
+    //   return entity_size() - written_to_socket;
     // }
 
     // @unsafe
-    virtual size_t WriteToFd(int fd, int written_to_socket) {
+    virtual size_t write_to_fd(int fd, int written_to_socket) {
         size_t sz = 0, prev = written_to_socket;
         if(written_to_socket < sizeof(kind_)){
           sz = track_write_2(fd, &kind_, sizeof(kind_), written_to_socket);
@@ -190,12 +206,17 @@ class MarshallDeputy {
         //Log_info("Written bytes of ghost chunk 1 %d %d %d", sz, kind_, written_to_socket);
         // sp_data_->reset_write_offset();
         // @unsafe {
-        sz = sp_data_->WriteToFd(fd, written_to_socket - sizeof(kind_));
+        // Safety check: sp_data_ must not be null when writing
+        if (sp_data_ == nullptr) {
+          Log_error("MarshallDeputy::write_to_fd called with null sp_data_ (kind=%d)", kind_);
+          return 0;
+        }
+        sz = sp_data_->write_to_fd(fd, written_to_socket - sizeof(kind_));
         // }
 	      //std::cout << sz << std::endl;
         //Log_info("Written bytes of ghost chunk 2 %d %d", sz, kind_);
         written_to_socket += sz;
-        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, EntitySize());
+        //Log_info("Written bytes of ghost chunk 3 %d %d %d", written_to_socket, kind_, entity_size());
         //Log_info("Written bytes of ghost chunk 2 %d %d", written_to_socket, kind_);
         return written_to_socket - prev;
     }
@@ -204,7 +225,9 @@ class MarshallDeputy {
 };
 
 class Marshal: public NoCopy {
-  struct raw_bytes: public RefCounted {
+private:
+  // Migrated from RefCounted to std::shared_ptr for automatic reference counting
+  struct raw_bytes {
     char *ptr = nullptr;
     size_t size = 0;
     static const size_t min_size;
@@ -244,11 +267,12 @@ class Marshal: public NoCopy {
   };
 
   struct chunk: public NoCopy {
-
    private:
 
-    chunk(raw_bytes *dt, size_t rd_idx, size_t wr_idx)
-        : data((raw_bytes *) dt->ref_copy()), read_idx(rd_idx),
+    // Private constructor for shared_copy - takes shared_ptr by value, copies it
+    chunk(std::shared_ptr<raw_bytes> dt, size_t rd_idx, size_t wr_idx)
+        : data(dt),  // Copy shared_ptr, increments refcount
+          read_idx(rd_idx),
           write_idx(wr_idx), next(nullptr) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
@@ -256,27 +280,33 @@ class Marshal: public NoCopy {
 
    public:
 
-    raw_bytes *data;
+    std::shared_ptr<raw_bytes> data;  // Migrated from raw_bytes* to shared_ptr
     size_t read_idx;
     size_t write_idx;
     chunk *next;
 
-    chunk() : data(new raw_bytes), read_idx(0), write_idx(0), next(nullptr) { }
-    chunk(MarshallDeputy md, size_t sz) : data(new raw_bytes(md, sz)), read_idx(0),
-                                           write_idx(sz), next(nullptr){}
+    // Updated constructors to use std::make_shared instead of new
+    chunk() : data(std::make_shared<raw_bytes>()),
+              read_idx(0), write_idx(0), next(nullptr) { }
 
-    chunk(size_t sz) : data(new raw_bytes(sz)), read_idx(0), write_idx(0), next(nullptr){}
+    chunk(MarshallDeputy md, size_t sz)
+        : data(std::make_shared<raw_bytes>(md, sz)),
+          read_idx(0), write_idx(sz), next(nullptr) {}
+
+    chunk(size_t sz)
+        : data(std::make_shared<raw_bytes>(sz)),
+          read_idx(0), write_idx(0), next(nullptr) {}
 
     chunk(const void *p, size_t n)
-        : data(new raw_bytes(p, n)), read_idx(0),
-          write_idx(n), next(nullptr) { }
-    chunk(const chunk&) = delete;
-    chunk& operator=(const chunk&) = delete;
-    ~chunk() { data->release(); }
+        : data(std::make_shared<raw_bytes>(p, n)),
+          read_idx(0), write_idx(n), next(nullptr) { }
+    // Destructor is now default - shared_ptr handles cleanup automatically
+    ~chunk() = default;
 
     // NOTE: This function is only intended for Marshal::read_from_marshal.
     // @unsafe - Creates a new chunk sharing the same data buffer
     chunk *shared_copy() const {
+      //if(read_idx != 0 && write_idx != 0) Log_info("read_idx: %d and write_idx: %d", read_idx, write_idx);
       return new chunk(data, read_idx, write_idx);
     }
 
@@ -323,13 +353,17 @@ class Marshal: public NoCopy {
     }
 
     // @safe - Reads data from chunk buffer
+    // SAFETY: Internal @unsafe block handles raw pointer arithmetic and memcpy
     size_t read(void *p, size_t n) {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
 
       size_t n_read = safe_min(n, write_idx - read_idx);
-      if (n_read > 0) {
-        memcpy(p, data->ptr + read_idx, n_read);
+      // @unsafe - raw pointer arithmetic
+      {
+        if (n_read > 0) {
+          memcpy(p, data->ptr + read_idx, n_read);
+        }
       }
       read_idx += n_read;
 
@@ -342,13 +376,17 @@ class Marshal: public NoCopy {
       return data->shared_data;
     }
 
-    // @safe - Peeks at data in chunk buffer without consuming
+    // @safe - Peeks at data in chunk buffer
+    // SAFETY: Internal @unsafe block handles raw pointer arithmetic and memcpy
     size_t peek(void *p, size_t n) const {
       assert(write_idx <= data->size);
       assert(read_idx <= write_idx);
       size_t n_peek = safe_min(n, write_idx - read_idx);
-      if (n_peek > 0) {
-        memcpy(p, data->ptr + read_idx, n_peek);
+      // @unsafe - raw pointer arithmetic
+      {
+        if (n_peek > 0) {
+          memcpy(p, data->ptr + read_idx, n_peek);
+        }
       }
 
       return n_peek;
@@ -366,33 +404,53 @@ class Marshal: public NoCopy {
       return n_discard;
     }
 
+    // @safe - Writes to file descriptor (I/O system call)
+    // SAFETY: Internal @unsafe block handles I/O system calls and raw pointer operations
     int write_to_fd(int fd) {
-      assert(write_idx <= data->size);
-      int cnt;
-      if(data->shared_data){
-        cnt = data->marshallable_entity.WriteToFd(fd, data->written_to_socket);
-        data->written_to_socket += cnt;
-	//Log_info("wrote %d bytes of ghost %d", cnt, fd);
-      }
-      else{
-        cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
-	//Log_info("wrote %d bytes of normal %d", cnt, fd);
-      }
+      // @unsafe
+      {
+        assert(write_idx <= data->size);
+        struct timespec begin2, begin2_cpu, end2, end2_cpu;
+        /*clock_gettime(CLOCK_MONOTONIC, &begin2);
+        clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &begin2_cpu);*/
+        int cnt;
+        if(data->shared_data){
+          // Safety check: marshallable_entity must have valid sp_data_
+          if (data->marshallable_entity.sp_data_ == nullptr) {
+            Log_error("chunk::write_to_fd: shared_data=true but marshallable_entity.sp_data_ is null");
+            return -1;
+          }
+          cnt = data->marshallable_entity.write_to_fd(fd, data->written_to_socket);
+          data->written_to_socket += cnt;
+          //Log_info("wrote %d bytes of ghost %d", cnt, fd);
+        }
+        else{
+          cnt = ::write(fd, data->ptr + read_idx, write_idx - read_idx);
+          //Log_info("wrote %d bytes of normal %d", cnt, fd);
+        }
 #ifdef RPC_STATISTICS
-      if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
-      else{
-        Log_debug("Missed RPC stats, shared data used in raw_bytes");
-      }
+        if(!data->shared_data)stat_marshal_out(fd, data->ptr + write_idx, data->size - write_idx, cnt);
+        else{
+          Log_debug("Missed RPC stats, shared data used in raw_bytes");
+        }
 #endif // RPC_STATISTICS
-      //if(cnt == -1)verify(0);
-      if (cnt > 0) {
-        read_idx += cnt;
-      }
+        //if(cnt == -1)verify(0);
+        if (cnt > 0) {
+          /*clock_gettime(CLOCK_MONOTONIC, &end2);
+          clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end2_cpu);
+          long total_cpu2 = (end2_cpu.tv_sec - begin2_cpu.tv_sec)*1000000000 + (end2_cpu.tv_nsec - begin2_cpu.tv_nsec);
+          long total_time2 = (end2.tv_sec - begin2.tv_sec)*1000000000 + (end2.tv_nsec - begin2.tv_nsec);
+          double util2 = (double) total_cpu2/total_time2;
+          Log_info("elapsed CPU time (fd write of %d): %f", write_idx - read_idx, util2);*/
+          read_idx += cnt;
+        }
 
-      assert(write_idx <= data->size);
-      return cnt;
+        assert(write_idx <= data->size);
+        return cnt;
+      }
     }
 
+    // @unsafe - Reads from file descriptor (I/O system call)
     int read_from_fd(int fd, size_t bytes = -1) {
       if(bytes == -1)bytes = data->size - write_idx;
       assert(write_idx <= data->size);
@@ -448,10 +506,40 @@ class Marshal: public NoCopy {
 
  public:
 
-  struct bookmark: public NoCopy {
-    size_t size;
-    char **ptr;
+	bool found_dep;
+  bool valid_id;
 
+	// @unsafe - Contains raw pointer for deferred writes
+	struct bookmark {
+    size_t size = 0;
+    char **ptr = nullptr;
+
+    // @safe - Default constructor
+    bookmark() = default;
+
+    // Non-copyable
+    bookmark(const bookmark&) = delete;
+    bookmark& operator=(const bookmark&) = delete;
+
+    // @safe - Move constructor transfers ownership
+    bookmark(bookmark&& other) noexcept : size(other.size), ptr(other.ptr) {
+      other.size = 0;
+      other.ptr = nullptr;
+    }
+
+    // @unsafe - Move assignment (uses delete[])
+    bookmark& operator=(bookmark&& other) noexcept {
+      if (this != &other) {
+        delete[] ptr;
+        size = other.size;
+        ptr = other.ptr;
+        other.size = 0;
+        other.ptr = nullptr;
+      }
+      return *this;
+    }
+
+    // @unsafe - Destructor (uses delete[])
     ~bookmark() {
       delete[] ptr;
     }
@@ -459,35 +547,76 @@ class Marshal: public NoCopy {
 
   Marshal()
       : head_(nullptr), tail_(nullptr), write_cnt_(0), content_size_(0) { }
-  Marshal(const Marshal &) = delete;
-  Marshal &operator=(const Marshal &) = delete;
   ~Marshal();
 
   void init_block_read(size_t block_size){
     head_ = tail_ = new chunk(block_size);
   }
 
+  // @safe - Simple empty check
   bool empty() const {
     assert(content_size_ == content_size_slow());
     return content_size_ == 0;
   }
+  // @safe - Returns cached content size
   size_t content_size() const {
     assert(content_size_ == content_size_slow());
     return content_size_;
   }
 
+  // @unsafe - Writes data to marshal buffer (uses raw pointer members)
   size_t write(const void *p, size_t n);
-  // @safe - Reads data from marshal buffer
+  // @safe - Reads data from marshal buffer (raw pointer version, for internal use)
+  // SAFETY: Internal @unsafe block handles raw pointer operations
   size_t read(void *p, size_t n);
+  // @safe - Reads data into a reference (type-safe version)
+  // SAFETY: Internal @unsafe block handles raw pointer operations
+  template<typename T>
+  size_t read(T& out, size_t n = sizeof(T)) {
+    static_assert(std::is_trivially_copyable_v<T>, "read requires trivially copyable type");
+    // @unsafe - reinterpret_cast for type-safe wrapper
+    {
+      return read(reinterpret_cast<void*>(&out), n);
+    }
+  }
   // @safe - Peeks at data without consuming
-  size_t peek(void *p, size_t n) const;
+  // SAFETY: Internal @unsafe block handles raw pointer operations
+  template<typename T>
+  size_t peek(T& out, size_t n = sizeof(T)) const {
+    static_assert(std::is_trivially_copyable_v<T>, "peek requires trivially copyable type");
+    // @unsafe - raw pointer operations
+    {
+      assert(tail_ == nullptr || tail_->next == nullptr);
+      assert(empty() || (head_ != nullptr && !head_->fully_read()));
+      char* pc = reinterpret_cast<char*>(&out);
+      size_t n_peek = 0;
+      chunk* chnk = head_;
+      while (chnk != nullptr && n - n_peek > 0) {
+        size_t cnt = chnk->peek(pc + n_peek, n - n_peek);
+        if (cnt == 0) {
+          break;
+        }
+        n_peek += cnt;
+        chnk = chnk->next;
+      }
+      assert(n_peek <= n);
+      assert(tail_ == nullptr || tail_->next == nullptr);
+      assert(empty() || (head_ != nullptr && !head_->fully_read()));
+      return n_peek;
+    }
+  }
 
+  // @safe - Reads from file descriptor (I/O system call)
+  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
   size_t read_from_fd(int fd);
 
+  // @unsafe - Reads from file descriptor into chunk (I/O system call)
   size_t chnk_read_from_fd(int fd, size_t bytes);
 
+  // @unsafe - Reuses chunks from another marshal (uses raw pointer members)
   size_t read_reuse_chnk(Marshal& m, size_t nbytes);
 
+  // @unsafe - Reads data into chunk (uses raw pointer members)
   size_t read_chnk(void* p, size_t n);
 
   // NOTE: This function is only used *internally* to chop a slice of marshal object.
@@ -495,8 +624,11 @@ class Marshal: public NoCopy {
   //             into a Marshal object and hand over to worker threads.
   // Use case 2: In Python extension, buffer message in Marshal object, and send to network.
   // @safe - Transfers data between Marshal objects
+  // SAFETY: Internal @unsafe block wraps raw pointer operations (head_, tail_, chunk*)
   size_t read_from_marshal(Marshal &m, size_t n);
 
+  // @safe - Writes to file descriptor (I/O system call)
+  // SAFETY: Internal @unsafe block handles I/O and raw pointer operations
   size_t write_to_fd(int fd);
 
   void reset(){
@@ -505,15 +637,26 @@ class Marshal: public NoCopy {
     write_cnt_ = 0;
   }
 
-  bookmark *set_bookmark(size_t n);
-  void write_bookmark(bookmark *bm, const void *p) {
-    const char *pc = (const char *) p;
-    assert(bm != nullptr && bm->ptr != nullptr && p != nullptr);
-    for (size_t i = 0; i < bm->size; i++) {
-      *(bm->ptr[i]) = pc[i];
+  // @safe - Creates bookmark for deferred writes, returns by move
+  // SAFETY: Internal @unsafe block handles raw pointer operations
+  bookmark set_bookmark(size_t n);
+
+  // @safe - Writes value to bookmark locations
+  // SAFETY: Internal @unsafe block handles pointer operations
+  template<typename T>
+  void write_bookmark(bookmark& bm, const T& value) {
+    // @unsafe
+    {
+      static_assert(sizeof(T) <= sizeof(size_t) * 8, "bookmark value too large");
+      const char *pc = reinterpret_cast<const char*>(&value);
+      assert(bm.ptr != nullptr);
+      for (size_t i = 0; i < bm.size; i++) {
+        *(bm.ptr[i]) = pc[i];
+      }
     }
   }
 
+  // @safe - Returns and resets write counter
   i32 get_and_reset_write_cnt() {
     i32 cnt = write_cnt_;
     write_cnt_ = 0;
@@ -548,26 +691,48 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i32 &v) {
 // @unsafe
 // @lifetime: (&'a, const i64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::i64 &v) {
+  //Log_info("The sizeof v is: %d", sizeof(v));
+  //auto start = std::chrono::steady_clock::now();
   verify(m.write(&v, sizeof(v)) == sizeof(v));
+  //auto end = std::chrono::steady_clock::now();
+  //auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  //Log_info("Time of << for int64 is: %d", duration);
+	
+	if (m.found_dep) {
+		if (v != -1) {
+			//Log_info("valid id: %d and %d", m.found_dep, v);
+			m.valid_id = true;
+		} else {
+			//Log_info("invalid id: %d and %d", m.found_dep, v);
+		}
+		m.found_dep = false;
+	}
+
   return m;
 }
 
-// @unsafe
+// @safe - Writes v32 to marshal
 // @lifetime: (&'a, const v32&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v32 &v) {
-  char buf[5];
-  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-  verify(m.write(buf, bsize) == bsize);
-  return m;
+  // @unsafe
+  {
+    char buf[5];
+    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+    verify(m.write(buf, bsize) == bsize);
+    return m;
+  }
 }
 
-// @unsafe
+// @safe - Writes v64 to marshal
 // @lifetime: (&'a, const v64&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const rrr::v64 &v) {
-  char buf[9];
-  size_t bsize = rrr::SparseInt::dump(v.get(), buf);
-  verify(m.write(buf, bsize) == bsize);
-  return m;
+  // @unsafe
+  {
+    char buf[9];
+    size_t bsize = rrr::SparseInt::dump(v.get(), buf);
+    verify(m.write(buf, bsize) == bsize);
+    return m;
+  }
 }
 
 // @unsafe
@@ -594,7 +759,13 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint32_t &u) {
 // @unsafe
 // @lifetime: (&'a, const uint64_t&) -> &'a
 inline rrr::Marshal &operator<<(rrr::Marshal &m, const uint64_t &u) {
+  //Log_info("The sizeof u is: %d", sizeof(u));
+  //auto start = std::chrono::steady_clock::now();
   verify(m.write(&u, sizeof(u)) == sizeof(u));
+  //auto end = std::chrono::steady_clock::now();
+  //auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end-start).count();
+  //Log_info("Time of << for uint64 is: %d", duration);
+  
   return m;
 }
 
@@ -614,6 +785,17 @@ inline rrr::Marshal &operator<<(rrr::Marshal &m, const std::string &v) {
   if (v_len.get() > 0) {
     verify(m.write(v.c_str(), v_len.get()) == (size_t) v_len.get());
   }
+
+	if (v == "dep") {
+		// Log_info("dep: %s", v.c_str());
+		m.found_dep = true;
+	} else if (v == "hb") { 
+		m.valid_id = true;
+	} else {
+    m.valid_id = true;
+		// Log_info("not dep: %s", v.c_str());
+	}
+
   return m;
 }
 
@@ -745,6 +927,16 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i32 &v) {
 // @lifetime: (&'a, i64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
   verify(m.read(&v, sizeof(v)) == sizeof(v));
+	/*if (m.found_dep) {
+		if (v != -1) {
+			Log_info("valid id: %d", v);
+			m.valid_id = true;
+		} else {
+			Log_info("invalid id: %d", v);
+			m.valid_id = false;
+		}
+		m.found_dep = false;
+	}*/
   return m;
 }
 
@@ -752,7 +944,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::i64 &v) {
 // @lifetime: (&'a, v32&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
   char byte0;
-  verify(m.peek(&byte0, 1) == 1);
+  verify(m.peek(byte0, 1) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[5];
   verify(m.read(buf, bsize) == bsize);
@@ -765,8 +957,8 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v32 &v) {
 // @lifetime: (&'a, v64&) -> &'a
 inline rrr::Marshal &operator>>(rrr::Marshal &m, rrr::v64 &v) {
   char byte0;
-  //Log_info("peeking data of %d", m.peek(&byte0, 1));
-  verify(m.peek(&byte0, 1) == 1);
+  //Log_info("peeking data of %d", m.peek(byte0, 1));
+  verify(m.peek(byte0, 1) == 1);
   size_t bsize = rrr::SparseInt::buf_size(byte0);
   char buf[9];
   verify(m.read(buf, bsize) == bsize);
@@ -819,6 +1011,12 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::string &v) {
   if (v_len.get() > 0) {
     verify(m.read(&v[0], v_len.get()) == (size_t) v_len.get());
   }
+	/*if (v == "dep") {
+		Log_info("dep: %s", v.c_str());
+		m.found_dep = true;
+	} else {
+		Log_info("not dep: %s", v.c_str());
+	}*/
   return m;
 }
 
@@ -928,7 +1126,7 @@ inline rrr::Marshal &operator>>(rrr::Marshal &m, std::unordered_map<K, V> &v) {
 // @lifetime: (&'a, MarshallDeputy&) -> &'a
 inline rrr::Marshal& operator>>(rrr::Marshal& m, rrr::MarshallDeputy& rhs) {
   m >> rhs.kind_;
-  rhs.CreateActualObjectFrom(m);
+  rhs.create_actual_object_from(m);
   return m;
 }
 
@@ -939,12 +1137,12 @@ inline rrr::Marshal& operator<<(rrr::Marshal& m,const rrr::MarshallDeputy& rhs) 
   verify(rhs.kind_ != rrr::MarshallDeputy::UNKNOWN);
   verify(rhs.sp_data_ != nullptr);
   if(rhs.bypass_to_socket_){
-    m.bypass_copying(rhs, rhs.EntitySize());
+    m.bypass_copying(rhs, rhs.entity_size());
   }else{
-    //Log_info("size is %d", rhs.EntitySize());
+    //Log_info("size is %d", rhs.entity_size());
     m << rhs.kind_;
     verify(rhs.sp_data_ != nullptr); // must be non-empty
-    rhs.sp_data_->ToMarshal(m);
+    rhs.sp_data_->to_marshal(m);
   }
   return m;
 }

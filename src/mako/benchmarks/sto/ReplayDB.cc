@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include "ThreadPool.h"
 
+// @unsafe: uses memcpy and pointer arithmetic
 // Single timestamp system: extracts timestamp and latency tracker from buffer
 CommitInfo get_latest_commit_info(char *buffer, size_t len) {
     CommitInfo info;
@@ -18,6 +19,7 @@ CommitInfo get_latest_commit_info(char *buffer, size_t len) {
     return info;
 }
 
+// @unsafe: uses memcpy, pointer arithmetic, and raw pointer management
 size_t treplay_in_same_thread_opt_mbta_v2(size_t par_id, char *buffer, size_t len, abstract_db* db, int nshards) {
     //printf("replay a log, par_id:%d, len:%d\n", par_id, len);
     len -= sizeof(uint32_t) * 2; // eliminate last timestamp and latency_tracker
@@ -68,5 +70,5 @@ size_t treplay_in_same_thread_opt_mbta_v2(size_t par_id, char *buffer, size_t le
                                                                 db) ;
     }
     //Warning("%d K-V pairs replayed, par_id:%d, total-len: %d, c_txn:%d, c_kv:%d", thread_put, par_id, len, c_txn, c_kv);
-    return thread_put ;
+    return thread_put;
 }

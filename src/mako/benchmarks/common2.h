@@ -10,6 +10,9 @@
 #include <unordered_map>
 #include <thread>
 #include <vector>
+#include <iterator>    // For istream_iterator, back_inserter
+#include <algorithm>   // For std::copy
+#include <sstream>     // For istringstream
 #include "bench.h"
 #include "benchmarks/sto/ReplayDB.h"
 #include "benchmarks/sto/sync_util.hh"
@@ -63,6 +66,33 @@ bench_runner * start_workers_tpcc(int leader_config, /*leader or learner (new le
         argv_bench[i] = (char *)bench_toks[i - 1].c_str();
     }
     bench_runner *R = tpcc_do_test(db, argc_bench, argv_bench, run, rc);
+    return R;
+}
+
+// Overload with shard_index for multi-shard mode
+bench_runner * start_workers_tpcc_shard(int leader_config,
+                        abstract_db *db,
+                        int threads_nums,
+                        int shard_index,
+                        bool skip_load = false,
+                        int run = 0,
+                        bench_runner *rc = NULL)
+{
+    std::string bench_type = "tpcc";
+    std::string bench_opts = "--f_mode=0";
+    if (skip_load) {
+        bench_opts = "--f_mode=1";
+    }
+
+    vector<string> bench_toks = split_ws(bench_opts);
+    int argc_bench = 1 + bench_toks.size();
+    char *argv_bench[argc_bench];
+    argv_bench[0] = (char *)bench_type.c_str();
+    for (size_t i = 1; i <= bench_toks.size(); i++)
+    {
+        argv_bench[i] = (char *)bench_toks[i - 1].c_str();
+    }
+    bench_runner *R = tpcc_do_test(db, argc_bench, argv_bench, run, rc, shard_index);
     return R;
 }
 

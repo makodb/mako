@@ -7,6 +7,7 @@
 
 #include "macros.h"
 
+
 /**
  * WARNING: This class is DEPRECATED. New code should use std::thread directly
  *

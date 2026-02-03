@@ -5,24 +5,26 @@ on:
     branches: [ mako-dev, mako-weihai ]
   workflow_dispatch:
 
-# Cancel superseded runs when you push new commits to the same PR/branch
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# comment out so we run test for every commit, otherwise new commit will cancel old (pending test) commit.
+#concurrency:
+#  group: ${{ github.workflow }}-${{ github.ref }}
+#  cancel-in-progress: false
 
 jobs:
   build-and-test:
     runs-on: self-hosted
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         build_type: [Release]
-        run_number: [1, 2, 3]
+        run_number: [1, 2]
     env:
       RUN_INDEX: ${{ matrix.run_number }}     # 1, 2, or 3 (per matrix job)
       RUN_NUM: ${{ github.run_number }}       # monotonically increasing per workflow
       RUN_ID: ${{ github.run_id }}            # unique per workflow run
+      MAKO_NO_GDB: "1"                        # Disable GDB for CI (breaks output parsing)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,6 +50,9 @@ jobs:
       - name: Run tests - simple transaction
         run: ./ci/ci.sh simpleTransaction
 
+      - name: Run tests - client-server mode
+        run: ./ci/ci.sh clientServer
+
       - name: Run tests - simple replication
         run: ./ci/ci.sh simplePaxos 
 
@@ -72,8 +77,35 @@ jobs:
       - name: Run tests - simple 2 shard with replication - simpleTransactionRep
         run: ./ci/ci.sh shard2ReplicationSimple
 
+      # =========================================
+      # Raft Replication Tests (after Paxos replication tests)
+      # =========================================
+      - name: Run tests - 1 shard with Raft replication - dbtest
+        run: ./ci/ci.sh shard1ReplicationRaft
+
+      - name: Run tests - 2 shard with Raft replication - dbtest
+        run: ./ci/ci.sh shard2ReplicationRaft
+
+      - name: Run tests - 1 shard with Raft replication - simpleTransactionRep
+        run: ./ci/ci.sh shard1ReplicationSimpleRaft
+
+      - name: Run tests - 2 shard with Raft replication - simpleTransactionRep
+        run: ./ci/ci.sh shard2ReplicationSimpleRaft
+
+      # =========================================
+      # Non-replication tests (run last)
+      # =========================================
       - name: Run tests - RocksDB persistence and partitioned queues
         run: ./ci/ci.sh rocksdbTests
+
+      - name: Run tests - multi-shard single process
+        run: ./ci/ci.sh multiShardSingleProcess
+
+      - name: Run tests - 2 shard single process (no replication)
+        run: ./ci/ci.sh shard2SingleProcess
+
+      - name: Run tests - 2 shard single process with replication
+        run: ./ci/ci.sh shard2SingleProcessReplication
 
       - name: Cleanup
         if: always()

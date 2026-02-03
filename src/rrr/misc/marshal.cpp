@@ -168,7 +168,7 @@ size_t Marshal::content_size_slow() const {
 
 size_t Marshal::write(const void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
-
+    chrono::time_point<chrono::steady_clock> start;
     if (head_ == nullptr) {
         assert(tail_ == nullptr);
         head_ = new chunk(p, n);
@@ -177,27 +177,41 @@ size_t Marshal::write(const void* p, size_t n) {
         tail_->next = new chunk(p, n);
         tail_ = tail_->next;
     } else {
+        //if(timing) start = chrono::steady_clock::now();
         size_t n_write = tail_->write(p, n);
-
+        /*if(timing){
+	    auto end =  chrono::steady_clock::now();
+	    auto duration = chrono::duration_cast<chrono::microseconds>(end-start).count();
+	    Log_info("Duration of this tail write is: %d", duration);
+	}*/
         // otherwise the above fully_written() should have returned true
         assert(n_write > 0);
 
         if (n_write < n) {
+	    //Log_info("Less less less");
             const char* pc = (const char *) p;
+	    //if(timing) start = chrono::steady_clock::now();
             tail_->next = new chunk(pc + n_write, n - n_write);
+            /*if(timing){
+	        auto end = chrono::steady_clock::now();
+		auto duration = chrono::duration_cast<chrono::microseconds>(end-start).count();
+		Log_info("Duration of Less less less is: %d", duration);
+	    }*/
             tail_ = tail_->next;
         }
+	
     }
     write_cnt_ += n;
     content_size_ += n;
-    assert(content_size_ == content_size_slow());
+    //assert(content_size_ == content_size_slow());
 
     return n;
 }
 
+// @unsafe - Uses new for raw heap allocation
 size_t Marshal::bypass_copying(MarshallDeputy data, size_t sz) {
   //Log_info("bypassing copying %d", sz);
-  assert(data.EntitySize() == sz);
+  assert(data.entity_size() == sz);
   assert(tail_ == nullptr || tail_->next == nullptr);
 
   if(head_ == nullptr){
@@ -227,88 +241,74 @@ size_t Marshal::read_chnk(void* p, size_t n){
     return n_read;
 }
 
+// @safe - Reads data from marshal buffer
+// SAFETY: Internal @unsafe block handles raw pointer casting and arithmetic
 size_t Marshal::read(void* p, size_t n) {
     assert(tail_ == nullptr || tail_->next == nullptr);
     assert(empty() || (head_ != nullptr && !head_->fully_read()));
 
-    char* pc = (char *) p;
-    size_t n_read = 0;
-    while (n_read < n && head_ != nullptr && head_->content_size() > 0) {
-        size_t cnt = head_->read(pc + n_read, n - n_read);
-        if (head_->fully_read()) {
-            if (tail_ == head_) {
-                // deleted the only chunk
-                tail_ = nullptr;
+    // @unsafe - raw pointer casting and arithmetic
+    {
+        char* pc = (char *) p;
+        size_t n_read = 0;
+        while (n_read < n && head_ != nullptr && head_->content_size() > 0) {
+            size_t cnt = head_->read(pc + n_read, n - n_read);
+            if (head_->fully_read()) {
+                if (tail_ == head_) {
+                    // deleted the only chunk
+                    tail_ = nullptr;
+                }
+                chunk* chnk = head_;
+                head_ = head_->next;
+                //delete chnk;
             }
-            chunk* chnk = head_;
-            head_ = head_->next;
-            //delete chnk;
+            if (cnt == 0) {
+                // currently there's no data available, so stop
+                break;
+            }
+            n_read += cnt;
         }
-        if (cnt == 0) {
-            // currently there's no data available, so stop
-            break;
-        }
-        n_read += cnt;
+        assert(content_size_ >= n_read);
+        content_size_ -= n_read;
+        assert(content_size_ == content_size_slow());
+
+        assert(n_read <= n);
+        assert(tail_ == nullptr || tail_->next == nullptr);
+        assert(empty() || (head_ != nullptr && !head_->fully_read()));
+
+        return n_read;
     }
-    assert(content_size_ >= n_read);
-    content_size_ -= n_read;
-    assert(content_size_ == content_size_slow());
-
-    assert(n_read <= n);
-    assert(tail_ == nullptr || tail_->next == nullptr);
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-
-    return n_read;
 }
 
-size_t Marshal::peek(void* p, size_t n) const {
-    assert(tail_ == nullptr || tail_->next == nullptr);
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-    //Log_info("is peeking empty %d %d", empty(), n);
-    char* pc = (char *) p;
-    size_t n_peek = 0;
-    chunk* chnk = head_;
-    while (chnk != nullptr && n - n_peek > 0) {
-	//Log_info("wkwkakakak");
-        size_t cnt = chnk->peek(pc + n_peek, n - n_peek);
-        if (cnt == 0) {
-            // no more data to peek, quit
-            break;
-        }
-        n_peek += cnt;
-        chnk = chnk->next;
-    }
-
-    assert(n_peek <= n);
-    assert(tail_ == nullptr || tail_->next == nullptr);
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-    return n_peek;
-}
-
+// @safe - Reads from file descriptor (I/O system call)
+// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
 size_t Marshal::read_from_fd(int fd) {
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
+    // @unsafe - I/O system calls and raw pointer operations
+    {
+        assert(empty() || (head_ != nullptr && !head_->fully_read()));
 
-    size_t n_bytes = 0;
-    for (;;) {
-        if (head_ == nullptr) {
-            head_ = new chunk;
-            tail_ = head_;
-        } else if (tail_->fully_written()) {
-            tail_->next = new chunk;
-            tail_ = tail_->next;
+        size_t n_bytes = 0;
+        for (;;) {
+            if (head_ == nullptr) {
+                head_ = new chunk;
+                tail_ = head_;
+            } else if (tail_->fully_written()) {
+                tail_->next = new chunk;
+                tail_ = tail_->next;
+            }
+            int r = tail_->read_from_fd(fd);
+            if (r <= 0) {
+                break;
+            }
+            n_bytes += r;
         }
-        int r = tail_->read_from_fd(fd);
-        if (r <= 0) {
-            break;
-        }
-        n_bytes += r;
+        write_cnt_ += n_bytes;
+        content_size_ += n_bytes;
+        assert(content_size_ == content_size_slow());
+
+        assert(empty() || (head_ != nullptr && !head_->fully_read()));
+        return n_bytes;
     }
-    write_cnt_ += n_bytes;
-    content_size_ += n_bytes;
-    assert(content_size_ == content_size_slow());
-
-    assert(empty() || (head_ != nullptr && !head_->fully_read()));
-    return n_bytes;
 }
 
 // the marshal object should have a chunk allocated with necessary size
@@ -354,137 +354,150 @@ size_t Marshal::read_reuse_chnk(Marshal& m, size_t n){
     return n_fetch;
 }
 
+// @safe - Transfers data between Marshal objects
+// SAFETY: Internal @unsafe block wraps raw pointer operations
 size_t Marshal::read_from_marshal(Marshal& m, size_t n) {
     assert(m.content_size() >= n);   // require m.content_size() >= n > 0
     size_t n_fetch = 0;
 
-    if ((head_ == nullptr && tail_ == nullptr) || tail_->fully_written()) {
-        // efficiently copy data by only copying pointers
-        while (n_fetch < n) {
-	   //Log_info("wkwkakakak");
-            // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
-            //       that only one Marshal should be able to write to it! For the
-            //       given 2 use cases, it works.
-            // @unsafe
-            chunk* chnk = m.head_->shared_copy();
-            if (n_fetch + chnk->content_size() > n) {
-                // only fetch enough bytes we need
-                chnk->write_idx -= (n_fetch + chnk->content_size()) - n;
-            }
-            size_t cnt = chnk->content_size();
-            assert(cnt > 0);
-            n_fetch += cnt;
-            verify(m.head_->discard(cnt) == cnt);
-            if (head_ == nullptr) {
-                head_ = tail_ = chnk;
-            } else {
-                tail_->next = chnk;
-                tail_ = chnk;
-            }
-            if (m.head_->fully_read()) {
-                if (m.tail_ == m.head_) {
-                    // deleted the only chunk
-                    m.tail_ = nullptr;
+    // @unsafe - Raw pointer operations (head_, tail_, chunk*)
+    {
+        if ((head_ == nullptr && tail_ == nullptr) || tail_->fully_written()) {
+            // efficiently copy data by only copying pointers
+            while (n_fetch < n) {
+                // NOTE: The copied chunk is shared by 2 Marshal objects. Be careful
+                //       that only one Marshal should be able to write to it! For the
+                //       given 2 use cases, it works.
+                chunk* chnk = m.head_->shared_copy();
+                if (n_fetch + chnk->content_size() > n) {
+                    // only fetch enough bytes we need
+                    chnk->write_idx -= (n_fetch + chnk->content_size()) - n;
                 }
-                chunk* next = m.head_->next;
-                delete m.head_;
-                m.head_ = next;
+                size_t cnt = chnk->content_size();
+                assert(cnt > 0);
+                n_fetch += cnt;
+                verify(m.head_->discard(cnt) == cnt);
+                if (head_ == nullptr) {
+                    head_ = tail_ = chnk;
+                } else {
+                    tail_->next = chnk;
+                    tail_ = chnk;
+                }
+                if (m.head_->fully_read()) {
+                    if (m.tail_ == m.head_) {
+                        // deleted the only chunk
+                        m.tail_ = nullptr;
+                    }
+                    chunk* next = m.head_->next;
+                    delete m.head_;
+                    m.head_ = next;
+                }
+            }
+            write_cnt_ += n_fetch;
+            content_size_ += n_fetch;
+            verify(m.content_size_ >= n_fetch);
+            m.content_size_ -= n_fetch;
+
+        } else {
+
+            // number of bytes that need to be copied
+            size_t copy_n = safe_min(tail_->data->size - tail_->write_idx, n);
+            char* buf = new char[copy_n];
+            n_fetch = m.read(buf, copy_n);
+            verify(n_fetch == copy_n);
+            verify(this->write(buf, n_fetch) == n_fetch);
+            delete[] buf;
+
+            size_t leftover = n - copy_n;
+            if (leftover > 0) {
+                verify(tail_->fully_written());
+                n_fetch += this->read_from_marshal(m, leftover);
             }
         }
-        write_cnt_ += n_fetch;
-        content_size_ += n_fetch;
-        verify(m.content_size_ >= n_fetch);
-        m.content_size_ -= n_fetch;
-
-    } else {
-
-        // number of bytes that need to be copied
-        size_t copy_n = safe_min(tail_->data->size - tail_->write_idx, n);
-        char* buf = new char[copy_n];
-        n_fetch = m.read(buf, copy_n);
-        verify(n_fetch == copy_n);
-        verify(this->write(buf, n_fetch) == n_fetch);
-        delete[] buf;
-
-        size_t leftover = n - copy_n;
-        if (leftover > 0) {
-            verify(tail_->fully_written());
-            n_fetch += this->read_from_marshal(m, leftover);
-        }
+        assert(n_fetch == n);
+        assert(content_size_ == content_size_slow());
     }
-    assert(n_fetch == n);
-    assert(content_size_ == content_size_slow());
     return n_fetch;
 }
 
 
+// @safe - Writes to file descriptor (I/O system call)
+// SAFETY: Internal @unsafe block handles I/O and raw pointer operations
 size_t Marshal::write_to_fd(int fd) {
-    size_t n_write = 0;
-    bool ok = false;
-    while (!empty()) {
-        int cnt = head_->write_to_fd(fd);
-	//Log_info("written %d bytes of %d", head_->read_idx, head_->write_idx);
-        if (head_->fully_read()) {
-            if (head_ == tail_) {
-                tail_ = nullptr;
+    // @unsafe
+    {
+        size_t n_write = 0;
+        bool ok = false;
+        while (!empty()) {
+            int cnt = head_->write_to_fd(fd);
+            //Log_info("written %d bytes of %d", head_->read_idx, head_->write_idx);
+            if (head_->fully_read()) {
+                if (head_ == tail_) {
+                    tail_ = nullptr;
+                }
+                //Log_info("fully read a chunk of size %d %d", head_->data->size, head_->write_idx);
+                chunk* chnk = head_;
+                head_ = head_->next;
+                delete chnk;
+                ok = true;
             }
-	    //Log_info("fully read a chunk of size %d %d", head_->data->size, head_->write_idx);
-            chunk* chnk = head_;
-            head_ = head_->next;
-            delete chnk;
-	    ok = true;
-        }
-        if (cnt <= 0) {
-	    //Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
-            break;
-        } else {
-	    //Log_info("written %lld bytes of %lld", head_->read_idx, head_->write_idx);	
-	}
-        assert(content_size_ >= (size_t) cnt);
-        content_size_ -= cnt;
-        n_write += cnt;
-	//if(ok) break;
+            if (cnt <= 0) {
+                //Log_info("written less than 0 bytes, breaking... %d %d %d", head_->data->size, head_->write_idx, head_->read_idx);
+                break;
+            } else {
+                //Log_info("written %lld bytes of %lld", head_->read_idx, head_->write_idx);
+            }
+            assert(content_size_ >= (size_t) cnt);
+            content_size_ -= cnt;
+            n_write += cnt;
+            //if(ok) break;
 
+        }
+        assert(content_size_ == content_size_slow());
+        return n_write;
     }
-    assert(content_size_ == content_size_slow());
-    return n_write;
 }
 
-Marshal::bookmark* Marshal::set_bookmark(size_t n) {
+// @safe - Creates bookmark for deferred writes
+// SAFETY: Internal @unsafe block handles raw pointer and new/delete operations
+Marshal::bookmark Marshal::set_bookmark(size_t n) {
     verify(write_cnt_ == 0);
 
-    bookmark* bm = new bookmark;
-    bm->size = n;
-    bm->ptr = new char*[bm->size];
-    for (size_t i = 0; i < n; i++) {
-        if (head_ == nullptr) {
-            head_ = new chunk;
-            tail_ = head_;
-        } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
-            tail_->next = new chunk;
-            tail_ = tail_->next;
+    // @unsafe
+    {
+        bookmark bm;
+        bm.size = n;
+        bm.ptr = new char*[n];
+        for (size_t i = 0; i < n; i++) {
+            if (head_ == nullptr) {
+                head_ = new chunk;
+                tail_ = head_;
+            } else if (tail_->fully_written() || tail_->is_shared_data_chunk()) {
+                tail_->next = new chunk;
+                tail_ = tail_->next;
+            }
+            bm.ptr[i] = tail_->set_bookmark();
         }
-        bm->ptr[i] = tail_->set_bookmark();
-    }
-    content_size_ += n;
-    assert(content_size_ == content_size_slow());
+        content_size_ += n;
+        assert(content_size_ == content_size_slow());
 
-    return bm;
+        return bm;  // Moved out (NRVO)
+    }
 }
 
 std::mutex md_mutex_g;
 std::mutex mdi_mutex_g;
-// Note: mc_ removed - now using Construct On First Use idiom in GetInitializers()
+// Note: mc_ removed - now using Construct On First Use idiom in get_initializers()
 // @safe - Thread-local factory registry copy
 // SAFETY: Each thread has its own copy, no locking needed for access
 thread_local MarshallDeputy::MarContainer mc_th_;
 thread_local bool mc_th_initialized_ = false;
 
 // @unsafe - Registers initializer with mutex locking and map insertion
-int MarshallDeputy::RegInitializer(int32_t cmd_type,
+int MarshallDeputy::reg_initializer(int32_t cmd_type,
                                    function<Marshallable*()> init) {
   md_mutex_g.lock();
-  auto& container = GetInitializers();
+  auto& container = get_initializers();
   auto pair = container.insert(std::make_pair(cmd_type, init));
   verify(pair.second);
   md_mutex_g.unlock();
@@ -493,10 +506,10 @@ int MarshallDeputy::RegInitializer(int32_t cmd_type,
 
 // @unsafe - Calls std::mutex::lock, std::unordered_map::find, std::function constructor
 function<Marshallable*()>
-MarshallDeputy::GetInitializer(int32_t type) {
+MarshallDeputy::get_initializer(int32_t type) {
   if (!mc_th_initialized_) {
     md_mutex_g.lock();
-    auto& global_container = GetInitializers();
+    auto& global_container = get_initializers();
     // Copy the container into thread-local storage
     mc_th_ = global_container;
     mc_th_initialized_ = true;
@@ -508,33 +521,32 @@ MarshallDeputy::GetInitializer(int32_t type) {
   return f;
 }
 
-// @safe - Returns reference to global factory registry
+// Returns reference to global factory registry
 // SAFETY: Protected by mutex, initializes on first access
 // Uses Construct On First Use idiom to avoid static initialization order fiasco
-// @lifetime: () -> &'static
 MarshallDeputy::MarContainer&
-MarshallDeputy::GetInitializers() {
+MarshallDeputy::get_initializers() {
   // Note: Caller must hold md_mutex_g
   // Local static is guaranteed to be initialized on first access
   static MarshallDeputy::MarContainer mc_;
   return mc_;
 }
 
-Marshal &Marshallable::FromMarshal(Marshal &m) {
+Marshal &Marshallable::from_marshal(Marshal &m) {
   verify(0);
   return m;
 }
 
-// @unsafe - Calls std::shared_ptr::get and GetInitializer
+// @unsafe - Calls std::shared_ptr::get and get_initializer
 // @lifetime: (&'a mut) -> &'a mut
-Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
+Marshal& MarshallDeputy::create_actual_object_from(Marshal& m) {
   verify(sp_data_ == nullptr);
   switch (kind_) {
     case UNKNOWN:
       verify(0);
       break;
     default:
-      auto func = GetInitializer(kind_);
+      auto func = get_initializer(kind_);
       verify(func);
       // Call initializer function which returns raw Marshallable*
       Marshallable* raw_ptr = func();
@@ -547,14 +559,14 @@ Marshal& MarshallDeputy::CreateActualObjectFrom(Marshal& m) {
   // Use get() to get pointer access
   Marshallable* mut_data = sp_data_.get();
   verify(mut_data);  // Should succeed - we just created it
-  mut_data->FromMarshal(m);
+  mut_data->from_marshal(m);
   verify(sp_data_->kind_);
   verify(kind_);
   verify(sp_data_->kind_ == kind_);
   return m;
 }
 
-Marshal &Marshallable::ToMarshal(Marshal &m) const {
+Marshal &Marshallable::to_marshal(Marshal &m) const {
   verify(0);
   return m;
 }

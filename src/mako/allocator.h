@@ -10,6 +10,18 @@
 #include "macros.h"
 #include "spinlock.h"
 
+// Forward declaration
+class SiloRuntime;
+
+/**
+ * allocator - Memory allocation facade
+ *
+ * This class provides static methods for backward compatibility.
+ * All methods now delegate to the current SiloRuntime's allocator.
+ *
+ * Each SiloRuntime has its own memory region for complete isolation
+ * between shards in multi-shard single-process mode.
+ */
 class allocator {
 public:
 
@@ -18,11 +30,13 @@ public:
   // Initialize can be called many times- but only the first call has effect.
   //
   // w/o calling Initialize(), behavior for this class is undefined
+  // Now delegates to SiloRuntime::Current()->InitializeAllocator()
   static void Initialize(size_t ncpus, size_t maxpercore);
 
   static void DumpStats();
 
   // returns an arena linked-list
+  // Delegates to SiloRuntime::Current()->AllocateArenas()
   static void *
   AllocateArenas(size_t cpu, size_t sz);
 
@@ -32,9 +46,11 @@ public:
   // Note that memory returned from here cannot be released back to the
   // allocator, so this should only be used for data structures which live
   // throughput the duration of the system (ie log buffers)
+  // Delegates to SiloRuntime::Current()->AllocateUnmanaged()
   static void *
   AllocateUnmanaged(size_t cpu, size_t nhugepgs);
 
+  // Delegates to SiloRuntime::Current()->ReleaseArenas()
   static void
   ReleaseArenas(void **arenas);
 
@@ -51,29 +67,19 @@ public:
   }
 
   // slow, but only needs to be called on initialization
+  // Delegates to SiloRuntime::Current()->FaultRegion()
   static void
   FaultRegion(size_t cpu);
 
-  // returns true if managed by this allocator, false otherwise
-  static inline bool
-  ManagesPointer(const void *p)
-  {
-    return p >= g_memstart && p < g_memend;
-  }
+  // returns true if managed by current runtime's allocator, false otherwise
+  // Delegates to SiloRuntime::Current()->ManagesPointer()
+  static bool
+  ManagesPointer(const void *p);
 
   // assumes p is managed by this allocator- returns the CPU from which this pointer
-  // was allocated
-  static inline size_t
-  PointerToCpu(const void *p)
-  {
-    ALWAYS_ASSERT(p >= g_memstart);
-    ALWAYS_ASSERT(p < g_memend);
-    const size_t ret =
-      (reinterpret_cast<const char *>(p) -
-       reinterpret_cast<const char *>(g_memstart)) / g_maxpercore;
-    ALWAYS_ASSERT(ret < g_ncpus);
-    return ret;
-  }
+  // was allocated. Delegates to SiloRuntime::Current()->PointerToCpu()
+  static size_t
+  PointerToCpu(const void *p);
 
 #ifdef MEMCHECK_MAGIC
   struct pgmetadata {
@@ -105,41 +111,13 @@ private:
   static size_t GetHugepageSizeImpl();
   static bool UseMAdvWillNeed();
 
-  struct regionctx {
-    regionctx()
-      : region_begin(nullptr),
-        region_end(nullptr),
-        region_faulted(false)
-    {
-      NDB_MEMSET(arenas, 0, sizeof(arenas));
-    }
-    regionctx(const regionctx &) = delete;
-    regionctx(regionctx &&) = delete;
-    regionctx &operator=(const regionctx &) = delete;
-
-    // set by Initialize()
-    void *region_begin;
-    void *region_end;
-
-    bool region_faulted;
-
-    spinlock lock;
-    std::mutex fault_lock; // XXX: hacky
-    void *arenas[MAX_ARENAS];
-  };
-
-  // assumes caller has the regionctx lock held, and
-  // will release the lock.
-  static void *
-  AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs);
-
-  // [g_memstart, g_memstart + ncpus * maxpercore) is the region of memory mmap()-ed
+  // Legacy: These are kept for backward compatibility but are no longer used.
+  // All state is now in SiloRuntime::AllocatorState.
+  // DO NOT USE - will be removed in a future version.
   static void *g_memstart;
-  static void *g_memend; // g_memstart + ncpus * maxpercore
+  static void *g_memend;
   static size_t g_ncpus;
   static size_t g_maxpercore;
-
-  static percore<regionctx> g_regions CACHE_ALIGNED;
 };
 
 #endif /* _NDB_ALLOCATOR_H_ */

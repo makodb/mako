@@ -21,6 +21,13 @@
 
 using namespace mako;
 
+// TransportBackendService::__dispatch__ implementation
+// @safe - forwards to RrrRpcBackend::RequestHandler
+void TransportBackendService::__dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
+                                           rrr::WeakServerConnection weak_sconn) {
+    RrrRpcBackend::RequestHandler(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn, backend_);
+}
+
 // External callbacks registered by bench.cc and dbtest.cc
 extern std::function<int(int,int)> bench_callback_;
 extern std::function<int(int,int)> dbtest_callback_;
@@ -33,7 +40,8 @@ RrrRpcBackend::RrrRpcBackend(const transport::Configuration& config,
     : config_(config),
       shard_idx_(shard_idx),
       id_(id),
-      cluster_(cluster) {
+      cluster_(cluster),
+      poll_thread_worker_(rusty::None) {
 
     cluster_role_ = convertCluster(cluster);
 }
@@ -52,8 +60,9 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
                               uint8_t st_nr_req_types,
                               uint8_t end_nr_req_types) {
 
-    // Create PollThreadWorker for event-driven I/O
-    poll_thread_worker_ = rrr::PollThreadWorker::create();
+    // Create PollThread for event-driven I/O
+    poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
+    Notice("RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=%d", poll_thread_worker_.is_some());
 
     // Extract host and port from local_uri (format: "host:port")
     size_t colon_pos = local_uri.find(':');
@@ -65,15 +74,16 @@ int RrrRpcBackend::Initialize(const std::string& local_uri,
     std::string port_str = local_uri.substr(colon_pos + 1);
 
     // Create server to listen for incoming requests
-    server_ = new rrr::Server(poll_thread_worker_);
+    // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
+    server_ = new rrr::Server(poll_thread_worker_.as_ref().unwrap().clone());
 
-    // Register request handlers for all request types
-    // Note: We capture both req_type and 'this' in the lambda
-    for (uint8_t req_type = st_nr_req_types; req_type <= end_nr_req_types; req_type++) {
-        server_->reg(req_type, [this, req_type](rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-            RequestHandler(req_type, std::move(req), weak_sconn, this);
-        });
-    }
+    // Register TransportBackendService to handle all request types in the range
+    auto svc = rusty::make_box<TransportBackendService>(
+        this,
+        static_cast<rrr::i32>(st_nr_req_types),
+        static_cast<rrr::i32>(end_nr_req_types)
+    );
+    server_->reg_service(std::move(svc));
 
     // Start listening on the port
     int ret = server_->start(("0.0.0.0:" + port_str).c_str());
@@ -121,12 +131,12 @@ void RrrRpcBackend::Shutdown() {
     Notice("RrrRpcBackend::Shutdown: About to shutdown poll_thread_worker_");
 
     // Shutdown poll thread worker explicitly (after server is deleted)
-    if (poll_thread_worker_) {
+    if (poll_thread_worker_.is_some()) {
         Notice("RrrRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()");
-        poll_thread_worker_->shutdown();
+        poll_thread_worker_.as_ref().unwrap()->shutdown();
         Notice("RrrRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed");
-        poll_thread_worker_ = rusty::Arc<rrr::PollThreadWorker>();
-        Notice("RrrRpcBackend::Shutdown: poll_thread_worker_ reset to empty Arc");
+        poll_thread_worker_ = rusty::None;
+        Notice("RrrRpcBackend::Shutdown: poll_thread_worker_ reset to None");
     } else {
         Notice("RrrRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown");
     }
@@ -156,7 +166,7 @@ void RrrRpcBackend::FreeRequestBuffer() {
 }
 
 // Get or create client connection to a shard
-rusty::Arc<rrr::Client> RrrRpcBackend::GetOrCreateClient(uint8_t shard_idx,
+rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t shard_idx,
                                                           uint16_t server_id,
                                                           int force_center) {
     int clusterRoleSentTo = cluster_role_;
@@ -188,7 +198,7 @@ rusty::Arc<rrr::Client> RrrRpcBackend::GetOrCreateClient(uint8_t shard_idx,
     if (stop_) {
         clients_lock_.unlock();
         Warning("GetOrCreateClient: stop requested, not creating/returning client");
-        return rusty::Arc<rrr::Client>();  // Return empty Arc
+        return rusty::None;  // Return None
     }
 
     auto it = clients_.find(session_key);
@@ -201,7 +211,15 @@ rusty::Arc<rrr::Client> RrrRpcBackend::GetOrCreateClient(uint8_t shard_idx,
     // Create new client
     Debug("GetOrCreateClient: Creating new client for shard %d, server %d", shard_idx, server_id);
 
-    rusty::Arc<rrr::Client> client = rrr::Client::create(poll_thread_worker_);
+    // Check if poll_thread_worker_ is still valid (not shutdown yet)
+    if (poll_thread_worker_.is_none()) {
+        Warning("GetOrCreateClient: poll_thread_worker_ is None (backend shutting down)");
+        clients_lock_.unlock();
+        return rusty::None;
+    }
+
+    // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
+    rusty::Arc<rrr::Client> client = rrr::Client::create(poll_thread_worker_.as_ref().unwrap().clone());
 
     // Connect to destination
     int port = std::atoi(config_.shard(shard_idx, clusterRoleSentTo).port.c_str()) + server_id;
@@ -211,13 +229,13 @@ rusty::Arc<rrr::Client> RrrRpcBackend::GetOrCreateClient(uint8_t shard_idx,
 
     int ret = client->connect(addr.c_str());
     if (ret != 0) {
-        Warning("Failed to connect to %s (error %d)", addr.c_str(), ret);
+        //Warning("Failed to connect to %s (error %d)", addr.c_str(), ret);
         clients_lock_.unlock();
-        return rusty::Arc<rrr::Client>();  // Return empty Arc
+        return rusty::None;  // Return None
     }
 
     // Store client
-    clients_[session_key] = client.clone();
+    clients_.emplace(session_key, client.clone());
     clients_lock_.unlock();
 
     Debug("Created rrr::Client connection to %s", addr.c_str());
@@ -244,35 +262,29 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
         return false;
     }
 
-    rusty::Arc<rrr::Client> client = GetOrCreateClient(shard_idx, server_id);
-    if (!client.is_valid()) {
+    auto client_opt = GetOrCreateClient(shard_idx, server_id);
+    if (client_opt.is_none()) {
         Warning("Failed to get client for shard %d, server %d", shard_idx, server_id);
         return false;
     }
+    rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-    Debug("RrrRpcBackend::SendToShard: Got client, calling begin_request");
+    Debug("RrrRpcBackend::SendToShard: Got client, calling request");
 
-    // Begin request with rrr/rpc
-    rrr::Future* fu = client->begin_request(req_type);
-    if (!fu) {
-        Warning("Failed to begin_request for req_type %d", req_type);
+    // Send request with lambda API
+    auto fu_result = client->request(req_type, [&](rrr::Marshal& out) {
+        out.write(tls_buffers.request_buffer.data(), msg_len);
+    });
+    if (fu_result.is_err()) {
+        Warning("Failed to send request for req_type %d", req_type);
         return false;
     }
-
-    Debug("RrrRpcBackend::SendToShard: begin_request succeeded, writing request data");
-
-    // Write request data using client's << operator
-    rrr::Marshal m;
-    m.write(tls_buffers.request_buffer.data(), msg_len);
-    *client << m;
+    auto fu = fu_result.unwrap();
 
     msg_size_req_sent_ += msg_len;
     msg_counter_req_sent_ += 1;
 
-    Debug("RrrRpcBackend::SendToShard: Calling end_request to send RPC");
-
-    // Send request
-    client->end_request();
+    Debug("RrrRpcBackend::SendToShard: Request sent");
 
     Debug("RrrRpcBackend::SendToShard: Waiting for response");
 
@@ -286,34 +298,31 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     // Check stop again after wait - client might have been closed during wait
     if (stop_) {
         Warning("RrrRpcBackend::SendToShard: stop requested after wait, aborting");
-        rrr::Future::safe_release(fu);
-        return false;
+        return false;  // Arc auto-released
     }
 
     if (fu->get_error_code() != 0) {
         Warning("RPC error: %d", fu->get_error_code());
-        rrr::Future::safe_release(fu);
-        return false;
+        return false;  // Arc auto-released
     }
 
     // Final check before accessing response - make sure we're not stopping
     if (stop_) {
         Warning("RrrRpcBackend::SendToShard: stop requested before processing response, aborting");
-        rrr::Future::safe_release(fu);
-        return false;
+        return false;  // Arc auto-released
     }
 
-    // Read response
-    rrr::Marshal& resp_marshal = fu->get_reply();
+    // Read response (guard ensures lifetime safety)
+    auto resp_guard = fu->get_reply();
     std::vector<char> resp_buffer(tls_buffers.response_len);
-    resp_marshal.read(resp_buffer.data(), tls_buffers.response_len);
+    resp_guard->read(resp_buffer.data(), tls_buffers.response_len);
 
     // Deliver response to receiver (only if not stopping)
     if (!stop_ && src) {
         src->ReceiveResponse(req_type, resp_buffer.data());
     }
 
-    rrr::Future::safe_release(fu);
+    // Arc auto-released when fu goes out of scope
     return !stop_;
 }
 
@@ -337,50 +346,47 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
     if (!shards_bit_set) return true;
 
     // Prepare futures for all shards
-    std::vector<rrr::Future*> futures;
+    std::vector<rusty::Arc<rrr::Future>> futures;
 
     for (int shard_idx = 0; shard_idx < config_.nshards; shard_idx++) {
         if ((shards_bit_set >> shard_idx) % 2 == 0) continue;
 
         Debug("RrrRpcBackend::SendToAll: Sending to shard %d", shard_idx);
 
-        rusty::Arc<rrr::Client> client = GetOrCreateClient(shard_idx, server_id, force_center);
-        if (!client.is_valid()) {
-            Warning("Failed to get client for shard %d", shard_idx);
+        auto client_opt = GetOrCreateClient(shard_idx, server_id, force_center);
+        if (client_opt.is_none()) {
+            //Warning("Failed to get client for shard %d", shard_idx);
             continue;
         }
+        rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-        Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling begin_request", shard_idx);
+        Debug("RrrRpcBackend::SendToAll: Got client for shard %d, calling request", shard_idx);
 
-        rrr::Future* fu = client->begin_request(req_type);
-        if (!fu) {
-            Warning("Failed to begin_request for shard %d", shard_idx);
+        auto fu_result = client->request(req_type, [&](rrr::Marshal& out) {
+            out.write(tls_buffers.request_buffer.data(), req_len);
+        });
+        if (fu_result.is_err()) {
+            Warning("Failed to send request for shard %d", shard_idx);
             continue;
         }
-
-        // Write request data using client's << operator
-        rrr::Marshal m;
-        m.write(tls_buffers.request_buffer.data(), req_len);
-        *client << m;
+        auto fu = fu_result.unwrap();
 
         msg_size_req_sent_ += req_len;
         msg_counter_req_sent_ += 1;
 
-        Debug("RrrRpcBackend::SendToAll: Calling end_request for shard %d", shard_idx);
+        Debug("RrrRpcBackend::SendToAll: Request sent to shard %d", shard_idx);
 
-        client->end_request();
-        futures.push_back(fu);
+        futures.push_back(std::move(fu));
     }
 
     Debug("RrrRpcBackend::SendToAll: Sent to %zu shards, waiting for responses", futures.size());
 
     // Wait for all responses
-    for (rrr::Future* fu : futures) {
+    for (auto& fu : futures) {
         // Check if stop was requested before waiting
         if (stop_) {
             Warning("RrrRpcBackend::SendToAll: stop requested, aborting wait for response (req_type=%d)", req_type);
-            rrr::Future::safe_release(fu);
-            continue;
+            continue;  // Arc auto-released
         }
 
         // Wait for response with timeout, checking stop flag periodically
@@ -393,29 +399,28 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         // Check stop again after wait
         if (stop_) {
             Warning("RrrRpcBackend::SendToAll: stop requested after wait, aborting (req_type=%d)", req_type);
-            rrr::Future::safe_release(fu);
-            continue;
+            continue;  // Arc auto-released
         }
 
         if (fu->get_error_code() != 0) {
             Warning("RPC error: %d", fu->get_error_code());
-            rrr::Future::safe_release(fu);
-            continue;
+            continue;  // Arc auto-released
         }
 
-        // Read response
-        rrr::Marshal& resp_marshal = fu->get_reply();
+        // Read response (guard ensures lifetime safety)
+        auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_marshal.read(resp_buffer.data(), resp_len);
+        resp_guard->read(resp_buffer.data(), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
             src->ReceiveResponse(req_type, resp_buffer.data());
         }
 
-        rrr::Future::safe_release(fu);
+        // Arc auto-released at end of loop iteration
     }
 
+    // All Arcs auto-released when futures vector destroyed
     return !stop_;
 }
 
@@ -431,38 +436,35 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         return false;
     }
 
-    std::vector<rrr::Future*> futures;
+    std::vector<rusty::Arc<rrr::Future>> futures;
 
     for (auto& entry : data) {
         int shard_idx = entry.first;
         char* raw_data = entry.second.first;
         size_t req_len = entry.second.second;
 
-        rusty::Arc<rrr::Client> client = GetOrCreateClient(shard_idx, server_id);
-        if (!client.is_valid()) continue;
+        auto client_opt = GetOrCreateClient(shard_idx, server_id);
+        if (client_opt.is_none()) continue;
+        rusty::Arc<rrr::Client> client = client_opt.unwrap();
 
-        rrr::Future* fu = client->begin_request(req_type);
-        if (!fu) continue;
-
-        // Write request data using client's << operator
-        rrr::Marshal m;
-        m.write(raw_data, req_len);
-        *client << m;
+        auto fu_result = client->request(req_type, [raw_data, req_len](rrr::Marshal& out) {
+            out.write(raw_data, req_len);
+        });
+        if (fu_result.is_err()) continue;
+        auto fu = fu_result.unwrap();
 
         msg_size_req_sent_ += req_len;
         msg_counter_req_sent_ += 1;
 
-        client->end_request();
-        futures.push_back(fu);
+        futures.push_back(std::move(fu));
     }
 
     // Wait for all responses
-    for (rrr::Future* fu : futures) {
+    for (auto& fu : futures) {
         // Check if stop was requested before waiting
         if (stop_) {
             Warning("RrrRpcBackend::SendBatchToAll: stop requested, aborting wait (req_type=%d)", req_type);
-            rrr::Future::safe_release(fu);
-            continue;
+            continue;  // Arc auto-released
         }
 
         // Wait for response with timeout, checking stop flag periodically
@@ -475,35 +477,34 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         // Check stop again after wait
         if (stop_) {
             Warning("RrrRpcBackend::SendBatchToAll: stop requested after wait, aborting (req_type=%d)", req_type);
-            rrr::Future::safe_release(fu);
-            continue;
+            continue;  // Arc auto-released
         }
 
         if (fu->get_error_code() != 0) {
             Warning("RPC error: %d", fu->get_error_code());
-            rrr::Future::safe_release(fu);
-            continue;
+            continue;  // Arc auto-released
         }
 
-        // Read response
-        rrr::Marshal& resp_marshal = fu->get_reply();
+        // Read response (guard ensures lifetime safety)
+        auto resp_guard = fu->get_reply();
         std::vector<char> resp_buffer(resp_len);
-        resp_marshal.read(resp_buffer.data(), resp_len);
+        resp_guard->read(resp_buffer.data(), resp_len);
 
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
             src->ReceiveResponse(req_type, resp_buffer.data());
         }
 
-        rrr::Future::safe_release(fu);
+        // Arc auto-released at end of loop iteration
     }
 
+    // All Arcs auto-released when futures vector destroyed
     return !stop_;
 }
 
 // Run event loop
 void RrrRpcBackend::RunEventLoop() {
-    // The PollThreadWorker runs its own thread for network I/O
+    // The PollThread runs its own thread for network I/O
     // Here we process responses from helper threads and send them back
     Notice("RrrRpcBackend::RunEventLoop: Starting event loop");
 
@@ -555,11 +556,10 @@ void RrrRpcBackend::RunEventLoop() {
                 }
 
                 // Send response back via rrr/rpc
-                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).begin_reply(*rrr_handle->original_request);
-                rrr::Marshal m;
-                m.write(rrr_handle->response_data.data(), msg_size);
-                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn) << m;
-                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).end_reply();
+                const_cast<rrr::ServerConnection&>(*rrr_handle->sconn).reply(
+                    *rrr_handle->original_request, 0, [&](rrr::Marshal& out) {
+                        out.write(rrr_handle->response_data.data(), msg_size);
+                    });
 
                 msg_size_resp_sent_ += msg_size;
                 msg_counter_resp_sent_ += 1;
@@ -717,11 +717,9 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.shard_index = TThread::get_shard_index();
 
         // Send response
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&resp, sizeof(resp));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&resp, sizeof(resp));
+        });
 
         backend->msg_size_resp_sent_ += sizeof(resp);
         backend->msg_counter_resp_sent_ += 1;
@@ -740,11 +738,9 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&resp, sizeof(resp));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&resp, sizeof(resp));
+        });
 
         backend->msg_size_resp_sent_ += sizeof(resp);
         backend->msg_counter_resp_sent_ += 1;
@@ -774,11 +770,9 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 
-        const_cast<rrr::ServerConnection&>(*sconn).begin_reply(*req);
-        rrr::Marshal m;
-        m.write(&resp, sizeof(resp));
-        const_cast<rrr::ServerConnection&>(*sconn) << m;
-        const_cast<rrr::ServerConnection&>(*sconn).end_reply();
+        const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& out) {
+            out.write(&resp, sizeof(resp));
+        });
 
         backend->msg_size_resp_sent_ += sizeof(resp);
         backend->msg_counter_resp_sent_ += 1;

@@ -48,6 +48,7 @@ struct typed_txn_btree_ {
     bool no_key_results;
   };
 
+  // @unsafe - decodes raw tuple bytes into structured values without borrow tracking
   static inline bool
   do_record_read(const uint8_t *data, size_t sz, uint64_t fields_mask, value_type *v)
   {
@@ -163,11 +164,13 @@ struct typed_txn_btree_ {
     const key_type *k;
   };
 
+  // @unsafe - walks serialized value buffers with manual pointer arithmetic to size updates
   static inline size_t
   compute_needed_standalone(
     const value_type *v, uint64_t fields,
     const uint8_t *buf, size_t sz)
   {
+    // @unsafe - manual pointer arithmetic into serialized value buffers
     if (fields == 0) {
       // delete
       INVARIANT(!v);
@@ -212,10 +215,12 @@ struct typed_txn_btree_ {
   }
 
   // how many bytes do we need to encode a delta record
+  // @unsafe - computes delta sizes by inspecting raw field offsets and encoded bytes
   static inline size_t
   compute_needed_delta_standalone(
       const value_type *v, uint64_t fields)
   {
+    // @unsafe - computes sizes by walking raw field offsets
     size_t size_needed = 0;
     size_needed += sizeof(uint64_t);
     if (fields == 0) {
@@ -305,6 +310,7 @@ struct typed_txn_btree_ {
 
   template <uint64_t Fields>
   static inline size_t
+  // @unsafe - casts opaque tuple payloads to value_type and performs raw buffer writes
   tuple_writer(dbtuple::TupleWriterMode mode, const void *v, uint8_t *p, size_t sz)
   {
     const value_type *vx = reinterpret_cast<const value_type *>(v);
@@ -335,6 +341,7 @@ struct typed_txn_btree_ {
     // [buf, buf+sz).
     //
     // compute the new required size for the update
+    // @unsafe - relies on raw buffer from caller representing an encoded tuple
     inline size_t
     compute_needed(const uint8_t *buf, size_t sz)
     {
@@ -359,6 +366,7 @@ struct typed_txn_btree_ {
 
     // the old value lives in [buf, buf+sz), but [buf, buf+compute_needed())
     // is valid memory to write to
+    // @unsafe - writes serialized fields directly into caller-provided buffers
     inline void
     operator()(uint8_t *buf, size_t sz)
     {
@@ -496,6 +504,7 @@ private:
 
   template <typename Traits>
   static inline const value_type *
+  // @unsafe - returns pointer into string-backed buffer reinterpreted as value_type
   stablize(Transaction<Traits> &t, const value_type &v)
   {
     if (Traits::stable_input_memory)

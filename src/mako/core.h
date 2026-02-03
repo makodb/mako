@@ -5,21 +5,39 @@
 #include "macros.h"
 #include "util.h"
 
+// Forward declaration - SiloRuntime manages per-site core ID allocation
+class SiloRuntime;
+
 /**
  * XXX: CoreIDs are not recyclable for now, so NMAXCORES is really the number
- * of threads which can ever be spawned in the system
+ * of threads which can ever be spawned in the system PER RUNTIME.
+ *
+ * With multi-site support, each SiloRuntime has its own core ID space.
+ * A thread's core ID is valid only for the runtime it was allocated from.
+ * When a thread binds to a different runtime, it gets a new core ID.
  */
 class coreid {
 public:
   static const unsigned NMaxCores = NMAXCORES;
 
+  /**
+   * Get the core ID for the current thread within the current runtime.
+   *
+   * If the thread has not been assigned a core ID for the current runtime,
+   * a new one is allocated from that runtime's ID space.
+   */
   static inline unsigned
   core_id()
   {
-    if (unlikely(tl_core_id == -1)) {
-      // initialize per-core data structures
-      tl_core_id = g_core_count.fetch_add(1, std::memory_order_acq_rel);
-      // did we exceed max cores?
+    // Get the current runtime (may be the global default)
+    SiloRuntime* runtime = get_current_runtime();
+    int runtime_id = get_runtime_id(runtime);
+
+    // Check if we need to allocate a new core ID for this runtime
+    if (unlikely(tl_core_id == -1 || tl_runtime_id != runtime_id)) {
+      // Allocate from the current runtime
+      tl_core_id = allocate_from_runtime(runtime);
+      tl_runtime_id = runtime_id;
       ALWAYS_ASSERT(unsigned(tl_core_id) < NMaxCores);
     }
     return tl_core_id;
@@ -48,23 +66,32 @@ public:
    * These are necessary but not sufficient conditions for uniqueness
    */
   static void
-  set_core_id(unsigned cid)
-  {
-    ALWAYS_ASSERT(cid < NMaxCores);
-    ALWAYS_ASSERT(cid < g_core_count.load(std::memory_order_acquire));
-    ALWAYS_ASSERT(tl_core_id == -1);
-    tl_core_id = cid; // sigh
+  set_core_id(unsigned cid);
+
+  /**
+   * Reset the thread-local core ID.
+   * Call this when a thread binds to a new runtime to force re-allocation.
+   */
+  static void reset_core_id() {
+    tl_core_id = -1;
+    tl_runtime_id = -1;
   }
 
   // actual number of CPUs online for the system
   static unsigned num_cpus_online();
 
 private:
+  // Helper functions to avoid circular include with silo_runtime.h
+  static SiloRuntime* get_current_runtime();
+  static int get_runtime_id(SiloRuntime* runtime);
+  static unsigned allocate_from_runtime(SiloRuntime* runtime);
+  static unsigned get_core_count_from_runtime(SiloRuntime* runtime);
+
   // the core ID of this core: -1 if not set
   static __thread int tl_core_id;
 
-  // contains a running count of all the cores
-  static std::atomic<unsigned> g_core_count CACHE_ALIGNED;
+  // which runtime the core ID was allocated from: -1 if not set
+  static __thread int tl_runtime_id;
 };
 
 // requires T to have no-arg ctor

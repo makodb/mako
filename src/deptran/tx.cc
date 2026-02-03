@@ -75,8 +75,16 @@ bool Tx::ReadColumn(mdb::Row *row,
                       mdb::colid_t col_id,
                       Value *value,
                       int hint_flag) {
-  verify(mdb_txn() != nullptr);
-  auto ret = mdb_txn()->read_column(row, col_id, value);
+  auto mtx = mdb_txn();
+  verify(mtx);
+  auto x = row->ref_count();
+  verify(x > 0);
+  verify(col_id >= 0);
+  int y = value->get_kind();
+  verify(y >= 0);
+  auto z = mtx->rtti();
+  verify(z>=0);
+  auto ret = mtx->read_column(row, col_id, value);
   verify(ret == true);
   return true;
 }
@@ -123,6 +131,7 @@ mdb::Row* Tx::CreateRow(const mdb::Schema *schema,
       break;
     case MODE_OCC:
     case MODE_NONE:
+    case MODE_NOTX:
     default:
       r = mdb::VersionedRow::create(schema, row_data);
       break;

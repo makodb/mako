@@ -119,7 +119,7 @@ public:
             if (sync_util::sync_logger::safety_check(header->timestamp, hist_timestamp[*time_term % 10])) { // Single timestamp check
                 bool ret = !isDeleted(val);
                 if (!ret) {
-                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getPartitionID(),*time_term%10,current_term, hist_timestamp[*time_term % 10],val.length());
+                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getGlobalPartitionID(),*time_term%10,current_term, hist_timestamp[*time_term % 10],val.length());
                     //mako::printStringAsBit(val);
                 }
                 return ret;
@@ -142,7 +142,7 @@ public:
             if (header->timestamp / 10 <= hist_timestamp[*time_term % 10]) { // Single timestamp check
                 bool ret = !isDeleted(val);
                 if (!ret) {
-                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getPartitionID(),*time_term%10,current_term, hist_timestamp[*time_term % 10],val.length());
+                    //Warning("XXXX par_id:%d,time_term:%d,cur_term:%d, watermark:%lld,len of v:%d",TThread::getGlobalPartitionID(),*time_term%10,current_term, hist_timestamp[*time_term % 10],val.length());
                     //mako::printStringAsBit(val);
                 }
                 return ret;

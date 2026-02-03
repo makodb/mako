@@ -35,7 +35,7 @@ void TpcaPaymentChopper::Init(TxRequest &req) {
 
   // all pieces are ready
   n_pieces_all_ = 3;
-  callback_ = req.callback_;
+  callback_ = std::move(req.callback_);
   max_try_ = req.n_try_;
   n_try_ = 1;
   n_pieces_dispatchable_ = 3;
@@ -46,9 +46,9 @@ void TpcaPaymentChopper::Init(TxRequest &req) {
       {TPCA_PAYMENT_3, DISPATCHABLE}
   };
   ranks_ = {
-      {TPCA_PAYMENT_1, DF_NO},
-      {TPCA_PAYMENT_2, DF_REAL},
-      {TPCA_PAYMENT_3, DF_REAL}
+      {TPCA_PAYMENT_1, RANK_I},
+      {TPCA_PAYMENT_2, RANK_D},
+      {TPCA_PAYMENT_3, RANK_D}
   };
 
   commit_.store(true);

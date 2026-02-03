@@ -1,0 +1,40 @@
+# Ubuntu 24.04 build environment for Mako
+#
+# Default: Uses native platform (ARM64 on Mac M4, AMD64 on Windows/Linux x86_64)
+# To force AMD64: docker build --build-arg FORCE_AMD64=true -f Dockerfile.ubuntu24 -t mako-build:ubuntu24 .
+#
+FROM ubuntu:24.04
+
+# Avoid interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set working directory
+WORKDIR /workspace
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    sudo \
+    curl \
+    wget \
+    git \
+    build-essential \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and run apt_packages.sh to install all dependencies
+COPY apt_packages.sh /tmp/apt_packages.sh
+RUN bash /tmp/apt_packages.sh && rm /tmp/apt_packages.sh
+
+# Install Rust via rustup (get latest stable)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Pre-create build directory
+RUN mkdir -p /workspace/build
+
+# Set up environment for build
+ENV MODE=perf
+ENV ENABLE_BORROW_CHECKING=OFF
+
+# Default command
+CMD ["/bin/bash"]

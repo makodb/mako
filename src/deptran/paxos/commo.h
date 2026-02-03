@@ -4,6 +4,8 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "../communicator.h"
+#include <chrono>
+#include <ctime>
 
 namespace janus {
 
@@ -24,7 +26,7 @@ class TxData;
 class MultiPaxosCommo : public Communicator {
  public:
   MultiPaxosCommo() = delete;
-  MultiPaxosCommo(rusty::Arc<PollThreadWorker>);
+  MultiPaxosCommo(rusty::Option<rusty::Arc<PollThread>> poll = rusty::None);
 
   int proxy_batch_size = 1 ;
   int current_proxy_batch_idx = 0;
@@ -37,7 +39,7 @@ class MultiPaxosCommo : public Communicator {
   void BroadcastPrepare(parid_t par_id,
                         slotid_t slot_id,
                         ballot_t ballot,
-                        const function<void(Future *fu)> &callback);
+                        const function<void(rusty::Arc<Future>)> &callback);
   shared_ptr<PaxosAcceptQuorumEvent>
   BroadcastAccept(parid_t par_id,
                   slotid_t slot_id,
@@ -47,7 +49,7 @@ class MultiPaxosCommo : public Communicator {
                        slotid_t slot_id,
                        ballot_t ballot,
                        shared_ptr<Marshallable> cmd,
-                       const function<void(Future*)> &callback);
+                       const function<void(rusty::Arc<Future>)> &callback);
   void ForwardToLearner(parid_t par_id,
                         uint64_t slot,
                         ballot_t ballot,
@@ -95,6 +97,12 @@ class MultiPaxosCommo : public Communicator {
     BroadcastPrepare2(parid_t par_id,
                       const shared_ptr<Marshallable> cmd,
                       const std::function<void(MarshallDeputy, ballot_t, int)>& cb);
+
+  shared_ptr<PaxosPrepareQuorumEvent>
+  SendForward(parid_t par_id,
+              uint64_t follower_id,
+              uint64_t dep_id,
+              shared_ptr<Marshallable> cmd);
 };
 
 } // namespace janus

@@ -24,7 +24,7 @@ class TapirCommo : public Communicator {
                        cmdid_t,
                        ballot_t,
                        int decision,
-                       const function<void(Future*)>&);
+                       const function<void(rusty::Arc<Future>)>&);
   virtual SiteProxyPair DispatchProxyForPartition(parid_t par_id) const
   override {
     return NearestProxyForPartition(par_id);

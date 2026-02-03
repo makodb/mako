@@ -18,8 +18,8 @@ typedef vector<RccTx*> RccScc;
 class EmptyGraph : public Marshallable {
  public:
   EmptyGraph() : Marshallable(MarshallDeputy::EMPTY_GRAPH) {};
-  virtual Marshal& ToMarshal(Marshal& m) const {return m;};
-  virtual Marshal& FromMarshal(Marshal& m) {return m;};
+  virtual Marshal& to_marshal(Marshal& m) const {return m;};
+  virtual Marshal& from_marshal(Marshal& m) {return m;};
 };
 
 class RccServer;
@@ -29,7 +29,7 @@ class RccGraph : public Graph<RccTx> {
 //  Graph <TxnInfo> txn_gra_;
   RccServer* sched_{nullptr};
   bool empty_{false};
-  parid_t partition_id_ = 0; // TODO
+//  parid_t partition_id_ = 0; // TODO
 //  std::vector<rrr::Client *> rpc_clients_;
 //  std::vector<RococoProxy *> rpc_proxies_;
 //  std::vector<std::string> server_addrs_;
@@ -48,7 +48,7 @@ class RccGraph : public Graph<RccTx> {
   void RemoveVertex(txnid_t txn_id);
   void RebuildEdgePointer(map<txnid_t, shared_ptr<RccTx>>& index);
   shared_ptr<RccTx> AggregateVertex(shared_ptr<RccTx> rhs_dtxn);
-  void UpgradeStatus(RccTx& v, int8_t status);
+  void UpgradeStatus(RccTx& v, int rank, int8_t status);
 
   virtual map<txnid_t, shared_ptr<RccTx>> Aggregate(epoch_t epoch, RccGraph& graph);
   void SelectGraphCmtUkn(RccTx& dtxn, shared_ptr<RccGraph> new_graph);
@@ -71,8 +71,8 @@ class RccGraph : public Graph<RccTx> {
   bool HasICycle(const RccScc& scc);
 
 
-//  Marshal& ToMarshal(Marshal& m) const override;
-//  Marshal& FromMarshal(Marshal& m) override;
+//  Marshal& to_marshal(Marshal& m) const override;
+//  Marshal& from_marshal(Marshal& m) override;
 
 };
 } // namespace janus

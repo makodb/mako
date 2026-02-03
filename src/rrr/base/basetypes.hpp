@@ -91,8 +91,10 @@ public:
     i32 get() const {
         return val_;
     }
+    // @safe
     size_t val_size() const {
-        return SparseInt::val_size(val_);
+        // @unsafe - SparseInt::val_size
+        { return SparseInt::val_size(val_); }
     }
 };
 
@@ -110,26 +112,27 @@ public:
     i64 get() const {
         return val_;
     }
+    // @safe
     size_t val_size() const {
-        return SparseInt::val_size(val_);
+        // @unsafe - SparseInt::val_size
+        { return SparseInt::val_size(val_); }
     }
 };
 
-// @safe
+// @interface
 class NoCopy {
 protected:
     NoCopy() = default;
-    virtual ~NoCopy() = 0;
+    virtual ~NoCopy() = default;
 public:
     // Delete copy constructor and copy assignment operator
     NoCopy(const NoCopy&) = delete;
     NoCopy& operator=(const NoCopy&) = delete;
-    
-    // Also delete move operations to prevent any form of copying/moving
-    NoCopy(NoCopy&&) = delete;
-    NoCopy& operator=(NoCopy&&) = delete;
+
+    // Allow move operations
+    NoCopy(NoCopy&&) = default;
+    NoCopy& operator=(NoCopy&&) = default;
 };
-inline NoCopy::~NoCopy() {}
 
 /**
  * Note: All sub class of RefCounted *MUST* have protected destructor!
@@ -141,7 +144,7 @@ inline NoCopy::~NoCopy() {}
  * The protected destructor pattern ensures controlled deallocation.
  */
 // @safe - Thread-safe reference counting with atomics
-class RefCounted: public NoCopy {
+class RefCounted {
     std::atomic<int> refcnt_;
 protected:
     virtual ~RefCounted() = 0;

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Statistics accumulator for performance measurement
+// Computes running statistics with online algorithms
+// SAFETY: Uses realloc for sample storage in some modes
+
 #ifndef KVSTATS_HH
 #define KVSTATS_HH 1
 #include <stdlib.h>
@@ -36,6 +40,7 @@ struct kvstats {
   operator unspecified_bool_type() const {
     return count ? &kvstats::add : 0;
   }
+  // @unsafe - uses libc sqrt and printf on raw accumulated totals
   void print_report(const char *name) const {
     if (count)
       printf("%s: n %ld, total %.0f, average %.0f, min %.0f, max %.0f, stddev %.0f\n",

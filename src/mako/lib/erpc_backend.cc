@@ -351,7 +351,7 @@ int ErpcBackend::HandleTimeout(size_t start_tsc, int req_type, const std::string
     }
 
     size_t end_tsc = rdtsc();
-    if ((end_tsc - start_tsc) / (0.0 + ms1_cycles_) >= 5) {
+    if ((end_tsc - start_tsc) / (0.0 + ms1_cycles_) >= 20) { // Increase timeout!
         TThread::skipBeforeRemoteNewOrder = 4;
         TThread::skipBeforeRemotePayment = 4;
         return 1;

@@ -20,7 +20,7 @@ int SchedulerTapir::OnFastAccept(txid_t tx_id,
   // but to be safe, let us follow the stock protocol.
   // validate read versions
   auto tx = dynamic_pointer_cast<TxTapir>(GetOrCreateTx(tx_id));
-  tx->fully_dispatched_->Wait();
+  tx->fully_dispatched_->wait();
   if (tx->aborted_in_dispatch_) {
     return REJECT;
   }
@@ -83,7 +83,7 @@ int SchedulerTapir::OnFastAccept(txid_t tx_id,
 
 int SchedulerTapir::OnDecide(txid_t tx_id,
                              int32_t decision,
-                             const function<void()> &callback) {
+                             rusty::Function<void()> callback) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   auto tx = dynamic_pointer_cast<TxTapir>(GetTx(tx_id));
   if (decision == CoordinatorTapir::Decision::COMMIT) {

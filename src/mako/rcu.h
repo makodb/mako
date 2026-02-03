@@ -16,6 +16,18 @@
 #include "ticker.h"
 #include "pxqueue.h"
 
+// Forward declaration
+class SiloRuntime;
+
+/**
+ * rcu - Read-Copy-Update system for safe memory reclamation.
+ *
+ * In per-runtime mode, each SiloRuntime owns its own rcu instance.
+ * The rcu uses the owning runtime's ticker and allocator for complete
+ * isolation between shards.
+ *
+ * Use SiloRuntime::Current()->get_rcu() to get the correct rcu instance.
+ */
 class rcu {
   template <bool> friend class scoped_rcu_base;
 public:
@@ -27,14 +39,17 @@ public:
       void* ptr;
       intptr_t action;
 
+      // @unsafe - stores either size (negative) or function pointer (positive)
       inline delete_entry(void* ptr, size_t sz)
           : ptr(ptr), action(-sz) {
           INVARIANT(action < 0);
       }
+      // @unsafe - captures raw deleter function pointer
       inline delete_entry(void* ptr, deleter_t fn)
           : ptr(ptr), action(reinterpret_cast<uintptr_t>(fn)) {
           INVARIANT(action > 0);
       }
+      // @unsafe - executes deferred free/deleter on raw pointer
       void run(rcu::sync& s) {
           if (action < 0)
               s.dealloc(ptr, -action);
@@ -89,6 +104,7 @@ public:
     friend class rcu;
     template <bool> friend class scoped_rcu_base;
   public:
+    // @unsafe - raw queues of pending frees; guarded by depth_/ticker
     px_queue queue_;
     px_queue scratch_;
     unsigned depth_; // 0 indicates no rcu region
@@ -146,7 +162,9 @@ public:
     // free-ing it. is meant for reasonably large allocations (order of pages)
     void *alloc_static(size_t sz);
 
+    // @unsafe - returns raw pointer to allocator arena
     void dealloc(void *p, size_t sz);
+    // @unsafe - enqueues free to occur after grace period
     void dealloc_rcu(void *p, size_t sz);
 
     // try to release local arenas back to the allocator based on some simple
@@ -173,12 +191,14 @@ public:
   };
 
   // thin forwarders
+  // @unsafe - performs raw memory allocation from the RCU arena
   inline void *
   alloc(size_t sz)
   {
     return mysync().alloc(sz);
   }
 
+  // @unsafe - allocates static arena memory without borrow tracking
   inline void *
   alloc_static(size_t sz)
   {
@@ -187,12 +207,14 @@ public:
 
   // this releases memory back to the allocator subsystem
   // this should NOT be used to free objects!
+  // @unsafe - frees raw memory blocks; caller must ensure lifetime ordering
   inline void
   dealloc(void *p, size_t sz)
   {
     return mysync().dealloc(p, sz);
   }
 
+  // @unsafe - schedules deferred free on raw pointer
   void dealloc_rcu(void *p, size_t sz);
 
   inline bool
@@ -207,6 +229,7 @@ public:
     mysync().do_cleanup();
   }
 
+  // @unsafe - invokes arbitrary deleter on raw pointer
   void free_with_fn(void *p, deleter_t fn);
 
   template <typename T>
@@ -230,7 +253,7 @@ public:
     const sync *s = syncs_.myview();
     if (unlikely(!s))
       return false;
-    const bool is_guarded = ticker::s_instance.is_locally_guarded(rcu_tick);
+    const bool is_guarded = get_ticker().is_locally_guarded(rcu_tick);
     const bool has_depth = s->depth();
     if (has_depth && !is_guarded)
       INVARIANT(false);
@@ -250,8 +273,12 @@ public:
   inline uint64_t
   cleaning_rcu_tick_exclusive() const
   {
-    return to_rcu_ticks(ticker::s_instance.global_last_tick_exclusive());
+    return to_rcu_ticks(get_ticker().global_last_tick_exclusive());
   }
+
+  // Get the ticker for this RCU instance
+  // Uses the owning runtime's ticker, or the global ticker for s_instance
+  ticker& get_ticker() const;
 
   // pin the current thread to CPU.
   //
@@ -263,13 +290,17 @@ public:
 
   void fault_region();
 
-  static rcu s_instance CACHE_ALIGNED; // system wide instance
+  static rcu s_instance CACHE_ALIGNED; // system wide instance (for backward compatibility)
 
   static void Test();
 
+  // Constructor for per-runtime RCU instance
+  // runtime: the owning SiloRuntime (or nullptr for global instance)
+  explicit rcu(SiloRuntime* runtime);
+
 private:
 
-  rcu(); // private ctor to enforce singleton
+  rcu(); // private ctor for static singleton
 
   static inline uint64_t constexpr
   to_rcu_ticks(uint64_t ticks)
@@ -278,6 +309,9 @@ private:
   }
 
   inline sync &mysync() { return syncs_.my(this); }
+
+  // Owning runtime (nullptr for global s_instance)
+  SiloRuntime* runtime_;
 
   percore_lazy<sync> syncs_;
 };
@@ -291,9 +325,21 @@ public:
   scoped_rcu_base(const scoped_rcu_base &) = delete;
   scoped_rcu_base &operator=(const scoped_rcu_base &) = delete;
 
+  // Default constructor - uses global s_instance for backward compatibility
+  // This is inline for header-only usage
   scoped_rcu_base()
-    : sync_(&rcu::s_instance.mysync()),
+    : rcu_(&rcu::s_instance),
+      sync_(&rcu::s_instance.mysync()),
       guard_(ticker::s_instance)
+  {
+    sync_->depth_++;
+  }
+
+  // Constructor with explicit rcu reference (for per-runtime mode)
+  explicit scoped_rcu_base(rcu& rcu_instance)
+    : rcu_(&rcu_instance),
+      sync_(&rcu_instance.mysync()),
+      guard_(rcu_instance.get_ticker())
   {
     sync_->depth_++;
   }
@@ -322,11 +368,16 @@ public:
   }
 
 private:
+  rcu* rcu_;  // The RCU instance we're using
   rcu::sync *sync_;
   unmanaged<ticker::guard> guard_;
 };
 
 typedef scoped_rcu_base<true> scoped_rcu_region;
+
+// Helper to create scoped_rcu_region using current runtime's rcu
+// Use this instead of default constructor for per-runtime mode
+inline scoped_rcu_region make_scoped_rcu_region();
 
 class disabled_rcu_region {};
 

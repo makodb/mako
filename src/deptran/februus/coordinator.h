@@ -14,7 +14,7 @@ class CoordinatorFebruus : public CoordinatorClassic {
   bool fast_path_{false};
   using CoordinatorClassic::CoordinatorClassic;
   void DispatchAsync() override;
-  void DispatchAck(phase_t phase, int ret, TxnOutput& outputs) override;
+  void DispatchAck(phase_t phase, double dispatch_time, int ret, TxnOutput& outputs) override;
   virtual void GotoNextPhase() override;
   bool PreAccept();
   void Prepare();

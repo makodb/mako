@@ -106,10 +106,14 @@
   } while (0)
 
 #ifdef USE_BUILTIN_MEMFUNCS
+// @unsafe - raw memory copy without lifetime tracking
 #define NDB_MEMCPY __builtin_memcpy
+// @unsafe - raw memory set without lifetime tracking
 #define NDB_MEMSET __builtin_memset
 #else
+// @unsafe - raw memory copy without lifetime tracking
 #define NDB_MEMCPY memcpy
+// @unsafe - raw memory set without lifetime tracking
 #define NDB_MEMSET memset
 #endif
 

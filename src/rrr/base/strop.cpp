@@ -4,40 +4,45 @@
 
 #include "strop.hpp"
 
-// External safety annotations for atomic operations
 // @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
+//   strlen: [unsafe],
+//   strncmp: [unsafe],
+//   std::ostringstream: [unsafe],
+//   std::ostringstream::str: [unsafe],
+//   std::ostringstream::precision: [unsafe],
+//   std::operator<<: [unsafe],
+//   std::fixed: [unsafe]
 // }
 
 
 namespace rrr {
 
+// @unsafe - Uses C-string functions (strlen, strncmp) which are not bounds-checked
 bool startswith(const char* str, const char* head) {
-    size_t len_str = strlen(str);
-    size_t len_head = strlen(head);
+    size_t len_str = strlen(str);  // @unsafe
+    size_t len_head = strlen(head);  // @unsafe
     if (len_head > len_str) {
         return false;
     }
-    return strncmp(str, head, len_head) == 0;
+    return strncmp(str, head, len_head) == 0;  // @unsafe
 }
 
+// @unsafe - Uses C-string functions (strlen, strncmp) which are not bounds-checked
 bool endswith(const char* str, const char* tail) {
-    size_t len_str = strlen(str);
-    size_t len_tail = strlen(tail);
+    size_t len_str = strlen(str);  // @unsafe
+    size_t len_tail = strlen(tail);  // @unsafe
     if (len_tail > len_str) {
         return false;
     }
-    return strncmp(str + (len_str - len_tail), tail, len_tail) == 0;
+    return strncmp(str + (len_str - len_tail), tail, len_tail) == 0;  // @unsafe
 }
 
+// @unsafe - Uses std::ostringstream which is not borrow-checked
 std::string format_decimal(double val) {
-    std::ostringstream o;
-    o.precision(2);
-    o << std::fixed << val;
-    std::string s(o.str());
+    std::ostringstream o;  // @unsafe
+    o.precision(2);  // @unsafe
+    o << std::fixed << val;  // @unsafe
+    std::string s(o.str());  // @unsafe
     std::string str;
     size_t idx = 0;
     while (idx < s.size()) {
@@ -60,10 +65,11 @@ std::string format_decimal(double val) {
     return str;
 }
 
+// @unsafe - Uses std::ostringstream which is not borrow-checked
 std::string format_decimal(int val) {
-    std::ostringstream o;
-    o << val;
-    std::string s(o.str());
+    std::ostringstream o;  // @unsafe
+    o << val;  // @unsafe
+    std::string s(o.str());  // @unsafe
     std::string str;
     str.reserve(s.size() + 8);
     for (size_t i = 0; i < s.size(); i++) {
@@ -75,18 +81,19 @@ std::string format_decimal(int val) {
     return str;
 }
 
+// @unsafe - Uses STL functions (vector::push_back, string::find_first_not_of) not yet in rusty-cpp safe list
 std::vector<std::string> strsplit(const std::string& str, const char sep /* =? */) {
     std::vector<std::string> split;
     size_t begin, end;
-    begin = str.find_first_not_of(sep);
+    begin = str.find_first_not_of(sep);  // @unsafe
     while ((end = str.find(sep, begin)) != std::string::npos) {
-        split.push_back(str.substr(begin, end - begin));
-        begin = str.find_first_not_of(sep, end);
+        split.push_back(str.substr(begin, end - begin));  // @unsafe
+        begin = str.find_first_not_of(sep, end);  // @unsafe
     }
     if (begin != std::string::npos && begin < str.size()) {
-        split.push_back(str.substr(begin));
+        split.push_back(str.substr(begin));  // @unsafe
     }
     return split;
 }
 
-} // namespace base
+} // namespace rrr

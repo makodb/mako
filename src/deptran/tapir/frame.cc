@@ -14,22 +14,22 @@ REG_FRAME(MODE_TAPIR, vector<string>({"tapir"}), FrameTapir);
 Coordinator *FrameTapir::CreateCoordinator(cooid_t coo_id,
                                            Config *config,
                                            int benchmark,
-                                           ClientControlServiceImpl *ccsi,
+                                           rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                            uint32_t id,
                                            shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
   CoordinatorTapir *coord = new CoordinatorTapir(coo_id,
                                                  benchmark,
-                                                 ccsi,
+                                                 std::move(client_status),
                                                  id);
   coord->txn_reg_ = txn_reg;
   coord->frame_ = this;
   return coord;
 }
 
-Communicator *FrameTapir::CreateCommo(rusty::Arc<PollThreadWorker> poll_thread_worker) {
+Communicator *FrameTapir::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // Default: return null;
-  commo_ = new TapirCommo(poll_thread_worker);
+  commo_ = new TapirCommo(std::move(poll_thread_worker));
   return commo_;
 }
 

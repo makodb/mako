@@ -9,6 +9,18 @@
 #include "spinlock.h"
 #include "lockguard.h"
 
+// Forward declaration
+class SiloRuntime;
+
+/**
+ * ticker - Epoch advancement system for RCU-based memory reclamation.
+ *
+ * In per-runtime mode, each SiloRuntime owns its own ticker instance.
+ * The static s_instance is kept for backward compatibility but should
+ * not be used in multi-runtime scenarios.
+ *
+ * Use SiloRuntime::Current()->get_ticker() to get the correct ticker.
+ */
 class ticker {
 public:
 

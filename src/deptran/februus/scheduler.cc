@@ -20,7 +20,7 @@ int SchedulerFebruus::OnPreAccept(const txid_t tx_id,
                                   uint64_t& ret_timestamp) {
   Log_debug("pre-accept tx id: %" PRIx64, tx_id);
   auto sp_tx = dynamic_pointer_cast<TxFebruus>(GetOrCreateTx(tx_id));
-  sp_tx->fully_dispatched_->Wait();
+  sp_tx->fully_dispatched_->wait();
   if (sp_tx->max_seen_ballot_ > 0) {
     return REJECT;
   }
@@ -34,7 +34,7 @@ int SchedulerFebruus::OnAccept(const txid_t tx_id,
                                ballot_t ballot) {
   Log_debug("accept tx id: %" PRIx64, tx_id);
   auto sp_tx = dynamic_pointer_cast<TxFebruus>(GetOrCreateTx(tx_id));
-  sp_tx->fully_dispatched_->Wait();
+  sp_tx->fully_dispatched_->wait();
   if (sp_tx->max_seen_ballot_ > ballot) {
     return REJECT;
   }
@@ -48,7 +48,7 @@ int SchedulerFebruus::OnCommit(const txid_t tx_id,
                                uint64_t timestamp) {
   auto sp_tx = dynamic_pointer_cast<TxFebruus>(GetOrCreateTx(tx_id));
   Log_debug("commit tx id: %" PRIx64, tx_id);
-  sp_tx->fully_dispatched_->Wait();
+  sp_tx->fully_dispatched_->wait();
   sp_tx->max_seen_ballot_ = -1;
   sp_tx->max_accepted_ballot_ = -1;
   sp_tx->timestamp_ = timestamp;
@@ -82,7 +82,7 @@ void SchedulerFebruus::UpdateQueue(shared_ptr<TxFebruus> sp_tx) {
   // execute
   it = queue_.begin();
   while (it != queue_.end() && (*it) -> committed_) {
-    (*it)->ev_execute_ready_->Set(1);
+    (*it)->ev_execute_ready_->set(1);
     it = queue_.erase(it);
   }
 }

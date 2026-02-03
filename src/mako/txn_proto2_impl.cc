@@ -52,6 +52,7 @@ event_avg_counter
 static event_avg_counter
   evt_avg_log_buffer_iov_len("avg_log_buffer_iov_len");
 
+// @unsafe
 void
 txn_logger::Init(
     size_t nworkers,
@@ -125,6 +126,7 @@ txn_logger::Init(
     *assignments_used = assignments;
 }
 
+// @unsafe
 void
 txn_logger::persister(
     vector<vector<unsigned>> assignments)
@@ -144,6 +146,7 @@ txn_logger::persister(
   }
 }
 
+// @unsafe
 void
 txn_logger::advance_system_sync_epoch(
     const vector<vector<unsigned>> &assignments)
@@ -221,6 +224,7 @@ txn_logger::advance_system_sync_epoch(
 }
 
 void
+// @unsafe - drains log buffers with manual iovec construction and raw pbuffer reuse
 txn_logger::writer(
     unsigned id, int fd,
     vector<unsigned> assignment)
@@ -409,6 +413,7 @@ txn_logger::writer(
   }
 }
 
+// @unsafe
 tuple<uint64_t, uint64_t, double>
 txn_logger::compute_ntxns_persisted_statistics()
 {
@@ -427,6 +432,7 @@ txn_logger::compute_ntxns_persisted_statistics()
   return make_tuple(acc, acc1, double(num)/double(acc));
 }
 
+// @unsafe
 void
 txn_logger::clear_ntxns_persisted_statistics()
 {
@@ -444,6 +450,7 @@ txn_logger::clear_ntxns_persisted_statistics()
   }
 }
 
+// @unsafe
 void
 txn_logger::wait_for_idle_state()
 {
@@ -459,6 +466,7 @@ txn_logger::wait_for_idle_state()
   }
 }
 
+// @unsafe
 void
 txn_logger::wait_until_current_point_persisted()
 {
@@ -494,6 +502,7 @@ sleep_ro_epoch()
   nanosleep(&t, nullptr);
 }
 
+// @unsafe
 void
 transaction_proto2_static::PurgeThreadOutstandingGCTasks()
 {
@@ -543,7 +552,9 @@ transaction_proto2_static::PurgeThreadOutstandingGCTasks()
 //}
 //#endif
 
+// @unsafe
 void
+// @unsafe - reclaims tuples using manual RCU guards and raw pointer mutation of btree nodes
 transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq)
 {
   INVARIANT(!rcu::s_instance.in_rcu_region());
@@ -592,7 +603,9 @@ transaction_proto2_static::clean_up_to_including(threadctx &ctx, uint64_t ro_tic
     return;
   bool in_rcu = false;
   size_t niters_with_rcu = 0, n = 0;
-  for (auto it = q.begin(); it != q.end(); ++it, ++n, ++niters_with_rcu) {
+  auto it = q.begin();
+  auto end = q.end();
+  for (; it != end; ++it, ++n, ++niters_with_rcu) {
     auto &delent = *it;
     INVARIANT(delent.tuple()->opaque.load(std::memory_order_acquire) == 1);
     if (!delent.key_.get_flags()) {

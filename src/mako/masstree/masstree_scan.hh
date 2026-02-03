@@ -13,10 +13,15 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Range scan implementation for Masstree
+// Provides forward/reverse iteration with visitor callback pattern
+// SAFETY: Optimistic traversal with version checking and stack-based state
+
 #ifndef MASSTREE_SCAN_HH
 #define MASSTREE_SCAN_HH
 #include "masstree_tcursor.hh"
 #include "masstree_struct.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 
 template <typename P>
@@ -31,29 +36,34 @@ class scanstackelt {
     typedef typename P::threadinfo_type threadinfo;
     typedef typename node_base<P>::nodeversion_type nodeversion_type;
 
-    leaf<P>* node() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    rusty::MutPtr<leaf<P>> node() const {
         return n_;
     }
+    // @unsafe { Uses operator<< which is not borrow-checked }
     typename nodeversion_type::value_type full_version_value() const {
         return (v_.version_value() << permuter_type::size_bits) + perm_.size();
     }
+    // @safe - Returns value copy
     int size() const {
         return perm_.size();
     }
+    // @safe - Returns value copy
     permuter_type permutation() const {
         return perm_;
     }
+    // @unsafe { Accesses raw node pointer via n.n_ }
     int operator()(const key_type &k, const scanstackelt<P> &n, int p) {
         return n.n_->compare_key(k, p);
     }
 
   private:
-    node_base<P>* root_;
-    leaf<P>* n_;
+    rusty::MutPtr<node_base<P>> root_;
+    rusty::MutPtr<leaf<P>> n_;
     nodeversion_type v_;
     permuter_type perm_;
     int ki_;
-    small_vector<node_base<P>*, 2> node_stack_;
+    small_vector<rusty::MutPtr<node_base<P>>, 2> node_stack_;
 
     enum { scan_emit, scan_find_next, scan_down, scan_up, scan_retry };
 
@@ -61,11 +71,14 @@ class scanstackelt {
     }
 
     template <typename H>
+    // @unsafe { Walks tree via raw pointers with version checking }
     int find_initial(H& helper, key_type& ka, bool emit_equal,
                      leafvalue_type& entry, threadinfo& ti);
     template <typename H>
+    // @unsafe { Retries traversal via reach_leaf() on raw nodes }
     int find_retry(H& helper, key_type& ka, threadinfo& ti);
     template <typename H>
+    // @unsafe { Advances cursor via raw node pointers, uses fence() }
     int find_next(H& helper, key_type& ka, leafvalue_type& entry);
 
     int kp() const {
@@ -306,6 +319,7 @@ int scanstackelt<P>::find_next(H &helper, key_type &ka, leafvalue_type &entry)
 }
 
 template <typename P> template <typename H, typename F>
+// @unsafe { Core scan implementation; traverses tree via raw pointers }
 int basic_table<P>::scan(H helper,
                          Str firstkey, bool emit_firstkey,
                          F& scanner,
@@ -386,6 +400,7 @@ int basic_table<P>::scan(H helper,
 }
 
 template <typename P> template <typename F>
+// @unsafe { Forward scan; delegates to unsafe core scan }
 int basic_table<P>::scan(Str firstkey, bool emit_firstkey,
                          F& scanner,
                          threadinfo& ti) const
@@ -394,6 +409,7 @@ int basic_table<P>::scan(Str firstkey, bool emit_firstkey,
 }
 
 template <typename P> template <typename F>
+// @unsafe { Reverse scan; delegates to unsafe core scan }
 int basic_table<P>::rscan(Str firstkey, bool emit_firstkey,
                           F& scanner,
                           threadinfo& ti) const

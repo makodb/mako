@@ -42,6 +42,7 @@ void CoordinatorTapir::DispatchAsync() {
                                std::bind(&CoordinatorClassic::DispatchAck,
                                          this,
                                          phase_,
+                                         -1,
                                          std::placeholders::_1,
                                          std::placeholders::_2));
   }
@@ -49,6 +50,7 @@ void CoordinatorTapir::DispatchAsync() {
 }
 
 void CoordinatorTapir::DispatchAck(phase_t phase,
+                                   double dispatch_time,
                                    int32_t res,
                                    TxnOutput &outputs) {
   std::lock_guard<std::recursive_mutex> lock(this->mtx_);
@@ -168,7 +170,7 @@ void CoordinatorTapir::Accept() {
   }
 }
 
-void CoordinatorTapir::AcceptAck(phase_t phase, parid_t pid, Future *fu) {
+void CoordinatorTapir::AcceptAck(phase_t phase, parid_t pid, rusty::Arc<Future> fu) {
   if (phase_ != phase) return;
   int res;
   fu->get_reply() >> res;

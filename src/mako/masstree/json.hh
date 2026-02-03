@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Dynamic JSON value type with streaming parser
+// Represents null, bool, number, string, array, and object types
+// SAFETY: Uses variant-like union storage, raw pointer array for children
+
 // -*- c-basic-offset: 4 -*-
 #ifndef JSON_HH
 #define JSON_HH

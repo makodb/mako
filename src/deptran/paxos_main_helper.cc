@@ -22,6 +22,11 @@
 using namespace janus;
 using namespace network_client;
 
+// ============================================================================
+// Paxos Implementation Namespace
+// ============================================================================
+namespace paxos_impl {
+
 // network client
 std::vector<shared_ptr<network_client::NetworkClientServiceImpl>> nc_services = {};
 std::vector<shared_ptr<pthread_t>> nc_service_pthreads = {};
@@ -93,16 +98,12 @@ void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
                      site_info_for_thread.id,
                      site_info_for_thread.GetBindAddress().c_str());
             auto& worker = pxs_workers_g[thread_index];
-            //worker->site_info_ = const_cast<Config::SiteInfo*>(&config->SiteById(site_info.id));
-            // setup frame and scheduler
-            //worker->SetupBase();
-            // start server service
-            Log_info("[DEBUG] site %d: calling SetupService()", (int)site_info_for_thread.id);
+            // start server service FIRST so it can receive connections
             worker->SetupService();
-            Log_info("[DEBUG] site %d: SetupService() complete, calling SetupCommo()", (int)site_info_for_thread.id);
-            // setup communicator
+            // THEN setup communicator (connects to other sites)
+            // Note: there is a small race window where Next() callback could fire
+            // before commo_ is set - the Next() code must handle commo_==nullptr
             worker->SetupCommo();
-            Log_info("[DEBUG] site %d: SetupCommo() complete, calling InitQueueRead()", (int)site_info_for_thread.id);
             worker->InitQueueRead();
             Log_info("site %d launched!", (int)site_info_for_thread.id);
         }));
@@ -178,7 +179,7 @@ void microbench_paxos() {
     Log_info("shutdown Server Control Service after task finish");
     for (auto& worker : pxs_workers_g) {
         if (worker->hb_rpc_server_ != nullptr) {
-            worker->scsi_->server_shutdown(nullptr);
+            worker->hb_rpc_server_->do_shutdown();
         }
     }
 }
@@ -408,7 +409,7 @@ void submit(const char* log, int len, uint32_t par_id) {
             worker->Submit(log_str.data(),len, par_id);
         }));
         auto arc_job_base = rusty::Arc<Job>(arc_job);
-        worker->GetPollThreadWorker()->add(arc_job_base);
+        worker->GetPollThread()->add(arc_job_base);
         submit_tot++;
     }
 }
@@ -528,14 +529,15 @@ void send_no_ops_to_all_workers(int epoch){
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncNoOpLog, ess](){
     int val = pw->SendSyncNoOpLog(syncNoOpLog);
     if(val == -1){
-      ess->stuff_after_election_cond_.bcast();
+      ess->stuff_after_election_cond_.notify_all();
     }
   }));
   auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
-  es->stuff_after_election_mutex_.lock();
-  es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
-  es->stuff_after_election_mutex_.unlock();
+  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
+  {
+    std::unique_lock<std::mutex> lock(es->stuff_after_election_mutex_);
+    es->stuff_after_election_cond_.wait(lock);
+  }
 }
 
 /*
@@ -551,14 +553,15 @@ void send_sync_logs(int epoch){
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([pw, syncLog, ess](){
   int val = pw->SendSyncLog(syncLog);
   if(val == -1){
-    ess->stuff_after_election_cond_.bcast();
+    ess->stuff_after_election_cond_.notify_all();
   }
  }));
  auto arc_job_base = rusty::Arc<Job>(arc_job);
- pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
- es->stuff_after_election_mutex_.lock();
- es->stuff_after_election_cond_.wait(es->stuff_after_election_mutex_);
- es->stuff_after_election_mutex_.unlock();
+ pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
+ {
+   std::unique_lock<std::mutex> lock(es->stuff_after_election_mutex_);
+   es->stuff_after_election_cond_.wait(lock);
+ }
 }
 
 void sync_callbacks_for_new_leader(){
@@ -572,7 +575,7 @@ void sync_callbacks_for_new_leader(){
 void send_no_ops_for_mark(int epoch){
   string log = "no-ops:" + to_string(epoch);
   for(int i = 0; i < pxs_workers_g.size(); i++){
-    add_log_to_nc(log.c_str(), log.size(), i);
+    add_log_to_nc(log.c_str(), log.size(), i, 0);
   }
 }
 
@@ -666,10 +669,10 @@ void send_bulk_prep(int send_epoch){
         ess->set_epoch(val);
         ess->state_unlock();
       }
-      ess->election_cond.bcast();
+      ess->election_cond.notify_all();
   }));
   auto arc_job_base = rusty::Arc<Job>(arc_job);
-  pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
+  pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
 }
 
 // marker:ansh
@@ -703,9 +706,10 @@ void* electionMonitor(void* arg){
     int send_epoch = es->set_epoch();
     es->state_unlock();
     send_bulk_prep(send_epoch);
-    es->election_state.lock();
-    es->election_cond.wait(es->election_state);
-    es->election_state.unlock();
+    {
+      std::unique_lock<std::mutex> lock(es->election_state);
+      es->election_cond.wait(lock);
+    }
     es->state_lock();
     if(send_epoch != es->cur_epoch){
       es->state_unlock();
@@ -744,14 +748,14 @@ void* heartbeatMonitor(void* arg){
         }
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);
-    pxs_workers_g.back()->GetPollThreadWorker()->add(arc_job_base);
+    pxs_workers_g.back()->GetPollThread()->add(arc_job_base);
   }
    pthread_exit(nullptr);
    return nullptr;
 }
 
 void* heartbeatBackground(void* arg) {
-  auto poll_arc = PollThreadWorker::create();
+  auto poll_arc = PollThread::create();
   auto rpc_cli = rrr::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
   // get the leader's host + port
@@ -777,7 +781,7 @@ void* heartbeatBackground(void* arg) {
 
 // between distant datacenters
 void* heartbeatBackground2(void* arg) {
-  auto poll_arc = PollThreadWorker::create();
+  auto poll_arc = PollThread::create();
   auto rpc_cli = rrr::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0); // tie to the partition0
   // get the leader's host + port
@@ -1003,7 +1007,7 @@ void pre_shutdown_step(){
     Log_info("shutdown Server Control Service after task finish total submit %d", (int)submit_tot);
     for (auto& worker : pxs_workers_g) {
         if (worker->hb_rpc_server_ != nullptr) {
-            worker->scsi_->server_shutdown(nullptr);
+            worker->hb_rpc_server_->do_shutdown();
         }
     }
 }
@@ -1110,14 +1114,12 @@ nc_pclock(char *msg, clockid_t cid)
 }
 
 void *nc_start_server(void *input) {
-    NetworkClientServiceImpl *impl = new NetworkClientServiceImpl();
-    auto poll_arc = PollThreadWorker::create();
-    base::ThreadPool *tp = new base::ThreadPool();  // never use it
-    rrr::Server *server = new rrr::Server(poll_arc, tp);
+    auto poll_arc = PollThread::create();
+    rrr::Server *server = new rrr::Server(rusty::Some(poll_arc));
 
-    server->reg(impl);
+    server->reg_service(rusty::make_box<NetworkClientServiceImpl>());
     server->start((std::string(((struct args*)input)->server_ip)+std::string(":")+std::to_string(((struct args*)input)->port)).c_str()  );
-    nc_services.push_back(std::shared_ptr<NetworkClientServiceImpl>(impl));
+    // Service is now owned by server
     int c=0;
     while (1) {
       c++;
@@ -1187,4 +1189,6 @@ std::vector<std::vector<int>>* nc_get_read_requests(int par_id) {
 
 std::vector<std::vector<int>>* nc_get_rmw_requests(int par_id) {
   return &nc_services[par_id]->rmw_requests;
-}; 
+};
+
+}  // namespace paxos_impl

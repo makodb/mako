@@ -30,6 +30,17 @@
  * notice is a summary of the Click LICENSE file; the license in that file
  * is legally binding.
  */
+// String accumulator for efficient string building
+// Uses malloc/realloc for dynamic buffer management - all functions @unsafe
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: lcdf::String::*
+// @external_unsafe: malloc
+// @external_unsafe: realloc
+// @external_unsafe: free
+// @external_unsafe: memcpy
+// @external_unsafe: memmove
 
 #include "straccum.hh"
 #include <stdarg.h>
@@ -64,7 +75,7 @@ namespace lcdf {
  * not</em> make the StringAccum out-of-memory.
  */
 
-/** @brief Change this StringAccum into an out-of-memory StringAccum. */
+// @unsafe - uses delete[] on raw pointer and reinterpret_cast for type punning
 void
 StringAccum::assign_out_of_memory()
 {
@@ -75,6 +86,7 @@ StringAccum::assign_out_of_memory()
     r_.len = 0;
 }
 
+// @unsafe - uses new[]/delete[] for raw buffer and memcpy() without bounds tracking
 char* StringAccum::grow(int ncap) {
     // can't append to out-of-memory strings
     if (r_.cap < 0) {
@@ -108,9 +120,7 @@ char* StringAccum::grow(int ncap) {
     return reinterpret_cast<char*>(r_.s + r_.len);
 }
 
-/** @brief Set the StringAccum's length to @a len.
-    @pre @a len >= 0
-    @return 0 on success, -ENOMEM on failure */
+// @unsafe - calls assert() which may abort and delegates to unsafe grow()
 int
 StringAccum::resize(int len)
 {
@@ -123,6 +133,7 @@ StringAccum::resize(int len)
     }
 }
 
+// @unsafe - returns raw char* into internal buffer and may reallocate
 char *
 StringAccum::hard_extend(int nadjust, int nreserve)
 {
@@ -136,6 +147,7 @@ StringAccum::hard_extend(int nadjust, int nreserve)
     return x;
 }
 
+// @unsafe - uses const_cast to steal String's internal buffer ownership
 void StringAccum::transfer_from(String& x) {
     if (x.is_shared() || x._r.memo_offset != -memo_space) {
         append(x.begin(), x.end());
@@ -147,12 +159,7 @@ void StringAccum::transfer_from(String& x) {
     }
 }
 
-/** @brief Null-terminate this StringAccum and return its data.
-
-    Note that the null character does not contribute to the StringAccum's
-    length(), and later append() and similar operations can overwrite it. If
-    appending the null character fails, the StringAccum becomes
-    out-of-memory and the returned value is a null string. */
+// @unsafe - returns raw char* pointer whose lifetime is tied to internal buffer
 const char *
 StringAccum::c_str()
 {
@@ -161,7 +168,7 @@ StringAccum::c_str()
     return reinterpret_cast<char *>(r_.s);
 }
 
-/** @brief Append @a len copies of character @a c to the StringAccum. */
+// @unsafe - calls memset() on raw internal buffer via extend()
 void
 StringAccum::append_fill(int c, int len)
 {
@@ -169,6 +176,7 @@ StringAccum::append_fill(int c, int len)
         memset(s, c, len);
 }
 
+// @unsafe - uses memcpy() and delete[] on raw buffers with manual aliasing check
 void
 StringAccum::hard_append(const char *s, int len)
 {
@@ -194,12 +202,14 @@ StringAccum::hard_append(const char *s, int len)
     }
 }
 
+// @unsafe - calls strlen() on raw C string and delegates to unsafe append()
 void
 StringAccum::hard_append_cstr(const char *cstr)
 {
     append(cstr, strlen(cstr));
 }
 
+// @unsafe - appends raw bytes via static_cast<char> without encoding validation
 bool
 StringAccum::append_utf8_hard(int ch)
 {
@@ -223,13 +233,7 @@ StringAccum::append_utf8_hard(int ch)
     return true;
 }
 
-/** @brief Return a String object with this StringAccum's contents.
-
-    This operation donates the StringAccum's memory to the returned String.
-    After a call to take_string(), the StringAccum object becomes empty, and
-    any future append() operations may cause memory allocations. If the
-    StringAccum is out-of-memory, the returned String is also out-of-memory,
-    but the StringAccum's out-of-memory state is reset. */
+// @unsafe - uses reinterpret_cast to create memo_type* from raw buffer
 String
 StringAccum::take_string()
 {
@@ -250,7 +254,7 @@ StringAccum::take_string()
     }
 }
 
-/** @brief Swap this StringAccum's contents with @a x. */
+// @unsafe - swaps internal rep_t structs containing raw pointers
 void
 StringAccum::swap(StringAccum &x)
 {
@@ -259,9 +263,7 @@ StringAccum::swap(StringAccum &x)
     r_ = xr;
 }
 
-/** @relates StringAccum
-    @brief Append decimal representation of @a i to @a sa.
-    @return @a sa */
+// @unsafe - calls sprintf() into raw reserve() buffer
 StringAccum &
 operator<<(StringAccum &sa, long i)
 {
@@ -272,9 +274,7 @@ operator<<(StringAccum &sa, long i)
     return sa;
 }
 
-/** @relates StringAccum
-    @brief Append decimal representation of @a u to @a sa.
-    @return @a sa */
+// @unsafe - calls sprintf() into raw reserve() buffer
 StringAccum &
 operator<<(StringAccum &sa, unsigned long u)
 {
@@ -285,9 +285,7 @@ operator<<(StringAccum &sa, unsigned long u)
     return sa;
 }
 
-/** @relates StringAccum
-    @brief Append decimal representation of @a i to @a sa.
-    @return @a sa */
+// @unsafe - calls sprintf() into raw reserve() buffer
 StringAccum &
 operator<<(StringAccum &sa, long long i)
 {
@@ -298,9 +296,7 @@ operator<<(StringAccum &sa, long long i)
     return sa;
 }
 
-/** @relates StringAccum
-    @brief Append decimal representation of @a u to @a sa.
-    @return @a sa */
+// @unsafe - calls sprintf() into raw reserve() buffer
 StringAccum &
 operator<<(StringAccum &sa, unsigned long long u)
 {
@@ -311,6 +307,7 @@ operator<<(StringAccum &sa, unsigned long long u)
     return sa;
 }
 
+// @unsafe - calls sprintf() into raw reserve() buffer
 StringAccum &
 operator<<(StringAccum &sa, double d)
 {
@@ -321,12 +318,7 @@ operator<<(StringAccum &sa, double d)
     return sa;
 }
 
-/** @brief Append result of vsnprintf() to this StringAccum.
-    @param n maximum number of characters to print
-    @param format format argument to snprintf()
-    @param val argument set
-    @return *this
-    @sa snprintf */
+// @unsafe - calls vsnprintf() into raw reserve() buffer with va_list
 StringAccum &
 StringAccum::vsnprintf(int n, const char *format, va_list val)
 {
@@ -342,20 +334,7 @@ StringAccum::vsnprintf(int n, const char *format, va_list val)
     return *this;
 }
 
-/** @brief Append result of snprintf() to this StringAccum.
-    @param n maximum number of characters to print
-    @param format format argument to snprintf()
-    @return *this
-
-    The terminating null character is not appended to the string.
-
-    @note The safe vsnprintf() variant is called if it exists. It does in
-    the Linux kernel, and on modern Unix variants. However, if it does not
-    exist on your machine, then this function is actually unsafe, and you
-    should make sure that the printf() invocation represented by your
-    arguments will never write more than @a n characters, not including the
-    terminating null.
-    @sa vsnprintf */
+// @unsafe - uses variadic args with va_start/va_end and delegates to unsafe vsnprintf()
 StringAccum &
 StringAccum::snprintf(int n, const char *format, ...)
 {
@@ -366,6 +345,7 @@ StringAccum::snprintf(int n, const char *format, ...)
     return *this;
 }
 
+// @unsafe - uses raw char* iterators and isspace() on unchecked bytes
 void
 StringAccum::append_break_lines(const String& text, int linelen, const String &leftmargin)
 {

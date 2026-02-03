@@ -1,9 +1,13 @@
 #pragma once
 
 #include <rusty/box.hpp>
+#include <rusty/result.hpp>
+#include <rusty/option.hpp>
+#include <rusty/unsafe_cell.hpp>
 
 #include <list>
 #include <queue>
+#include <vector>
 #include <functional>
 #include <pthread.h>
 #include <atomic>
@@ -41,6 +45,12 @@
 //   std::__atomic_base::store: [unsafe, (int, std::memory_order) -> void]
 //   std::__atomic_base::load: [unsafe, (std::memory_order) -> int]
 //   nanosleep: [unsafe, (const struct timespec*, struct timespec*) -> int]
+//   std::mutex::lock: [unsafe, () -> void]
+//   std::mutex::unlock: [unsafe, () -> void]
+//   std::condition_variable::wait: [unsafe, (std::unique_lock<std::mutex>&) -> void]
+//   std::condition_variable::notify_one: [unsafe, () -> void]
+//   std::condition_variable::notify_all: [unsafe, () -> void]
+//   std::condition_variable::wait_for: [unsafe, (std::unique_lock<std::mutex>&, duration) -> std::cv_status]
 // }
 
 #define Pthread_spin_init(l, pshared) verify(pthread_spin_init(l, (pshared)) == 0)
@@ -70,7 +80,7 @@ public:
 //    virtual Lockable::type whatami() = 0;
 };
 
-// @safe - Thread-safe spinlock using atomic operations
+// @unsafe - Used with mutable for interior mutability
 class SpinLock: public Lockable {
 public:
     // @safe - Initializes to unlocked state
@@ -83,11 +93,9 @@ public:
     SpinLock& operator=(SpinLock&&) = delete;
 
     // @unsafe - Uses address-of operator for nanosleep call
-    // SAFETY: Only takes address of stack-allocated timespec which remains valid
     void lock();
 
-    // @unsafe - Calls std::atomic::store (external unsafe)
-    // SAFETY: Thread-safe atomic store operation
+    // @unsafe - Calls std::atomic::store
     void unlock() {
         locked_.store(false, std::memory_order_release);
     }
@@ -96,15 +104,242 @@ private:
     std::atomic<bool> locked_ alignas(64);  // Cache-line aligned to prevent false sharing
 };
 
+// =============================================================================
+// SpinMutex<T> - Rust-like Mutex API using SpinLock
+// =============================================================================
+// Similar to rusty::Mutex<T>, but uses SpinLock for low-latency locking.
+// Returns LockResult<T> from lock() for API consistency.
+
+// Forward declarations
+template<typename T> class SpinMutex;
+template<typename T> class SpinMutexGuard;
+
+// @safe - PoisonError for SpinMutex (placeholder, C++ doesn't have poisoning)
+template<typename T>
+class SpinPoisonError {
+public:
+    SpinPoisonError() = default;
+};
+
+// Type alias for SpinMutex lock result
+template<typename T>
+using SpinLockResult = rusty::Result<SpinMutexGuard<T>, SpinPoisonError<T>>;
+
+// @safe - SpinMutexGuard - RAII lock guard for SpinMutex<T>
+// This is safe because:
+// 1. The guard can only be created by SpinMutex::lock() which acquires the lock
+// 2. Data access goes through UnsafeCell which has internal @unsafe blocks
+// 3. The destructor releases the lock automatically (RAII)
+// 4. Non-copyable ensures single ownership of the lock
+template<typename T>
+class SpinMutexGuard {
+private:
+    SpinLock* lock_;
+    rusty::UnsafeCell<T>* data_;  // Uses UnsafeCell for interior mutability
+    bool owns_lock_;
+
+    friend class SpinMutex<T>;
+
+    // @safe - Private constructor only callable by SpinMutex::lock()
+    SpinMutexGuard(SpinLock* lock, rusty::UnsafeCell<T>* data)
+        : lock_(lock), data_(data), owns_lock_(true) {}
+
+public:
+    // @safe - Access to data through UnsafeCell
+    // @lifetime: (&'a) -> &'a
+    T& operator*() {
+        // @unsafe
+        {
+            T& ref = data_->as_mut_unchecked();
+            return ref;
+        }
+    }
+
+    // @safe - Const access to data through UnsafeCell
+    // @lifetime: (&'a) -> &'a
+    const T& operator*() const {
+        // @unsafe
+        {
+            const T& ref = data_->as_ref_unchecked();
+            return ref;
+        }
+    }
+
+    // @safe - Pointer access through UnsafeCell
+    // @lifetime: (&'a) -> &'a
+    T* operator->() {
+        // @unsafe
+        {
+            return data_->get();
+        }
+    }
+
+    // @safe - Const pointer access
+    // @lifetime: (&'a) -> &'a
+    const T* operator->() const {
+        // @unsafe
+        {
+            return data_->get_const();
+        }
+    }
+
+    // @safe - Get raw pointer through UnsafeCell
+    // @lifetime: (&'a) -> &'a
+    T* get() {
+        // @unsafe
+        {
+            return data_->get();
+        }
+    }
+
+    // @safe - Get const raw pointer
+    // @lifetime: (&'a) -> &'a
+    const T* get() const {
+        // @unsafe
+        {
+            return data_->get_const();
+        }
+    }
+
+    // @safe - Get mutable reference through UnsafeCell
+    // @lifetime: (&'a) -> &'a
+    T& get_mut() {
+        // @unsafe
+        {
+            T& ref = data_->as_mut_unchecked();
+            return ref;
+        }
+    }
+
+    // Non-copyable (enforces single ownership of lock)
+    SpinMutexGuard(const SpinMutexGuard&) = delete;
+    SpinMutexGuard& operator=(const SpinMutexGuard&) = delete;
+
+    // @safe - Movable (transfers ownership)
+    SpinMutexGuard(SpinMutexGuard&& other) noexcept
+        : lock_(other.lock_), data_(other.data_), owns_lock_(other.owns_lock_) {
+        other.owns_lock_ = false;
+    }
+
+    // @safe - Move assignment
+    // @lifetime: (&'a, SpinMutexGuard<T>) -> &'a
+    SpinMutexGuard& operator=(SpinMutexGuard&& other) noexcept {
+        if (this != &other) {
+            if (owns_lock_ && lock_) {
+                // @unsafe
+                { lock_->unlock(); }
+            }
+            lock_ = other.lock_;
+            data_ = other.data_;
+            owns_lock_ = other.owns_lock_;
+            other.owns_lock_ = false;
+        }
+        return *this;
+    }
+
+    // @safe - Destructor unlocks automatically (RAII)
+    ~SpinMutexGuard() {
+        if (owns_lock_ && lock_) {
+            // @unsafe
+            { lock_->unlock(); }
+        }
+    }
+};
+
+// @safe - SpinMutex<T> - Thread-safe interior mutability with spinlock
+// Similar to Rust's Mutex<T> but uses SpinLock for low-latency locking.
+//
+// This is safe because:
+// 1. Data is stored in UnsafeCell which provides interior mutability
+// 2. The lock() method acquires the spinlock before returning the guard
+// 3. The guard releases the lock in its destructor (RAII)
+// 4. All unsafe operations are encapsulated in internal @unsafe blocks
+//
+// Usage:
+//   SpinMutex<int> counter(0);
+//   {
+//       auto guard = counter.lock().unwrap();
+//       *guard += 1;
+//   }  // Lock released here
+//
+// @safe
+template<typename T>
+class SpinMutex {
+private:
+    mutable SpinLock lock_;
+    mutable rusty::UnsafeCell<T> data_;  // UnsafeCell for interior mutability
+
+public:
+    // Type alias for the guard type
+    using Guard = SpinMutexGuard<T>;
+
+    // @safe - Default constructor for default-constructible types
+    SpinMutex() : data_() {}
+
+    // @safe - Constructor initializes data
+    explicit SpinMutex(T value) : data_(std::move(value)) {}
+
+    // @safe - Acquires lock and returns LockResult
+    [[nodiscard]] SpinLockResult<T> lock() {
+        // @unsafe
+        {
+            lock_.lock();
+            SpinLock* lock_ptr = &lock_;
+            rusty::UnsafeCell<T>* data_ptr = &data_;
+            return SpinLockResult<T>::Ok(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
+    }
+
+    // @safe - Acquires lock with const access (interior mutability via UnsafeCell)
+    [[nodiscard]] SpinLockResult<T> lock() const {
+        // @unsafe
+        {
+            const_cast<SpinLock&>(lock_).lock();
+            SpinLock* lock_ptr = const_cast<SpinLock*>(&lock_);
+            rusty::UnsafeCell<T>* data_ptr = const_cast<rusty::UnsafeCell<T>*>(&data_);
+            return SpinLockResult<T>::Ok(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
+    }
+
+    // @safe - Attempts to acquire lock without blocking
+    // Note: Currently always locks since SpinLock doesn't have try_lock
+    [[nodiscard]] rusty::Option<SpinMutexGuard<T>> try_lock() {
+        // @unsafe
+        {
+            lock_.lock();
+            SpinLock* lock_ptr = &lock_;
+            rusty::UnsafeCell<T>* data_ptr = &data_;
+            return rusty::Some(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
+    }
+
+    // @safe - Attempts to acquire lock with const access (interior mutability)
+    [[nodiscard]] rusty::Option<SpinMutexGuard<T>> try_lock() const {
+        // @unsafe
+        {
+            const_cast<SpinLock&>(lock_).lock();
+            SpinLock* lock_ptr = const_cast<SpinLock*>(&lock_);
+            rusty::UnsafeCell<T>* data_ptr = const_cast<rusty::UnsafeCell<T>*>(&data_);
+            return rusty::Some(SpinMutexGuard<T>(lock_ptr, data_ptr));
+        }
+    }
+};
+
+// @unsafe - Helper function to create SpinMutex
+template<typename T>
+auto make_spin_mutex(T value) {
+    return SpinMutex<T>(std::move(value));
+}
+
 // @safe - Spin-based condition variable using atomic flag
-class SpinCondVar: public NoCopy {
+class SpinCondVar {
 private:
     std::atomic<int> flag_{0};
 
 public:
     // @safe - Default constructor
     SpinCondVar() = default;
-    
+
     // @safe - Default destructor
     ~SpinCondVar() = default;
 
@@ -150,117 +385,12 @@ public:
     }
 };
 
-//#define ALL_SPIN_LOCK
-
-#ifdef ALL_SPIN_LOCK
-
-#define Mutex SpinLock
-#define CondVar SpinCondVar
-
-#else
-
-// @unsafe - Uses raw pthread mutex operations for performance
-// SAFETY: All operations are thread-safe when used correctly
-class Mutex: public Lockable {
-public:
-    // @unsafe - Initializes pthread mutex
-    Mutex() : m_() {
-        pthread_mutexattr_t attr;
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-        Pthread_mutex_init(&m_, &attr);
-        pthread_mutexattr_destroy(&attr);
-    }
-    
-    // @unsafe - Destroys pthread mutex
-    ~Mutex() {
-        Pthread_mutex_destroy(&m_);
-    }
-
-    // @unsafe - Acquires mutex lock
-    void lock() {
-        Pthread_mutex_lock(&m_);
-    }
-    
-    // @unsafe - Releases mutex lock
-    void unlock() {
-        Pthread_mutex_unlock(&m_);
-    }
-
-private:
-    friend class CondVar;
-    pthread_mutex_t m_;
-};
-
-// choice between spinlock & mutex:
-// * when n_thread > n_core, use mutex
-// * on virtual machines, use mutex
-
-// @unsafe - Uses raw pthread condition variable for performance
-// SAFETY: All operations are thread-safe when used with proper mutex
-class CondVar: public NoCopy {
-public:
-    // @unsafe - Initializes pthread condition variable
-    CondVar() : cv_() {
-        Pthread_cond_init(&cv_, nullptr);
-    }
-    
-    // @unsafe - Destroys pthread condition variable
-    ~CondVar() {
-        Pthread_cond_destroy(&cv_);
-    }
-
-    // @unsafe - Waits on condition variable with mutex
-    void wait(Mutex& m) {
-        Pthread_cond_wait(&cv_, &m.m_);
-    }
-    
-    // @unsafe - Signals one waiting thread
-    void signal() {
-        Pthread_cond_signal(&cv_);
-    }
-    
-    // @unsafe - Broadcasts to all waiting threads
-    void bcast() {
-        Pthread_cond_broadcast(&cv_);
-    }
-
-    // @unsafe - Timed wait with timeout
-    int timed_wait(Mutex& m, double sec);
-
-private:
-    pthread_cond_t cv_;
-};
-
-#endif // ALL_SPIN_LOCK
-
-// @safe - RAII lock guard that ensures proper lock/unlock
-class ScopedLock: public NoCopy {
-public:
-    // @safe - Acquires lock on construction
-    explicit ScopedLock(Lockable* lock): m_(lock) { 
-        if (m_) m_->lock(); 
-    }
-    
-    // @safe - Acquires lock on construction (reference version)
-    explicit ScopedLock(Lockable& lock): m_(&lock) { 
-        m_->lock(); 
-    }
-    
-    // @safe - Releases lock on destruction
-    ~ScopedLock() { 
-        if (m_) m_->unlock(); 
-    }
-    
-private:
-    Lockable* m_;
-};
-
 
 /**
  * Thread safe queue using rusty::Box for automatic memory management.
  * @unsafe - Uses raw pthread primitives for performance
  * SAFETY: All public methods are thread-safe through mutex protection
+ * Supports move-only types like rusty::Box<T>.
  */
 template<class T>
 class Queue: public NoCopy {
@@ -282,36 +412,37 @@ public:
         // q_ automatically deleted by rusty::Box
     }
 
-    // @unsafe - Thread-safe push with mutex protection
-    void push(const T& e) {
+    // @unsafe - Thread-safe push with mutex protection (move semantics)
+    void push(T e) {
         Pthread_mutex_lock(&m_);
-        q_->push_back(e);
+        q_->push_back(std::move(e));
         Pthread_cond_signal(&not_empty_);
         Pthread_mutex_unlock(&m_);
     }
 
     // @unsafe - Thread-safe try_pop with mutex protection
-    // SAFETY: Returns via output parameter
+    // SAFETY: Returns via output parameter using move semantics
     bool try_pop(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
         if (!q_->empty()) {
             ret = true;
-            *t = q_->front();
+            *t = std::move(q_->front());
             q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
         return ret;
     }
 
-    // @unsafe - Thread-safe try_pop with ignore value
-    // SAFETY: Returns via output parameter
-    bool try_pop_but_ignore(T* t, const T& ignore) {
+    // @unsafe - Thread-safe try_pop that ignores invalid/null items
+    // For rusty::Box<T>, this ignores items where !is_valid()
+    // SAFETY: Returns via output parameter using move semantics
+    bool try_pop_but_ignore_invalid(T* t) {
         bool ret = false;
         Pthread_mutex_lock(&m_);
-        if (!q_->empty() && q_->front() != ignore) {
+        if (!q_->empty() && q_->front().is_valid()) {
             ret = true;
-            *t = q_->front();
+            *t = std::move(q_->front());
             q_->pop_front();
         }
         Pthread_mutex_unlock(&m_);
@@ -319,7 +450,7 @@ public:
     }
 
     // @unsafe - Thread-safe blocking pop
-    // SAFETY: Returns by value (copy/move), not by reference. Borrow checker false positive.
+    // SAFETY: Returns by value (move), not by reference. Borrow checker false positive.
     T pop() {
         Pthread_mutex_lock(&m_);
         while (q_->empty()) {
@@ -335,8 +466,8 @@ public:
 class ThreadPool: public RefCounted {
     int n_;
     Counter round_robin_;
-    pthread_t* th_;
-    Queue<std::function<void()>*>* q_;
+    std::vector<pthread_t> th_;
+    std::vector<Queue<rusty::Box<std::function<void()>>>> q_;
     bool should_stop_{false};
 
     static void* start_thread_pool(void*);

@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Row type management for Masstree values
+// Provides row allocation, change detection, and log replay interfaces
+// SAFETY: Uses threadinfo allocator, log callbacks, row marker sentinels
+
 #ifndef KVROW_HH
 #define KVROW_HH 1
 #include "kvthread.hh"
@@ -20,6 +24,7 @@
 #include "log.hh"
 #include "json.hh"
 #include <algorithm>
+#include <rusty/ptr.hpp>
 
 #if MASSTREE_ROW_TYPE_ARRAY
 # include "value_array.hh"
@@ -37,7 +42,8 @@ typedef value_bag<uint16_t> row_type;
 
 template <typename R>
 struct query_helper {
-    inline const R* snapshot(const R* row, const std::vector<typename R::index_type>&, threadinfo&) {
+    // @safe - Returns rusty::Ptr (borrow-checked pointer type)
+    inline rusty::Ptr<R> snapshot(rusty::Ptr<R> row, const std::vector<typename R::index_type>&, threadinfo&) {
         return row;
     }
 };
@@ -78,23 +84,24 @@ class query {
     lcdf::String scankey_;
     int scankeypos_;
 
-    void emit_fields(const R* value, Json& req, threadinfo& ti);
-    void emit_fields1(const R* value, Json& req, threadinfo& ti);
+    void emit_fields(rusty::Ptr<R> value, Json& req, threadinfo& ti);
+    void emit_fields1(rusty::Ptr<R> value, Json& req, threadinfo& ti);
     void assign_timestamp(threadinfo& ti);
     void assign_timestamp(threadinfo& ti, kvtimestamp_t t);
-    inline bool apply_put(R*& value, bool found, const Json* firstreq,
+    inline bool apply_put(rusty::MutPtr<R>& value, bool found, const Json* firstreq,
                           const Json* lastreq, threadinfo& ti);
-    inline bool apply_replace(R*& value, bool found, Str new_value,
+    inline bool apply_replace(rusty::MutPtr<R>& value, bool found, Str new_value,
                               threadinfo& ti);
-    inline void apply_remove(R*& value, kvtimestamp_t& node_ts, threadinfo& ti);
+    inline void apply_remove(rusty::MutPtr<R>& value, kvtimestamp_t& node_ts, threadinfo& ti);
 
     template <typename RR> friend class query_json_scanner;
 };
 
 
 template <typename R>
-void query<R>::emit_fields(const R* value, Json& req, threadinfo& ti) {
-    const R* snapshot = helper_.snapshot(value, f_, ti);
+// @unsafe { Accesses row columns via pointer snapshot }
+void query<R>::emit_fields(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
+    rusty::Ptr<R> snapshot = helper_.snapshot(value, f_, ti);
     if (f_.empty()) {
         for (int i = 0; i != snapshot->ncol(); ++i)
             req.push_back(lcdf::String::make_stable(snapshot->col(i)));
@@ -105,8 +112,9 @@ void query<R>::emit_fields(const R* value, Json& req, threadinfo& ti) {
 }
 
 template <typename R>
-void query<R>::emit_fields1(const R* value, Json& req, threadinfo& ti) {
-    const R* snapshot = helper_.snapshot(value, f_, ti);
+// @unsafe { Accesses row columns via pointer snapshot }
+void query<R>::emit_fields1(rusty::Ptr<R> value, Json& req, threadinfo& ti) {
+    rusty::Ptr<R> snapshot = helper_.snapshot(value, f_, ti);
     if ((f_.empty() && snapshot->ncol() == 1) || f_.size() == 1)
         req = lcdf::String::make_stable(snapshot->col(f_.empty() ? 0 : f_[0]));
     else if (f_.empty()) {
@@ -120,6 +128,7 @@ void query<R>::emit_fields1(const R* value, Json& req, threadinfo& ti) {
 
 
 template <typename R> template <typename T>
+// @unsafe { Traverses Masstree via unlocked cursor, accesses row values }
 void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
     typename T::unlocked_cursor_type lp(table, req[2].as_s());
     bool found = lp.find_unlocked(ti);
@@ -135,6 +144,7 @@ void query<R>::run_get(T& table, Json& req, threadinfo& ti) {
 }
 
 template <typename R> template <typename T>
+// @unsafe { Traverses Masstree via unlocked cursor, returns column value }
 bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) {
     typename T::unlocked_cursor_type lp(table, key);
     bool found = lp.find_unlocked(ti);
@@ -147,12 +157,14 @@ bool query<R>::run_get1(T& table, Str key, int col, Str& value, threadinfo& ti) 
 
 
 template <typename R>
+// @safe - updates timestamp via threadinfo
 inline void query<R>::assign_timestamp(threadinfo& ti) {
     qtimes_.ts = ti.update_timestamp();
     qtimes_.prev_ts = 0;
 }
 
 template <typename R>
+// @safe - updates timestamp via threadinfo with minimum
 inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
     qtimes_.ts = ti.update_timestamp(min_ts);
     qtimes_.prev_ts = min_ts;
@@ -160,6 +172,7 @@ inline void query<R>::assign_timestamp(threadinfo& ti, kvtimestamp_t min_ts) {
 
 
 template <typename R> template <typename T>
+// @unsafe { Uses cursor to find/insert, mutates raw row pointers }
 result_t query<R>::run_put(T& table, Str key,
                            const Json* firstreq, const Json* lastreq,
                            threadinfo& ti) {
@@ -172,10 +185,11 @@ result_t query<R>::run_put(T& table, Str key,
     return inserted ? Inserted : Updated;
 }
 
+// @unsafe { Mutates row pointers, schedules old rows for RCU reclamation }
 template <typename R>
-inline bool query<R>::apply_put(R*& value, bool found, const Json* firstreq,
+inline bool query<R>::apply_put(rusty::MutPtr<R>& value, bool found, const Json* firstreq,
                                 const Json* lastreq, threadinfo& ti) {
-    if (loginfo* log = ti.logger()) {
+    if (rusty::MutPtr<loginfo> log = ti.logger()) {
         log->acquire();
         qtimes_.epoch = global_log_epoch;
     }
@@ -187,14 +201,14 @@ inline bool query<R>::apply_put(R*& value, bool found, const Json* firstreq,
         return true;
     }
 
-    R* old_value = value;
+    rusty::MutPtr<R> old_value = value;
     assign_timestamp(ti, old_value->timestamp());
     if (row_is_marker(old_value)) {
         old_value->deallocate_rcu(ti);
         goto insert;
     }
 
-    R* updated = old_value->update(firstreq, lastreq, qtimes_.ts, ti);
+    rusty::MutPtr<R> updated = old_value->update(firstreq, lastreq, qtimes_.ts, ti);
     if (updated != old_value) {
         value = updated;
         old_value->deallocate_rcu_after_update(firstreq, lastreq, ti);
@@ -203,6 +217,7 @@ inline bool query<R>::apply_put(R*& value, bool found, const Json* firstreq,
 }
 
 template <typename R> template <typename T>
+// @unsafe { Uses cursor to find/insert, replaces raw row data }
 result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
     bool found = lp.find_insert(ti);
@@ -213,10 +228,11 @@ result_t query<R>::run_replace(T& table, Str key, Str value, threadinfo& ti) {
     return inserted ? Inserted : Updated;
 }
 
+// @unsafe { Swaps row pointers, frees old buffers via deallocate_rcu() }
 template <typename R>
-inline bool query<R>::apply_replace(R*& value, bool found, Str new_value,
+inline bool query<R>::apply_replace(rusty::MutPtr<R>& value, bool found, Str new_value,
                                     threadinfo& ti) {
-    if (loginfo* log = ti.logger()) {
+    if (rusty::MutPtr<loginfo> log = ti.logger()) {
         log->acquire();
         qtimes_.epoch = global_log_epoch;
     }
@@ -234,6 +250,7 @@ inline bool query<R>::apply_replace(R*& value, bool found, Str new_value,
 }
 
 template <typename R> template <typename T>
+// @unsafe { Uses locked cursor, frees row via RCU }
 bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
     typename T::cursor_type lp(table, key);
     bool found = lp.find_locked(ti);
@@ -243,15 +260,16 @@ bool query<R>::run_remove(T& table, Str key, threadinfo& ti) {
     return found;
 }
 
+// @unsafe { Frees row via deallocate_rcu(), updates phantom epoch }
 template <typename R>
-inline void query<R>::apply_remove(R*& value, kvtimestamp_t& node_ts,
+inline void query<R>::apply_remove(rusty::MutPtr<R>& value, kvtimestamp_t& node_ts,
                                    threadinfo& ti) {
-    if (loginfo* log = ti.logger()) {
+    if (rusty::MutPtr<loginfo> log = ti.logger()) {
         log->acquire();
         qtimes_.epoch = global_log_epoch;
     }
 
-    R* old_value = value;
+    rusty::MutPtr<R> old_value = value;
     assign_timestamp(ti, old_value->timestamp());
     if (circular_int<kvtimestamp_t>::less_equal(node_ts, qtimes_.ts))
         node_ts = qtimes_.ts + 2;
@@ -260,6 +278,7 @@ inline void query<R>::apply_remove(R*& value, kvtimestamp_t& node_ts,
 
 
 template <typename R>
+// @unsafe { Scan visitor: memcpy() on key data, accesses raw row pointers }
 class query_json_scanner {
   public:
     query_json_scanner(query<R> &q, lcdf::Json& request)
@@ -274,7 +293,7 @@ class query_json_scanner {
     template <typename SS, typename K>
     void visit_leaf(const SS&, const K&, threadinfo&) {
     }
-    bool visit_value(Str key, R* value, threadinfo& ti) {
+    bool visit_value(Str key, rusty::MutPtr<R> value, threadinfo& ti) {
         if (row_is_marker(value))
             return true;
         // NB the `key` is not stable! We must save space for it.
@@ -299,6 +318,7 @@ class query_json_scanner {
 };
 
 template <typename R> template <typename T>
+// @unsafe { Invokes Masstree scan with visitor callback }
 void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();
@@ -309,6 +329,7 @@ void query<R>::run_scan(T& table, Json& request, threadinfo& ti) {
 }
 
 template <typename R> template <typename T>
+// @unsafe { Invokes Masstree reverse scan with visitor callback }
 void query<R>::run_rscan(T& table, Json& request, threadinfo& ti) {
     assert(request[3].as_i() > 0);
     f_.clear();

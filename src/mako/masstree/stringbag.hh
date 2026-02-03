@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Append-only string storage with offset-based access
+// Packs multiple variable-length strings into contiguous allocation
+// SAFETY: Uses memcpy for string storage, offset-based retrieval
+
 #ifndef STRINGBAG_HH
 #define STRINGBAG_HH 1
 #include "compiler.hh"
@@ -82,6 +86,7 @@ class stringbag {
         to new. Allocate space for a stringbag, then call the constructor on
         that space using placement new. @a capacity must be no bigger than
         the allocated space. */
+    // @unsafe - requires caller-managed storage; manipulates raw offsets
     stringbag(int width, size_t capacity) {
         size_t firstpos = overhead(width);
         assert(capacity >= firstpos && capacity <= max_size());
@@ -101,12 +106,14 @@ class stringbag {
 
     /** @brief Return the string at position @a p.
         @pre @a p >= 0 && @a p < bag width */
+    // @unsafe - returns slice into caller-managed backing store
     lcdf::Str operator[](int p) const {
         info_type info = info_[p];
         return lcdf::Str(s_ + info.pos, info.len);
     }
     /** @brief Return the string at position @a p.
         @pre @a p >= 0 && @a p < bag width */
+    // @unsafe - returns slice into caller-managed backing store
     lcdf::Str get(int p) const {
         info_type info = info_[p];
         return lcdf::Str(s_ + info.pos, info.len);
@@ -119,6 +126,7 @@ class stringbag {
         @return true if the assignment succeeded, false if it failed
            (because the stringbag is out of capacity)
         @pre @a p >= 0 && @a p < bag width */
+    // @unsafe - copies raw bytes into backing buffer
     bool assign(int p, const char *s, int len) {
         unsigned pos, mylen = info_[p].len;
         if (mylen >= (unsigned) len)

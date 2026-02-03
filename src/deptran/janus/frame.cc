@@ -9,21 +9,22 @@
 #include "coordinator.h"
 #include "scheduler.h"
 #include "tx.h"
+#include "../troad/troad.h"
 
 namespace janus {
 
-REG_FRAME(MODE_JANUS, vector<string>({"brq","baroque","janus"}), JanusFrame);
+REG_FRAME(MODE_JANUS, vector<string>({"brq","baroque","janus"}), TroadJanusFrame);
 
 Coordinator *JanusFrame::CreateCoordinator(cooid_t coo_id,
                                            Config *config,
                                            int benchmark,
-                                           ClientControlServiceImpl *ccsi,
+                                           rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                            uint32_t id,
                                            shared_ptr<TxnRegistry> txn_reg) {
   verify(config != nullptr);
-  CoordinatorJanus *coord = new CoordinatorJanus(coo_id,
+  auto *coord = new CoordinatorJanus(coo_id,
                                      benchmark,
-                                     ccsi,
+                                     std::move(client_status),
                                      id);
   coord->txn_reg_ = txn_reg;
   coord->frame_ = this;
@@ -41,12 +42,11 @@ TxLogServer *JanusFrame::CreateScheduler() {
   return sched;
 }
 
-vector<rrr::Service *>
+vector<rusty::Box<rrr::Service>>
 JanusFrame::CreateRpcServices(uint32_t site_id,
                               TxLogServer *sched,
-                              rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
-                              ServerControlServiceImpl *scsi) {
-  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker, scsi);
+                              rusty::Arc<rrr::PollThread> poll_thread_worker) {
+  return Frame::CreateRpcServices(site_id, sched, poll_thread_worker);
 }
 
 mdb::Row *JanusFrame::CreateRow(const mdb::Schema *schema,
@@ -64,8 +64,8 @@ shared_ptr<Tx> JanusFrame::CreateTx(epoch_t epoch, txnid_t tid,
   return sp_tx;
 }
 
-Communicator *JanusFrame::CreateCommo(rusty::Arc<PollThreadWorker> poll) {
-  return new JanusCommo(poll);
+Communicator *JanusFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll) {
+  return new JanusCommo(std::move(poll));
 }
 
 } // namespace janus

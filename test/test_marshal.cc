@@ -335,17 +335,17 @@ TEST_F(MarshalTest, PartialReadWrite) {
 TEST_F(MarshalTest, PeekOperation) {
     i32 val1 = 100;
     i32 val2 = 200;
-    
+
     *m << val1 << val2;
-    
+
     i32 peeked_val;
-    size_t peeked = m->peek(&peeked_val, sizeof(i32));
+    size_t peeked = m->peek(peeked_val);
     EXPECT_EQ(peeked, sizeof(i32));
     EXPECT_EQ(peeked_val, val1);
-    
+
     i32 read_val1, read_val2;
     *m >> read_val1 >> read_val2;
-    
+
     EXPECT_EQ(read_val1, val1);
     EXPECT_EQ(read_val2, val2);
 }
@@ -358,7 +358,7 @@ TEST_F(MarshalTest, BookmarkOperation) {
     *m << str;
     
     i32 actual_value = 42;
-    m->write_bookmark(bookmark, &actual_value);
+    m->write_bookmark(bookmark, actual_value);
     
     i32 read_value;
     std::string read_str;
@@ -366,8 +366,7 @@ TEST_F(MarshalTest, BookmarkOperation) {
     
     EXPECT_EQ(read_value, actual_value);
     EXPECT_EQ(read_str, str);
-    
-    delete bookmark;
+    // bookmark automatically cleaned up when going out of scope
 }
 
 TEST_F(MarshalTest, MultipleChunks) {
@@ -475,19 +474,21 @@ public:
 
     // @safe
     // @lifetime: (&'a, &'b mut) -> &'b mut
-    Marshal& ToMarshal(Marshal& m) const override {
-        m << id << name << data;
+    Marshal& to_marshal(Marshal& m) const override {
+        // @unsafe - operator<<
+        { m << id << name << data; }
         return m;
     }
 
     // @safe
     // @lifetime: (&'a mut, &'b mut) -> &'b mut
-    Marshal& FromMarshal(Marshal& m) override {
-        m >> id >> name >> data;
+    Marshal& from_marshal(Marshal& m) override {
+        // @unsafe - operator>>
+        { m >> id >> name >> data; }
         return m;
     }
 
-    size_t EntitySize() const override {
+    size_t entity_size() const override {
         return sizeof(id) + sizeof(v64) + name.size() +
                sizeof(v64) + data.size() * sizeof(double);
     }

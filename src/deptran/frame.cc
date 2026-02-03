@@ -15,6 +15,11 @@
 #include "2pl/coordinator.h"
 #include "occ/tx.h"
 #include "occ/coordinator.h"
+#include "none_copilot/commo.h"
+#include "none_copilot/scheduler.h"
+
+#include "rule/commo.h"
+#include "rule/coordinator.h"
 
 #include "bench/tpcc_real_dist/sharding.h"
 #include "bench/tpcc/workload.h"
@@ -50,6 +55,8 @@
 #include "deptran/2pl/scheduler.h"
 #include "occ/scheduler.h"
 
+#include "paxos/frame.h"
+
 #include "extern_c/frame.h"
 
 
@@ -65,14 +72,24 @@ Frame* Frame::RegFrame(int mode,
 }
 
 Frame* Frame::GetFrame(int mode) {
+  return GetFrame(mode, -1);
+}
+
+Frame* Frame::GetFrame(int mode, int replica_mode) {
   Frame *frame = nullptr;
   // some built-in mode
   switch (mode) {
     case MODE_NONE:
+    case MODE_NONE_COPILOT:
+    case MODE_NOTX:
     case MODE_MDCC:
     case MODE_2PL:
     case MODE_OCC:
-      frame = new Frame(mode);
+    case MODE_RULE:
+      frame = new Frame(mode, replica_mode);
+      break;
+    case MODE_MULTI_PAXOS:
+      frame = new MultiPaxosFrame(mode);
       break;
     case MODE_EXTERNC:
       frame = new ExternCFrame();
@@ -164,7 +181,7 @@ mdb::Row* Frame::CreateRow(const mdb::Schema *schema,
 Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
                                       Config *config,
                                       int benchmark,
-                                      ClientControlServiceImpl *ccsi,
+                                      rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                       uint32_t id,
                                       shared_ptr<TxnRegistry> txn_reg) {
   // TODO: clean this up; make Coordinator subclasses assign txn_reg_
@@ -176,7 +193,7 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
     case MODE_2PL:
       coo = new Coordinator2pl(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
@@ -184,32 +201,40 @@ Coordinator* Frame::CreateCoordinator(cooid_t coo_id,
     case MODE_RPC_NULL:
       coo = new CoordinatorOcc(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
     case MODE_RCC:
       coo = new RccCoord(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
     case MODE_RO6:
       coo = new RO6Coord(coo_id,
                          benchmark,
-                         ccsi,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                          id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
     case MODE_MDCC:
 //      coo = (Coordinator*)new mdcc::MdccCoordinator(coo_id, id, config, ccsi);
       break;
+    case MODE_RULE:
+      coo = new CoordinatorRule(coo_id,
+                         benchmark,
+                         client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
+                         id);
+      ((Coordinator*)coo)->txn_reg_ = txn_reg;
+      break;
     case MODE_NONE:
+    case MODE_NONE_COPILOT:
     default:
       coo = new CoordinatorNone(coo_id,
                           benchmark,
-                          ccsi,
+                          client_status.is_some() ? rusty::Some(client_status.as_ref().unwrap().clone()) : rusty::None,
                           id);
       ((Coordinator*)coo)->txn_reg_ = txn_reg;
       break;
@@ -291,16 +316,18 @@ TxData* Frame::CreateTxnCommand(TxRequest& req, shared_ptr<TxnRegistry> reg) {
 //  return CreateTxnCommand(req, reg);
 //}
 
-Communicator* Frame::CreateCommo(rusty::Arc<PollThreadWorker> poll_thread_worker) {
-  commo_ = new Communicator(poll_thread_worker);
+Communicator* Frame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
+  commo_ = new Communicator(std::move(poll_thread_worker));
   return commo_;
 }
 
 shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
                                bool ro, TxLogServer *mgr) {
   shared_ptr<Tx> sp_tx;
-
-  switch (mode_) {
+	/*struct timespec begin, end;
+	clock_gettime(CLOCK_MONOTONIC, &begin);*/
+  Log_debug("enter CreateTx");
+	switch (mode_) {
     case MODE_2PL:
       sp_tx.reset(new Tx2pl(epoch, tid, mgr));
       break;
@@ -314,12 +341,19 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
       sp_tx.reset(new TxSnow(tid, mgr, ro));
       break;
     case MODE_MULTI_PAXOS:
+    case MODE_MENCIUS:
+    case MODE_RAFT:
+    case MODE_FPGA_RAFT:
       break;
     case MODE_NONE:
+    case MODE_NOTX:
     default:
-      sp_tx.reset(new Tx2pl(epoch, tid, mgr));
+      sp_tx.reset(new TxClassic(epoch, tid, mgr));
       break;
   }
+	/*clock_gettime(CLOCK_MONOTONIC, &end);
+	Log_info("time of CreateTx on server: %d", end.tv_nsec-begin.tv_nsec);*/
+  Log_debug("exit CreateTx, Tx address=%p", sp_tx);
   return sp_tx;
 }
 
@@ -342,32 +376,45 @@ Executor* Frame::CreateExecutor(cmdid_t cmd_id, TxLogServer* sched) {
 }
 
 TxLogServer* Frame::CreateScheduler() {
+  Log_info("enter CreateScheduler, mode=%d", Config::GetConfig()->tx_proto_);
   auto mode = Config::GetConfig()->tx_proto_;
   TxLogServer *sch = nullptr;
-  switch(mode) {
-    case MODE_2PL:
-      sch = new Scheduler2pl();
-      break;
-    case MODE_OCC:
-      sch = new SchedulerOcc();
-      break;
-    case MODE_MDCC:
-//      sch = new mdcc::MdccScheduler();
-      break;
-    case MODE_NONE:
-      sch = new SchedulerNone();
-      break;
-    case MODE_RPC_NULL:
-    case MODE_RCC:
-    case MODE_RO6:
-      verify(0);
-      break;
-    default:
-      verify(0);
-//      sch = new CustomSched();
+  if (Config::GetConfig()->replica_proto_ == MODE_COPILOT) {
+    sch = new SchedulerNoneCopilot();
+  } else {
+    switch(mode) {
+      case MODE_2PL:
+        sch = new Scheduler2pl();
+        break;
+      case MODE_OCC:
+        sch = new SchedulerOcc();
+        break;
+      case MODE_MDCC:
+  //      sch = new mdcc::MdccScheduler();
+        break;
+      case MODE_NOTX:
+      case MODE_NONE:
+      case MODE_RULE:
+        sch = new SchedulerNone();
+        break;
+      case MODE_NONE_COPILOT:
+        sch = new SchedulerNoneCopilot();
+        break;
+      case MODE_RPC_NULL:
+      case MODE_RCC:
+      case MODE_RO6:
+        verify(0);
+        break;
+      default:
+        verify(0);
+  //      sch = new CustomSched();
+    }
   }
+  
   verify(sch);
   sch->frame_ = this;
+  verify(svr_ == nullptr);
+  svr_ = sch;
   return sch;
 }
 
@@ -395,12 +442,11 @@ Workload * Frame::CreateTxGenerator() {
   return gen;
 }
 
-vector<rrr::Service *> Frame::CreateRpcServices(uint32_t site_id,
+vector<rusty::Box<rrr::Service>> Frame::CreateRpcServices(uint32_t site_id,
                                                 TxLogServer *dtxn_sched,
-                                                rusty::Arc<rrr::PollThreadWorker> poll_thread_worker,
-                                                ServerControlServiceImpl *scsi) {
+                                                rusty::Arc<rrr::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<Service *>();
+  auto result = std::vector<rusty::Box<Service>>();
   switch(mode_) {
     case MODE_MDCC:
     case MODE_2PL:
@@ -408,9 +454,11 @@ vector<rrr::Service *> Frame::CreateRpcServices(uint32_t site_id,
     case MODE_NONE:
     case MODE_TAPIR:
     case MODE_JANUS:
+    case MODE_CAROUSEL:
     case MODE_RCC:
+    case MODE_NOTX:
     default:
-      result.push_back(new ClassicServiceImpl(dtxn_sched, poll_thread_worker, scsi));
+      result.push_back(rusty::make_box<ClassicServiceImpl>(dtxn_sched, poll_thread_worker));
       break;
   }
   return result;
@@ -418,9 +466,11 @@ vector<rrr::Service *> Frame::CreateRpcServices(uint32_t site_id,
 map<string, int> &Frame::FrameNameToMode() {
   static map<string, int> frame_name_mode_s = {
       {"none",          MODE_NONE},
+      {"none_copilot",  MODE_NONE_COPILOT},
       {"2pl",           MODE_2PL},
       {"occ",           MODE_OCC},
-      {"snow",           MODE_RO6},
+      {"snow",          MODE_RO6},
+      {"notx",          MODE_NOTX},
       {"rpc_null",      MODE_RPC_NULL},
       {"deptran",       MODE_DEPTRAN},
       {"deptran_er",    MODE_DEPTRAN},
@@ -433,8 +483,13 @@ map<string, int> &Frame::FrameNameToMode() {
       {"extern_c",      MODE_EXTERNC},
       {"mdcc",          MODE_MDCC},
       {"multi_paxos",   MODE_MULTI_PAXOS},
+      {"mencius",       MODE_MENCIUS},
+      {"raft",          MODE_RAFT},
+      {"fpga_raft",     MODE_FPGA_RAFT},
       {"epaxos",        MODE_NOT_READY},
-      {"rep_commit",    MODE_NOT_READY}
+      {"rep_commit",    MODE_NOT_READY},
+      {"rule",          MODE_RULE},
+      {"mongodb",       MODE_MONGODB},
   };
   return frame_name_mode_s;
 }

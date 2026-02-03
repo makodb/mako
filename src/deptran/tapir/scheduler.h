@@ -19,7 +19,7 @@ class SchedulerTapir : public SchedulerClassic {
 
   int OnDecide(txid_t tx_id,
                int32_t decision,
-               const function<void()> &callback);
+               rusty::Function<void()> callback);
 
   virtual bool HandleConflicts(Tx &dtxn,
                                innid_t inn_id,

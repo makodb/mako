@@ -1,3 +1,7 @@
+// @unsafe - Small buffer optimized vector container
+// Stores up to N elements inline, spills to heap for larger sizes
+// SAFETY: Manual small-buffer management, placement new/delete
+
 #ifndef GSTORE_SMALL_VECTOR_HH
 #define GSTORE_SMALL_VECTOR_HH 1
 #include "compiler.hh"
@@ -17,6 +21,7 @@ class small_vector {
     typedef unsigned size_type;
     static constexpr size_type small_capacity = N;
 
+    // @unsafe - manual small-buffer management
     inline small_vector(const A& allocator = A());
     small_vector(const small_vector<T, N, A>& x);
     template <unsigned NN, typename AA>
@@ -104,6 +109,7 @@ small_vector<T, N, A>::small_vector(const small_vector<T, NN, AA>& x)
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - manually destroys and frees embedded inline/heap storage
 inline small_vector<T, N, A>::~small_vector() {
     for (T* it = r_.first_; it != r_.last_; ++it)
         std::allocator_traits<A>::destroy(r_, it);
@@ -137,6 +143,7 @@ inline bool small_vector<T, N, A>::operator!() const {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - reallocates underlying buffer and moves elements manually
 void small_vector<T, N, A>::grow(size_type n) {
     size_t newcap = capacity() * 2;
     while (newcap < n)
@@ -214,36 +221,43 @@ inline auto small_vector<T, N, A>::crend() const -> const_reverse_iterator {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - unchecked access into raw buffer
 inline T& small_vector<T, N, A>::operator[](size_type i) {
     return r_.first_[i];
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - unchecked access into raw buffer
 inline const T& small_vector<T, N, A>::operator[](size_type i) const {
     return r_.first_[i];
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - caller must ensure container is nonempty
 inline T& small_vector<T, N, A>::front() {
     return r_.first_[0];
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - caller must ensure container is nonempty
 inline const T& small_vector<T, N, A>::front() const {
     return r_.first_[0];
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - caller must ensure container is nonempty
 inline T& small_vector<T, N, A>::back() {
     return r_.last_[-1];
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - caller must ensure container is nonempty
 inline const T& small_vector<T, N, A>::back() const {
     return r_.last_[-1];
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - may reallocate and constructs element into raw storage
 inline void small_vector<T, N, A>::push_back(const T& x) {
     if (r_.last_ == r_.capacity_)
         grow();
@@ -252,6 +266,7 @@ inline void small_vector<T, N, A>::push_back(const T& x) {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - may reallocate and constructs element into raw storage
 inline void small_vector<T, N, A>::push_back(T&& x) {
     if (r_.last_ == r_.capacity_)
         grow();
@@ -260,6 +275,7 @@ inline void small_vector<T, N, A>::push_back(T&& x) {
 }
 
 template <typename T, unsigned N, typename A> template <typename... Args>
+// @unsafe - may reallocate and placement-new into raw buffer
 inline void small_vector<T, N, A>::emplace_back(Args&&... args) {
     if (r_.last_ == r_.capacity_)
         grow();
@@ -268,6 +284,7 @@ inline void small_vector<T, N, A>::emplace_back(Args&&... args) {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - destroys element without bounds checks
 inline void small_vector<T, N, A>::pop_back() {
     assert(r_.first_ != r_.last_);
     --r_.last_;
@@ -275,6 +292,7 @@ inline void small_vector<T, N, A>::pop_back() {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - destroys objects and leaves raw buffer intact
 inline void small_vector<T, N, A>::clear() {
     for (auto it = r_.first_; it != r_.last_; ++it)
         std::allocator_traits<A>::destroy(r_, it);
@@ -282,6 +300,7 @@ inline void small_vector<T, N, A>::clear() {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - may reallocate and manually construct/destroy elements
 inline void small_vector<T, N, A>::resize(size_type n, value_type v) {
     if (capacity() < n)
         grow(n);
@@ -325,6 +344,7 @@ inline T* small_vector<T, N, A>::erase(iterator position) {
 }
 
 template <typename T, unsigned N, typename A>
+// @unsafe - shifts elements manually and destroys trailing objects
 T* small_vector<T, N, A>::erase(iterator first, iterator last) {
     if (first != last) {
         iterator it = first, xend = end();

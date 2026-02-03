@@ -26,9 +26,17 @@ class Scheduler2pl: public SchedulerClassic {
   virtual bool DispatchPiece(Tx& tx,
                              SimpleCommand& cmd,
                              TxnOutput& ret_output) override {
-    SchedulerClassic::DispatchPiece(tx, cmd, ret_output);
-    ExecutePiece(tx, cmd, ret_output);
-    return true;
+    if (tx.aborted_) {
+      return false;
+    } else {
+      auto ret = SchedulerClassic::DispatchPiece(tx, cmd, ret_output);
+      if (!ret) {
+        tx.aborted_ = true;
+        return false;
+      }
+      ExecutePiece(tx, cmd, ret_output);
+      return true;
+    }
   }
 
   virtual bool Guard(Tx &tx_box, Row *row, int col_idx, bool write) override;

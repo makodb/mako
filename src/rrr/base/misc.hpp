@@ -93,49 +93,53 @@ erase(Container& l,
   return std::reverse_iterator<typename Container::iterator>(it);
 }
 
-// @safe - Abstract interface with no implementation
+// @interface
 class Job {
  public:
   virtual bool Ready() = 0;
   virtual void Work() = 0;
   virtual bool Done() = 0;
-  virtual ~Job(){};
+  virtual ~Job() = default;
 };
 
-// @safe - Simple job wrapper with safe state management
+// @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug workaround)
 class OneTimeJob : public Job {
  public:
   // @safe
   OneTimeJob(std::function<void()> func) : func_(func) {
   }
   bool done_{false};
+  bool ready_{true};
   std::function<void()> func_{};
-  // @safe
+  // Interface method - inherits @unsafe from Job
   bool Ready() override {
-    return true;
+    return ready_;
   }
-  // @safe
+  // Interface method - inherits @unsafe from Job
   bool Done() override {
     return done_;
   }
-  // @unsafe - Calls std::function::operator() (external unsafe)
+  // Interface method - inherits @unsafe from Job
+  // Calls std::function::operator() (external unsafe)
   // SAFETY: Executes user-provided function, caller ensures validity
   void Work() override {
+    ready_ = false;
     func_();
     done_ = true;
   }
   virtual ~OneTimeJob(){};
 };
 
-// @safe - Periodic job with safe time tracking
+// @unsafe - Inherits from @interface Job (rusty-cpp namespace resolution bug workaround)
 class FrequentJob : public Job {
  public:
   uint64_t tm_last_ = 0;
   uint64_t period_ = 0;
 
   virtual ~FrequentJob() {}
-  // @safe
+  // Interface method - inherits @unsafe from Job
   virtual bool Ready() override {
+    // Time::now is @unsafe
     uint64_t tm_now = rrr::Time::now();
     uint64_t s = tm_now - tm_last_;
     if (s > period_) {
@@ -145,7 +149,7 @@ class FrequentJob : public Job {
     return false;
   }
 
-  // @safe
+  // Interface method - inherits @unsafe from Job
   virtual bool Done() override {
     // never done.
     return false;

@@ -4,8 +4,15 @@
 #pragma once
 
 #include "base/all.hpp"
+#include <rusty/arc.hpp>
+#include <rusty/rc.hpp>
+#include <rusty/rc/weak.hpp>
+#include <rusty/refcell.hpp>
 #include <unistd.h>
 #include <array>
+#include <algorithm>
+#include <memory>
+#include <vector>
 #include <cerrno>
 
 #ifdef __APPLE__
@@ -20,35 +27,62 @@
 
 
 namespace rrr {
+using std::shared_ptr;
 
-// @safe - Abstract interface for pollable file descriptors
+// Forward declaration
+class PollThreadWorker;
+
+// Pollable mode constants (moved outside interface for @interface compliance)
+namespace PollMode {
+    static constexpr int READ = 0x1;
+    static constexpr int WRITE = 0x2;
+    // Special return value for handle_write() indicating no mode change needed
+    static constexpr int NO_CHANGE = -1;
+}
+
+// @interface
 class Pollable {
 public:
-    virtual ~Pollable() {}
+    virtual ~Pollable() = default;
 
-    enum {
-        READ = 0x1, WRITE = 0x2
-    };
-
-    // @safe - Returns file descriptor
+    // @safe
     virtual int fd() const = 0;
-    // @safe - Returns current poll mode (READ/WRITE flags)
+    // @safe
     virtual int poll_mode() const = 0;
-    // @unsafe - Handles read events (implementation-specific)
-    virtual void handle_read() = 0;
-    // @unsafe - Handles write events (implementation-specific)
-    virtual void handle_write() = 0;
-    // @unsafe - Handles error events (implementation-specific)
+    // @safe
+    virtual size_t content_size() = 0;
+    // @safe
+    virtual bool handle_read() = 0;
+    // @safe
+    virtual int handle_write() = 0;
+    // @safe
     virtual void handle_error() = 0;
+    // @safe
+    virtual void close() = 0;
+    // @safe
+    virtual bool check_pending_write_update() const = 0;
+    // @safe
+    virtual bool is_closed() const = 0;
 };
 
 
 // @unsafe - Wrapper for epoll/kqueue system calls
 // SAFETY: Proper file descriptor management and error checking
 class Epoll {
+ private:
+	int zero_count = 0;
+	long have_count = 0;
+  long no_count = 0;
+	int first = 0;
+  long total_have_time = 0;
+  long total_no_time = 0;
  public:
   // For testing: track number of Remove() calls (static for persistence)
   static inline std::atomic<int> remove_count_{0};
+
+  // Control flags for pause/stop functionality (jetpack)
+  volatile bool* pause;
+  volatile bool* stop;
 
   // @unsafe - Creates epoll/kqueue file descriptor
   // SAFETY: Verifies creation succeeded
@@ -90,7 +124,7 @@ class Epoll {
     auto fd = poll->fd();
 #ifdef USE_KQUEUE
     struct kevent ev;
-    if (poll_mode & Pollable::READ) {
+    if (poll_mode & PollMode::READ) {
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
       ev.flags = EV_ADD;
@@ -98,7 +132,7 @@ class Epoll {
       ev.udata = userdata;  // Store slot index instead of raw pointer
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if (poll_mode & Pollable::WRITE) {
+    if (poll_mode & PollMode::WRITE) {
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
       ev.flags = EV_ADD;
@@ -114,10 +148,20 @@ class Epoll {
     ev.data.ptr = userdata;  // Store slot index instead of raw pointer
     ev.events = EPOLLET | EPOLLIN | EPOLLRDHUP; // EPOLLERR and EPOLLHUP are included by default
 
-    if (poll_mode & Pollable::WRITE) {
+    if (poll_mode & PollMode::WRITE) {
         ev.events |= EPOLLOUT;
     }
-    verify(epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev) == 0);
+
+    // Try to add the fd to epoll
+    // If it already exists (fd reuse after reconnection), remove first then add
+    int result = epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev);
+    if (result != 0 && errno == EEXIST) {
+        // fd already registered (possible due to fd reuse after close+reconnect)
+        // Remove it first, then add again
+        (void)epoll_ctl(poll_fd_, EPOLL_CTL_DEL, fd, nullptr);
+        result = epoll_ctl(poll_fd_, EPOLL_CTL_ADD, fd, &ev);
+    }
+    verify(result == 0);
 #endif
     return 0;
   }
@@ -154,11 +198,11 @@ class Epoll {
   // @unsafe - Updates poll mode for file descriptor
   // SAFETY: Uses system calls with proper event flag handling
   // userdata is raw Pollable* for lookup
-  int Update(Pollable& poll, void* userdata, int new_mode, int old_mode) {
+  int Update(const Pollable& poll, void* userdata, int new_mode, int old_mode) {
     auto fd = poll.fd();
 #ifdef USE_KQUEUE
     struct kevent ev;
-    if ((new_mode & Pollable::READ) && !(old_mode & Pollable::READ)) {
+    if ((new_mode & PollMode::READ) && !(old_mode & PollMode::READ)) {
       // add READ
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -167,7 +211,7 @@ class Epoll {
       ev.filter = EVFILT_READ;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if (!(new_mode & Pollable::READ) && (old_mode & Pollable::READ)) {
+    if (!(new_mode & PollMode::READ) && (old_mode & PollMode::READ)) {
       // del READ
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -176,7 +220,7 @@ class Epoll {
       ev.filter = EVFILT_READ;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if ((new_mode & Pollable::WRITE) && !(old_mode & Pollable::WRITE)) {
+    if ((new_mode & PollMode::WRITE) && !(old_mode & PollMode::WRITE)) {
       // add WRITE
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -185,7 +229,7 @@ class Epoll {
       ev.filter = EVFILT_WRITE;
       verify(kevent(poll_fd_, &ev, 1, nullptr, 0, nullptr) == 0);
     }
-    if (!(new_mode & Pollable::WRITE) && (old_mode & Pollable::WRITE)) {
+    if (!(new_mode & PollMode::WRITE) && (old_mode & PollMode::WRITE)) {
       // del WRITE
       bzero(&ev, sizeof(ev));
       ev.ident = fd;
@@ -200,10 +244,10 @@ class Epoll {
 
     ev.data.ptr = userdata;  // Store slot index instead of raw pointer
     ev.events = EPOLLET | EPOLLRDHUP;
-    if (new_mode & Pollable::READ) {
+    if (new_mode & PollMode::READ) {
         ev.events |= EPOLLIN;
     }
-    if (new_mode & Pollable::WRITE) {
+    if (new_mode & PollMode::WRITE) {
         ev.events |= EPOLLOUT;
     }
     int rc = epoll_ctl(poll_fd_, EPOLL_CTL_MOD, fd, &ev);
@@ -221,10 +265,15 @@ class Epoll {
     return 0;
   }
 
-  // @unsafe - Waits for events and dispatches to handlers directly
+  // Jetpack split-phase Wait (declaration - implementation in epoll_wrapper.cc)
+  void Wait();
+
+  // @unsafe - Waits for events and dispatches to handlers directly (mako-dev template version)
   // SAFETY: Uses system calls with timeout, raw pointer safe due to deferred removal
   // userdata is Pollable* - safe to use directly because object remains in fd_to_pollable_ map
-  void Wait() {
+  // ModeUpdater: callable with signature void(Pollable*, int new_mode)
+  template<typename ModeUpdater>
+  void Wait(ModeUpdater&& update_mode) {
     const int max_nev = 100;
 #ifdef USE_KQUEUE
     struct kevent evlist[max_nev];
@@ -242,7 +291,10 @@ class Epoll {
         poll->handle_read();
       }
       if (evlist[i].filter == EVFILT_WRITE) {
-        poll->handle_write();
+        int new_mode = poll->handle_write();
+        if (new_mode != PollMode::NO_CHANGE) {
+          update_mode(poll, new_mode);
+        }
       }
 
       // handle error after handle IO, so that we can at least process something
@@ -262,13 +314,22 @@ class Epoll {
     for (int i = 0; i < nev; i++) {
       //Log_info("number of events are %d", nev);
       void* userdata = evlist[i].data.ptr;
+
+      // Skip if userdata is nullptr (used for internal wakeup events like channel eventfd)
+      if (userdata == nullptr) {
+        continue;
+      }
+
       Pollable* poll = reinterpret_cast<Pollable*>(userdata);  // Direct cast - safe!
 
       if (evlist[i].events & EPOLLIN) {
           poll->handle_read();
       }
       if (evlist[i].events & EPOLLOUT) {
-          poll->handle_write();
+          int new_mode = poll->handle_write();
+          if (new_mode != PollMode::NO_CHANGE) {
+            update_mode(poll, new_mode);
+          }
       }
       // handle error after handle IO, so that we can at least process something
       if (evlist[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
@@ -283,6 +344,9 @@ class Epoll {
       close(poll_fd_);
     }
   }
+
+  // Public accessor for the epoll/kqueue file descriptor
+  int fd() const { return poll_fd_; }
 
  private:
   int poll_fd_;

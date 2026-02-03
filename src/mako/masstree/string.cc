@@ -31,6 +31,17 @@
  * notice is a summary of the Click LICENSE file; the license in that file
  * is legally binding.
  */
+// Core String class implementation with shared substrings
+// Uses malloc/free for reference-counted buffers - all functions @unsafe
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+// @external_unsafe: lcdf::StringAccum::*
+// @external_unsafe: malloc
+// @external_unsafe: free
+// @external_unsafe: realloc
+// @external_unsafe: memcpy
+// @external_unsafe: memmove
 
 #include "string.hh"
 #include "straccum.hh"

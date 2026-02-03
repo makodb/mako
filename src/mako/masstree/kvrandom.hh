@@ -13,6 +13,10 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Random number generators for testing and benchmarking
+// Provides PSDES, xorshift, and lcg-based generators
+// SAFETY: Pure arithmetic operations (no unsafe memory operations)
+
 #ifndef KVRANDOM_HH
 #define KVRANDOM_HH 1
 #include <inttypes.h>
@@ -59,15 +63,17 @@ class kvrandom_psdes_nr { public:
     typedef uint32_t value_type;
     typedef uint32_t seed_type;
     kvrandom_psdes_nr() {
-	reset(1);
+        reset(1);
     }
     explicit kvrandom_psdes_nr(seed_type seed) {
-	reset(seed);
+        reset(seed);
     }
+    // @unsafe - mutates internal seed with deterministic PRNG math; no locking
     void reset(seed_type seed) {
 	seed_ = seed;
 	next_ = 1;
     }
+    // @unsafe - uses raw internal state without synchronization
     value_type next() {
 	uint32_t value = psdes(seed_, next_);
 	++next_;

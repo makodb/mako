@@ -36,6 +36,7 @@
 #include <chrono>
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
+#include "benchmarks/tpcc_sharding.h"
 
 using namespace std;
 using namespace util;
@@ -94,7 +95,7 @@ void ALWAYS_ERROR(bool aa){
   if (likely(aa)){
   }else{
     if(TThread::transget_without_throw){
-      //found the key, but invalid. 
+      //found the key, but invalid.
       //  in the previous implementation, it throw an exception.
       //  but we don't want stack unwinding, just abort transaction
 
@@ -233,7 +234,7 @@ std::string intToString2(long long num) {
     return ss.str();
 }
 
-long long getCurrentTimeMillis2() {
+static inline long long getCurrentTimeMillis2() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
@@ -676,9 +677,10 @@ public:
               const map<string, vector<abstract_ordered_index *>> &partitions,
               const map<string, vector<abstract_ordered_index *>> &remote_partitions,
               spin_barrier *barrier_a, spin_barrier *barrier_b,
-              uint warehouse_id_start, uint warehouse_id_end)
+              uint warehouse_id_start, uint warehouse_id_end,
+              int shard_index = -1)
     : bench_worker(worker_id, true, seed, db,
-                   open_tables, barrier_a, barrier_b),
+                   open_tables, barrier_a, barrier_b, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions),
       warehouse_id_start(warehouse_id_start),
       warehouse_id_end(warehouse_id_end)
@@ -818,7 +820,7 @@ protected:
     //if (BenchmarkConfig::getInstance().getClusterRole()==mako::LOCALHOST_CENTER_INT){ // disable it if 10 shards
       // #if !defined(MEGA_BENCHMARK)
       // for (int i=0;i<=100;i++) {
-      //    ///*printf("start - pid:%d-i:%d", TThread::getPartitionID(), i);
+      //    ///*printf("start - pid:%d-i:%d", TThread::getGlobalPartitionID(), i);
       //    //std::cout<<std::endl;
       //    //uint32_t dstShardIndex=0;
       //    //for (int i=0; i<nshards; i++) {
@@ -830,7 +832,7 @@ protected:
       //   TThread::sclient->warmupRequest(req_val, mako::LEARNER_CENTER_INT, ret_value, dstShardIndex);
       //   int ret = ret_value;
       // }
-      // Warning("DONE a warmup on leader:%d to the learner-0\n", TThread::getPartitionID());
+      // Warning("DONE a warmup on leader:%d to the learner-0\n", TThread::getGlobalPartitionID());
       // #endif
     //}
   }
@@ -863,8 +865,9 @@ public:
                         abstract_db *db,
                         const map<string, abstract_ordered_index *> &open_tables,
                         const map<string, vector<abstract_ordered_index *>> &partitions,
-                        const map<string, vector<abstract_ordered_index *>> &remote_partitions)
-    : bench_loader(seed, db, open_tables),
+                        const map<string, vector<abstract_ordered_index *>> &remote_partitions,
+                        int shard_index = -1)
+    : bench_loader(seed, db, open_tables, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions)
   {}
 
@@ -1015,8 +1018,9 @@ public:
                    abstract_db *db,
                    const map<string, abstract_ordered_index *> &open_tables,
                    const map<string, vector<abstract_ordered_index *>> &partitions,
-                   const map<string, vector<abstract_ordered_index *>> &remote_partitions)
-    : bench_loader(seed, db, open_tables),
+                   const map<string, vector<abstract_ordered_index *>> &remote_partitions,
+                   int shard_index = -1)
+    : bench_loader(seed, db, open_tables, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions)
   {}
 
@@ -1078,8 +1082,9 @@ public:
                     abstract_db *db,
                     const map<string, abstract_ordered_index *> &open_tables,
                     const map<string, vector<abstract_ordered_index *>> &partitions,const map<string, vector<abstract_ordered_index *>> &remote_partitions,
-                    ssize_t warehouse_id)
-    : bench_loader(seed, db, open_tables),
+                    ssize_t warehouse_id,
+                    int shard_index = -1)
+    : bench_loader(seed, db, open_tables, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions),
       warehouse_id(warehouse_id)
   {
@@ -1189,8 +1194,9 @@ public:
                        abstract_db *db,
                        const map<string, abstract_ordered_index *> &open_tables,
                        const map<string, vector<abstract_ordered_index *>> &partitions,
-                       const map<string, vector<abstract_ordered_index *>> &remote_partitions)
-    : bench_loader(seed, db, open_tables),
+                       const map<string, vector<abstract_ordered_index *>> &remote_partitions,
+                       int shard_index = -1)
+    : bench_loader(seed, db, open_tables, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions)
   {}
 
@@ -1255,8 +1261,9 @@ public:
                        const map<string, abstract_ordered_index *> &open_tables,
                        const map<string, vector<abstract_ordered_index *>> &partitions,
                        const map<string, vector<abstract_ordered_index *>> &remote_partitions,
-                       ssize_t warehouse_id)
-    : bench_loader(seed, db, open_tables),
+                       ssize_t warehouse_id,
+                       int shard_index = -1)
+    : bench_loader(seed, db, open_tables, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions),
       warehouse_id(warehouse_id)
   {
@@ -1403,8 +1410,9 @@ public:
                     const map<string, abstract_ordered_index *> &open_tables,
                     const map<string, vector<abstract_ordered_index *>> &partitions,
                     const map<string, vector<abstract_ordered_index *>> &remote_partitions,
-                    ssize_t warehouse_id)
-    : bench_loader(seed, db, open_tables),
+                    ssize_t warehouse_id,
+                    int shard_index = -1)
+    : bench_loader(seed, db, open_tables, shard_index),
       tpcc_worker_mixin(partitions,remote_partitions),
       warehouse_id(warehouse_id)
   {
@@ -1603,7 +1611,7 @@ tpcc_worker::txn_new_order_simple() {
   {
     for (int c_id=1; c_id<=10; c_id++) {
       local_oorder_id ++;
-      int oorder_id = local_oorder_id * 100 + TThread::getPartitionID();
+      int oorder_id = local_oorder_id * 100 + TThread::getGlobalPartitionID();
       ids.push_back(oorder_id);
       bool is_remote=false;
       retry:
@@ -1643,15 +1651,15 @@ tpcc_worker::txn_new_order_simple() {
         }
         bool ret = db->commit_txn(txn);
         if (!ret) {
-          Warning("fail to transaction-1(false):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id, TThread::getPartitionID());
+          Warning("fail to transaction-1(false):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id, TThread::getGlobalPartitionID());
           isAbort = true;
           //db->abort_txn(txn);
           //goto retry;
         } else {
-          //Warning("succeed to transaction-1:%d,local_oorder_id:%d,par_id:%d,c_id:%d,is_remote:%d", warehouse_id,local_oorder_id, TThread::getPartitionID(),c_id,is_remote);
+          //Warning("succeed to transaction-1:%d,local_oorder_id:%d,par_id:%d,c_id:%d,is_remote:%d", warehouse_id,local_oorder_id, TThread::getGlobalPartitionID(),c_id,is_remote);
         }
       } catch (abstract_db::abstract_abort_exception &ex) {
-        Warning("fail to transaction-1(abort):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id, TThread::getPartitionID());
+        Warning("fail to transaction-1(abort):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id, TThread::getGlobalPartitionID());
         db->abort_txn(txn);
         isAbort = true;
       } catch (int n) {
@@ -1682,14 +1690,14 @@ tpcc_worker::txn_new_order_simple() {
 
           bool ret = db->commit_txn(txn);
           if (!ret) {
-            Warning("fail to transaction-2(false):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id,TThread::getPartitionID());
+            Warning("fail to transaction-2(false):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id,TThread::getGlobalPartitionID());
             //db->abort_txn(txn);
             isAbort = true;
           }else {
-            Warning("succeed to transaction-2:%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id,TThread::getPartitionID());
+            Warning("succeed to transaction-2:%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id,TThread::getGlobalPartitionID());
           }
         } catch (abstract_db::abstract_abort_exception &ex) {
-          Warning("fail to transaction-2(abort):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id,TThread::getPartitionID());
+          Warning("fail to transaction-2(abort):%d,local_oorder_id:%d,par_id:%d", warehouse_id,local_oorder_id,TThread::getGlobalPartitionID());
           db->abort_txn(txn);
           isAbort = true;
         } catch (int n) {
@@ -1703,7 +1711,7 @@ tpcc_worker::txn_new_order_simple() {
 
   // Transaction-3
   if (isAbort || local_oorder_id % 10 == 0) {
-    Warning("current oorder id: %d, w-id: %d,par_id:%d", local_oorder_id, warehouse_id,TThread::getPartitionID());
+    Warning("current oorder id: %d, w-id: %d,par_id:%d", local_oorder_id, warehouse_id,TThread::getGlobalPartitionID());
     try {
       usleep((rand()%100)*1000);
       scan_entire_warehouses(warehouse_id);
@@ -2182,7 +2190,7 @@ tpcc_worker::txn_new_order_mega()
       if (!WarehouseInShard(ol_supply_w_id, BenchmarkConfig::getInstance().getShardIndex())) {
         const stock::key k_s(WarehouseGlobal2Local(ol_supply_w_id), base_ol_i_id);
         remote_tbl_stock(ol_supply_w_id)->get(txn, EncodeK(obj_key0, k_s), obj_v);
-        //std::cout<<"send base:"<<base_ol_i_id<<", tid:"<<TThread::getPartitionID()<<", v-len:"<<obj_v.length()<< std::endl;
+        //std::cout<<"send base:"<<base_ol_i_id<<", tid:"<<TThread::getGlobalPartitionID()<<", v-len:"<<obj_v.length()<< std::endl;
     
         // batch-read
         for (int i=0; i<mako::mega_batch_size; i++){
@@ -3461,18 +3469,30 @@ private:
   {
     const bool is_read_only = IsTableReadOnly(name);
     const bool is_append_only = IsTableAppendOnly(name);
-    const bool use_hashtable = UseHashtable(name); 
+    const bool use_hashtable = UseHashtable(name);
     const string s_name(name);
     vector<abstract_ordered_index *> ret(NumWarehousesTotal());
+
+    // Check if we're in multi-shard single-process mode
+    auto* config = BenchmarkConfig::getInstance().getConfig();
+    bool multi_shard_mode = config && config->multi_shard_mode;
+    const auto& local_shards = config ? config->local_shard_indices : std::vector<int>();
+
     for (size_t i = 0; i < NumWarehousesTotal(); i++) {
       int global_wid=i+1;
 
       int s_idx = i / NumWarehouses() ;
       if (s_idx == BenchmarkConfig::getInstance().getShardIndex()) {
-        // do nothing
-      } else { // create remote tables
+        // Local to current shard - do nothing
+      } else if (multi_shard_mode &&
+                 std::find(local_shards.begin(), local_shards.end(), s_idx) != local_shards.end()) {
+        // Multi-shard mode and target shard is local: leave nullptr
+        // Will be filled in later with actual local tables from other shard
+        Notice("Remote table %s for wid %d: target shard %d is local, skipping RPC proxy",
+               name, global_wid, s_idx);
+      } else { // create remote tables for truly remote shards (different process)
         abstract_ordered_index *idx = db->open_index(
-          s_name + "_remote_" + to_string(global_wid), 
+          s_name + "_remote_" + to_string(global_wid),
           s_idx);
         ret[i] = idx;
       }
@@ -3484,6 +3504,18 @@ public:
   tpcc_bench_runner(abstract_db *db, bool failure=false)
     : bench_runner(db)
   {
+    init_tables(db, failure);
+  }
+
+  // Constructor with shard_index for multi-shard mode
+  tpcc_bench_runner(abstract_db *db, int shard_index, bool failure=false)
+    : bench_runner(db, shard_index)
+  {
+    init_tables(db, failure);
+  }
+
+private:
+  void init_tables(abstract_db *db, bool failure) {
     if (failure) {
       printf("reinitializing partitions under failure\n");
         string nCount[12] = {"customer", "customer_name_idx", "district", "history", "new_order", "oorder", 
@@ -3531,6 +3563,16 @@ public:
       }
     }
 
+    // Initialize TPC-C sharding policy for policy-based routing
+    // This enables the ShardingPolicyCache to route keys to the correct shard
+    // based on warehouse ID rather than table ID alone
+    if (!mako::is_tpcc_sharding_initialized()) {
+      auto& cfg = BenchmarkConfig::getInstance();
+      int num_warehouses_total = cfg.getScaleFactor() * cfg.getNshards();
+      int num_shards = cfg.getNshards();
+      mako::initialize_tpcc_sharding_policy(num_warehouses_total, num_shards);
+    }
+
     if (g_enable_partition_locks) {
       static_assert(sizeof(aligned_padded_elem<spinlock>) == CACHELINE_SIZE, "xx");
       auto& cfg = BenchmarkConfig::getInstance();
@@ -3561,36 +3603,37 @@ protected:
   make_loaders()
   {
     vector<bench_loader *> ret;
-    if (TThread::get_is_micro()) {
-      ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions));
+    int shard_idx = get_shard_index();  // Get shard index from runner for multi-shard mode
+    if (BenchmarkConfig::getInstance().getIsMicro()) {
+      ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions, shard_idx));
       return ret;
     }
 #if defined(SIMPLE_WORKLOAD)
-    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions));
+    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions, shard_idx));
 #else
-    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions));
-    ret.push_back(new tpcc_item_loader(235443, db, open_tables, partitions, remote_partitions));
+    ret.push_back(new tpcc_warehouse_loader(9324, db, open_tables, partitions, remote_partitions, shard_idx));
+    ret.push_back(new tpcc_item_loader(235443, db, open_tables, partitions, remote_partitions, shard_idx));
     if (BenchmarkConfig::getInstance().getEnableParallelLoading()) {
       fast_random r(89785943);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, remote_partitions, i));
+        ret.push_back(new tpcc_stock_loader(r.next(), db, open_tables, partitions, remote_partitions, i, shard_idx));
     } else {
-      ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, partitions, remote_partitions, -1));
+      ret.push_back(new tpcc_stock_loader(89785943, db, open_tables, partitions, remote_partitions, -1, shard_idx));
     }
-    ret.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions, remote_partitions));
+    ret.push_back(new tpcc_district_loader(129856349, db, open_tables, partitions, remote_partitions, shard_idx));
     if (BenchmarkConfig::getInstance().getEnableParallelLoading()) {
       fast_random r(923587856425);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, remote_partitions, i));
+        ret.push_back(new tpcc_customer_loader(r.next(), db, open_tables, partitions, remote_partitions, i, shard_idx));
     } else {
-      ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, remote_partitions, -1));
+      ret.push_back(new tpcc_customer_loader(923587856425, db, open_tables, partitions, remote_partitions, -1, shard_idx));
     }
     if (BenchmarkConfig::getInstance().getEnableParallelLoading()) {
       fast_random r(2343352);
       for (uint i = 1; i <= NumWarehouses(); i++)
-        ret.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, remote_partitions, i));
+        ret.push_back(new tpcc_order_loader(r.next(), db, open_tables, partitions, remote_partitions, i, shard_idx));
     } else {
-      ret.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, remote_partitions, -1));
+      ret.push_back(new tpcc_order_loader(2343352, db, open_tables, partitions, remote_partitions, -1, shard_idx));
     }
 #endif
     return ret;
@@ -3612,9 +3655,10 @@ protected:
         ret.push_back(
           new tpcc_worker(
             blockstart + i,
-            r.next(), db, open_tables, partitions, remote_partitions, 
+            r.next(), db, open_tables, partitions, remote_partitions,
             &barrier_a, &barrier_b,
-            (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2));
+            (i % NumWarehouses()) + 1, (i % NumWarehouses()) + 2,
+            shard_index_));  // Pass shard index to worker
       }
     } else {
       const unsigned nwhse_per_partition = NumWarehouses() / cfg.getNthreads();
@@ -3626,7 +3670,8 @@ protected:
           new tpcc_worker(
             blockstart + i,
             r.next(), db, open_tables, partitions, remote_partitions,
-            &barrier_a, &barrier_b, wstart+1, wend+1));
+            &barrier_a, &barrier_b, wstart+1, wend+1,
+            shard_index_));  // Pass shard index to worker
       }
     }
     return ret;
@@ -3637,6 +3682,37 @@ public:
   const map<string, vector<abstract_ordered_index *>> & get_partitions() const { return partitions; }
   const map<string, vector<abstract_ordered_index *>> & get_remote_partitions() const { return remote_partitions; }
   const map<string, abstract_ordered_index *> & get_open_tables_ref() const { return open_tables; }
+
+  // For multi-shard mode: wire up cross-shard tables from other runners
+  // Sets remote_partitions entries for warehouses belonging to source_shard
+  void wireup_cross_shard_tables(int source_shard, const map<string, vector<abstract_ordered_index *>>& source_partitions) {
+    int num_warehouses = NumWarehouses();
+    int start_wid_idx = source_shard * num_warehouses;  // 0-indexed warehouse index
+
+    for (auto& entry : remote_partitions) {
+      const string& table_name = entry.first;
+      vector<abstract_ordered_index*>& remote_vec = entry.second;
+
+      // Find corresponding table in source partitions
+      auto it = source_partitions.find(table_name);
+      if (it == source_partitions.end()) {
+        Notice("wireup_cross_shard_tables: table %s not found in source shard %d", table_name.c_str(), source_shard);
+        continue;
+      }
+
+      const vector<abstract_ordered_index*>& source_vec = it->second;
+
+      // Wire up entries for warehouses belonging to source_shard
+      for (int local_wid = 0; local_wid < num_warehouses && local_wid < (int)source_vec.size(); local_wid++) {
+        int global_wid_idx = start_wid_idx + local_wid;  // 0-indexed
+        if (global_wid_idx < (int)remote_vec.size()) {
+          remote_vec[global_wid_idx] = source_vec[local_wid];
+          // Notice("Wired up %s[%d] from shard %d local_wid %d", table_name.c_str(), global_wid_idx, source_shard, local_wid);
+        }
+      }
+    }
+    Notice("Wired up cross-shard tables from shard %d", source_shard);
+  }
 
 private:
   map<string, vector<abstract_ordered_index *>> partitions;
@@ -3653,7 +3729,7 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
     mako::stop_erpc_server();
     return rc; // rc is same object as r below
   }
-  if (TThread::get_is_micro()) {
+  if (BenchmarkConfig::getInstance().getIsMicro()) {
     unsigned default_mix_for_micro[] = {50, 50, 0, 0, 0};
     std::copy_n(default_mix_for_micro, 5, g_txn_workload_mix);
   }
@@ -3767,4 +3843,123 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run = 0, bench_runner *
 
   
   return r;
+}
+
+// Overload with shard_index for multi-shard mode
+bench_runner *
+tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, int shard_index)
+{
+  if (run==1){
+    ((tpcc_bench_runner*)rc)->run();
+    mako::stop_erpc_server();
+    return rc;
+  }
+  if (BenchmarkConfig::getInstance().getIsMicro()) {
+    unsigned default_mix_for_micro[] = {50, 50, 0, 0, 0};
+    std::copy_n(default_mix_for_micro, 5, g_txn_workload_mix);
+  }
+
+  auto x0 = std::chrono::high_resolution_clock::now();
+  optind = 1;
+  bool did_spec_remote_pct = false;
+  g_enable_separate_tree_per_partition = 1;
+  while (1) {
+    static struct option long_options[] =
+    {
+      {"disable-cross-partition-transactions" , no_argument       , &g_disable_xpartition_txn             , 1}   ,
+      {"disable-read-only-snapshots"          , no_argument       , &g_disable_read_only_scans            , 1}   ,
+      {"enable-partition-locks"               , no_argument       , &g_enable_partition_locks             , 1}   ,
+      {"enable-separate-tree-per-partition"   , no_argument       , &g_enable_separate_tree_per_partition , 1}   ,
+      {"f_mode"                               , required_argument , 0                                     , 'm'} ,
+      {"new-order-remote-item-pct"            , required_argument , 0                                     , 'r'} ,
+      {"new-order-fast-id-gen"                , no_argument       , &g_new_order_fast_id_gen              , 1}   ,
+      {"uniform-item-dist"                    , no_argument       , &g_uniform_item_dist                  , 1}   ,
+      {"order-status-scan-hack"               , no_argument       , &g_order_status_scan_hack             , 1}   ,
+      {"workload-mix"                         , required_argument , 0                                     , 'w'} ,
+      {0, 0, 0, 0}
+    };
+    int option_index = 0;
+    int c = getopt_long(argc, argv, "r:", long_options, &option_index);
+    if (c == -1)
+      break;
+    switch (c) {
+    case 0:
+      if (long_options[option_index].flag != 0)
+        break;
+      abort();
+      break;
+
+    case 'r':
+      g_new_order_remote_item_pct = strtoul(optarg, NULL, 10);
+      ALWAYS_ERROR(g_new_order_remote_item_pct >= 0 && g_new_order_remote_item_pct <= 100);
+      did_spec_remote_pct = true;
+      break;
+
+    case 'm':
+      if(optarg) {
+          f_mode = strtoul(optarg, NULL, 10);
+      }
+      break;
+
+    case 'w':
+      {
+        const vector<string> toks = split(optarg, ',');
+        ALWAYS_ERROR(toks.size() == ARRAY_NELEMS(g_txn_workload_mix));
+        unsigned s = 0;
+        for (size_t i = 0; i < toks.size(); i++) {
+          unsigned p = strtoul(toks[i].c_str(), nullptr, 10);
+          ALWAYS_ERROR(p >= 0 && p <= 100);
+          s += p;
+          g_txn_workload_mix[i] = p;
+        }
+        ALWAYS_ERROR(s == 100);
+      }
+      break;
+
+    case '?':
+      exit(1);
+
+    default:
+      abort();
+    }
+  }
+
+  if (did_spec_remote_pct && g_disable_xpartition_txn) {
+    cerr << "WARNING: --new-order-remote-item-pct given with --disable-cross-partition-transactions" << endl;
+    cerr << "  --new-order-remote-item-pct will have no effect" << endl;
+  }
+
+  // Create bench_runner with shard_index for multi-shard mode
+  tpcc_bench_runner *r = new tpcc_bench_runner(db, shard_index, f_mode==1);
+
+  // In multi-shard single-process mode, skip RPC setup since all shards are local
+  // Cross-shard access will use local tables directly
+  auto* config = BenchmarkConfig::getInstance().getConfig();
+  bool multi_shard_mode = config && config->multi_shard_mode;
+  if (!multi_shard_mode) {
+    mako::setup_erpc_server();
+    std::map<int, abstract_ordered_index *> open_tables_by_id;
+    for (const auto &entry : r->get_open_tables_ref()) {
+      abstract_ordered_index *tbl = entry.second;
+      if (tbl) {
+        open_tables_by_id[tbl->get_table_id()] = tbl;
+      }
+    }
+    mako::setup_helper(db, open_tables_by_id);
+  } else {
+    Notice("Multi-shard mode: skipping RPC setup for shard %d (all shards local)", shard_index);
+  }
+  r->f_mode=f_mode;
+  auto x1 = std::chrono::high_resolution_clock::now();
+  printf("start worker (shard %d):%d\n", shard_index,
+            std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count());
+
+  return r;
+}
+
+// Multi-shard mode: wire up cross-shard table references between runners
+void wireup_cross_shard_tables_tpcc(bench_runner* target_runner, int source_shard_idx, bench_runner* source_runner) {
+  tpcc_bench_runner* target = static_cast<tpcc_bench_runner*>(target_runner);
+  tpcc_bench_runner* source = static_cast<tpcc_bench_runner*>(source_runner);
+  target->wireup_cross_shard_tables(source_shard_idx, source->get_partitions());
 }

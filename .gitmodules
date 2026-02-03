@@ -7,6 +7,6 @@
 [submodule "third-party/makocon"]
 	path = third-party/makocon
 	url = https://github.com/Jiyang-Wu/MakoCon
-[submodule "third-party/rustycpp"]
+[submodule "third-party/rusty-cpp"]
 	path = third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp

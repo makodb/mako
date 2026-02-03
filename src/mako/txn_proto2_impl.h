@@ -55,6 +55,7 @@ public:
   //
   // should only be called ONCE is not thread-safe.  if assignments_used is not
   // null, then fills it with a copy of the assignment actually computed
+  // @unsafe
   static void Init(
       size_t nworkers,
       const std::vector<std::string> &logfiles,
@@ -132,15 +133,19 @@ public:
       return curoff_ - sizeof(logbuf_header);
     }
 
+    // @unsafe
     inline logbuf_header *
     header()
     {
+      // @unsafe - casts raw log buffer into header struct
       return reinterpret_cast<logbuf_header *>(&buf_start_[0]);
     }
 
+    // @unsafe
     inline const logbuf_header *
     header() const
     {
+      // @unsafe - const cast of raw buffer to header view
       return reinterpret_cast<const logbuf_header *>(&buf_start_[0]);
     }
 
@@ -269,7 +274,9 @@ private:
     INITMODE_RCU,  // try to use the RCU numa aware allocator
   };
 
+  // @unsafe
   static inline persist_ctx &
+  // @unsafe - performs manual arena allocation and placement-new for log buffers
   persist_ctx_for(uint64_t core_id, InitMode imode)
   {
     INVARIANT(core_id < g_persist_ctxs.size());
@@ -295,7 +302,7 @@ private:
       }
       ctx.init_ = true;
     }
-    return ctx;
+    return g_persist_ctxs[core_id];
   }
 
   // static state
@@ -568,6 +575,7 @@ protected:
     }
   };
 
+  // @unsafe
   static void
   clean_up_to_including(threadctx &ctx, uint64_t ro_tick_geq);
 
@@ -776,7 +784,9 @@ public:
     return true;
   }
 
+  // @unsafe
   inline void
+  // @unsafe - serializes write set records directly into shared log buffers
   on_tid_finish(tid_t commit_tid)
   {
     if (!txn_logger::IsPersistenceEnabled() ||
@@ -890,7 +900,9 @@ public:
 private:
 
   // assumes enough space in px to hold this txn
+  // @unsafe
   inline uint64_t
+  // @unsafe - writes encoded transaction contents into raw pbuffer memory
   write_current_txn_into_buffer(
       txn_logger::pbuffer *px,
       uint64_t commit_tid,
@@ -1041,7 +1053,9 @@ public:
     return (ctx.last_commit_tid_ = ret);
   }
 
+  // @unsafe
   inline ALWAYS_INLINE void
+  // @unsafe - enqueues obsolete tuple versions using raw pointers and manual epoch math
   on_dbtuple_spill(dbtuple *tuple_ahead, dbtuple *tuple)
   {
 #ifdef PROTO2_CAN_DISABLE_GC
@@ -1081,7 +1095,9 @@ public:
         ro_tick);
   }
 
+  // @unsafe
   inline ALWAYS_INLINE void
+  // @unsafe - copies delete keys into tuple storage and schedules GC with raw pointers
   on_logical_delete(dbtuple *tuple, const std::string &key, concurrent_btree *btr)
   {
 #ifdef PROTO2_CAN_DISABLE_GC

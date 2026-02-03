@@ -14,13 +14,13 @@ class FrameTapir : public Frame {
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,
                                  int benchmark,
-                                 ClientControlServiceImpl *ccsi,
+                                 rusty::Option<rusty::Arc<ClientStatus>> client_status,
                                  uint32_t id,
                                  shared_ptr<TxnRegistry>) override;
   TxLogServer *CreateScheduler() override;
   mdb::Row *CreateRow(const mdb::Schema *schema,
                       vector<Value> &row_data) override;
-  Communicator *CreateCommo(rusty::Arc<PollThreadWorker> poll_thread_worker = rusty::Arc<PollThreadWorker>()) override;
+  Communicator *CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None) override;
 
   shared_ptr<Tx> CreateTx(epoch_t epoch, txnid_t tid,
                           bool ro, TxLogServer *mgr) override;

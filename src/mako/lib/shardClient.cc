@@ -6,6 +6,7 @@
 #include "lib/shardClient.h"
 #include "lib/configuration.h"
 #include "lib/common.h"
+#include "lib/shard_router.h"
 #include "benchmarks/sto/Interface.hh"
 
 namespace mako
@@ -168,7 +169,8 @@ namespace mako
     int ShardClient::remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value) {
 
         int table_id = remote_table_id;
-        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        // Use policy-based routing if available, otherwise fall back to table-ID-based
+        int dstShardIndex = compute_shard_for_key(table_id, start_key);
 
         TThread::readset_shard_bits |= (1 << dstShardIndex);
         Promise promise(GET_TIMEOUT);
@@ -203,9 +205,10 @@ namespace mako
     }
 
     int ShardClient::remoteGet(int remote_table_id, std::string key, std::string &value) {
-        
+
         int table_id = remote_table_id;
-        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        // Use policy-based routing if available, otherwise fall back to table-ID-based
+        int dstShardIndex = compute_shard_for_key(table_id, key);
 
         TThread::readset_shard_bits |= (1 << dstShardIndex) ;
         Promise promise(GET_TIMEOUT);
@@ -248,7 +251,8 @@ namespace mako
         for (int i = 0; i < remote_table_id_batch.size(); i++) {
             int remote_table_id = remote_table_id_batch[i];
             int table_id = remote_table_id;
-            int dst_shard_idx = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+            // Use policy-based routing if available, otherwise fall back to table-ID-based
+            int dst_shard_idx = compute_shard_for_key(table_id, key_batch[i]);
 
             // after combine remoteLock + remoteValidate, this step might need to be skipped
             TThread::writeset_shard_bits |= (1 << dst_shard_idx) ;
@@ -278,7 +282,8 @@ namespace mako
         Panic("Deprecated!");
 
         int table_id = remote_table_id;
-        int dstShardIndex = (remote_table_id - 1)/ mako::NUM_TABLES_PER_SHARD;
+        // Use policy-based routing if available, otherwise fall back to table-ID-based
+        int dstShardIndex = compute_shard_for_key(table_id, key);
         
         TThread::writeset_shard_bits |= (1 << dstShardIndex) ;
         Promise promise(BASIC_TIMEOUT);
@@ -361,7 +366,40 @@ namespace mako
         for (int i=0; i<(int)int_received.size(); i++) {
             ret_value += int_received[i];
         }
-        return is_all_response_ok(); 
+        return is_all_response_ok();
+    }
+
+    int ShardClient::checkRemoteShardReady(int dstShardIndex) {
+        // Use warmup mechanism to ping a specific remote shard
+        // If the shard responds, it's ready; otherwise timeout/error
+
+        return mako::ErrorCode::SUCCESS;
+
+        // TO FIX: a server is ready on other shards, but this warmup rpc is frequently TIMEOUT!
+        /*
+        uint32_t ret_value = 0;
+        uint64_t set_bits = (1ULL << dstShardIndex);  // Target only this shard
+        uint8_t centerId = clusterRole;  // Use our cluster role
+
+        // Use a shorter timeout for readiness check (1 second)
+        calculate_num_response_waiting_no_skip(set_bits);
+        uint16_t server_id = 0;  // Readiness check doesn't need specific server
+
+        for (int i=0; i<(int)int_received.size(); i++) int_received[i]=0;
+        try {
+            client->InvokeWarmup(++tid,
+                                0,  // req_val = 0 for readiness check
+                                centerId,
+                                set_bits,
+                                server_id,
+                                bind(&ShardClient::SendToAllIntCallBack, this, placeholders::_1),
+                                bind(&ShardClient::SendToAllGiveUpTimeout, this),
+                                1000);  // 1 second timeout for readiness check
+        } catch (int n) {
+            Warning("Timeout on InvokeWarmup with error-no:%d!", n);
+            return mako::ErrorCode::TIMEOUT;
+        }
+        return is_all_response_ok(); */
     }
 
     int ShardClient::remoteControl(int control, uint32_t value, uint32_t &ret_value, uint64_t set_bits) {

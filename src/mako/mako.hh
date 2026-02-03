@@ -28,7 +28,8 @@
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 
-#include "deptran/s_main.h"
+// Runtime replication switching - unified interface
+#include "deptran/replication_helper.h"
 
 #include "lib/configuration.h"
 #include "lib/fasttransport.h"
@@ -37,8 +38,37 @@
 #include "lib/server.h"
 #include "lib/rust_wrapper.h"
 
+// Config node initialization stubs
+// NOTE: The full implementation is in config_node_init.cc but cannot be linked
+// due to include conflicts between rrr/deptran and mako lib headers.
+// TODO: Resolve header conflicts to enable full config node support in mako.
+namespace mako {
+    inline bool init_config_node() {
+        auto& benchConfig = BenchmarkConfig::getInstance();
+        if (benchConfig.isConfigNode()) {
+            Notice("Config node mode requested but not yet fully integrated with mako");
+            // TODO: Implement proper config node initialization
+        }
+        return true;  // Return success to not block startup
+    }
+
+    inline bool fetch_config_from_cnode() {
+        auto& benchConfig = BenchmarkConfig::getInstance();
+        if (!benchConfig.getConfigNodeAddr().empty()) {
+            Notice("Config node client mode requested but not yet fully integrated with mako");
+            // TODO: Implement proper config fetching
+        }
+        return false;  // Return false to indicate no config was fetched
+    }
+
+    inline void shutdown_config_node() {
+        // Stub - nothing to shutdown yet
+    }
+}
+
 
 // Initialize Rust wrapper: communicate with rust-based redis client
+/*
 static void initialize_rust_wrapper()
 {
   RustWrapper* g_rust_wrapper = new RustWrapper();
@@ -49,7 +79,7 @@ static void initialize_rust_wrapper()
   }
   std::cout << "Successfully initialized rust wrapper!" << std::endl;
   g_rust_wrapper->start_polling();
-}
+}*/
 
 static void print_system_info()
 {
@@ -225,7 +255,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         std::cout << "we can start a advancer" << std::endl;
         sync_util::sync_logger::start_advancer();
       }
-      return status; 
+      return status;
     }
 
     // ending of Paxos group
@@ -615,8 +645,12 @@ static void setup_leader_election_callbacks()
     uint32_t aa = mako::getCurrentTimeMillis();
     Warning("Receive a control command:%d, current ms: %llu", control, aa);
     switch (control) {
-#if defined(FAIL_NEW_VERSION)
+#if defined(FAIL_NEW_VERSION) && !defined(MAKO_USE_RAFT)
       case 0: {
+        if (janus::is_using_raft()) {
+          // Raft: Leader stepped down - no action needed, Raft handles internally
+          break;
+        }
         std::cout<<"Implement a new fail recovery!"<<std::endl;
         sync_util::sync_logger::exchange_running = false;
         auto& benchConfig = BenchmarkConfig::getInstance();
@@ -625,18 +659,22 @@ static void setup_leader_election_callbacks()
         break;
       }
       case 2: {
+        if (janus::is_using_raft()) {
+          // Raft: Became leader - no action needed, Raft handles internally
+          break;
+        }
         // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
         // Single timestamp system: collect all shard watermarks and use maximum
         uint32_t max_watermark = 0;
         auto& benchConfig = BenchmarkConfig::getInstance();
         for (int i=0; i<benchConfig.getNshards(); i++) {
           int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
-          if (i==0) 
+          if (i==0)
             clusterRoleLocal = mako::LEARNER_CENTER_INT;
-          mako::NFSSync::wait_for_key("fvw_"+std::to_string(i), 
+          mako::NFSSync::wait_for_key("fvw_"+std::to_string(i),
                                           benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i), 
-                                                      benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
+          std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i),
+                                                      benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(),
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
           std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
           uint32_t watermark = std::stoi(w_i);
@@ -655,14 +693,19 @@ static void setup_leader_election_callbacks()
         auto x0 = std::chrono::high_resolution_clock::now() ;
         break;
       }
-#else
+#endif
+#if !defined(FAIL_NEW_VERSION)
       // for the partial datacenter failure
       case 0: {
-        // 0. stop exchange client + server on the new leader (learner)
+        if (janus::is_using_raft()) {
+          // Raft: Leader stepped down - no action needed, Raft handles internally
+          break;
+        }
+        // Paxos: 0. stop exchange client + server on the new leader (learner)
         sync_util::sync_logger::exchange_running = false;
         // 1. issue a control command to all other leader partition servers to
-        //    1.1 pause other servers DB threads 
-        //    1.2 config update 
+        //    1.1 pause other servers DB threads
+        //    1.2 config update
         //    1.3 issue no-ops within the old epoch
         //    1.4 start the controller
         auto& benchConfig = BenchmarkConfig::getInstance();
@@ -676,15 +719,20 @@ static void setup_leader_election_callbacks()
         break;
       }
       case 2: {// notify that you're the new leader; PREPARE
-         auto& benchConfig = BenchmarkConfig::getInstance();
+        if (janus::is_using_raft()) {
+          // Raft: Became leader - no action needed, Raft handles internally
+          break;
+        }
+        // Paxos:
+        auto& benchConfig = BenchmarkConfig::getInstance();
         sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
-         // wait for Paxos logs replicated
-         auto x0 = std::chrono::high_resolution_clock::now() ;
-         WAN_WAIT_TIME;
-         auto x1 = std::chrono::high_resolution_clock::now() ;
-         printf("replicated:%d\n",
+        // wait for Paxos logs replicated
+        auto x0 = std::chrono::high_resolution_clock::now() ;
+        WAN_WAIT_TIME;
+        auto x1 = std::chrono::high_resolution_clock::now() ;
+        printf("replicated:%d\n",
             std::chrono::duration_cast<std::chrono::microseconds>(x1-x0).count());
-         break;
+        break;
       }
       case 3: {  // COMMIT
         std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));
@@ -721,43 +769,62 @@ static void cleanup_and_shutdown()
   }
 
   sync_util::sync_logger::shutdown();
-  std::quick_exit( EXIT_SUCCESS );
+  //std::quick_exit( EXIT_SUCCESS ); // don't exit early
 }
 
 static char** prepare_paxos_args(const vector<string>& paxos_config_file,
-  const string paxos_proc_name)
+  const string paxos_proc_name, int& argc_out)
 {
-  int argc_paxos = 18;
-  int kPaxosBatchSize = 50000; 
+  // Support variable number of config files (typically 2 or 3)
+  // Base args: 14 args + 2 args per config file
+  int num_configs = paxos_config_file.size();
+  int argc_paxos = 14 + (num_configs * 2);
+  argc_out = argc_paxos;
+
+  int kPaxosBatchSize = 50000;
   char **argv_paxos = new char*[argc_paxos];
-  int k = 0;
-  
-  argv_paxos[0] = (char *) "";
-  argv_paxos[1] = (char *) "-b";
-  argv_paxos[2] = (char *) "-d";
-  argv_paxos[3] = (char *) "60";
-  argv_paxos[4] = (char *) "-f";
-  argv_paxos[5] = (char *) paxos_config_file[k++].c_str();
-  argv_paxos[6] = (char *) "-f";
-  argv_paxos[7] = (char *) paxos_config_file[k++].c_str();
-  argv_paxos[8] = (char *) "-t";
-  argv_paxos[9] = (char *) "30";
-  argv_paxos[10] = (char *) "-T";
-  argv_paxos[11] = (char *) "100000";
-  argv_paxos[12] = (char *) "-n";
-  argv_paxos[13] = (char *) "32";
-  argv_paxos[14] = (char *) "-P";
-  argv_paxos[15] = (char *) paxos_proc_name.c_str();
-  argv_paxos[16] = (char *) "-A";
-  argv_paxos[17] = new char[20];
-  memset(argv_paxos[17], '\0', 20);
-  sprintf(argv_paxos[17], "%d", kPaxosBatchSize);
-  
+  int i = 0;
+
+  argv_paxos[i++] = (char *) "";
+  argv_paxos[i++] = (char *) "-b";
+  argv_paxos[i++] = (char *) "-d";
+  argv_paxos[i++] = (char *) "60";
+
+  // Add all config files
+  for (int k = 0; k < num_configs; k++) {
+    argv_paxos[i++] = (char *) "-f";
+    argv_paxos[i++] = (char *) paxos_config_file[k].c_str();
+  }
+
+  argv_paxos[i++] = (char *) "-t";
+  argv_paxos[i++] = (char *) "30";
+  argv_paxos[i++] = (char *) "-T";
+  argv_paxos[i++] = (char *) "100000";
+  argv_paxos[i++] = (char *) "-n";
+  argv_paxos[i++] = (char *) "32";
+  argv_paxos[i++] = (char *) "-P";
+  argv_paxos[i++] = (char *) paxos_proc_name.c_str();
+  argv_paxos[i++] = (char *) "-A";
+  argv_paxos[i] = new char[20];
+  memset(argv_paxos[i], '\0', 20);
+  sprintf(argv_paxos[i], "%d", kPaxosBatchSize);
+
   return argv_paxos;
 }
 
-static void init_env() {
+static abstract_db * init_env() {
   auto& benchConfig = BenchmarkConfig::getInstance();
+
+  // Initialize config node if this is a c-node
+  // @unsafe { RocksDB and RPC I/O }
+  if (!mako::init_config_node()) {
+    Warning("Failed to initialize config node");
+    // Continue anyway - config node is optional
+  }
+
+  // Fetch config from c-node if specified and we don't have local config
+  // @unsafe { Network I/O }
+  mako::fetch_config_from_cnode();
 
   // Setup callbacks
   setup_sync_util_callbacks();
@@ -773,11 +840,12 @@ static void init_env() {
     setup_leader_election_callbacks();
 
 
-    char** argv_paxos = prepare_paxos_args(benchConfig.getPaxosConfigFile(), benchConfig.getPaxosProcName());
-    std::vector<std::string> ret = setup(18, argv_paxos);
+    int argc_paxos = 0;
+    char** argv_paxos = prepare_paxos_args(benchConfig.getPaxosConfigFile(), benchConfig.getPaxosProcName(), argc_paxos);
+    std::vector<std::string> ret = setup(argc_paxos, argv_paxos);
     if (ret.empty()) {
       Warning("paxos args errors");
-      return ;
+      return db;
     }
 
     // Setup Paxos callbacks have to be after setup() is called
@@ -824,7 +892,9 @@ static void init_env() {
       bench_runner *r = start_workers_tpcc(1, db, benchConfig.getNthreads(), true);
       modeMonitor(db, benchConfig.getNthreads(), r) ;
     }
+    return db;
   }
+  return nullptr;
 }
 
 static void send_end_signal() {
@@ -873,6 +943,10 @@ static void db_close() {
   // Cleanup and shutdown
   if (benchConfig.getIsReplicated())
     cleanup_and_shutdown();
+
+  // Shutdown config node if running
+  // @unsafe { RocksDB and RPC I/O }
+  mako::shutdown_config_node();
 }
 
 #endif

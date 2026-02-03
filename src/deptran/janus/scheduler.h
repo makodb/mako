@@ -19,19 +19,17 @@ class SchedulerJanus : public RccServer {
                           shared_ptr<RccGraph> res_graph);
 
   void OnAccept(txnid_t txn_id,
+                int rank,
                 const ballot_t& ballot,
                 shared_ptr<RccGraph> graph,
                 int32_t* res);
 
-  int OnCommit(txnid_t txn_id,
-               rank_t rank,
-               bool need_validation,
-               shared_ptr<RccGraph> sp_graph,
-               TxnOutput *output) override;
+//  int OnCommit(txnid_t txn_id,
+//               rank_t rank,
+//               bool need_validation,
+//               shared_ptr<RccGraph> sp_graph,
+//               TxnOutput *output) override;
 
-  int OnInquire(epoch_t epoch,
-                cmdid_t cmd_id,
-                shared_ptr<RccGraph> graph) override;
   JanusCommo* commo();
 
 };

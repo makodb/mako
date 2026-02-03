@@ -25,7 +25,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //    rrr::FutureAttr fuattr;
 //
 //    // remember this a asynchronous call! variable funtional range is important!
-//    fuattr.callback = [ch, pi, this, header, subcmd](Future * fu) {
+//    fuattr.callback = [ch, pi, this, header, subcmd](rusty::Arc<Future> fu) {
 //      bool early_return = false;
 //      {
 //        //     Log::debug("try locking at start response, tid: %llx, pid: %llx",
@@ -86,7 +86,7 @@ void RO6Coord::deptran_start(TxData *ch) {
 //               cmd_->id_,
 //               header.pid);
 //        verify(input != nullptr);
-//    Future::safe_release(proxy->async_rcc_start_pie(*subcmd, fuattr));
+//    proxy->async_rcc_start_pie(*subcmd, fuattr);  // Arc auto-released
 //  }
 }
 
@@ -96,7 +96,7 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //
 //  // commit or abort piece
 //  rrr::FutureAttr fuattr;
-//  fuattr.callback = [ch, this](Future * fu) {
+//  fuattr.callback = [ch, this](rusty::Arc<Future> fu) {
 //    int e = fu->get_error_code();
 //        verify(e == 0);
 //
@@ -160,7 +160,7 @@ void RO6Coord::deptran_finish(TxData *ch) {
 //
 //  for (auto& rp : ch->partition_ids_) {
 //    RococoProxy *proxy = (RococoProxy*)comm()->rpc_proxies_[rp];
-//    Future::safe_release(proxy->async_rcc_finish_txn(req, fuattr));
+//    proxy->async_rcc_finish_txn(req, fuattr);  // Arc auto-released
 //  }
 }
 
@@ -182,7 +182,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //    rrr::FutureAttr fuattr;
 //
 //    // remember this a asynchronous call! variable funtional range is important!
-//    fuattr.callback = [ch, pi, this, header](Future * fu) {
+//    fuattr.callback = [ch, pi, this, header](rusty::Arc<Future> fu) {
 //      {
 //        std::lock_guard<std::recursive_mutex> lock(this->mtx_);
 //
@@ -225,7 +225,7 @@ void RO6Coord::ro6_start_ro(TxData *ch) {
 //               cmd_->id_,
 //               header.pid);
 //    verify(input != nullptr);
-//    Future::safe_release(proxy->async_rcc_ro_start_pie(*subcmd, fuattr));
+//    proxy->async_rcc_ro_start_pie(*subcmd, fuattr);  // Arc auto-released
 //  }
 }
 

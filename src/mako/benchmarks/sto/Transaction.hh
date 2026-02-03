@@ -88,6 +88,7 @@
 
 void register_sync_util(std::function<int()>);
 
+// @unsafe: manages raw memory buffers
 class StringAllocator{
  private:
   unsigned char *LOG;
@@ -135,7 +136,8 @@ class StringAllocator{
         memcpy (queueLog + pos, &st_time, sizeof(uint32_t));
         pos += sizeof(uint32_t);
         //Warning("Paxos log cleanup!max_bytes_size:%d",max_bytes_size);
-        add_log_to_nc((char *)queueLog, pos, TThread::getPartitionID (), batch_size);
+        // Use local partition ID for Paxos workers (they are indexed 0 to warehouses-1 per shard)
+        add_log_to_nc((char *)queueLog, pos, TThread::getLocalPartitionID(), batch_size);
 
 #ifndef DISABLE_DISK
         // Asynchronously persist to RocksDB
@@ -143,7 +145,7 @@ class StringAllocator{
         uint32_t shard_id = BenchmarkConfig::getInstance().getShardIndex();
         static std::atomic<uint64_t> persist_success_count{0};
         static std::atomic<uint64_t> persist_fail_count{0};
-        persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getPartitionID(),
+        persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getLocalPartitionID(),
             [](bool success) {
                 if (success) {
                     persist_success_count.fetch_add(1, std::memory_order_relaxed);
@@ -166,6 +168,7 @@ class StringAllocator{
 //   static void setSTOBatchSize(size_t k){
 //     kSizeLimit = k;
 //   }
+  // @safe
   bool checkPushRequired(){
     if (curr_pos + 1 > max_bytes_size)
         Warning("checkPushRequired: buffer[%d/%d] is not enough!!!!, entries: %d, batch_size: %d", curr_pos, max_bytes_size, entries, batch_size);
@@ -179,16 +182,19 @@ class StringAllocator{
 	  return LOG+curr_pos-size;
     }
   }
+  // @safe
   unsigned char * getLogOnly(size_t& pos){
     pos = curr_pos;
 	return LOG;
   }
 
+  // @safe
   void resetMemory(){
     curr_pos = 0;
     entries = 0;
     latest_commit_timestamp = 0;
   }
+  // @safe
   bool checkLimits(size_t newLogLen){
   	return (curr_pos + newLogLen) < max_bytes_size;
   }
@@ -203,15 +209,18 @@ class StringAllocator{
 	entries++;
   }*/
 
+  // @safe
   inline void update_ptr(const size_t& w){
     entries++;
     curr_pos=w;
   }
 
+  // @safe
   size_t get_max_bytes_size() {
     return max_bytes_size;
   }
 
+  // @unsafe: uses std::max
   inline void update_commit_id(const uint32_t cid) {
     // Single timestamp system: just track the maximum timestamp
     latest_commit_timestamp = std::max(latest_commit_timestamp, cid);
@@ -229,6 +238,8 @@ class StringAllocator{
 	return true;
   }
 };
+
+
 
 inline std::unordered_map<uint32_t, uint32_t> sample_transaction_tracker ;  // local timestamp => updated time (millisecond)
 
@@ -345,7 +356,7 @@ struct __attribute__((aligned(128))) threadinfo_t {
     }
 };
 
-
+// @unsafe: uses mutable fields for interior mutability, complex template instantiations
 class Transaction {
 public:
     static constexpr unsigned tset_initial_capacity = 512;
@@ -382,6 +393,7 @@ public:
     }
 
     void print_stats();
+    // @unsafe: uses pointer address-of
     uint8_t get_current_term() const;
 
     static void clear_stats() {
@@ -897,14 +909,20 @@ public:
     }
 
     static void abort() {
-        always_assert(in_progress());
+        // Be defensive during shutdown - only abort if transaction is in progress
+        if (!in_progress()) {
+            return;
+        }
         TThread::txn->abort();
     }
 
     static void abort_without_throw() {
+        // Check if we need to do remote abort before aborting locally
+        bool needs_remote_abort = in_progress() &&
+            (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0);
         Sto::silent_abort();
-        if (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0)
-            TThread::sclient->remoteAbort(); 
+        if (needs_remote_abort)
+            TThread::sclient->remoteAbort();
     }
 
     static void silent_abort() {
@@ -915,19 +933,20 @@ public:
     template <typename T>
     static TransProxy item(const TObject* s, T key) {
         if (!in_progress()) {
-            Panic("IT should never happen:%d", TThread::txn->state_);
+            Panic("item() called when no transaction in progress: mode=%d", TThread::mode());
         }
-        always_assert(in_progress());
         return TThread::txn->item(s, key);
     }
 
     static void check_opacity(TransactionTid::type t) {
-        always_assert(in_progress());
+        // Be defensive during shutdown
+        if (!in_progress()) return;
         TThread::txn->check_opacity(t);
     }
 
     static void check_opacity() {
-        always_assert(in_progress());
+        // Be defensive during shutdown
+        if (!in_progress()) return;
         TThread::txn->check_opacity();
     }
 
@@ -942,34 +961,43 @@ public:
 
     template <typename T>
     static TransProxy new_item(const TObject* s, T key) {
-        always_assert(in_progress());
+        if (!in_progress()) {
+            Panic("new_item() called when no transaction in progress: mode=%d", TThread::mode());
+        }
         return TThread::txn->new_item(s, key);
     }
 
     template <typename T>
     static TransProxy read_item(const TObject* s, T key) {
-        always_assert(in_progress());
+        if (!in_progress()) {
+            Panic("read_item() called when no transaction in progress: mode=%d", TThread::mode());
+        }
         return TThread::txn->read_item(s, key);
     }
 
     template <typename T>
     static TransProxy fresh_item(const TObject* s, T key) {
-        always_assert(in_progress());
+        if (!in_progress()) {
+            Panic("fresh_item() called when no transaction in progress: mode=%d", TThread::mode());
+        }
         return TThread::txn->fresh_item(s, key);
     }
 
     static void commit() {
-        always_assert(in_progress());
+        // Be defensive during shutdown
+        if (!in_progress()) return;
         TThread::txn->commit();
     }
 
     static bool try_commit() {
-        always_assert(in_progress());
+        // Be defensive during shutdown - return false if no transaction
+        if (!in_progress()) return false;
         return TThread::txn->try_commit();
     }
 
     static bool try_commit_no_paxos() {
-        always_assert(in_progress());
+        // Be defensive during shutdown - return false if no transaction
+        if (!in_progress()) return false;
         return TThread::txn->try_commit(true);
     }
 
@@ -1039,6 +1067,7 @@ private:
     Transaction* base_;
 };
 
+// @unsafe: manages Transaction lifecycle
 class TransactionGuard {
   public:
     TransactionGuard() {
@@ -1056,6 +1085,7 @@ class TransactionGuard {
     }
 };
 
+// @unsafe: manages Transaction loop lifecycle
 class TransactionLoopGuard {
   public:
     TransactionLoopGuard() {

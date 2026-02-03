@@ -1,27 +1,43 @@
-
+# Unified Makefile - Builds both Mako Paxos and Jetpack Raft
+# Usage:
+#   make              - Build production (Paxos)
+#   make mako-raft    - Build Mako with Raft replication layer
+#   make raft-test    - Build with Raft testing coroutines enabled
+#   make clean        - Clean build artifacts
 
 # Variables
 BUILD_DIR = build
 
-.PHONY: all configure build clean rebuild run test test-verbose test-parallel
+PARALLEL_JOBS = $(or $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS))),4)
+
+.PHONY: all configure build clean rebuild run mako-raft raft-test help test test-verbose test-parallel
 
 all: build
 
 configure:
-	cmake -S . -B $(BUILD_DIR) 
+	cmake -S . -B $(BUILD_DIR)
 
 build: configure
-	@echo "Building with $(if $(filter -j%,$(MAKEFLAGS)),$(subst -j,,$(filter -j%,$(MAKEFLAGS))),4) parallel jobs..."
-	cmake --build $(BUILD_DIR) --parallel $(if $(filter -j%,$(MAKEFLAGS)),$(subst -j,,$(filter -j%,$(MAKEFLAGS))),4)  
+	@echo "Building with $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
+
+# Build Mako with the Raft helper enabled
+mako-raft:
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON
+	@echo "Building Mako with Raft helper using $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
+
+# Build with Raft testing coroutines enabled
+raft-test:
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON
+	@echo "Building Raft test binaries with $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 clean:
-	rm -rf $(BUILD_DIR)
-	# Remove all test files
-	rm -rf /tmp/test_*
-	# Remove all disk db
-	rm -rf /tmp/rocksdb_*
-	rm -rf /tmp/callback_demo_db*
-	# rm -rf /tmp/mako_rocksdb*
+	rm -rf $(BUILD_DIR) 2>/dev/null || true
+	# Remove test files for current user only
+	@USERNAME=$${USER:-unknown}; \
+	rm -rf /tmp/$${USERNAME}_*;
 	# Clean out-perf.masstree
 	rm -rf ./out-perf.masstree/*
 	# Clean mako out-perf.masstree
@@ -40,18 +56,18 @@ clean:
 	# Clean Rust library
 	@echo "Cleaning Rust library..."
 	@cd rust-lib && cargo clean 2>/dev/null || true
-	# Clean rusty-cpp
+	# Clean rusty-cpp (both host and docker builds)
 	@rm -rf third-party/rusty-cpp/target || true
-
-
-
+	@rm -rf target-docker || true
+	# rebuild rpc
+	bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
 
 rebuild: clean all
 
 run: build
 	./$(BUILD_DIR)/dbtest
-	./$(BUILD_DIR)/simpleTransction
-	./$(BUILD_DIR)/simpleTransctionRep
+	./$(BUILD_DIR)/simpleTransaction
+	./$(BUILD_DIR)/simpleTransactionRep
 	./$(BUILD_DIR)/simplePaxos
 
 # Run tests using ctest
@@ -67,8 +83,21 @@ test-verbose: build
 # Run tests in parallel
 test-parallel: build
 	@echo "Running tests in parallel..."
-	@cd $(BUILD_DIR) && ctest -j$(if $(filter -j%,$(MAKEFLAGS)),$(subst -j,,$(filter -j%,$(MAKEFLAGS))),4) --output-on-failure
+	@cd $(BUILD_DIR) && ctest -j$(PARALLEL_JOBS) --output-on-failure
 
-
-
-
+help:
+	@echo "Unified Build System - Mako Paxos + Jetpack Raft"
+	@echo ""
+	@echo "Usage:"
+	@echo "  make              - Build production (Paxos) ~2-3 mins"
+	@echo "  make mako-raft    - Build Mako with Raft replication layer"
+	@echo "  make raft-test    - Build with Raft testing coroutines"
+	@echo "  make clean        - Clean all build artifacts"
+	@echo "  make rebuild      - Clean and rebuild"
+	@echo "  make test         - Run ctest test suite"
+	@echo "  make test-verbose - Run tests with verbose output"
+	@echo "  make test-parallel- Run tests in parallel"
+	@echo ""
+	@echo "Testing:"
+	@echo "  ./ci/ci.sh all                                   - Run all Paxos CI tests"
+	@echo "  ./build/deptran_server -f config/3c1s3r3p.yml    - Run Raft server (requires mako-raft)"

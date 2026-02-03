@@ -23,6 +23,7 @@
 #include "prefetch.h"
 #include "ownership_checker.h"
 
+
 // debugging tool
 //#define TUPLE_LOCK_OWNERSHIP_CHECKING
 
@@ -215,6 +216,7 @@ private:
 
   // creates a record at version derived from base
   // (inheriting its value).
+  // @unsafe - copies existing tuple bytes into a new record without lifetime tracking
   dbtuple(tid_t version,
           struct dbtuple *base,
           size_type alloc_size,
@@ -250,6 +252,7 @@ private:
 
   // creates a spill record, copying in the *old* value if necessary, but
   // setting the size to the *new* value
+  // @unsafe - builds spill records with manual memcpy and unchecked size math
   dbtuple(tid_t version,
           const_record_type r,
           size_type old_size,
@@ -340,7 +343,9 @@ public:
   }
 #endif
 
+  // @unsafe
   inline version_t
+  // @unsafe - directly spins on header bits to acquire tuple lock without higher-level guard
   lock(bool write_intent)
   {
     // XXX: implement SPINLOCK_BACKOFF
@@ -375,7 +380,9 @@ public:
     return hdr;
   }
 
+  // @unsafe
   inline void
+  // @unsafe - clears lock/write bits and bumps version using manual bit fiddling
   unlock()
   {
     CheckMagic();
@@ -632,6 +639,7 @@ private:
 
   // written to be non-recursive
   template <typename Reader, typename StringAllocator>
+  // @unsafe
   static ReadStatus
   record_at_chain(
       const dbtuple *starting, tid_t t, tid_t &start_t,
@@ -677,6 +685,7 @@ private:
   // we force one level of inlining, but don't force record_at_chain()
   // to be inlined
   template <typename Reader, typename StringAllocator>
+  // @unsafe
   inline ALWAYS_INLINE ReadStatus
   record_at(
       tid_t t, tid_t &start_t,
@@ -759,6 +768,7 @@ public:
    * is an error- this will cause deadlock
    */
   template <typename Reader, typename StringAllocator>
+  // @unsafe
   inline ALWAYS_INLINE ReadStatus
   stable_read(
       tid_t t, tid_t &start_t,
@@ -851,6 +861,7 @@ public:
    * Note: if this != ret.first, then we need a tree replacement
    */
   template <typename Transaction>
+  // @unsafe
   write_record_ret
   write_record_at(const Transaction *txn, tid_t t,
                   const void *v, tuple_writer_t writer)
@@ -990,9 +1001,11 @@ public:
   // internally anyways, so we might as well grab more usable space (really
   // just internal vs external fragmentation)
 
+  // @unsafe
   static inline dbtuple *
   alloc_first(size_type sz, bool acquire_lock)
   {
+    // @unsafe - allocates raw dbtuple storage via rcu allocator and placement new
     INVARIANT(sz <= std::numeric_limits<node_size_type>::max());
     const size_t max_alloc_sz =
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
@@ -1007,9 +1020,12 @@ public:
         sz, alloc_sz - sizeof(dbtuple), acquire_lock);
   }
 
+  // @unsafe
   static inline dbtuple *
+  // @unsafe - performs placement-new using RCU-managed memory
   alloc(tid_t version, struct dbtuple *base, bool set_latest)
   {
+    // @unsafe - allocates and constructs dbtuple directly from RCU pool
     const size_t max_alloc_sz =
       std::numeric_limits<node_size_type>::max() + sizeof(dbtuple);
     const size_t alloc_sz =
@@ -1022,11 +1038,13 @@ public:
         version, base, alloc_sz - sizeof(dbtuple), set_latest);
   }
 
+  // @unsafe
   static inline dbtuple *
   alloc_spill(tid_t version, const_record_type value, size_type oldsz,
               size_type newsz, struct dbtuple *next, bool set_latest,
               bool copy_old_value)
   {
+    // @unsafe - uses raw allocations and placement new to build spill tuple
     INVARIANT(oldsz <= std::numeric_limits<node_size_type>::max());
     INVARIANT(newsz <= std::numeric_limits<node_size_type>::max());
 
@@ -1066,7 +1084,9 @@ public:
     destruct_and_free(n);
   }
 
+  // @unsafe
   static inline void
+  // @unsafe - schedules RCU reclamation of raw tuple memory
   release(dbtuple *n)
   {
     if (unlikely(!n))
@@ -1076,7 +1096,9 @@ public:
     rcu::s_instance.free_with_fn(n, deleter);
   }
 
+  // @unsafe
   static inline void
+  // @unsafe - immediately frees tuple storage without RCU deferral
   release_no_rcu(dbtuple *n)
   {
     if (unlikely(!n))

@@ -16,7 +16,7 @@ TEST(Time, perf) {
     t.start();
 
     for (int i = 0; i < n; i++) {
-	tmp += rrr::Time::now();
+	tmp += rrr::Time::now(true);
     }
 
     t.stop();

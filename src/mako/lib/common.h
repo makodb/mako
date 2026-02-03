@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <sys/file.h>
 #include "rpc.h"
 #include <mutex>
@@ -176,7 +177,25 @@ namespace mako
     const uint8_t controlReqType = 12;
     // reserved for watermark exchange between follower data center
     const uint8_t watermarkReqType = 13;
-    
+
+    // --------------------------- Remote client API (for decoupled clients)
+    // These message types enable clients to run on different servers
+    const uint8_t clientBeginTxnReqType = 20;
+    const uint8_t clientCommitReqType = 21;
+    const uint8_t clientRollbackReqType = 22;
+    const uint8_t clientPutReqType = 23;
+    const uint8_t clientGetReqType = 24;
+    const uint8_t clientDeleteReqType = 25;
+    const uint8_t clientServerBusyType = 26;  // Server busy rejection response
+
+    // Maximum message length for server busy response
+    const size_t max_busy_message_length = 64;
+
+    // Server busy response (sent when all workers are occupied)
+    struct client_server_busy_response_t {
+        uint8_t status;     // Always ErrorCode::SERVER_BUSY
+        char message[max_busy_message_length];  // Human-readable message
+    };
 
     const size_t max_key_length = 64;
 #if defined(MEGA_BENCHMARK)
@@ -330,7 +349,7 @@ namespace mako
         }
 
         size_t get_msg_len() {
-            return msg_len + sizeof(request->batch_size) + sizeof(request->req_nr);
+            return msg_len + offsetof(batch_lock_request_t, data);
         }
 
         batch_lock_request_t *get_request_ptr() {
@@ -386,6 +405,58 @@ namespace mako
         uint32_t req_nr;
     };
 
+    // --------------------------- Remote client API structures
+    // Used for decoupled client-server communication
+
+    // Request to begin a new transaction on the server
+    struct client_begin_txn_request_t
+    {
+        uint32_t req_nr;
+        uint64_t client_id;         // Unique client identifier
+    };
+
+    // Response to begin transaction - contains server-assigned txn_id
+    struct client_begin_txn_response_t
+    {
+        uint32_t req_nr;
+        uint64_t txn_id;            // Server-assigned transaction ID
+        int status;
+    };
+
+    // Request for Put/Get/Delete operations
+    struct client_kv_request_t
+    {
+        uint32_t req_nr;
+        uint64_t txn_id;            // Transaction ID from begin_txn
+        uint16_t table_id;          // Target table
+        uint16_t klen;              // Key length
+        uint16_t vlen;              // Value length (0 for Get/Delete)
+        char key_and_value[max_key_length + max_value_length];
+    };
+
+    // Response for Put/Get/Delete operations
+    struct client_kv_response_t
+    {
+        uint32_t req_nr;
+        uint16_t vlen;              // Value length (for Get response)
+        int status;
+        char value[max_value_length];
+    };
+
+    // Request to commit a transaction
+    struct client_commit_request_t
+    {
+        uint32_t req_nr;
+        uint64_t txn_id;            // Transaction ID to commit
+    };
+
+    // Response to commit/rollback
+    struct client_commit_response_t
+    {
+        uint32_t req_nr;
+        int status;
+    };
+
     class ErrorCode
     {
     public:
@@ -393,6 +464,7 @@ namespace mako
         static const int TIMEOUT = 1;
         static const int ERROR = 2;
         static const int ABORT = 3;
+        static const int SERVER_BUSY = 4;  // All workers occupied
     };
 
     using resp_continuation_t =
@@ -477,6 +549,7 @@ namespace mako
         return static_cast<size_t>(ms * 1000 * 1000 * freq_ghz);
     }
 
+    // @unsafe: uses std::chrono::duration::count
     static uint64_t getCurrentTimeMillis() {
         return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();

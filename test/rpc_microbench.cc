@@ -28,8 +28,8 @@ using namespace std;
 //int outgoing_requests = 1000;
 //
 //static string request_str;
-//PollThreadWorker *poll;
-//PollThreadWorker **polls;
+//PollThread *poll;
+//PollThread **polls;
 //ThreadPool* thrpool;
 //
 //Counter req_counter;
@@ -111,7 +111,7 @@ using namespace std;
 //static void* client_proc(void *args) {
 //    client_para_t *client_para = (client_para_t *)args;
 //    uint32_t cid = client_para->cid;
-//    polls[cid] = new PollThreadWorker(1);
+//    polls[cid] = new PollThread(1);
 //    Client* cl = new Client(polls[cid]);
 //    verify(cl->connect(svr_addr) == 0);
 //    i32 rpc_id;
@@ -126,14 +126,14 @@ using namespace std;
 //    auto do_work = [cl, &fu_attr, rpc_id, &last_time] {
 //        if (!should_stop) {
 //            clock_gettime(CLOCK_REALTIME, &last_time);
-//            Future* fu = cl->begin_request(rpc_id, fu_attr);
+//            rusty::Arc<Future> fu = cl->begin_request(rpc_id, fu_attr);
 //            *cl << request_str;
 //            cl->end_request();
-//            Future::safe_release(fu);
+//            // Arc auto-released
 //            req_counter.next();
 //        }
 //    };
-//    fu_attr.callback = [&do_work, &last_time, cid] (Future* fu) {
+//    fu_attr.callback = [&do_work, &last_time, cid] (rusty::Arc<Future> fu) {
 //        if (fu->get_error_code() != 0) {
 //            return;
 //        }
@@ -228,7 +228,7 @@ using namespace std;
 //    request_str = string(byte_size, 'x');
 //    thrpool = new ThreadPool(worker_threads);
 //    if (is_server) {
-//        poll = new PollThreadWorker(epoll_instances);
+//        poll = new PollThread(epoll_instances);
 //        BenchmarkService svc;
 //        Server svr(poll, thrpool);
 //        svr.reg(&svc);
@@ -257,7 +257,7 @@ using namespace std;
 //    } else {
 //        response = new std::vector<std::vector<double> >[client_threads];
 //        qps.resize(seconds);
-//        polls = (PollThreadWorker **)malloc(sizeof(PollThreadWorker *) * client_threads);
+//        polls = (PollThread **)malloc(sizeof(PollThread *) * client_threads);
 //        pthread_t* client_th = new pthread_t[client_threads];
 //        client_para_t *client_para = (client_para_t *)malloc(client_threads * sizeof(client_para_t));
 //        for (int i = 0; i < client_threads; i++) {

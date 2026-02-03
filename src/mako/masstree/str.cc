@@ -13,6 +13,13 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe
+namespace str_safe_file {} // Skip STL header checks (file has no functions - just static data)
+// Static string slice data - contains only maxkey constant
+//
+// @external_unsafe_type: std::*
+// @external_unsafe: std::*
+
 #include "str.hh"
 namespace lcdf {
 

@@ -7,10 +7,14 @@
 #include <atomic>
 #include <utility>
 #include <unordered_map>
+#include <fstream>
+#include <filesystem>
+#include <chrono>
 #include "lib/configuration.h"
 #include "lib/common.h"
 #include "lib/helper_queue.h"
 #include "lib/fasttransport.h"
+#include "silo_runtime.h"
 
 enum {
   RUNMODE_TIME = 0,
@@ -25,6 +29,7 @@ class abstract_ordered_index;
 struct ShardContext {
     int shard_index;                                              // Shard index (0, 1, 2, ...)
     std::string cluster_role;                                     // Cluster role (localhost, p1, p2, learner)
+    rusty::Arc<SiloRuntime> runtime;                              // Per-shard Silo runtime (epoch, threads, core IDs)
     abstract_db* db;                                              // Per-shard database instance
     FastTransport* transport;                                     // Per-shard transport
     std::vector<FastTransport*> server_transports;                // Per-shard server transports
@@ -32,9 +37,10 @@ struct ShardContext {
     std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_response; // Response queues
     std::map<int, abstract_ordered_index*> open_tables;           // Per-shard tables
 
-    ShardContext() : shard_index(-1), db(nullptr), transport(nullptr) {}
+    ShardContext() : shard_index(-1), runtime(nullptr), db(nullptr), transport(nullptr) {}
 };
 
+// @unsafe: singleton with mutable state
 class BenchmarkConfig {
   private:
       // Private constructor with default values
@@ -65,7 +71,9 @@ class BenchmarkConfig {
           is_micro_(0), // if run micro-based workload
           end_received_(0),
           end_received_leader_(0),
-          replay_batch_(0) {}
+          replay_batch_(0),
+          cpu_limit_percent_(0.0),      // 0 = no limit (default)
+          throttle_cycle_ms_(100) {}    // 100ms default cycle
       
       // Member variables from dbtest.cc
       size_t nthreads_;
@@ -100,7 +108,11 @@ class BenchmarkConfig {
       std::atomic<int> end_received_;
       std::atomic<int> end_received_leader_;
       std::atomic<int> replay_batch_;
-      
+
+      // CPU throttling configuration
+      double cpu_limit_percent_;      // 0.0-100.0, 0 = no limit
+      uint32_t throttle_cycle_ms_;    // Duty cycle period in ms
+
       // Watermark tracking for latency measurements
       std::vector<std::pair<uint32_t, uint32_t>> advanceWatermarkTracker_;
 
@@ -113,6 +125,16 @@ class BenchmarkConfig {
       // Multi-shard support: per-shard contexts
       std::map<int, ShardContext> shard_contexts_;
 
+      // NFS-based multi-shard synchronization
+      // Works for both single-process and distributed deployments
+      std::string nfs_sync_dir_{"/tmp/mako_sync"};  // Shared directory for sync files
+      int nfs_sync_timeout_sec_{60};                 // Timeout for waiting for other shards
+
+      // Config node settings (for centralized configuration)
+      bool is_config_node_{false};                   // True if this node is a c-node
+      std::string config_node_addr_;                 // Address of c-node (host:port) for clients
+      std::string config_db_path_{"/tmp/mako_config_db"};  // RocksDB path for c-node
+      int config_port_{8888};                        // RPC port for ConfigService
 
   public:
       // Delete copy/move constructors
@@ -125,11 +147,21 @@ class BenchmarkConfig {
           return instance;
       }
 
+      // Thread-local shard index for multi-shard mode
+      // -1 means not set (use global shardIndex_)
+      static inline thread_local int tl_shard_index_ = -1;
+
       // Getters
       size_t getNthreads() const { return nthreads_; }
       size_t getNshards() const { return nshards_; }
       size_t getNumErpcServer() const { return num_erpc_server_; }
-      size_t getShardIndex() const { return shardIndex_; }
+      // In multi-shard mode, returns thread-local shard index if set
+      size_t getShardIndex() const {
+        if (tl_shard_index_ >= 0) {
+          return static_cast<size_t>(tl_shard_index_);
+        }
+        return shardIndex_;
+      }
       const std::string& getCluster() const { return cluster_; }
       int getClusterRole() const { return clusterRole_; }
       transport::Configuration* getConfig() const { return config_; }
@@ -148,10 +180,15 @@ class BenchmarkConfig {
       int getRetryAbortedTransaction() const { return retry_aborted_transaction_; }
       int getNoResetCounters() const { return no_reset_counters_; }
       int getBackoffAbortedTransaction() const { return backoff_aborted_transaction_; }
+      // @safe
       int getUseHashtable() const { return use_hashtable_; }
+      // @safe
       int getIsMicro() const { return is_micro_; }
+      // @safe
       int getIsReplicated() const { return is_replicated_; }
+      // @unsafe: returns std::string by value
       std::string getPaxosProcName() const { return paxos_proc_name_; }
+      // @safe
       int getLeaderConfig() const { return paxos_proc_name_==mako::LOCALHOST_CENTER; }
       const std::vector<std::string>& getPaxosConfigFile() const { return paxos_config_file_; }
       
@@ -170,6 +207,10 @@ class BenchmarkConfig {
       void setNshards(size_t n) { nshards_ = n; }
       void setNumErpcServer(size_t n) { num_erpc_server_ = n; }
       void setShardIndex(size_t idx) { shardIndex_ = idx; }
+      // Set thread-local shard index for multi-shard mode
+      // Call with -1 to clear and revert to global shardIndex_
+      static void setThreadLocalShardIndex(int idx) { tl_shard_index_ = idx; }
+      static void clearThreadLocalShardIndex() { tl_shard_index_ = -1; }
       void setCluster(const std::string& c) { cluster_ = c; }
       void setClusterRole(int role) { clusterRole_ = role; }
       void setConfig(transport::Configuration* cfg) { config_ = cfg; }
@@ -206,7 +247,16 @@ class BenchmarkConfig {
       int getReplayBatch() const { return replay_batch_.load(); }
       void setReplayBatch(int value) { replay_batch_.store(value); }
       void incrementReplayBatch() { replay_batch_.fetch_add(1); }
-      
+
+      // CPU throttling getters and setters
+      double getCpuLimitPercent() const { return cpu_limit_percent_; }
+      void setCpuLimitPercent(double pct) { cpu_limit_percent_ = pct; }
+      uint32_t getThrottleCycleMs() const { return throttle_cycle_ms_; }
+      void setThrottleCycleMs(uint32_t ms) { throttle_cycle_ms_ = ms; }
+      bool isCpuThrottlingEnabled() const {
+          return cpu_limit_percent_ > 0.0 && cpu_limit_percent_ < 100.0;
+      }
+
       // Getters and setters for watermark tracking
       std::vector<std::pair<uint32_t, uint32_t>>& getAdvanceWatermarkTracker() { return advanceWatermarkTracker_; }
       const std::vector<std::pair<uint32_t, uint32_t>>& getAdvanceWatermarkTracker() const { return advanceWatermarkTracker_; }
@@ -231,6 +281,101 @@ class BenchmarkConfig {
 
       bool hasMultipleShards() const {
           return shard_contexts_.size() > 1;
+      }
+
+      // NFS sync getters and setters
+      const std::string& getNfsSyncDir() const { return nfs_sync_dir_; }
+      void setNfsSyncDir(const std::string& dir) { nfs_sync_dir_ = dir; }
+      int getNfsSyncTimeoutSec() const { return nfs_sync_timeout_sec_; }
+      void setNfsSyncTimeoutSec(int sec) { nfs_sync_timeout_sec_ = sec; }
+
+      // Config node getters and setters
+      bool isConfigNode() const { return is_config_node_; }
+      void setIsConfigNode(bool v) { is_config_node_ = v; }
+      const std::string& getConfigNodeAddr() const { return config_node_addr_; }
+      void setConfigNodeAddr(const std::string& addr) { config_node_addr_ = addr; }
+      const std::string& getConfigDbPath() const { return config_db_path_; }
+      void setConfigDbPath(const std::string& path) { config_db_path_ = path; }
+      int getConfigPort() const { return config_port_; }
+      void setConfigPort(int port) { config_port_ = port; }
+
+      // NFS-based multi-shard barrier methods
+      // Works for both single-process and distributed deployments
+
+      // Get the ready file path for a shard
+      std::string getShardReadyFilePath(int shard_idx) const {
+          return nfs_sync_dir_ + "/shard_" + std::to_string(shard_idx) + "_ready";
+      }
+
+      // Initialize NFS sync: create directory and clean up old files
+      void initMultiShardBarrier(int /* num_shards - unused, we use nshards_ */) {
+          // Create sync directory if it doesn't exist
+          std::filesystem::create_directories(nfs_sync_dir_);
+
+          // Clean up any old ready files for ALL shards
+          for (size_t i = 0; i < nshards_; i++) {
+              std::string ready_file = getShardReadyFilePath(i);
+              std::filesystem::remove(ready_file);
+          }
+      }
+
+      // Signal this shard is ready by creating a ready file
+      void signalShardReady(int shard_idx) {
+          // Ensure directory exists (needed for multi-process mode where
+          // initMultiShardBarrier() might not be called)
+          std::filesystem::create_directories(nfs_sync_dir_);
+
+          std::string ready_file = getShardReadyFilePath(shard_idx);
+          std::ofstream ofs(ready_file);
+          ofs << "ready" << std::endl;
+          ofs.close();
+      }
+
+      // Wait for all shards to be ready (check for ready files)
+      void waitMultiShardBarrier() {
+          if (nshards_ <= 1) {
+              return;  // No barrier needed for single shard
+          }
+
+          // Signal that this shard is ready
+          // Uses thread-local shard index if set, otherwise global shardIndex_
+          signalShardReady(getShardIndex());
+
+          // Then wait for ALL shards to be ready
+          auto start = std::chrono::steady_clock::now();
+          while (true) {
+              bool all_ready = true;
+              for (size_t i = 0; i < nshards_; i++) {
+                  std::string ready_file = getShardReadyFilePath(i);
+                  if (!std::filesystem::exists(ready_file)) {
+                      all_ready = false;
+                      break;
+                  }
+              }
+
+              if (all_ready) {
+                  break;
+              }
+
+              // Check timeout
+              auto now = std::chrono::steady_clock::now();
+              auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start).count();
+              if (elapsed >= nfs_sync_timeout_sec_) {
+                  // Timeout - proceed anyway with a warning
+                  break;
+              }
+
+              // Sleep briefly before checking again
+              std::this_thread::sleep_for(std::chrono::milliseconds(10));
+          }
+      }
+
+      // Clean up ready files after benchmark completes
+      void resetMultiShardBarrier() {
+          for (size_t i = 0; i < nshards_; i++) {
+              std::string ready_file = getShardReadyFilePath(i);
+              std::filesystem::remove(ready_file);
+          }
       }
 };
 

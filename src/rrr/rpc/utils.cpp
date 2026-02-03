@@ -14,13 +14,8 @@
 #include "base/all.hpp"
 #include "utils.hpp"
 
-// External safety annotations for atomic operations
-// @external: {
-//   std::__atomic_base::load: [unsafe]
-//   std::__atomic_base::store: [unsafe]
-//   std::__atomic_base::fetch_add: [unsafe]
-//   std::__atomic_base::fetch_sub: [unsafe]
-// }
+// Note: std::atomic public API (load, store, etc.) is annotated in event.h
+// No external annotations needed here - utils.cpp doesn't use atomics directly
 
 
 using namespace std;
@@ -45,19 +40,19 @@ int set_nonblocking(int fd, bool nonblocking) {
 // SAFETY: All pointers remain valid throughout function scope
 int find_open_port() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-
-    addrinfo *local_addr;
-
-    addrinfo hints;
-    bzero(&hints, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
-
-    if (getaddrinfo("0.0.0.0", nullptr, nullptr, &local_addr) != 0) {
-        Log_error("Failed to getaddrinfo");
+    if (fd < 0) {
+        Log_error("Failed to create socket");
         return -1;
     }
+
+    // Use AddrInfo RAII wrapper - automatically frees on scope exit
+    auto addr_result = AddrInfo::resolve("0.0.0.0", nullptr, nullptr);
+    if (addr_result.is_err()) {
+        Log_error("Failed to getaddrinfo");
+        ::close(fd);
+        return -1;
+    }
+    auto local_addr = addr_result.unwrap();
 
     int port = -1;
 
@@ -72,14 +67,15 @@ int find_open_port() {
         memset(&addr, 0, sizeof(addr));
         if (getsockname(fd, (sockaddr*)&addr, &addrlen) != 0) {
             Log_error("Failed to get socket address");
-            return -1;
+            ::close(fd);
+            return -1;  // AddrInfo automatically freed
         }
 
         port = i;
         break;
     }
 
-    freeaddrinfo(local_addr);
+    // AddrInfo automatically freed when local_addr goes out of scope
     ::close(fd);
 
     if (port != -1) {
@@ -91,8 +87,7 @@ int find_open_port() {
     return -1;
 }
 
-// @unsafe - Calls unsafe Log::error on failure
-// SAFETY: Buffer is properly sized, error logging is thread-safe
+// @unsafe - Uses raw buffer for gethostname system call
 std::string get_host_name() {
     char buffer[1024];
     if (gethostname(buffer, 1024) != 0) {

@@ -145,6 +145,11 @@ int main(int argc, char **argv) {
 
     setup2(0, 0);
 
+    // Wait for all sites to complete their communicator setup
+    // This ensures p1's rep_commo_ is initialized before commits arrive
+    // (p1 forwards commits to learner, needs communicator ready)
+    this_thread::sleep_for(chrono::seconds(2));
+
     if (leader_config) {
         std::cerr << "[LEADER DEBUG] Starting db_worker threads" << std::endl;
         vector<thread> threads;

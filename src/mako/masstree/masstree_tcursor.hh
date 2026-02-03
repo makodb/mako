@@ -13,11 +13,16 @@
  * notice is a summary of the Masstree LICENSE file; the license in that file
  * is legally binding.
  */
+// @unsafe - Tree cursor for Masstree traversal with lock management
+// Maintains path from root to leaf with version tracking for retry
+// SAFETY: Tracks traversal state, acquires/releases locks on nodes
+
 #ifndef MASSTREE_TCURSOR_HH
 #define MASSTREE_TCURSOR_HH 1
 #include "small_vector.hh"
 #include "masstree_key.hh"
 #include "masstree_struct.hh"
+#include <rusty/ptr.hpp>
 namespace Masstree {
 template <typename P> struct gc_layer_rcu_callback;
 
@@ -60,14 +65,18 @@ class unlocked_tcursor {
           lv_(leafvalue<P>::make_empty()), root_(table.fix_root()) {
     }
 
+    // @unsafe { Traverses tree via raw pointers without locks }
     bool find_unlocked(threadinfo& ti);
 
+    // @safe - Returns value copy
     inline value_type value() const {
         return lv_.value();
     }
-    inline leaf<P>* node() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    inline rusty::MutPtr<leaf<P>> node() const {
         return n_;
     }
+    // @safe - Returns value copy
     inline permuter_type permutation() const {
         return perm_;
     }
@@ -80,12 +89,12 @@ class unlocked_tcursor {
     }
 
   private:
-    leaf<P>* n_;
+    rusty::MutPtr<leaf<P>> n_;
     key_type ka_;
     typename leaf<P>::nodeversion_type v_;
     permuter_type perm_;
     leafvalue<P> lv_;
-    const node_base<P>* root_;
+    rusty::Ptr<node_base<P>> root_;
 };
 
 template <typename P>
@@ -103,7 +112,7 @@ class tcursor {
     typedef typename nodeversion_type::value_type nodeversion_value_type;
     typedef typename P::threadinfo_type threadinfo;
     static constexpr int new_nodes_size = 1; // unless we make a new trie newnodes will have at most 1 item
-    typedef small_vector<std::pair<leaf_type*, nodeversion_value_type>, new_nodes_size> new_nodes_type;
+    typedef small_vector<std::pair<rusty::MutPtr<leaf_type>, nodeversion_value_type>, new_nodes_size> new_nodes_type;
 
     tcursor(basic_table<P>& table, Str str)
         : ka_(str), root_(table.fix_root()) {
@@ -114,10 +123,10 @@ class tcursor {
     tcursor(basic_table<P>& table, const unsigned char* s, int len)
         : ka_(reinterpret_cast<const char*>(s), len), root_(table.fix_root()) {
     }
-    tcursor(node_base<P>* root, const char* s, int len)
+    tcursor(rusty::MutPtr<node_base<P>> root, const char* s, int len)
         : ka_(s, len), root_(root) {
     }
-    tcursor(node_base<P>* root, const unsigned char* s, int len)
+    tcursor(rusty::MutPtr<node_base<P>> root, const unsigned char* s, int len)
         : ka_(reinterpret_cast<const char*>(s), len), root_(root) {
     }
 
@@ -128,15 +137,18 @@ class tcursor {
         return n_->lv_[kx_.p].value();
     }
 
+    // @safe - Returns bool value
     inline bool is_first_layer() const {
         return !ka_.is_shifted();
     }
 
-    inline leaf<P>* node() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    inline rusty::MutPtr<leaf<P>> node() const {
         return n_;
     }
 
-    inline leaf_type *original_node() const {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    inline rusty::MutPtr<leaf_type> original_node() const {
         return original_n_;
     }
 
@@ -152,27 +164,31 @@ class tcursor {
         return new_nodes_;
     }
 
+    // @unsafe { Acquires locks, manipulates raw node pointers }
     inline bool find_locked(threadinfo& ti);
+    // @unsafe { Inserts via raw node manipulation, may split }
     inline bool find_insert(threadinfo& ti);
 
+    // @unsafe { Updates node state, releases locks }
     inline void finish(int answer, threadinfo& ti);
 
     inline nodeversion_value_type previous_full_version_value() const;
     inline nodeversion_value_type next_full_version_value(int state) const;
 
   private:
-    leaf_type *n_;
+    rusty::MutPtr<leaf_type> n_;
     key_type ka_;
     key_indexed_position kx_;
-    node_base<P>* root_;
+    rusty::MutPtr<node_base<P>> root_;
     int state_;
 
-    leaf_type *original_n_;
+    rusty::MutPtr<leaf_type> original_n_;
     nodeversion_value_type original_v_;
     nodeversion_value_type updated_v_;
     new_nodes_type new_nodes_;
 
-    inline node_type* reset_retry() {
+    // @safe - Returns rusty::MutPtr (borrow-checked pointer type)
+    inline rusty::MutPtr<node_type> reset_retry() {
         ka_.unshift_all();
         return root_;
     }
@@ -182,16 +198,19 @@ class tcursor {
     inline void finish_insert();
     inline bool finish_remove(threadinfo& ti);
 
-    static bool reshape(internode_type* n, ikey_type ikey,
-                        node_type* root, Str prefix, threadinfo& ti);
-    static bool collapse(internode_type* n, ikey_type ikey,
-                         node_type* root, Str prefix, threadinfo& ti);
+    // @unsafe { Patches internode keys after child removal }
+    static bool reshape(rusty::MutPtr<internode_type> n, ikey_type ikey,
+                        rusty::MutPtr<node_type> root, Str prefix, threadinfo& ti);
+    // @unsafe { Collapses single-child internodes to shorten tree }
+    static bool collapse(rusty::MutPtr<internode_type> n, ikey_type ikey,
+                         rusty::MutPtr<node_type> root, Str prefix, threadinfo& ti);
     /** Remove @a leaf from the Masstree rooted at @a rootp.
      * @param prefix String defining the path to the tree containing this leaf.
      *   If removing a leaf in layer 0, @a prefix is empty.
      *   If removing, for example, the node containing key "01234567ABCDEF" in the layer-1 tree
      *   rooted at "01234567", then @a prefix should equal "01234567". */
-    static bool remove_leaf(leaf_type* leaf, node_type* root,
+    // @unsafe { Unlinks leaf from tree, frees via RCU }
+    static bool remove_leaf(rusty::MutPtr<leaf_type> leaf, rusty::MutPtr<node_type> root,
                             Str prefix, threadinfo& ti);
 
     bool gc_layer(threadinfo& ti);

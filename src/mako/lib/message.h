@@ -40,11 +40,14 @@ enum Message_Type {
 #define PWarning(msg...) MessageFlags((Message_Type)(MSG_WARNING|MSG_PERROR), msg)
 #define PNotice(msg...)  MessageFlags((Message_Type)(MSG_NOTICE|MSG_PERROR), msg)
 
+// @safe
 void _Message(enum Message_Type type,
               const char *fname, int line, const char *func,
               const char *fmt, ...)
         __attribute__((format(printf,5,6)));
+// @safe
 void _Panic(void) __attribute__((noreturn));
+// @safe
 bool _Message_DebugEnabled(const char *fname);
 
 void Message_VA(enum Message_Type type,

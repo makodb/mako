@@ -52,6 +52,7 @@ struct PartitionState {
 
 class RocksDBPersistence {
 public:
+    // @unsafe: singleton static lifetime
     static RocksDBPersistence& getInstance();
 
     /**
@@ -76,12 +77,17 @@ public:
                                    uint32_t shard_id, uint32_t partition_id,
                                    std::function<void(bool)> callback = nullptr);
 
+    // @unsafe: uses stringstream
     std::string generateKey(uint32_t shard_id, uint32_t partition_id,
                            uint32_t epoch, uint64_t seq_num);
 
+    // @unsafe: uses atomic load
     uint32_t getCurrentEpoch() const;
+    
+    // @unsafe: uses file I/O
     void setEpoch(uint32_t epoch);
 
+    // @unsafe: uses atomic load
     size_t getPendingWrites() const { return pending_writes_.load(); }
 
     bool flushAll();

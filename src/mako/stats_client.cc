@@ -21,6 +21,7 @@
 using namespace std;
 using namespace util;
 
+// @unsafe: uses socket operations and raw pointers
 int
 main(int argc, char **argv)
 {

@@ -40,12 +40,13 @@ void TapirCommo::BroadcastFastAccept(parid_t par_id,
   for (auto &p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [cb] (Future* fu) {
+    fuattr.callback = [cb] (rusty::Arc<Future> fu) {
       int32_t res;
       fu->get_reply() >> res;
       cb(res);
     };
-    Future::safe_release(proxy->async_TapirFastAccept(cmd_id, cmds, fuattr));
+    auto fu_result = proxy->async_TapirFastAccept(cmd_id, cmds, fuattr);
+    // Arc auto-released
   }
 }
 
@@ -56,8 +57,9 @@ void TapirCommo::BroadcastDecide(parid_t par_id,
   for (auto &p : proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
-    fuattr.callback = [] (Future* fu) {} ;
-    Future::safe_release(proxy->async_TapirDecide(cmd_id, decision, fuattr));
+    fuattr.callback = [] (rusty::Arc<Future> fu) {} ;
+    auto fu_result = proxy->async_TapirDecide(cmd_id, decision, fuattr);
+    // Arc auto-released
   }
 }
 
@@ -65,16 +67,17 @@ void TapirCommo::BroadcastAccept(parid_t par_id,
                                  cmdid_t cmd_id,
                                  ballot_t ballot,
                                  int decision,
-                                 const function<void(Future*)>& callback) {
+                                 const function<void(rusty::Arc<Future>)>& callback) {
   auto proxies = rpc_par_proxies_[par_id];
   for (auto &p: proxies) {
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = callback;
-    Future::safe_release(proxy->async_TapirAccept(cmd_id,
-                                                  ballot,
-                                                  decision,
-                                                  fuattr));
+    auto fu_result = proxy->async_TapirAccept(cmd_id,
+                                              ballot,
+                                              decision,
+                                              fuattr);
+    // Arc auto-released
   }
 }
 

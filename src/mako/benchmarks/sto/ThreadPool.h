@@ -3,6 +3,7 @@
 #include "../abstract_db.h"
 #include "function_pool.h"
 
+// @unsafe
 size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                                                  uint32_t cid,  /* timestamp on current shard */
                                                  unsigned short int count,

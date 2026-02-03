@@ -1,25 +1,29 @@
-version: '3.8'
-
 services:
-  ubuntu22-build:
+  build:
     platform: linux/amd64
     build:
       context: .
-      dockerfile: Dockerfile.ubuntu22
-    image: mako-build:ubuntu22
-    container_name: mako-ubuntu22
+      dockerfile: Dockerfile.ubuntu24
+    image: mako-build:ubuntu24
+    container_name: mako-build
     volumes:
       - .:/workspace
     working_dir: /workspace
-    command: /bin/bash -c "cd /workspace && rm -rf build && mkdir -p build && cd build && cmake .. && make -j $(nproc) dbtest"
-    
-  ubuntu22-dev:
+    environment:
+      # Use separate Cargo target directory to avoid conflicts with host builds
+      - CARGO_TARGET_DIR=/workspace/target-docker
+    command: /bin/bash -c "cd /workspace && rm -rf build_docker && mkdir -p build_docker && cd build_docker && cmake .. && make -j $(nproc) dbtest"
+
+  dev:
     platform: linux/amd64
-    image: mako-build:ubuntu22
-    container_name: mako-ubuntu22-dev
+    image: mako-build:ubuntu24
+    container_name: mako-dev
     volumes:
       - .:/workspace
     working_dir: /workspace
+    environment:
+      # Use separate Cargo target directory to avoid conflicts with host builds
+      - CARGO_TARGET_DIR=/workspace/target-docker
     stdin_open: true
     tty: true
     command: /bin/bash
