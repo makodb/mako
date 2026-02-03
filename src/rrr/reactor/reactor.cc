@@ -67,6 +67,9 @@ Fiber::create_run_impl(rusty::Function<void()> func, const char* file, int64_t l
 }
 
 void Fiber::sleep(uint64_t microseconds) {
+  if (microseconds == 0) {
+    return;
+  }
   auto x = Reactor::create_sp_event<TimeoutEvent>(microseconds);
   x->wait();
 }
@@ -221,7 +224,8 @@ Reactor::create_run_coroutine(rusty::Function<void()> func, const char* file, in
   {
     coro->run();
     if (coro->finished()) {
-      coros_.borrow_mut()->remove(coro);
+      auto coro_ref = coro.clone();
+      recycle(coro_ref);
     }
   }
 
@@ -255,7 +259,7 @@ void Reactor::check_timeout(rusty::VecDeque<std::shared_ptr<Event>>& ready_event
       const auto& wakeup_time = event.wakeup_time_;
       // @unsafe - verify is external
       { verify(wakeup_time > 0); }
-      if (time_now > wakeup_time) {
+      if (time_now >= wakeup_time) {
         if (event.is_ready()) {
           event.status_.set(Event::READY);
         } else {

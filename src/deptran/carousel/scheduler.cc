@@ -54,16 +54,28 @@ mdb::Txn* SchedulerCarousel::get_mdb_txn(const i64 tid) {
   return txn;
 }
 
-void SchedulerCarousel::GeneralPrint(const char* msg, txnid_t tx_id, Row* row, uint64_t* key_hash){
+void SchedulerCarousel::GeneralPrint(const char* msg, txnid_t tx_id, Row* row) {
   stringstream ss;
   ss << msg;
   ss << " txn_id:" << (void*)tx_id;
   if (row != nullptr) {
     ss << " row:" << (uint64_t)row;
   }
-  if (key_hash != nullptr) {
-    ss << " key_hash:" << *key_hash;
+  ss << " thread id:" << std::this_thread::get_id();
+  Log_debug(ss.str().c_str());
+}
+
+void SchedulerCarousel::GeneralPrint(const char* msg,
+                                    txnid_t tx_id,
+                                    Row* row,
+                                    uint64_t key_hash) {
+  stringstream ss;
+  ss << msg;
+  ss << " txn_id:" << (void*)tx_id;
+  if (row != nullptr) {
+    ss << " row:" << (uint64_t)row;
   }
+  ss << " key_hash:" << key_hash;
   ss << " thread id:" << std::this_thread::get_id();
   Log_debug(ss.str().c_str());
 }
@@ -86,7 +98,7 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
   // validate read versions
   tx->fully_dispatched_->wait();
   if (tx->aborted_in_dispatch_) {
-    GeneralPrint("DoPrepare failed aborted_in_dispatch_", tx_id, nullptr, nullptr);
+    GeneralPrint("DoPrepare failed aborted_in_dispatch_", tx_id, nullptr);
     return false;
   }
 
@@ -115,7 +127,10 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
       auto key_col_hash = key_hash + pair2.first;
       auto it = pending_write_row_map_.find(key_col_hash);
       if (it != pending_write_row_map_.end()) {
-        GeneralPrint("DoPrepare failed  pending_read_row_map_ rw failed", tx_id, row, &key_col_hash);
+        GeneralPrint("DoPrepare failed  pending_read_row_map_ rw failed",
+                     tx_id,
+                     row,
+                     static_cast<uint64_t>(key_col_hash));
         lock_.unlock();
         return false;
       }
@@ -139,7 +154,10 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
       auto it = pending_read_row_map_.find(key_col_hash);
       if (it != pending_read_row_map_.end()) {
         if (it->second > 0) {
-          GeneralPrint("DoPrepare failed  pending_read_row_map_ ww failed", tx_id, row, &key_col_hash);
+          GeneralPrint("DoPrepare failed  pending_read_row_map_ ww failed",
+                       tx_id,
+                       row,
+                       static_cast<uint64_t>(key_col_hash));
           lock_.unlock();
           fflush(stdout);
           return false;
@@ -149,7 +167,10 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
       }
       it = pending_write_row_map_.find(key_col_hash);
       if (it != pending_write_row_map_.end()) {
-        GeneralPrint("DoPrepare failed  pending_write_row_map_ ww failed", tx_id, row, &key_col_hash);
+        GeneralPrint("DoPrepare failed  pending_write_row_map_ ww failed",
+                     tx_id,
+                     row,
+                     static_cast<uint64_t>(key_col_hash));
         lock_.unlock();
         return false;
       }
@@ -163,10 +184,16 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
     auto key_col_hash = key_col_hash_it.first;
     auto it = pending_read_row_map_.find(key_col_hash);
     if (it != pending_read_row_map_.end()) {
-      GeneralPrint("DoPrepare add read hash", tx_id, (Row*)(key_col_hash_it.second), &key_col_hash);
+      GeneralPrint("DoPrepare add read hash",
+                   tx_id,
+                   (Row*)(key_col_hash_it.second),
+                   static_cast<uint64_t>(key_col_hash));
       it->second = it->second + 1;
     } else {
-      GeneralPrint("DoPrepare insert read hash", tx_id, (Row*)(key_col_hash_it.second), &key_col_hash);
+      GeneralPrint("DoPrepare insert read hash",
+                   tx_id,
+                   (Row*)(key_col_hash_it.second),
+                   static_cast<uint64_t>(key_col_hash));
       pending_read_row_map_.emplace(key_col_hash, 1) ;
     }
   }
@@ -174,7 +201,10 @@ bool SchedulerCarousel::DoPrepare(txnid_t tx_id, Marshallable* cmd) {
   // Insert into the write map.
   for (auto& key_col_hash_it: write_hash_keys) {
     auto key_col_hash = key_col_hash_it.first;
-    GeneralPrint("DoPrepare insert write hash", tx_id, (Row*)(key_col_hash_it.second), &key_col_hash);
+    GeneralPrint("DoPrepare insert write hash",
+                 tx_id,
+                 (Row*)(key_col_hash_it.second),
+                 static_cast<uint64_t>(key_col_hash));
     pending_write_row_map_.emplace(key_col_hash, 1) ;
   }
 
@@ -341,7 +371,10 @@ void SchedulerCarousel::DoCommit(Tx& tx_input) {
         if (it->second == 0) {
           pending_read_row_map_.erase(it);
         }
-        GeneralPrint("DoCommit decrease read", tx->tid_, row, &key_col_hash);
+        GeneralPrint("DoCommit decrease read",
+                     tx->tid_,
+                     row,
+                     static_cast<uint64_t>(key_col_hash));
         fflush(stdout);
       }
     }
@@ -377,7 +410,10 @@ void SchedulerCarousel::DoCommit(Tx& tx_input) {
         }
         verify(it->second == 1);
         pending_write_row_map_.erase(it);
-        GeneralPrint("DoCommit erase write ", tx->tid_, row, &key_col_hash);
+        GeneralPrint("DoCommit erase write ",
+                     tx->tid_,
+                     row,
+                     static_cast<uint64_t>(key_col_hash));
         fflush(stdout);
       }
     }

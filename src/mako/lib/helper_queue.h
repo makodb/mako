@@ -1,12 +1,15 @@
 #ifndef _LIB_HELPER_QUEUE_H_
 #define _LIB_HELPER_QUEUE_H_
 
-#include "rpc.h"
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
 
 #define HELPER_QUEUE_SIZE 100
+
+namespace erpc {
+class ReqHandle;
+}
 
 namespace mako
 {

@@ -1,6 +1,8 @@
 
 #include <thread>
 #include <cstring>  // for std::memcpy
+#include <cstdint>
+#include <functional>
 #include "basetypes.hpp"
 
 // External safety annotations for atomic operations
@@ -297,11 +299,12 @@ double Timer::elapsed() const {
 Rand::Rand() : rand_() {
     struct timeval now;
     gettimeofday(&now, nullptr);
-    // Use static_cast for pthread_t (which is typically an integer type)
-    // and reinterpret_cast for pointer-to-integer conversion
-    rand_.seed(now.tv_sec + now.tv_usec +
-               static_cast<long long>(pthread_self()) +
-               reinterpret_cast<long long>(this));
+    const auto thread_hash =
+        static_cast<long long>(std::hash<pthread_t>{}(pthread_self()));
+    const auto this_hash =
+        static_cast<long long>(reinterpret_cast<uintptr_t>(this));
+    rand_.seed(static_cast<long long>(now.tv_sec) +
+               static_cast<long long>(now.tv_usec) + thread_hash + this_hash);
 }
 
 } // namespace base

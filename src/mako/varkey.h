@@ -1,7 +1,6 @@
 #ifndef _NDB_VARKEY_H_
 #define _NDB_VARKEY_H_
 
-#include <endian.h>
 #include <stdint.h>
 #include <string.h>
 

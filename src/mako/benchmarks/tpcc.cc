@@ -10,7 +10,11 @@
 #include <string>
 #include <ctype.h>
 #include <stdlib.h>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#else
 #include <malloc.h>
+#endif
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -23,6 +27,18 @@
 #include "../macros.h"
 #include "../scopedperf.hh"
 #include "../spinlock.h"
+
+#if defined(__APPLE__)
+static inline void* tpcc_memalign(size_t alignment, size_t size) {
+  void* p = nullptr;
+  if (posix_memalign(&p, alignment, size) != 0) return nullptr;
+  return p;
+}
+#else
+static inline void* tpcc_memalign(size_t alignment, size_t size) {
+  return memalign(alignment, size);
+}
+#endif
 
 #include "bench.h"
 #include "tpcc.h"
@@ -3576,7 +3592,9 @@ private:
     if (g_enable_partition_locks) {
       static_assert(sizeof(aligned_padded_elem<spinlock>) == CACHELINE_SIZE, "xx");
       auto& cfg = BenchmarkConfig::getInstance();
-      void * const px = memalign(CACHELINE_SIZE, sizeof(aligned_padded_elem<spinlock>) * cfg.getNthreads());
+      void * const px =
+        tpcc_memalign(CACHELINE_SIZE,
+                      sizeof(aligned_padded_elem<spinlock>) * cfg.getNthreads());
       ALWAYS_ERROR(px);
       ALWAYS_ERROR(reinterpret_cast<uintptr_t>(px) % CACHELINE_SIZE == 0);
       g_partition_locks = reinterpret_cast<aligned_padded_elem<spinlock> *>(px);
@@ -3588,7 +3606,7 @@ private:
 
     if (g_new_order_fast_id_gen) {
       void * const px =
-        memalign(
+        tpcc_memalign(
             CACHELINE_SIZE,
             sizeof(aligned_padded_elem<atomic<uint64_t>>) *
               NumWarehouses() * NumDistrictsPerWarehouse());

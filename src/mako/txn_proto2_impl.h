@@ -842,7 +842,7 @@ public:
     txn_logger::pbuffer_circbuf &pull_buf = ctx.all_buffers_;
     txn_logger::pbuffer_circbuf &push_buf = ctx.persist_buffers_;
 
-    util::non_atomic_fetch_add(stats.ntxns_committed_, 1UL);
+    util::non_atomic_fetch_add(stats.ntxns_committed_, static_cast<uint64_t>(1));
 
     const bool do_compress = txn_logger::IsCompressionEnabled();
     if (do_compress) {

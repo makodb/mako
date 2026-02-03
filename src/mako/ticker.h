@@ -103,7 +103,8 @@ public:
     {
       tickinfo &ti = impl_->ticks_[core_];
       // bump the depth first
-      const uint64_t prev_depth = util::non_atomic_fetch_add(ti.depth_, 1UL);
+      const uint64_t prev_depth =
+        util::non_atomic_fetch_add(ti.depth_, static_cast<uint64_t>(1));
       // grab the lock
       if (!prev_depth) {
         ti.lock_.lock();
@@ -133,7 +134,8 @@ public:
       tickinfo &ti = impl_->ticks_[core_];
       INVARIANT(ti.lock_.is_locked());
       INVARIANT(tick_ > impl_->global_last_tick_inclusive());
-      const uint64_t prev_depth = util::non_atomic_fetch_sub(ti.depth_, 1UL);
+      const uint64_t prev_depth =
+        util::non_atomic_fetch_sub(ti.depth_, static_cast<uint64_t>(1));
       INVARIANT(prev_depth);
       // unlock
       if (prev_depth == 1) {
@@ -209,7 +211,8 @@ private:
 
       // bump the current tick
       // XXX: ignore overflow
-      const uint64_t last_tick = util::non_atomic_fetch_add(current_tick_, 1UL);
+      const uint64_t last_tick =
+        util::non_atomic_fetch_add(current_tick_, static_cast<uint64_t>(1));
       const uint64_t cur_tick  = last_tick + 1;
 
       // wait for all threads to finish the last tick

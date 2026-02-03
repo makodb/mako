@@ -279,7 +279,7 @@ class Epoll {
     struct kevent evlist[max_nev];
     struct timespec timeout;
     timeout.tv_sec = 0;
-    timeout.tv_nsec = 50 * 1000 * 1000; // 0.05 sec
+    timeout.tv_nsec = 1 * 1000 * 1000; // 0.001 sec
 
     int nev = kevent(poll_fd_, nullptr, 0, evlist, max_nev, &timeout);
 

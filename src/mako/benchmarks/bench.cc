@@ -8,7 +8,13 @@
 #include <stdlib.h>
 #include <sched.h>
 #include <unistd.h>
+#if defined(__linux__)
 #include <sys/sysinfo.h>
+#else
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <mach/mach.h>
+#endif
 
 #include "bench.h"
 #include "tpcc.h"
@@ -86,9 +92,26 @@ map_agg(map<K, V> &agg, const map<K, V> &m)
 static pair<uint64_t, uint64_t>
 get_system_memory_info()
 {
+#if defined(__linux__)
   struct sysinfo inf;
   sysinfo(&inf);
   return make_pair(inf.mem_unit * inf.freeram, inf.mem_unit * inf.totalram);
+#else
+  uint64_t total = 0;
+  size_t total_len = sizeof(total);
+  (void)sysctlbyname("hw.memsize", &total, &total_len, nullptr, 0);
+
+  mach_port_t host = mach_host_self();
+  vm_size_t page_size = 0;
+  (void)host_page_size(host, &page_size);
+  vm_statistics64_data_t vmstat;
+  mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+  uint64_t free_bytes = 0;
+  if (host_statistics64(host, HOST_VM_INFO64, (host_info64_t)&vmstat, &count) == KERN_SUCCESS) {
+    free_bytes = static_cast<uint64_t>(vmstat.free_count) * static_cast<uint64_t>(page_size);
+  }
+  return make_pair(free_bytes, total);
+#endif
 }
 
 static bool

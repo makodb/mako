@@ -1,13 +1,19 @@
 #include <iostream>
-#include <bits/stdc++.h>
+#include <atomic>
+#include <cstring>
+#include <ctime>
+#include <map>
+#include <thread>
+#include <unordered_map>
+#include <vector>
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/promise.h"
 #include "lib/common.h"
 #include <stdlib.h>
+#include <unistd.h>
 #include "benchmarks/common.h"
 #include <boost/fiber/all.hpp>
-#include "unordered_map"
 #include "util.h"
 #include "benchmarks/sto/sync_util.hh"
 using namespace std;
@@ -109,7 +115,8 @@ void erpc_instance_exp_seq(int num) {
 }
 
 void fiber_instance_exp(int id) {
-    static __thread int nshards=id;
+    thread_local int nshards = 0;
+    nshards = id;
     //__thread int TThread::the_id;
     static thread_local int a=id;
     static int b=id;

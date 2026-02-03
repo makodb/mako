@@ -14,6 +14,7 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "client.hpp"
+#include "inproc_transport.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -186,6 +187,7 @@ void ClientConnection::handle_free(i64 xid) const {
 // Contains syscalls, raw pointers, and other unsafe operations
 int ClientConnection::connect(const char* addr) {
   verify(!state_machine_.is_connected());
+  inproc_transport_.set(false);
 
   // Transition to CONNECTING state
   if (!state_machine_.transition_to(ConnectionState::CONNECTING)) {
@@ -206,48 +208,54 @@ int ClientConnection::connect(const char* addr) {
   string port = addr_str.substr(idx + 1);
   // }
 
+  // In-process fallback: if a server is registered for this port, connect via socketpair.
+  int inproc_fd = -1;
+  const int inproc_res = inproc_try_connect(addr_str, poll_thread_worker_, &inproc_fd);
+  if (inproc_res == 0 && inproc_fd >= 0) {
+    socket_ = inproc_fd;
+    inproc_transport_.set(true);
+  } else {
 #ifdef USE_IPC
-  // @unsafe { - IPC socket creation and connect syscalls
-  struct sockaddr_un saun;
-  saun.sun_family = AF_UNIX;
-  string ipc_addr = "rsock" + port;
-  strcpy(saun.sun_path, ipc_addr.data());
-  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (sock < 0) {
-    Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
-    return errno;
-  }
-  socket_ = sock;
-  auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
-  if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
-    int err = errno;
-    Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
-    ::close(socket_);
-    socket_ = -1;
-    return err;
-  }
-  // }
+    // @unsafe { - IPC socket creation and connect syscalls
+    struct sockaddr_un saun;
+    saun.sun_family = AF_UNIX;
+    string ipc_addr = "rsock" + port;
+    strcpy(saun.sun_path, ipc_addr.data());
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock < 0) {
+      Log_error("rrr::ClientConnection: socket() failed: %s", strerror(errno));
+      return errno;
+    }
+    socket_ = sock;
+    auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
+    if (::connect(socket_, (struct sockaddr*)&saun, len) < 0) {
+      int err = errno;
+      Log_error("rrr::ClientConnection: connect() failed: %s", strerror(err));
+      ::close(socket_);
+      socket_ = -1;
+      return err;
+    }
+    // }
 #else
+    struct addrinfo hints;
+    // @unsafe { - memset
+    memset(&hints, 0, sizeof(struct addrinfo));
+    // }
 
-  struct addrinfo hints;
-  // @unsafe { - memset
-  memset(&hints, 0, sizeof(struct addrinfo));
-  // }
+    hints.ai_family = AF_INET; // ipv4
+    hints.ai_socktype = SOCK_STREAM; // tcp
 
-  hints.ai_family = AF_INET; // ipv4
-  hints.ai_socktype = SOCK_STREAM; // tcp
+    // Use AddrInfo RAII wrapper - automatically frees on scope exit
+    auto addr_result = AddrInfo::resolve(host.c_str(), port.c_str(), &hints);
+    if (addr_result.is_err()) {
+      Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
+      return EINVAL;
+    }
+    auto addr_info = addr_result.unwrap();
 
-  // Use AddrInfo RAII wrapper - automatically frees on scope exit
-  auto addr_result = AddrInfo::resolve(host.c_str(), port.c_str(), &hints);
-  if (addr_result.is_err()) {
-    Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
-    return EINVAL;
-  }
-  auto addr_info = addr_result.unwrap();
-
-  // @unsafe { - TCP socket creation, options, and connect syscalls
-  struct addrinfo* rp = nullptr;
-  for (rp = addr_info.get(); rp != nullptr; rp = rp->ai_next) {
+    // @unsafe { - TCP socket creation, options, and connect syscalls
+    struct addrinfo* rp = nullptr;
+    for (rp = addr_info.get(); rp != nullptr; rp = rp->ai_next) {
       int sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
       if (sock == -1) {
         continue;
@@ -267,24 +275,31 @@ int ClientConnection::connect(const char* addr) {
       ::close(socket_);
       socket_ = -1;
     }
-  // AddrInfo automatically freed when addr_info goes out of scope
-  // }
+    // AddrInfo automatically freed when addr_info goes out of scope
+    // }
 
-  if (rp == nullptr) {
-    // failed to connect
-    state_machine_.transition_to(ConnectionState::FAILED);
-    return ENOTCONN;
-  }
+    if (rp == nullptr) {
+      // failed to connect
+      state_machine_.transition_to(ConnectionState::FAILED);
+      return ENOTCONN;
+    }
 #endif
-
+  }
   // @unsafe - set_nonblocking syscall
   {
+#ifdef __APPLE__
+    // Prevent SIGPIPE termination on write() to closed sockets.
+    const int yes = 1;
+    (void)setsockopt(socket_, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+#endif
     verify(set_nonblocking(socket_, true) == 0);
   }
 
   // Apply TCP keepalive options after socket is connected
   // @unsafe { setsockopt system calls }
-  apply_keepalive_options();
+  if (!inproc_transport_.get()) {
+    apply_keepalive_options();
+  }
 
   // Initialize last activity time and record connection in metrics
   auto now_ms = current_time_ms();
@@ -1151,6 +1166,9 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
 // @unsafe - Apply TCP keepalive options to socket
 void ClientConnection::apply_keepalive_options() {
   if (socket_ < 0) {
+    return;
+  }
+  if (inproc_transport_.get()) {
     return;
   }
 

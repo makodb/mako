@@ -31,7 +31,8 @@ class SchedulerCarousel : public SchedulerClassic {
   };
 
 
-  void GeneralPrint(const char* msg, txnid_t tx_id, Row* row, uint64_t* key_hash);
+  void GeneralPrint(const char* msg, txnid_t tx_id, Row* row);
+  void GeneralPrint(const char* msg, txnid_t tx_id, Row* row, uint64_t key_hash);
 
   bool OnPrepare(cmdid_t);
   bool DoPrepare(txnid_t tx_id, Marshallable* cmd = nullptr);

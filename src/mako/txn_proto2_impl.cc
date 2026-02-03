@@ -356,7 +356,11 @@ txn_logger::writer(
       }
 
       if (g_call_fsync) {
+  #if defined(__APPLE__)
+        const int fret = fsync(fd);
+  #else
         const int fret = fdatasync(fd);
+  #endif
         if (unlikely(fret == -1)) {
           perror("fdatasync");
           ALWAYS_ASSERT(false);
@@ -394,7 +398,7 @@ txn_logger::writer(
             const size_t stridelen = 1;
             for (size_t p = 0; p < pxlen; p += stridelen)
               if ((&px->buf_start_[0])[p] & 0xF)
-                non_atomic_fetch_add(ea.dummy_work_, 1UL);
+                non_atomic_fetch_add(ea.dummy_work_, static_cast<uint64_t>(1));
           }
 #endif
           px0 = ctx.persist_buffers_.deq();

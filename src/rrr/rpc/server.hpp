@@ -198,6 +198,8 @@ class ServerListener: public Pollable {
   struct addrinfo* p_svr_addr_{nullptr};
 
   int server_sock_{0};
+  // Last bind() errno when binding failed (used to detect restricted environments).
+  int bind_errno_{0};
 
   int poll_mode() const override {
     return PollMode::READ;
@@ -289,6 +291,13 @@ public:
 
     // @safe - Initializes connection with socket
     ServerConnection(rusty::Arc<RpcServiceContext> ctx, int socket);
+
+    // @unsafe - Initializes weak self-reference for callback/dispatch paths
+    // Must be called immediately after creating the Arc<ServerConnection>.
+    static void init_weak_self(const rusty::Arc<ServerConnection>& self) {
+        // @unsafe - const_cast to initialize weak_self_
+        { const_cast<ServerConnection&>(*self).weak_self_ = self; }
+    }
 
     // @safe - Simple status check
     bool connected() {
@@ -498,6 +507,9 @@ class Server: public NoCopy {
     // Server restart detection: unique instance ID generated on startup
     // Used by clients to detect server restarts (ID changes after restart)
     uint64_t instance_id_;
+    // In-process transport fallback (used when bind() fails with EPERM).
+    bool inproc_registered_{false};
+    std::string inproc_bind_addr_;
 
 public:
     // @safe - Creates server with optional PollThread

@@ -14,6 +14,7 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "server.hpp"
+#include "inproc_transport.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -329,6 +330,12 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 // @safe - Destroys server and requests close for all connections
 // Arc<RpcServiceContext> ensures services live until all connections are done
 Server::~Server() {
+    if (inproc_registered_) {
+        inproc_unregister_server(inproc_bind_addr_);
+        inproc_registered_ = false;
+        inproc_bind_addr_.clear();
+    }
+
     // Request close for server listener and all its connections via poll thread
     if (server_listener_.is_some()) {
         auto& listener = server_listener_.as_ref().unwrap();
@@ -343,7 +350,9 @@ Server::~Server() {
         }
 
         // Request close for the listener itself
-        poll_thread_.as_ref().unwrap()->request_close(listener->fd());
+        if (listener->fd() >= 0) {
+            poll_thread_.as_ref().unwrap()->request_close(listener->fd());
+        }
         server_listener_ = rusty::None;  // Reset to None
     }
 
@@ -374,6 +383,11 @@ bool ServerListener::handle_read() {
     }
     if (clnt_socket >= 0) {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
+#ifdef __APPLE__
+      // Prevent SIGPIPE termination on write() to closed sockets.
+      const int yes = 1;
+      (void)setsockopt(clnt_socket, SOL_SOCKET, SO_NOSIGPIPE, &yes, sizeof(yes));
+#endif
       // @unsafe - set_nonblocking
       { verify(set_nonblocking(clnt_socket, true) == 0); }
 
@@ -418,8 +432,9 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 #ifdef USE_IPC
   struct sockaddr_un saun;
   if ((server_sock_ = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-    perror("server: socket");
-    exit(1);
+    bind_errno_ = errno;
+    server_sock_ = -1;
+    return;
   }
   saun.sun_family = AF_UNIX;
   string ipc_addr = "rsock" + port;
@@ -427,8 +442,10 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
   ::unlink(ipc_addr.data());
   if (::bind(server_sock_, (struct sockaddr*)&saun, len) != 0) {
-    perror("server: socket bind");
-    exit(1);
+    bind_errno_ = errno;
+    ::close(server_sock_);
+    server_sock_ = -1;
+    return;
   }
 
 #else
@@ -450,6 +467,7 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   gai_result_ = addr_result.unwrap();
 
   struct addrinfo* rp = nullptr;
+  int last_bind_errno = 0;
   for (rp = gai_result_.get(); rp != nullptr; rp = rp->ai_next) {
     server_sock_ = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
     if (server_sock_ == -1) {
@@ -481,8 +499,11 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
     }
 
     if (::bind(server_sock_, rp->ai_addr, rp->ai_addrlen) == 0) {
+      bind_errno_ = 0;
       break;  // Successfully bound
     } else {
+      last_bind_errno = errno;
+      bind_errno_ = last_bind_errno;
       Log_error("port bind error for %s:%s, errno: %d (%s)", host.c_str(), port.c_str(), errno, strerror(errno));
       ::close(server_sock_);
       server_sock_ = -1;
@@ -492,6 +513,7 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 
   if (rp == nullptr) {
     // Failed to bind to any address
+    bind_errno_ = last_bind_errno;
     Log_error("rrr::Server: failed to bind to %s:%s after trying all addresses", host.c_str(), port.c_str());
     Log_error("rrr::Server: This is likely because the port is already in use by another process");
     Log_error("rrr::Server: Please check: sudo lsof -i :%s or sudo ss -tulpn | grep %s", port.c_str(), port.c_str());
@@ -547,6 +569,19 @@ int Server::start(const char* bind_addr) {
 
   // Check if listener was created successfully (binding may have failed)
   if (server_listener_.as_ref().unwrap()->server_sock_ < 0) {
+    // In restricted environments (e.g., sandboxed macOS runs), bind() may be denied (EPERM).
+    // Fall back to in-process transport using socketpair, which does not require bind/listen.
+    if (server_listener_.as_ref().unwrap()->bind_errno_ == EPERM) {
+      Log_warn("rrr::Server::start: bind() denied (EPERM) for %s; enabling in-process transport fallback", bind_addr);
+      inproc_register_server(addr_str,
+                             ctx_.as_ref().unwrap(),
+                             poll_thread_.as_ref().unwrap(),
+                             server_listener_.as_ref().unwrap());
+      inproc_registered_ = true;
+      inproc_bind_addr_ = addr_str;
+      return 0;
+    }
+
     Log_error("rrr::Server::start: failed to bind to %s", bind_addr);
     server_listener_ = rusty::None;
     ctx_ = rusty::None;
