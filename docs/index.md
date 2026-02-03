@@ -1,410 +1,212 @@
 # Mako Documentation
 
-Welcome to the "Mako-book".
+Welcome to the Mako documentation.
 
 ---
 
 ## Documentation Structure
 
-This documentation is organized into two main sections:
-
-1. **[User Manual](#user-manual)** - For users who want to deploy, configure, and use Mako
-2. **[Developer Manual](#developer-manual)** - For developers who want to understand Mako's internals or contribute
+| Section | Description |
+|---------|-------------|
+| [Getting Started](#getting-started) | Installation, setup, and first steps |
+| [Architecture](#architecture) | System design and components |
+| [Configuration](#configuration) | YAML configuration reference |
+| [Developer Guide](#developer-guide) | Development setup and internals |
+| [RPC Framework](#rpc-framework) | RPC system documentation |
+| [Persistence](#persistence) | Storage and disk persistence |
+| [Performance](#performance) | Profiling and benchmarking |
+| [Migration](#migration) | RustyCpp and Raft migration docs |
+| [Development Plans](#development-plans) | Active development plans |
+| [Reference](#reference) | Analysis and reference docs |
+| [Testing](#testing) | CI and code review |
 
 ---
-
-# User Manual
-
-## Introduction
-
-### Overview
-- **[What is Mako?](introduction.md)** - Understanding Mako's purpose and capabilities
-- **[Key Concepts](concepts.md)** - Fundamental concepts: shards, replicas, transactions, speculative execution
-- **[Comparison with Other Systems](comparison.md)** - How Mako differs from MongoDB, PostgreSQL, Spanner, etc.
-- **[Use Cases](use-cases.md)** - When to use Mako vs. other databases
 
 ## Getting Started
 
-### Installation & Setup
-- **[Installation Guide](install.md)** - Step-by-step installation instructions for Debian/Ubuntu
-- **[Build Instructions](build.md)** - Building on different systems and configurations
-- **[Docker Deployment](DOCKER_BUILD.md)** - Running Mako in Docker containers
-  - [Docker Build Success Guide](DOCKER_BUILD_SUCCESS.md)
-  - [Docker Verification](DOCKER_VERIFICATION.md)
-- **[Quick Start Tutorial](quickstart.md)** - Get up and running in 10 minutes
-
-### Configuration
-- **[Configuration Reference](config.md)** - Complete YAML configuration options
-- **[Cluster Topology](topology.md)** - Defining shards, replicas, and datacenters
-- **[Network Configuration](network.md)** - Setting up networking for distributed deployments
-- **[Storage Configuration](storage-config.md)** - Masstree vs RocksDB persistence options
-
-### Deployment
-- **[Local Deployment](run.md)** - Running distributed tests on localhost
-- **[EC2 Deployment](ec2.md)** - Deploying Mako on AWS EC2
-- **[Multi-Datacenter Setup](multi-dc.md)** - Configuring geo-replication across datacenters
-- **[Production Deployment Checklist](production.md)** - Best practices for production
-- **[Capacity Planning](capacity-planning.md)** - Sizing your cluster
-
-## Working with Data
-
-### CRUD Operations
-- **[Insert Data](crud/insert.md)** - Creating records in Mako
-- **[Query Data](crud/query.md)** - Reading and retrieving data
-- **[Update Data](crud/update.md)** - Modifying existing records
-- **[Delete Data](crud/delete.md)** - Removing records
-
-### Transactions
-- **[Transaction Basics](transactions/basics.md)** - Understanding distributed transactions
-- **[ACID Guarantees](transactions/acid.md)** - Consistency and isolation levels
-- **[Read-Write Transactions](transactions/read-write.md)** - Mixed read/write operations
-- **[Transaction Best Practices](transactions/best-practices.md)** - Optimizing transaction performance
-- **[Handling Conflicts](transactions/conflicts.md)** - Understanding and resolving conflicts
-
-### Data Modeling
-- **[Schema Design](data-modeling/schema.md)** - Designing your data model for Mako
-- **[Key Design](data-modeling/keys.md)** - Choosing effective partition keys
-- **[Sharding Strategy](data-modeling/sharding.md)** - How data is distributed across shards
-- **[Data Types](data-modeling/types.md)** - Supported data types and serialization
-
-## Client Interfaces
-
-### Language Drivers
-- **[C++ Client](clients/cpp.md)** - Native C++ client library
-- **[Python Client](clients/python.md)** - Python bindings and usage
-- **[Java Client](clients/java.md)** - Java client library
-- **[Go Client](clients/go.md)** - Go client library
-
-### Compatibility Layers
-- **[RocksDB-Compatible Interface](clients/rocksdb-interface.md)** - Using Mako as a distributed RocksDB
-- **[Redis-Compatible Interface](clients/redis-interface.md)** - Using Mako with Redis API
-- **[Native Client API](clients/native-api.md)** - Direct Mako protocol usage
-
-### Connection Management
-- **[Connection Pooling](clients/connection-pooling.md)** - Managing client connections
-- **[Client Configuration](clients/configuration.md)** - Configuring client behavior
-- **[Error Handling](clients/error-handling.md)** - Handling errors and retries
-
-## Sharding & Distribution
-
-### Sharding Concepts
-- **[Sharding Overview](sharding/overview.md)** - How Mako partitions data
-- **[Shard Keys](sharding/shard-keys.md)** - Choosing and managing shard keys
-- **[Shard Management](sharding/management.md)** - Adding and removing shards
-- **[Balancing](sharding/balancing.md)** - Data distribution and rebalancing
-
-### Geo-Replication
-- **[Replication Overview](replication/overview.md)** - Understanding geo-replication
-- **[Replica Configuration](replication/configuration.md)** - Setting up replicas
-- **[Consistency Levels](replication/consistency.md)** - Configuring consistency guarantees
-- **[Failover & Recovery](replication/failover.md)** - Handling datacenter failures
-
-## Administration
-
-### Cluster Operations
-- **[Starting & Stopping](admin/start-stop.md)** - Cluster lifecycle management
-- **[Monitoring & Metrics](admin/monitoring.md)** - Tracking system performance and health
-- **[Log Management](admin/logs.md)** - Understanding and analyzing logs
-- **[Alerts & Notifications](admin/alerts.md)** - Setting up monitoring alerts
-
-### Maintenance
-- **[Backup & Recovery](admin/backup.md)** - Data backup and disaster recovery procedures
-- **[Upgrades](admin/upgrades.md)** - Upgrading Mako versions
-- **[Scaling](admin/scaling.md)** - Horizontal and vertical scaling
-- **[Node Management](admin/nodes.md)** - Adding and removing nodes
-
-### Storage Management
-- **[Disk Usage](admin/disk-usage.md)** - Managing storage capacity
-- **[Data Persistence](admin/persistence.md)** - RocksDB persistence layer
-- **[Compaction](admin/compaction.md)** - Background compaction processes
-- **[Data Retention](admin/retention.md)** - Data lifecycle policies
-
-## Security
-
-### Authentication & Authorization
-- **[Authentication](security/authentication.md)** - User authentication mechanisms
-- **[Authorization](security/authorization.md)** - Access control and permissions
-- **[User Management](security/users.md)** - Creating and managing users
-- **[Role-Based Access](security/rbac.md)** - Role-based access control
-
-### Network Security
-- **[TLS/SSL Configuration](security/tls.md)** - Encrypting network traffic
-- **[Firewall Setup](security/firewall.md)** - Network security configuration
-- **[VPC Deployment](security/vpc.md)** - Deploying in private networks
-
-### Auditing & Compliance
-- **[Audit Logging](security/audit.md)** - Tracking access and operations
-- **[Compliance](security/compliance.md)** - Meeting regulatory requirements
-
-## Performance
-
-### Optimization
-- **[Benchmarking Guide](performance/benchmarks.md)** - Running TPC-C, TPC-A, and custom benchmarks
-- **[Performance Tuning](performance/tuning.md)** - Optimizing throughput and latency
-- **[Profiling](profile.md)** - CPU profiling and performance analysis
-- **[Query Optimization](performance/query-optimization.md)** - Improving query performance
-
-### Monitoring
-- **[Metrics Collection](performance/metrics.md)** - Key performance indicators
-- **[Performance Analysis](performance/analysis.md)** - Diagnosing performance issues
-- **[Resource Usage](performance/resources.md)** - CPU, memory, network, disk utilization
-
-## Migration & Integration
-
-### Migration Guides
-- **[Migrating from RocksDB](migration/from-rocksdb.md)** - Moving from single-node RocksDB
-- **[Migrating from Redis](migration/from-redis.md)** - Transitioning from Redis
-- **[Migrating from MongoDB](migration/from-mongodb.md)** - Moving from MongoDB
-- **[Migrating from PostgreSQL](migration/from-postgresql.md)** - Transitioning from PostgreSQL
-
-### Integration
-- **[Application Integration](integration/applications.md)** - Integrating Mako into applications
-- **[ETL Pipelines](integration/etl.md)** - Extract, transform, load workflows
-- **[Backup Integration](integration/backup.md)** - Integrating with backup systems
-
-## Reference
-
-### Command Reference
-- **[Server Commands](reference/server-commands.md)** - Server management commands
-- **[Client Commands](reference/client-commands.md)** - Client operations reference
-- **[Configuration Options](reference/config-options.md)** - Complete configuration reference
-- **[Error Codes](reference/error-codes.md)** - Error code reference
-
-### Limits & Thresholds
-- **[System Limits](reference/limits.md)** - Maximum values and constraints
-- **[Default Settings](reference/defaults.md)** - Default configuration values
-- **[Glossary](reference/glossary.md)** - Terminology and definitions
-
-## Troubleshooting
-
-### Common Issues
-- **[Troubleshooting Guide](troubleshooting/guide.md)** - Solutions to frequent problems
-- **[Connection Issues](troubleshooting/connection.md)** - Debugging connectivity problems
-- **[Performance Issues](troubleshooting/performance.md)** - Diagnosing slow performance
-- **[Replication Issues](troubleshooting/replication.md)** - Geo-replication problems
-
-### Debugging
-- **[Debugging Guide](troubleshooting/debugging.md)** - Tools and techniques for debugging
-- **[Log Analysis](troubleshooting/logs.md)** - Understanding log messages
-- **[Core Dumps](troubleshooting/core-dumps.md)** - Analyzing crashes
-
-### FAQ
-- **[General FAQ](faq/general.md)** - Frequently asked questions
-- **[Performance FAQ](faq/performance.md)** - Performance-related questions
-- **[Deployment FAQ](faq/deployment.md)** - Deployment and operations questions
+- **[Introduction](getting-started/introduction.md)** - What is Mako and its capabilities
+- **[Quick Start](getting-started/quickstart.md)** - Get up and running in 10 minutes
+- **[Installation](getting-started/installation.md)** - Step-by-step installation for Debian/Ubuntu
+- **[Concepts](getting-started/concepts.md)** - Fundamental concepts: shards, replicas, transactions
+- **[Docker Setup](getting-started/docker.md)** - Running Mako in Docker containers
+  - [Docker Verification](getting-started/docker-verification.md)
 
 ---
 
-# Developer Manual
+## Architecture
 
-## Architecture & Design
+- **[Architecture Overview](architecture/overview.md)** - High-level system architecture
+- **[Client-Server Architecture](architecture/client-server.md)** - Client-server design
+  - [Client-Server Roadmap](architecture/client-server-roadmap.md)
+- **[Multi-Shard Single Process](architecture/multi-shard.md)** - Running multiple shards in one process
+- **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
 
-### System Overview
-- **[Architecture Overview](architecture.md)** - High-level system architecture
-- **[Speculative 2PC Protocol](speculative-2pc.md)** - Core innovation explained
-- **[Transaction Execution](transaction-execution.md)** - How transactions are processed
-- **[Replication & Consensus](replication.md)** - Geo-replication and Paxos implementation
+---
 
-### Core Components
-- **[Transaction Coordinator](coordinator.md)** - Coordinating distributed transactions
-- **[Transaction Scheduler](scheduler.md)** - Scheduling and execution logic
-- **[Storage Engine - Masstree](masstree.md)** - In-memory index structure
-- **[Disk Persistence - RocksDB](disk_persistence.md)** - Asynchronous persistence layer
-- **[RPC Framework - RRR](rrr-rpc.md)** - Custom RPC implementation
+## Configuration
 
-## Development Guide
+- **[Configuration Reference](configuration/config.md)** - Complete YAML configuration options
 
-### Getting Started
-- **[Development Setup](dev-setup.md)** - Setting up development environment
-- **[Code Organization](code-organization.md)** - Understanding the codebase structure
-- **[Build System](build-system.md)** - CMake, Makefile, and build configurations
-- **[Testing Framework](testing.md)** - Unit tests, integration tests, and CI
+---
 
-### Core Programming Concepts
-- **[Coroutines & Reactor Pattern](coroutines_guide.md)** - Understanding RRR's async model
-- **[Memory Management](memory-management.md)** - RustyCpp smart pointers and safety
-  - [RustyCpp Migration Plan](rrr-rustycpp-migration-plan.md)
-  - [RRR Safety Roadmap](RRR_SAFETY_ROADMAP.md)
-- **[Thread Model](threading.md)** - Multi-threading and concurrency patterns
-- **[Event System](event-system.md)** - Event-driven programming in RRR
+## Developer Guide
 
-### Implementation Details
-- **[Transaction Protocols](protocols.md)** - Implementing concurrency control protocols
-  - 2PL (Two-Phase Locking)
-  - OCC (Optimistic Concurrency Control)
-  - Mako's Speculative 2PC
-  - Paxos & Raft
-- **[Workload Implementation](workloads.md)** - Adding new benchmarks
-- **[Table Allocation](table-allocation.md)** - Memory allocation strategies
-- **[RPC Design](rpc-design.md)** - Adding new RPC services
-  - [RPC Benchmarking](rpc-benchmark.md)
+- **[Development Setup](developer/development.md)** - Setting up development environment
+- **[Coroutines & Reactor](developer/coroutines.md)** - Understanding RRR's async model
+- **[Fiber API](developer/fiber-api.md)** - Fiber API documentation
+  - [Fiber API Refactoring](developer/fiber-api-refactoring.md)
+- **[Transport Backends](developer/transport-backends.md)** - Switching between rrr/rpc and eRPC
+  - [Transport Stop Fix](developer/transport-stop-fix.md)
 
-### Advanced Topics
-- **[Network Transport Layers](transports.md)** - TCP, DPDK, RDMA, eRPC
-- **[Crash Recovery](recovery.md)** - Fault tolerance and recovery mechanisms
-- **[Dependency Tracking](dependency-tracking.md)** - Managing transaction dependencies
-- **[Client Types](Open-loop-vs-Closed-loop-clients.md)** - Open-loop vs closed-loop clients
+---
 
-## Contributing
+## RPC Framework
 
-### Development Workflow
-- **[Contributing Guide](../CONTRIBUTING.md)** - How to contribute to Mako
-- **[Code Review Process](code-review.md)** - Submitting and reviewing pull requests
-- **[Coding Standards](coding-standards.md)** - C++ style guide and best practices
-- **[Writing Tests](writing-tests.md)** - Test writing guidelines
-- **[Documentation Guide](documentation.md)** - Contributing to documentation
+- **[RPC Overview](rpc/overview.md)** - RRR RPC framework guide
+- **[RPC API Reference](rpc/api.md)** - RPC reliability API reference
+- **[RPC Reliability](rpc/reliability.md)** - RPC reliability mechanisms
+  - [Reliability Plan](rpc/reliability-plan.md)
+  - [Safety Plan](rpc/safety-plan.md)
+- **[RPC Migration Guide](rpc/migration-guide.md)** - Migrating to new RPC interface
+- **[RPC Benchmarking](rpc/benchmark.md)** - RPC benchmarking setup
 
-### CI/CD
-- **[Continuous Integration](ci.md)** - GitHub Actions and automated testing
-- **[Release Process](release.md)** - Version management and releases
+### RPC Implementation Plans
+
+| Phase | Documents |
+|-------|-----------|
+| Phase 1 | [Connection State](rpc/phase1_connection_state.md), [Auto Reconnect](rpc/phase1_auto_reconnect.md), [Circuit Breaker](rpc/phase1_circuit_breaker.md), [Reconnect Policy](rpc/phase1_reconnect_policy.md) |
+| Phase 2 | [Request Queue](rpc/phase2_request_queue.md), [Request Buffering](rpc/phase2_request_buffering.md), [Timeout Retry](rpc/phase2_timeout_retry.md) |
+| Phase 3 | [Heartbeat](rpc/phase3_heartbeat.md), [Metrics](rpc/phase3_metrics.md), [Validation](rpc/phase3_validation.md) |
+| Phase 4 | [Graceful Shutdown](rpc/phase4_graceful_shutdown.md), [Restart Detection](rpc/phase4_restart_detection.md) |
+| Phase 5 | [Health Pool](rpc/phase5_health_pool.md) |
+| Phase 6 | [Callbacks](rpc/phase6_callbacks.md), [Error Types](rpc/phase6_error_types.md) |
+| Phase 7 | [Unit Tests](rpc/phase7_unit_tests.md), [Integration Tests](rpc/phase7_2_integration_tests.md) |
+
+---
+
+## Persistence
+
+- **[Disk Persistence](persistence/disk_persistence.md)** - RocksDB persistence with callback implementation
+- **[Table Allocation](persistence/table-allocation.md)** - Memory allocation strategies
+
+---
+
+## Performance
+
+- **[Profiling](performance/profiling.md)** - CPU profiling and performance analysis
+- **[CPU Throttling](performance/cpu_throttling.md)** - CPU throttling for scaling tests
+  - [CPU Limiting Plan](performance/cpu_limiting_plan.md)
+- **[Plotting](performance/plot.md)** - Generating graphs from benchmark data
+
+---
+
+## Migration
+
+### RustyCpp Migration (Memory Safety)
+
+- **[Migration Overview](migration/rustycpp/overview.md)** - Master RustyCpp migration plan
+- **[Safety Roadmap](migration/rustycpp/safety-roadmap.md)** - 5-phase safety roadmap
+- **[RRR Migration](migration/rustycpp/rrr-migration.md)** - RRR-specific migration
+- **[Safety Conversion](migration/rustycpp/safety-conversion.md)** - Safety conversion details
+- **[RRR Unsafe Blocks](migration/rustycpp/rrr-unsafe-blocks.md)** - RRR unsafe code documentation
+- **[Reactor RefCell](migration/rustycpp/reactor-refcell.md)** - Reactor RefCell migration
+- **[Reactor Unsafe Blocks](migration/rustycpp/reactor-unsafe-blocks.md)** - Reactor unsafe code
+- **[Raft Migration](migration/rustycpp/raft-migration.md)** - Raft-specific migration
+- **[Masstree Migration](migration/rustycpp/masstree-migration.md)** - Masstree migration plan
+
+### Raft Migration (Paxos to Raft)
+
+- **[Raft Migration Overview](migration/raft/overview.md)** - Replace Paxos with Raft
+- **[Architecture Analysis](migration/raft/architecture-analysis.md)** - Architecture for Raft
+- **[Complete Architecture](migration/raft/complete-architecture.md)** - Complete Raft architecture
+- **[Mako Explained](migration/raft/mako-explained.md)** - Mako explanation
+- **[Raft Explained](migration/raft/raft-explained.md)** - Raft protocol explanation
+- **[Raft Helper](migration/raft/raft-helper.md)** - Raft helper implementation
+- **[Main Helper Implementation](migration/raft/main-helper-impl.md)** - Implementation details
+- **[Migration Status](migration/raft/status.md)** - Migration status tracking
+
+---
+
+## Development Plans
+
+### Config Node System
+
+- **[Overview](plans/config-node/overview.md)** - Configuration persistence master plan
+- [Task 1](plans/config-node/task1.md) | [Task 2](plans/config-node/task2.md) | [Task 3](plans/config-node/task3.md) | [Task 4](plans/config-node/task4.md) | [Task 5](plans/config-node/task5.md)
+
+### Log Persistence & Recovery
+
+| Phase 1: Log Storage | Phase 2: Recovery | Phase 3: Snapshots | Phase 4+ |
+|---------------------|-------------------|-------------------|----------|
+| [Interface](plans/log-persistence/phase1_1_log_persistence_interface.md) | [Recovery Manager](plans/log-persistence/phase2_1_recovery_manager.md) | [Snapshot Interface](plans/log-persistence/phase3_1_snapshot_interface.md) | [Pre-vote Protocol](plans/log-persistence/phase4_1_prevote_protocol.md) |
+| [RocksDB Backend](plans/log-persistence/phase1_2_rocksdb_log_backend.md) | [Log Replay](plans/log-persistence/phase2_2_log_replay.md) | [Snapshot Format](plans/log-persistence/phase3_2_snapshot_format.md) | [Chaos Engineering](plans/log-persistence/phase7_4_chaos_engineering.md) |
+| [Raft Integration](plans/log-persistence/phase1_3_raft_integration.md) | [Uncommitted Entries](plans/log-persistence/phase2_3_uncommitted_entries.md) | [Snapshot Storage](plans/log-persistence/phase3_3_snapshot_storage.md) | |
+| [Paxos Integration](plans/log-persistence/phase1_4_paxos_integration.md) | [State Machine Recovery](plans/log-persistence/phase2_4_state_machine_recovery.md) | [Log Compaction](plans/log-persistence/phase3_4_log_compaction.md) | |
+
+### Range Sharding
+
+- [Task 1](plans/range-sharding/task1.md) | [Task 2](plans/range-sharding/task2.md) | [Task 3](plans/range-sharding/task3.md) | [Task 4](plans/range-sharding/task4.md)
+
+### Client-Server Unification
+
+- [Unify Interface](plans/client-server/unify_client_server_interface_plan.md)
+- [Unify Mode](plans/client-server/unify_client_mode_plan.md)
+- [Unify DB Interface](plans/client-server/unify_db_interface_plan.md)
+- [CI Test Plan](plans/client-server/client_server_ci_test_plan.md)
+- [Evaluation](plans/client-server/client_server_evaluation.md)
+- [Test Client Service](plans/client-server/test_client_service_plan.md)
+- [Legacy API Removal](plans/client-server/legacy_api_removal_plan.md)
+- [Startup Tests](plans/client-server/task8_4_startup_tests_plan.md)
+
+### Issue Fixes
+
+- [Fix Commit/Rollback](plans/issues/fix_commit_rollback_plan.md)
+- [Fix Txn ID Collision](plans/issues/fix_txn_id_collision_plan.md)
+- [Node Crash Replication](plans/issues/node_crash_replication_plan.md)
+- [Shard Crash Reboot](plans/issues/shard_crash_reboot_plan.md)
+- [Transaction Timeout](plans/issues/txn_timeout_plan.md)
+- [Leader Shutdown Hang](plans/issues/leader_shutdown_hang.md)
+
+---
 
 ## Reference
 
-### API Reference
-- **[Client API Reference](api/client.md)** - Complete client API documentation
-- **[Server API Reference](api/server.md)** - Server-side API documentation
-- **[Configuration Schema](api/config-schema.md)** - YAML configuration schema
+- **[Function Dependencies](reference/function-dependencies.md)** - Function dependency analysis
+- **[Naming Conventions](reference/naming-conventions.md)** - Codebase naming conventions
+- **[TPC-C Sharding](reference/tpcc-sharding.md)** - TPC-C benchmark sharding behavior
+- **[Event Rename Plan](reference/plan_event_rename.md)** - Event class renaming plan
 
-### Benchmarks
-- **[TPC-C Implementation](bench/tpcc.md)** - TPC-C benchmark details
-- **[TPC-A Implementation](bench/tpca.md)** - TPC-A benchmark details
-- **[Read-Write Workload](bench/rw.md)** - RW benchmark details
-- **[Micro-benchmarks](bench/micro.md)** - Micro-benchmark suite
+---
 
-### Tools & Utilities
-- **[Plotting Results](plot.md)** - Generating graphs from benchmark data
-- **[Log Analysis](log-analysis.md)** - Analyzing system logs
-- **[Performance Tools](perf-tools.md)** - gperf, perf, and other profiling tools
+## Testing
+
+- **[Judge System](testing/judge.md)** - Judge system documentation
+- **[Commit Reviews](testing/commit_reviews.md)** - Code review guidelines
+
+---
+
+## Archive
+
+Legacy documentation kept for reference:
+
+- [Build (Legacy)](archive/build-legacy.md) - Deprecated Python 2 build system
+- [Run (Legacy)](archive/run-legacy.md) - Deprecated run.py scripts
+- [EC2 (Legacy)](archive/ec2-legacy.md) - Deprecated AWS deployment
+- [Docker Build Success](archive/DOCKER_BUILD_SUCCESS.md) - Historical build verification
 
 ---
 
 ## Additional Resources
 
 ### Papers & Publications
+
 - [OSDI'25 Paper](https://www.usenix.org/conference/osdi25/presentation/shen-weihai) - Mako: Speculative Distributed Transactions with Geo-Replication
 
 ### Community
+
 - [GitHub Repository](https://github.com/makodb/mako)
 - [Issue Tracker](https://github.com/makodb/mako/issues)
-- [Discussions](https://github.com/makodb/mako/discussions)
 
 ---
 
-## Quick Navigation
-
-### I want to...
-- **Get started quickly** → [Quick Start Tutorial](quickstart.md) → [CRUD Operations](crud/insert.md)
-- **Use Mako as a distributed database** → [Installation Guide](install.md) → [Configuration Reference](config.md) → [RocksDB Interface](clients/rocksdb-interface.md)
-- **Migrate from another database** → See [Migration Guides](migration/from-rocksdb.md)
-- **Deploy Mako on AWS** → [EC2 Deployment](ec2.md) → [Production Deployment](production.md)
-- **Run benchmarks** → [Benchmarking Guide](performance/benchmarks.md) → [Performance Tuning](performance/tuning.md)
-- **Set up geo-replication** → [Multi-Datacenter Setup](multi-dc.md) → [Replication Overview](replication/overview.md)
-- **Understand transactions** → [Transaction Basics](transactions/basics.md) → [ACID Guarantees](transactions/acid.md)
-- **Optimize performance** → [Performance Tuning](performance/tuning.md) → [Query Optimization](performance/query-optimization.md)
-- **Secure my deployment** → [Authentication](security/authentication.md) → [TLS/SSL Configuration](security/tls.md)
-- **Monitor and maintain** → [Monitoring & Metrics](admin/monitoring.md) → [Backup & Recovery](admin/backup.md)
-- **Understand how Mako works** → [Architecture Overview](architecture.md) → [Speculative 2PC Protocol](speculative-2pc.md)
-- **Add a new transaction protocol** → [Transaction Protocols](protocols.md) → [Development Setup](dev-setup.md)
-- **Contribute code** → [Development Setup](dev-setup.md) → [Contributing Guide](../CONTRIBUTING.md)
-- **Debug an issue** → [Troubleshooting Guide](troubleshooting/guide.md) → [Debugging Guide](troubleshooting/debugging.md)
-
----
-
-## Documentation Status
-
-Legend: ✅ Complete | 🚧 In Progress | 📝 Planned
-
-### User Manual Status
-
-**Existing Documentation:**
-- ✅ Build Instructions (build.md)
-- ✅ Running Tests (run.md)
-- ✅ EC2 Deployment (ec2.md)
-- ✅ Profiling (profile.md)
-- ✅ Docker Build (DOCKER_BUILD.md)
-
-**Introduction (📝 Planned):**
-- What is Mako?, Key Concepts, Comparison, Use Cases
-
-**Getting Started (📝 Planned):**
-- Installation Guide, Quick Start Tutorial, Storage Configuration, Capacity Planning
-
-**Working with Data (📝 Planned):**
-- CRUD Operations (Insert, Query, Update, Delete)
-- Transactions (Basics, ACID, Read-Write, Best Practices, Conflicts)
-- Data Modeling (Schema Design, Key Design, Sharding Strategy, Data Types)
-
-**Client Interfaces (📝 Planned):**
-- Language Drivers (C++, Python, Java, Go)
-- Compatibility Layers (RocksDB, Redis, Native API)
-- Connection Management (Pooling, Configuration, Error Handling)
-
-**Sharding & Distribution (📝 Planned):**
-- Sharding (Overview, Shard Keys, Management, Balancing)
-- Geo-Replication (Overview, Configuration, Consistency, Failover)
-
-**Administration (📝 Planned):**
-- Cluster Operations (Start/Stop, Monitoring, Logs, Alerts)
-- Maintenance (Backup, Upgrades, Scaling, Node Management)
-- Storage Management (Disk Usage, Persistence, Compaction, Retention)
-
-**Security (📝 Planned):**
-- Authentication & Authorization (Auth, Users, RBAC)
-- Network Security (TLS/SSL, Firewall, VPC)
-- Auditing & Compliance
-
-**Performance (📝 Planned):**
-- Optimization (Benchmarking, Tuning, Query Optimization)
-- Monitoring (Metrics, Analysis, Resource Usage)
-
-**Migration & Integration (📝 Planned):**
-- Migration Guides (from RocksDB, Redis, MongoDB, PostgreSQL)
-- Integration (Applications, ETL, Backup)
-
-**Reference (📝 Planned):**
-- Command Reference (Server, Client, Configuration, Error Codes)
-- Limits & Thresholds (System Limits, Defaults, Glossary)
-
-**Troubleshooting (📝 Planned):**
-- Common Issues (Guide, Connection, Performance, Replication)
-- Debugging (Guide, Log Analysis, Core Dumps)
-- FAQ (General, Performance, Deployment)
-
-### Developer Manual Status
-- ✅ Coroutines Guide
-- ✅ Disk Persistence
-- ✅ RRR RPC Framework
-- ✅ RustyCpp Migration Plan
-- ✅ RRR Safety Roadmap
-- ✅ Table Allocation
-- ✅ RPC Benchmarking
-- ✅ Client Types
-- ✅ Plotting
-- 📝 Architecture Overview
-- 📝 Speculative 2PC Protocol
-- 📝 Transaction Execution
-- 📝 Replication & Consensus
-- 📝 Core Components
-- 📝 Development Setup
-- 📝 Code Organization
-- 📝 Build System
-- 📝 Testing Framework
-- 📝 Memory Management
-- 📝 Thread Model
-- 📝 Event System
-- 📝 Transaction Protocols
-- 📝 Workload Implementation
-- 📝 RPC Design
-- 📝 Network Transports
-- 📝 Crash Recovery
-- 📝 Dependency Tracking
-- 📝 Contributing Guide
-- 📝 Code Review Process
-- 📝 Coding Standards
-- 📝 Writing Tests
-- 📝 CI/CD
-- 📝 API Reference
-
----
-
-*Last updated: October 2024*
+*Last updated: February 2026*
