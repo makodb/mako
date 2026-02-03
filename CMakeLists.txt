@@ -31,29 +31,23 @@ else()
     message(WARNING "You are not using GCC. Current compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
-# Configure and enable rusy-cpp-checker
-include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
-set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
+# Configure (optional) RustyCpp borrow checker
+#
+# Keep this OFF by default. Also, allow building without the RustyCpp submodule
+# present; in that case borrow-checking cannot be enabled.
+set(ENABLE_BORROW_CHECKING OFF CACHE BOOL "Enable RustyCpp borrow checking")
 
-# Build the rusty-cpp-checker binary first before enabling borrow checking
-set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp")
-set(CPP_BORROW_CHECKER "${RUSTYCPP_DIR}/target/${RUSTYCPP_BUILD_TYPE}/rusty-cpp-checker")
-
-# Create a custom command to build the checker if it doesn't exist
-if(NOT EXISTS ${CPP_BORROW_CHECKER})
-    message(STATUS "Building rusty-cpp-checker binary...")
-    execute_process(
-        COMMAND cargo build --${RUSTYCPP_BUILD_TYPE}
-        WORKING_DIRECTORY ${RUSTYCPP_DIR}
-        RESULT_VARIABLE BUILD_RESULT
-    )
-endif()
-
-# Enable borrow checking (can be disabled with -DENABLE_BORROW_CHECKING=OFF)
-# Don't use FORCE so command-line option takes precedence
-set(ENABLE_BORROW_CHECKING ON CACHE BOOL "Enable RustyCpp borrow checking")
-if(ENABLE_BORROW_CHECKING)
+set(RUSTYCPP_CMAKE "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake")
+if(EXISTS "${RUSTYCPP_CMAKE}")
+  include("${RUSTYCPP_CMAKE}")
+  if(ENABLE_BORROW_CHECKING)
     enable_borrow_checking()
+  endif()
+else()
+  if(ENABLE_BORROW_CHECKING)
+    message(FATAL_ERROR "ENABLE_BORROW_CHECKING=ON but RustyCpp submodule not found at: ${RUSTYCPP_CMAKE}")
+  endif()
+  message(STATUS "RustyCpp submodule not found; borrow checking disabled")
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -105,6 +99,37 @@ set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
 # RUST
+# Build and link the Rust redis server library (requires Cargo).
+set(_CARGO_CANDIDATES)
+find_program(_CARGO_IN_PATH cargo)
+if(_CARGO_IN_PATH)
+  list(APPEND _CARGO_CANDIDATES "${_CARGO_IN_PATH}")
+endif()
+if(APPLE)
+  list(APPEND _CARGO_CANDIDATES "/opt/homebrew/bin/cargo" "/usr/local/bin/cargo")
+endif()
+list(APPEND _CARGO_CANDIDATES "$ENV{HOME}/.cargo/bin/cargo")
+
+set(CARGO_EXECUTABLE "")
+foreach(_cargo_candidate IN LISTS _CARGO_CANDIDATES)
+  if(EXISTS "${_cargo_candidate}")
+    execute_process(
+      COMMAND "${_cargo_candidate}" --version
+      RESULT_VARIABLE _cargo_rc
+      OUTPUT_QUIET
+      ERROR_QUIET
+    )
+    if(_cargo_rc EQUAL 0)
+      set(CARGO_EXECUTABLE "${_cargo_candidate}")
+      break()
+    endif()
+  endif()
+endforeach()
+if(NOT CARGO_EXECUTABLE)
+  message(FATAL_ERROR "No working Cargo executable found. Ensure a native cargo is installed and on PATH.")
+endif()
+message(STATUS "Using cargo: ${CARGO_EXECUTABLE}")
+
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})
     set(RUST_LIB_TARGET_BASE "$ENV{CARGO_TARGET_DIR}")
@@ -119,7 +144,8 @@ set(RUST_LIB_PATH "${RUST_LIB_DIR}/lib${RUST_LIB_NAME}.a")
 # Use add_custom_command instead of add_custom_target to avoid rebuilding every time
 add_custom_command(
     OUTPUT ${RUST_LIB_PATH}
-    COMMAND cargo build --release
+    # Try online first; fall back to offline if the environment blocks network.
+    COMMAND /bin/sh -c "\"${CARGO_EXECUTABLE}\" build --release || \"${CARGO_EXECUTABLE}\" build --release --offline"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/lib.rs
@@ -282,7 +308,27 @@ if(RAFT_TEST)
   message(STATUS "Raft lab testing coroutine enabled (note: REUSE_CORO is always enabled)")
 endif()
 
-set(USE_MALLOC_MODE 1 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow")
+find_library(JEMALLOC_LIBRARY NAMES jemalloc)
+find_library(TCMALLOC_LIBRARY NAMES tcmalloc tcmalloc_minimal)
+find_library(FLOW_LIBRARY NAMES flow)
+
+# Prefer jemalloc when it is available; otherwise fall back to libc malloc.
+set(_DEFAULT_MALLOC_MODE 0)
+if(JEMALLOC_LIBRARY)
+  set(_DEFAULT_MALLOC_MODE 1)
+endif()
+set(USE_MALLOC_MODE ${_DEFAULT_MALLOC_MODE} CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow")
+
+if(USE_MALLOC_MODE EQUAL 1 AND NOT JEMALLOC_LIBRARY)
+  message(WARNING "USE_MALLOC_MODE=1 (jemalloc) requested but jemalloc was not found; falling back to libc malloc (USE_MALLOC_MODE=0)")
+  set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow" FORCE)
+elseif(USE_MALLOC_MODE EQUAL 2 AND NOT TCMALLOC_LIBRARY)
+  message(WARNING "USE_MALLOC_MODE=2 (tcmalloc) requested but tcmalloc was not found; falling back to libc malloc (USE_MALLOC_MODE=0)")
+  set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow" FORCE)
+elseif(USE_MALLOC_MODE EQUAL 3 AND NOT FLOW_LIBRARY)
+  message(WARNING "USE_MALLOC_MODE=3 (flow) requested but flow was not found; falling back to libc malloc (USE_MALLOC_MODE=0)")
+  set(USE_MALLOC_MODE 0 CACHE STRING "Malloc mode: 0=libc, 1=jemalloc, 2=tcmalloc, 3=flow" FORCE)
+endif()
 set(MODE "perf" CACHE STRING "Build mode: perf, backoff, factor-gc, factor-gc-nowriteinplace, factor-fake-compression, sandbox")
 option(STO_RMW "Enable STO read-modify-write" OFF)
 option(HASHTABLE "Enable hashtable" OFF)
@@ -361,41 +407,30 @@ else()
 endif()
 set(O "${O}.masstree")
 
-# Borrow checker inputs (place after CONFIG_H so it is available to the checker)
-set(BORROW_CHECKER_INCLUDE_PATHS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/masstree-beta
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-)
+if(ENABLE_BORROW_CHECKING)
+  # Borrow checker inputs (place after CONFIG_H so it is available to the checker)
+  set(BORROW_CHECKER_INCLUDE_PATHS
+      ${CMAKE_CURRENT_SOURCE_DIR}/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mako
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/rrr
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/src
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/masstree-beta
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/asio/include
+      ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+  )
 
-# Make config paths visible to the borrow checker (will be turned into -include)
-add_compile_definitions(MASSTREE_CONFIG_H=\"${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/config.h\")
-add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree_btree.h\")
+  # Make config paths visible to the borrow checker (will be turned into -include)
+  add_compile_definitions(MASSTREE_CONFIG_H=\"${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/config.h\")
+  add_compile_definitions(MASSTREE_SUPPORT_HEADER=\"${CMAKE_CURRENT_SOURCE_DIR}/src/mako/masstree_btree.h\")
 
-# Masstree borrow checking - incrementally enabled per file
-# Phase 4 of RustyCpp migration enables borrow checking file by file
-# See TODO.md "Masstree RustyCpp Safety Migration" for details
-#
-# Previously disabled due to false positives that have been addressed by:
-#   - Adding @unsafe { reason } annotations to all unsafe functions
-#   - Converting raw pointers to rusty::Ptr<T>/MutPtr<T> wrappers
-#   - Marking safe getters/setters with @safe annotations
-#
-# Phase 4.1: Enable borrow checking for masstree_context
-add_borrow_check(src/mako/masstree/masstree_context.cc)
-#
-# Phase 4.2: Enable borrow checking for kvthread
-add_borrow_check(src/mako/masstree/kvthread.cc)
-#
-# Phase 4.3: Enable more files incrementally
-add_borrow_check(src/mako/masstree/value_versioned_array.cc)
-add_borrow_check(src/mako/masstree/query_masstree.cc)
+  # Masstree borrow checking - incrementally enabled per file
+  add_borrow_check(src/mako/masstree/masstree_context.cc)
+  add_borrow_check(src/mako/masstree/kvthread.cc)
+  add_borrow_check(src/mako/masstree/value_versioned_array.cc)
+  add_borrow_check(src/mako/masstree/query_masstree.cc)
+endif()
 
 # Compiler flags
 set(CXXFLAGS
@@ -664,6 +699,42 @@ endif()
 # avoid adding backslashes (\) automatically
 separate_arguments(MASSTREE_CONFIG_ARGS NATIVE_COMMAND "${MASSTREE_CONFIG}")
 
+# Masstree's autoconf configure runs outside CMake, so it doesn't automatically
+# inherit Homebrew include/link directories on macOS. Provide them explicitly so
+# optional allocators (jemalloc, etc.) can be discovered.
+set(MASSTREE_CONFIGURE_ENV)
+if(APPLE)
+  if(EXISTS "/opt/homebrew")
+    set(_MASSTREE_CPPFLAGS "$ENV{CPPFLAGS}")
+    set(_MASSTREE_LDFLAGS "$ENV{LDFLAGS}")
+    if(_MASSTREE_CPPFLAGS STREQUAL "")
+      set(_MASSTREE_CPPFLAGS "-I/opt/homebrew/include")
+    else()
+      set(_MASSTREE_CPPFLAGS "${_MASSTREE_CPPFLAGS} -I/opt/homebrew/include")
+    endif()
+    if(_MASSTREE_LDFLAGS STREQUAL "")
+      set(_MASSTREE_LDFLAGS "-L/opt/homebrew/lib")
+    else()
+      set(_MASSTREE_LDFLAGS "${_MASSTREE_LDFLAGS} -L/opt/homebrew/lib")
+    endif()
+    list(APPEND MASSTREE_CONFIGURE_ENV "CPPFLAGS=${_MASSTREE_CPPFLAGS}" "LDFLAGS=${_MASSTREE_LDFLAGS}")
+  elseif(EXISTS "/usr/local")
+    set(_MASSTREE_CPPFLAGS "$ENV{CPPFLAGS}")
+    set(_MASSTREE_LDFLAGS "$ENV{LDFLAGS}")
+    if(_MASSTREE_CPPFLAGS STREQUAL "")
+      set(_MASSTREE_CPPFLAGS "-I/usr/local/include")
+    else()
+      set(_MASSTREE_CPPFLAGS "${_MASSTREE_CPPFLAGS} -I/usr/local/include")
+    endif()
+    if(_MASSTREE_LDFLAGS STREQUAL "")
+      set(_MASSTREE_LDFLAGS "-L/usr/local/lib")
+    else()
+      set(_MASSTREE_LDFLAGS "${_MASSTREE_LDFLAGS} -L/usr/local/lib")
+    endif()
+    list(APPEND MASSTREE_CONFIGURE_ENV "CPPFLAGS=${_MASSTREE_CPPFLAGS}" "LDFLAGS=${_MASSTREE_LDFLAGS}")
+  endif()
+endif()
+
 # Masstree configuration - automatically configure if needed
 # First, run autoreconf if configure script doesn't exist
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/configure")
@@ -681,11 +752,19 @@ endif()
 # Then, run configure if config.h doesn't exist
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree/config.h")
   message(STATUS "Configuring Masstree with: ${MASSTREE_CONFIG}")
-  execute_process(
-    COMMAND ./configure ${MASSTREE_CONFIG_ARGS}
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree"
-    RESULT_VARIABLE configure_result
-  )
+  if(MASSTREE_CONFIGURE_ENV)
+    execute_process(
+      COMMAND ${CMAKE_COMMAND} -E env ${MASSTREE_CONFIGURE_ENV} ./configure ${MASSTREE_CONFIG_ARGS}
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree"
+      RESULT_VARIABLE configure_result
+    )
+  else()
+    execute_process(
+      COMMAND ./configure ${MASSTREE_CONFIG_ARGS}
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${W}/masstree"
+      RESULT_VARIABLE configure_result
+    )
+  endif()
   if(NOT configure_result EQUAL 0)
     message(FATAL_ERROR "Failed to configure Masstree")
   endif()
@@ -707,19 +786,18 @@ add_custom_target(rcc_rpc_gen DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
 )
 
-# Custom command for lz4 library - build only if missing
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/liblz4.so")
-  message(STATUS "Building LZ4 library...")
-  execute_process(
-    COMMAND make -C "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4" library
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    RESULT_VARIABLE lz4_result
-  )
-  if(NOT lz4_result EQUAL 0)
-    message(FATAL_ERROR "Failed to build LZ4 library")
-  endif()
-  message(STATUS "LZ4 library built successfully")
-endif()
+# LZ4 (vendored): build as part of the workspace so macOS doesn't rely on a
+# system-installed liblz4 and to avoid platform-specific shared-library flags.
+add_library(lz4 STATIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/lz4.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4/xxhash.c"
+)
+set_target_properties(lz4 PROPERTIES
+  C_STANDARD 99
+  C_STANDARD_REQUIRED ON
+  POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(lz4 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4")
 
 # Build libtxlog.so natively with CMake instead of WAF
 # Collect RRR source files
@@ -974,6 +1052,7 @@ target_include_directories(mako PUBLIC
     "${HOME}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include"
 )
+target_link_libraries(mako PUBLIC lz4)
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
@@ -1125,19 +1204,17 @@ endif()
 #     add_borrow_check_target(dbtest)
 # endif()
 
-# Enable deptran borrow checking by default for dbtest and related apps (Linux).
-# On macOS, RustyCpp currently reports violations in deptran that are not
-# relevant to functional correctness/testing.
-if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_deptran AND NOT APPLE)
-    add_dependencies(dbtest borrow_check_deptran)
-    if(MAKO_USE_RAFT)
-        add_dependencies(deptran_server borrow_check_deptran)
-    endif()
-endif()
+# Enable deptran borrow checking by default for dbtest and related apps.
+if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_deptran)
+	    add_dependencies(dbtest borrow_check_deptran)
+	    if(MAKO_USE_RAFT)
+	        add_dependencies(deptran_server borrow_check_deptran)
+	    endif()
+	endif()
 
 add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
-if(ENABLE_ERPC AND NOT APPLE)
+if(ENABLE_ERPC)
   add_apps(erpc_client src/mako/benchmarks/ut/erpc_client.cc)
   add_apps(erpc_server src/mako/benchmarks/ut/erpc_server.cc)
 endif()
