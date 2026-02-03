@@ -300,8 +300,12 @@ void* SiloRuntime::AllocateUnmanagedWithLock(regionctx &pc, size_t nhugepgs) {
             ALWAYS_ASSERT(false);
         }
         INVARIANT(x == mypx);
+#ifdef MADV_HUGEPAGE
         const int advice =
             UseMAdvWillNeed() ? MADV_HUGEPAGE | MADV_WILLNEED : MADV_HUGEPAGE;
+#else
+        const int advice = UseMAdvWillNeed() ? MADV_WILLNEED : MADV_NORMAL;
+#endif
         if (madvise(x, hugepgsize, advice)) {
             perror("madvise");
             ALWAYS_ASSERT(false);
@@ -385,8 +389,12 @@ void SiloRuntime::FaultRegion(size_t cpu) {
     }
     ALWAYS_ASSERT(x == pc.region_begin);
 
+#ifdef MADV_HUGEPAGE
     const int advice =
         UseMAdvWillNeed() ? MADV_HUGEPAGE | MADV_WILLNEED : MADV_HUGEPAGE;
+#else
+    const int advice = UseMAdvWillNeed() ? MADV_WILLNEED : MADV_NORMAL;
+#endif
     if (madvise(x, sz, advice)) {
         perror("madvise");
         ALWAYS_ASSERT(false);

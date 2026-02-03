@@ -2,7 +2,11 @@
 #pragma once
 
 #include <assert.h>
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#else
 #include <malloc.h>
+#endif
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>

@@ -535,7 +535,7 @@ inline typename T::substring_type String_generic::trim(const T &str) {
 #if HAVE_STD_HASH
 # define LCDF_MAKE_STRING_HASH(type) \
     namespace std { template <> struct hash<type>          \
-        : public unary_function<const type&, size_t> {     \
+        {                                                  \
         size_t operator()(const type& x) const noexcept {  \
             return x.hashcode();                           \
         } }; }

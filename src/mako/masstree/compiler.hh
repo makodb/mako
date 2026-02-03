@@ -109,12 +109,22 @@ inline void release_fence() {
 
     Use this in spinloops, for example. */
 inline void relax_fence() {
+#if __x86__
     asm volatile("pause" : : : "memory"); // equivalent to "rep; nop"
+#elif defined(__aarch64__) || defined(__arm__)
+    asm volatile("yield" : : : "memory");
+#else
+    asm volatile("" : : : "memory");
+#endif
 }
 
 /** @brief Full memory fence. */
 inline void memory_fence() {
+#if __x86__
     asm volatile("mfence" : : : "memory");
+#else
+    __sync_synchronize();
+#endif
 }
 
 /** @brief Do-nothing function object. */
@@ -163,8 +173,12 @@ template <int SIZE, typename BARRIER> struct sized_compiler_operations;
 template <typename B> struct sized_compiler_operations<1, B> {
     typedef char type;
     static inline type xchg(type* object, type new_value) {
+#if __x86__
         asm volatile("xchgb %0,%1"
                      : "+q" (new_value), "+m" (*object));
+#else
+        new_value = __atomic_exchange_n(object, new_value, __ATOMIC_ACQ_REL);
+#endif
         B()();
         return new_value;
     }
@@ -219,8 +233,12 @@ template <typename B> struct sized_compiler_operations<2, B> {
     typedef int16_t type;
 #endif
     static inline type xchg(type* object, type new_value) {
+#if __x86__
         asm volatile("xchgw %0,%1"
                      : "+r" (new_value), "+m" (*object));
+#else
+        new_value = __atomic_exchange_n(object, new_value, __ATOMIC_ACQ_REL);
+#endif
         B()();
         return new_value;
     }
@@ -275,8 +293,12 @@ template <typename B> struct sized_compiler_operations<4, B> {
     typedef int32_t type;
 #endif
     static inline type xchg(type* object, type new_value) {
+#if __x86__
         asm volatile("xchgl %0,%1"
                      : "+r" (new_value), "+m" (*object));
+#else
+        new_value = __atomic_exchange_n(object, new_value, __ATOMIC_ACQ_REL);
+#endif
         B()();
         return new_value;
     }
@@ -336,6 +358,12 @@ template <typename B> struct sized_compiler_operations<8, B> {
     static inline type xchg(type* object, type new_value) {
         asm volatile("xchgq %0,%1"
                      : "+r" (new_value), "+m" (*object));
+        B()();
+        return new_value;
+    }
+#else
+    static inline type xchg(type* object, type new_value) {
+        new_value = __atomic_exchange_n(object, new_value, __ATOMIC_ACQ_REL);
         B()();
         return new_value;
     }
@@ -574,8 +602,12 @@ inline void prefetch(const void *ptr) {
 #ifdef NOPREFETCH
     (void) ptr;
 #else
+#if __x86__
     typedef struct { char x[CACHE_LINE_SIZE]; } cacheline_t;
     asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *)ptr));
+#else
+    __builtin_prefetch(ptr, 0, 3);
+#endif
 #endif
 }
 #endif
@@ -584,8 +616,12 @@ inline void prefetchnta(const void *ptr) {
 #ifdef NOPREFETCH
     (void) ptr;
 #else
+#if __x86__
     typedef struct { char x[CACHE_LINE_SIZE]; } cacheline_t;
     asm volatile("prefetchnta %0" : : "m" (*(const cacheline_t *)ptr));
+#else
+    __builtin_prefetch(ptr, 0, 0);
+#endif
 #endif
 }
 
@@ -606,7 +642,7 @@ struct value_prefetcher<T *> {
 
 // stolen from Linux
 inline uint64_t ntohq(uint64_t val) {
-#ifdef __i386__
+#if defined(__i386__)
     union {
         struct {
             uint32_t a;
@@ -618,9 +654,11 @@ inline uint64_t ntohq(uint64_t val) {
     asm("bswapl %0; bswapl %1; xchgl %0,%1"
         : "+r" (v.s.a), "+r" (v.s.b));
     return v.u;
-#else /* __i386__ */
+#elif defined(__x86_64__)
     asm("bswapq %0" : "+r" (val));
     return val;
+#else
+    return __builtin_bswap64(val);
 #endif
 }
 
@@ -968,16 +1006,29 @@ inline T read_in_net_order(const uint8_t* s) {
 
 
 inline uint64_t read_pmc(uint32_t ecx) {
+#if defined(__i386__) || defined(__x86_64__)
     uint32_t a, d;
     __asm __volatile("rdpmc" : "=a"(a), "=d"(d) : "c"(ecx));
     return ((uint64_t)a) | (((uint64_t)d) << 32);
+#else
+    (void) ecx;
+    return 0;
+#endif
 }
 
 inline uint64_t read_tsc(void)
 {
+#if defined(__i386__) || defined(__x86_64__)
     uint32_t low, high;
     asm volatile("rdtsc" : "=a" (low), "=d" (high));
     return ((uint64_t)low) | (((uint64_t)high) << 32);
+#elif defined(__aarch64__)
+    uint64_t val;
+    __asm__ __volatile__("mrs %0, cntvct_el0" : "=r"(val));
+    return val;
+#else
+    return 0;
+#endif
 }
 
 // @unsafe
@@ -1191,6 +1242,30 @@ inline void int_multiply(unsigned long long a, unsigned long long b, unsigned lo
 }
 template <> struct has_fast_int_multiply<unsigned long long> : public mass::true_type {};
 # endif
+#elif defined(__aarch64__) || defined(__SIZEOF_INT128__)
+inline void int_multiply(unsigned a, unsigned b, unsigned &xlow, unsigned &xhigh)
+{
+    uint64_t res = (uint64_t)a * b;
+    xlow = (unsigned)res;
+    xhigh = (unsigned)(res >> 32);
+}
+template <> struct has_fast_int_multiply<unsigned> : public mass::true_type {};
+
+inline void int_multiply(unsigned long a, unsigned long b, unsigned long &xlow, unsigned long &xhigh)
+{
+    unsigned __int128 res = (unsigned __int128)a * b;
+    xlow = (unsigned long)res;
+    xhigh = (unsigned long)(res >> 64);
+}
+template <> struct has_fast_int_multiply<unsigned long> : public mass::true_type {};
+
+inline void int_multiply(unsigned long long a, unsigned long long b, unsigned long long &xlow, unsigned long long &xhigh)
+{
+    unsigned __int128 res = (unsigned __int128)a * b;
+    xlow = (unsigned long long)res;
+    xhigh = (unsigned long long)(res >> 64);
+}
+template <> struct has_fast_int_multiply<unsigned long long> : public mass::true_type {};
 #endif
 
 struct uninitialized_type {};

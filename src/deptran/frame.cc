@@ -353,7 +353,7 @@ shared_ptr<Tx> Frame::CreateTx(epoch_t epoch, txnid_t tid,
   }
 	/*clock_gettime(CLOCK_MONOTONIC, &end);
 	Log_info("time of CreateTx on server: %d", end.tv_nsec-begin.tv_nsec);*/
-  Log_debug("exit CreateTx, Tx address=%p", sp_tx);
+  Log_debug("exit CreateTx, Tx address=%p", sp_tx.get());
   return sp_tx;
 }
 

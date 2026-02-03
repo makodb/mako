@@ -24,7 +24,12 @@ void
 ndb_thread::startBind(int core_id)
 {
   thd_ = std::move(thread(&ndb_thread::run, this));
-  pthread_setname_np(thd_.native_handle(), ("worker_"+std::to_string(core_id)).c_str());
+#if defined(__APPLE__)
+  (void)core_id;
+#else
+  pthread_setname_np(thd_.native_handle(),
+                     ("worker_" + std::to_string(core_id)).c_str());
+#endif
   //cpu_set_t cpuset;
   //CPU_ZERO(&cpuset);
   //CPU_SET(core_id, &cpuset);
