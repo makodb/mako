@@ -203,9 +203,12 @@ rusty::Option<rusty::Arc<rrr::Client>> RrrRpcBackend::GetOrCreateClient(uint8_t 
 
     auto it = clients_.find(session_key);
     if (it != clients_.end()) {
+        // Clone the Arc BEFORE unlocking to avoid use-after-free
+        // (another thread could clear clients_ map after we unlock)
+        auto result = it->second.clone();
         clients_lock_.unlock();
         Debug("GetOrCreateClient: Reusing existing client for shard %d, server %d", shard_idx, server_id);
-        return it->second.clone();
+        return result;
     }
 
     // Create new client

@@ -16,21 +16,19 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. [last checked: 2026-02-03, 22:35 - MOST RECENT RUN FAILED: #21649096526/a6bed72c failed (shardNoReplication test - segfault in RrrRpcBackend::Stop during shutdown). CI health: BROKEN - fix task added.]
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. [last checked: 2026-02-03, 23:05 - CI failure fixed: race condition in GetOrCreateClient() iterator-after-unlock bug. Awaiting new CI run.]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. [last done: 2026-02-03, 22:41 - all borrow_check_all targets pass with no violations (10 targets checked during CI build)]
     - [ ] for every day, check docs/judge/commit_reviews.md to evaluate `Open Issues`. Evaluate each open issue, if you believe this issue is reasonable and can be fixed easily (e.g., changes <= 200 lines), add a task in TODO.md to fix this issue. For each added task, you should tag its corresponding Issue ID to avoid duplicated task created for the same issue. [last done: 2026-02-03, 22:41 - commit_reviews.md moved to docs/testing/commit_reviews.md. Open Issues table is empty - all issues have been addressed.]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-02-03, 22:41 - checked commits a6bed72c, a5d3c01c. Documentation-only changes, no C++ code modified. No rusty-unsafe code introduced.]
     - [ ] for every day, run all the ci tests listed in github ci workflow, make sure no test fail. If failed tests found, investigate and fix. Repeat until no failures are detected. Don't cheat by removing or weakening tests. Also, double check the github ci test and the "ci all" have the same tests; if one misses something, add it. [last done: 2026-02-03, 22:41 - shardNoReplication passed 4/4 local runs. GitHub CI run #21649096526 failed with intermittent segfault (not code-related - commits were doc-only). Task added to investigate.]
-  - [ ] *high* Investigate intermittent segfault in RrrRpcBackend::Stop during shutdown [CI-a6bed72c]
+  - [x] *high* Investigate intermittent segfault in RrrRpcBackend::Stop during shutdown [CI-a6bed72c] [FIXED 2026-02-03, 23:05]
     - Problem: shardNoReplication test fails with segfault in shard 0 during RrrRpcBackend::Stop
     - Evidence: CI run #21649096526 failed - "Segmentation fault" at rrr_rpc_backend.cc during client connection close
-    - Location: src/rrr/rpc/rrr_rpc_backend.cc:634 (closing client connections phase)
-    - Investigation (2026-02-03):
-      - Commits a6bed72c and a5d3c01c are documentation-only (no C++ changes)
-      - Test passes consistently locally (4/4 runs passed)
-      - Likely CI environment timing/load issue causing race condition
-      - Similar to previous race fix in e00d802f (FastTransport shutdown)
-    - Next step: Re-run CI to confirm intermittent nature; if persists, add defensive synchronization
+    - Root cause: Race condition in GetOrCreateClient() - iterator used after mutex unlock
+      - Code: `clients_lock_.unlock(); return it->second.clone();` - iterator invalid if another thread clears map
+    - Fix: Clone Arc BEFORE unlocking mutex: `auto result = it->second.clone(); clients_lock_.unlock(); return result;`
+    - Files changed: src/mako/lib/rrr_rpc_backend.cc (line 204-211)
+    - Verified: shardNoReplication passed 5/5 runs, rrrTests 66/66 passed, shard2Replication passed
   - [x] *high* Unify client-server interfaces in simpleTransactionRep.cc [issue-1.md] [DONE 2026-01-25, 06:44]
     - Plan: docs/dev/unify_client_server_interface_plan.md
     - Requirements from issue-1.md:
