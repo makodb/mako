@@ -1715,8 +1715,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       }
 
       // ==================================================================
-      // SPECULATIVE REPLICATION: Start async persistence and durable ack
+      // PERSISTENCE: Either async (speculative) or sync (traditional)
       // ==================================================================
+#if RAFT_ASYNC_PERSISTENCE
+      // ASYNC MODE (speculative): Start async persistence and send durable ack later
       if (!entries_to_persist.empty()) {
         // Capture entries by move to avoid dangling references
         std::thread([this, entries = std::move(entries_to_persist),
@@ -1738,6 +1740,16 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           }
         }).detach();
       }
+#else
+      // SYNC MODE (traditional): Persist entries synchronously before returning
+      // No separate AppendEntriesDurable RPC needed - the ack implies durability
+      if (!entries_to_persist.empty()) {
+        for (const auto& entry : entries_to_persist) {
+          PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: sync follower entry");
+        }
+        PersistCommitIndex(commit_index_copy, "OnAppendEntries: sync follower commit");
+      }
+#endif
 
       // Re-acquire mutex before returning (to handle remaining code safely)
       mtx_.lock();

@@ -1,5 +1,20 @@
 #pragma once
 
+// ============================================================================
+// RAFT_ASYNC_PERSISTENCE - Control async vs sync disk persistence
+// ============================================================================
+// When enabled (1): Speculative Raft with async disk persistence
+//   - Vote requests: respond immediately, persist async, send VoteDurable after fsync
+//   - AppendEntries: ack immediately, persist async, send AppendEntriesDurable after fsync
+//   - Tracks specVoters/durableVoters, specCommitIndex/securedLogIndex separately
+//
+// When disabled (0): Traditional Raft with sync disk persistence
+//   - Vote requests: persist first, then respond (no VoteDurable RPC)
+//   - AppendEntries: persist first, then ack (no AppendEntriesDurable RPC)
+//   - Simpler state tracking (no speculative/durable separation)
+// ============================================================================
+#define RAFT_ASYNC_PERSISTENCE 1
+
 #define _PARAMS0(...)
 #define _PARAMS1(first, second, ...) second
 #define _PARAMS2(first, second, ...) second, _PARAMS1(__VA_ARGS__)

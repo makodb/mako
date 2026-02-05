@@ -253,7 +253,8 @@ class RaftServer : public TxLogServer {
           // Reset timeout
           resetTimer("granted vote");
 
-          // SPECULATIVE VOTING: Respond IMMEDIATELY (memory vote)
+#if RAFT_ASYNC_PERSISTENCE
+          // SPECULATIVE VOTING (async mode): Respond IMMEDIATELY (memory vote)
           // Then start async persistence and send VoteDurable after fsync
           n_vote_++ ;
           cb() ;  // Respond now - this is the memory vote
@@ -266,7 +267,6 @@ class RaftServer : public TxLogServer {
           parid_t par_id_copy = partition_id_;
 
           // Use a detached thread for async fsync + VoteDurable send
-          // TODO: Consider using event loop integration for production
           std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
               // Persist the vote durably
               PersistState(term_copy, can_id_copy, "doVote: async vote persist");
@@ -279,6 +279,14 @@ class RaftServer : public TxLogServer {
           }).detach();
 
           return;  // Already called cb() above
+#else
+          // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then respond
+          // No separate VoteDurable RPC needed - the vote response implies durability
+          PersistState(currentTerm, can_id, "doVote: sync vote persist");
+          n_vote_++ ;
+          cb() ;
+          return;
+#endif
       }
 
       n_vote_++ ;

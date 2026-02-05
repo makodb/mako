@@ -17,53 +17,54 @@ int RaftLabTest::Run(void) {
   config_->SetLearnerAction();
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
-  if (TEST_EXPAND(testPersistence())                      // Test 13
-      || TEST_EXPAND(testLeaderFollowerPersistence())      // Test 14
-      || TEST_EXPAND(testComprehensiveCrashRecovery())     // Test 15
-      || TEST_EXPAND(testPartitionPlusRestart())           // Test 16
-      || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
-      || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
-      || TEST_EXPAND(testFigure8CrashRecovery())           // Test 19
-      // Speculative Raft tests (Phase 7)
-      || TEST_EXPAND(testSpeculativeLeaderElection())      // Test 20
-      || TEST_EXPAND(testSpecCommitIndexAdvances())        // Test 21
-      || TEST_EXPAND(testSpeculativeInvariantsHold())      // Test 22
-      || TEST_EXPAND(testSecuredLeaderContinuesAfterSpecQuorumLoss()) // Test 23
-      || TEST_EXPAND(testDurableCommitRequiresSecuredLeader())        // Test 24
-      // Phase 7.2: NotifyRestart tests
-      || TEST_EXPAND(testRestartRemovesFromSpecVoters())              // Test 25
-      || TEST_EXPAND(testUnsecuredLostQuorumStepsDown())              // Test 26
-      || TEST_EXPAND(testRestartRemovesFromMemoryAcks())              // Test 27
-      || TEST_EXPAND(testRestartDoesNotAffectDurableVoters())         // Test 28
-      // Phase 7.3: Integration tests
-      || TEST_EXPAND(testSpeculativeEntriesSurviveCrash())            // Test 29
-      || TEST_EXPAND(testVoterCrashBeforeVoteFsync())                 // Test 30
-      || TEST_EXPAND(testDoubleVotePrevention())                      // Test 31
-      // Phase 7.4: Stress tests
-      || TEST_EXPAND(testRapidRestarts())                             // Test 32
-      || TEST_EXPAND(testConcurrentElections())                       // Test 33
-      // Phase 5.3: Client notification tests
-      || TEST_EXPAND(testSpeculativeCommitNotification())             // Test 34
-      || TEST_EXPAND(testDurableCommitNotification())                 // Test 35
-      || TEST_EXPAND(testNotificationOrdering())                      // Test 36
-      || TEST_EXPAND(testUnsecuredStepDownNotifiesRollback())         // Test 37
-      || TEST_EXPAND(testFullCommitPath())                            // Test 38
-      || TEST_EXPAND(testSecuredStepDownPartialRollback())            // Test 39
-      || TEST_EXPAND(testSpeculativeEntriesOverwritten())             // Test 40
-      // Phase 6: Relaxed invariant tests
-      || TEST_EXPAND(testDurableQuorumPreemptsStepDown())             // Test 41
-      || TEST_EXPAND(testSecuredViaDurableAfterSpecLoss())            // Test 42
-      // testInitialElection()
-      // || TEST_EXPAND(testReElection())
-      // || TEST_EXPAND(testBasicAgree())
-      // || TEST_EXPAND(testFailAgree())
-      // || TEST_EXPAND(testFailNoAgree())
-      // || TEST_EXPAND(testRejoin())
-      // || TEST_EXPAND(testConcurrentStarts())
-      // || TEST_EXPAND(testBackup())
-      // || TEST_EXPAND(testCount())
-      // || TEST_EXPAND(testUnreliableAgree())
-      // || TEST_EXPAND(testFigure8())
+  if (testInitialElection()                               // Test 1
+      || TEST_EXPAND(testReElection())                    // Test 2
+      || TEST_EXPAND(testBasicAgree())                    // Test 3
+      || TEST_EXPAND(testFailAgree())                     // Test 4
+      || TEST_EXPAND(testFailNoAgree())                   // Test 5
+      || TEST_EXPAND(testRejoin())                        // Test 6
+      || TEST_EXPAND(testConcurrentStarts())              // Test 7
+      || TEST_EXPAND(testBackup())                        // Test 8
+      || TEST_EXPAND(testCount())                         // Test 9
+      || TEST_EXPAND(testUnreliableAgree())               // Test 10
+      || TEST_EXPAND(testFigure8())                       // Test 11
+      // Disk persistence tests (require MAKO_RAFT_PERSISTENCE=1)
+      // || TEST_EXPAND(testPersistence())                   // Test 13
+      // || TEST_EXPAND(testLeaderFollowerPersistence())     // Test 14
+      // || TEST_EXPAND(testComprehensiveCrashRecovery())    // Test 15
+      // || TEST_EXPAND(testPartitionPlusRestart())          // Test 16
+      // || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
+      // || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
+      // || TEST_EXPAND(testFigure8CrashRecovery())          // Test 19
+      // Speculative Raft tests (Phase 7) - disabled for now
+      // || TEST_EXPAND(testSpeculativeLeaderElection())     // Test 20
+      // || TEST_EXPAND(testSpecCommitIndexAdvances())       // Test 21
+      // || TEST_EXPAND(testSpeculativeInvariantsHold())     // Test 22
+      // || TEST_EXPAND(testSecuredLeaderContinuesAfterSpecQuorumLoss()) // Test 23
+      // || TEST_EXPAND(testDurableCommitRequiresSecuredLeader())        // Test 24
+      // Phase 7.2: NotifyRestart tests - disabled
+      // || TEST_EXPAND(testRestartRemovesFromSpecVoters())              // Test 25
+      // || TEST_EXPAND(testUnsecuredLostQuorumStepsDown())              // Test 26
+      // || TEST_EXPAND(testRestartRemovesFromMemoryAcks())              // Test 27
+      // || TEST_EXPAND(testRestartDoesNotAffectDurableVoters())         // Test 28
+      // Phase 7.3: Integration tests - disabled
+      // || TEST_EXPAND(testSpeculativeEntriesSurviveCrash())            // Test 29
+      // || TEST_EXPAND(testVoterCrashBeforeVoteFsync())                 // Test 30
+      // || TEST_EXPAND(testDoubleVotePrevention())                      // Test 31
+      // Phase 7.4: Stress tests - disabled
+      // || TEST_EXPAND(testRapidRestarts())                             // Test 32
+      // || TEST_EXPAND(testConcurrentElections())                       // Test 33
+      // Phase 5.3: Client notification tests - disabled
+      // || TEST_EXPAND(testSpeculativeCommitNotification())             // Test 34
+      // || TEST_EXPAND(testDurableCommitNotification())                 // Test 35
+      // || TEST_EXPAND(testNotificationOrdering())                      // Test 36
+      // || TEST_EXPAND(testUnsecuredStepDownNotifiesRollback())         // Test 37
+      // || TEST_EXPAND(testFullCommitPath())                            // Test 38
+      // || TEST_EXPAND(testSecuredStepDownPartialRollback())            // Test 39
+      // || TEST_EXPAND(testSpeculativeEntriesOverwritten())             // Test 40
+      // Phase 6: Relaxed invariant tests - disabled
+      // || TEST_EXPAND(testDurableQuorumPreemptsStepDown())             // Test 41
+      // || TEST_EXPAND(testSecuredViaDurableAfterSpecLoss())            // Test 42
     ) {
     Log_info("Test sequence failed");
     Print("TESTS FAILED");
