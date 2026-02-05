@@ -6,6 +6,13 @@ set -e  # Exit on error
 # Disable GDB for CI runs - GDB changes output format and breaks grep patterns
 export MAKO_NO_GDB=1
 
+# On macOS, eRPC is disabled by design; skip the eRPC variants in CI.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    SKIP_ERPC=1
+else
+    SKIP_ERPC=0
+fi
+
 # Build directory (can be overridden via environment variable)
 BUILD_DIR=${BUILD_DIR:-build}
 
@@ -160,6 +167,12 @@ run_2shard_no_replication() {
 
 # Function 4b: Run 2-shard no replication test with eRPC transport
 run_2shard_no_replication_erpc() {
+    if [ "$SKIP_ERPC" -eq 1 ]; then
+        echo "========================================="
+        echo "Skipping: ./ci/ci.sh shardNoReplicationErpc (macOS: eRPC disabled)"
+        echo "========================================="
+        return 0
+    fi
     echo "========================================="
     echo "Running: ./ci/ci.sh shardNoReplicationErpc"
     echo "========================================="
@@ -208,6 +221,12 @@ run_2shard_replication() {
 }
 
 run_2shard_replication_erpc() {
+    if [ "$SKIP_ERPC" -eq 1 ]; then
+        echo "========================================="
+        echo "Skipping: ./ci/ci.sh shard2ReplicationErpc (macOS: eRPC disabled)"
+        echo "========================================="
+        return 0
+    fi
     echo "========================================="
     echo "Running: ./ci/ci.sh shard2ReplicationErpc"
     echo "========================================="
@@ -530,11 +549,15 @@ case "${1:-}" in
         run_client_server_test
         run_simple_paxos
         run_2shard_no_replication
-        run_2shard_no_replication_erpc
+        if [ "$SKIP_ERPC" -eq 0 ]; then
+            run_2shard_no_replication_erpc
+        fi
         # Paxos replication tests
         run_1shard_replication
         run_2shard_replication
-        run_2shard_replication_erpc
+        if [ "$SKIP_ERPC" -eq 0 ]; then
+            run_2shard_replication_erpc
+        fi
         run_1shard_replication_simple
         run_2shard_replication_simple
         # Raft replication tests

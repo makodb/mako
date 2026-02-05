@@ -198,8 +198,10 @@ class ServerListener: public Pollable {
   struct addrinfo* p_svr_addr_{nullptr};
 
   int server_sock_{0};
+#ifdef __APPLE__
   // Last bind() errno when binding failed (used to detect restricted environments).
   int bind_errno_{0};
+#endif
 
   int poll_mode() const override {
     return PollMode::READ;
@@ -507,9 +509,11 @@ class Server: public NoCopy {
     // Server restart detection: unique instance ID generated on startup
     // Used by clients to detect server restarts (ID changes after restart)
     uint64_t instance_id_;
+#ifdef __APPLE__
     // In-process transport fallback (used when bind() fails with EPERM).
     bool inproc_registered_{false};
     std::string inproc_bind_addr_;
+#endif
 
 public:
     // @safe - Creates server with optional PollThread

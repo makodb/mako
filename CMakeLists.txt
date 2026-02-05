@@ -210,6 +210,11 @@ endif()
 option(ENABLE_ERPC "Enable eRPC transport" ${_DEFAULT_ENABLE_ERPC})
 option(ENABLE_RPC "Enable RRR RPC transport" OFF)
 
+if(APPLE AND ENABLE_ERPC)
+  message(WARNING "ENABLE_ERPC was requested on macOS; forcing it OFF. Use rrr/rpc on macOS.")
+  set(ENABLE_ERPC OFF CACHE BOOL "Enable eRPC transport" FORCE)
+endif()
+
 if(ENABLE_ERPC)
   add_subdirectory(third-party/erpc)
   set_target_properties(erpc PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/third-party/erpc")

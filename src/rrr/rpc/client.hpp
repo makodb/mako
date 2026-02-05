@@ -550,8 +550,6 @@ class ClientConnection: public Pollable {
 
     // TCP Keepalive configuration for connection health monitoring (Cell for interior mutability)
     rusty::Cell<KeepaliveConfig> keepalive_config_;
-    // In-process transport fallback (socketpair) - skip TCP-only socket options.
-    rusty::Cell<bool> inproc_transport_{false};
 
     // Last activity timestamp for idle detection (milliseconds since epoch)
     // Updated on send/receive operations

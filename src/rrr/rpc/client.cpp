@@ -14,7 +14,6 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "client.hpp"
-#include "inproc_transport.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -37,6 +36,12 @@
 using namespace std;
 
 namespace rrr {
+
+#ifdef __APPLE__
+int inproc_try_connect(const std::string& addr,
+                       const rusty::Arc<PollThread>& client_poll_thread,
+                       int* out_client_fd);
+#endif
 
 // Helper function to get current time in milliseconds
 // @unsafe - Uses std::chrono which is not borrow-checked (but is memory-safe)
@@ -187,7 +192,6 @@ void ClientConnection::handle_free(i64 xid) const {
 // Contains syscalls, raw pointers, and other unsafe operations
 int ClientConnection::connect(const char* addr) {
   verify(!state_machine_.is_connected());
-  inproc_transport_.set(false);
 
   // Transition to CONNECTING state
   if (!state_machine_.transition_to(ConnectionState::CONNECTING)) {
@@ -208,13 +212,17 @@ int ClientConnection::connect(const char* addr) {
   string port = addr_str.substr(idx + 1);
   // }
 
-  // In-process fallback: if a server is registered for this port, connect via socketpair.
+#ifdef __APPLE__
+  bool is_inproc = false;
   int inproc_fd = -1;
   const int inproc_res = inproc_try_connect(addr_str, poll_thread_worker_, &inproc_fd);
   if (inproc_res == 0 && inproc_fd >= 0) {
     socket_ = inproc_fd;
-    inproc_transport_.set(true);
-  } else {
+    is_inproc = true;
+  }
+
+  if (!is_inproc) {
+#endif
 #ifdef USE_IPC
     // @unsafe { - IPC socket creation and connect syscalls
     struct sockaddr_un saun;
@@ -284,7 +292,9 @@ int ClientConnection::connect(const char* addr) {
       return ENOTCONN;
     }
 #endif
+#ifdef __APPLE__
   }
+#endif
   // @unsafe - set_nonblocking syscall
   {
 #ifdef __APPLE__
@@ -297,9 +307,13 @@ int ClientConnection::connect(const char* addr) {
 
   // Apply TCP keepalive options after socket is connected
   // @unsafe { setsockopt system calls }
-  if (!inproc_transport_.get()) {
+#ifdef __APPLE__
+  if (!is_inproc) {
     apply_keepalive_options();
   }
+#else
+  apply_keepalive_options();
+#endif
 
   // Initialize last activity time and record connection in metrics
   auto now_ms = current_time_ms();
@@ -1166,9 +1180,6 @@ rusty::Option<rusty::Arc<Client>> ClientPool::get_client(const string& addr) {
 // @unsafe - Apply TCP keepalive options to socket
 void ClientConnection::apply_keepalive_options() {
   if (socket_ < 0) {
-    return;
-  }
-  if (inproc_transport_.get()) {
     return;
   }
 
