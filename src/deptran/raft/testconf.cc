@@ -641,7 +641,14 @@ void RaftTestConfig::Restart(siteid_t svr) {
                         strcmp(persistence_flag, "true") == 0));
 
   if (should_enable) {
-    Log_info("[RAFT-TEST-RESTART] Loading persistence for site %d", svr);
+    // Set async persistence flag on the server (default: sync)
+    const char* async_flag = std::getenv("MAKO_RAFT_ASYNC_PERSISTENCE");
+    frame->svr_->async_persistence_ = (async_flag &&
+                                       (strcmp(async_flag, "1") == 0 ||
+                                        strcmp(async_flag, "true") == 0));
+
+    Log_info("[RAFT-TEST-RESTART] Loading persistence for site %d (mode=%s)",
+             svr, frame->svr_->async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
     rrr::RecoveryConfig config;

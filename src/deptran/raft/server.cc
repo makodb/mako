@@ -380,8 +380,14 @@ void RaftServer::Setup() {
                         strcmp(persistence_flag, "true") == 0));
 
   if (should_enable) {
-    Log_info("[RAFT-PERSISTENCE] Initializing LogStorage for site %d partition %d",
-             site_id_, partition_id_);
+    // Check if async persistence is requested (default: sync)
+    const char* async_flag = std::getenv("MAKO_RAFT_ASYNC_PERSISTENCE");
+    async_persistence_ = (async_flag &&
+                         (strcmp(async_flag, "1") == 0 ||
+                          strcmp(async_flag, "true") == 0));
+
+    Log_info("[RAFT-PERSISTENCE] Initializing LogStorage for site %d partition %d (mode=%s)",
+             site_id_, partition_id_, async_persistence_ ? "async" : "sync");
 
     // Create RecoveryConfig
     rrr::RecoveryConfig config;
@@ -1717,39 +1723,39 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       // ==================================================================
       // PERSISTENCE: Either async (speculative) or sync (traditional)
       // ==================================================================
-#if RAFT_ASYNC_PERSISTENCE
-      // ASYNC MODE (speculative): Start async persistence and send durable ack later
-      if (!entries_to_persist.empty()) {
-        // Capture entries by move to avoid dangling references
-        std::thread([this, entries = std::move(entries_to_persist),
-                     log_index_for_durable_ack, term_copy, follower_id_copy,
-                     leader_id_copy, par_id_copy, commit_index_copy]() {
-          // Persist all log entries
-          for (const auto& entry : entries) {
-            PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
-          }
+      if (async_persistence_) {
+        // ASYNC MODE (speculative): Start async persistence and send durable ack later
+        if (!entries_to_persist.empty()) {
+          // Capture entries by move to avoid dangling references
+          std::thread([this, entries = std::move(entries_to_persist),
+                       log_index_for_durable_ack, term_copy, follower_id_copy,
+                       leader_id_copy, par_id_copy, commit_index_copy]() {
+            // Persist all log entries
+            for (const auto& entry : entries) {
+              PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
+            }
 
-          // Also persist commit index (async is fine for commit index)
-          PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
+            // Also persist commit index (async is fine for commit index)
+            PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
 
-          // Send AppendEntriesDurable RPC to leader
-          auto c = commo();
-          if (c != nullptr) {
-            c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
-                                        follower_id_copy, log_index_for_durable_ack);
-          }
-        }).detach();
-      }
-#else
-      // SYNC MODE (traditional): Persist entries synchronously before returning
-      // No separate AppendEntriesDurable RPC needed - the ack implies durability
-      if (!entries_to_persist.empty()) {
-        for (const auto& entry : entries_to_persist) {
-          PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: sync follower entry");
+            // Send AppendEntriesDurable RPC to leader
+            auto c = commo();
+            if (c != nullptr) {
+              c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
+                                          follower_id_copy, log_index_for_durable_ack);
+            }
+          }).detach();
         }
-        PersistCommitIndex(commit_index_copy, "OnAppendEntries: sync follower commit");
+      } else {
+        // SYNC MODE (traditional): Persist entries synchronously before returning
+        // No separate AppendEntriesDurable RPC needed - the ack implies durability
+        if (!entries_to_persist.empty()) {
+          for (const auto& entry : entries_to_persist) {
+            PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: sync follower entry");
+          }
+          PersistCommitIndex(commit_index_copy, "OnAppendEntries: sync follower commit");
+        }
       }
-#endif
 
       // Re-acquire mutex before returning (to handle remaining code safely)
       mtx_.lock();

@@ -83,6 +83,7 @@ class RaftServer : public TxLogServer {
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
   std::shared_ptr<rrr::LogStorage> log_storage_;  // Optional persistent storage
+  bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
   // SNAPSHOT SUPPORT (Phase 3.1)
@@ -253,40 +254,40 @@ class RaftServer : public TxLogServer {
           // Reset timeout
           resetTimer("granted vote");
 
-#if RAFT_ASYNC_PERSISTENCE
-          // SPECULATIVE VOTING (async mode): Respond IMMEDIATELY (memory vote)
-          // Then start async persistence and send VoteDurable after fsync
-          n_vote_++ ;
-          cb() ;  // Respond now - this is the memory vote
+          if (async_persistence_) {
+            // SPECULATIVE VOTING (async mode): Respond IMMEDIATELY (memory vote)
+            // Then start async persistence and send VoteDurable after fsync
+            n_vote_++ ;
+            cb() ;  // Respond now - this is the memory vote
 
-          // Start async vote persistence
-          // Capture necessary state for the async operation
-          ballot_t term_copy = currentTerm;
-          siteid_t voter_copy = site_id_;
-          siteid_t can_id_copy = can_id;
-          parid_t par_id_copy = partition_id_;
+            // Start async vote persistence
+            // Capture necessary state for the async operation
+            ballot_t term_copy = currentTerm;
+            siteid_t voter_copy = site_id_;
+            siteid_t can_id_copy = can_id;
+            parid_t par_id_copy = partition_id_;
 
-          // Use a detached thread for async fsync + VoteDurable send
-          std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
-              // Persist the vote durably
-              PersistState(term_copy, can_id_copy, "doVote: async vote persist");
+            // Use a detached thread for async fsync + VoteDurable send
+            std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+                // Persist the vote durably
+                PersistState(term_copy, can_id_copy, "doVote: async vote persist");
 
-              // Send VoteDurable RPC to candidate
-              auto c = commo();
-              if (c != nullptr) {
-                  c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
-              }
-          }).detach();
+                // Send VoteDurable RPC to candidate
+                auto c = commo();
+                if (c != nullptr) {
+                    c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
+                }
+            }).detach();
 
-          return;  // Already called cb() above
-#else
-          // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then respond
-          // No separate VoteDurable RPC needed - the vote response implies durability
-          PersistState(currentTerm, can_id, "doVote: sync vote persist");
-          n_vote_++ ;
-          cb() ;
-          return;
-#endif
+            return;  // Already called cb() above
+          } else {
+            // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then respond
+            // No separate VoteDurable RPC needed - the vote response implies durability
+            PersistState(currentTerm, can_id, "doVote: sync vote persist");
+            n_vote_++ ;
+            cb() ;
+            return;
+          }
       }
 
       n_vote_++ ;

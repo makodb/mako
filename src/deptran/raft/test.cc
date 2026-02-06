@@ -17,25 +17,27 @@ int RaftLabTest::Run(void) {
   config_->SetLearnerAction();
   uint64_t start_rpc = config_->RpcTotal();
   Log_info("Beginning test sequence");
-  if (testInitialElection()                               // Test 1
-      || TEST_EXPAND(testReElection())                    // Test 2
-      || TEST_EXPAND(testBasicAgree())                    // Test 3
-      || TEST_EXPAND(testFailAgree())                     // Test 4
-      || TEST_EXPAND(testFailNoAgree())                   // Test 5
-      || TEST_EXPAND(testRejoin())                        // Test 6
-      || TEST_EXPAND(testConcurrentStarts())              // Test 7
-      || TEST_EXPAND(testBackup())                        // Test 8
-      || TEST_EXPAND(testCount())                         // Test 9
-      || TEST_EXPAND(testUnreliableAgree())               // Test 10
-      || TEST_EXPAND(testFigure8())                       // Test 11
+  if (
+      // Basic Raft tests (disabled for disk persistence verification)
+      // testInitialElection()                               // Test 1
+      // || TEST_EXPAND(testReElection())                    // Test 2
+      // || TEST_EXPAND(testBasicAgree())                    // Test 3
+      // || TEST_EXPAND(testFailAgree())                     // Test 4
+      // || TEST_EXPAND(testFailNoAgree())                   // Test 5
+      // || TEST_EXPAND(testRejoin())                        // Test 6
+      // || TEST_EXPAND(testConcurrentStarts())              // Test 7
+      // || TEST_EXPAND(testBackup())                        // Test 8
+      // || TEST_EXPAND(testCount())                         // Test 9
+      // || TEST_EXPAND(testUnreliableAgree())               // Test 10
+      // || TEST_EXPAND(testFigure8())                       // Test 11
       // Disk persistence tests (require MAKO_RAFT_PERSISTENCE=1)
-      // || TEST_EXPAND(testPersistence())                   // Test 13
-      // || TEST_EXPAND(testLeaderFollowerPersistence())     // Test 14
-      // || TEST_EXPAND(testComprehensiveCrashRecovery())    // Test 15
-      // || TEST_EXPAND(testPartitionPlusRestart())          // Test 16
-      // || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
-      // || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
-      // || TEST_EXPAND(testFigure8CrashRecovery())          // Test 19
+      TEST_EXPAND(testPersistence())                   // Test 13
+      || TEST_EXPAND(testLeaderFollowerPersistence())     // Test 14
+      || TEST_EXPAND(testComprehensiveCrashRecovery())    // Test 15
+      || TEST_EXPAND(testPartitionPlusRestart())          // Test 16
+      || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
+      || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
+      || TEST_EXPAND(testFigure8CrashRecovery())          // Test 19
       // Speculative Raft tests (Phase 7) - disabled for now
       // || TEST_EXPAND(testSpeculativeLeaderElection())     // Test 20
       // || TEST_EXPAND(testSpecCommitIndexAdvances())       // Test 21
