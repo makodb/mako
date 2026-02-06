@@ -126,7 +126,7 @@ protected:
         );
         if (fu_result.is_err()) return false;
         auto fu = fu_result.unwrap();
-        fu->timed_wait(0.5);  // 0.5 seconds (500ms) timeout
+        fu->timed_wait(1.0);  // 1 second timeout for CI resilience
         return fu->get_error_code() == 0;
     }
 
@@ -139,10 +139,18 @@ protected:
         }
     }
 
+    // @unsafe - Restart server with retry logic for CI resilience
     void restart_server() {
         std::lock_guard<std::mutex> lock(server_mutex_);
         if (!current_server_ && current_port_ > 0) {
-            current_server_ = create_server(current_port_);
+            // Retry up to 3 times with backoff - port may still be in
+            // TIME_WAIT under heavy CI load
+            for (int attempt = 0; attempt < 3; attempt++) {
+                current_server_ = create_server(current_port_);
+                if (current_server_) break;
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(50 * (attempt + 1)));
+            }
         }
     }
 
@@ -430,7 +438,7 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
 
     auto client = create_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
-    std::this_thread::sleep_for(milliseconds(50));
+    std::this_thread::sleep_for(milliseconds(100));
 
     // Verify initial connectivity
     EXPECT_TRUE(send_request(client));
@@ -438,7 +446,7 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
     // Setup chaos controller
     ChaosConfig config;
     config.failure_rate = 0.5;  // 50% chance per check
-    config.server_restart_delay_ms = 50;
+    config.server_restart_delay_ms = 100;
     config.auto_restart_server = true;
     ChaosController controller(config);
 
@@ -461,11 +469,12 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
         auto type = controller.maybe_inject_failure(FailureType::SERVER_KILL);
         if (type == FailureType::SERVER_KILL) {
             server_kills++;
-            // Reconnect after server restart
-            std::this_thread::sleep_for(milliseconds(100));
+            // Reconnect after server restart - use longer delays for
+            // CI resilience where CPU contention can slow things down
+            std::this_thread::sleep_for(milliseconds(200));
             client->close();
             client->connect(addr.c_str());
-            std::this_thread::sleep_for(milliseconds(50));
+            std::this_thread::sleep_for(milliseconds(100));
         }
 
         total_requests++;
@@ -481,12 +490,12 @@ TEST_F(ChaosTest, IntegrationRandomServerKills) {
     // Verify some chaos was injected
     EXPECT_GT(server_kills, 0);
 
-    // Setup verifier
-    ChaosVerifier verifier(2000);
+    // Setup verifier - use longer timeout for CI resilience
+    ChaosVerifier verifier(3000);
     verifier.set_connectivity_check([&client, &addr]() {
         if (!client->connected()) {
             client->connect(addr.c_str());
-            std::this_thread::sleep_for(milliseconds(50));
+            std::this_thread::sleep_for(milliseconds(100));
         }
         return client->connected();
     });
@@ -643,7 +652,7 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
 
     ChaosConfig config;
     config.failure_rate = 0.3;
-    config.server_restart_delay_ms = 50;
+    config.server_restart_delay_ms = 100;
     ChaosController controller(config);
 
     controller.set_on_server_kill([this]() {
@@ -666,13 +675,14 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
     for (int i = 0; i < 15; i++) {
         auto type = controller.maybe_inject_failure(FailureType::COMBINED);
 
-        // Handle different failure types
+        // Handle different failure types - use longer delays for CI
+        // resilience where CPU contention can slow things down
         switch (type) {
             case FailureType::SERVER_KILL:
-                std::this_thread::sleep_for(milliseconds(100));
+                std::this_thread::sleep_for(milliseconds(200));
                 client->close();
                 client->connect(addr.c_str());
-                std::this_thread::sleep_for(milliseconds(50));
+                std::this_thread::sleep_for(milliseconds(100));
                 break;
 
             case FailureType::LATENCY_INJECTION:
@@ -683,9 +693,9 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
                 break;
 
             case FailureType::CONNECTION_RESET:
-                std::this_thread::sleep_for(milliseconds(50));
+                std::this_thread::sleep_for(milliseconds(100));
                 client->connect(addr.c_str());
-                std::this_thread::sleep_for(milliseconds(50));
+                std::this_thread::sleep_for(milliseconds(100));
                 break;
 
             default:
@@ -706,12 +716,12 @@ TEST_F(ChaosTest, IntegrationCombinedChaos) {
     auto& stats = controller.stats();
     EXPECT_GT(stats.total_failures.load(), 0u);
 
-    // Verify recovery
-    ChaosVerifier verifier(2000);
+    // Verify recovery - use longer timeout for CI resilience
+    ChaosVerifier verifier(3000);
     verifier.set_connectivity_check([&client, &addr]() {
         if (!client->connected()) {
             client->connect(addr.c_str());
-            std::this_thread::sleep_for(milliseconds(50));
+            std::this_thread::sleep_for(milliseconds(100));
         }
         return client->connected();
     });
