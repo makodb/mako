@@ -15,7 +15,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
-  - [ ] *high* Mako-Raft CI Test Suite: Fix all ci_mako_raft.sh tests so they pass
+  - [x] *high* Mako-Raft CI Test Suite: Fix all ci_mako_raft.sh tests so they pass [DONE 2026-02-07]
     - **Goal**: The Raft CI tests are currently failing. The job here is to fix them one by one. Do NOT run `./ci/ci_mako_raft.sh all` upfront — that wastes time running every test when the first one already fails. Instead, pick one test at a time, run just that test, analyse the logs, figure out WHY it fails, fix the underlying bug in the C++ source or test infrastructure, rebuild, re-run that single test to confirm the fix, and only then move on to the next test. After all individual tests pass, run `./ci/ci_mako_raft.sh all` as a final confirmation. This is NOT about re-running tests until they happen to pass — you must find and fix the actual bugs.
     - **Script**: `ci/ci_mako_raft.sh` — runs Raft-specific tests (simpleRaft, shard replication with Raft, etc.). Run individual tests with e.g. `./ci/ci_mako_raft.sh simpleRaft`.
     - **Note — Build**: `make -j32` builds everything (both Paxos and Raft code paths, including all Raft test binaries). `MAKO_USE_RAFT=ON` is already set in CMakeCache. There is no need to use `make mako-raft` — a plain `make -j32` is sufficient. The core Raft/Paxos logic is compiled into the same binaries and switched at runtime via `replication_helper.cc` dispatcher.
@@ -47,7 +47,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - **Common failure modes**: Low throughput, high abort ratio, follower not replicating (replay_batch too low), missing keywords in output
       - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
       - **Result**: Test PASSED. Root cause: dbtest was using Paxos code path even when config had `ab: raft`. Fix: Added `detect_replication_type_from_config()` in mako.hh that scans config files for `ab: raft` and auto-sets replication type before setup() dispatches. Also added `--replication raft` to shard_raft.sh as safety measure. Throughput: 69784.6 ops/sec, replay_batch: 796.
-    - [ ] *high* Task 4: Run and fix shard2ReplicationRaft test
+    - [x] *high* Task 4: Run and fix shard2ReplicationRaft test [DONE 2026-02-07, 00:40]
       - Run: `./ci/ci_mako_raft.sh shard2ReplicationRaft`
       - **What it does**: Starts 2 shards, each with 3 Raft replicas (localhost, p1, p2) running TPC-C benchmark with 6 threads. Polls for completion up to 120 seconds.
       - **Underlying script**: `examples/mako-raft-tests/test_2shard_replication_raft.sh`
@@ -56,7 +56,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - **Common failure modes**: Port conflicts between shards, cross-shard RPC failures during Raft leader election, high abort ratios, benchmark timeout (not completing within 120s), race conditions during shutdown
       - Note: This is historically the flakiest test. If it fails intermittently, run it 3-5 times to confirm reproducibility before fixing.
       - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
-    - [ ] *high* Task 5: Run and fix shard1ReplicationSimpleRaft test
+      - **Result**: Test PASSED 3/3 runs. No new code changes needed — the auto-detection fix from Task 3 (detect_replication_type_from_config + --replication raft in shard_raft.sh) resolved the issue. Throughput ~8400-8540 ops/sec per shard, abort ratio ~1.3-1.6%, replay_batch 800-1220.
+    - [x] *high* Task 5: Run and fix shard1ReplicationSimpleRaft test [DONE 2026-02-07, 00:50]
       - Run: `./ci/ci_mako_raft.sh shard1ReplicationSimpleRaft`
       - **What it does**: Starts 1 shard with 3 Raft replicas using `simpleTransactionRepRaft` binary (simpler transaction test, not TPC-C) for 40 seconds.
       - **Underlying script**: `examples/mako-raft-tests/test_1shard_replication_simple_raft.sh`
@@ -64,7 +65,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - **Pass criteria**: (1) follower p1 has `replay_batch > 0`, (2) both followers (p1, p2) have `ALL VERIFICATIONS PASSED` in their logs (leader may hang during shutdown — that is a known issue and acceptable)
       - **Common failure modes**: Data integrity verification failure on followers, replay_batch=0 (replication not working), leader hanging during shutdown (acceptable if followers pass)
       - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
-    - [ ] *high* Task 6: Run and fix shard2ReplicationSimpleRaft test
+      - **Result**: Test PASSED. No new code changes needed — auto-detection fix from Task 3 works for simpleTransactionRepRaft too. replay_batch: 6, all 3 nodes verified data integrity, all processes exited cleanly.
+    - [x] *high* Task 6: Run and fix shard2ReplicationSimpleRaft test [DONE 2026-02-07, 00:55]
       - Run: `./ci/ci_mako_raft.sh shard2ReplicationSimpleRaft`
       - **What it does**: Starts 2 shards, each with 3 Raft replicas using `simpleTransactionRepRaft` binary for 60 seconds.
       - **Underlying script**: `examples/mako-raft-tests/test_2shard_replication_simple_raft.sh`
@@ -72,13 +74,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - **Pass criteria**: (1) both shard followers have `replay_batch > 0`, (2) all 4 followers (2 per shard) have `ALL VERIFICATIONS PASSED` (leaders may hang — acceptable)
       - **Common failure modes**: Similar to shard2ReplicationRaft — port conflicts, cross-shard issues, data integrity failures on followers, insufficient replication
       - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
-    - [ ] *high* Task 7: Run full suite and confirm all tests pass
+      - **Result**: Test PASSED. No new code changes needed. replay_batch: 12 for both shards, all 6 nodes verified data integrity, all processes exited cleanly.
+    - [x] *high* Task 7: Run full suite and confirm all tests pass [DONE 2026-02-07]
       - Run: `./ci/ci_mako_raft.sh all`
       - This runs all tests in sequence: compile → simpleRaft → shard1ReplicationRaft → shard2ReplicationRaft → shard1ReplicationSimpleRaft → shard2ReplicationSimpleRaft
       - **Pass criteria**: Script exits 0 and prints "All Raft CI steps completed successfully!"
       - If any test fails in the full run but passed individually, investigate interactions between tests (e.g., hanging processes from a prior test interfering with the next one, port conflicts, leaked state)
       - Run the full suite 3 times to confirm stability. Save all logs to `logs/` folder.
       - If flaky, investigate and fix the flakiness (timing issues, process cleanup, port conflicts, etc.)
+      - **Result**: All 3 runs passed. Logs saved to `logs/raft_ci_run3.log` (and previous runs in `logs/raft_a1.log`, `logs/raft_a2.log`). Full `ci.sh all` regression check also passed (exit code 0) — no regressions in Paxos or other tests.
   - [x] *high* Investigate intermittent segfault in RrrRpcBackend::Stop during shutdown [CI-a6bed72c] [FIXED 2026-02-03, 23:05]
     - Problem: shardNoReplication test fails with segfault in shard 0 during RrrRpcBackend::Stop
     - Evidence: CI run #21649096526 failed - "Segmentation fault" at rrr_rpc_backend.cc during client connection close
