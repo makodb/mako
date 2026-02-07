@@ -20,6 +20,13 @@ class RaftLabTest {
 
  private:
 
+  int testPersistence(void);
+  int testTwoFollowerPersistence(void);
+  int testLeaderFollowerPersistence(void);
+  int testComprehensiveCrashRecovery(void);
+  int testPartitionPlusRestart(void);
+  int testSequentialPartitionsPlusRestart(void);
+  int testMultipleRestartsPlusPartition(void);
   int testInitialElection(void);
   int testReElection(void);
 
@@ -33,6 +40,104 @@ class RaftLabTest {
 
   int testUnreliableAgree(void);
   int testFigure8(void);
+  int testFigure8CrashRecovery(void);
+
+  // ===========================================================================
+  // SPECULATIVE RAFT TESTS (Phase 7)
+  // ===========================================================================
+  // Tests for speculative replication functionality
+
+  // Test that leader becomes speculative first, then secured after VoteDurable
+  int testSpeculativeLeaderElection(void);
+
+  // Test that specCommitIndex advances on memory ack quorum
+  int testSpecCommitIndexAdvances(void);
+
+  // Test that invariants hold throughout operations
+  int testSpeculativeInvariantsHold(void);
+
+  // Test that secured leader continues even after losing speculative quorum
+  int testSecuredLeaderContinuesAfterSpecQuorumLoss(void);
+
+  // Test that durable commit requires secured leader
+  int testDurableCommitRequiresSecuredLeader(void);
+
+  // ===========================================================================
+  // PHASE 7.2: NotifyRestart Tests
+  // ===========================================================================
+  // Tests for notifyRestart and step-down behavior
+
+  // Test that follower restart removes from specVoters
+  int testRestartRemovesFromSpecVoters(void);
+
+  // Test that unsecured leader steps down when losing spec quorum
+  int testUnsecuredLostQuorumStepsDown(void);
+
+  // Test that restart removes from memoryAcks for unsecured entries
+  int testRestartRemovesFromMemoryAcks(void);
+
+  // Test that restart does not affect durableVoters
+  int testRestartDoesNotAffectDurableVoters(void);
+
+  // ===========================================================================
+  // PHASE 7.3: Integration Tests
+  // ===========================================================================
+  // Crash and recovery integration scenarios
+
+  // Test that speculative entries survive leader crash if new leader has them
+  int testSpeculativeEntriesSurviveCrash(void);
+
+  // Test that voter crash before VoteDurable fsync is handled correctly
+  int testVoterCrashBeforeVoteFsync(void);
+
+  // Test double-vote prevention after crash
+  int testDoubleVotePrevention(void);
+
+  // ===========================================================================
+  // PHASE 7.4: Stress Tests
+  // ===========================================================================
+
+  // Test rapid follower restarts
+  int testRapidRestarts(void);
+
+  // Test concurrent elections with speculative voting
+  int testConcurrentElections(void);
+
+  // ===========================================================================
+  // PHASE 5.3: Client Notification Tests
+  // ===========================================================================
+
+  // Test that client gets SPECULATIVE notification
+  int testSpeculativeCommitNotification(void);
+
+  // Test that client gets DURABLE notification
+  int testDurableCommitNotification(void);
+
+  // Test that SPECULATIVE comes before DURABLE for same entry
+  int testNotificationOrdering(void);
+
+  // Test that unsecured leader step-down notifies ROLLEDBACK
+  int testUnsecuredStepDownNotifiesRollback(void);
+
+  // Test full commit path: SPECULATIVE -> DURABLE -> persist after restart
+  int testFullCommitPath(void);
+
+  // Test secured leader step-down: only entries > securedLogIndex get ROLLEDBACK
+  int testSecuredStepDownPartialRollback(void);
+
+  // Test speculative entries overwritten when new leader commits at same index
+  int testSpeculativeEntriesOverwritten(void);
+
+  // ===========================================================================
+  // PHASE 6: Relaxed Invariant Tests
+  // ===========================================================================
+  // Tests for durableVoters ⊆ specVoters relaxation
+
+  // Test that leader doesn't step down if durableVoters >= quorum (even when specVoters < quorum)
+  int testDurableQuorumPreemptsStepDown(void);
+
+  // Test transition to secured via durable quorum after spec quorum lost due to restarts
+  int testSecuredViaDurableAfterSpecLoss(void);
 
   void wait(uint64_t microseconds);
 

@@ -1,0 +1,455 @@
+================================================================================
+RAFT PERSISTENCE UNIT TEST SUITE EXPLANATION
+================================================================================
+File: test_raft_persistence.cc
+Purpose: Comprehensive unit tests for the RaftPersistence class
+
+================================================================================
+OVERVIEW
+================================================================================
+
+This file contains a standalone unit test suite for the RaftPersistence class,
+which provides persistent storage for Raft consensus protocol state. The tests
+verify that critical Raft state can be correctly persisted to disk and
+recovered after a crash/restart, which is essential for Raft's correctness
+guarantees.
+
+The test suite consists of 10 independent test cases, each testing a specific
+aspect of the persistence layer. All tests use temporary directories under
+/tmp/ and clean up after themselves.
+
+================================================================================
+RAFT PERSISTENCE REQUIREMENTS
+================================================================================
+
+According to the Raft consensus algorithm, the following state MUST be
+persisted to stable storage before responding to RPCs:
+
+1. currentTerm: Latest term the server has seen (initialized to 0)
+2. votedFor: CandidateId that received vote in current term (or null/INVALID)
+3. log[]: Log entries (each entry contains command + term when received)
+
+Additionally, for performance and recovery optimization:
+4. commitIndex: Index of highest log entry known to be committed
+
+The RaftPersistence class uses RocksDB (an embedded key-value store) to
+provide ACID guarantees for these persistence operations.
+
+================================================================================
+TEST CASE DESCRIPTIONS
+================================================================================
+
+Test 1: TestInit() - Basic Initialization
+--------------------------------------------------------------------------------
+Purpose: Verify that RaftPersistence can be initialized and creates the
+         required database directory structure.
+
+Steps:
+  1. Clean up any existing test directory
+  2. Create a new RaftPersistence instance
+  3. Initialize with site_id=0, partition_id=0, and test path
+  4. Verify Init() returns true (success)
+  5. Verify database directory was created at expected path
+
+Expected Behavior:
+  - Init() succeeds and returns true
+  - Directory created at: {base_path}/raft_{site_id}_partition_{partition_id}
+  - Example: /tmp/test_raft_persistence_1/raft_0_partition_0
+
+Why This Matters:
+  Proper initialization is the foundation for all persistence operations. If
+  the database cannot be created or opened, the Raft node cannot recover from
+  crashes and will violate safety guarantees.
+
+
+Test 2: TestPersistLoadTerm() - Persist and Load Current Term
+--------------------------------------------------------------------------------
+Purpose: Verify that the current term can be persisted and correctly loaded
+         after database restart.
+
+Steps:
+  1. Initialize persistence layer
+  2. Persist term value of 42
+  3. Close the database (destroy persistence object)
+  4. Reopen the database with a new persistence object
+  5. Load the term and verify it's 42
+
+Expected Behavior:
+  - PersistTerm(42) succeeds
+  - After restart, LoadTerm() returns 42
+  - Term survives database close/reopen cycle
+
+Why This Matters:
+  The current term is fundamental to Raft's correctness. Servers must never
+  regress to an earlier term, or they might vote twice in the same term,
+  violating safety. Persistent term storage prevents this.
+
+
+Test 3: TestPersistLoadVotedFor() - Persist and Load Voted-For Field
+--------------------------------------------------------------------------------
+Purpose: Verify that the votedFor field can be persisted and correctly loaded
+         after database restart.
+
+Steps:
+  1. Initialize persistence layer
+  2. Persist votedFor value of 5 (meaning voted for server ID 5)
+  3. Close the database
+  4. Reopen the database
+  5. Load votedFor and verify it's 5
+
+Expected Behavior:
+  - PersistVotedFor(5) succeeds
+  - After restart, LoadVotedFor() returns 5
+  - VotedFor survives database close/reopen cycle
+
+Why This Matters:
+  The votedFor field prevents a server from voting for multiple candidates
+  in the same term. Without persistent storage of this field, a server could
+  crash after voting, restart, forget who it voted for, and vote again,
+  allowing multiple leaders in the same term (safety violation).
+
+
+Test 4: TestLoadDefaults() - Load Default Values from Empty Database
+--------------------------------------------------------------------------------
+Purpose: Verify that loading from an empty/new database returns correct
+         default values according to Raft specification.
+
+Steps:
+  1. Initialize fresh database (no prior state)
+  2. Attempt to load term and votedFor
+  3. Verify default values are returned
+
+Expected Behavior:
+  - LoadTerm() returns 0 (Raft starts at term 0)
+  - LoadVotedFor() returns (uint32_t)-1 (INVALID_SITEID, meaning no vote cast)
+
+Why This Matters:
+  When a Raft node starts for the first time, it must begin with correct
+  initial state. Term 0 is the defined starting term, and INVALID_SITEID
+  indicates the node hasn't voted yet in term 0.
+
+
+Test 5: TestPersistLoadSingleLog() - Persist and Load Single Log Entry
+--------------------------------------------------------------------------------
+Purpose: Verify that a single log entry can be persisted and correctly loaded
+         after database restart.
+
+Steps:
+  1. Initialize persistence layer
+  2. Create a RaftData entry with:
+     - term: 10
+     - slot_id: 1
+     - log_: TpcCommitCommand (a concrete command type)
+  3. Persist the entry at slot 1
+  4. Close and reopen database
+  5. Load all logs using LoadAllLogs()
+  6. Verify exactly 1 entry is loaded with correct term and slot_id
+
+Expected Behavior:
+  - PersistLogEntry() succeeds
+  - After restart, LoadAllLogs() returns map with 1 entry
+  - Entry has correct term (10) and slot_id (1)
+
+Why This Matters:
+  The log is the most critical data structure in Raft. It stores the sequence
+  of commands that will be applied to the state machine. Without persistent
+  logs, committed commands could be lost after a crash, violating durability.
+
+
+Test 6: TestPersistLoadMultipleLogs() - Persist and Load Multiple Log Entries
+--------------------------------------------------------------------------------
+Purpose: Verify that multiple log entries can be persisted and all are
+         correctly loaded after restart.
+
+Steps:
+  1. Initialize persistence layer
+  2. Create and persist 10 log entries:
+     - Slot IDs: 1, 2, 3, ..., 10
+     - Terms: 10, 20, 30, ..., 100 (slot_id * 10)
+  3. Close and reopen database
+  4. Load all logs
+  5. Verify all 10 entries are present with correct values
+
+Expected Behavior:
+  - All 10 PersistLogEntry() calls succeed
+  - After restart, LoadAllLogs() returns map with 10 entries
+  - Each entry has correct term and slot_id
+  - No entries are missing or corrupted
+
+Why This Matters:
+  In a real deployment, the log can grow to millions of entries. The
+  persistence layer must correctly handle multiple entries without data loss,
+  corruption, or ordering issues. This test verifies basic multi-entry
+  correctness.
+
+
+Test 7: TestLoadLogRange() - Load Subset of Log Entries by Range
+--------------------------------------------------------------------------------
+Purpose: Verify that LoadLogRange() can efficiently load a subset of log
+         entries without loading the entire log.
+
+Steps:
+  1. Initialize persistence layer
+  2. Create and persist 10 log entries (slot IDs 1-10)
+  3. Close and reopen database
+  4. Load range [3, 7] using LoadLogRange(3, 7, logs)
+  5. Verify exactly 5 entries are loaded (slots 3, 4, 5, 6, 7)
+  6. Verify each entry has correct slot_id
+
+Expected Behavior:
+  - LoadLogRange(3, 7) succeeds
+  - Returns exactly 5 entries
+  - Entries have slot_ids 3, 4, 5, 6, 7
+  - Entries outside range (1, 2, 8, 9, 10) are not loaded
+
+Why This Matters:
+  For efficiency, Raft implementations often need to access specific ranges
+  of the log without loading everything. For example:
+  - Sending log entries to followers during AppendEntries RPCs
+  - Log compaction/snapshotting
+  - Recovering from specific checkpoints
+
+  Loading the entire log every time would be prohibitively expensive for
+  large logs.
+
+
+Test 8: TestUpdateTerm() - Update Term Multiple Times
+--------------------------------------------------------------------------------
+Purpose: Verify that the term can be updated multiple times and each update
+         is immediately visible on reload.
+
+Steps:
+  1. Initialize persistence layer (keep it open)
+  2. For terms 1, 2, 3, 4, 5:
+     a. Persist the new term
+     b. Immediately load the term back
+     c. Verify loaded value matches what was persisted
+  3. All operations without closing/reopening database
+
+Expected Behavior:
+  - Each PersistTerm() immediately commits to storage
+  - Each subsequent LoadTerm() returns the latest persisted value
+  - No need to close/reopen database for updates to be visible
+
+Why This Matters:
+  During leader election, a server may see multiple higher terms in quick
+  succession and must update its term each time. The persistence layer must
+  guarantee that these updates are durable immediately (not cached), so that
+  if a crash occurs right after updating the term, the new term is preserved.
+
+
+Test 9: TestPersistCommitIndex() - Persist Commit Index
+--------------------------------------------------------------------------------
+Purpose: Verify that the commit index can be persisted to disk.
+
+Steps:
+  1. Initialize persistence layer
+  2. Call PersistCommitIndex(42)
+  3. Verify the call succeeds
+
+Expected Behavior:
+  - PersistCommitIndex(42) returns true
+
+Why This Matters:
+  The commit index tracks which log entries are known to be committed (i.e.,
+  replicated on a majority of servers and safe to apply to state machine).
+  While not strictly required by basic Raft, persisting the commit index
+  enables faster recovery by avoiding re-computation of which entries are
+  committed after a restart.
+
+Note: This test doesn't verify loading the commit index, suggesting that
+      feature may not be fully implemented yet or is tested elsewhere.
+
+
+Test 10: TestMultipleSites() - Multiple Site IDs (Isolation)
+--------------------------------------------------------------------------------
+Purpose: Verify that different site IDs (different Raft nodes) use isolated
+         databases and don't interfere with each other.
+
+Steps:
+  1. Initialize persistence for site_id=0, persist term=100
+  2. Initialize persistence for site_id=1, persist term=200
+  3. Reload site_id=0 and verify term is still 100
+  4. Reload site_id=1 and verify term is 200
+
+Expected Behavior:
+  - Site 0's database is completely isolated from Site 1's database
+  - Each site has its own directory: raft_{site_id}_partition_{partition_id}
+  - Operations on one site don't affect the other
+
+Why This Matters:
+  In a distributed deployment, multiple Raft nodes may run on the same
+  physical machine (common in testing or for different partitions). Each
+  node must have completely isolated persistent storage to avoid:
+  - Data corruption from concurrent access
+  - One node's crash affecting another node's data
+  - Confusion about which state belongs to which node
+
+================================================================================
+HELPER FUNCTIONS
+================================================================================
+
+remove_directory(const std::string& path)
+--------------------------------------------------------------------------------
+Purpose: Recursively delete a directory and all its contents.
+
+Implementation: Uses system() to call "rm -rf {path}"
+
+Usage: Called before each test to ensure clean state, and after each test
+       to clean up temporary files.
+
+Note: Using system("rm -rf") is acceptable for test code but should never
+      be used in production code due to:
+      - Security risks (path injection)
+      - Lack of error handling
+      - Platform dependence (Unix/Linux only)
+
+================================================================================
+MAIN TEST RUNNER
+================================================================================
+
+The main() function:
+  1. Prints a header banner
+  2. Runs all 10 test functions sequentially
+  3. Counts passed and failed tests
+  4. Prints summary of results
+  5. Returns 0 if all tests passed, 1 if any failed
+
+Each test function:
+  - Returns true on success, false on failure
+  - Prints "PASSED" or "FAILED" with detailed error message
+  - Cleans up its own temporary directory
+
+================================================================================
+PERSISTENCE IMPLEMENTATION DETAILS (inferred from tests)
+================================================================================
+
+Based on the test code, we can infer the RaftPersistence interface:
+
+Class: RaftPersistence
+
+Methods:
+  bool Init(uint32_t site_id, uint32_t partition_id, std::string base_path)
+    - Initializes the persistence layer
+    - Creates database at {base_path}/raft_{site_id}_partition_{partition_id}
+    - Returns true on success
+
+  bool PersistTerm(uint64_t term)
+    - Persists the current term to disk
+    - Returns true on success
+
+  bool LoadTerm(uint64_t& term)
+    - Loads the current term from disk
+    - Returns default value 0 if not previously persisted
+    - Returns true on success
+
+  bool PersistVotedFor(uint32_t candidate_id)
+    - Persists which candidate this server voted for
+    - Returns true on success
+
+  bool LoadVotedFor(uint32_t& voted_for)
+    - Loads the votedFor field from disk
+    - Returns default value INVALID_SITEID if not previously persisted
+    - Returns true on success
+
+  bool PersistLogEntry(slotid_t slot_id, const RaftData& entry)
+    - Persists a single log entry at given slot
+    - Returns true on success
+
+  bool LoadAllLogs(std::map<slotid_t, shared_ptr<RaftData>>& logs)
+    - Loads all log entries from disk into provided map
+    - Map key is slot_id, value is the RaftData entry
+    - Returns true on success
+
+  bool LoadLogRange(slotid_t start, slotid_t end,
+                    std::map<slotid_t, shared_ptr<RaftData>>& logs)
+    - Loads log entries in range [start, end] inclusive
+    - Returns true on success
+
+  bool PersistCommitIndex(uint64_t commit_index)
+    - Persists the commit index
+    - Returns true on success
+
+Storage Backend: RocksDB
+  - Embedded LSM-tree based key-value store
+  - Provides ACID guarantees
+  - Optimized for write-heavy workloads (like Raft logs)
+
+================================================================================
+RUNNING THE TESTS
+================================================================================
+
+To compile and run these tests:
+
+  # Build the test binary
+  make test_raft_persistence
+
+  # Run the tests
+  ./build/test_raft_persistence
+
+Expected Output:
+  ================================
+  Raft Persistence Unit Tests
+  ================================
+  Test 1: Basic Initialization... PASSED
+  Test 2: Persist and Load Term... PASSED
+  Test 3: Persist and Load VotedFor... PASSED
+  Test 4: Load Defaults (Empty Database)... PASSED
+  Test 5: Persist and Load Single Log Entry... PASSED
+  Test 6: Persist and Load Multiple Log Entries... PASSED
+  Test 7: Load Log Range... PASSED
+  Test 8: Update Term Multiple Times... PASSED
+  Test 9: Persist Commit Index... PASSED
+  Test 10: Multiple Site IDs (Isolation)... PASSED
+  ================================
+  Results: 10 passed, 0 failed
+  ================================
+
+Exit Code:
+  0 if all tests pass
+  1 if any test fails
+
+================================================================================
+WHAT'S NOT TESTED (Potential Future Tests)
+================================================================================
+
+1. LoadCommitIndex() - Test 9 only tests persisting, not loading
+2. Concurrent access - Multiple threads accessing persistence simultaneously
+3. Log truncation - Deleting log entries (needed for log compaction)
+4. Large log entries - Entries with significant data payloads
+5. Disk full errors - Handling out-of-space conditions
+6. Corruption recovery - Handling corrupted database files
+7. Performance - Throughput and latency under load
+8. Crash recovery - Simulating crashes mid-write
+9. Different command types - Tests only use TpcCommitCommand
+10. Partition IDs - Tests use partition_id=0, could test multiple partitions
+
+================================================================================
+INTEGRATION WITH RAFT SERVER
+================================================================================
+
+The RaftPersistence class is used by the RaftServer implementation to:
+
+1. Persist state changes before responding to RPCs:
+   - Before voting: persist new term and votedFor
+   - Before accepting log entries: persist new entries to disk
+
+2. Restore state after crash/restart:
+   - Load current term and votedFor
+   - Load entire log or specific ranges
+   - Resume operation from last committed state
+
+3. Ensure safety guarantees:
+   - Never vote twice in same term (votedFor persistence)
+   - Never decrease term (term persistence)
+   - Never lose committed log entries (log persistence)
+
+The persistence layer is the foundation of Raft's crash-recovery correctness.
+Without it, Raft cannot provide its strong consistency guarantees across
+server restarts.
+
+================================================================================
+
+
+
+rm -rf /tmp/raft_*_partition_*

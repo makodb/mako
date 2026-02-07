@@ -7,6 +7,7 @@
 #include "commo.h"
 #include <rusty/box.hpp>
 #include "rpc/log_storage.hpp"
+#include "rpc/recovery_manager.hpp"
 #include "rpc/snapshot_manager.hpp"
 
 namespace janus {
@@ -16,6 +17,37 @@ class CmdData;
 #define INVALID_SITEID  ((siteid_t)-1)
 #define NUM_BATCH_TIMER_RESET  (100)
 #define SEC_BATCH_TIMER_RESET  (1)
+
+/**
+ * StepDownReason - Why the leader is stepping down
+ *
+ * Used by stepDown() to determine what action to take:
+ * - UnsecuredFailure: Lost speculative quorum while unsecured leader.
+ *   All current-term entries are suspect, clients should be notified.
+ * - SecuredFailure: Lost quorum but was secured leader.
+ *   Only unsecured entries (specCommitIndex, securedLogIndex] are suspect.
+ * - HigherTerm: Saw higher term from another server.
+ *   Entries may still be valid, no automatic rollback notification.
+ */
+enum class StepDownReason {
+  UnsecuredFailure,  // Lost spec quorum while unsecured
+  SecuredFailure,    // Lost quorum but was secured
+  HigherTerm         // Saw higher term from another server
+};
+
+/**
+ * CommitStatus - Notification status for client callbacks
+ *
+ * Used by client callback infrastructure to notify clients of entry status:
+ * - SPECULATIVE: Entry reached memory quorum, likely to commit
+ * - DURABLE: Entry reached disk quorum with secured leader, guaranteed
+ * - ROLLEDBACK: Entry will not commit (leader stepped down gracefully)
+ */
+enum class CommitStatus {
+  SPECULATIVE,  // Entry reached memory quorum
+  DURABLE,      // Entry reached disk quorum with secured leader
+  ROLLEDBACK    // Entry will not commit (best-effort notification)
+};
 
 struct RaftData {
   ballot_t max_ballot_seen_ = 0;
@@ -45,36 +77,30 @@ struct KeyValue {
 
 
 class RaftServer : public TxLogServer {
+  friend class RaftTestConfig;  // Allow test config to access private members for kill/restart
  private:
   // ============================================================================
   // LOG PERSISTENCE (Phase 1.3)
   // ============================================================================
   std::shared_ptr<rrr::LogStorage> log_storage_;  // Optional persistent storage
+  bool async_persistence_ = false;  // Runtime: sync (default) vs async disk persistence
 
   // ============================================================================
   // SNAPSHOT SUPPORT (Phase 3.1)
   // ============================================================================
   std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
 
-  // Metadata keys for consensus state
+  // Metadata keys for LogStorage persistence
   static constexpr const char* META_TERM = "currentTerm";
   static constexpr const char* META_VOTE_FOR = "vote_for";
   static constexpr const char* META_COMMIT_INDEX = "commitIndex";
 
-  // @unsafe - Persists term and vote_for to storage
-  void PersistTermAndVote();
-
-  // @unsafe - Persists vote_for only to storage
-  void PersistVote();
-
-  // @unsafe - Persists commitIndex to storage
-  void PersistCommitIndex();
-
-  // @unsafe - Persists a single log entry
-  void PersistLogEntry(slotid_t slot_id, const RaftData& data);
-
-  // @unsafe - Persists multiple log entries
-  void PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
+  // LogStorage-based persistence helper methods
+  void PersistTermAndVoteToLogStorage();
+  void PersistVoteToLogStorage();
+  void PersistCommitIndexToLogStorage();
+  void PersistLogEntryToLogStorage(slotid_t slot_id, const RaftData& data);
+  void PersistLogEntriesToLogStorage(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
 
   // ============================================================================
 
@@ -131,6 +157,38 @@ class RaftServer : public TxLogServer {
   std::thread leadership_monitor_thread_;                   // Background thread monitoring for transfer
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
+  // ============================================================================
+  // SPECULATIVE REPLICATION STATE (Phase 1.1)
+  // ============================================================================
+  // Enables separation of "speculative" (memory quorum) from "secured" (durable
+  // quorum) for both leadership and log entries. See docs/dev/phase1_speculative_state_plan.md
+
+  // Leader security status - true when durable vote quorum achieved
+  // When securedLeader_ = true, a quorum has votedFor = me on disk,
+  // so no other candidate can win election in this term.
+  bool securedLeader_ = false;
+
+  // Vote tracking for current term (as candidate/leader)
+  std::set<siteid_t> specVoters_;     // servers that have memory-voted for us
+  std::set<siteid_t> durableVoters_;  // servers that have durably-voted for us
+
+  // Log commit tracking
+  // Invariant: securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
+  uint64_t securedLogIndex_ = 0;      // highest index with durable ack quorum
+  uint64_t specCommitIndex_ = 0;      // highest index with memory ack quorum
+
+  // Acknowledgment tracking per log index
+  // Key: log index, Value: set of nodes that have acked at that level
+  std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
+  std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
+
+  // Client notification callbacks
+  // Key: log index, Value: callback to notify on commit status change
+  // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
+  // or ROLLEDBACK (leader stepped down gracefully)
+  std::map<uint64_t, std::function<void(CommitStatus)>> pendingCallbacks_;
+  uint64_t lastSpecNotifiedIndex_ = 0;    // last index notified with SPECULATIVE
+  uint64_t lastDurableNotifiedIndex_ = 0; // last index notified with DURABLE
 
   // @unsafe - Uses INVALID_SITEID macro with integer cast
   bool AmIPreferredLeader() const {
@@ -152,12 +210,8 @@ class RaftServer : public TxLogServer {
 	void Setup();
 	void HeartbeatLoop() ;
 
-  // @unsafe - Returns raw pointer cast
-  RaftCommo* commo() {
-    return (RaftCommo*) commo_;
-  }
-
   // @unsafe
+  // SPECULATIVE VOTING: Respond immediately, then persist and send VoteDurable async
   void doVote(const slotid_t& lst_log_idx,
               const ballot_t& lst_log_term,
               const siteid_t& can_id,
@@ -173,30 +227,69 @@ class RaftServer : public TxLogServer {
       Log_info("[RAFT_VOTE] server %d (loc %d) vote=%d candidate=%d can_term=%lu cur_term=%lu prev_vote_for=%d is_leader=%d lst_idx=%lu lst_term=%lu",
                site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
 #endif
-                    
+
       if( can_term > currentTerm)
       {
-          // is_leader_ = false ;  // TODO recheck
           // Any higher term seen means we must immediately step down.
           setIsLeader(false);
           auto prev_term = currentTerm;
           currentTerm = can_term ;
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+
+          // SPECULATIVE: Still persist term change synchronously for correctness
+          // (term changes must be durable before we can proceed)
+          PersistState(currentTerm, vote_for_, "doVote: observed higher term");
+
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
-          PersistTermAndVote();  // Persist term/vote change
       }
 
       if(vote)
       {
           setIsLeader(false) ;
           vote_for_ = can_id ;
+
 #ifdef RAFT_LEADER_ELECTION_DEBUG
           Log_info("[RAFT_VOTE] server %d recorded vote_for=%d at term=%lu", site_id_, vote_for_, currentTerm);
 #endif
-          PersistVote();  // Persist vote change
-          //reset timeout
+          // Reset timeout
           resetTimer("granted vote");
+
+          if (async_persistence_) {
+            // SPECULATIVE VOTING (async mode): Respond IMMEDIATELY (memory vote)
+            // Then start async persistence and send VoteDurable after fsync
+            n_vote_++ ;
+            cb() ;  // Respond now - this is the memory vote
+
+            // Start async vote persistence
+            // Capture necessary state for the async operation
+            ballot_t term_copy = currentTerm;
+            siteid_t voter_copy = site_id_;
+            siteid_t can_id_copy = can_id;
+            parid_t par_id_copy = partition_id_;
+
+            // Use a detached thread for async fsync + VoteDurable send
+            std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+                // Persist the vote durably
+                PersistState(term_copy, can_id_copy, "doVote: async vote persist");
+
+                // Send VoteDurable RPC to candidate
+                auto c = commo();
+                if (c != nullptr) {
+                    c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
+                }
+            }).detach();
+
+            return;  // Already called cb() above
+          } else {
+            // SYNC PERSISTENCE (traditional Raft): Persist FIRST, then respond
+            // No separate VoteDurable RPC needed - the vote response implies durability
+            PersistState(currentTerm, can_id, "doVote: sync vote persist");
+            n_vote_++ ;
+            cb() ;
+            return;
+          }
       }
+
       n_vote_++ ;
       cb() ;
   }
@@ -247,6 +340,27 @@ class RaftServer : public TxLogServer {
     return RandomGenerator::rand_double(0.4, 0.7) ;
   }
 
+  // @unsafe - Uses LogStorage for persistence
+  void PersistState(uint64_t term, siteid_t voted_for, const char* reason = "unspecified") {
+    if (!log_storage_ || !log_storage_->is_open()) return;
+    PersistTermAndVoteToLogStorage();
+    Log_debug("[RAFT-PERSISTENCE] Persisted: term=%lu votedFor=%u (%s)",
+              term, voted_for, reason);
+  }
+
+  // @unsafe - Uses LogStorage for persistence
+  void PersistLogEntry(slotid_t slot_id, const RaftData& entry, const char* reason = "unspecified") {
+    if (!log_storage_ || !log_storage_->is_open()) return;
+    PersistLogEntryToLogStorage(slot_id, entry);
+    Log_debug("[RAFT-PERSISTENCE] Persisted log: slot=%lu (%s)", slot_id, reason);
+  }
+
+  // @unsafe - Uses LogStorage for persistence
+  void PersistCommitIndex(uint64_t commit_index, const char* reason = "unspecified") {
+    if (!log_storage_ || !log_storage_->is_open()) return;
+    PersistCommitIndexToLogStorage();
+  }
+
   /**
    * Get dynamic election timeout based on preferred replica role and grace period
    *
@@ -259,6 +373,11 @@ class RaftServer : public TxLogServer {
    */
   uint64_t GetElectionTimeout();
  public:
+  // @unsafe - Returns raw pointer cast
+  RaftCommo* commo() {
+    return (RaftCommo*) commo_;
+  }
+
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;
   slotid_t max_committed_slot_ = 0;
@@ -320,6 +439,9 @@ class RaftServer : public TxLogServer {
     instance->term = currentTerm;
 		instance->slot_id = slot_id;
 		instance->ballot = ballot;
+
+    // CRITICAL: Persist log entry before replicating to followers
+    PersistLogEntry(lastLogIndex, *instance, "SetLocalAppend: leader log");
 
 #ifndef RAFT_TEST_CORO
     if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
@@ -509,6 +631,24 @@ class RaftServer : public TxLogServer {
                      bool_t *vote_granted,
                      rusty::Function<void()> cb) ;
 
+  /**
+   * VoteDurable RPC Handler - Speculative Voting Protocol
+   *
+   * Receives VoteDurable RPC from a follower after it has durably persisted
+   * its vote to disk. This allows the leader to track durable votes separately
+   * from memory votes, enabling speculative leader election.
+   *
+   * @param term - Term of the vote (must match current term)
+   * @param voter_id - Site ID of the voter
+   * @param acknowledged - [OUT] true if vote was recorded
+   * @param cb - Callback to invoke when handling complete
+   */
+  // @unsafe - Modifies durableVoters_ and securedLeader_
+  void OnVoteDurable(const ballot_t& term,
+                     const siteid_t& voter_id,
+                     bool_t* acknowledged,
+                     rusty::Function<void()> cb);
+
   // @unsafe
   void OnAppendEntries(const slotid_t slot_id,
                        const ballot_t ballot,
@@ -524,6 +664,26 @@ class RaftServer : public TxLogServer {
                        uint64_t *followerLastLogIndex,
                        rusty::Function<void()> cb,
                        bool trigger_election_now = false);
+
+  /**
+   * AppendEntriesDurable RPC Handler - Speculative Commit Protocol
+   *
+   * Receives AppendEntriesDurable RPC from a follower after it has durably
+   * persisted log entries to disk. This allows the leader to track durable
+   * acknowledgments separately from memory acks, enabling speculative commits.
+   *
+   * @param term - Term when entries were persisted (must match current term)
+   * @param follower_id - Site ID of the follower
+   * @param lastLogIndex - Highest log index that is now durable on follower
+   * @param acknowledged - [OUT] true if ack was recorded
+   * @param cb - Callback to invoke when handling complete
+   */
+  // @unsafe - Modifies durableAcks_ and securedLogIndex_
+  void OnAppendEntriesDurable(const ballot_t& term,
+                              const siteid_t& follower_id,
+                              const uint64_t& lastLogIndex,
+                              bool_t* acknowledged,
+                              rusty::Function<void()> cb);
 
   /**
    * TimeoutNow RPC Handler - Leadership Transfer Protocol
@@ -633,5 +793,210 @@ class RaftServer : public TxLogServer {
    * Stop leadership transfer monitoring
    */
   void StopLeadershipTransferMonitoring();
+
+  // ============================================================================
+  // PUBLIC API: Speculative Replication State (Phase 1.1)
+  // ============================================================================
+
+  /**
+   * Check if this leader has achieved secured status (durable vote quorum).
+   * When securedLeader_ = true, a quorum has votedFor = me on disk,
+   * so no other candidate can win election in this term.
+   * @return true if leader has durable vote quorum
+   */
+  // @safe - Read-only accessor
+  bool IsSecuredLeader() const {
+    return securedLeader_;
+  }
+
+  /**
+   * Get the speculative commit index (highest index with memory ack quorum).
+   * @return specCommitIndex value
+   */
+  // @safe - Read-only accessor
+  uint64_t GetSpecCommitIndex() const {
+    return specCommitIndex_;
+  }
+
+  /**
+   * Get the secured log index (highest index with durable ack quorum).
+   * Invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
+   * @return securedLogIndex value
+   */
+  // @safe - Read-only accessor
+  uint64_t GetSecuredLogIndex() const {
+    return securedLogIndex_;
+  }
+
+  /**
+   * Get the set of servers that have memory-voted for us in current term.
+   * @return copy of specVoters set
+   */
+  // @safe - Returns copy, read-only access
+  std::set<siteid_t> GetSpecVoters() const {
+    return specVoters_;
+  }
+
+  /**
+   * Get the count of servers that have memory-voted for us in current term.
+   * @return Number of servers in specVoters
+   */
+  // @safe - Read-only accessor
+  size_t GetSpecVotersCount() const {
+    return specVoters_.size();
+  }
+
+  /**
+   * Get the set of servers that have durably-voted for us in current term.
+   * @return copy of durableVoters set
+   */
+  // @safe - Returns copy, read-only access
+  std::set<siteid_t> GetDurableVoters() const {
+    return durableVoters_;
+  }
+
+  /**
+   * Get the count of servers that have durably-voted for us in current term.
+   * @return Number of servers in durableVoters
+   */
+  // @safe - Read-only accessor
+  size_t GetDurableVotersCount() const {
+    return durableVoters_.size();
+  }
+
+  /**
+   * Get the last log index.
+   * @return lastLogIndex value
+   */
+  // @safe - Read-only accessor
+  uint64_t GetLastLogIndex() const {
+    return lastLogIndex;
+  }
+
+  /**
+   * Get the number of memory acks for a specific log index.
+   * @param index Log index to query
+   * @return Number of nodes that have memory-acked this index
+   */
+  // @safe - Read-only accessor
+  size_t GetMemoryAckCount(uint64_t index) const {
+    auto it = memoryAcks_.find(index);
+    return it != memoryAcks_.end() ? it->second.size() : 0;
+  }
+
+  /**
+   * Get the number of durable acks for a specific log index.
+   * @param index Log index to query
+   * @return Number of nodes that have durably-acked this index
+   */
+  // @safe - Read-only accessor
+  size_t GetDurableAckCount(uint64_t index) const {
+    auto it = durableAcks_.find(index);
+    return it != durableAcks_.end() ? it->second.size() : 0;
+  }
+
+  /**
+   * Reset speculative state when becoming leader or stepping down.
+   * Called during leadership transitions.
+   *
+   * On becoming leader:
+   * - specVoters = {self}  (voted for self)
+   * - durableVoters = {self}  (self vote is always durable)
+   * - securedLogIndex = commitIndex (from previous term)
+   * - specCommitIndex = commitIndex
+   *
+   * On stepping down:
+   * - All speculative state is cleared
+   */
+  // @unsafe - Modifies state
+  void ResetSpeculativeState();
+
+  /**
+   * Verify speculative state invariants.
+   * Debug helper - asserts if invariants are violated.
+   * Invariants:
+   * - securedLogIndex <= specCommitIndex <= lastLogIndex
+   * - durableVoters ⊆ specVoters (conceptually, not strictly enforced after crashes)
+   */
+  // @safe - Read-only check
+  void VerifySpeculativeInvariants() const;
+
+  /**
+   * Handle notification that a peer has restarted.
+   *
+   * Called when we receive notifyRestart from another server. For speculative
+   * replication, this means the restarted server has lost:
+   * 1. Its memory vote (if it voted but didn't fsync)
+   * 2. Memory-acked log entries (not yet fsynced)
+   *
+   * This method invalidates any speculative state that depended on the
+   * restarted server and may trigger step-down if we're an unsecured leader
+   * who has lost speculative quorum.
+   *
+   * @param restarted_site_id - Site ID of the server that restarted
+   */
+  // @unsafe - Modifies speculative state
+  void OnPeerRestart(siteid_t restarted_site_id);
+
+  /**
+   * Step down as leader with specified reason.
+   *
+   * This is the central function for leader step-down in speculative Raft.
+   * It handles:
+   * 1. Logging the step-down event with reason
+   * 2. Resetting speculative state
+   * 3. Transitioning to follower state
+   * 4. Resetting election timer
+   *
+   * Future: Will also notify pending clients based on reason:
+   * - UnsecuredFailure: Rollback all current-term entries
+   * - SecuredFailure: Rollback only unsecured entries
+   * - HigherTerm: No automatic rollback (entries may still be valid)
+   *
+   * @param reason - Why the leader is stepping down
+   */
+  // @unsafe - Modifies state, calls setIsLeader
+  void stepDown(StepDownReason reason);
+
+  // ===========================================================================
+  // CLIENT NOTIFICATION CALLBACKS
+  // ===========================================================================
+
+  /**
+   * Register a callback to be notified when an entry's commit status changes.
+   *
+   * The callback will be invoked with:
+   * - SPECULATIVE: When entry reaches memory quorum (specCommitIndex advances)
+   * - DURABLE: When entry reaches disk quorum with secured leader
+   * - ROLLEDBACK: If leader steps down gracefully (best-effort)
+   *
+   * Note: Callback is invoked while holding mtx_, keep it lightweight.
+   * If index is already at or past the requested state, callback is invoked
+   * immediately.
+   *
+   * @param index - Log index to monitor
+   * @param callback - Function to call on status change
+   */
+  // @unsafe - Modifies pendingCallbacks_
+  void RegisterCommitCallback(uint64_t index,
+                              std::function<void(CommitStatus)> callback);
+
+  /**
+   * Notify all registered callbacks for indices in range (from, to] with status.
+   * Used internally by specCommitIndex/securedLogIndex advancement handlers.
+   *
+   * @param from - Exclusive lower bound
+   * @param to - Inclusive upper bound
+   * @param status - Commit status to notify
+   */
+  // @unsafe - Invokes callbacks, modifies pendingCallbacks_
+  void NotifyCallbacks(uint64_t from, uint64_t to, CommitStatus status);
+
+  /**
+   * Notify rollback for all pending callbacks above securedLogIndex.
+   * Called during step-down when leader is still alive.
+   */
+  // @unsafe - Invokes callbacks, clears pendingCallbacks_
+  void NotifyRollback();
 };
 } // namespace janus

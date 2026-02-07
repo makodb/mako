@@ -426,8 +426,9 @@ void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
   if (coro->status_.get() == Fiber::INIT) {
     coro->run();
   } else {
-    auto guard = sp_running_coro_th_.borrow();
-    (*guard).as_ref().unwrap()->continue_();
+    // Don't hold borrow during continue_() as coroutine may call create_run()
+    // This fixes RefCell double-borrow crash during server restart
+    coro->continue_();
   }
 
   // @unsafe - Fiber::finished() is not marked @safe

@@ -687,6 +687,9 @@ list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
 list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
 # Exclude MongoDB backend (requires mongocxx library)
 list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
+# Exclude standalone executables with main() functions
+list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
+list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -1031,6 +1034,7 @@ if(MAKO_USE_RAFT)
   add_apps(testPreferredReplicaStartup examples/mako-raft-tests/testPreferredReplicaStartup.cc)
   add_apps(testPreferredReplicaLogReplication examples/mako-raft-tests/testPreferredReplicaLogReplication.cc)
   add_apps(testNoOps examples/mako-raft-tests/testNoOps.cc)
+  add_apps(read_raft_disk src/deptran/raft/read_raft_disk.cc)
 endif()
 
 # Borrow checking for dbtest DISABLED - uses STO (Software Transactional Objects)

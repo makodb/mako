@@ -56,9 +56,8 @@ clean:
 	# Clean Rust library
 	@echo "Cleaning Rust library..."
 	@cd rust-lib && cargo clean 2>/dev/null || true
-	# Clean rusty-cpp (both host and docker builds)
+	# Clean rusty-cpp
 	@rm -rf third-party/rusty-cpp/target || true
-	@rm -rf target-docker || true
 	# rebuild rpc
 	bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
 

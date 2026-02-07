@@ -12,8 +12,8 @@ mode:
 site:
   server:
     - ["s101:9000", "s102:9001", "s103:9002", "s104:9003", "s105:9004"]
-  client:
-    - ["c01"]
+  # client:
+  #   - ["c01"]
 
 process:
   s101: localhost
@@ -21,7 +21,7 @@ process:
   s103: localhost
   s104: localhost
   s105: localhost
-  c01: localhost
+  # c01: localhost
 
 host:
   localhost: 127.0.0.1
