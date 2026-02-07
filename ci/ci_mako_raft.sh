@@ -113,7 +113,7 @@ compile() {
     echo "========================================="
     echo "Running: ./ci/ci_mako_raft.sh compile"
     echo "========================================="
-    make mako-raft -j32
+    make -j32
 }
 
 # Function 2: Run simple Raft test (basic replication)

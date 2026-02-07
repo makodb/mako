@@ -772,6 +772,49 @@ static void cleanup_and_shutdown()
   //std::quick_exit( EXIT_SUCCESS ); // don't exit early
 }
 
+// @safe - Scans config files for "ab: raft" to auto-detect replication type.
+// Called before setup() so the dispatcher routes to the correct implementation.
+// Only sets the type if the current type is still the default (PAXOS) and
+// no explicit --replication flag was provided.
+static void detect_replication_type_from_config(const vector<string>& config_files) {
+  // Don't override explicit CLI setting
+  if (janus::is_using_raft()) {
+    return;
+  }
+
+  for (const auto& file_path : config_files) {
+    // @unsafe { file I/O }
+    std::ifstream ifs(file_path);
+    if (!ifs.is_open()) {
+      continue;
+    }
+    std::string line;
+    while (std::getline(ifs, line)) {
+      // Look for "ab:" field in YAML - match patterns like "ab: raft", "ab:raft"
+      auto pos = line.find("ab:");
+      if (pos != std::string::npos) {
+        auto value = line.substr(pos + 3);
+        // Trim leading whitespace
+        auto start = value.find_first_not_of(" \t");
+        if (start != std::string::npos) {
+          value = value.substr(start);
+        }
+        // Trim trailing whitespace and comments
+        auto end = value.find_first_of(" \t#\r\n");
+        if (end != std::string::npos) {
+          value = value.substr(0, end);
+        }
+        if (value == "raft" || value == "fpga_raft") {
+          Notice("Auto-detected replication type '%s' from config file: %s",
+                 value.c_str(), file_path.c_str());
+          janus::set_replication_type(janus::ReplicationType::RAFT);
+          return;
+        }
+      }
+    }
+  }
+}
+
 static char** prepare_paxos_args(const vector<string>& paxos_config_file,
   const string paxos_proc_name, int& argc_out)
 {
@@ -839,6 +882,11 @@ static abstract_db * init_env() {
     setup_transport_callbacks();
     setup_leader_election_callbacks();
 
+
+    // Auto-detect replication type from config files before dispatching setup().
+    // This ensures dbtest uses the Raft code path when config says "ab: raft",
+    // even if --replication raft wasn't explicitly passed on the command line.
+    detect_replication_type_from_config(benchConfig.getPaxosConfigFile());
 
     int argc_paxos = 0;
     char** argv_paxos = prepare_paxos_args(benchConfig.getPaxosConfigFile(), benchConfig.getPaxosProcName(), argc_paxos);
