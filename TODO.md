@@ -92,11 +92,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Heartbeats: empty AppendEntries as keep-alive (`HEARTBEAT_INTERVAL`)
         - Batching behavior: how multiple entries are sent in a single RPC
         - **Result**: Created `doc/thesis/02-raft-core/log_replication.md` with end-to-end replication flow diagram, HeartbeatLoop wake mechanism, batch vs non-batch entry preparation (TpcBatchCommand), SendAppendEntries2 RPC with 500ms bounded wait, OnAppendEntries 3-check acceptance (term/index/prev_term), mutex release during apply, 4 response cases (lost RPC, higher term stepdown, log conflict backtrack, success), 3-tier log reconciliation (fast O(1)/exponential O(log n)/linear), commit advancement via sorted match_index median with term safety rule, heartbeat interval table, applyLogs with app_next_ callback, complete 3-node replication sequence diagram with timing, and log conflict resolution example.
-      - [ ] `doc/thesis/02-raft-core/coordinator.md` — `CoordinatorRaft` transaction submission
+      - [x] `doc/thesis/02-raft-core/coordinator.md` — `CoordinatorRaft` transaction submission [DONE 2026-02-08]
         - How `Submit()` works: slot allocation via `Arc<Cell<slotid_t>>`, calling `RaftServer::Start()`
         - `WRONG_LEADER` handling: retry logic when submitting to a non-leader
         - Quorum calculation: `GetQuorum()` = n/2 + 1
         - Integration with Mako's transaction coordinator chain
+        - **Result**: Created `doc/thesis/02-raft-core/coordinator.md` covering class hierarchy (Coordinator → CoordinatorRaft), key members (svr_, cmd_, slot_hint_, n_replica_), phase enum (INIT_END/PREPARE/ACCEPT/COMMIT/FORWARD), Submit() entry point with IsLeader() check, GotoNextPhase() state machine flow (INIT_END → AppendEntries → COMMIT → LeaderLearn), AppendEntries() blocking wait with 1ms polling and term change detection, WRONG_LEADER handling with ViewData propagation and leader=-1 fallback, slot allocation via Arc<Cell<slotid_t>> shared counter in RaftFrame, GetQuorum() = n/2+1, CreateCoordinator() factory method with pointer borrowing, LeaderLearn() post-commit callback, and complete end-to-end submission flow diagram from SchedulerClassic::OnCommit through Raft commit to callback.
       - [ ] `doc/thesis/02-raft-core/rpc_layer.md` — Communication infrastructure
         - `RaftCommo`: `SendAppendEntries2()`, `BroadcastVote()`, `SendTimeoutNow()`
         - `RaftServiceImpl`: `HandleVote()`, `HandleAppendEntries()`, `HandleTimeoutNow()` — RPC handler registration
