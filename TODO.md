@@ -250,24 +250,27 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Line chart: throughput scaling from 1-shard to 2-shard
         - Table: architectural differences (replicas, processes, quorum size)
         - **Result**: Created `doc/thesis/07-performance/figures.md` with 9 figures. ASCII bar charts: (1) 1-shard throughput (Paxos 133,931 vs Raft 96,463), (2) 2-shard per-shard throughput (all four ~8,500, within 1.4%), (3) throughput scaling 1→2 shard with convergence visualization, (4) per-transaction commit latency (5 tx types, P vs R), (5) follower replay batch comparison (669 vs 3,674), (6) architectural comparison table (topology, protocol, 1-shard perf, 2-shard perf, correctness — 20+ metrics), (7) remote abort ratio comparison, (8) per-process throughput efficiency (33,483 vs 32,154, within 4%). Mermaid charts: (9.1) throughput bar chart, (9.2) replay batch bar chart, (9.3) per-transaction latency grouped bars.
-    - [ ] *medium* Task 9: `doc/thesis/08-persistence/` — Log Persistence and Recovery
-      - [ ] `doc/thesis/08-persistence/log_storage.md` — Persistent log storage
+    - [x] *medium* Task 9: `doc/thesis/08-persistence/` — Log Persistence and Recovery
+      - [x] `doc/thesis/08-persistence/log_storage.md` — Persistent log storage
         - `LogStorage` interface: `append()`, `read()`, `truncate()`, `get_metadata()`, `set_metadata()`
         - `InMemoryLogStorage`: for testing
         - `RocksDBLogStorage`: production backend with batch writes
         - How Raft integrates: `SetLogStorage()`, `RecoverFromStorage()`, `PersistTermAndVote()`, `PersistLogEntry()`
         - Metadata persistence: `currentTerm`, `vote_for`, `commitIndex`
-      - [ ] `doc/thesis/08-persistence/recovery.md` — Crash recovery process
+        - **Result**: Created `doc/thesis/08-persistence/log_storage.md` documenting the persistence layer. LogEntry struct (6 fields: slot_id, term, max_ballot_seen/accepted, command, committed, is_no_op) with to_marshal/from_marshal serialization. LogStorage abstract interface: 15 virtual methods across 5 categories (single ops: get/put/remove, batch: get_range/put_batch/remove_range, index: first/last/term/size/empty, metadata: set/get, lifecycle: sync/close/is_open/clear). InMemoryLogStorage: rusty::Mutex-protected std::map, all @safe annotations, no-op sync, reopen()/get_all() test utilities. RocksDBLogStorage: 480 lines, key prefixes LOG_PREFIX="log:" META_PREFIX="meta:", 20-digit zero-padded keys for lexicographic ordering. Config: 64MB write_buffer, LZ4 compression, sync=true for durability, verify_checksums=true. WriteBatch for atomic multi-entry writes. Raft integration: 3 metadata keys (currentTerm, vote_for, commitIndex), 5 persistence methods (PersistTermAndVote, PersistVote, PersistCommitIndex, PersistLogEntry, PersistLogEntries). Paxos integration: 3 metadata keys (cur_epoch, max_committed_slot, max_executed_slot). Storage paths: /tmp/{USER}_mako_log_shard{pid}_replica{lid}. 531-line test suite with 9 test categories.
+      - [x] `doc/thesis/08-persistence/recovery.md` — Crash recovery process
         - Recovery sequence: detect fresh vs recovery start, load metadata, replay committed entries, resume consensus
         - `RecoveryManager`: `RecoveryMode` enum, `RecoveryConfig`, `RecoveryResult`
         - `ReplayCommittedEntries()`: replaying from `executeIndex` to `commitIndex`
         - How uncommitted entries are resolved via consensus after recovery
         - Storage paths: `/tmp/<username>_mako_log_shard<N>_replica<M>`
-      - [ ] `doc/thesis/08-persistence/snapshots.md` — Snapshot support
+        - **Result**: Created `doc/thesis/08-persistence/recovery.md` documenting crash recovery. RecoveryMode enum: FRESH_START/NORMAL_RECOVERY/FORCED_FRESH. RecoveryConfig: storage_path, force_fresh_start, 30s timeout, verify_on_recovery, clear_on_forced_fresh. for_replica() factory: /tmp/{USER}_mako_log_shard{pid}_replica{lid}. RecoveryResult: mode, success, error, recovered_entries/term/epoch, recovery_time_ms. RecoveryManager: detect_mode() checks filesystem (CURRENT file = valid RocksDB), create_storage() handles forced fresh deletion, recover() template with 3 lambda params (set_storage, recover_fn, get_stats). Full server_worker.cc integration sequence diagram. Raft recovery: loads currentTerm/vote_for/commitIndex metadata + all log entries, rebuilds in-memory state. Paxos recovery: loads cur_epoch/max_committed_slot/max_executed_slot + ReplayCommittedEntries. Uncommitted entry resolution: Raft uses leader AppendEntries or no-op commit; Paxos re-proposes. CI cleanup: rm -rf /tmp/${USER}_mako_rocksdb_shard* ensures FRESH_START per test.
+      - [x] `doc/thesis/08-persistence/snapshots.md` — Snapshot support
         - `SnapshotManager` interface, `FileSnapshotManager` implementation
         - Snapshot format: 52-byte binary header, CRC32 checksums
         - `CompactLog()`: removing log entries covered by snapshot
         - When snapshots are taken, retention policy
+        - **Result**: Created `doc/thesis/08-persistence/snapshots.md` documenting snapshot support. SnapshotMetadata: 5 fields (last_included_index/term, timestamp, size_bytes, checksum). SnapshotManager: 10 virtual methods (BeginSnapshot/TakeSnapshot, BeginLoad/LoadLatestSnapshot, GetLatestSnapshot/ListSnapshots/HasSnapshotAtOrAfter, PruneSnapshots/DeleteAllSnapshots, GetStoragePath). SnapshotReader/Writer streaming interfaces. FileSnapshotManager: 531 lines, file naming snapshot_{index}_{term}.snap, atomic write via temp+fsync+rename, ApplyRetentionPolicy max_snapshots=3. SnapshotConfig: interval=10000 entries, max=3, chunk_size=64KB. Binary format: 52-byte header (magic 0x504E4153 "SNAP", version, data_size, compression, checksum_type, last_index, last_term, timestamp, header_crc, padding) + data + data_crc32. CRC32: IEEE 802.3 polynomial table-driven implementation. Compression: NONE only (SNAPPY/ZSTD reserved). Crash safety: write-to-temp-then-rename pattern, dual CRC verification, 3-snapshot retention as fallback.
     - [ ] *medium* Task 10: `doc/thesis/09-appendix/` — Appendix and Reference Material
       - [ ] `doc/thesis/09-appendix/file_reference.md` — Complete file listing
         - Every file in `src/deptran/raft/` with one-line description
