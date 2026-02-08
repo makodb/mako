@@ -64,7 +64,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Key deviations or extensions from the paper (preferred leader, integration with 2PC)
         - State machine diagram: Follower → Candidate → Leader transitions with code references
         - **Result**: Created `doc/thesis/02-raft-core/protocol_overview.md` with ASCII state machine diagram, implementation-to-paper mapping table, core state variables (persistent/volatile/leader-only), 4 RPC definitions with wire formats, algorithm summaries for election/replication/safety, 6 documented deviations from the Raft paper (preferred leader, 2PC integration, batched replication, optimized reconciliation, persistence, Jetpack recovery), component interaction sequence diagram, and complete file map.
-      - [ ] `doc/thesis/02-raft-core/server_implementation.md` — `RaftServer` deep dive
+      - [x] `doc/thesis/02-raft-core/server_implementation.md` — `RaftServer` deep dive [DONE 2026-02-08]
         - Class hierarchy: `RaftServer` extends `TxLogServer` extends `Scheduler`
         - All member variables with explanations: `currentTerm`, `commitIndex`, `executeIndex`, `lastLogIndex`, `vote_for_`, `is_leader_`, `match_index_`, `next_index_`, `raft_logs_`, timer, preferred leader fields
         - `OnRequestVote()`: Full algorithm walkthrough with code snippets — term comparison, log up-to-date check, vote granting, persistence
@@ -74,6 +74,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Election timer: `randDuration()` (0.4-0.7s), `GetElectionTimeout()` dynamic timeout based on preferred leader role, `resetTimer()`
         - Log persistence integration: `PersistTermAndVote()`, `PersistLogEntry()`, `RecoverFromStorage()`
         - RustyCpp safety: which methods are `@safe` vs `@unsafe` and why
+        - **Result**: Created `doc/thesis/02-raft-core/server_implementation.md` with class hierarchy diagram, 30+ member variables organized into 8 categories (persistent state, volatile state, leader-only, preferred leader, log application, persistence/snapshot, timer, RaftData struct), full algorithm walkthroughs for OnRequestVote (5-step flowchart), OnAppendEntries (6-step with batch optimization), Start/SetLocalAppend, applyLogs (do-while concurrency pattern), HeartbeatLoop (commit index calculation, 3-tier log reconciliation), election timer with dynamic timeout table, persistence/recovery/compaction, setIsLeader state transitions, destructor shutdown sequence, and @safe/@unsafe annotation tables.
       - [ ] `doc/thesis/02-raft-core/leader_election.md` — Election mechanism
         - Election trigger: timer expiry → increment term → vote for self → `BroadcastVote()`
         - `RaftVoteQuorumEvent`: How votes are collected, quorum detection
