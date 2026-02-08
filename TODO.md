@@ -58,11 +58,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Port allocation scheme: Paxos uses 17xxx, Raft uses 27xxx, control plane uses 31xxx
         - **Result**: Created `doc/thesis/01-mako-overview/build_system.md` with CMake options table, build targets (core + Raft-only), compile definitions, third-party dependencies, transport layer configuration, YAML config format (mode/shard/replication group with side-by-side Paxos vs Raft examples), port allocation tables, runtime dispatch mechanism diagram, CI test infrastructure, and quick-reference switching guide.
     - [ ] *high* Task 3: `doc/thesis/02-raft-core/` — Raft Protocol Implementation (the heart of the contribution)
-      - [ ] `doc/thesis/02-raft-core/protocol_overview.md` — Raft consensus protocol as implemented
+      - [x] `doc/thesis/02-raft-core/protocol_overview.md` — Raft consensus protocol as implemented [DONE 2026-02-08]
         - Brief recap of Raft fundamentals (leader election, log replication, safety) with references to the Raft paper
         - How this implementation maps to the paper: `RaftServer` = state machine, `RaftCommo` = RPC layer, `RaftServiceImpl` = RPC handlers
         - Key deviations or extensions from the paper (preferred leader, integration with 2PC)
         - State machine diagram: Follower → Candidate → Leader transitions with code references
+        - **Result**: Created `doc/thesis/02-raft-core/protocol_overview.md` with ASCII state machine diagram, implementation-to-paper mapping table, core state variables (persistent/volatile/leader-only), 4 RPC definitions with wire formats, algorithm summaries for election/replication/safety, 6 documented deviations from the Raft paper (preferred leader, 2PC integration, batched replication, optimized reconciliation, persistence, Jetpack recovery), component interaction sequence diagram, and complete file map.
       - [ ] `doc/thesis/02-raft-core/server_implementation.md` — `RaftServer` deep dive
         - Class hierarchy: `RaftServer` extends `TxLogServer` extends `Scheduler`
         - All member variables with explanations: `currentTerm`, `commitIndex`, `executeIndex`, `lastLogIndex`, `vote_for_`, `is_leader_`, `match_index_`, `next_index_`, `raft_logs_`, timer, preferred leader fields
