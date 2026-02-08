@@ -15,6 +15,264 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - [ ] *high* Comprehensive Raft-Mako Documentation for Thesis Report
+    - **Goal**: Write extremely detailed, thesis-grade documentation covering the entire Raft module, its integration with Mako, testing infrastructure, and performance comparison with Paxos. The documentation should be thorough enough that a reader with basic distributed-systems knowledge can fully understand the system from these docs alone — no hand-holding, but nothing left unexplained. This is NOT a thesis itself but the detailed technical content that feeds into one.
+    - **Audience**: Thesis committee members and future developers. Assume familiarity with basic distributed systems concepts (consensus, replication, 2PC) but NOT with this codebase.
+    - **Writing style**: Technical, precise, with code snippets and diagrams where helpful. Every claim should be traceable to source files. Use file paths (e.g., `src/deptran/raft/server.h:42`) so readers can cross-reference. Include architecture diagrams in ASCII or Mermaid format.
+    - **Output location**: `doc/thesis/` — organized into subfolders by topic. Do NOT put everything in a single file. Each document should be self-contained but cross-reference others.
+    - **Important context**: The author (Krish) implemented the Raft module, wrote standalone tests (`test.cc`, `testconf.cc`), integrated Raft with Mako via `raft_worker`, `raft_main_helper`, `replication_helper`, and `simpleRaft` examples, implemented preferred leader election, and wrote the CI test suite (`ci_mako_raft.sh`). Mako itself was NOT written by the author — the author's contribution is bringing Raft into Mako and making it work alongside the existing Paxos path. The documentation should clearly distinguish what was authored vs what was pre-existing infrastructure.
+    - **Key source files to study in depth**:
+      - Core Raft: `src/deptran/raft/server.h`, `server.cc`, `coordinator.h`, `coordinator.cc`, `frame.h`, `frame.cc`, `commo.h`, `commo.cc`, `service.h`, `service.cc`, `exec.h`, `exec.cc`, `macros.h`
+      - Raft-Mako bridge: `src/deptran/raft/raft_worker.h`, `raft_worker.cc`, `src/deptran/raft_main_helper.cc`
+      - Runtime switching: `src/deptran/replication_helper.h`, `replication_helper.cc`
+      - Standalone tests: `src/deptran/raft/test.h`, `test.cc`, `testconf.h`, `testconf.cc`
+      - Mako integration: `src/mako/mako.hh` (setup_leader_election_callbacks, detect_replication_type_from_config)
+      - Examples: `examples/mako-raft-tests/simpleRaft.sh`, `simpleRaft.cc`, all test shell scripts under `examples/mako-raft-tests/`
+      - CI: `ci/ci_mako_raft.sh`
+      - Configs: `config/occ_raft.yml`, `config/raft6_shardidx*.yml`, `config/raft_lab_test.yml`
+      - Shard launcher: `bash/shard_raft.sh`
+      - Paxos (for comparison): `src/deptran/paxos/server.h`, `server.cc`, `coordinator.h`, `commo.h`, `frame.h`
+      - Existing comparison: `doc/paxos_vs_raft_comparison.md`
+    - **Document structure** (each is a separate .md file under `doc/thesis/`):
+    - [x] *high* Task 1: `doc/thesis/README.md` — Table of contents and reading guide [DONE 2026-02-08]
+      - List all documents in reading order with one-line descriptions
+      - Suggested reading paths (quick overview vs deep dive)
+      - Glossary of terms used throughout (term, slot, commitIndex, quorum, partition, shard, etc.)
+      - **Result**: Created `doc/thesis/README.md` with complete document map (9 chapters, 28 documents), 4 reading paths (quick overview, implementation deep dive, integration story, testing & validation), key source file reference table, and comprehensive glossary (40+ terms across Raft, Mako, and system categories).
+    - [ ] *high* Task 2: `doc/thesis/01-mako-overview/` — Mako System Overview
+      - [ ] `doc/thesis/01-mako-overview/system_architecture.md` — High-level Mako architecture
+        - What Mako is: speculative distributed transaction system with geo-replication (OSDI'25)
+        - Core components: Masstree storage engine, OCC concurrency control, atomic broadcast layer, sharding
+        - How transactions flow: client → coordinator → scheduler → storage → replication → commit
+        - The role of the atomic broadcast layer (where Raft/Paxos plug in)
+        - Shard architecture: how data is partitioned, what a "partition group" is, replica topology
+        - Existing Paxos path: how Multi-Paxos was already integrated before Raft
+        - Diagrams: transaction flow, shard topology, replication group structure
+        - Key classes: `TxnCoordinator`, `TxnScheduler`, `Communicator`, `Frame`, `TxLogServer`
+      - [ ] `doc/thesis/01-mako-overview/build_system.md` — Build and configuration
+        - CMake build system, key flags (`MAKO_USE_RAFT`, `PAXOS_LIB_ENABLED`)
+        - How both Paxos and Raft are compiled into the same binaries
+        - Runtime switching via `--replication raft|paxos` flag and `replication_helper.h` dispatcher
+        - YAML configuration format: mode config (`occ_raft.yml` vs `occ_paxos.yml`), host configs, replication group definitions
+        - Port allocation scheme: Paxos uses 17xxx, Raft uses 27xxx, control plane uses 31xxx
+    - [ ] *high* Task 3: `doc/thesis/02-raft-core/` — Raft Protocol Implementation (the heart of the contribution)
+      - [ ] `doc/thesis/02-raft-core/protocol_overview.md` — Raft consensus protocol as implemented
+        - Brief recap of Raft fundamentals (leader election, log replication, safety) with references to the Raft paper
+        - How this implementation maps to the paper: `RaftServer` = state machine, `RaftCommo` = RPC layer, `RaftServiceImpl` = RPC handlers
+        - Key deviations or extensions from the paper (preferred leader, integration with 2PC)
+        - State machine diagram: Follower → Candidate → Leader transitions with code references
+      - [ ] `doc/thesis/02-raft-core/server_implementation.md` — `RaftServer` deep dive
+        - Class hierarchy: `RaftServer` extends `TxLogServer` extends `Scheduler`
+        - All member variables with explanations: `currentTerm`, `commitIndex`, `executeIndex`, `lastLogIndex`, `vote_for_`, `is_leader_`, `match_index_`, `next_index_`, `raft_logs_`, timer, preferred leader fields
+        - `OnRequestVote()`: Full algorithm walkthrough with code snippets — term comparison, log up-to-date check, vote granting, persistence
+        - `OnAppendEntries()`: Full algorithm walkthrough — term check, log consistency check, entry appending, commit index advancement, `applyLogs()` callback
+        - `Start()`: How leader appends new commands — log entry creation, broadcasting to followers
+        - `applyLogs()`: How committed entries are applied to the state machine via `app_next_` callback
+        - Election timer: `randDuration()` (0.4-0.7s), `GetElectionTimeout()` dynamic timeout based on preferred leader role, `resetTimer()`
+        - Log persistence integration: `PersistTermAndVote()`, `PersistLogEntry()`, `RecoverFromStorage()`
+        - RustyCpp safety: which methods are `@safe` vs `@unsafe` and why
+      - [ ] `doc/thesis/02-raft-core/leader_election.md` — Election mechanism
+        - Election trigger: timer expiry → increment term → vote for self → `BroadcastVote()`
+        - `RaftVoteQuorumEvent`: How votes are collected, quorum detection
+        - `doVote()`: Vote granting logic, persistence of vote
+        - Split vote handling: random timeout prevents repeated splits
+        - Term advancement: how stale leaders step down on higher term
+        - Code walkthrough of a complete election cycle with sequence diagram
+      - [ ] `doc/thesis/02-raft-core/log_replication.md` — Log replication mechanism
+        - Leader's `SendAppendEntries2()`: how entries are sent to each follower
+        - Follower's `OnAppendEntries()`: consistency check, appending, reply
+        - `match_index_` / `next_index_` tracking: how leader tracks follower progress
+        - Commit advancement: when leader updates `commitIndex` (majority replicated)
+        - Backtracking: when `next_index_` is decremented on rejection
+        - Heartbeats: empty AppendEntries as keep-alive (`HEARTBEAT_INTERVAL`)
+        - Batching behavior: how multiple entries are sent in a single RPC
+      - [ ] `doc/thesis/02-raft-core/coordinator.md` — `CoordinatorRaft` transaction submission
+        - How `Submit()` works: slot allocation via `Arc<Cell<slotid_t>>`, calling `RaftServer::Start()`
+        - `WRONG_LEADER` handling: retry logic when submitting to a non-leader
+        - Quorum calculation: `GetQuorum()` = n/2 + 1
+        - Integration with Mako's transaction coordinator chain
+      - [ ] `doc/thesis/02-raft-core/rpc_layer.md` — Communication infrastructure
+        - `RaftCommo`: `SendAppendEntries2()`, `BroadcastVote()`, `SendTimeoutNow()`
+        - `RaftServiceImpl`: `HandleVote()`, `HandleAppendEntries()`, `HandleTimeoutNow()` — RPC handler registration
+        - `RaftFrame`: factory pattern — `CreateScheduler()`, `CreateCommo()`, `CreateCoordinator()`, `CreateRpcServices()`
+        - RPC macros in `macros.h`: `RpcHandler`, `Call_Async`, disconnection handling
+        - Wire format: how commands are serialized via Marshal
+    - [ ] *high* Task 4: `doc/thesis/03-preferred-leader/` — Preferred Leader Election (novel contribution)
+      - [ ] `doc/thesis/03-preferred-leader/design.md` — Design and motivation
+        - Why preferred leader: deterministic placement for data locality, reduced cross-shard latency, operational control
+        - How it differs from standard Raft: standard Raft has no leader preference, any node can become leader
+        - Design overview: `SetPreferredLeader()` → monitoring thread → `TimeoutNow` RPC → leadership transfer
+        - Safety argument: all Raft safety properties are preserved (leader completeness, election safety)
+      - [ ] `doc/thesis/03-preferred-leader/implementation.md` — Implementation details
+        - `preferred_leader_site_id_`: configuration storage
+        - `AmIPreferredLeader()`: self-check
+        - `HaveCaughtUp()`: comparing follower's commit to leader's commit
+        - `ShouldTransferLeadership()`: conditions for triggering transfer
+        - `InitiateLeadershipTransfer()`: sending `TimeoutNow` RPC
+        - `OnTimeoutNow()`: receiver immediately starts election
+        - `StartLeadershipTransferMonitoring()`: background thread that periodically checks
+        - Dynamic election timeout (`GetElectionTimeout()`): preferred gets 150-300ms, others get 500ms-1s during normal operation, 1-2s during startup grace period
+        - Full sequence diagram of a leadership transfer
+      - [ ] `doc/thesis/03-preferred-leader/testing.md` — How preferred leader was tested
+        - `testPreferredReplicaStartup` binary: what it tests and how
+        - `testPreferredReplicaLogReplication` binary: log replication with preferred leader
+        - `testNoOps` binary: no-op log entries for watermark synchronization
+        - Test results and correctness guarantees
+    - [ ] *high* Task 5: `doc/thesis/04-mako-integration/` — Patching Raft into Mako (core thesis contribution)
+      - [ ] `doc/thesis/04-mako-integration/architecture.md` — Integration architecture
+        - The challenge: Mako was built with Multi-Paxos, need to add Raft as alternative without breaking Paxos
+        - Solution: `replication_helper.h` dispatcher pattern with `DISPATCH_RAFT_OR_PAXOS` macro
+        - `rusty::Cell<ReplicationType>` global state for runtime switching
+        - Unified API: `setup()`, `register_for_follower()`, `register_for_leader()`, `submit()`, `add_log()`, etc.
+        - How `detect_replication_type_from_config()` auto-detects from YAML `ab: raft`
+        - Diagram: Mako → replication_helper → raft_impl / paxos_impl dispatch
+      - [ ] `doc/thesis/04-mako-integration/raft_worker.md` — `RaftWorker` bridge class
+        - Purpose: connects Mako's watermark/callback system to Raft's replication
+        - Setup chain: `SetupBase()` → `SetupService()` → `SetupCommo()` → `SetupHeartbeat()`
+        - Leader/follower callbacks: `register_leader_callback_par_id_return()`, `register_follower_callback_par_id_return()`
+        - Log submission: `Submit()` → `EnqueueLog()` → `SubmitThread` loop → `RaftServer::Start()`
+        - `Next()` callback: how Raft's committed entries flow back to Mako
+        - `PendingLog` queue: buffering between Mako's write path and Raft's consensus
+      - [ ] `doc/thesis/04-mako-integration/raft_main_helper.md` — `raft_main_helper.cc` glue code
+        - Namespace `raft_impl`: all functions that the dispatcher calls
+        - `setup()` / `setup2()`: initialization sequence — creating RaftWorker, starting RPC, registering callbacks
+        - `raft_handle_leader_change()`: how leadership changes propagate to Mako
+        - `send_no_ops_for_mark()`: NO-OP log entries for epoch/watermark synchronization across partitions
+        - `wait_for_local_leadership()`: blocking wait used during multi-shard startup
+        - Separate leader/follower callback maps: why different watermark handling is needed
+      - [ ] `doc/thesis/04-mako-integration/mako_hooks.md` — Mako-side integration points
+        - `mako.hh: setup_leader_election_callbacks()`: how Mako registers for leader change notifications
+        - `mako.hh: detect_replication_type_from_config()`: auto-detection of replication type from config files
+        - `FAIL_NEW_VERSION` code path: the fix that added `is_using_raft()` checks to prevent cross-shard RPC failures during Raft leader elections
+        - `shard_raft.sh` vs `shard.sh`: differences in shard launching for Raft vs Paxos
+      - [ ] `doc/thesis/04-mako-integration/challenges.md` — Integration challenges and bugs fixed
+        - Bug: `simpleRaft.cc` was not calling `set_replication_type(RAFT)` before `setup()` — dispatcher routed to Paxos code path
+        - Bug: `dbtest` used Paxos code path even when config had `ab: raft` — fix: `detect_replication_type_from_config()`
+        - Bug: `FAIL_NEW_VERSION` in `mako.hh` called `client_control()` during Raft leader elections without checking `is_using_raft()` — caused cross-shard RPC failures in 2-shard mode
+        - Bug: Race condition in `GetOrCreateClient()` — iterator used after mutex unlock (general fix, affected Raft tests too)
+        - Process cleanup: Raft processes sometimes hung during shutdown — required careful SIGKILL handling in CI scripts
+        - Port conflicts: Paxos uses 17xxx, Raft uses 27xxx — needed separate port ranges to avoid collision when both are tested
+    - [ ] *high* Task 6: `doc/thesis/05-standalone-testing/` — Standalone Raft Testing
+      - [ ] `doc/thesis/05-standalone-testing/test_framework.md` — Test infrastructure
+        - `RaftLabTest` class: coroutine-based test harness in `test.h`/`test.cc`
+        - `RaftTestConfig` class: test utilities in `testconf.h`/`testconf.cc`
+        - Test configuration: 5 servers, election timeout 5s, network simulation (latency, disconnection)
+        - Helper methods: `OneLeader()`, `NoLeader()`, `OneTerm()`, `NCommitted()`, `Wait()`, `DoAgreement()`, `Disconnect()`, `Reconnect()`
+        - How tests simulate network partitions and node failures
+      - [ ] `doc/thesis/05-standalone-testing/test_cases.md` — Individual test case documentation
+        - `testInitialElection()`: Verifies a leader is elected after startup
+        - `testReElection()`: Verifies leader re-election after leader failure
+        - `testBasicAgree()`: Verifies all replicas agree on committed log entries
+        - `testFailAgree()`: Agreement works despite minority failures
+        - `testFailNoAgree()`: No false agreement when majority fails
+        - `testRejoin()`: Old followers can rejoin and catch up
+        - `testConcurrentStarts()`: Multiple concurrent submissions
+        - `testBackup()`: Backup log entry correctness
+        - `testCount()`: All replicas applied exactly the same entries
+        - `testUnreliableAgree()`: Works with unreliable (lossy) network
+        - `testFigure8()`: The Figure 8 scenario from the Raft paper — the hardest correctness test
+        - For each test: what it tests, how it works, expected outcome, what bugs it would catch
+      - [ ] `doc/thesis/05-standalone-testing/config_files.md` — Test configuration YAML
+        - `config/raft_lab_test.yml`: structure and meaning of each field
+        - How test configs differ from production configs (5 servers vs 3, different timeouts)
+    - [ ] *high* Task 7: `doc/thesis/06-ci-testing/` — CI Integration Testing
+      - [ ] `doc/thesis/06-ci-testing/ci_script.md` — `ci_mako_raft.sh` documentation
+        - Script structure: cleanup, compile, test functions, main dispatch
+        - Process management: `cleanup_processes()`, `check_for_hanging_processes()`
+        - Port management and collision avoidance
+        - How it mirrors `ci.sh` (Paxos) but for Raft
+      - [ ] `doc/thesis/06-ci-testing/test_scenarios.md` — Each CI test scenario in detail
+        - **simpleRaft**: 3 replicas × 3 partitions, 100 logs each, 3KB entries, 5ms interval. Pass: ≥300 follower callbacks. Tests basic Raft replication without Mako transactions.
+        - **shard1ReplicationRaft**: 1 shard, 3 Raft replicas, TPC-C benchmark (dbtest), 6 threads, 60s. Pass: `agg_persist_throughput` found, `NewOrder_remote_abort_ratio < 20%`, `replay_batch > 500`. Tests Raft under real transactional workload.
+        - **shard2ReplicationRaft**: 2 shards, 3 Raft replicas each, TPC-C benchmark, 6 threads. Pass: both shards report throughput, abort ratio < 40%. Tests cross-shard transactions with Raft replication.
+        - **shard1ReplicationSimpleRaft**: 1 shard, 3 replicas, `simpleTransactionRepRaft` binary, 40s. Pass: `replay_batch > 0`, `ALL VERIFICATIONS PASSED` on followers. Tests data integrity with simple key-value operations.
+        - **shard2ReplicationSimpleRaft**: 2 shards, 3 replicas each, `simpleTransactionRepRaft`, 60s. Pass: both shard followers have `replay_batch > 0` and `ALL VERIFICATIONS PASSED`. Tests multi-shard data integrity.
+        - For each: underlying shell script path, binaries involved, config files used, log files produced, exact pass/fail criteria
+      - [ ] `doc/thesis/06-ci-testing/example_scripts.md` — Shell scripts walkthrough
+        - `examples/mako-raft-tests/simpleRaft.sh`: step-by-step what happens
+        - `examples/mako-raft-tests/test_1shard_replication_raft.sh`: shard launch, benchmark run, result collection
+        - `examples/mako-raft-tests/test_2shard_replication_raft.sh`: multi-shard orchestration
+        - `examples/mako-raft-tests/test_1shard_replication_simple_raft.sh`: simple transaction test
+        - `examples/mako-raft-tests/test_2shard_replication_simple_raft.sh`: multi-shard simple test
+        - `bash/shard_raft.sh`: how individual Raft shards are launched, config selection, environment setup
+    - [ ] *high* Task 8: `doc/thesis/07-performance/` — Performance Analysis and Paxos Comparison
+      - [ ] `doc/thesis/07-performance/methodology.md` — Benchmark methodology
+        - Test environment: single localhost machine, all replicas co-located
+        - Transport: rrr (TCP/IP RPC), not eRPC
+        - Workload: TPC-C (NewOrder, Payment, Delivery, OrderStatus, StockLevel)
+        - Configuration: 6 worker threads per replica, 6 warehouses per shard
+        - Metrics collected: `agg_persist_throughput`, commit counts, latencies, abort ratios, `replay_batch`
+        - Caveats: single-node testing, resource contention, test duration differences
+      - [ ] `doc/thesis/07-performance/results.md` — Detailed benchmark results
+        - Table: 1-shard TPC-C — Paxos (133,931 ops/sec) vs Raft (96,463 ops/sec)
+        - Table: 2-shard TPC-C — Paxos (~8,500/shard) vs Raft (~8,560/shard)
+        - Table: Simple transaction — identical replay_batch and data integrity
+        - Per-transaction-type latency breakdown (NewOrder, Payment, Delivery, OrderStatus, StockLevel)
+        - Per-partition commit distribution
+        - Follower replay_batch comparison (Paxos 669 vs Raft 3,674 in 1-shard)
+        - Abort ratio comparison (local and remote)
+      - [ ] `doc/thesis/07-performance/analysis.md` — Performance analysis and discussion
+        - Why Paxos is ~39% faster in single-shard: Multi-Paxos pipelining, test duration difference (40s vs 60s), batching behavior
+        - Why 2-shard throughput is equal: cross-shard coordination latency (~10ms) dominates, replication layer is no longer the bottleneck
+        - Throughput drop factor: Paxos 15.8x vs Raft 11.3x from 1-shard to 2-shard
+        - Replica topology difference: Paxos 4 replicas (3 voters + 1 learner) vs Raft 3 replicas (all voters) — 33% more processes for Paxos
+        - Raft's higher replay_batch (3,674 vs 669): more aggressive batching but with overhead
+        - Replication correctness: both achieve identical data integrity
+        - What these results mean for production deployment decisions
+      - [ ] `doc/thesis/07-performance/figures.md` — Throughput charts and comparison tables (ASCII/Mermaid format)
+        - Bar chart: 1-shard throughput comparison
+        - Bar chart: 2-shard per-shard throughput comparison
+        - Line chart: throughput scaling from 1-shard to 2-shard
+        - Table: architectural differences (replicas, processes, quorum size)
+    - [ ] *medium* Task 9: `doc/thesis/08-persistence/` — Log Persistence and Recovery
+      - [ ] `doc/thesis/08-persistence/log_storage.md` — Persistent log storage
+        - `LogStorage` interface: `append()`, `read()`, `truncate()`, `get_metadata()`, `set_metadata()`
+        - `InMemoryLogStorage`: for testing
+        - `RocksDBLogStorage`: production backend with batch writes
+        - How Raft integrates: `SetLogStorage()`, `RecoverFromStorage()`, `PersistTermAndVote()`, `PersistLogEntry()`
+        - Metadata persistence: `currentTerm`, `vote_for`, `commitIndex`
+      - [ ] `doc/thesis/08-persistence/recovery.md` — Crash recovery process
+        - Recovery sequence: detect fresh vs recovery start, load metadata, replay committed entries, resume consensus
+        - `RecoveryManager`: `RecoveryMode` enum, `RecoveryConfig`, `RecoveryResult`
+        - `ReplayCommittedEntries()`: replaying from `executeIndex` to `commitIndex`
+        - How uncommitted entries are resolved via consensus after recovery
+        - Storage paths: `/tmp/<username>_mako_log_shard<N>_replica<M>`
+      - [ ] `doc/thesis/08-persistence/snapshots.md` — Snapshot support
+        - `SnapshotManager` interface, `FileSnapshotManager` implementation
+        - Snapshot format: 52-byte binary header, CRC32 checksums
+        - `CompactLog()`: removing log entries covered by snapshot
+        - When snapshots are taken, retention policy
+    - [ ] *medium* Task 10: `doc/thesis/09-appendix/` — Appendix and Reference Material
+      - [ ] `doc/thesis/09-appendix/file_reference.md` — Complete file listing
+        - Every file in `src/deptran/raft/` with one-line description
+        - Every file in `src/deptran/paxos/` with one-line description (for comparison)
+        - Integration files: `replication_helper.*`, `raft_main_helper.cc`, `mako.hh`
+        - Config files: all Raft YAML configs with description
+        - Test scripts: all shell scripts under `examples/mako-raft-tests/`
+        - CI scripts: `ci_mako_raft.sh`, `ci.sh` (Paxos equivalent)
+      - [ ] `doc/thesis/09-appendix/configuration_reference.md` — YAML configuration reference
+        - Mode config fields: `cc`, `ab`, `read_only`, `batch`, `retry`, `ongoing`
+        - Replication group structure: host, port, partition assignments
+        - How to switch between Paxos and Raft configurations
+        - Port allocation scheme
+      - [ ] `doc/thesis/09-appendix/glossary.md` — Terms and definitions
+        - Raft-specific: term, log index, commit index, match index, next index, election timeout, heartbeat
+        - Mako-specific: shard, partition, partition group, watermark, epoch, NO-OP
+        - System-specific: RPC, rrr framework, eRPC, DPDK, Masstree, OCC, 2PC
+      - [ ] `doc/thesis/09-appendix/rustycpp_safety.md` — RustyCpp safety annotations in Raft code
+        - Which Raft methods are `@safe` and why
+        - Which Raft methods are `@unsafe` and why (persistence I/O, state mutation, RPC calls)
+        - RustyCpp types used: `rusty::Arc<Cell<slotid_t>>`, `rusty::Box<Timer>`, `rusty::Option<Arc<PollThread>>`
+        - Borrow checking status of Raft files
+    - **Execution notes for the agent**:
+      - This is a documentation-only task. Do NOT modify any source code.
+      - Read each source file thoroughly before writing about it. Use exact line numbers and code snippets.
+      - Cross-reference between documents using relative markdown links (e.g., `[see RaftServer](../02-raft-core/server_implementation.md)`).
+      - Include ASCII sequence diagrams for: election flow, log replication flow, leadership transfer flow, Mako→Raft submission flow.
+      - Include Mermaid diagrams for: class hierarchy, state machines, architecture overview.
+      - Pull actual benchmark numbers from `doc/paxos_vs_raft_comparison.md` and CI logs in `logs/`.
+      - Each document should start with a brief "What this document covers" and end with "Related documents" links.
+      - Total expected output: ~30-40 pages worth of markdown across all documents.
   - [x] *high* Mako-Raft CI Test Suite: Fix all ci_mako_raft.sh tests so they pass [DONE 2026-02-07]
     - **Goal**: The Raft CI tests are currently failing. The job here is to fix them one by one. Do NOT run `./ci/ci_mako_raft.sh all` upfront — that wastes time running every test when the first one already fails. Instead, pick one test at a time, run just that test, analyse the logs, figure out WHY it fails, fix the underlying bug in the C++ source or test infrastructure, rebuild, re-run that single test to confirm the fix, and only then move on to the next test. After all individual tests pass, run `./ci/ci_mako_raft.sh all` as a final confirmation. This is NOT about re-running tests until they happen to pass — you must find and fix the actual bugs.
     - **Script**: `ci/ci_mako_raft.sh` — runs Raft-specific tests (simpleRaft, shard replication with Raft, etc.). Run individual tests with e.g. `./ci/ci_mako_raft.sh simpleRaft`.
