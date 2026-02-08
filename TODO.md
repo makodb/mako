@@ -226,7 +226,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Metrics collected: `agg_persist_throughput`, commit counts, latencies, abort ratios, `replay_batch`
         - Caveats: single-node testing, resource contention, test duration differences
         - **Result**: Created `doc/thesis/07-performance/methodology.md` documenting benchmark methodology. Test environment: single localhost machine, rrr TCP/IP transport (10-50us latency), release mode with jemalloc. TPC-C workload: NewOrder 45%, Payment 43%, Delivery/OrderStatus/StockLevel 4% each. 4 test configurations detailed with comparison tables: 1-shard TPC-C (Paxos 4 processes vs Raft 3, 40s vs 60s duration), 2-shard TPC-C (8 vs 6 processes, 120s polling), 1-shard simple tx, 2-shard simple tx. Primary metrics: agg_persist_throughput, replay_batch, NewOrder_remote_abort_ratio. Per-transaction metrics: attempts/commits/avg/p50/p99 latency/abort ratio. 6 caveats: single-node deployment (CPU contention), test duration difference (40s vs 60s), process count difference (4 vs 3), Multi-Paxos pipelining vs Raft sequential log, warmup period (~5s), resource contention (18-48 threads).
-      - [ ] `doc/thesis/07-performance/results.md` — Detailed benchmark results
+      - [x] `doc/thesis/07-performance/results.md` — Detailed benchmark results
         - Table: 1-shard TPC-C — Paxos (133,931 ops/sec) vs Raft (96,463 ops/sec)
         - Table: 2-shard TPC-C — Paxos (~8,500/shard) vs Raft (~8,560/shard)
         - Table: Simple transaction — identical replay_batch and data integrity
@@ -234,6 +234,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Per-partition commit distribution
         - Follower replay_batch comparison (Paxos 669 vs Raft 3,674 in 1-shard)
         - Abort ratio comparison (local and remote)
+        - **Result**: Created `doc/thesis/07-performance/results.md` with detailed benchmark data extracted from actual CI log files. 6 sections: (1) Overview, (2) 1-Shard TPC-C — aggregate throughput (Paxos 133,931 vs Raft 96,463 ops/sec, Raft 28% lower), per-transaction latency table (NewOrder/Delivery faster under Raft, Payment faster under Paxos), follower replication (Raft 5.5x more replay batches: 3,674 vs 669), (3) 2-Shard TPC-C — per-shard throughput essentially equal (~8,500 ops/sec), Raft 2.1x higher remote abort ratio (2.64% vs 1.28%), 25% fewer processes, (4) throughput drop 1→2 shard (Paxos 15.8x vs Raft 11.3x), (5) Simple transaction results (simpleRaft: 303 follower_callbacks, both simple tx: replay_batch=12, ALL VERIFICATIONS PASSED), (6) Replication correctness (identical data integrity), (7) Summary table across all 5 configurations.
       - [ ] `doc/thesis/07-performance/analysis.md` — Performance analysis and discussion
         - Why Paxos is ~39% faster in single-shard: Multi-Paxos pipelining, test duration difference (40s vs 60s), batching behavior
         - Why 2-shard throughput is equal: cross-shard coordination latency (~10ms) dominates, replication layer is no longer the bottleneck
