@@ -271,28 +271,32 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - `CompactLog()`: removing log entries covered by snapshot
         - When snapshots are taken, retention policy
         - **Result**: Created `doc/thesis/08-persistence/snapshots.md` documenting snapshot support. SnapshotMetadata: 5 fields (last_included_index/term, timestamp, size_bytes, checksum). SnapshotManager: 10 virtual methods (BeginSnapshot/TakeSnapshot, BeginLoad/LoadLatestSnapshot, GetLatestSnapshot/ListSnapshots/HasSnapshotAtOrAfter, PruneSnapshots/DeleteAllSnapshots, GetStoragePath). SnapshotReader/Writer streaming interfaces. FileSnapshotManager: 531 lines, file naming snapshot_{index}_{term}.snap, atomic write via temp+fsync+rename, ApplyRetentionPolicy max_snapshots=3. SnapshotConfig: interval=10000 entries, max=3, chunk_size=64KB. Binary format: 52-byte header (magic 0x504E4153 "SNAP", version, data_size, compression, checksum_type, last_index, last_term, timestamp, header_crc, padding) + data + data_crc32. CRC32: IEEE 802.3 polynomial table-driven implementation. Compression: NONE only (SNAPPY/ZSTD reserved). Crash safety: write-to-temp-then-rename pattern, dual CRC verification, 3-snapshot retention as fallback.
-    - [ ] *medium* Task 10: `doc/thesis/09-appendix/` — Appendix and Reference Material
-      - [ ] `doc/thesis/09-appendix/file_reference.md` — Complete file listing
+    - [x] *medium* Task 10: `doc/thesis/09-appendix/` — Appendix and Reference Material
+      - [x] `doc/thesis/09-appendix/file_reference.md` — Complete file listing
         - Every file in `src/deptran/raft/` with one-line description
         - Every file in `src/deptran/paxos/` with one-line description (for comparison)
         - Integration files: `replication_helper.*`, `raft_main_helper.cc`, `mako.hh`
         - Config files: all Raft YAML configs with description
         - Test scripts: all shell scripts under `examples/mako-raft-tests/`
         - CI scripts: `ci_mako_raft.sh`, `ci.sh` (Paxos equivalent)
-      - [ ] `doc/thesis/09-appendix/configuration_reference.md` — YAML configuration reference
+        - **Result**: Created `doc/thesis/09-appendix/file_reference.md` with 8 sections. Raft implementation: 19 files, ~6,081 lines (server.cc 1829, test.cc 740, raft_worker.cc 615, testconf.cc 585, commo.cc 287, frame.cc 206, coordinator.cc 199). Paxos implementation: 13 files, ~2,957 lines (server.cc 1025, commo.cc 514, coordinator.cc 432). Integration files: raft_main_helper.cc, replication_helper.h/cc, mako.hh, bench.cc, server_worker.cc. Persistence layer: 7 files (file_snapshot_manager.hpp 531, rocksdb_log_storage.hpp 480, snapshot_format.hpp 373, log_storage.hpp 302). Test files: 5 C++ binaries, 8 shell scripts (5 CI, 3 non-CI), 1 unit test (531 lines). CI scripts: ci_mako_raft.sh 252, ci.sh 553. Shard launchers: shard_raft.sh 39, shard.sh 62. Config files: 4 mode configs, 3 topology configs, 2 shard configs, 2 test cluster configs.
+      - [x] `doc/thesis/09-appendix/configuration_reference.md` — YAML configuration reference
         - Mode config fields: `cc`, `ab`, `read_only`, `batch`, `retry`, `ongoing`
         - Replication group structure: host, port, partition assignments
         - How to switch between Paxos and Raft configurations
         - Port allocation scheme
-      - [ ] `doc/thesis/09-appendix/glossary.md` — Terms and definitions
+        - **Result**: Created `doc/thesis/09-appendix/configuration_reference.md` with 7 sections. Mode config: 6 fields (cc, ab, read_only, batch, retry, ongoing) with occ_raft.yml, occ_paxos.yml, and 4 variant configs. Replication group: site array with host/port/partition, partition naming s{R}{PP}. Port allocation: Raft 27xxx, Paxos 17xxx, standalone 9xxx, with formula base+shard+replica*100+partition. Shard config: shard_id and warehouses fields. Standalone test: raft_lab_test.yml with cc:none/ab:raft. Switching: via shard_raft.sh (dedicated), shard.sh 7th arg, mode config ab field, or --replication CLI flag. Config selection by shard_raft.sh: raft${trd}_shardidx${shard}.yml.
+      - [x] `doc/thesis/09-appendix/glossary.md` — Terms and definitions
         - Raft-specific: term, log index, commit index, match index, next index, election timeout, heartbeat
         - Mako-specific: shard, partition, partition group, watermark, epoch, NO-OP
         - System-specific: RPC, rrr framework, eRPC, DPDK, Masstree, OCC, 2PC
-      - [ ] `doc/thesis/09-appendix/rustycpp_safety.md` — RustyCpp safety annotations in Raft code
+        - **Result**: Created `doc/thesis/09-appendix/glossary.md` with 5 sections, 50+ terms defined. Raft terms: term, log index, commit index, match index, next index, election timeout, heartbeat, leader/follower/candidate, RequestVote, AppendEntries, TimeoutNow, preferred leader, NO-OP, log compaction. Mako terms: shard, partition, partition group, watermark, epoch, speculative execution, agg_persist_throughput, replay_batch, learner, preferred replica. Transaction terms: TPC-C and 5 transaction types, OCC, 2PC, abort ratio, commit latency. System terms: rrr, eRPC, DPDK, Masstree, RocksDB, jemalloc, RustyCpp, Marshal, dbtest, simpleRaft, simpleTransactionRepRaft, GDB, coroutine, fiber. Persistence terms: WAL, fsync, WriteBatch, snapshot, CURRENT file.
+      - [x] `doc/thesis/09-appendix/rustycpp_safety.md` — RustyCpp safety annotations in Raft code
         - Which Raft methods are `@safe` and why
         - Which Raft methods are `@unsafe` and why (persistence I/O, state mutation, RPC calls)
         - RustyCpp types used: `rusty::Arc<Cell<slotid_t>>`, `rusty::Box<Timer>`, `rusty::Option<Arc<PollThread>>`
         - Borrow checking status of Raft files
+        - **Result**: Created `doc/thesis/09-appendix/rustycpp_safety.md` with 8 sections. 122 total annotations across 12 files. Summary table per file. @safe methods (52, 68%): all service layer (5/5), all executor (4/4), all frame (7/7), all commo (5/5), plus read-only accessors. @unsafe methods (24, 32%): persistence I/O (8 methods via LogStorage), state mutation (16 methods: doVote, OnRequestVote/AppendEntries/TimeoutNow, resetTimer, removeCmd), RPC/connection management (Disconnect/Reconnect/commo/GetState), random number generation. RustyCpp types: Arc<T> (18 occurrences: Arc<Cell<slotid_t>>, Arc<PollThread>, Arc<Future>, Arc<ServerStatus>), Box<T> (3: Box<Timer>, Box<RaftServiceImpl>), Cell<T> (6: slot_hint_), Option<T> (16: optional threads/status), Function (2: callbacks), Mutex (in persistence layer). Borrow checking: all raft/*.cc checked except testconf.cc, test.cc (test infrastructure), raft_main_helper.cc (third-party headers). Build: make borrow_check_raft. Key patterns: Arc<Cell<T>> for shared mutable state, Box<T> for owned resources, lambda over std::bind, inline @unsafe blocks.
     - **Execution notes for the agent**:
       - This is a documentation-only task. Do NOT modify any source code.
       - Read each source file thoroughly before writing about it. Use exact line numbers and code snippets.
