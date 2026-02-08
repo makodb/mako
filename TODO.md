@@ -15,7 +15,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
-  - [ ] *high* Comprehensive Raft-Mako Documentation for Thesis Report
+  - [x] *high* Comprehensive Raft-Mako Documentation for Thesis Report
     - **Goal**: Write extremely detailed, thesis-grade documentation covering the entire Raft module, its integration with Mako, testing infrastructure, and performance comparison with Paxos. The documentation should be thorough enough that a reader with basic distributed-systems knowledge can fully understand the system from these docs alone — no hand-holding, but nothing left unexplained. This is NOT a thesis itself but the detailed technical content that feeds into one.
     - **Audience**: Thesis committee members and future developers. Assume familiarity with basic distributed systems concepts (consensus, replication, 2PC) but NOT with this codebase.
     - **Writing style**: Technical, precise, with code snippets and diagrams where helpful. Every claim should be traceable to source files. Use file paths (e.g., `src/deptran/raft/server.h:42`) so readers can cross-reference. Include architecture diagrams in ASCII or Mermaid format.
