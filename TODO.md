@@ -75,13 +75,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Log persistence integration: `PersistTermAndVote()`, `PersistLogEntry()`, `RecoverFromStorage()`
         - RustyCpp safety: which methods are `@safe` vs `@unsafe` and why
         - **Result**: Created `doc/thesis/02-raft-core/server_implementation.md` with class hierarchy diagram, 30+ member variables organized into 8 categories (persistent state, volatile state, leader-only, preferred leader, log application, persistence/snapshot, timer, RaftData struct), full algorithm walkthroughs for OnRequestVote (5-step flowchart), OnAppendEntries (6-step with batch optimization), Start/SetLocalAppend, applyLogs (do-while concurrency pattern), HeartbeatLoop (commit index calculation, 3-tier log reconciliation), election timer with dynamic timeout table, persistence/recovery/compaction, setIsLeader state transitions, destructor shutdown sequence, and @safe/@unsafe annotation tables.
-      - [ ] `doc/thesis/02-raft-core/leader_election.md` — Election mechanism
+      - [x] `doc/thesis/02-raft-core/leader_election.md` — Election mechanism [DONE 2026-02-08]
         - Election trigger: timer expiry → increment term → vote for self → `BroadcastVote()`
         - `RaftVoteQuorumEvent`: How votes are collected, quorum detection
         - `doVote()`: Vote granting logic, persistence of vote
         - Split vote handling: random timeout prevents repeated splits
         - Term advancement: how stale leaders step down on higher term
         - Code walkthrough of a complete election cycle with sequence diagram
+        - **Result**: Created `doc/thesis/02-raft-core/leader_election.md` with election timer loop pseudocode, dynamic timeout table, 5-step RequestVote walkthrough, BroadcastVote flow (quorum event creation, async RPC callbacks), RaftVoteQuorumEvent class hierarchy (Event→QuorumEvent→RaftVoteQuorumEvent) with quorum logic formulas, 4-step OnRequestVote decision tree, doVote helper (term advancement, vote persistence, timer reset), split vote handling via randomized timeouts, term advancement table (5 locations), complete 3-node election sequence diagram with timing breakdown, leader change notification via RaftWorker callback, and edge cases (no pre-vote, stale election guard, shutdown safety).
       - [ ] `doc/thesis/02-raft-core/log_replication.md` — Log replication mechanism
         - Leader's `SendAppendEntries2()`: how entries are sent to each follower
         - Follower's `OnAppendEntries()`: consistency check, appending, reply
