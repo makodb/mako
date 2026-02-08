@@ -112,7 +112,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Design overview: `SetPreferredLeader()` → monitoring thread → `TimeoutNow` RPC → leadership transfer
         - Safety argument: all Raft safety properties are preserved (leader completeness, election safety)
         - **Result**: Created `doc/thesis/03-preferred-leader/design.md` covering motivation (data locality, cross-shard coordination, operational control), comparison table (standard Raft vs preferred leader), three-phase design (startup election bias via asymmetric timeouts, monitoring thread with ShouldTransferLeadership checks, piggybacked transfer via trigger_election_now in EmptyAppendEntries), detailed transfer sequence diagram with timing analysis (~40ms on LAN), GetElectionTimeout() asymmetric timeout table (preferred 150-300ms / non-preferred grace 1-2s / non-preferred normal 500ms-1s), 5-second startup grace period, OnTimeoutNow edge cases, SetPreferredLeader configuration, comprehensive safety argument proving all 5 Raft properties preserved, failure mode analysis.
-      - [ ] `doc/thesis/03-preferred-leader/implementation.md` — Implementation details
+      - [x] `doc/thesis/03-preferred-leader/implementation.md` — Implementation details [DONE 2026-02-08]
         - `preferred_leader_site_id_`: configuration storage
         - `AmIPreferredLeader()`: self-check
         - `HaveCaughtUp()`: comparing follower's commit to leader's commit
@@ -122,6 +122,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - `StartLeadershipTransferMonitoring()`: background thread that periodically checks
         - Dynamic election timeout (`GetElectionTimeout()`): preferred gets 150-300ms, others get 500ms-1s during normal operation, 1-2s during startup grace period
         - Full sequence diagram of a leadership transfer
+        - **Result**: Created `doc/thesis/03-preferred-leader/implementation.md` with method-by-method walkthrough of all 12+ functions: 7 member variables table with design rationale, AmIPreferredLeader/HaveCaughtUp inline helpers, SetPreferredLeader entry point with startup and runtime call sites, GetElectionTimeout with 3-row timeout decision table, setIsLeader integration showing transfer flag clearing and monitor start, StartLeadershipTransferMonitoring OS thread with lock-then-release pattern and 5 exit conditions, ShouldTransferLeadership 6-check decision flowchart with safety-critical match_index check, InitiateLeadershipTransfer 4-step piggybacked protocol with per-peer heartbeat loop, OnTimeoutNow 6 edge cases (shutdown/stale/ahead/already-leader/candidate/transferring), StopLeadershipTransferMonitoring detach-vs-join deadlock rationale, destructor sequence, HeartbeatLoop delegation comment, integration points table, full call graph, complete 10-event sequence diagram with timing, and 11-row constants/tuning table.
       - [ ] `doc/thesis/03-preferred-leader/testing.md` — How preferred leader was tested
         - `testPreferredReplicaStartup` binary: what it tests and how
         - `testPreferredReplicaLogReplication` binary: log replication with preferred leader
