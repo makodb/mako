@@ -83,7 +83,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Term advancement: how stale leaders step down on higher term
         - Code walkthrough of a complete election cycle with sequence diagram
         - **Result**: Created `doc/thesis/02-raft-core/leader_election.md` with election timer loop pseudocode, dynamic timeout table, 5-step RequestVote walkthrough, BroadcastVote flow (quorum event creation, async RPC callbacks), RaftVoteQuorumEvent class hierarchy (Event→QuorumEvent→RaftVoteQuorumEvent) with quorum logic formulas, 4-step OnRequestVote decision tree, doVote helper (term advancement, vote persistence, timer reset), split vote handling via randomized timeouts, term advancement table (5 locations), complete 3-node election sequence diagram with timing breakdown, leader change notification via RaftWorker callback, and edge cases (no pre-vote, stale election guard, shutdown safety).
-      - [ ] `doc/thesis/02-raft-core/log_replication.md` — Log replication mechanism
+      - [x] `doc/thesis/02-raft-core/log_replication.md` — Log replication mechanism [DONE 2026-02-08]
         - Leader's `SendAppendEntries2()`: how entries are sent to each follower
         - Follower's `OnAppendEntries()`: consistency check, appending, reply
         - `match_index_` / `next_index_` tracking: how leader tracks follower progress
@@ -91,6 +91,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Backtracking: when `next_index_` is decremented on rejection
         - Heartbeats: empty AppendEntries as keep-alive (`HEARTBEAT_INTERVAL`)
         - Batching behavior: how multiple entries are sent in a single RPC
+        - **Result**: Created `doc/thesis/02-raft-core/log_replication.md` with end-to-end replication flow diagram, HeartbeatLoop wake mechanism, batch vs non-batch entry preparation (TpcBatchCommand), SendAppendEntries2 RPC with 500ms bounded wait, OnAppendEntries 3-check acceptance (term/index/prev_term), mutex release during apply, 4 response cases (lost RPC, higher term stepdown, log conflict backtrack, success), 3-tier log reconciliation (fast O(1)/exponential O(log n)/linear), commit advancement via sorted match_index median with term safety rule, heartbeat interval table, applyLogs with app_next_ callback, complete 3-node replication sequence diagram with timing, and log conflict resolution example.
       - [ ] `doc/thesis/02-raft-core/coordinator.md` — `CoordinatorRaft` transaction submission
         - How `Submit()` works: slot allocation via `Arc<Cell<slotid_t>>`, calling `RaftServer::Start()`
         - `WRONG_LEADER` handling: retry logic when submitting to a non-leader
