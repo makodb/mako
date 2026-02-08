@@ -57,7 +57,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - YAML configuration format: mode config (`occ_raft.yml` vs `occ_paxos.yml`), host configs, replication group definitions
         - Port allocation scheme: Paxos uses 17xxx, Raft uses 27xxx, control plane uses 31xxx
         - **Result**: Created `doc/thesis/01-mako-overview/build_system.md` with CMake options table, build targets (core + Raft-only), compile definitions, third-party dependencies, transport layer configuration, YAML config format (mode/shard/replication group with side-by-side Paxos vs Raft examples), port allocation tables, runtime dispatch mechanism diagram, CI test infrastructure, and quick-reference switching guide.
-    - [ ] *high* Task 3: `doc/thesis/02-raft-core/` — Raft Protocol Implementation (the heart of the contribution)
+    - [x] *high* Task 3: `doc/thesis/02-raft-core/` — Raft Protocol Implementation (the heart of the contribution) [DONE 2026-02-08]
       - [x] `doc/thesis/02-raft-core/protocol_overview.md` — Raft consensus protocol as implemented [DONE 2026-02-08]
         - Brief recap of Raft fundamentals (leader election, log replication, safety) with references to the Raft paper
         - How this implementation maps to the paper: `RaftServer` = state machine, `RaftCommo` = RPC layer, `RaftServiceImpl` = RPC handlers
@@ -98,12 +98,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Quorum calculation: `GetQuorum()` = n/2 + 1
         - Integration with Mako's transaction coordinator chain
         - **Result**: Created `doc/thesis/02-raft-core/coordinator.md` covering class hierarchy (Coordinator → CoordinatorRaft), key members (svr_, cmd_, slot_hint_, n_replica_), phase enum (INIT_END/PREPARE/ACCEPT/COMMIT/FORWARD), Submit() entry point with IsLeader() check, GotoNextPhase() state machine flow (INIT_END → AppendEntries → COMMIT → LeaderLearn), AppendEntries() blocking wait with 1ms polling and term change detection, WRONG_LEADER handling with ViewData propagation and leader=-1 fallback, slot allocation via Arc<Cell<slotid_t>> shared counter in RaftFrame, GetQuorum() = n/2+1, CreateCoordinator() factory method with pointer borrowing, LeaderLearn() post-commit callback, and complete end-to-end submission flow diagram from SchedulerClassic::OnCommit through Raft commit to callback.
-      - [ ] `doc/thesis/02-raft-core/rpc_layer.md` — Communication infrastructure
+      - [x] `doc/thesis/02-raft-core/rpc_layer.md` — Communication infrastructure [DONE 2026-02-08]
         - `RaftCommo`: `SendAppendEntries2()`, `BroadcastVote()`, `SendTimeoutNow()`
         - `RaftServiceImpl`: `HandleVote()`, `HandleAppendEntries()`, `HandleTimeoutNow()` — RPC handler registration
         - `RaftFrame`: factory pattern — `CreateScheduler()`, `CreateCommo()`, `CreateCoordinator()`, `CreateRpcServices()`
         - RPC macros in `macros.h`: `RpcHandler`, `Call_Async`, disconnection handling
         - Wire format: how commands are serialized via Marshal
+        - **Result**: Created `doc/thesis/02-raft-core/rpc_layer.md` with 4-layer architecture diagram (RaftCommo → RaftProxy → RaftService → RaftServiceImpl), all 4 RPC definitions with hex IDs and wire formats, RpcHandler macro expansion showing generated override/handler/disconnection methods, Call_Async macro with Future::safe_release pattern, RaftCommo sending methods (SendAppendEntries2 with IntEvent, SendAppendEntries with results struct, BroadcastVote with quorum event, SendTimeoutNow with callback), RaftServiceImpl handler delegation with Fiber::create_run for AppendEntries, DeferredReply RAII pattern with marshal_reply/cleanup lambdas, RaftService generated base class (__reg_to__/__dispatch__/__wrapper__ methods), RaftProxy serialization via Marshal << operator, RaftFrame factory pattern with ownership model (unique_ptr for commo_/svr_, Arc for slot_hint_, raw pointer borrows), proxy map population via Communicator::ConnectToPeers, disconnection simulation system with default responses, WAN_WAIT compile-time switch, RAFT_TEST_CORO infrastructure, and complete end-to-end AppendEntries RPC flow diagram from HeartbeatLoop through TCP to OnAppendEntries and back.
     - [ ] *high* Task 4: `doc/thesis/03-preferred-leader/` — Preferred Leader Election (novel contribution)
       - [ ] `doc/thesis/03-preferred-leader/design.md` — Design and motivation
         - Why preferred leader: deterministic placement for data locality, reduced cross-shard latency, operational control
