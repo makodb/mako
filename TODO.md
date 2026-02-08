@@ -39,8 +39,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Suggested reading paths (quick overview vs deep dive)
       - Glossary of terms used throughout (term, slot, commitIndex, quorum, partition, shard, etc.)
       - **Result**: Created `doc/thesis/README.md` with complete document map (9 chapters, 28 documents), 4 reading paths (quick overview, implementation deep dive, integration story, testing & validation), key source file reference table, and comprehensive glossary (40+ terms across Raft, Mako, and system categories).
-    - [ ] *high* Task 2: `doc/thesis/01-mako-overview/` — Mako System Overview
-      - [ ] `doc/thesis/01-mako-overview/system_architecture.md` — High-level Mako architecture
+    - [x] *high* Task 2: `doc/thesis/01-mako-overview/` — Mako System Overview [DONE 2026-02-08]
+      - [x] `doc/thesis/01-mako-overview/system_architecture.md` — High-level Mako architecture
         - What Mako is: speculative distributed transaction system with geo-replication (OSDI'25)
         - Core components: Masstree storage engine, OCC concurrency control, atomic broadcast layer, sharding
         - How transactions flow: client → coordinator → scheduler → storage → replication → commit
@@ -49,12 +49,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Existing Paxos path: how Multi-Paxos was already integrated before Raft
         - Diagrams: transaction flow, shard topology, replication group structure
         - Key classes: `TxnCoordinator`, `TxnScheduler`, `Communicator`, `Frame`, `TxLogServer`
-      - [ ] `doc/thesis/01-mako-overview/build_system.md` — Build and configuration
+        - **Result**: Created `doc/thesis/01-mako-overview/system_architecture.md` with ASCII architecture diagram, 7-step transaction flow pipeline, key class documentation (Frame factory, TxnCoordinator, TxLogServer with app_next_ callback, Communicator, Tx), shard topology with Paxos/Raft comparison, and replication_helper.h dispatch architecture.
+      - [x] `doc/thesis/01-mako-overview/build_system.md` — Build and configuration
         - CMake build system, key flags (`MAKO_USE_RAFT`, `PAXOS_LIB_ENABLED`)
         - How both Paxos and Raft are compiled into the same binaries
         - Runtime switching via `--replication raft|paxos` flag and `replication_helper.h` dispatcher
         - YAML configuration format: mode config (`occ_raft.yml` vs `occ_paxos.yml`), host configs, replication group definitions
         - Port allocation scheme: Paxos uses 17xxx, Raft uses 27xxx, control plane uses 31xxx
+        - **Result**: Created `doc/thesis/01-mako-overview/build_system.md` with CMake options table, build targets (core + Raft-only), compile definitions, third-party dependencies, transport layer configuration, YAML config format (mode/shard/replication group with side-by-side Paxos vs Raft examples), port allocation tables, runtime dispatch mechanism diagram, CI test infrastructure, and quick-reference switching guide.
     - [ ] *high* Task 3: `doc/thesis/02-raft-core/` — Raft Protocol Implementation (the heart of the contribution)
       - [ ] `doc/thesis/02-raft-core/protocol_overview.md` — Raft consensus protocol as implemented
         - Brief recap of Raft fundamentals (leader election, log replication, safety) with references to the Raft paper
