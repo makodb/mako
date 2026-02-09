@@ -306,6 +306,29 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Pull actual benchmark numbers from `doc/paxos_vs_raft_comparison.md` and CI logs in `logs/`.
       - Each document should start with a brief "What this document covers" and end with "Related documents" links.
       - Total expected output: ~30-40 pages worth of markdown across all documents.
+  - [x] *high* Merge All Thesis Documents into a Single Unified Markdown File [DONE 2026-02-09]
+    - **Goal**: Go to `doc/thesis/` and merge every document across all subdirectories (`01-mako-overview/` through `09-appendix/`, including `README.md`) into a single, self-contained Markdown file. The merged file should present all thesis content in a logical, readable order — essentially a complete thesis document in one file.
+    - **Output file**: `doc/thesis/complete_thesis.md` — a new file inside the thesis folder. **Do NOT delete or modify any existing files.** The original directory structure and individual documents must remain untouched.
+    - **Result**: Created `doc/thesis/merge_thesis.py` (441 lines) that merges all 34 source documents into `doc/thesis/complete_thesis.md` (14,557 lines). Features: hierarchical TOC with 994 clickable anchor links (all verified), heading level adjustment for consistent hierarchy (# for chapters, ## for sections, ### for subsections), HTML `<a id="">` anchor injection for duplicate headings (103 duplicates resolved), cross-reference conversion from file paths to internal anchors, Related Documents section stripping, code block integrity preservation (794 markers, all paired). Zero content loss verified (13,426 source lines → 14,557 merged lines, 8.4% overhead from TOC/separators/anchors). No existing files modified.
+    - **Requirements**:
+      - **Zero content loss**: Every piece of information, every code snippet, every diagram, every table, every cross-reference from every document must appear in the merged file. Nothing may be omitted, summarized, or shortened.
+      - **Table of Contents**: The file must begin with a comprehensive, hierarchical Table of Contents with clickable anchor links. The TOC should include both top-level chapters and all sub-sections within each chapter.
+      - **Logical ordering**: Arrange content in a sensible thesis-like order. Follow the existing chapter numbering (`01` through `09`) as the primary structure, and within each chapter arrange sub-documents in a logical reading order.
+      - **Heading hierarchy**: Adjust heading levels as needed so the merged document has a consistent, non-conflicting heading hierarchy (e.g., chapter titles as `#`, document titles as `##`, sections within documents as `###`, etc.).
+      - **Cross-references**: Update internal cross-reference links (e.g., `[see RaftServer](../02-raft-core/server_implementation.md)`) to use anchor links within the single file instead.
+      - **Preserve formatting**: All Mermaid diagrams, ASCII art, code blocks, tables, and lists must be preserved exactly as they appear in the source documents.
+    - **Source documents to merge** (in order):
+      - `doc/thesis/README.md` — Use as the basis for the introductory section and reading guide
+      - `doc/thesis/01-mako-overview/system_architecture.md`, `build_system.md`
+      - `doc/thesis/02-raft-core/protocol_overview.md`, `server_implementation.md`, `leader_election.md`, `log_replication.md`, `coordinator.md`, `rpc_layer.md`
+      - `doc/thesis/03-preferred-leader/design.md`, `implementation.md`, `testing.md`
+      - `doc/thesis/04-mako-integration/architecture.md`, `raft_worker.md`, `raft_main_helper.md`, `mako_hooks.md`, `challenges.md`
+      - `doc/thesis/05-standalone-testing/test_framework.md`, `test_cases.md`, `config_files.md`
+      - `doc/thesis/06-ci-testing/ci_script.md`, `test_scenarios.md`, `example_scripts.md`
+      - `doc/thesis/07-performance/methodology.md`, `results.md`, `analysis.md`, `figures.md`
+      - `doc/thesis/08-persistence/log_storage.md`, `recovery.md`, `snapshots.md`
+      - `doc/thesis/09-appendix/file_reference.md`, `configuration_reference.md`, `glossary.md`, `rustycpp_safety.md`
+    - **This is a documentation-only task. Do NOT modify any source code or existing documentation files.**
   - [x] *high* Mako-Raft CI Test Suite: Fix all ci_mako_raft.sh tests so they pass [DONE 2026-02-07]
     - **Goal**: The Raft CI tests are currently failing. The job here is to fix them one by one. Do NOT run `./ci/ci_mako_raft.sh all` upfront — that wastes time running every test when the first one already fails. Instead, pick one test at a time, run just that test, analyse the logs, figure out WHY it fails, fix the underlying bug in the C++ source or test infrastructure, rebuild, re-run that single test to confirm the fix, and only then move on to the next test. After all individual tests pass, run `./ci/ci_mako_raft.sh all` as a final confirmation. This is NOT about re-running tests until they happen to pass — you must find and fix the actual bugs.
     - **Script**: `ci/ci_mako_raft.sh` — runs Raft-specific tests (simpleRaft, shard replication with Raft, etc.). Run individual tests with e.g. `./ci/ci_mako_raft.sh simpleRaft`.
