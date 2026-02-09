@@ -13,6 +13,7 @@
 #include "rpc/server.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
@@ -25,9 +26,6 @@ static uint64_t current_time_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             now.time_since_epoch()).count());
 }
-
-// Atomic counter for dynamic port allocation
-static std::atomic<int> g_pool_test_port{18000};
 
 // ============================================================================
 // PoolConfig Tests
@@ -109,7 +107,7 @@ protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int test_port_;
 
-    ClientPoolTest() : test_port_(g_pool_test_port.fetch_add(1)) {}
+    ClientPoolTest() : test_port_(test_ports::get_port()) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
@@ -235,7 +233,7 @@ TEST_F(ClientPoolTest, AddressCount) {
     ASSERT_NE(server1, nullptr);
 
     // Create second server on different port
-    int port2 = g_pool_test_port.fetch_add(1);
+    int port2 = test_ports::get_port();
     auto poll2 = PollThread::create();
     auto server2 = new Server(rusty::Some(poll2.clone()));
     auto service_box2 = rusty::make_box<PoolTestService>();

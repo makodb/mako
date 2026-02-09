@@ -122,10 +122,6 @@ struct StressStats {
 class StressCrashTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
-    int base_port_;
-
-    // @safe - Reserve port range for this test fixture
-    StressCrashTest() : base_port_(test_ports::reserve_ports(100)) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
@@ -133,12 +129,6 @@ protected:
 
     void TearDown() override {
         poll_thread_.as_ref().unwrap()->shutdown();
-    }
-
-    // @safe - Allocate unique port
-    int next_port() {
-        static std::atomic<int> offset{0};
-        return base_port_ + offset.fetch_add(1);
     }
 
     // @safe - Create server on given port
@@ -152,6 +142,31 @@ protected:
             return nullptr;
         }
         return server;
+    }
+
+    // @safe - Create server, retrying with new ports on bind failure.
+    Server* create_server_with_retry(int* port_out) {
+        const int kMaxAttempts = 10;
+        for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
+            int port = (port_out != nullptr && *port_out > 0) ? *port_out : test_ports::get_port();
+            auto server = create_server(port);
+            if (server != nullptr) {
+                if (port_out != nullptr) {
+                    *port_out = port;
+                }
+                return server;
+            }
+            if (port_out != nullptr) {
+                *port_out = -1;
+            }
+            std::this_thread::sleep_for(milliseconds(5));
+        }
+        return nullptr;
+    }
+
+    // @safe - Build loopback address for a port
+    std::string make_addr(int port) {
+        return "127.0.0.1:" + std::to_string(port);
     }
 
     // @safe - Create client configured for stress testing
@@ -193,13 +208,13 @@ protected:
 // ============================================================================
 
 TEST_F(StressCrashTest, ServerCrashUnderLoad) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
     StressStats stats;
 
     // Start server
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr) << "Failed to start server";
+    std::string addr = make_addr(port);
 
     // Create multiple clients
     const int NUM_CLIENTS = 5;
@@ -259,13 +274,13 @@ TEST_F(StressCrashTest, ServerCrashUnderLoad) {
 }
 
 TEST_F(StressCrashTest, ServerCrashWith100PendingRequests) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
     StressStats stats;
 
     // Start server with delay to accumulate pending requests
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    std::string addr = make_addr(port);
 
     auto client = create_stress_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -312,8 +327,8 @@ TEST_F(StressCrashTest, ServerCrashWith100PendingRequests) {
 // ============================================================================
 
 TEST_F(StressCrashTest, RapidServerRestarts) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
+    std::string addr;
     StressStats stats;
     const int RESTART_CYCLES = 5;
 
@@ -321,8 +336,9 @@ TEST_F(StressCrashTest, RapidServerRestarts) {
 
     for (int cycle = 0; cycle < RESTART_CYCLES; cycle++) {
         // Start server
-        auto server = create_server(port);
+        auto server = create_server_with_retry(&port);
         ASSERT_NE(server, nullptr) << "Cycle " << cycle << ": Failed to start server";
+        addr = make_addr(port);
 
         // Connect client
         stats.connect_attempts++;
@@ -362,12 +378,12 @@ TEST_F(StressCrashTest, RapidServerRestarts) {
 }
 
 TEST_F(StressCrashTest, QuickServerBounce) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
 
     // Start initial server
-    auto server1 = create_server(port);
+    auto server1 = create_server_with_retry(&port);
     ASSERT_NE(server1, nullptr);
+    std::string addr = make_addr(port);
 
     auto client = create_stress_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
@@ -379,8 +395,9 @@ TEST_F(StressCrashTest, QuickServerBounce) {
 
     // Quick bounce: stop and immediately restart
     delete server1;
-    auto server2 = create_server(port);
+    auto server2 = create_server_with_retry(&port);
     ASSERT_NE(server2, nullptr);
+    addr = make_addr(port);
 
     // Wait a moment for server to be ready
     std::this_thread::sleep_for(milliseconds(100));
@@ -402,12 +419,12 @@ TEST_F(StressCrashTest, QuickServerBounce) {
 // ============================================================================
 
 TEST_F(StressCrashTest, ClientStormAfterRecovery) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
 
     // Start server
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    std::string addr = make_addr(port);
 
     // Create many clients
     const int NUM_CLIENTS = 20;
@@ -436,8 +453,9 @@ TEST_F(StressCrashTest, ClientStormAfterRecovery) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Restart server
-    server = create_server(port);
+    server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    addr = make_addr(port);
 
     // All clients try to reconnect simultaneously (storm)
     std::atomic<int> reconnect_success{0};
@@ -485,12 +503,12 @@ TEST_F(StressCrashTest, ClientStormAfterRecovery) {
 }
 
 TEST_F(StressCrashTest, StaggeredClientReconnection) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
 
     // Start server
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    std::string addr = make_addr(port);
 
     const int NUM_CLIENTS = 10;
     std::vector<rusty::Arc<Client>> clients;
@@ -505,8 +523,9 @@ TEST_F(StressCrashTest, StaggeredClientReconnection) {
     // Kill and restart server
     delete server;
     std::this_thread::sleep_for(milliseconds(50));
-    server = create_server(port);
+    server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    addr = make_addr(port);
 
     // Staggered reconnection - clients reconnect at different times
     std::atomic<int> success_count{0};
@@ -543,11 +562,11 @@ TEST_F(StressCrashTest, StaggeredClientReconnection) {
 TEST_F(StressCrashTest, MemoryStabilityShortRun) {
     // This is a short version of the memory stability test
     // A full 24-hour test would be run separately in CI
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
 
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    std::string addr = make_addr(port);
 
     const int ITERATIONS = 20;  // Reduced for CI (full test can be run manually)
     const int CLIENTS_PER_ITERATION = 3;
@@ -582,11 +601,11 @@ TEST_F(StressCrashTest, MemoryStabilityShortRun) {
 }
 
 TEST_F(StressCrashTest, RepeatedConnectDisconnectCycle) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
 
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    std::string addr = make_addr(port);
 
     auto client = create_stress_client();
 
@@ -618,8 +637,8 @@ TEST_F(StressCrashTest, RepeatedConnectDisconnectCycle) {
 // ============================================================================
 
 TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
+    std::string addr = make_addr(port);
 
     CircuitBreakerConfig cb_config;
     cb_config.failure_threshold = 5;
@@ -634,14 +653,18 @@ TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
     for (int i = 0; i < 5 && cb.allow_request(); i++) {
         if (client->connect(addr.c_str()) != 0) {
             cb.record_failure();
+        } else {
+            client->close();
+            cb.record_failure();
         }
     }
 
     EXPECT_TRUE(cb.is_open());
 
     // Now start server
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    addr = make_addr(port);
 
     // Wait for circuit timeout
     std::this_thread::sleep_for(milliseconds(150));
@@ -675,16 +698,18 @@ TEST_F(StressCrashTest, CircuitBreakerHighLoadRecovery) {
 // ============================================================================
 
 TEST_F(StressCrashTest, MultiServerFailover) {
-    int port1 = next_port();
-    int port2 = next_port();
-    std::string addr1 = "127.0.0.1:" + std::to_string(port1);
-    std::string addr2 = "127.0.0.1:" + std::to_string(port2);
+    int port1 = test_ports::get_port();
+    int port2 = test_ports::get_port();
+    std::string addr1;
+    std::string addr2;
 
     // Start two servers
-    auto server1 = create_server(port1);
-    auto server2 = create_server(port2);
+    auto server1 = create_server_with_retry(&port1);
+    auto server2 = create_server_with_retry(&port2);
     ASSERT_NE(server1, nullptr);
     ASSERT_NE(server2, nullptr);
+    addr1 = make_addr(port1);
+    addr2 = make_addr(port2);
 
     // Create clients for both
     auto client1 = create_stress_client();
@@ -710,8 +735,9 @@ TEST_F(StressCrashTest, MultiServerFailover) {
     EXPECT_FALSE(send_request(client1, stats));
 
     // Restart server1
-    server1 = create_server(port1);
+    server1 = create_server_with_retry(&port1);
     ASSERT_NE(server1, nullptr);
+    addr1 = make_addr(port1);
 
     // Reconnect client1
     client1->close();
@@ -733,11 +759,11 @@ TEST_F(StressCrashTest, MultiServerFailover) {
 // ============================================================================
 
 TEST_F(StressCrashTest, MetricsAccuracyUnderStress) {
-    int port = next_port();
-    std::string addr = "127.0.0.1:" + std::to_string(port);
+    int port = test_ports::get_port();
 
-    auto server = create_server(port);
+    auto server = create_server_with_retry(&port);
     ASSERT_NE(server, nullptr);
+    std::string addr = make_addr(port);
 
     auto client = create_stress_client();
     ASSERT_EQ(client->connect(addr.c_str()), 0);
