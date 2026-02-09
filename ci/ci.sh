@@ -88,6 +88,61 @@ cleanup_processes() {
     echo "Cleanup complete."
 }
 
+# Pick a port base for simpleTransaction by checking that the full shard range is free.
+pick_simple_transaction_port_base() {
+    python - <<'PY'
+import random
+import socket
+
+OFFSETS = [0, 100, 1000, 1100, 2000, 2100, 3000, 3100]
+
+def port_free(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("0.0.0.0", port))
+    except OSError:
+        return False
+    finally:
+        sock.close()
+    return True
+
+for _ in range(200):
+    base = random.randint(20000, 45000)
+    if all(port_free(base + offset) for offset in OFFSETS):
+        print(base)
+        raise SystemExit(0)
+raise SystemExit(0)
+PY
+}
+
+# Generate a temp config file with a port base offset for simpleTransaction.
+write_simple_transaction_config() {
+    local base_port=$1
+    local src_config=$2
+    local dest_config=$3
+    python - <<'PY' "$base_port" "$src_config" "$dest_config"
+import sys
+import yaml
+
+base_port = int(sys.argv[1])
+src_config = sys.argv[2]
+dest_config = sys.argv[3]
+
+data = yaml.safe_load(open(src_config, "r"))
+delta = base_port - 31000
+for group in ("localhost", "p1", "p2", "learner"):
+    if group not in data:
+        continue
+    for node in data[group]:
+        if "port" in node:
+            node["port"] = int(node["port"]) + delta
+
+with open(dest_config, "w") as f:
+    yaml.safe_dump(data, f, sort_keys=False)
+PY
+}
+
 # Run a command with memory limit (in KB)
 # Usage: run_with_memory_limit <limit_kb> <command...>
 # Example: run_with_memory_limit 31457280 bash ./examples/test.sh  # 30GB limit
@@ -124,6 +179,18 @@ run_simple_transaction() {
     echo "Running: ./ci/ci.sh simpleTransaction"
     echo "========================================="
     cleanup_processes
+    local base_port
+    base_port=$(pick_simple_transaction_port_base)
+    if [ -n "$base_port" ]; then
+        local src_config="src/mako/config/local-shards2-warehouses1.yml"
+        local tmp_config
+        tmp_config=$(mktemp /tmp/mako_simple_txn_XXXX.yml)
+        write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
+        MAKO_CONFIG="$tmp_config" ./${BUILD_DIR}/simpleTransaction
+        local result=$?
+        rm -f "$tmp_config"
+        return $result
+    fi
     ./${BUILD_DIR}/simpleTransaction
 }
 

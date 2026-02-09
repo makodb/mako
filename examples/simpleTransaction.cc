@@ -5,6 +5,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <cstdlib>
 #include <mako.hh>
 #include <examples/common.h>
 
@@ -171,10 +172,12 @@ int main() {
     abstract_db *db = new mbta_wrapper;
     db->init() ;
     printf("=== Mako Transaction Tests  ===\n");
-    
-    auto config = new transport::Configuration(
-        get_current_absolute_path() + "../src/mako/config/local-shards2-warehouses1.yml"
-    );
+
+    const char* config_env = std::getenv("MAKO_CONFIG");
+    std::string config_path = config_env
+        ? config_env
+        : get_current_absolute_path() + "../src/mako/config/local-shards2-warehouses1.yml";
+    auto config = new transport::Configuration(config_path);
     BenchmarkConfig::getInstance().setConfig(config);
     
     run_tests(db);
