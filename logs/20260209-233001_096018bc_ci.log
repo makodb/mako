@@ -1,0 +1,964 @@
+=========================================
+Running: ./ci/ci.sh compile
+=========================================
+cmake -S . -B build
+-- RustyCpp parallel jobs: 64
+-- Rusty C++ Checker submodule found at: /home/users/wshen24/mako/third-party/rusty-cpp
+-- Checker will be built on demand at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- C++ Borrow Checking enabled
+-- Checker will be built at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- Build type: release
+-- Checking RustyCpp dependencies...
+-- Found cargo: /home/users/wshen24/.local-rust/bin/cargo
+-- Found libclang: /usr/lib/llvm-16/lib/libclang.so
+-- Found libclang headers: /usr/lib/llvm-16/include
+-- Found llvm-config: /usr/lib/llvm-16/bin/llvm-config
+-- Found Z3: /usr/lib/x86_64-linux-gnu/libz3.so
+-- Found Z3 headers: /usr/include
+-- Checker already exists at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker - skipping build target
+-- I: /home/users/wshen24/mako/third-party/erpc
+-- environment: eth
+CMake Deprecation Warning at third-party/erpc/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 2.8.12 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Compilation optimized for performance.
+-- Debugging is disabled.
+-- Profile-guided optimization is disabled.
+-- Logging level = none.
+-- Testing is disabled, so tests may fail.
+-- Selected transport = fake.
+-- Compiling app = latency
+-- DPDK not needed to build eRPC
+STATUS,server compiles
+-- Reuse coroutine enabled
+-- --- Configuring Mako Root & STO Borrow Checks ---
+-- Found 0 files to check in src/mako/ and benchmarks/sto/
+-- --- End Mako Borrow Checks Configuration ---
+-- GoogleTest found via find_package
+-- Test targets configured:
+--   RRR Framework Tests:
+--     - test_marshal: Marshal/Unmarshal tests
+--     - test_rpc: RPC client/server tests
+--     - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)
+--     - test_future: Future/async operation tests
+--     - test_masstree: Core Masstree b-tree regression tests
+--     - test_reactor: Reactor/event system tests
+--     - test_reactor_extended: Extended reactor tests (events, coroutines, load)
+--     - rpcbench: RPC performance benchmark test
+--   Silo/STO Tests:
+--     - test_silo_varint: Varint encoding/decoding (22 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run Silo/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/users/wshen24/mako/build
+Building with 32 parallel jobs...
+cmake --build build --parallel 32
+gmake[1]: warning: -j32 forced in submake: resetting jobserver mode.
+gmake[1]: Entering directory '/home/users/wshen24/mako/build'
+gmake[2]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gtest
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  1%] Built target rust_build
+Consolidate compiler generated dependencies of target gflags_nothreads_shared
+Consolidate compiler generated dependencies of target gflags_nothreads_static
+Consolidate compiler generated dependencies of target hdr_histogram_static
+[  1%] Checker already exists, skipping build
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  1%] Built target rcc_rpc_gen
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hdr_histogram
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Checker already built: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  1%] Built target gtest
+[  2%] Built target gflags_nothreads_static
+[  2%] Built target gflags_nothreads_shared
+[  3%] Built target build_rusty_cpp_checker
+[  3%] Built target hdr_histogram_static
+[  4%] Built target hdr_histogram
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rrr
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gmock
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gtest_main
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  5%] Borrow checking src/mako/masstree/value_versioned_array.cc
+[  5%] Borrow checking src/deptran/communicator.cc (from deptran_borrow)
+[  5%] Borrow checking src/mako/masstree/query_masstree.cc
+[  5%] Borrow checking src/mako/masstree/kvthread.cc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  6%] Borrow checking src/deptran/executor.cc (from deptran_borrow)
+[  6%] Borrow checking src/deptran/stats_registry.cc (from deptran_borrow)
+[  6%] Borrow checking src/mako/masstree/masstree_context.cc
+[  6%] Borrow checking src/deptran/workload.cc (from deptran_borrow)
+[  6%] Borrow checking src/deptran/paxos_worker.cc (from deptran_borrow)
+[  7%] Borrow checking src/deptran/empty.cc (from deptran_borrow)
+[  7%] Linking CXX shared library ../../../../../lib/libgtest_main.so
+[  7%] Linking CXX shared library ../../../../../lib/libgmock.so
+[ 11%] Built target rrr
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/kvthread.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/value_versioned_array.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/stats_registry.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/communicator.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/query_masstree.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/masstree_context.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/executor.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/workload.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/paxos_worker.cc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/empty.cc
+Consolidate compiler generated dependencies of target erpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target memdb
+Consolidate compiler generated dependencies of target latency
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+[ 17%] Built target erpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 20%] Built target memdb
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target mako
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+✓ rusty-cpp: no violations found!
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 21%] Built target gtest_main
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 26%] Built target latency
+[ 26%] Built target borrow_check_deptran_borrow_empty
+Consolidate compiler generated dependencies of target test_marshal
+Consolidate compiler generated dependencies of target test_fiber
+Consolidate compiler generated dependencies of target hello_client
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sharding_policy
+Consolidate compiler generated dependencies of target test_idempotency
+Consolidate compiler generated dependencies of target hello_server
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_schema
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_reactor
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_client_service
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rpcbench
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_coroutine
+Consolidate compiler generated dependencies of target test_future
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 27%] Linking CXX executable test_marshal
+[ 27%] Built target gmock
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_load_balancer
+Consolidate compiler generated dependencies of target test_completion_tracker
+Consolidate compiler generated dependencies of target test_rpc
+Consolidate compiler generated dependencies of target rpc_chaos_test
+[ 27%] Built target test_fiber
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 27%] Linking CXX executable test_sharding_policy
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target bench_future
+[ 28%] Linking CXX executable test_idempotency
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 28%] Linking CXX executable test_config_schema
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_arc_mutex_thread
+Consolidate compiler generated dependencies of target test_reactor_extended
+Consolidate compiler generated dependencies of target test_rpc_extended
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 28%] Linking CXX executable test_client_service
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 28%] Linking CXX executable test_reactor
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 30%] Built target hello_client
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Built target rpcbench
+[ 31%] Built target hello_server
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_timeout_race
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Linking CXX executable test_future
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Linking CXX executable test_completion_tracker
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Linking CXX executable test_coroutine
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Linking CXX executable test_rpc
+[ 31%] Linking CXX executable test_load_balancer
+Consolidate compiler generated dependencies of target test_and_event
+[ 31%] Linking CXX executable rpc_chaos_test
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 33%] Linking CXX executable test_arc_mutex_thread
+[ 36%] Linking CXX executable test_reactor_extended
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 40%] Linking CXX executable bench_future
+[ 42%] Linking CXX executable test_timeout_race
+[ 44%] Linking CXX executable test_and_event
+[ 43%] Linking CXX executable test_rpc_extended
+[ 44%] Built target mako
+Consolidate compiler generated dependencies of target test_transport_backend
+Consolidate compiler generated dependencies of target stress_transport_backend
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_transport_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 44%] Linking CXX executable stress_transport_backend
+Consolidate compiler generated dependencies of target test_erpc_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 44%] Linking CXX executable test_transport_integration
+[ 44%] Linking CXX executable test_transport_backend
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 44%] Linking CXX executable test_erpc_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 45%] Built target test_erpc_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_connection_state
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 45%] Linking CXX executable test_rpc_connection_state
+Consolidate compiler generated dependencies of target txlog
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 76%] Built target txlog
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_reconnect_policy
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 76%] Linking CXX executable test_rpc_reconnect_policy
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 76%] Built target test_load_balancer
+[ 76%] Built target test_reactor_extended
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 76%] Built target test_reactor
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_circuit_breaker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 76%] Linking CXX executable test_rpc_circuit_breaker
+[ 76%] Built target test_and_event
+Consolidate compiler generated dependencies of target test_rpc_heartbeat
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_errors
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 76%] Linking CXX executable test_rpc_heartbeat
+[ 76%] Built target bench_future
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_callbacks
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 77%] Built target test_rpc_extended
+[ 77%] Linking CXX executable test_rpc_callbacks
+[ 77%] Linking CXX executable test_rpc_errors
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_request_queue
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_request_buffering
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_transport_integration
+[ 78%] Linking CXX executable test_rpc_request_queue
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_timeout_retry
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_request_buffering
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc
+[ 78%] Built target rpc_chaos_test
+[ 78%] Built target test_coroutine
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_timeout_retry
+[ 78%] Built target test_timeout_race
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_state_integration
+Consolidate compiler generated dependencies of target test_rpc_circuit_breaker_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_reconnect_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_future
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_circuit_breaker_integration
+[ 80%] Linking CXX executable test_rpc_state_integration
+[ 80%] Linking CXX executable test_rpc_reconnect_integration
+Consolidate compiler generated dependencies of target test_rpc_error_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_combined_reliability
+[ 80%] Linking CXX executable test_rpc_error_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_combined_reliability
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_rpc_state_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_graceful_shutdown
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_graceful_shutdown
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_rpc_circuit_breaker_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_restart_detection
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_restart_detection
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_rpc_request_buffering
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_validation
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_rpc_combined_reliability
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_validation
+Consolidate compiler generated dependencies of target test_rpc_metrics
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_rpc_error_integration
+[ 80%] Linking CXX executable test_rpc_metrics
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_rpc_reconnect_integration
+Consolidate compiler generated dependencies of target test_rpc_client_pool
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_log_storage
+[ 80%] Linking CXX executable test_rpc_client_pool
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_idempotency
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_rocksdb_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_rocksdb_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target test_client_service
+[ 80%] Built target test_marshal
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_txn_timeout
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_stress_crash
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_txn_timeout
+[ 80%] Built target test_arc_mutex_thread
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_stress_crash
+Consolidate compiler generated dependencies of target test_rpc_partition
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_partition
+[ 80%] Built target test_transport_backend
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_varint
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 81%] Linking CXX executable test_silo_varint
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 81%] Built target test_rpc_graceful_shutdown
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_rcu_thread
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 81%] Built target test_silo_varint
+[ 81%] Built target test_sharding_policy
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 81%] Linking CXX executable test_silo_rcu_thread
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_allocator_tuple
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sto_transaction
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 81%] Linking CXX executable test_silo_allocator_tuple
+[ 81%] Linking CXX executable test_sto_transaction
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 81%] Built target test_silo_rcu_thread
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sto_transaction_real
+[ 81%] Built target test_sto_transaction
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 81%] Linking CXX executable test_sto_transaction_real
+Consolidate compiler generated dependencies of target gmock_main
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 82%] Linking CXX shared library ../../../../../lib/libgmock_main.so
+[ 82%] Built target test_rpc_restart_detection
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 82%] Built target test_silo_allocator_tuple
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target simpleTransaction
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 82%] Built target simpleTransaction
+Consolidate compiler generated dependencies of target simpleTransactionRep
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target continuousTransactions
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 83%] Built target simpleTransactionRep
+[ 83%] Built target test_config_schema
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 83%] Built target continuousTransactions
+[ 83%] Built target gmock_main
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+✓ rusty-cpp: no violations found!
+[ 83%] Built target test_rpc_metrics
+Consolidate compiler generated dependencies of target simplePaxos
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rocksdb_persistence
+Consolidate compiler generated dependencies of target rocksdb_replay_app
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_callback_demo
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 83%] Built target borrow_check_kvthread
+[ 83%] Built target test_rocksdb_persistence
+Consolidate compiler generated dependencies of target test_ordered_callbacks
+[ 83%] Built target rocksdb_replay_app
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 83%] Built target simplePaxos
+[ 83%] Built target test_completion_tracker
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 83%] Built target test_callback_demo
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_stress_partitioned_queues
+[ 85%] Built target test_rpc_reconnect_policy
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 85%] Built target test_ordered_callbacks
+Consolidate compiler generated dependencies of target test_partitioned_queues
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target makoCon
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target paxos_async_commit_test
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 86%] Built target test_stress_partitioned_queues
+[ 86%] Built target test_partitioned_queues
+Consolidate compiler generated dependencies of target makoConDBBench
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target basic
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target makoConMultiTrd
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 86%] Built target paxos_async_commit_test
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 86%] Built target makoCon
+[ 86%] Built target basic
+Consolidate compiler generated dependencies of target erpc_server
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 87%] Built target makoConMultiTrd
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target erpc_client
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target makoConDBBench
+Consolidate compiler generated dependencies of target test_sharding_policy_cache
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target test_rpc_validation
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Built target stress_transport_backend
+[ 88%] Built target test_rpc_client_pool
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_store
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Built target erpc_server
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_tpcc_sharding
+[ 88%] Linking CXX executable test_sharding_policy_cache
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_shard_router
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_masstree
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_failure
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_config_store
+Consolidate compiler generated dependencies of target test_config_service
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target erpc_client
+Consolidate compiler generated dependencies of target test_sharding_startup
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_masstree
+Consolidate compiler generated dependencies of target test_masstree_internals
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_client
+[ 88%] Linking CXX executable test_tpcc_sharding
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_config_failure
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_shard_router
+[ 88%] Linking CXX executable test_config_service
+Consolidate compiler generated dependencies of target test_masstree_multi_instance
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_sharding_startup
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_masstree_internals
+[ 88%] Linking CXX executable test_config_client
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_masstree_multi_instance
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target test_rpc_rocksdb_log_storage
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_runtime
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_silo_runtime
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 90%] Built target test_rpc_connection_state
+[ 90%] Built target test_sto_transaction_real
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_multi_site_stress
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target masstree_perf
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 90%] Built target test_masstree_multi_instance
+[ 91%] Built target test_masstree
+[ 92%] Built target masstree_perf
+[ 92%] Linking CXX executable test_silo_multi_site_stress
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 92%] Built target test_config_store
+[ 93%] Built target test_rpc_callbacks
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 93%] Built target test_silo_runtime
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 94%] Built target test_rpc_partition
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 94%] Built target test_tpcc_sharding
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 94%] Built target test_sharding_startup
+[ 95%] Built target test_config_client
+[ 96%] Built target test_sharding_policy_cache
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 97%] Built target test_config_failure
+[ 97%] Built target test_rpc_stress_crash
+[ 97%] Built target test_shard_router
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 97%] Built target test_silo_multi_site_stress
+[ 98%] Built target test_config_service
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target borrow_check_masstree_context
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target test_rpc_timeout_retry
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target test_rpc_errors
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_heartbeat
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_circuit_breaker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_request_queue
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_txn_timeout
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_masstree_internals
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_value_versioned_array
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_query_masstree
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_executor
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_stats_registry
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_paxos_worker
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_communicator
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_workload
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_all_deptran_borrow
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[100%] Running borrow checker on Deptran worker sources
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target dbtest
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target dbtest
+gmake[2]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[1]: Leaving directory '/home/users/wshen24/mako/build'
+using partitions:  10
+using partitions:  10
+using partitions:  10
+[{'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}]
+work on template:  template_local-shards1-warehouses1.yml
+work on template:  template_local-shards2-warehouses1.yml
+work on template:  template_local-shards3-warehouses1.yml
+work on template:  template_local-shards4-warehouses1.yml
+work on template:  template_local-shards5-warehouses1.yml
+work on template:  template_local-shards6-warehouses1.yml
+work on template:  template_local-shards7-warehouses1.yml
+work on template:  template_local-shards8-warehouses1.yml
+work on template:  template_local-shards9-warehouses1.yml
+work on template:  template_local-shards10-warehouses1.yml
+using partitions:  10
+=========================================
+Running: ./ci/ci.sh rrrTests
+=========================================
+Test project /home/users/wshen24/mako/build
+      Start  1: test_marshal
+ 1/66 Test  #1: test_marshal ...........................   Passed    0.10 sec
+      Start  2: test_client_service
+ 2/66 Test  #2: test_client_service ....................   Passed    0.06 sec
+      Start  3: test_config_schema
+ 3/66 Test  #3: test_config_schema .....................   Passed    0.04 sec
+      Start  4: test_sharding_policy
+ 4/66 Test  #4: test_sharding_policy ...................   Passed    0.04 sec
+      Start  5: test_sharding_policy_cache
+ 5/66 Test  #5: test_sharding_policy_cache .............   Passed    0.21 sec
+      Start  6: test_shard_router
+ 6/66 Test  #6: test_shard_router ......................   Passed    0.04 sec
+      Start  7: test_tpcc_sharding
+ 7/66 Test  #7: test_tpcc_sharding .....................   Passed    0.03 sec
+      Start  8: test_fiber
+ 8/66 Test  #8: test_fiber .............................   Passed    0.09 sec
+      Start  9: test_config_store
+ 9/66 Test  #9: test_config_store ......................   Passed    0.15 sec
+      Start 10: test_config_service
+10/66 Test #10: test_config_service ....................   Passed    0.23 sec
+      Start 11: test_config_client
+11/66 Test #11: test_config_client .....................   Passed    2.09 sec
+      Start 12: test_config_failure
+12/66 Test #12: test_config_failure ....................   Passed    0.87 sec
+      Start 13: test_sharding_startup
+13/66 Test #13: test_sharding_startup ..................   Passed    0.60 sec
+      Start 14: test_rpc
+14/66 Test #14: test_rpc ...............................   Passed    3.53 sec
+      Start 15: test_load_balancer
+15/66 Test #15: test_load_balancer .....................   Passed    0.58 sec
+      Start 16: test_idempotency
+16/66 Test #16: test_idempotency .......................   Passed    0.08 sec
+      Start 17: test_completion_tracker
+17/66 Test #17: test_completion_tracker ................   Passed    0.02 sec
+      Start 18: rpc_chaos_test
+18/66 Test #18: rpc_chaos_test .........................   Passed    5.50 sec
+      Start 19: test_future
+19/66 Test #19: test_future ............................   Passed    2.32 sec
+      Start 20: test_masstree
+20/66 Test #20: test_masstree ..........................   Passed    0.05 sec
+      Start 21: test_masstree_internals
+21/66 Test #21: test_masstree_internals ................   Passed    0.03 sec
+      Start 22: test_masstree_multi_instance
+22/66 Test #22: test_masstree_multi_instance ...........   Passed    0.03 sec
+      Start 23: test_silo_runtime
+23/66 Test #23: test_silo_runtime ......................   Passed    0.02 sec
+      Start 24: test_silo_multi_site_stress
+24/66 Test #24: test_silo_multi_site_stress ............   Passed    0.89 sec
+      Start 25: test_reactor
+25/66 Test #25: test_reactor ...........................   Passed    1.85 sec
+      Start 26: test_coroutine
+26/66 Test #26: test_coroutine .........................   Passed    1.04 sec
+      Start 27: test_rpc_extended
+27/66 Test #27: test_rpc_extended ......................   Passed    5.92 sec
+      Start 28: test_reactor_extended
+28/66 Test #28: test_reactor_extended ..................   Passed    0.27 sec
+      Start 29: test_arc_mutex_thread
+29/66 Test #29: test_arc_mutex_thread ..................   Passed    0.03 sec
+      Start 30: test_timeout_race
+30/66 Test #30: test_timeout_race ......................   Passed    0.56 sec
+      Start 31: test_and_event
+31/66 Test #31: test_and_event .........................   Passed    0.33 sec
+      Start 32: test_transport_backend
+32/66 Test #32: test_transport_backend .................   Passed    0.13 sec
+      Start 33: stress_transport_backend
+33/66 Test #33: stress_transport_backend ...............   Passed    5.75 sec
+      Start 34: test_transport_integration
+34/66 Test #34: test_transport_integration .............   Passed   13.74 sec
+      Start 35: test_erpc_integration
+35/66 Test #35: test_erpc_integration ..................   Passed    1.34 sec
+      Start 36: test_rpc_connection_state
+36/66 Test #36: test_rpc_connection_state ..............   Passed    0.04 sec
+      Start 37: test_rpc_reconnect_policy
+37/66 Test #37: test_rpc_reconnect_policy ..............   Passed    0.03 sec
+      Start 38: test_rpc_circuit_breaker
+38/66 Test #38: test_rpc_circuit_breaker ...............   Passed    0.32 sec
+      Start 39: test_rpc_heartbeat
+39/66 Test #39: test_rpc_heartbeat .....................   Passed    0.19 sec
+      Start 40: test_rpc_errors
+40/66 Test #40: test_rpc_errors ........................   Passed    0.01 sec
+      Start 41: test_rpc_callbacks
+41/66 Test #41: test_rpc_callbacks .....................   Passed    0.02 sec
+      Start 42: test_rpc_request_queue
+42/66 Test #42: test_rpc_request_queue .................   Passed    0.24 sec
+      Start 43: test_rpc_request_buffering
+43/66 Test #43: test_rpc_request_buffering .............   Passed    0.35 sec
+      Start 44: test_rpc_timeout_retry
+44/66 Test #44: test_rpc_timeout_retry .................   Passed    0.08 sec
+      Start 45: test_rpc_state_integration
+45/66 Test #45: test_rpc_state_integration .............   Passed    1.37 sec
+      Start 46: test_rpc_reconnect_integration
+46/66 Test #46: test_rpc_reconnect_integration .........   Passed    0.90 sec
+      Start 47: test_rpc_circuit_breaker_integration
+47/66 Test #47: test_rpc_circuit_breaker_integration ...   Passed    0.48 sec
+      Start 48: test_rpc_error_integration
+48/66 Test #48: test_rpc_error_integration .............   Passed    0.34 sec
+      Start 49: test_rpc_combined_reliability
+49/66 Test #49: test_rpc_combined_reliability ..........   Passed    1.13 sec
+      Start 50: test_rpc_graceful_shutdown
+50/66 Test #50: test_rpc_graceful_shutdown .............   Passed    0.31 sec
+      Start 51: test_rpc_restart_detection
+51/66 Test #51: test_rpc_restart_detection .............   Passed    0.03 sec
+      Start 52: test_rpc_validation
+52/66 Test #52: test_rpc_validation ....................   Passed    1.19 sec
+      Start 53: test_rpc_metrics
+53/66 Test #53: test_rpc_metrics .......................   Passed    0.23 sec
+      Start 54: test_rpc_client_pool
+54/66 Test #54: test_rpc_client_pool ...................   Passed    0.21 sec
+      Start 55: test_rpc_log_storage
+55/66 Test #55: test_rpc_log_storage ...................   Passed    0.02 sec
+      Start 56: test_rpc_rocksdb_log_storage
+56/66 Test #56: test_rpc_rocksdb_log_storage ...........   Passed    0.40 sec
+      Start 57: test_txn_timeout
+57/66 Test #57: test_txn_timeout .......................   Passed    0.02 sec
+      Start 58: test_rpc_stress_crash
+58/66 Test #58: test_rpc_stress_crash ..................   Passed    3.56 sec
+      Start 59: test_rpc_partition
+59/66 Test #59: test_rpc_partition .....................   Passed    7.89 sec
+      Start 60: simpleTransaction
+60/66 Test #60: simpleTransaction ......................   Passed    1.33 sec
+      Start 61: rpcbench
+61/66 Test #61: rpcbench ...............................   Passed    5.06 sec
+      Start 62: SiloVarintTests
+62/66 Test #62: SiloVarintTests ........................   Passed    0.01 sec
+      Start 63: SiloRCUThreadTests
+63/66 Test #63: SiloRCUThreadTests .....................   Passed    0.08 sec
+      Start 64: SiloAllocatorTupleTests
+64/66 Test #64: SiloAllocatorTupleTests ................   Passed    0.07 sec
+      Start 65: STOTransactionTests
+65/66 Test #65: STOTransactionTests ....................   Passed    0.01 sec
+      Start 66: STOTransactionRealTests
+66/66 Test #66: STOTransactionRealTests ................   Passed    0.05 sec
+
+100% tests passed, 0 tests failed out of 66
+
+Label Time Summary:
+chaos     =   5.50 sec*proc (1 test)
+stress    =  11.45 sec*proc (2 tests)
+
+Total Test time (real) =  74.75 sec
+=========================================
+Running: ./ci/ci.sh simpleTransaction
+=========================================
+Cleaning up any lingering test processes...
