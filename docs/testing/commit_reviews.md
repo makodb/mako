@@ -19,8 +19,10 @@ Each commit may have multiple issues tracked with severity levels:
 
 | Issue ID | Severity | Commit | Addressed By |
 |----------|----------|--------|--------------|
-| ISSUE-232ba3b0-1 | S3 | 232ba3b0 | (this commit) |
-| ISSUE-232ba3b0-2 | S3 | 232ba3b0 | (this commit) |
+| ISSUE-db176a90-1 | S2 | db176a90 | (next commit) |
+| ISSUE-db176a90-2 | S2 | db176a90 | (next commit) |
+| ISSUE-232ba3b0-1 | S3 | 232ba3b0 | db176a90 |
+| ISSUE-232ba3b0-2 | S3 | 232ba3b0 | db176a90 |
 | ISSUE-1886cab7-1 | S3 | 1886cab7 | 7a6a5847 |
 | ISSUE-1886cab7-2 | S3 | 1886cab7 | 844e6c99 |
 | ISSUE-1886cab7-3 | S2 | 1886cab7 | fb6d9d92 |
@@ -31,7 +33,26 @@ Each commit may have multiple issues tracked with severity levels:
 
 ---
 
-*Last updated: 2026-02-10 (7a75d1af reviewed)*
+*Last updated: 2026-02-10 (db176a90 reviewed)*
+
+---
+
+## Commit db176a90 - "Fix 2 Raft async persistence bugs from commit 232ba3b0"
+**Date**: 2026-02-10
+
+**Changes**: server.cc (59 insertions, 22 deletions), server.h (29 insertions, 13 deletions)
+
+**Verdict**: Two medium-severity issues found
+
+### ISSUE-db176a90-1 (S2 medium): Mutex held during thread join in destructor
+- Destructor holds `async_threads_mtx_` while calling `join()` on all threads
+- If an in-flight RPC handler (past `stop_` check) tries to `emplace_back`, it deadlocks
+- **Fix**: Swap vector out under lock, join without lock
+
+### ISSUE-db176a90-2 (S2 medium): Unbounded thread handle accumulation
+- `async_threads_` vector is append-only; completed thread handles never pruned
+- Over thousands of operations, accumulates finished `std::thread` objects (minor resource leak)
+- **Fix**: Prune completed threads (via atomic done flag) at each insertion
 
 ---
 

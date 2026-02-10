@@ -1140,14 +1140,20 @@ RaftServer::~RaftServer() {
   // Join all async persistence threads to prevent use-after-free.
   // These threads capture `this` for PersistState/PersistLogEntry/commo() calls.
   // They must complete before this object is destroyed.
+  // NOTE: We swap the vector out under the lock, then join WITHOUT the lock.
+  // This prevents deadlock if an in-flight RPC handler tries to emplace_back
+  // a new thread while we're joining (it would block on async_threads_mtx_).
   {
-    std::lock_guard<std::mutex> lk(async_threads_mtx_);
-    for (auto& t : async_threads_) {
+    std::vector<std::pair<std::thread, std::shared_ptr<std::atomic<bool>>>> threads_to_join;
+    {
+      std::lock_guard<std::mutex> lk(async_threads_mtx_);
+      threads_to_join = std::move(async_threads_);
+    }
+    for (auto& [t, done_flag] : threads_to_join) {
       if (t.joinable()) {
         t.join();
       }
     }
-    async_threads_.clear();
   }
 
   // CRITICAL: Sleep briefly to allow detached coroutines to see stop_=true and exit
@@ -1743,9 +1749,22 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
           // Track async persistence thread (joined in destructor to prevent UAF)
           {
             std::lock_guard<std::mutex> lk(async_threads_mtx_);
-            async_threads_.emplace_back([this, entries = std::move(entries_to_persist),
+            // Prune completed threads to prevent unbounded accumulation
+            async_threads_.erase(
+              std::remove_if(async_threads_.begin(), async_threads_.end(),
+                [](auto& entry) {
+                  if (entry.second->load(std::memory_order_acquire)) {
+                    if (entry.first.joinable()) entry.first.join();
+                    return true;
+                  }
+                  return false;
+                }),
+              async_threads_.end());
+            auto done = std::make_shared<std::atomic<bool>>(false);
+            async_threads_.emplace_back(
+              std::thread([this, entries = std::move(entries_to_persist),
                          log_index_for_durable_ack, term_copy, follower_id_copy,
-                         leader_id_copy, par_id_copy, commit_index_copy]() {
+                         leader_id_copy, par_id_copy, commit_index_copy, done]() {
               // Persist all log entries
               for (const auto& entry : entries) {
                 PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
@@ -1760,7 +1779,8 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                 c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
                                             follower_id_copy, log_index_for_durable_ack);
               }
-            });
+              done->store(true, std::memory_order_release);
+            }), done);
           }
         }
       } else {

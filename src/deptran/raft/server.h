@@ -183,8 +183,11 @@ class RaftServer : public TxLogServer {
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
   // @safe - Tracked async persistence threads (joined in destructor to prevent UAF)
+  // Each entry pairs a thread with a completion flag. The lambda sets the flag to true
+  // when done, allowing us to prune finished threads at each new insertion to prevent
+  // unbounded growth of thread handles.
   std::mutex async_threads_mtx_;
-  std::vector<std::thread> async_threads_;
+  std::vector<std::pair<std::thread, std::shared_ptr<std::atomic<bool>>>> async_threads_;
 
   // Client notification callbacks
   // Key: log index, Value: callback to notify on commit status change
@@ -274,7 +277,20 @@ class RaftServer : public TxLogServer {
             // Track async persistence thread (joined in destructor to prevent UAF)
             {
               std::lock_guard<std::mutex> lk(async_threads_mtx_);
-              async_threads_.emplace_back([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+              // Prune completed threads to prevent unbounded accumulation
+              async_threads_.erase(
+                std::remove_if(async_threads_.begin(), async_threads_.end(),
+                  [](auto& entry) {
+                    if (entry.second->load(std::memory_order_acquire)) {
+                      if (entry.first.joinable()) entry.first.join();
+                      return true;
+                    }
+                    return false;
+                  }),
+                async_threads_.end());
+              auto done = std::make_shared<std::atomic<bool>>(false);
+              async_threads_.emplace_back(
+                std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy, done]() {
                   // Persist the vote durably
                   PersistState(term_copy, can_id_copy, "doVote: async vote persist");
 
@@ -283,7 +299,8 @@ class RaftServer : public TxLogServer {
                   if (c != nullptr) {
                       c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
                   }
-              });
+                  done->store(true, std::memory_order_release);
+              }), done);
             }
 
             return;  // Already called cb() above
