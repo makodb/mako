@@ -182,6 +182,10 @@ class RaftServer : public TxLogServer {
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
+  // @safe - Tracked async persistence threads (joined in destructor to prevent UAF)
+  std::mutex async_threads_mtx_;
+  std::vector<std::thread> async_threads_;
+
   // Client notification callbacks
   // Key: log index, Value: callback to notify on commit status change
   // Callbacks are invoked with: SPECULATIVE (memory quorum), DURABLE (disk quorum),
@@ -267,17 +271,20 @@ class RaftServer : public TxLogServer {
             siteid_t can_id_copy = can_id;
             parid_t par_id_copy = partition_id_;
 
-            // Use a detached thread for async fsync + VoteDurable send
-            std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
-                // Persist the vote durably
-                PersistState(term_copy, can_id_copy, "doVote: async vote persist");
+            // Track async persistence thread (joined in destructor to prevent UAF)
+            {
+              std::lock_guard<std::mutex> lk(async_threads_mtx_);
+              async_threads_.emplace_back([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+                  // Persist the vote durably
+                  PersistState(term_copy, can_id_copy, "doVote: async vote persist");
 
-                // Send VoteDurable RPC to candidate
-                auto c = commo();
-                if (c != nullptr) {
-                    c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
-                }
-            }).detach();
+                  // Send VoteDurable RPC to candidate
+                  auto c = commo();
+                  if (c != nullptr) {
+                      c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
+                  }
+              });
+            }
 
             return;  // Already called cb() above
           } else {

@@ -14,13 +14,13 @@ Each commit may have multiple issues tracked with severity levels:
 
 | Issue ID | Severity | Commit | Category | Brief Description |
 |----------|----------|--------|----------|-------------------|
-| ISSUE-232ba3b0-1 | S3 | 232ba3b0 | Memory safety | Detached threads capture `this` in async persistence path - use-after-free on server destruction |
-| ISSUE-232ba3b0-2 | S3 | 232ba3b0 | Correctness | Double-counting self in quorum check in OnPeerRestart() - quorum off by one |
 
 ## Addressed Issues
 
 | Issue ID | Severity | Commit | Addressed By |
 |----------|----------|--------|--------------|
+| ISSUE-232ba3b0-1 | S3 | 232ba3b0 | (this commit) |
+| ISSUE-232ba3b0-2 | S3 | 232ba3b0 | (this commit) |
 | ISSUE-1886cab7-1 | S3 | 1886cab7 | 7a6a5847 |
 | ISSUE-1886cab7-2 | S3 | 1886cab7 | 844e6c99 |
 | ISSUE-1886cab7-3 | S2 | 1886cab7 | fb6d9d92 |

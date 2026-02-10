@@ -1137,6 +1137,19 @@ RaftServer::~RaftServer() {
   // Stop leadership transfer monitoring thread if running
   StopLeadershipTransferMonitoring();
 
+  // Join all async persistence threads to prevent use-after-free.
+  // These threads capture `this` for PersistState/PersistLogEntry/commo() calls.
+  // They must complete before this object is destroyed.
+  {
+    std::lock_guard<std::mutex> lk(async_threads_mtx_);
+    for (auto& t : async_threads_) {
+      if (t.joinable()) {
+        t.join();
+      }
+    }
+    async_threads_.clear();
+  }
+
   // CRITICAL: Sleep briefly to allow detached coroutines to see stop_=true and exit
   // The election timer coroutine (StartElectionTimer) and leadership transfer coroutine
   // (InitiateLeadershipTransfer) are detached and check stop_ before calling RequestVote().
@@ -1727,24 +1740,28 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         // ASYNC MODE (speculative): Start async persistence and send durable ack later
         if (!entries_to_persist.empty()) {
           // Capture entries by move to avoid dangling references
-          std::thread([this, entries = std::move(entries_to_persist),
-                       log_index_for_durable_ack, term_copy, follower_id_copy,
-                       leader_id_copy, par_id_copy, commit_index_copy]() {
-            // Persist all log entries
-            for (const auto& entry : entries) {
-              PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
-            }
+          // Track async persistence thread (joined in destructor to prevent UAF)
+          {
+            std::lock_guard<std::mutex> lk(async_threads_mtx_);
+            async_threads_.emplace_back([this, entries = std::move(entries_to_persist),
+                         log_index_for_durable_ack, term_copy, follower_id_copy,
+                         leader_id_copy, par_id_copy, commit_index_copy]() {
+              // Persist all log entries
+              for (const auto& entry : entries) {
+                PersistLogEntry(entry.first, *entry.second, "OnAppendEntries: async follower entry");
+              }
 
-            // Also persist commit index (async is fine for commit index)
-            PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
+              // Also persist commit index (async is fine for commit index)
+              PersistCommitIndex(commit_index_copy, "OnAppendEntries: async follower commit");
 
-            // Send AppendEntriesDurable RPC to leader
-            auto c = commo();
-            if (c != nullptr) {
-              c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
-                                          follower_id_copy, log_index_for_durable_ack);
-            }
-          }).detach();
+              // Send AppendEntriesDurable RPC to leader
+              auto c = commo();
+              if (c != nullptr) {
+                c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
+                                            follower_id_copy, log_index_for_durable_ack);
+              }
+            });
+          }
         }
       } else {
         // SYNC MODE (traditional): Persist entries synchronously before returning
@@ -2334,8 +2351,9 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
     size_t quorum = (Config::GetConfig()->GetPartitionSize(partition_id_) / 2) + 1;
 
     // NEW (Phase 6.4.1): Check if durable quorum is sufficient for secured status
-    // +1 for our own durable vote (self-vote is always durable - see server.cc:1176-1177)
-    size_t durable_vote_count = durableVoters_.size() + 1;
+    // Note: site_id_ is already in durableVoters_ (inserted by ResetSpeculativeState
+    // or RequestElection), so no +1 needed. This matches OnVoteDurable() at line 1417.
+    size_t durable_vote_count = durableVoters_.size();
     if (durable_vote_count >= quorum) {
       // We have durable quorum - become secured leader
       // Safety: durableVoters have votedFor=us on disk, can't vote for others in this term
@@ -2345,8 +2363,9 @@ void RaftServer::OnPeerRestart(siteid_t restarted_site_id) {
                site_id_, durable_vote_count, quorum, specVoters_.size());
     } else {
       // No durable quorum yet - check speculative quorum
-      // +1 for our own vote
-      size_t vote_count = specVoters_.size() + 1;
+      // Note: site_id_ is already in specVoters_ (inserted by ResetSpeculativeState
+      // or RequestElection), so no +1 needed.
+      size_t vote_count = specVoters_.size();
       if (vote_count < quorum) {
         // No durable quorum AND no speculative quorum - must step down
         Log_info("[SPEC-RAFT] Site %d: Lost both spec quorum (%zu/%zu) and durable quorum (%zu/%zu) - stepping down",
