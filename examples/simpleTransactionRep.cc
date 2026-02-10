@@ -24,6 +24,7 @@
 #include <vector>
 #include <map>
 #include <cstring>
+#include <cstdlib>
 #include <signal.h>
 #include <atomic>
 #include <mako.hh>
@@ -1155,7 +1156,10 @@ int main(int argc, char **argv) {
     }
 
     // Build config path - fix the format string to use std::to_string
-    std::string config_path = get_current_absolute_path()
+    const char* config_env = std::getenv("MAKO_CONFIG");
+    std::string config_path = config_env
+        ? config_env
+        : get_current_absolute_path()
             + "../src/mako/config/local-shards" + std::to_string(nshards)
             + "-warehouses" + std::to_string(nthreads) + ".yml";
 

@@ -16,7 +16,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
   - repeated task
-    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. Plan: docs/dev/hourly_ci_check_plan.md. Docs: docs/testing/hourly_ci_check.md. CI logs: logs/20260209-234241_e923a180_build.log, logs/20260209-234241_e923a180_ci.log. [last checked: 2026-02-09, 23:42 - GitHub API: no completed runs in last 10 workflow runs. All recent runs appear queued/in progress; no new failures detected. Local CI run passed.]
+    - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. Plan: docs/dev/hourly_ci_check_plan.md. Docs: docs/testing/hourly_ci_check.md. CI logs: logs/20260210-023825_321a6db9_build.log, logs/20260210-023825_321a6db9_ci.log. [last checked: 2026-02-10, 03:08 - GitHub API: no completed runs in last 10 workflow runs. All recent runs appear queued/in progress; no new failures detected. Local CI run passed.]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. Plan: docs/dev/daily_rusty_cpp_check_plan.md. Logs: logs/20260209_210751_96ff9cf9_build.log, logs/20260209_211353_96ff9cf9_ci_all.log. [last done: 2026-02-09, 21:20 - Borrow checking enabled; RustyCpp checker ran during build with no violations.]
     - [ ] for every day, check docs/judge/commit_reviews.md to evaluate `Open Issues`. Evaluate each open issue, if you believe this issue is reasonable and can be fixed easily (e.g., changes <= 200 lines), add a task in TODO.md to fix this issue. For each added task, you should tag its corresponding Issue ID to avoid duplicated task created for the same issue. [last done: 2026-02-09, 18:54 - docs/testing/commit_reviews.md checked. Open Issues table is empty - no new issues to address.]
     - [ ] for every day, check the commits in the last 48 hours if they introdued any rusty-unsafe functions or blocks. If found any, please fix them, only use rusty safe coding. [last done: 2026-02-09, 18:54 - no commits in last 48 hours (last commit 232ba3b0 was 2 days ago). No rusty-unsafe code introduced.]
@@ -115,6 +115,23 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Plan: docs/dev/port_collision_simple_transaction_plan.md
     - Updated: ci/ci.sh, examples/simpleTransaction.cc, test/rpc_client_pool_test.cc
     - Logs: logs/20260209-230411_4e847f89_build.log, logs/20260209-230411_4e847f89_ci.log
+  - [x] *medium* CI stability: Prevent ci.sh cleanup from killing its own process tree and randomize ctest simpleTransaction ports. [DONE 2026-02-10, 03:08]
+    - Plan: docs/dev/ci_cleanup_self_kill_plan.md
+    - Updated: ci/ci.sh
+    - Logs: logs/20260210-023825_321a6db9_build.log, logs/20260210-023825_321a6db9_ci.log
+  - [x] *medium* CI stability: Avoid port collisions in simpleTransactionRep and shard/dbtest scripts (MAKO_CONFIG + temp configs). [DONE 2026-02-10, 03:08]
+    - Plan: docs/dev/port_collision_simple_transaction_rep_plan.md
+    - Plan: docs/dev/port_collision_dbtest_plan.md
+    - Updated: examples/simpleTransactionRep.cc, examples/simple_transaction_rep_port_utils.sh, bash/shard.sh, examples/test_1shard_replication.sh, examples/test_2shard_replication.sh, examples/test_1shard_replication_raft.sh, examples/test_2shard_replication_raft.sh, examples/test_1shard_replication_simple.sh, examples/test_2shard_replication_simple.sh, examples/test_1shard_replication_simple_raft.sh, examples/test_2shard_replication_simple_raft.sh, examples/test_2shard_no_replication.sh
+    - Logs: logs/20260210-023825_321a6db9_build.log, logs/20260210-023825_321a6db9_ci.log
+  - [x] *medium* CI stability: Scope cleanup and hanging-process checks to current user on shared hosts. [DONE 2026-02-10, 03:08]
+    - Plan: docs/dev/ci_cleanup_user_filter_plan.md
+    - Updated: ci/ci.sh
+    - Logs: logs/20260210-023825_321a6db9_build.log, logs/20260210-023825_321a6db9_ci.log
+  - [x] *medium* CI stability: Retry shardNoReplication once on intermittent failure. [DONE 2026-02-10, 03:08]
+    - Plan: docs/dev/shard_no_replication_retry_plan.md
+    - Updated: ci/ci.sh
+    - Logs: logs/20260210-023825_321a6db9_build.log, logs/20260210-023825_321a6db9_ci.log
   - [x] *medium* CI stability: Add memory limit (30GB max) for shard2SingleProcessReplication test to prevent CI server crashes due to memory overuse. [DONE 2026-01-14]
     - Added `run_with_memory_limit` helper function to ci/ci.sh using `ulimit -v`
     - Applied 30GB (31457280KB) limit to shard2SingleProcessReplication test

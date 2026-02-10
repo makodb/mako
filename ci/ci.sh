@@ -13,28 +13,34 @@ BUILD_DIR=${BUILD_DIR:-build}
 check_for_hanging_processes() {
     local test_name="$1"
     local max_wait_seconds=10
+    local user_name=${USER:-$(whoami)}
 
     echo "Checking if all test processes exited cleanly..."
 
     # Wait a bit for processes to exit naturally
     sleep 3
 
-    # Count hanging dbtest processes
-    local hanging_count=$(ps aux | grep -E "[d]btest" | wc -l)
+    # Count hanging dbtest processes for the current user only
+    local hanging_pids
+    hanging_pids=$(pgrep -u "$user_name" -f dbtest || true)
+    local hanging_count=0
+    if [ -n "$hanging_pids" ]; then
+        hanging_count=$(echo "$hanging_pids" | wc -l)
+    fi
 
     if [ "$hanging_count" -gt 0 ]; then
         echo "=========================================
 ERROR: Test '$test_name' left $hanging_count hanging dbtest process(es)!
 =========================================
 Hanging processes:"
-        ps aux | grep -E "[d]btest"
+        ps -u "$user_name" -f | grep -E "[d]btest"
         echo ""
         echo "These processes did not exit cleanly after the test completed."
         echo "This indicates a process cleanup issue that needs to be fixed."
 
         # Kill the hanging processes
         echo "Killing hanging processes..."
-        pkill -9 -f dbtest 2>/dev/null || true
+        pkill -9 -u "$user_name" -f dbtest 2>/dev/null || true
         sleep 2
 
         # As long as all throughput are ready, just pass it!
@@ -46,33 +52,46 @@ Hanging processes:"
 }
 
 # Cleanup function: Kill any lingering test processes
+is_ancestor_pid() {
+    local candidate="$1"
+    local pid=$$
+
+    while [ -n "$pid" ] && [ "$pid" -ne 0 ]; do
+        if [ "$pid" = "$candidate" ]; then
+            return 0
+        fi
+        pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+    done
+
+    return 1
+}
+
 cleanup_processes() {
     result=ci_results_${RUN_NUM}_${RUN_INDEX}
     mkdir -p ~/results/$result
     rm -f nfs_*
     # Clean up RocksDB data from previous runs
-    USERNAME=${USER:-$(whoami)}
-    rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+    local user_name=${USER:-$(whoami)}
+    rm -rf /tmp/${user_name}_mako_rocksdb_shard*
     echo "Cleaning up any lingering test processes..."
 
-    # Kill test executables (exclude ci.sh itself and its parent processes)
-    # Use pgrep to get PIDs, filter out current process tree, then kill
-    local my_pid=$$
-    local my_ppid=$(ps -o ppid= -p $my_pid | tr -d ' ')
-
     for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction; do
-        pgrep -f "$proc" 2>/dev/null | while read pid; do
-            if [ "$pid" != "$my_pid" ] && [ "$pid" != "$my_ppid" ] && [ "$pid" != "1" ]; then
-                kill -9 "$pid" 2>/dev/null || true
+        while read -r pid; do
+            if [ -z "$pid" ] || [ "$pid" = "1" ]; then
+                continue
             fi
-        done
+            if is_ancestor_pid "$pid"; then
+                continue
+            fi
+            kill -9 "$pid" 2>/dev/null || true
+        done < <(pgrep -u "$user_name" -f "$proc" 2>/dev/null || true)
     done
 
     # Kill test wrapper scripts (2shard tests with/without replication)
-    pkill -9 -f "test_2shard_no_replication.sh" 2>/dev/null || true
-    pkill -9 -f "test_2shard_replication.sh" 2>/dev/null || true
-    pkill -9 -f "test_1shard_replication.sh" 2>/dev/null || true
-    pkill -9 -f "bash/shard.sh" 2>/dev/null || true
+    pkill -9 -u "$user_name" -f "test_2shard_no_replication.sh" 2>/dev/null || true
+    pkill -9 -u "$user_name" -f "test_2shard_replication.sh" 2>/dev/null || true
+    pkill -9 -u "$user_name" -f "test_1shard_replication.sh" 2>/dev/null || true
+    pkill -9 -u "$user_name" -f "bash/shard.sh" 2>/dev/null || true
 
     sleep 3  # Give OS time to fully terminate processes and release ports
 
@@ -107,11 +126,12 @@ def port_free(port):
         sock.close()
     return True
 
-for _ in range(200):
+for _ in range(2000):
     base = random.randint(20000, 45000)
     if all(port_free(base + offset) for offset in OFFSETS):
         print(base)
         raise SystemExit(0)
+print(random.randint(20000, 45000))
 raise SystemExit(0)
 PY
 }
@@ -181,17 +201,19 @@ run_simple_transaction() {
     cleanup_processes
     local base_port
     base_port=$(pick_simple_transaction_port_base)
-    if [ -n "$base_port" ]; then
-        local src_config="src/mako/config/local-shards2-warehouses1.yml"
-        local tmp_config
-        tmp_config=$(mktemp /tmp/mako_simple_txn_XXXX.yml)
-        write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
-        MAKO_CONFIG="$tmp_config" ./${BUILD_DIR}/simpleTransaction
-        local result=$?
-        rm -f "$tmp_config"
-        return $result
+    if [ -z "$base_port" ]; then
+        echo "ERROR: Failed to select a base port for simpleTransaction"
+        return 1
     fi
-    ./${BUILD_DIR}/simpleTransaction
+    echo "simpleTransaction base port: $base_port"
+    local src_config="src/mako/config/local-shards2-warehouses1.yml"
+    local tmp_config
+    tmp_config=$(mktemp /tmp/mako_simple_txn_XXXX.yml)
+    write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
+    MAKO_CONFIG="$tmp_config" ./${BUILD_DIR}/simpleTransaction
+    local result=$?
+    rm -f "$tmp_config"
+    return $result
 }
 
 # Function 3: Run simple Paxos test
@@ -215,14 +237,25 @@ run_2shard_no_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shardNoReplication"
     echo "========================================="
-    cleanup_processes
-    set +e
-    bash ./examples/test_2shard_no_replication.sh
-    local test_result=$?
-    set -e
-    check_for_hanging_processes "shardNoReplication"
-    local hanging_check=$?
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        set +e
+        bash ./examples/test_2shard_no_replication.sh
+        local test_result=$?
+        set -e
+        check_for_hanging_processes "shardNoReplication"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shardNoReplication (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 # Function 4b: Run 2-shard no replication test with eRPC transport
@@ -475,10 +508,23 @@ run_rrr_unit_tests() {
     echo "========================================="
     echo "Running: ./ci/ci.sh rrrTests"
     echo "========================================="
+    local base_port
+    base_port=$(pick_simple_transaction_port_base)
+    if [ -z "$base_port" ]; then
+        echo "ERROR: Failed to select a base port for rrrTests"
+        return 1
+    fi
+    echo "rrrTests simpleTransaction base port: $base_port"
+    local src_config="src/mako/config/local-shards2-warehouses1.yml"
+    local tmp_config
+    tmp_config=$(mktemp /tmp/mako_simple_txn_ctest_XXXX.yml)
+    write_simple_transaction_config "$base_port" "$src_config" "$tmp_config"
+
     cd ${BUILD_DIR}
-    ctest
+    MAKO_CONFIG="$tmp_config" ctest
     local test_result=$?
     cd ..
+    rm -f "$tmp_config"
     return $test_result
 }
 

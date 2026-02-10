@@ -5,6 +5,7 @@
 # Source common utilities (includes GDB_PREFIX for debugging)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../bash/util.sh"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
 
 echo "========================================="
 echo "Testing 1-shard setup with RAFT replication using simpleTransactionRep"
@@ -19,6 +20,19 @@ ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev
 rm -f simple-shard0*.log nfs_sync_*
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+
+TEMP_CONFIG=$(make_simple_txn_rep_config 1 6)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "simpleTransactionRep config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+trap cleanup_temp_config EXIT
 
 # Start shard 0 in background with RAFT replication - capture ALL PIDs
 echo "Starting shard 0 with Raft..."

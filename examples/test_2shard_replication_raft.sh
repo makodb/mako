@@ -5,6 +5,9 @@
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 40%
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
+
 echo "========================================="
 echo "Testing 2-shard setup with RAFT replication"
 echo "========================================="
@@ -19,6 +22,19 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 trd=6
 script_name="$(basename "$0")"
+
+TEMP_CONFIG=$(make_simple_txn_rep_config 2 $trd)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "dbtest config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+trap cleanup_temp_config EXIT
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"

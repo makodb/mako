@@ -6,12 +6,29 @@
 # 2. Have NewOrder_remote_abort_ratio < 20%
 # 3. Followers replay at least 1000 batches
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
+
 echo "========================================="
 echo "Testing 1-shard setup with RAFT replication"
 echo "========================================="
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+
+TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "dbtest config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+trap cleanup_temp_config EXIT
+
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
 rm -f nfs_sync_*

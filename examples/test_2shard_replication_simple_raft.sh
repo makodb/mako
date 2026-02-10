@@ -5,6 +5,7 @@
 # Source common utilities (includes GDB_PREFIX for debugging)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../bash/util.sh"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
 
 echo "========================================="
 echo "Testing 2-shard setup with RAFT replication using simpleTransactionRep"
@@ -25,6 +26,19 @@ ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev
 sleep 1
 
 trd=6
+
+TEMP_CONFIG=$(make_simple_txn_rep_config 2 $trd)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "simpleTransactionRep config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+trap cleanup_temp_config EXIT
 
 # Start BOTH shards simultaneously to avoid timing issues where shard 0 tries
 # to connect to shard 1 before shard 1 is ready
