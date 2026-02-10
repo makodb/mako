@@ -14,6 +14,8 @@ Each commit may have multiple issues tracked with severity levels:
 
 | Issue ID | Severity | Commit | Category | Brief Description |
 |----------|----------|--------|----------|-------------------|
+| ISSUE-232ba3b0-1 | S3 | 232ba3b0 | Memory safety | Detached threads capture `this` in async persistence path - use-after-free on server destruction |
+| ISSUE-232ba3b0-2 | S3 | 232ba3b0 | Correctness | Double-counting self in quorum check in OnPeerRestart() - quorum off by one |
 
 ## Addressed Issues
 
@@ -29,7 +31,141 @@ Each commit may have multiple issues tracked with severity levels:
 
 ---
 
-*Last updated: 2026-02-03 (a6bed72c reviewed)*
+*Last updated: 2026-02-10 (7a75d1af reviewed)*
+
+---
+
+## Commit 7a75d1af - "Hourly CI check"
+**Date**: 2026-02-10
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 55ea7d19 - "Stabilize CI ports and cleanup checks"
+**Date**: 2026-02-10
+
+**Verdict**: No issues found (CI infrastructure hardening - user-scoped cleanup, random port allocation, retry logic)
+
+---
+
+## Commit 321a6db9 - "Hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit e923a180 - "Hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 096018bc - "Hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 6e4625c6 - "Harden simpleTransaction ports"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (dynamic port allocation for simpleTransaction via MAKO_CONFIG env var)
+
+---
+
+## Commit 4e847f89 - "Fix RPC test port collisions"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (test infrastructure - migration to test_ports::get_port())
+
+---
+
+## Commit 1000c96c - "Record hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 934dc023 - "Fix rpc_metrics test port collisions"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (test infrastructure - migration to test_ports::get_port())
+
+---
+
+## Commit b3ac71cf - "Update hourly and daily CI check notes"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 96ff9cf9 - "Update hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit aefdc2fa - "Update daily recurring task timestamps"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 232ba3b0 - "Zeyu raft disk (#53)"
+**Date**: 2026-02-09
+**Author**: Zeyu
+
+Large commit adding Raft disk persistence with sync/async modes, speculative replication protocol, parallel heartbeat dispatch, atomic service pointer for kill/restart, and 21 new tests.
+
+### ISSUE-232ba3b0-1 [S3 - high]
+**Category**: Memory safety / use-after-free
+**Evidence**: `src/deptran/raft/server.h` (doVote async path) and `src/deptran/raft/server.cc` (OnAppendEntries async path)
+**Problem**: In the async persistence path, `std::thread(...).detach()` captures `this` (the `RaftServer*`). If the server is destroyed (e.g., during Kill/Restart in tests or shutdown) while the thread is running, the detached thread will access a dangling `this` pointer causing use-after-free. Example:
+```cpp
+std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+    PersistState(term_copy, can_id_copy, "doVote: async vote persist");
+    auto c = commo();
+    if (c != nullptr) {
+        c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
+    }
+}).detach();
+```
+**Action**: Use `shared_from_this()` / weak references, or track spawned threads and join them in the destructor.
+
+### ISSUE-232ba3b0-2 [S3 - high]
+**Category**: Correctness / quorum logic
+**Evidence**: `src/deptran/raft/server.cc` - `OnPeerRestart()` method
+**Problem**: `durableVoters_` already contains `site_id_` (inserted during `ResetSpeculativeState()` and election win), but `OnPeerRestart()` computes `durable_vote_count = durableVoters_.size() + 1` adding another `+1` "for self". This double-counts self, making quorum checks off-by-one in the leader's favor. With 5 nodes (quorum=3), the leader could think it has 3 durable votes when it only has 2. Same issue for `specVoters_.size() + 1`.
+**Action**: Remove the `+1` since self is already in the set, or verify the set doesn't contain self before adding.
+
+---
+
+## Commit 36e4f8ee - "Fix rpc_chaos_test CI flakiness and update daily checks"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (test infrastructure - increased timing margins for CI CPU contention)
+
+---
+
+## Commit c84909cc - "Fix race condition in GetOrCreateClient causing intermittent segfault"
+**Date**: 2026-02-03
+
+**Verdict**: No issues found (correct fix - clone Arc while holding lock before unlocking)
+
+---
+
+## Commit 31eda945 - "Update daily checks and add CI failure investigation"
+**Date**: 2026-02-03
+
+**Verdict**: No issues found (timestamp update + investigation notes)
 
 ---
 
