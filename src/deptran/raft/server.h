@@ -6,6 +6,7 @@
 #include "../classic/tpc_command.h"
 #include "commo.h"
 #include <rusty/box.hpp>
+#include <rusty/arc.hpp>
 #include "rpc/log_storage.hpp"
 #include "rpc/recovery_manager.hpp"
 #include "rpc/snapshot_manager.hpp"
@@ -182,12 +183,25 @@ class RaftServer : public TxLogServer {
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
+  // @safe - Thread completion flag wrapping std::atomic<bool> for use with rusty::Arc.
+  // Arc only provides const access, so the atomic must be mutable to allow store().
+  struct AtomicFlag {
+    mutable std::atomic<bool> value{false};
+    explicit AtomicFlag(bool v) : value(v) {}
+    void set(bool v, std::memory_order order = std::memory_order_release) const {
+      value.store(v, order);
+    }
+    bool get(std::memory_order order = std::memory_order_acquire) const {
+      return value.load(order);
+    }
+  };
+
   // @safe - Tracked async persistence threads (joined in destructor to prevent UAF)
   // Each entry pairs a thread with a completion flag. The lambda sets the flag to true
   // when done, allowing us to prune finished threads at each new insertion to prevent
   // unbounded growth of thread handles.
   std::mutex async_threads_mtx_;
-  std::vector<std::pair<std::thread, std::shared_ptr<std::atomic<bool>>>> async_threads_;
+  std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> async_threads_;
 
   // Client notification callbacks
   // Key: log index, Value: callback to notify on commit status change
@@ -281,14 +295,14 @@ class RaftServer : public TxLogServer {
               async_threads_.erase(
                 std::remove_if(async_threads_.begin(), async_threads_.end(),
                   [](auto& entry) {
-                    if (entry.second->load(std::memory_order_acquire)) {
+                    if (entry.second->get()) {
                       if (entry.first.joinable()) entry.first.join();
                       return true;
                     }
                     return false;
                   }),
                 async_threads_.end());
-              auto done = std::make_shared<std::atomic<bool>>(false);
+              auto done = rusty::Arc<AtomicFlag>::make(false);
               async_threads_.emplace_back(
                 std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy, done]() {
                   // Persist the vote durably
@@ -299,7 +313,7 @@ class RaftServer : public TxLogServer {
                   if (c != nullptr) {
                       c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
                   }
-                  done->store(true, std::memory_order_release);
+                  done->set(true);
               }), done);
             }
 

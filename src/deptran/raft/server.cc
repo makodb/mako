@@ -1144,7 +1144,7 @@ RaftServer::~RaftServer() {
   // This prevents deadlock if an in-flight RPC handler tries to emplace_back
   // a new thread while we're joining (it would block on async_threads_mtx_).
   {
-    std::vector<std::pair<std::thread, std::shared_ptr<std::atomic<bool>>>> threads_to_join;
+    std::vector<std::pair<std::thread, rusty::Arc<AtomicFlag>>> threads_to_join;
     {
       std::lock_guard<std::mutex> lk(async_threads_mtx_);
       threads_to_join = std::move(async_threads_);
@@ -1753,14 +1753,14 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
             async_threads_.erase(
               std::remove_if(async_threads_.begin(), async_threads_.end(),
                 [](auto& entry) {
-                  if (entry.second->load(std::memory_order_acquire)) {
+                  if (entry.second->get()) {
                     if (entry.first.joinable()) entry.first.join();
                     return true;
                   }
                   return false;
                 }),
               async_threads_.end());
-            auto done = std::make_shared<std::atomic<bool>>(false);
+            auto done = rusty::Arc<AtomicFlag>::make(false);
             async_threads_.emplace_back(
               std::thread([this, entries = std::move(entries_to_persist),
                          log_index_for_durable_ack, term_copy, follower_id_copy,
@@ -1779,7 +1779,7 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
                 c->SendAppendEntriesDurable(leader_id_copy, par_id_copy, term_copy,
                                             follower_id_copy, log_index_for_durable_ack);
               }
-              done->store(true, std::memory_order_release);
+              done->set(true);
             }), done);
           }
         }
