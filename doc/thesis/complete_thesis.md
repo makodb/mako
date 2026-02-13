@@ -181,6 +181,16 @@ Mako's architecture consists of several major components that work together to p
 
 **Protocol Factory.** Mako uses a factory pattern to create protocol-specific components. Each protocol (OCC, 2PL, Paxos, Raft, and others) registers a factory subclass that creates the appropriate coordinator, scheduler, communicator, and RPC services. This architecture enables protocol polymorphism — the upper layers of the system need not know which consensus protocol is in use.
 
+### Speculative Execution and the Replication Layer
+
+Mako's speculative execution model has a direct and important relationship with the replication layer. In a traditional (non-speculative) system, the transaction processing pipeline is strictly sequential: execute → replicate → apply → respond. Each step must complete before the next begins, and the system sits idle during replication.
+
+Mako breaks this sequential dependency by executing subsequent transactions speculatively while the replication of previous transactions is in flight. The speculation is based on the prediction that most transactions will succeed (no OCC conflicts, no 2PC aborts). When this prediction is correct — which it is in the vast majority of cases for well-partitioned workloads — the system achieves significantly higher throughput by overlapping computation with replication.
+
+This speculation creates a subtle requirement for the replication layer: it must be able to handle a backlog of uncommitted entries without blocking the transaction pipeline. If the replication layer cannot keep up with the submission rate, the backlog grows and eventually the system must stall. This means the replication layer's throughput ceiling directly bounds the system's speculative execution throughput. In the single-shard performance analysis (Chapter 7), the replication layer is precisely this ceiling — Multi-Paxos's pipelining allows a deeper submission backlog without stalling, explaining its throughput advantage.
+
+The speculation also affects the application callback path. When the replication layer commits an entry and invokes the application callback, Mako must reconcile the committed result with the speculatively executed result. If they match (the common case), the speculative work is simply confirmed. If they differ (a conflict was detected after speculative execution began), the speculative work is rolled back and the transaction is retried. The efficiency of this reconciliation process — how quickly the system detects and resolves mismatches between speculative and committed state — is another factor that affects end-to-end throughput.
+
 ## Transaction Flow
 
 Understanding how transactions flow through the system is essential for understanding where the replication layer fits — and why it can be swapped without affecting the rest of the system.
@@ -349,9 +359,19 @@ When a voter grants a vote, it resets its election timer. This prevents the vote
 
 **Quorum detection.** The implementation uses an event-based quorum tracker that tallies vote responses as they arrive. A candidate needs votes from a strict majority (more than half the cluster). For a 3-node cluster, this means 2 votes (including the candidate's self-vote). If a majority is reached, the candidate becomes leader. If a majority reject or the election times out, the candidate returns to follower state and a new election will eventually begin.
 
-**Split vote handling.** Split votes occur when no candidate receives a majority — for example, in a 5-node cluster where two candidates each receive 2 votes. Raft handles this through randomised election timeouts: after a failed election, each server waits a random interval before trying again, making it statistically unlikely that the same split occurs repeatedly.
+The quorum tracker also monitors the highest term seen in any vote response. If a voter responds with a term higher than the candidate's, it means a more recent election has occurred and the candidate is stale. The candidate immediately updates its term to the higher value and reverts to follower state. This ensures that a candidate from a stale term does not disrupt a cluster that has already elected a more recent leader.
+
+The event-based design (as opposed to a polling-based design) means that the quorum decision is made as soon as the last needed vote arrives, with no polling delay. This is important for minimising election duration: in a system where leader absence causes writes to stall, even a few milliseconds of unnecessary delay in the quorum decision adds directly to the unavailability window.
+
+**Leader state initialisation.** When a candidate wins an election and becomes leader, it must initialise the volatile leader state before sending any heartbeats. Specifically, it resets the next index for each follower to one past its own last log index (optimistically assuming followers are up to date) and resets the match index for each follower to zero (conservatively assuming nothing has been confirmed).
+
+This initialisation must happen before the first heartbeat is sent. A subtle bug was discovered during development where the heartbeat loop could start before the leader state was fully initialised, causing the leader to send AppendEntries messages with stale next indices from a previous leadership period. This manifested as followers rejecting entries they should have accepted, causing unnecessary log reconciliation and temporary throughput loss. The fix was to ensure that leader state initialisation is part of the state transition (in the method that sets the leadership flag), not part of the heartbeat loop's setup, guaranteeing that the state is ready before any heartbeat is sent.
+
+**Split vote handling.** Split votes occur when no candidate receives a majority — for example, in a 5-node cluster where two candidates each receive 2 votes. Raft handles this through randomised election timeouts: after a failed election, each server waits a random interval before trying again, making it statistically unlikely that the same split occurs repeatedly. The probability of consecutive split votes decreases geometrically: with random timeouts in a range of [T, 2T], the probability that two servers choose timeouts within a small interval decreases with each round. In practice, split votes are resolved within one or two rounds.
 
 **Term advancement.** Terms advance in several situations: when a follower's election timer fires, when a candidate or leader discovers a message with a higher term, or when a candidate receives a vote reply indicating a higher term. The invariant is that terms only increase — no server ever decreases its term. This monotonicity is fundamental to Raft's safety.
+
+Every point in the code where a message is received checks the message's term against the server's current term. If the message carries a higher term, the server immediately updates its term, clears its vote (since the vote was for the old term), and reverts to follower state. This "term supremacy" rule ensures that stale servers — those that were partitioned and continued operating in an old term — are quickly brought into line when they rejoin the cluster. The check is applied uniformly to all message types (vote requests, vote responses, AppendEntries, and heartbeats), eliminating any possibility of a stale server interfering with the current leader's operation.
 
 ## Log Replication
 
@@ -400,6 +420,55 @@ The reconciliation process also handles the important edge case of **stale entri
 
 **Heartbeats.** Even when there are no new entries to replicate, the leader sends periodic empty AppendEntries messages (heartbeats) to maintain its authority and prevent followers from starting elections. The heartbeat interval is shorter than the minimum election timeout, ensuring that a healthy leader always refreshes followers' election timers before they expire.
 
+### The Heartbeat Loop as the Replication Engine
+
+The heartbeat loop is the central nervous system of the Raft leader — it is far more than a simple keep-alive mechanism. In the implementation, the heartbeat loop is a continuously running background coroutine that handles all outgoing replication, commit advancement, and follower state tracking. Understanding its architecture is essential for understanding the system's throughput characteristics.
+
+**Event-driven design.** Rather than polling on a fixed timer, the heartbeat loop uses an event-driven design with a bounded wait. The loop sleeps on an event object with a timeout equal to the heartbeat interval. This has two operating modes:
+
+- *Idle mode*: When no new entries are pending, the event times out after the heartbeat interval and the loop sends empty heartbeats to all followers. This maintains the leader's authority at minimum cost.
+- *Active mode*: When a new log entry is submitted, the submit path signals the event, waking the heartbeat loop immediately. This means that new entries are replicated within microseconds of submission, rather than waiting for the next heartbeat interval. The result is that replication latency is bounded by network round-trip time, not by heartbeat interval.
+
+This event-driven approach is a significant optimisation over a naive timer-based design. In a system processing thousands of transactions per second, a fixed heartbeat interval of even 50ms would introduce unacceptable latency. The event-driven approach reduces replication latency to the minimum achievable while still providing heartbeat functionality during idle periods.
+
+**Per-follower replication with independent tracking.** The heartbeat loop iterates over all followers and handles each independently. For each follower, the leader:
+
+1. Computes the set of entries to send (from the follower's next index to the leader's last log index)
+2. Retrieves the previous log index and previous log term for the consistency check
+3. Sends the AppendEntries message asynchronously
+4. Processes the response with a bounded timeout (500ms to prevent a slow follower from blocking heartbeats to other followers)
+
+This per-follower independence is critical for availability. If one follower is slow or partitioned, the leader continues sending heartbeats and entries to the other followers without delay. A design that waited for all followers to respond before sending the next round would allow a single slow follower to stall the entire cluster.
+
+**Mutex management.** The heartbeat loop follows a carefully designed lock acquisition pattern to balance correctness and concurrency:
+
+1. *Acquire the mutex* at the start of each iteration to read consistent state (term, log, match indices)
+2. *Release the mutex* before sending RPCs to avoid holding the lock during network operations
+3. *Re-acquire the mutex* after receiving responses to update state (match indices, next indices, commit index)
+4. *Release the mutex* before applying committed entries to the state machine
+
+This release-before-RPC pattern is essential for throughput. If the mutex were held during network round-trips (which can take milliseconds even on localhost), all other Raft operations (incoming AppendEntries from other partitions, client submissions, election timer checks) would block. The lock is only held during brief state reads and updates, never during I/O.
+
+**Commit index advancement within the loop.** After processing all follower responses, the heartbeat loop recomputes the commit index. The algorithm sorts the match indices of all servers (including the leader's own last log index) and takes the median value. The median of N values is the highest value that at least ⌈N/2⌉ servers have reached — exactly the majority threshold required for commitment.
+
+However, advancing the commit index requires an additional safety check: the entry at the new commit index must be from the current term. This is the term safety rule from the Raft paper (Figure 8). Without this check, a newly elected leader could advance the commit index to include entries from a previous term that are on a majority of servers but were never committed. Those entries might later be overwritten by a different leader in the same term range, violating Leader Completeness. By requiring that only current-term entries advance the commit index, and relying on the fact that committing a current-term entry implicitly commits all preceding entries, this safety hole is closed.
+
+A further defensive measure caps the commit index at the leader's own last log index. While theoretically the median of match indices should never exceed the leader's log (since the leader includes its own log length in the computation), this cap provides an additional safety margin against edge cases in the sorted array computation.
+
+**Response handling.** When the leader receives a response to an AppendEntries message, it handles four cases:
+
+1. *Lost RPC* (timeout with no response): The leader does nothing — the next heartbeat iteration will retry. This is the most common failure mode in real networks and is handled entirely by the heartbeat loop's natural retry behaviour.
+2. *Higher term in response*: The follower has a higher term than the leader, meaning a new election has occurred. The leader steps down immediately — it is no longer the authoritative coordinator.
+3. *Log conflict* (follower rejected the consistency check): The leader applies the three-tier backoff strategy described above to find the agreement point and retry.
+4. *Success*: The leader advances the follower's match index and next index, bringing the follower closer to (or at) the leader's current state.
+
+**Batch optimisation integration.** The heartbeat loop supports two replication modes that can be selected at compile time:
+
+- *Non-batched mode*: Each AppendEntries message contains a single log entry. This is simpler but generates more RPCs under high load.
+- *Batched mode*: Multiple log entries are packed into a single batch command. The leader collects all entries from a follower's next index through the leader's last log index and wraps them in a batch structure. This dramatically reduces RPC count — instead of N RPCs for N entries, a single RPC suffices. Followers unpack the batch and persist all entries in a single I/O operation.
+
+The batched mode is the default for production use. The batch size adapts naturally to the system's throughput: under high load, more entries accumulate between heartbeat iterations, resulting in larger batches with better amortisation. Under low load, batches are small (often single entries), adding negligible overhead.
+
 ## Commit and State Machine Application
 
 The commit and application process deserves special attention because it is the point where Raft consensus connects to Mako's transaction processing. It is the handoff point between the consensus layer (which ensures agreement) and the application layer (which actually processes transactions). Getting this handoff right is critical for both correctness and performance.
@@ -445,8 +514,6 @@ Several extensions beyond the standard Raft protocol were implemented to support
 **Integration with Two-Phase Commit.** Unlike standalone Raft implementations that replicate arbitrary byte strings, this implementation replicates transaction commit records. The log entries contain serialised transaction commands that are fed back into Mako's transaction processing pipeline through the application callback. The coordinator handles the WRONG_LEADER error case by redirecting clients to the current leader using view tracking data.
 
 **Persistent state management.** The implementation optionally persists Raft state to a RocksDB backend. After every term change or vote grant, the new term and vote are written to stable storage. When the leader appends new entries, they are persisted before acknowledgement. The commit index is persisted when it advances. On restart, the server recovers its state from storage and replays committed entries through the application callback to restore the state machine.
-
-**Jetpack recovery.** On leader election, the new leader can optionally run a recovery procedure specific to Mako's speculative execution model. This handles the case where speculative state from a previous leader needs to be reconciled with committed state.
 
 ## The Transaction Coordinator
 
@@ -707,9 +774,36 @@ The worker performs several key functions:
 3. The submit loop supports batching: it collects multiple pending entries and submits them together for efficiency.
 4. Graceful shutdown drains any remaining entries before stopping the loop.
 
-**Committed entry callback.** When the Raft server commits an entry, it invokes the worker's callback function. This callback deserialises the committed command and invokes the registered application callbacks (watermark callbacks, simple callbacks, or legacy bridge callbacks). The callback path is the mechanism by which committed Raft log entries are fed back into Mako's transaction processing pipeline.
+**Two-role callback architecture.** A distinctive design decision in the Raft worker is the separation of committed entry callbacks into leader and follower roles. Rather than a single callback that handles all committed entries regardless of role, the worker maintains separate callback registrations for leader events and follower events:
 
-**Leadership queries.** The worker provides methods to query leadership status for a partition, check whether a partition exists on this server, and receive notifications when leadership changes. These are used by the upper layer to route client requests to the correct leader.
+- *Leader callbacks* are invoked when the leader commits entries that it originally proposed. On the leader, commitment means the transaction result can be returned to the client. Leader callbacks trigger the transaction coordinator's commit notification path, which unblocks the client.
+- *Follower callbacks* are invoked when a follower applies entries that it received from the leader. On followers, application means the follower's state machine is being brought into consistency with the leader's. Follower callbacks trigger the follower's replay path, which updates the local Masstree index.
+
+This role-aware callback separation enables Mako to optimise differently for leaders (where the priority is notifying the client quickly) and followers (where the priority is efficient batch replay). A single-callback design would force the application layer to check the server's role on every committed entry, adding overhead on the hot path.
+
+The callback determines the server's current role dynamically at invocation time rather than at registration time. This handles the case where a server's role changes between registration and invocation — for example, a leader that steps down while entries are being applied. The role check is a simple boolean flag read, adding negligible overhead.
+
+**Command encoding and protocol evolution.** The log entries replicated by Raft are not arbitrary byte strings — they are structured transaction commit records that must be deserialised and fed back into Mako's transaction processing pipeline. The encoding scheme reveals an interesting aspect of iterative protocol evolution.
+
+The Mako codebase originally supported only the Janus transaction protocol, where log entries contained structured transaction "pieces" with typed key-value pairs. When the Raft module was integrated, the command encoding had to be compatible with this existing structure while also supporting Mako's own serialised transaction format.
+
+The solution uses a multi-layer wrapping structure: Mako's raw serialised transaction bytes are wrapped in a transaction commit command structure (which includes metadata like the transaction ID and term), which is in turn serialised using the existing marshalling infrastructure. On the receive side, the worker's callback function detects the data format (Mako's serialised bytes vs. legacy key-value pairs) and routes to the appropriate deserialisation path. This dual-format support allows the Raft module to work with both the standalone test infrastructure (which uses simple key-value pairs) and the full Mako transaction pipeline (which uses serialised transaction records).
+
+This encoding design is a pragmatic concession to backward compatibility. A clean-sheet design would use a single encoding format, but the need to support both standalone testing and production use with minimal code changes made the dual-format approach the practical choice.
+
+**Threading and concurrency model.** The Raft worker uses a coroutine-based concurrency model inherited from Mako's fiber framework. The key concurrent activities within each worker are:
+
+- *The heartbeat loop*: A long-running coroutine that handles outgoing replication and commit advancement (described in Chapter 3).
+- *The election timer*: A long-running coroutine that monitors the election timeout and triggers elections when the leader is unresponsive.
+- *The submit loop*: A background thread that drains the pending log queue and feeds entries to the Raft server.
+- *Incoming RPC handlers*: Coroutines spawned by the RPC framework to handle incoming AppendEntries, RequestVote, and other messages.
+- *The leadership transfer monitor*: An OS thread (not a coroutine) that periodically checks whether leadership should be transferred to the preferred replica.
+
+The use of OS threads for the leadership transfer monitor (rather than coroutines) is a deliberate design choice. Coroutines in the fiber framework are cooperatively scheduled — they only yield at explicit yield points. The monitor thread needs to sleep for a full second between checks, and blocking a coroutine for a full second would prevent other coroutines from running on the same thread. An OS thread can sleep without affecting other coroutines.
+
+Shutdown of these concurrent activities is coordinated through a stop flag that all activities check periodically. When the flag is set, each activity completes its current operation and exits. A brief delay after setting the stop flag allows all activities to notice the flag before the worker's destructor runs, preventing use-after-free bugs when a coroutine accesses object state after the destructor has collapsed the virtual function table.
+
+**Leadership queries.** The worker provides methods to query leadership status for a partition, check whether a partition exists on this server, and receive notifications when leadership changes. These are used by the upper layer to route client requests to the correct leader. Leadership change notifications propagate up through a callback chain: the Raft server notifies the worker, the worker notifies the helper layer, and the helper layer notifies the upper Mako layer. This chain ensures that all layers have a consistent view of which replica is the current leader for each partition.
 
 ## Lifecycle and Initialisation
 
@@ -721,10 +815,12 @@ The Raft lifecycle within Mako follows a sequence that mirrors the existing Paxo
 
 **Steady state.** During normal operation, the Raft server handles leader election and log replication autonomously. The upper layer interacts with it only through log submission and callback registration. Leader change notifications propagate up through a callback chain: the Raft server notifies the worker, the worker notifies the helper layer, and the helper layer notifies the upper Mako layer.
 
-**Shutdown.** Shutdown proceeds in two phases:
+**Shutdown.** Shutdown is deceptively complex in a system with multiple concurrent activities, asynchronous RPC connections, and coroutines that may be blocked on I/O. The implementation uses a two-phase shutdown sequence:
 
-1. **Wait for shutdown**: Blocks until all submitted entries have been processed, then signals the submit thread to stop.
-2. **Active shutdown**: Stops the Raft server (which stops the election timer, heartbeat loop, and leadership transfer monitor), disconnects from peers, and releases resources.
+1. **Wait for shutdown**: Blocks until all submitted entries have been processed and committed, then signals the submit thread to stop. This phase ensures that no user data is lost during shutdown — every entry that was submitted before shutdown was initiated will be committed before the system stops. The wait uses a polling loop that checks the submit queue's drain status.
+2. **Active shutdown**: Stops the Raft server (which sets the stop flag for the election timer, heartbeat loop, and leadership transfer monitor), disconnects from all peers (closing RPC connections), and releases resources. A brief sleep after setting the stop flag allows detached coroutines to notice the flag and exit before the server's destructor runs.
+
+The active shutdown sequence is ordered carefully to prevent cascading failures. The election timer is stopped first (to prevent the server from starting elections during shutdown), then the heartbeat loop (to prevent the server from sending RPCs to disconnecting peers), then the leadership transfer monitor, and finally the RPC connections. Reversing this order — disconnecting peers before stopping the heartbeat loop — would cause the heartbeat loop to encounter connection errors and potentially trigger error handling code that is itself being torn down.
 
 ## Log Submission and Callback Paths
 
@@ -793,6 +889,18 @@ The integration of Raft into Mako was not a straightforward "plug and play" exer
 
 **Lesson.** When integrating components with different lifecycle phases (setup, running, shutdown), care must be taken to ensure that inter-component registrations happen at the right point in each component's lifecycle. A "registration buffer" pattern — where registrations are queued during setup and applied at the ready state — is a general solution to this class of problem.
 
+### Coroutine Shutdown and Virtual Function Table Races
+
+**Problem.** During shutdown, the Raft server occasionally crashed with segmentation faults in the election timer or heartbeat loop coroutines. The crashes were intermittent — they depended on the precise timing of coroutine scheduling relative to object destruction — making them extremely difficult to reproduce and diagnose.
+
+**Root cause.** The Raft server uses detached coroutines (fibers) for the election timer and heartbeat loop. These coroutines hold a `this` pointer to the Raft server and call virtual methods on it. When the Raft server's destructor runs, it collapses the virtual function table (vtable) as part of C++ object destruction. If a detached coroutine reads the stop flag (which is `false`), gets preempted, and then the destructor runs (setting the stop flag and collapsing the vtable), the coroutine resumes and calls a virtual method through the now-invalid vtable, causing a crash.
+
+The fundamental issue is a time-of-check-to-time-of-use (TOCTOU) race: the coroutine checks the stop flag and decides to continue, but by the time it executes the next statement, the object has been destroyed. This race is inherent in any system that uses detached coroutines with shared mutable state and object destruction.
+
+**Solution.** The destructor sets the stop flag and then sleeps for a brief interval (100ms) before allowing C++ destruction to proceed. This gives the detached coroutines time to notice the stop flag and exit cleanly before the vtable is collapsed. Additionally, each coroutine checks the stop flag immediately before calling any virtual method, minimising the TOCTOU window. While this sleep is not a theoretically perfect solution (a coroutine could be blocked on I/O for longer than 100ms), it works reliably in practice because the coroutines' blocking operations have bounded timeouts.
+
+**Lesson.** Detached coroutines interacting with objects that have non-trivial destructors are a source of subtle lifetime bugs. The Rust ownership model, which prevents references from outliving the objects they refer to, would catch this class of bug at compile time. The RustyCpp annotations applied to the Raft module (see Chapter 9) are a step toward this kind of compile-time safety, marking the coroutine-spawning methods as `@unsafe` to flag them for manual review.
+
 ### Process Cleanup in Multi-Process Tests
 
 **Problem.** Multi-process test configurations (where each replica runs as a separate OS process) required robust cleanup to avoid stale processes from previous runs interfering with new tests. A stale process holding a port would cause the next test to fail at startup with a "port already in use" error, leading to cascading test failures.
@@ -812,6 +920,13 @@ The integration of Raft into Mako was not a straightforward "plug and play" exer
 Testing a consensus protocol implementation is fundamentally different from testing a sequential program. The challenge is that consensus protocols operate in a non-deterministic environment: messages can be delayed, reordered, or lost; servers can crash and restart at any point; and multiple servers execute concurrently. A correct implementation must produce the right result under all possible interleavings of these events — not just the "happy path."
 
 The standalone test suite validates the correctness of the Raft implementation in isolation, without the complexity of the full Mako system. By testing in isolation, the suite can focus on Raft's core properties (election safety, log matching, leader completeness) without interference from Mako's transaction processing, OCC validation, or cross-shard coordination. This separation of concerns is essential: if a test fails, the root cause is in the Raft implementation, not in the interaction between Raft and Mako.
+
+**Test design philosophy.** The test suite is modelled after the MIT 6.824 distributed systems course's Raft lab tests, which have been refined over many years of student implementations and are widely regarded as a thorough correctness validation for Raft. The key design principles are:
+
+- *Black-box testing*: Tests interact with the Raft cluster only through the public API (submit commands, query leaders, check agreement). They do not inspect internal state, set breakpoints, or rely on implementation-specific behaviour. This makes the tests robust to implementation changes — as long as the protocol semantics are correct, the tests pass.
+- *Failure injection through topology manipulation*: Rather than injecting faults at the code level (mocking functions, corrupting data structures), failures are simulated by manipulating the network topology. Disconnecting a server is equivalent to a crash from the perspective of other servers — they can no longer communicate with it. Reconnecting is equivalent to a restart. This approach tests the protocol's response to realistic failure patterns.
+- *Progressive difficulty*: Tests are ordered so that each test assumes the properties verified by all previous tests. If test 3 (basic agreement) fails, there is no point running test 8 (backup reconciliation) because the more complex test depends on basic agreement working correctly. This ordering makes debugging efficient — the first failing test identifies the most fundamental problem.
+- *Deterministic failure scenarios*: Each test creates a specific, reproducible failure scenario (for example, "disconnect the leader and two followers, submit entries, then reconnect"). This is in contrast to random testing (which the unreliable agreement test also provides), which catches different bugs. Both approaches are valuable: deterministic tests validate specific properties, random tests find unexpected interactions.
 
 **Test infrastructure.** The test framework provides:
 
@@ -897,7 +1012,6 @@ This aggressive approach was necessary because lingering processes from failed t
 **Known issues and workarounds.** The CI suite includes workarounds for several known issues:
 
 - **Leader shutdown hang**: In some configurations, the leader process hangs during shutdown after the benchmark completes. This is handled by using a timeout-based kill mechanism rather than waiting for graceful shutdown.
-- **Jetpack incompatibility**: Mako's Jetpack recovery system is incompatible with the Raft replication path and must be explicitly disabled in Raft test configurations.
 - **Port range separation**: Raft tests use different port ranges than Paxos tests to avoid conflicts when both test suites run on the same machine.
 
 ## Test Scenarios and Pass Criteria
@@ -1029,16 +1143,24 @@ This is analogous to Amdahl's Law: when the serial component (cross-shard coordi
 
 Paxos drops more dramatically (15.8x vs 11.3x) because it starts from a higher single-shard baseline. Both protocols are equally bottlenecked by cross-shard coordination, so they converge to the same absolute throughput.
 
-**Higher remote abort ratio under Raft.** Raft's remote abort ratio (2.64%) is 2.1 times higher than Paxos's (1.28%). This may be caused by Raft's stricter ordering holding locks longer while waiting for earlier entries to commit, increasing contention windows. However, despite the higher abort ratio, Raft achieves the same throughput because aborted transactions are retried and ultimately succeed.
+**Higher remote abort ratio under Raft.** Raft's remote abort ratio (2.64%) is 2.1 times higher than Paxos's (1.28%). This difference is a second-order consequence of Raft's sequential commit ordering. In Raft, entries are committed and applied in strict log order. When cross-shard 2PC is in progress, the participating shards hold tentative state (locks or speculative results) for the duration of the 2PC protocol. Because Raft's sequential ordering can delay the commitment of individual entries (if earlier entries in the log are not yet committed), the tentative state is held for longer, extending the window during which a concurrent transaction accessing the same data will observe a conflict and abort.
+
+Multi-Paxos's pipelined commit allows individual consensus instances to commit independently, so the 2PC protocol can complete as soon as the specific instance for that transaction is committed, without waiting for preceding instances. This shorter tentative-state window reduces the probability of overlapping access, explaining the lower abort ratio.
+
+Despite the higher abort ratio, Raft achieves the same throughput as Paxos in multi-shard mode because aborted transactions are retried and ultimately succeed. The cost of a retry (re-executing the transaction and re-running 2PC) is small relative to the initial cost, and the retry typically succeeds because the conflicting transaction has completed. The 2.64% abort ratio means that fewer than 3% of transactions require a retry — a modest overhead that does not measurably affect aggregate throughput.
 
 ## Replication Batching Behaviour
 
-The replay batch metric reveals fundamental differences in how the two protocols batch replication:
+The replay batch metric reveals fundamental differences in how the two protocols batch replication, and these differences are rooted in their architectural designs rather than being tuneable parameters.
 
-- **Raft**: More frequent, smaller batches (~26 entries per batch). Each heartbeat interval triggers a batch of accumulated entries. The leader collects entries from each follower's next index through the leader's last log index.
-- **Paxos**: Less frequent, larger batches (~200 entries per batch). The pipelining design naturally accumulates more entries before follower replay. Bulk commit notifications batch multiple instances together.
+- **Raft**: More frequent, smaller batches (~26 entries per batch). Each heartbeat interval triggers a batch of accumulated entries. The leader collects entries from each follower's next index through the leader's last log index. Because Raft commits entries sequentially and the heartbeat loop processes followers in rounds, the natural batch size is determined by the number of entries submitted between heartbeat iterations.
+- **Paxos**: Less frequent, larger batches (~200 entries per batch). The pipelining design naturally accumulates more entries before follower replay. Because Multi-Paxos can have many consensus instances in flight simultaneously, the follower accumulates entries from multiple instances before replaying them as a batch. Bulk commit notifications batch multiple instances together, and the learner (which does not participate in consensus) receives committed entries in large bursts.
 
 Paxos's larger batch sizes reduce per-entry overhead (fewer RPCs, fewer I/O synchronisation points), contributing to its single-shard throughput advantage.
+
+The 5.5x replay batch count difference (3,674 for Raft vs. 669 for Paxos) is inversely proportional to the batch size difference (26 vs. 200 entries per batch). Both protocols process approximately the same total number of entries (since they handle the same workload), but they distribute those entries across different numbers of batches. Larger batches amortise fixed costs better: each batch requires one RPC, one network round-trip, and one I/O synchronisation point regardless of how many entries it contains. The 8x difference in entries per batch translates into a meaningful throughput difference when the replication layer is the bottleneck (single-shard mode), but becomes irrelevant when a larger bottleneck dominates (multi-shard coordination).
+
+This architectural difference between sequential commit (Raft) and pipelined commit (Paxos) is fundamental — it cannot be eliminated by tuning parameters. The only way to achieve Paxos-like batching in Raft would be to introduce parallel commit semantics (allowing entries from the current term to commit independently), which would require changes to the core Raft protocol and has implications for the safety argument. This is a topic for future research.
 
 ## Production Deployment Implications
 
@@ -1125,12 +1247,20 @@ Two implementations are provided:
 
 **RocksDB storage** provides durable persistence using Facebook's RocksDB embedded key-value store. It is configured with synchronous writes (fsync on every write) to guarantee that persisted state survives process crashes and power failures. Write batches are used for atomic multi-entry writes — either all entries in a batch are persisted or none are, preventing partially written state.
 
-The Raft server integrates with the storage backend at several points:
+**Persistence design trade-offs.** The persistence layer makes several deliberate trade-offs between durability, performance, and recovery speed:
 
-- After every term change or vote grant, the new term and vote are persisted immediately.
-- When the leader appends new log entries, they are persisted before being sent to followers.
-- When the commit index advances, it is persisted.
-- Followers persist received entries as part of the AppendEntries handler, before acknowledging.
+*Metadata durability is prioritised over log durability.* Term and vote changes are persisted synchronously on every change, because violating the one-vote-per-term invariant can create two leaders in the same term — a catastrophic safety violation. Log entries, by contrast, can afford slightly relaxed durability: if a follower crashes after accepting an entry but before persisting it, the entry is simply re-sent by the leader on the next heartbeat. The asymmetry in durability requirements reflects the asymmetry in safety consequences: losing a term/vote state leads to safety violations, while losing an uncommitted log entry leads to a temporary performance degradation (the leader resends it).
+
+*The commit index is persisted but not on the critical path.* Persisting the commit index is strictly optional for safety — the leader will communicate the current commit index in subsequent AppendEntries messages. However, persisting it enables faster recovery: without a persisted commit index, a restarted server must wait for the leader to tell it which entries are committed before it can replay the state machine. With a persisted commit index, the server can begin replaying committed entries immediately upon restart, reducing recovery time from "wait for leader heartbeat" (potentially hundreds of milliseconds) to "read from local storage" (sub-millisecond).
+
+*Batch persistence amortises fsync costs.* Individual fsync operations are the most expensive part of persistent storage, each costing roughly 1ms on a typical SSD. By batching multiple log entries into a single write operation, the implementation amortises this cost across many entries. Under high load, a single batch write might persist 50-100 entries with a single fsync, reducing the per-entry persistence cost from 1ms to 10-20 microseconds — a 50-100x improvement.
+
+The Raft server integrates with the storage backend at several points in the protocol:
+
+- After every term change or vote grant, the new term and vote are persisted immediately. This synchronous persistence is on the critical path for elections: a candidate must persist its self-vote before broadcasting vote requests, because a crash between broadcasting and persisting could allow the candidate to vote for a different candidate after restart.
+- When the leader appends new log entries, they are persisted before being sent to followers. This ensures that the leader does not send entries it cannot recover after a crash.
+- When the commit index advances, it is persisted asynchronously. The commit index is used to accelerate recovery but is not required for safety.
+- Followers persist received entries as part of the AppendEntries handler, before acknowledging. This ensures that an acknowledged entry is durable on the follower, which is necessary for the commit rule (an entry committed on a majority of servers must survive any single server's crash).
 
 ## Crash Recovery
 
@@ -1207,12 +1337,27 @@ The key findings are:
 
 The preferred leader election mechanism is a novel contribution that provides deterministic leader placement while preserving all five Raft safety properties. The three-phase design (startup bias, monitoring, piggybacked transfer) handles the complete lifecycle of leader placement: initial election, failover, and failback. The safety argument demonstrates that the extension is a pure optimisation — it changes when elections happen, not how they work.
 
+### Lessons Learned
+
+The process of integrating Raft into a production-grade distributed transaction system yielded several lessons that are broadly applicable to systems engineering:
+
+**The gap between specification and implementation is vast.** The Raft paper is 18 pages. The implementation is thousands of lines. The paper describes the protocol's steady-state behaviour, its safety invariants, and the key mechanisms. It does not describe how to handle shutdown races, how to manage mutex scope across asynchronous RPC calls, how to integrate with a multi-phase boot sequence, or how to handle the dozens of edge cases that arise when a consensus protocol interacts with a transaction processing pipeline. The specification is the starting point, not the destination.
+
+**Concurrency bugs dominate development time.** The most time-consuming bugs were not algorithmic errors in the Raft protocol but concurrency issues at the integration boundaries. Examples include: the heartbeat loop holding a mutex during RPC calls, blocking all other Raft operations; callback registrations being overwritten during initialisation; and detached coroutines accessing object state after the destructor had run. These bugs were difficult to reproduce because they depended on specific timing between concurrent operations, and they were difficult to diagnose because the symptoms (hangs, crashes, silent data loss) were far removed from the root causes.
+
+**Testing infrastructure is as important as the implementation.** The ability to programmatically disconnect and reconnect servers in the standalone test suite was invaluable for validating edge cases that would be nearly impossible to trigger reliably in a multi-process environment. The CI test suite caught integration bugs that the standalone tests could not — such as RPC serialisation errors, port conflicts, and process startup race conditions. Both levels of testing were essential; neither alone would have been sufficient.
+
+**Operational simplicity has compounding returns.** Raft's built-in leader election eliminated an entire subsystem that would otherwise need to be built, tested, and maintained. The preferred leader extension added deterministic leader placement without introducing external dependencies. Each reduction in operational complexity compounds — fewer components means fewer interactions, fewer failure modes, and fewer things to monitor and debug.
+
+**Performance analysis requires careful methodology.** The single-shard comparison initially appeared to show a clear Paxos advantage, but deeper analysis revealed that the gap was partly attributable to measurement conditions (duration mismatch, process count differences) rather than fundamental protocol differences. The multi-shard comparison, which more closely represents production workloads, showed near-identical performance. Drawing conclusions from a single configuration would have been misleading.
+
 **Future work.** Several directions for future work emerge from this thesis:
 
 - **Geo-replicated benchmarks**: Running the same comparison on a geo-distributed cluster with real network latency would provide more production-representative results and likely show even smaller performance differences between the protocols.
-- **Log compaction with InstallSnapshot**: Implementing the InstallSnapshot RPC would allow very slow or newly added replicas to catch up via a snapshot transfer rather than replaying the entire log.
-- **Non-voting learner support in Raft**: Adding a non-voting learner role to the Raft implementation would provide read scaling capabilities comparable to Paxos's learner, while maintaining Raft's simpler all-voter consensus.
-- **Performance optimisation**: Investigating Raft-specific optimisations such as parallel commit (committing entries from multiple terms simultaneously) and read leases (serving reads from followers) could narrow the single-shard throughput gap.
+- **Log compaction with InstallSnapshot**: Implementing the InstallSnapshot RPC would allow very slow or newly added replicas to catch up via a snapshot transfer rather than replaying the entire log, which is critical for operational scenarios where a replica has been offline for an extended period.
+- **Non-voting learner support in Raft**: Adding a non-voting learner role to the Raft implementation would provide read scaling capabilities comparable to Paxos's learner, while maintaining Raft's simpler all-voter consensus. This would eliminate one of the remaining advantages of the Paxos topology.
+- **Performance optimisation**: Investigating Raft-specific optimisations such as parallel commit (committing entries from multiple terms simultaneously), read leases (serving reads from followers without leader involvement), and pre-vote (reducing disruption from partitioned servers) could narrow the single-shard throughput gap and improve availability during network instability.
+- **Formal verification**: The safety argument for the preferred leader extension is informal. A formal verification using a tool like TLA+ or Coq would provide stronger guarantees and could uncover edge cases not considered in the informal argument.
 
 ---
 
