@@ -1449,7 +1449,7 @@ Global mutable state (such as the replication type) uses an interior mutability 
 
 ### Safety Coverage
 
-Across the Raft module, approximately 68% of methods are annotated as safe, with the remaining 32% marked as unsafe primarily due to:
+Across the Raft module, approximately 77% of methods are annotated as safe, with the remaining 23% marked as unsafe primarily due to:
 
 - **I/O operations**: Logging, error output, and file I/O are inherently unsafe in the borrow-checking model because they involve system calls that cannot be statically verified.
 - **Legacy code calls**: Calls to pre-existing Mako code that has not been migrated to the Rust-style ownership model.
