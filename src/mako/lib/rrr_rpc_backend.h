@@ -234,11 +234,12 @@ private:
     std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_;
     std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_response_;
 
-    // Statistics
-    uint64_t msg_size_req_sent_{0};
-    int msg_counter_req_sent_{0};
-    uint64_t msg_size_resp_sent_{0};
-    int msg_counter_resp_sent_{0};
+    // Statistics - atomic for thread-safe concurrent updates from network threads
+    // @unsafe { std::atomic is not borrow-checked but required for multi-threaded counters }
+    std::atomic<uint64_t> msg_size_req_sent_{0};
+    std::atomic<int> msg_counter_req_sent_{0};
+    std::atomic<uint64_t> msg_size_resp_sent_{0};
+    std::atomic<int> msg_counter_resp_sent_{0};
 
     // Rrr request handle storage for helper queue processing
     // Maps erpc::ReqHandle* (used as key) to RrrRequestHandle data

@@ -284,8 +284,8 @@ bool RrrRpcBackend::SendToShard(TransportReceiver* src,
     }
     auto fu = fu_result.unwrap();
 
-    msg_size_req_sent_ += msg_len;
-    msg_counter_req_sent_ += 1;
+    msg_size_req_sent_.fetch_add(msg_len, std::memory_order_relaxed);
+    msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
 
     Debug("RrrRpcBackend::SendToShard: Request sent");
 
@@ -374,8 +374,8 @@ bool RrrRpcBackend::SendToAll(TransportReceiver* src,
         }
         auto fu = fu_result.unwrap();
 
-        msg_size_req_sent_ += req_len;
-        msg_counter_req_sent_ += 1;
+        msg_size_req_sent_.fetch_add(req_len, std::memory_order_relaxed);
+        msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
 
         Debug("RrrRpcBackend::SendToAll: Request sent to shard %d", shard_idx);
 
@@ -456,8 +456,8 @@ bool RrrRpcBackend::SendBatchToAll(TransportReceiver* src,
         if (fu_result.is_err()) continue;
         auto fu = fu_result.unwrap();
 
-        msg_size_req_sent_ += req_len;
-        msg_counter_req_sent_ += 1;
+        msg_size_req_sent_.fetch_add(req_len, std::memory_order_relaxed);
+        msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
 
         futures.push_back(std::move(fu));
     }
@@ -564,8 +564,8 @@ void RrrRpcBackend::RunEventLoop() {
                         out.write(rrr_handle->response_data.data(), msg_size);
                     });
 
-                msg_size_resp_sent_ += msg_size;
-                msg_counter_resp_sent_ += 1;
+                msg_size_resp_sent_.fetch_add(msg_size, std::memory_order_relaxed);
+                msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
             }
         }
 
@@ -670,18 +670,23 @@ void RrrRpcBackend::Stop() {
         }
     }
 
+    // @unsafe { std::atomic load for statistics - not borrow-checked }
+    auto resp_size = msg_size_resp_sent_.load(std::memory_order_relaxed);
+    auto resp_count = msg_counter_resp_sent_.load(std::memory_order_relaxed);
     Notice("RrrRpcBackend stats: msg_size_resp_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
-           msg_size_resp_sent_, msg_counter_resp_sent_,
-           msg_size_resp_sent_ / (msg_counter_resp_sent_ + 0.0));
+           resp_size, resp_count,
+           resp_size / (resp_count + 0.0));
     Notice("RrrRpcBackend::Stop: END");
 }
 
 
-// Print statistics
+// @unsafe { std::atomic load for statistics - not borrow-checked }
 void RrrRpcBackend::PrintStats() {
+    auto req_size = msg_size_req_sent_.load(std::memory_order_relaxed);
+    auto req_count = msg_counter_req_sent_.load(std::memory_order_relaxed);
     Notice("RrrRpcBackend request stats: msg_size_req_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
-           msg_size_req_sent_, msg_counter_req_sent_,
-           msg_size_req_sent_ / (msg_counter_req_sent_ + 0.0));
+           req_size, req_count,
+           req_size / (req_count + 0.0));
 }
 
 // Static request handler for rrr::Server
@@ -724,8 +729,8 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
             out.write(&resp, sizeof(resp));
         });
 
-        backend->msg_size_resp_sent_ += sizeof(resp);
-        backend->msg_counter_resp_sent_ += 1;
+        backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
+        backend->msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -745,8 +750,8 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
             out.write(&resp, sizeof(resp));
         });
 
-        backend->msg_size_resp_sent_ += sizeof(resp);
-        backend->msg_counter_resp_sent_ += 1;
+        backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
+        backend->msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
@@ -777,8 +782,8 @@ void RrrRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<rrr::Request> re
             out.write(&resp, sizeof(resp));
         });
 
-        backend->msg_size_resp_sent_ += sizeof(resp);
-        backend->msg_counter_resp_sent_ += 1;
+        backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
+        backend->msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
         return;
     }
 
