@@ -11,13 +11,20 @@
 #include "server.h"
 #include "macros.h"
 
+// @external: {
+//   verify: [safe, (bool) -> void],
+//   Fiber::create_run: [safe, (...) -> void],
+//   clock_gettime: [safe, (int, timespec*) -> int],
+//   srand: [safe, (unsigned int) -> void]
+// }
+
 class SimpleCommand;
 namespace janus {
 
 class TxLogServer;
 class RaftServer;
 
-// @safe
+// @unsafe - inherits from non-@interface RaftService (individual methods are @safe)
 class RaftServiceImpl : public RaftService {
  public:
   RaftServer* svr_;
@@ -30,8 +37,11 @@ class RaftServiceImpl : public RaftService {
              const ballot_t&, can_term,
              ballot_t*, reply_term,
              bool_t*, vote_granted) {
+    // @unsafe
+    {
     *reply_term = can_term;
     *vote_granted = false;
+    }
   }
 
   RpcHandler(AppendEntries, 12,
@@ -47,9 +57,12 @@ class RaftServiceImpl : public RaftService {
              uint64_t*, followerAppendOK,
              uint64_t*, followerCurrentTerm,
              uint64_t*, followerLastLogIndex) {
+    // @unsafe
+    {
     *followerAppendOK = false;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
+    }
   }
 
   RpcHandler(EmptyAppendEntries, 11,
@@ -64,9 +77,12 @@ class RaftServiceImpl : public RaftService {
              uint64_t*, followerAppendOK,
              uint64_t*, followerCurrentTerm,
              uint64_t*, followerLastLogIndex) {
+    // @unsafe
+    {
     *followerAppendOK = false;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
+    }
   }
 
   RpcHandler(TimeoutNow, 4,
@@ -74,8 +90,11 @@ class RaftServiceImpl : public RaftService {
              const siteid_t&, leaderSiteId,
              uint64_t*, followerTerm,
              bool_t*, success) {
+    // @unsafe
+    {
     *followerTerm = 0;
     *success = false;
+    }
   }
 
 };

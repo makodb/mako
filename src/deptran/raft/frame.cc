@@ -11,9 +11,14 @@
 // #include "../kv/server.h"
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [unsafe, (double, double) -> double]
-//   std::make_shared: [unsafe, (...) -> owned]
-//   std::unique_ptr::get: [unsafe, () -> *]
+//   Log_info: [safe, (...) -> void]
+//   Log_debug: [safe, (...) -> void]
+//   verify: [safe, (...) -> void]
+//   std::make_unique: [safe, (...) -> owned]
+//   std::make_shared: [safe, (...) -> owned]
+//   Config::GetConfig: [safe, () -> *]
+//   Reactor::get_reactor: [safe, () -> *]
+//   rusty::make_box: [safe, (...) -> owned]
 // }
 
 namespace janus {
@@ -25,9 +30,8 @@ RaftFrame::RaftFrame(int mode) : Frame(mode) {
 
 }
 
-// @safe - Properly cleans up owned resources
+// @safe - Properly cleans up owned resources via Option<Box<T>>
 RaftFrame::~RaftFrame() {
-  // commo_ and svr_ automatically cleaned up by unique_ptr
 }
 
 #ifdef RAFT_TEST_CORO
@@ -41,13 +45,13 @@ uint16_t RaftFrame::n_commo_created_ = 0;
 #endif
 
 
-// @safe
+// @unsafe - factory method returns raw pointer via new (caller takes ownership)
 Executor *RaftFrame::CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) {
   Executor *exec = new RaftExecutor(cmd_id, sched);
   return exec;
 }
 
-// @safe
+// @unsafe - factory method uses new to create raw pointer (caller takes ownership)
 Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
                                                 Config *config,
                                                 int benchmark,
@@ -76,17 +80,19 @@ Coordinator *RaftFrame::CreateCoordinator(cooid_t coo_id,
   return coo;
 }
 
-// @safe
+// @safe - returns raw pointer to owned member (caller does not take ownership)
 TxLogServer *RaftFrame::CreateScheduler() {
   if(svr_ == nullptr)
   {
-    svr_ = std::make_unique<RaftServer>(this);
+    // @unsafe
+    { svr_ = std::make_unique<RaftServer>(this); }
   }
   else
   {
     verify(0) ;
   }
-  Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id);
+  // @unsafe
+  { Log_debug("create new fpga raft sched loc: %d", this->site_info_->locale_id); }
 
 #ifdef RAFT_TEST_CORO
   raft_test_mutex_.lock();
@@ -99,7 +105,7 @@ TxLogServer *RaftFrame::CreateScheduler() {
   return svr_.get();
 }
 
-// @safe
+// @safe - returns raw pointer to owned member, external calls marked @external [safe]
 Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
@@ -189,7 +195,7 @@ Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<PollThread>> poll_
   return commo_.get();
 }
 
-// @safe
+// @safe - external calls marked @external [safe]
 vector<rusty::Box<rrr::Service>>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,

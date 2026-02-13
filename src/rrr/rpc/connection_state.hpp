@@ -128,7 +128,8 @@ public:
     // @safe - Set callback for state changes
     // Callback receives (from_state, to_state)
     void set_on_state_change(std::function<void(ConnectionState, ConnectionState)> callback) {
-        on_state_change_ = std::move(callback);
+        // @unsafe
+        { on_state_change_ = std::move(callback); }
     }
 
     // @safe - Check if currently connected

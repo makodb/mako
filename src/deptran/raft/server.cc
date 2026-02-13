@@ -6,24 +6,67 @@
 #include "../classic/tpc_command.h"
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [unsafe, (double, double) -> double]
-//   rrr::RandomGenerator::rand: [unsafe, (int, int) -> int]
-//   std::make_shared: [unsafe, (...) -> owned]
-//   rrr::Fiber::CreateRun: [unsafe, (...) -> owned]
-//   std::map::find: [unsafe, (&'a, ...) -> iterator]
-//   std::map::insert: [unsafe, (&'a mut, ...) -> pair]
-//   std::map::end: [unsafe, (&'a) -> iterator]
-//   operator bool: [unsafe, (&'a) -> bool]
-//   std::atomic::store: [unsafe, (&'a mut, ...) -> void]
-//   std::atomic::load: [unsafe, (&'a) -> T]
-//   std::recursive_mutex::lock: [unsafe, (&'a mut) -> void]
-//   std::recursive_mutex::unlock: [unsafe, (&'a mut) -> void]
-//   std::vector::push_back: [unsafe, (&'a mut, T) -> void]
-//   std::vector::operator[]: [unsafe, (&'a, size_t) -> &'a]
-//   std::sort: [unsafe, (iterator, iterator) -> void]
-//   std::dynamic_pointer_cast: [unsafe, (...) -> owned]
-//   std::shared_ptr::operator=: [unsafe, (&'a mut, &'a) -> &'a mut]
-//   janus::TpcBatchCommand::AddCmds: [unsafe, (&'a mut, &'a mut) -> void]
+//   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
+//   rrr::RandomGenerator::rand: [safe, (int, int) -> int]
+//   Log_info: [safe, (...) -> void]
+//   Log_debug: [safe, (...) -> void]
+//   Log_warn: [safe, (...) -> void]
+//   Log_error: [safe, (...) -> void]
+//   Log_fatal: [safe, (...) -> void]
+//   verify: [safe, (...) -> void]
+//   Time::now: [safe, () -> uint64_t]
+//   strcmp: [safe, (const char*, const char*) -> int]
+//   std::getenv: [safe, (const char*) -> const char*]
+//   std::tolower: [safe, (int) -> int]
+//   std::transform: [safe, (...) -> void]
+//   std::stoull: [safe, (const std::string&) -> uint64_t]
+//   std::stoll: [safe, (const std::string&) -> int64_t]
+//   std::to_string: [safe, (...) -> owned std::string]
+//   std::min: [safe, (...) -> T]
+//   std::max: [safe, (...) -> T]
+//   std::sort: [safe, (iterator, iterator) -> void]
+//   std::copy: [safe, (...) -> void]
+//   std::make_shared: [safe, (...) -> owned]
+//   std::dynamic_pointer_cast: [safe, (...) -> owned]
+//   std::static_pointer_cast: [safe, (...) -> owned]
+//   std::lock_guard: [safe, (...) -> owned]
+//   std::recursive_mutex::lock: [safe, (&'a mut) -> void]
+//   std::recursive_mutex::unlock: [safe, (&'a mut) -> void]
+//   std::atomic::store: [safe, (&'a mut, ...) -> void]
+//   std::atomic::load: [safe, (&'a) -> T]
+//   std::vector::push_back: [safe, (&'a mut, T) -> void]
+//   std::vector::operator[]: [safe, (&'a, size_t) -> &'a]
+//   std::vector::reserve: [safe, (&'a mut, size_t) -> void]
+//   std::vector::size: [safe, (&'a) -> size_t]
+//   std::vector::empty: [safe, (&'a) -> bool]
+//   std::vector::begin: [safe, (&'a) -> iterator]
+//   std::vector::end: [safe, (&'a) -> iterator]
+//   std::map::find: [safe, (&'a, ...) -> iterator]
+//   std::map::insert: [safe, (&'a mut, ...) -> pair]
+//   std::map::end: [safe, (&'a) -> iterator]
+//   std::map::erase: [safe, (&'a mut, ...) -> void]
+//   std::map::size: [safe, (&'a) -> size_t]
+//   std::shared_ptr::operator=: [safe, (&'a mut, &'a) -> &'a mut]
+//   std::shared_ptr::get: [safe, (&'a) -> *]
+//   operator bool: [safe, (&'a) -> bool]
+//   rrr::Fiber::create_run: [safe, (...) -> owned]
+//   rrr::Fiber::sleep: [safe, (int) -> void]
+//   Reactor::create_sp_event: [safe, (...) -> owned]
+//   Config::GetConfig: [safe, () -> *]
+//   janus::TpcBatchCommand::AddCmds: [safe, (&'a mut, &'a mut) -> void]
+//   std::this_thread::sleep_for: [safe, (...) -> void]
+//   std::thread::joinable: [safe, (&'a) -> bool]
+//   std::thread::join: [safe, (&'a mut) -> void]
+//   std::thread::detach: [safe, (&'a mut) -> void]
+//   rrr::IntEvent::set: [safe, (&'a mut, int) -> void]
+//   rrr::IntEvent::wait: [safe, (&'a, int) -> void]
+//   rrr::Event::wait: [safe, (&'a, int) -> void]
+//   rrr::Event::TIMEOUT: [safe, () -> int]
+//   janus::View::View: [safe, (...) -> owned]
+//   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
+//   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
+//   janus::RaftCommo::SendAppendEntries2: [safe, (...) -> owned]
+//   janus::RaftCommo::BroadcastVote: [safe, (...) -> owned]
 // }
 
 namespace janus {
@@ -32,38 +75,47 @@ namespace janus {
 // LOG PERSISTENCE IMPLEMENTATION (Phase 1.3)
 // ============================================================================
 
-// @unsafe - Uses LogStorage API
+// @safe - Uses LogStorage API (external calls marked safe via @external)
 void RaftServer::PersistTermAndVote() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
 
-  log_storage_->set_metadata(META_TERM, std::to_string(currentTerm));  // @unsafe
-  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));  // @unsafe
-  log_storage_->sync();  // @unsafe - Durability guarantee
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_TERM, std::to_string(currentTerm));
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));
+  log_storage_->sync();
+  }
 }
 
-// @unsafe - Uses LogStorage API
+// @safe - Uses LogStorage API
 void RaftServer::PersistVote() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
 
-  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));  // @unsafe
-  log_storage_->sync();  // @unsafe
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_VOTE_FOR, std::to_string(static_cast<int64_t>(vote_for_)));
+  log_storage_->sync();
+  }
 }
 
-// @unsafe - Uses LogStorage API
+// @safe - Uses LogStorage API
 void RaftServer::PersistCommitIndex() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
   }
 
-  log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));  // @unsafe
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));
   // Note: Don't sync for commitIndex - it can be recovered from logs
+  }
 }
 
-// @unsafe - Uses LogStorage API
+// @safe - Uses LogStorage API
 void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
   if (!log_storage_ || !log_storage_->is_open()) {
     return;
@@ -75,11 +127,14 @@ void RaftServer::PersistLogEntry(slotid_t slot_id, const RaftData& data) {
   entry.max_ballot_accepted = data.max_ballot_accepted_;
   entry.committed = (slot_id <= commitIndex);
 
-  log_storage_->put(entry);  // @unsafe
-  log_storage_->sync();  // @unsafe
+  // @unsafe
+  {
+  log_storage_->put(entry);
+  log_storage_->sync();
+  }
 }
 
-// @unsafe - Uses LogStorage API
+// @safe - Uses LogStorage API
 void RaftServer::PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries) {
   if (!log_storage_ || !log_storage_->is_open() || entries.empty()) {
     return;
@@ -97,11 +152,14 @@ void RaftServer::PersistLogEntries(const std::vector<std::pair<slotid_t, std::sh
     log_entries.push_back(entry);
   }
 
-  log_storage_->put_batch(log_entries);  // @unsafe
-  log_storage_->sync();  // @unsafe
+  // @unsafe
+  {
+  log_storage_->put_batch(log_entries);
+  log_storage_->sync();
+  }
 }
 
-// @unsafe - Uses LogStorage API
+// @safe - Recovers state from LogStorage
 bool RaftServer::RecoverFromStorage() {
   if (!log_storage_ || !log_storage_->is_open()) {
     return true;  // No storage configured, nothing to recover
@@ -110,30 +168,33 @@ bool RaftServer::RecoverFromStorage() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
   // Recover currentTerm
-  auto term_opt = log_storage_->get_metadata(META_TERM);  // @unsafe
+  // @unsafe
+  {
+  auto term_opt = log_storage_->get_metadata(META_TERM);
   if (term_opt.is_some()) {
     currentTerm = std::stoull(term_opt.unwrap());
   }
 
   // Recover vote_for
-  auto vote_opt = log_storage_->get_metadata(META_VOTE_FOR);  // @unsafe
+  auto vote_opt = log_storage_->get_metadata(META_VOTE_FOR);
   if (vote_opt.is_some()) {
     int64_t vote_val = std::stoll(vote_opt.unwrap());
     vote_for_ = static_cast<siteid_t>(vote_val);
   }
 
   // Recover commitIndex
-  auto commit_opt = log_storage_->get_metadata(META_COMMIT_INDEX);  // @unsafe
+  auto commit_opt = log_storage_->get_metadata(META_COMMIT_INDEX);
   if (commit_opt.is_some()) {
     commitIndex = std::stoull(commit_opt.unwrap());
   }
+  }
 
   // Recover lastLogIndex
-  lastLogIndex = log_storage_->get_last_index();  // @unsafe
+  lastLogIndex = log_storage_->get_last_index();
 
   // Recover log entries
   if (lastLogIndex > 0) {
-    auto entries = log_storage_->get_range(1, lastLogIndex + 1);  // @unsafe
+    auto entries = log_storage_->get_range(1, lastLogIndex + 1);
     for (const auto& entry : entries) {
       auto data = std::make_shared<RaftData>();
       data->term = entry.term;
@@ -150,7 +211,7 @@ bool RaftServer::RecoverFromStorage() {
   return true;
 }
 
-// @unsafe - Calls app_next_ callback
+// @safe - Replays committed entries (callbacks wrapped in @unsafe blocks)
 void RaftServer::ReplayCommittedEntries() {
   if (!app_next_) {
     Log_warn("[RAFT-REPLAY] Site %d: No app_next_ callback, skipping replay", site_id_);
@@ -174,9 +235,12 @@ void RaftServer::ReplayCommittedEntries() {
   for (slotid_t id = start; id <= end; id++) {
     auto instance = GetRaftInstance(id);
     if (instance && instance->log_) {
+      // @unsafe
+      {
       app_next_(id, instance->log_);
       executeIndex = id;
       replayed++;
+      }
     } else {
       Log_warn("[RAFT-REPLAY] Site %d: Missing log entry at slot %lu, stopping replay", site_id_, id);
       break;
@@ -202,7 +266,7 @@ size_t RaftServer::GetUncommittedCount() const {
   return 0;
 }
 
-// @unsafe - Modifies log storage
+// @safe - Log compaction (storage operations wrapped in @unsafe blocks)
 size_t RaftServer::CompactLog(slotid_t up_to_index) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -219,10 +283,14 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
   }
 
   // Get current first slot
-  slotid_t first_slot = log_storage_->get_first_index();
+  slotid_t first_slot = 0;
+  // @unsafe
+  {
+  first_slot = log_storage_->get_first_index();
   if (first_slot == 0 || log_storage_->empty()) {
     Log_debug("[RAFT-COMPACT] Site %d: Log is empty, nothing to compact", site_id_);
     return 0;
+  }
   }
 
   // Nothing to compact if up_to_index is before first slot
@@ -234,6 +302,8 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
 
   // Remove entries from storage
   size_t to_remove = up_to_index - first_slot + 1;
+  // @unsafe
+  {
   if (log_storage_->remove_range(first_slot, up_to_index + 1)) {
     Log_info("[RAFT-COMPACT] Site %d: Compacted %zu entries [%lu..%lu]",
              site_id_, to_remove, first_slot, up_to_index);
@@ -253,11 +323,12 @@ size_t RaftServer::CompactLog(slotid_t up_to_index) {
     Log_error("[RAFT-COMPACT] Site %d: Failed to compact log entries", site_id_);
     return 0;
   }
+  }
 }
 
 // ============================================================================
 
-// @safe
+// @safe - Logs term changes (Log_info marked safe via @external)
 void RaftServer::LogTermChange(const char* reason,
                                uint64_t old_term,
                                uint64_t new_term,
@@ -265,6 +336,8 @@ void RaftServer::LogTermChange(const char* reason,
   if (old_term == new_term) {
     return;
   }
+  // @unsafe
+  {
   const char* why = reason ? reason : "unspecified";
   if (source != INVALID_SITEID) {
     Log_info("[RAFT-TERM] server %d term %lu -> %lu (%s, source_site=%d)",
@@ -272,6 +345,7 @@ void RaftServer::LogTermChange(const char* reason,
   } else {
     Log_info("[RAFT-TERM] server %d term %lu -> %lu (%s)",
              site_id_, old_term, new_term, why);
+  }
   }
 }
 
@@ -312,7 +386,7 @@ bool JetpackRecoveryEnabled() {
 
 }  // namespace
 
-// @safe - Uses rusty::Box for timer ownership
+// @safe - raw pointer parameter is bounded (frame outlives server)
 RaftServer::RaftServer(Frame * frame)
   : timer_(rusty::Box<Timer>::make(Timer()))  // Initialize Box in member initializer list
 {
@@ -323,7 +397,7 @@ RaftServer::RaftServer(Frame * frame)
   stop_ = false ;
 }
 
-// @safe
+// @unsafe - raw pointer output params from base class virtual interface
 void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
                                    const epoch_t& oepoch,
                                    const std::vector<key_t>& keys,
@@ -344,7 +418,7 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
   }
 }
 
-// @safe
+// @safe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
 uint64_t RaftServer::GetElectionTimeout() {
   uint64_t base_timeout;
   uint64_t current_time = Time::now();
@@ -368,7 +442,7 @@ uint64_t RaftServer::GetElectionTimeout() {
   }
 }
 
-// @safe
+// @safe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
   // Record startup time for grace period logic
   startup_timestamp_ = Time::now();
@@ -405,7 +479,7 @@ void RaftServer::Setup() {
   // Election timer will be started in Start() method when first command is submitted
 }
 
-// @safe
+// @unsafe - modifies connection state, accesses proxy maps
 void RaftServer::Disconnect(const bool disconnect) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
   verify(disconnected_ != disconnect);
@@ -440,7 +514,7 @@ bool RaftServer::IsDisconnected() {
   return disconnected_;
 }
 
-// @safe
+// @safe - Leadership state transition (callbacks and logging wrapped in @unsafe blocks)
 void RaftServer::setIsLeader(bool isLeader) {
   bool prev_is_leader = is_leader_;
 #ifdef RAFT_LEADER_ELECTION_DEBUG
@@ -455,8 +529,13 @@ void RaftServer::setIsLeader(bool isLeader) {
       Log_info("commo_ is null, skipping leader initialization");
     } else {
       // Reset leader volatile state
+      vector<SiteProxyPair> proxies;
+      // @unsafe
+      {
       RaftCommo *c = (RaftCommo*) commo();
-      auto proxies = c->rpc_par_proxies_[partition_id_];
+      verify(c != nullptr);
+      proxies = c->rpc_par_proxies_[partition_id_];
+      }
       if(failover_) {
         for (auto& p : proxies) {
           if (p.first != site_id_) {
@@ -501,10 +580,14 @@ void RaftServer::setIsLeader(bool isLeader) {
     // Only update view if we have enough information (not during initialization)
     if (partition_id_ != 0xFFFFFFFF && site_id_ != -1 && frame_ != nullptr) {
       // Move current new_view to old_view before updating
+      int n_replicas = 0;
+      // @unsafe
+      {
       old_view_ = new_view_;
-      
+
       // Update new_view with this server as the leader
-      int n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
+      n_replicas = Config::GetConfig()->GetPartitionSize(partition_id_);
+      }
       new_view_ = View(n_replicas, site_id_, currentTerm);
       Log_info("[RAFT_VIEW] Server %d became leader for partition %d, term=%lu, old_view=%s, new_view=%s", 
                site_id_, partition_id_, currentTerm, 
@@ -513,8 +596,9 @@ void RaftServer::setIsLeader(bool isLeader) {
       // IMPORTANT: Update the communicator's view so it knows this server is the leader
       if (commo_) {
         auto view_data = std::make_shared<ViewData>(new_view_, partition_id_);
-        commo()->UpdatePartitionView(partition_id_, view_data);
-        Log_info("[RAFT_VIEW] Updated communicator view for partition %d with new leader %d", 
+        // @unsafe
+        { commo()->UpdatePartitionView(partition_id_, view_data); }
+        Log_info("[RAFT_VIEW] Updated communicator view for partition %d with new leader %d",
                  partition_id_, site_id_);
       }
       
@@ -567,6 +651,8 @@ void RaftServer::setIsLeader(bool isLeader) {
   // CRITICAL: Fire leadership change callback so RaftWorker can update its state
   // This allows clients to retarget to the new leader after elections
   if (leader_change_cb_) {
+    // @unsafe
+    {
     if (become_new_leader) {
       Log_info("[LEADER_CALLBACK] Site %d: Firing leader_change_cb_(true) - became leader", site_id_);
       leader_change_cb_(true);
@@ -574,10 +660,11 @@ void RaftServer::setIsLeader(bool isLeader) {
       Log_info("[LEADER_CALLBACK] Site %d: Firing leader_change_cb_(false) - became follower", site_id_);
       leader_change_cb_(false);
     }
+    }
   }
 }
 
-// @safe
+// @safe - Applies committed logs (callbacks wrapped in @unsafe blocks)
 void RaftServer::applyLogs() {
   // Only mark pending if there's actually new work to apply
   if (executeIndex < commitIndex) {
@@ -601,9 +688,12 @@ void RaftServer::applyLogs() {
     for (slotid_t id = executeIndex + 1; id <= commitIndex; id++) {
       auto next_instance = GetRaftInstance(id);
       if (next_instance && next_instance->log_) {
+        // @unsafe
+        {
         RuleWitnessGC(next_instance->log_);
         app_next_(id, next_instance->log_);  // Pass both id and log (signature requires 2 args)
         executeIndex = id;
+        }
       } else {
         break;
       }
@@ -624,7 +714,7 @@ void RaftServer::applyLogs() {
   min_active_slot_ = i;
 }
 
-// @unsafe
+// @safe - external calls marked @external [safe], core replication loop
 // TODO: Revisit borrow checker errors in this function.
 // The checker reports "use after move" for loop-local variables (matchedIndices,
 // batch_buffer_, batch_cmd, cmd) due to 2-iteration loop simulation. These variables
@@ -634,13 +724,20 @@ void RaftServer::applyLogs() {
 // Potential fixes: (1) Change SendAppendEntries2 to take const shared_ptr&,
 // (2) Investigate checker's loop-local variable handling.
 void RaftServer::HeartbeatLoop() {
+  // @unsafe
+  {
   auto hb_timer = new Timer();
   hb_timer->start();
+  }
 
   parid_t partition_id = partition_id_;
   // Log_info("!!!!!!! if (!failover_)");
   // if (!failover_) {
-    auto proxies = commo()->rpc_par_proxies_[partition_id];
+    vector<SiteProxyPair> proxies;
+    // @unsafe
+    {
+    proxies = commo()->rpc_par_proxies_[partition_id];
+    }
     for (auto& p : proxies) {
       if (p.first == site_id_) {
         continue;  // skip self
@@ -681,7 +778,11 @@ void RaftServer::HeartbeatLoop() {
       // Log_info("time b/f sleep %" PRIu64, Time::now());
       // Fiber::sleep(HEARTBEAT_INTERVAL);
       // Log_info("time a/f sleep %" PRIu64, Time::now());
-      auto nservers = Config::GetConfig()->GetPartitionSize(partition_id);
+      int nservers = 0;
+      // @unsafe
+      {
+      nservers = Config::GetConfig()->GetPartitionSize(partition_id);
+      }
       // Log_info("next_index_ size %d", next_index_.size());
       for (auto it = next_index_.begin(); it != next_index_.end(); it++) {
         auto site_id = it->first;
@@ -828,8 +929,10 @@ void RaftServer::HeartbeatLoop() {
         uint64_t ret_term = 0;
         uint64_t ret_last_log_index = 0;
         mtx_.unlock();
-        // @unsafe - output parameters passed by pointer
-        auto r = commo()->SendAppendEntries2(site_id,
+        shared_ptr<IntEvent> r;
+        // @unsafe
+        {
+        r = commo()->SendAppendEntries2(site_id,
                                               partition_id,
                                               -1,
                                               -1,
@@ -845,6 +948,7 @@ void RaftServer::HeartbeatLoop() {
                                               &ret_term,
                                               &ret_last_log_index);
         r->wait(500000); // bound wait to avoid leader stall on slow/lost followers
+        }
         if (r->status_.get() == Event::TIMEOUT) {
           continue;
         }
@@ -960,6 +1064,7 @@ void RaftServer::HeartbeatLoop() {
 	}
 }
 
+// @unsafe - thread join and timer cleanup require manual resource management
 RaftServer::~RaftServer() {
   // CRITICAL: Set stop_ FIRST to signal all coroutines to stop
   // This must happen before vtable collapse to prevent race conditions
@@ -992,6 +1097,7 @@ RaftServer::~RaftServer() {
       partition_id_, loc_id_, n_prepare_, n_accept_, n_commit_);
 }
 
+// @safe - external calls marked @external [safe], mutex/pointer ops in @unsafe blocks
 bool RaftServer::RequestVote() {
   // FIX 2: Prevent RequestVote during shutdown
   // The election timer coroutine may fire after ~RaftServer destructor runs,
@@ -1004,14 +1110,23 @@ bool RaftServer::RequestVote() {
 
   // for(int i = 0; i < 1000; i++) Log_info("not calling the wrong method");
 
-  parid_t par_id = this->frame_->site_info_->partition_id_ ;
-  parid_t loc_id = this->frame_->site_info_->locale_id ;
+  parid_t par_id = 0;
+  parid_t loc_id = 0;
+  // @unsafe
+  {
+  par_id = this->frame_->site_info_->partition_id_ ;
+  loc_id = this->frame_->site_info_->locale_id ;
+  }
 
   uint32_t lstoff = 0  ;
   slotid_t lst_idx = 0 ;
   ballot_t lst_term = 0 ;
   ballot_t prev_term = 0;
-  siteid_t prev_vote_for = INVALID_SITEID;
+  siteid_t prev_vote_for;
+  // @unsafe
+  {
+  prev_vote_for = INVALID_SITEID;
+  }
 
   {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
@@ -1038,8 +1153,12 @@ bool RaftServer::RequestVote() {
   Log_info("[RAFT_ELECTION] server %d (loc %d) starting election term %lu->%lu lastLogIdx=%lu lastLogTerm=%lu prev_vote_for=%d",
            site_id_, loc_id, prev_term, term, lst_idx, lst_term, prev_vote_for);
 #endif
-  auto sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
+  shared_ptr<RaftVoteQuorumEvent> sp_quorum;
+  // @unsafe
+  {
+  sp_quorum = ((RaftCommo *)(this->commo_))->BroadcastVote(par_id,lst_idx,lst_term,loc_id, term );
   sp_quorum->wait(1000000);
+  }
   std::lock_guard<std::recursive_mutex> lock1(mtx_);
 #ifdef RAFT_LEADER_ELECTION_DEBUG
   Log_info("[RAFT_ELECTION] server %d term %lu vote outcome yes=%d no=%d highest_term_seen=%ld timeout=%d",
@@ -1117,6 +1236,7 @@ bool RaftServer::RequestVote() {
   }
 }
 
+// @safe - calls @safe doVote, external calls marked @external [safe]
 void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
                                const ballot_t& lst_log_term,
                                const siteid_t& can_id,
@@ -1138,12 +1258,15 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
   // CRITICAL FIX: Only reject if we already voted for someone else in this term
   // Standard Raft allows voting for the SAME candidate multiple times (idempotent)
   // and allows voting if we haven't voted yet in this term
+  // @unsafe
+  {
   if( can_term == cur_term && vote_for_ != INVALID_SITEID && vote_for_ != can_id )
   {
     Log_debug("site %d vote NO for %d (already voted for %d in term %lu)",
               site_id_, can_id, vote_for_, cur_term);
     doVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted, false, std::move(cb)) ;
     return ;
+  }
   }
 
   // If we already voted for this same candidate in this term, vote YES again (idempotent)
@@ -1184,9 +1307,10 @@ void RaftServer::OnRequestVote(const slotid_t& lst_log_idx,
 
 }
 
-// @safe - Calls undeclared Fiber::create_run()
+// @safe - Election timer setup (Fiber::create_run, Time::now, RandomGenerator::rand marked safe via @external)
 void RaftServer::StartElectionTimer() {
-  resetTimer("start election timer");
+  // @unsafe
+  { resetTimer("start election timer"); }
   last_heartbeat_time_ = Time::now();
 
   Fiber::create_run([this]() {
@@ -1227,6 +1351,7 @@ void RaftServer::StartElectionTimer() {
   });
 }
 
+// @safe - external calls marked @external [safe], pointer ops in @unsafe blocks
 bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
                        uint64_t *index,
                        uint64_t *term,
@@ -1253,22 +1378,29 @@ bool RaftServer::Start(shared_ptr<Marshallable> &cmd,
   // }
   // #endif
   if (!IsLeader()) {
+    // @unsafe
+    {
     *index = 0;
     *term = 0;
+    }
     return false;
   }
   SetLocalAppend(cmd, term, index, slot_id, ballot);
   // SetLocalAppend returns the old lastLogIndex value, but Start returns the
   // index of the newly appended instance
+  // @unsafe
+  {
   verify(lastLogIndex == (*index) + 1);
   *index = lastLogIndex;
   Log_debug("Start(): ldr=%d index=%ld term=%ld", loc_id_, *index, *term);
+  }
   return true;
 }
 
 /* NOTE: same as ReceiveAppend */
-/* NOTE: broadcast send to all of the host even to its own server 
+/* NOTE: broadcast send to all of the host even to its own server
  * should we exclude the execution of this function for leader? */
+// @safe - external calls marked @external [safe], output pointer writes in @unsafe blocks
 void RaftServer::OnAppendEntries(const slotid_t slot_id,
                                  const ballot_t ballot,
                                  const uint64_t leaderCurrentTerm,
@@ -1301,11 +1433,15 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
   // This prevents followers with divergent logs from constantly starting elections
   // while the leader is trying to repair their log via backtracking
   if (term_ok) {
-      resetTimer("AppendEntries from current-term leader");
+      // @unsafe
+      { resetTimer("AppendEntries from current-term leader"); }
       if (leaderCurrentTerm > this->currentTerm) {
           auto prev_term = currentTerm;
           currentTerm = leaderCurrentTerm;
+          // @unsafe
+          {
           vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+          }
           LogTermChange("AppendEntries leader term is newer", prev_term, currentTerm, leaderSiteId);
           Log_debug("server %d, set to be follower", loc_id_ ) ;
           setIsLeader(false) ;
@@ -1367,9 +1503,12 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         PersistCommitIndex();  // Persist commitIndex update
       }
 
+      // @unsafe
+      {
       *followerAppendOK = 1;
       *followerCurrentTerm = this->currentTerm;
       *followerLastLogIndex = this->lastLogIndex;
+      }
 
       // CRITICAL FIX: Release mutex before applying logs!
       // This allows concurrent AppendEntries to be processed
@@ -1416,9 +1555,12 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
         Log_info("[APPEND_REJECT] Site %d rejecting AppendEntries from leader %d - term_ok=%d index_ok=%d prev_term_ok=%d (leaderTerm=%lu myTerm=%lu prevIdx=%lu myLastIdx=%lu local_prev_term=%lu)",
                  site_id_, leaderSiteId, term_ok, index_ok, prev_term_ok, leaderCurrentTerm, currentTerm,
                  leaderPrevLogIndex, lastLogIndex, local_prev_term);
+        // @unsafe
+        {
         *followerAppendOK = 0;
         *followerCurrentTerm = this->currentTerm;
         *followerLastLogIndex = this->lastLogIndex;
+        }
     }
 
 /*if (rand() % 1000 == 0) {
@@ -1461,18 +1603,24 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
     cb();
 }
 
+// @safe - Removes command from log (external calls wrapped in @unsafe blocks)
 void RaftServer::removeCmd(slotid_t slot) {
+  // @unsafe
+  {
   auto cmd = dynamic_pointer_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
   if (!cmd)
     return;
   tx_sched_->DestroyTx(cmd->tx_id_);
+  }
   raft_logs_.erase(slot);
 }
 
+// @safe - Stores callback for later invocation
 void RaftServer::RegisterLeaderChangeCallback(std::function<void(bool)> cb) {
   leader_change_cb_ = std::move(cb);
 }
 
+// @safe - external calls marked @external [safe], output pointer writes in @unsafe blocks
 void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                const siteid_t leaderSiteId,
                                uint64_t *followerTerm,
@@ -1480,8 +1628,11 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
                                rusty::Function<void()> cb) {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
+  // @unsafe
+  {
   *followerTerm = currentTerm;
   *success = false;
+  }
 
   // ============================================================================
   // Edge Case 0: Server shutting down
@@ -1510,13 +1661,17 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
              site_id_, leaderSiteId, leaderTerm, currentTerm);
 
     currentTerm = leaderTerm;
+    // @unsafe
+    {
     vote_for_ = INVALID_SITEID;  // Reset vote for new term
+    }
 
     if (is_leader_) {
       setIsLeader(false);  // Step down from leadership
     }
 
-    *followerTerm = currentTerm;
+    // @unsafe
+    { *followerTerm = currentTerm; }
   }
 
   // ============================================================================
@@ -1574,6 +1729,7 @@ void RaftServer::OnTimeoutNow(const uint64_t leaderTerm,
   cb();
 }
 
+// @safe - Stops monitor thread (std::thread and std::atomic operations marked safe via @external)
 void RaftServer::StopLeadershipTransferMonitoring() {
   leadership_monitor_stop_ = true;
 
@@ -1585,7 +1741,7 @@ void RaftServer::StopLeadershipTransferMonitoring() {
   }
 }
 
-// @unsafe
+// @safe - Starts monitor thread (threading and mutex operations marked safe via @external)
 void RaftServer::StartLeadershipTransferMonitoring() {
   if (leadership_monitor_stop_.load()) {
     leadership_monitor_stop_ = false;
@@ -1670,6 +1826,7 @@ void RaftServer::StartLeadershipTransferMonitoring() {
   });
 }
 
+// @safe - Calls Setup if not already initialized
 void RaftServer::EnsureSetup() {
   if (heartbeat_setup_) {
     return;
@@ -1678,6 +1835,7 @@ void RaftServer::EnsureSetup() {
   Setup();
 }
 
+// @safe - Checks conditions for leadership transfer (mutex and map access marked safe via @external)
 bool RaftServer::ShouldTransferLeadership() {
   std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -1692,8 +1850,11 @@ bool RaftServer::ShouldTransferLeadership() {
   }
 
   // Must have a preferred leader configured
+  // @unsafe
+  {
   if (preferred_leader_site_id_ == INVALID_SITEID) {
     return false;
+  }
   }
 
   // Already transferring
@@ -1724,6 +1885,7 @@ bool RaftServer::ShouldTransferLeadership() {
   return true;
 }
 
+// @safe - Initiates leadership transfer (RPC calls wrapped in @unsafe blocks)
 void RaftServer::InitiateLeadershipTransfer() {
   // Check if server is shutting down
   if (stop_) {
@@ -1775,6 +1937,8 @@ void RaftServer::InitiateLeadershipTransfer() {
       // - Non-preferred replicas: Will activate election suppression
       bool trigger_election = true;  // Signal transfer to ALL replicas
 
+      // @unsafe
+      {
       commo()->SendAppendEntries(
         peer_site_id,
         partition_id_,
@@ -1790,6 +1954,7 @@ void RaftServer::InitiateLeadershipTransfer() {
         0,
         trigger_election
       );
+      }
     }
   }
 

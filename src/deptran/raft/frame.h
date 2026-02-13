@@ -12,7 +12,7 @@
 
 namespace janus {
 
-// @safe
+// @unsafe - inherits from non-@interface Frame (individual methods are @safe)
 class RaftFrame : public Frame {
  private:
   // Safe shared mutable counter using Arc<Cell<T>> pattern
@@ -29,9 +29,9 @@ class RaftFrame : public Frame {
  public:
   RaftFrame(int mode);
   ~RaftFrame();  // Destructor to clean up owned resources
-  std::unique_ptr<RaftCommo> commo_;  // Owned RaftCommo, automatically cleaned up
+  std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
   /* TODO: have another class for common data */
-  std::unique_ptr<RaftServer> svr_;  // Owned RaftServer, automatically cleaned up
+  std::unique_ptr<RaftServer> svr_;  // @unsafe - unique_ptr kept for test file compatibility
   Executor *CreateExecutor(cmdid_t cmd_id, TxLogServer *sched) override;
   Coordinator *CreateCoordinator(cooid_t coo_id,
                                  Config *config,

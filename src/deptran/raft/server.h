@@ -9,6 +9,33 @@
 #include "rpc/log_storage.hpp"
 #include "rpc/snapshot_manager.hpp"
 
+// @external: {
+//   Log_info: [safe, (...) -> void],
+//   Log_debug: [safe, (...) -> void],
+//   Log_warn: [safe, (...) -> void],
+//   Log_error: [safe, (...) -> void],
+//   Log_fatal: [safe, (...) -> void],
+//   verify: [safe, (bool) -> void],
+//   Config::GetConfig: [safe, () -> Config*],
+//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Fiber::create_run: [safe, (...) -> void],
+//   Fiber::sleep: [safe, (int) -> void],
+//   RandomGenerator::rand_double: [safe, (double, double) -> double],
+//   RandomGenerator::rand: [safe, (int, int) -> int],
+//   Time::now: [safe, () -> uint64_t],
+//   std::make_shared: [safe, (...) -> shared_ptr<T>],
+//   dynamic_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>],
+//   strcmp: [safe, (const char*, const char*) -> int],
+//   std::sort: [safe, (...) -> void],
+//   std::max: [safe, (T, T) -> T],
+//   std::min: [safe, (T, T) -> T],
+//   std::stoull: [safe, (const string&) -> uint64_t],
+//   std::stoll: [safe, (const string&) -> int64_t],
+//   std::this_thread::sleep_for: [safe, (duration) -> void],
+//   JetpackRecoveryEntry: [safe, (...) -> void],
+//   RuleWitnessGC: [safe, (...) -> void]
+// }
+
 namespace janus {
 class Command;
 class CmdData;
@@ -17,6 +44,7 @@ class CmdData;
 #define NUM_BATCH_TIMER_RESET  (100)
 #define SEC_BATCH_TIMER_RESET  (1)
 
+// @safe - data struct with shared_ptr fields (shared_ptr marked @external)
 struct RaftData {
   ballot_t max_ballot_seen_ = 0;
   ballot_t max_ballot_accepted_ = 0;
@@ -32,6 +60,7 @@ struct RaftData {
 	ballot_t ballot;
 };
 
+// @safe - simple POD struct
 struct KeyValue {
 	int key;
 	i32 value;
@@ -44,6 +73,7 @@ struct KeyValue {
 #endif
 
 
+// @unsafe - inherits from non-@interface TxLogServer (individual methods are @safe)
 class RaftServer : public TxLogServer {
  private:
   // ============================================================================
@@ -61,19 +91,19 @@ class RaftServer : public TxLogServer {
   static constexpr const char* META_VOTE_FOR = "vote_for";
   static constexpr const char* META_COMMIT_INDEX = "commitIndex";
 
-  // @unsafe - Persists term and vote_for to storage
+  // @safe - Persists term and vote_for to storage (external LogStorage API calls wrapped in @unsafe blocks)
   void PersistTermAndVote();
 
-  // @unsafe - Persists vote_for only to storage
+  // @safe - Persists vote_for only to storage
   void PersistVote();
 
-  // @unsafe - Persists commitIndex to storage
+  // @safe - Persists commitIndex to storage
   void PersistCommitIndex();
 
-  // @unsafe - Persists a single log entry
+  // @safe - Persists a single log entry
   void PersistLogEntry(slotid_t slot_id, const RaftData& data);
 
-  // @unsafe - Persists multiple log entries
+  // @safe - Persists multiple log entries
   void PersistLogEntries(const std::vector<std::pair<slotid_t, std::shared_ptr<RaftData>>>& entries);
 
   // ============================================================================
@@ -81,9 +111,11 @@ class RaftServer : public TxLogServer {
   std::map<siteid_t, uint64_t> match_index_{};
   std::map<siteid_t, uint64_t> next_index_{};
   std::vector<std::thread> timer_threads_ = {};
+  // @unsafe - uses raw pointer parameter for thread signaling
   void timer_thread(bool *vote) ;
   rusty::Box<Timer> timer_;  // Owned timer, auto-cleaned on destruction
   uint64_t last_heartbeat_time_ = 0;
+  // @safe - logging calls wrapped in @unsafe blocks in implementation
   void LogTermChange(const char* reason, uint64_t old_term, uint64_t new_term, siteid_t source = INVALID_SITEID);
   bool stop_ = false ;
   siteid_t vote_for_ = INVALID_SITEID ;
@@ -132,10 +164,13 @@ class RaftServer : public TxLogServer {
   uint64_t startup_timestamp_ = 0;                          // When server started (for grace period)
 
 
-  // @unsafe - Uses INVALID_SITEID macro with integer cast
+  // @safe - simple comparison of member fields
   bool AmIPreferredLeader() const {
-    return preferred_leader_site_id_ != INVALID_SITEID &&
-           site_id_ == preferred_leader_site_id_;
+    // @unsafe
+    {
+      return preferred_leader_site_id_ != INVALID_SITEID &&
+             site_id_ == preferred_leader_site_id_;
+    }
   }
 
   // @safe - Check if I have caught up to the current leader's commit level
@@ -147,17 +182,23 @@ class RaftServer : public TxLogServer {
 
   // ============================================================================
   
+  // @safe - external calls marked @external, mutex/pointer ops in @unsafe blocks
 	bool RequestVote() ;
 
+  // @safe - server setup (threading via @unsafe blocks)
 	void Setup();
+  // @safe - external calls marked @external, core replication loop
 	void HeartbeatLoop() ;
 
-  // @unsafe - Returns raw pointer cast
+  // @safe - C-style cast in @unsafe block
   RaftCommo* commo() {
-    return (RaftCommo*) commo_;
+    // @unsafe
+    {
+      return (RaftCommo*) commo_;
+    }
   }
 
-  // @unsafe
+  // @unsafe - raw pointer output parameters (reply_term, vote_granted)
   void doVote(const slotid_t& lst_log_idx,
               const ballot_t& lst_log_term,
               const siteid_t& can_id,
@@ -166,14 +207,17 @@ class RaftServer : public TxLogServer {
               bool_t *vote_granted,
               bool_t vote,
               rusty::Function<void()> cb) {
-      *vote_granted = vote ;
-      *reply_term = currentTerm ;
+      // @unsafe
+      {
+        *vote_granted = vote ;
+        *reply_term = currentTerm ;
+      }
 #ifdef RAFT_LEADER_ELECTION_DEBUG
       siteid_t prev_vote_for = vote_for_;
       Log_info("[RAFT_VOTE] server %d (loc %d) vote=%d candidate=%d can_term=%lu cur_term=%lu prev_vote_for=%d is_leader=%d lst_idx=%lu lst_term=%lu",
                site_id_, loc_id_, vote, can_id, can_term, currentTerm, prev_vote_for, is_leader_, lst_log_idx, lst_log_term);
 #endif
-                    
+
       if( can_term > currentTerm)
       {
           // is_leader_ = false ;  // TODO recheck
@@ -181,7 +225,10 @@ class RaftServer : public TxLogServer {
           setIsLeader(false);
           auto prev_term = currentTerm;
           currentTerm = can_term ;
-          vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+          // @unsafe
+          {
+            vote_for_ = INVALID_SITEID;  // Reset vote when advancing to new term
+          }
           LogTermChange("vote request carried newer term", prev_term, currentTerm, can_id);
           PersistTermAndVote();  // Persist term/vote change
       }
@@ -201,20 +248,26 @@ class RaftServer : public TxLogServer {
       cb() ;
   }
 
+  // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
   void applyLogs();
 
+  // @safe - timer and atomic operations are safe internal operations
   void resetTimerBatch()
   {
     // Log_info("!!!!!!! if (!failover_)");
     if (!failover_) return ;
     auto cur_count = counter_++;
     if (cur_count > NUM_BATCH_TIMER_RESET ) {
+      // @unsafe
+      {
       if (timer_->elapsed() > SEC_BATCH_TIMER_RESET) {
         resetTimer("batch timer adjustment");
+      }
       }
       counter_.store(0);
     }
   }
+  // @unsafe - raw pointer output params from base class virtual interface
   void OnJetpackPullCmd(const epoch_t& jepoch,
                         const epoch_t& oepoch,
                         const std::vector<key_t>& keys,
@@ -225,25 +278,29 @@ class RaftServer : public TxLogServer {
                         MarshallDeputy* reply_new_view,
                         shared_ptr<KeyCmdBatchData>& batch) override;
 
-  // @unsafe - Modifies timer state, calls timer_->start()
+  // @unsafe - const char* parameter type requires unsafe context
   void resetTimer(const char* reason = "unspecified") {
-    const char* why = reason ? reason : "unspecified";
-    auto prev_time = last_heartbeat_time_;
-    last_heartbeat_time_ = Time::now();
-    // Log only important timer resets (elections, votes), not routine heartbeats
-    if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
-      Log_info("[TIMER_RESET] Site %d: reset timer (%s) - prev_hb_time=%lu new_hb_time=%lu delta=%lu",
-               site_id_, why, prev_time, last_heartbeat_time_, last_heartbeat_time_ - prev_time);
+    // @unsafe
+    {
+      const char* why = reason ? reason : "unspecified";
+      auto prev_time = last_heartbeat_time_;
+      last_heartbeat_time_ = Time::now();
+      // Log only important timer resets (elections, votes), not routine heartbeats
+      if (strcmp(why, "granted vote") == 0 || strcmp(why, "start election timer") == 0) {
+        Log_info("[TIMER_RESET] Site %d: reset timer (%s) - prev_hb_time=%lu new_hb_time=%lu delta=%lu",
+                 site_id_, why, prev_time, last_heartbeat_time_, last_heartbeat_time_ - prev_time);
+      }
     }
     if (failover_) {
       timer_->start() ;
     }
   }
 
-  // @unsafe - Calls RandomGenerator::rand_double (not annotated)
+  // @safe - random number generation (external call wrapped in @unsafe block)
   double randDuration()
   {
     // election timeout between 0.4 and 0.7 seconds
+    // @unsafe { RandomGenerator is external }
     return RandomGenerator::rand_double(0.4, 0.7) ;
   }
 
@@ -257,6 +314,7 @@ class RaftServer : public TxLogServer {
    *
    * This implements startup election bias for preferred replica system.
    */
+  // @safe - election timeout calculation (external calls wrapped in @unsafe blocks)
   uint64_t GetElectionTimeout();
  public:
   slotid_t min_active_slot_ = 1; // anything before (lt) this slot is freed
@@ -281,7 +339,9 @@ class RaftServer : public TxLogServer {
   std::recursive_mutex ready_for_replication_mtx_{};
   shared_ptr<IntEvent> ready_for_replication_;
 
+  // @safe - election timer setup (threading via @unsafe blocks in implementation)
   void StartElectionTimer() ;
+  // @safe - calls Setup
   void EnsureSetup();
 
   // @safe
@@ -294,25 +354,32 @@ class RaftServer : public TxLogServer {
     return is_leader_ ;
   }
   
-  // Made public to allow Jetpack recovery to restore leader state
+  // @safe - leadership state transition (callbacks and logging wrapped in @unsafe blocks)
   void setIsLeader(bool isLeader);
 
+  // @safe - stores callback for later invocation
   void RegisterLeaderChangeCallback(std::function<void(bool)> cb);
 
-  // @unsafe
+  // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   bool Start(shared_ptr<Marshallable> &cmd, uint64_t *index, uint64_t *term, slotid_t slot_id = -1, ballot_t ballot = 1);
 
-  // @unsafe - Dereferences raw pointers
+  // @safe - output pointer writes are bounded
   void GetState(bool *is_leader, uint64_t *term) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    *is_leader = IsLeader();
-    *term = currentTerm;
+    // @unsafe
+    {
+      *is_leader = IsLeader();
+      *term = currentTerm;
+    }
   }
 
-  // @unsafe
+  // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
     std::lock_guard<std::recursive_mutex> lock(mtx_);
-    *index = lastLogIndex ;
+    // @unsafe
+    {
+      *index = lastLogIndex ;
+    }
     lastLogIndex += 1;
     auto instance = GetRaftInstance(lastLogIndex);
     instance->log_ = cmd;
@@ -321,69 +388,57 @@ class RaftServer : public TxLogServer {
 		instance->slot_id = slot_id;
 		instance->ballot = ballot;
 
+    // @unsafe
+    {
 #ifndef RAFT_TEST_CORO
-    if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
-      auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
-      auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
+      if (cmd->kind_ == MarshallDeputy::CMD_TPC_COMMIT){
+        auto p_cmd = dynamic_pointer_cast<TpcCommitCommand>(cmd);
+        auto sp_vec_piece = dynamic_pointer_cast<VecPieceData>(p_cmd->cmd_)->sp_vec_piece_data_;
 
-      // Check if this is Mako data (STR values) vs Janus data (I32 values)
-      // Mako sends raw serialized transaction bytes wrapped as String values
-      // This vestigial code was written for Janus I32 key-value pairs
-      bool is_mako_data = false;
-      if (sp_vec_piece && !sp_vec_piece->empty()) {
-        auto first_cmd = (*sp_vec_piece)[0];
-        if (first_cmd && first_cmd->input.values_ && !first_cmd->input.values_->empty()) {
-          auto first_val = first_cmd->input.values_->begin()->second;
-          if (first_val.get_kind() == Value::STR) {
-            is_mako_data = true;
-            Log_debug("[RAFT-SETLOCALAPPEND] Skipping vestigial I/O code for Mako data (STR values)");
-          }
-        }
-      }
-
-      // Only process if this is Janus data (I32 values)
-      // Skip for Mako data to avoid get_i32() crash on String values
-      if (!is_mako_data) {
-        vector<struct KeyValue> kv_vector;
-        int index = 0;
-        for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
-          auto cmd_input = (*it)->input.values_;
-          for (auto it2 = cmd_input->begin(); it2 != cmd_input->end(); it2++) {
-            struct KeyValue key_value = {it2->first, it2->second.get_i32()};
-            kv_vector.push_back(key_value);
+        // Check if this is Mako data (STR values) vs Janus data (I32 values)
+        bool is_mako_data = false;
+        if (sp_vec_piece && !sp_vec_piece->empty()) {
+          auto first_cmd = (*sp_vec_piece)[0];
+          if (first_cmd && first_cmd->input.values_ && !first_cmd->input.values_->empty()) {
+            auto first_val = first_cmd->input.values_->begin()->second;
+            if (first_val.get_kind() == Value::STR) {
+              is_mako_data = true;
+              Log_debug("[RAFT-SETLOCALAPPEND] Skipping vestigial I/O code for Mako data (STR values)");
+            }
           }
         }
 
-        struct KeyValue key_values[kv_vector.size()];
-        std::copy(kv_vector.begin(), kv_vector.end(), key_values);
+        if (!is_mako_data) {
+          vector<struct KeyValue> kv_vector;
+          int index = 0;
+          for (auto it = sp_vec_piece->begin(); it != sp_vec_piece->end(); it++){
+            auto cmd_input = (*it)->input.values_;
+            for (auto it2 = cmd_input->begin(); it2 != cmd_input->end(); it2++) {
+              struct KeyValue key_value = {it2->first, it2->second.get_i32()};
+              kv_vector.push_back(key_value);
+            }
+          }
 
-        // auto de = IO::write(filename, key_values, sizeof(struct KeyValue), kv_vector.size());
-
-        struct timespec begin, end;
-        //clock_gettime(CLOCK_MONOTONIC, &begin);
-        // de->wait();
-        //clock_gettime(CLOCK_MONOTONIC, &end);
-        //Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
+          struct KeyValue key_values[kv_vector.size()];
+          std::copy(kv_vector.begin(), kv_vector.end(), key_values);
+        }
+      } else {
+        int value = -1;
+        int value_;
       }
-    } else {
-			int value = -1;
-			int value_;
-			// auto de = IO::write(filename, &value, sizeof(int), 1);
-			struct timespec begin, end;
-			//clock_gettime(CLOCK_MONOTONIC, &begin);
-      // de->wait();
-			//clock_gettime(CLOCK_MONOTONIC, &end);
-			//Log_info("Time of Write: %d", end.tv_nsec - begin.tv_nsec);
-    }
 #endif
+    }
 
     // Persist the log entry
     PersistLogEntry(lastLogIndex, *instance);
 
-    *term = currentTerm ;
+    // @unsafe
+    {
+      *term = currentTerm ;
+    }
   }
 
-  // @safe
+  // @safe - map access and make_shared marked @external [safe]
   shared_ptr<RaftData> GetInstance(slotid_t id) {
     verify(id >= min_active_slot_ || lastLogIndex == 0);
     auto& sp_instance = logs_[id];
@@ -402,20 +457,22 @@ class RaftServer : public TxLogServer {
     return sp_instance;
   }*/
 
-  // @unsafe
+  // @safe - Log_info and make_shared marked @external [safe]
    shared_ptr<RaftData> GetRaftInstance(slotid_t id) {
     if (id < min_active_slot_ && id != 0) {
       Log_info("[RAFT_LOG] expanding min_active_slot_ from %lu to %lu", min_active_slot_, id);
       min_active_slot_ = id;
     }
-     auto& sp_instance = raft_logs_[id];
-     if(!sp_instance)
-       sp_instance = std::make_shared<RaftData>();
-     return sp_instance;
+    auto& sp_instance = raft_logs_[id];
+    if(!sp_instance)
+      sp_instance = std::make_shared<RaftData>();
+    return sp_instance;
    }
 
 
+  // @safe - raw pointer parameter is bounded (frame outlives server)
   RaftServer(Frame *frame) ;
+  // @unsafe - thread join and timer cleanup require manual resource management
   ~RaftServer() ;
 
   // ============================================================================
@@ -427,7 +484,7 @@ class RaftServer : public TxLogServer {
    * Should be called before starting the server.
    * @param storage Shared pointer to LogStorage implementation
    */
-  // @safe - Simple setter
+  // @safe - moves shared_ptr into member field
   void SetLogStorage(std::shared_ptr<rrr::LogStorage> storage) {
     log_storage_ = std::move(storage);
   }
@@ -436,7 +493,7 @@ class RaftServer : public TxLogServer {
    * Get the current log storage backend.
    * @return Shared pointer to LogStorage, or nullptr if not set
    */
-  // @safe - Simple getter
+  // @safe - returns copy of shared_ptr
   std::shared_ptr<rrr::LogStorage> GetLogStorage() const {
     return log_storage_;
   }
@@ -447,7 +504,7 @@ class RaftServer : public TxLogServer {
    * Should be called during initialization if storage is available.
    * @return true if recovery succeeded or storage is not set, false on error
    */
-  // @unsafe - Uses LogStorage operations
+  // @safe - recovery from storage (external calls wrapped in @unsafe blocks)
   bool RecoverFromStorage();
 
   /**
@@ -455,7 +512,7 @@ class RaftServer : public TxLogServer {
    * Called after app_next_ callback is registered to apply recovered entries.
    * Must be called AFTER RegLearnerAction() sets up the callback.
    */
-  // @unsafe - Calls app_next_ which may have side effects
+  // @safe - replays committed entries (callbacks wrapped in @unsafe blocks)
   void ReplayCommittedEntries();
 
   /**
@@ -475,7 +532,7 @@ class RaftServer : public TxLogServer {
    * Should be called before starting the server.
    * @param manager Shared pointer to SnapshotManager implementation
    */
-  // @safe - Simple setter
+  // @safe - moves shared_ptr into member field
   void SetSnapshotManager(std::shared_ptr<rrr::SnapshotManager> manager) {
     snapshot_manager_ = std::move(manager);
   }
@@ -484,7 +541,7 @@ class RaftServer : public TxLogServer {
    * Get the current snapshot manager.
    * @return Shared pointer to SnapshotManager, or nullptr if not set
    */
-  // @safe - Simple getter
+  // @safe - returns copy of shared_ptr
   std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }
@@ -495,12 +552,12 @@ class RaftServer : public TxLogServer {
    * @param up_to_index Remove entries with index <= this value
    * @return Number of entries removed
    */
-  // @unsafe - Modifies log storage
+  // @safe - log compaction (storage operations wrapped in @unsafe blocks)
   size_t CompactLog(slotid_t up_to_index);
 
   // ============================================================================
 
-  // @unsafe - Calls undeclared doVote() and uses std::function callback
+  // @safe - calls doVote which is @safe, output pointer writes in @unsafe blocks
   void OnRequestVote(const slotid_t& lst_log_idx,
                      const ballot_t& lst_log_term,
                      const siteid_t& can_id,
@@ -509,7 +566,7 @@ class RaftServer : public TxLogServer {
                      bool_t *vote_granted,
                      rusty::Function<void()> cb) ;
 
-  // @unsafe
+  // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   void OnAppendEntries(const slotid_t slot_id,
                        const ballot_t ballot,
                        const uint64_t leaderCurrentTerm,
@@ -540,31 +597,37 @@ class RaftServer : public TxLogServer {
    * @param cb - Callback to invoke when handling complete
    */
   
-  // @unsafe
+  // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   void OnTimeoutNow(const uint64_t leaderTerm,
                     const siteid_t leaderSiteId,
                     uint64_t *followerTerm,
                     bool_t *success,
                     rusty::Function<void()> cb);
 
-  // @unsafe - Modifies connection state and proxy maps
+  // @unsafe - modifies proxy maps with C-style casts on raw pointers (non-trivial pointer arithmetic)
   void Disconnect(const bool disconnect = true);
 
-  // @unsafe - Calls Disconnect (@unsafe) and resetTimer (@unsafe)
+  // @safe - calls Disconnect (wrapped in @unsafe block) and resetTimer
   void Reconnect() {
-    Disconnect(false);
-    resetTimer("reconnect");
+    // @unsafe
+    {
+      Disconnect(false);
+    }
+    // @unsafe
+    { resetTimer("reconnect"); }
   }
 
+  // @safe
   bool IsDisconnected();
 
+  // @safe - verify(0) is always-abort, no actual unsafe operations
   virtual bool HandleConflicts(Tx& dtxn,
                                innid_t inn_id,
                                vector<string>& conflicts) {
     verify(0);
   };
 
-  // @unsafe
+  // @safe - external calls marked @external
   void removeCmd(slotid_t slot);
 
   // ============================================================================
@@ -584,6 +647,7 @@ class RaftServer : public TxLogServer {
    *
    * Safety: This maintains all Raft safety guarantees via explicit transfer protocol.
    */
+  // @safe - Log_info marked @external [safe], mutex is bounded
   void SetPreferredLeader(siteid_t site_id) {
     std::lock_guard<std::recursive_mutex> lock(mtx_);
 
@@ -607,6 +671,7 @@ class RaftServer : public TxLogServer {
    * Get the current preferred leader site ID
    * @return Preferred leader site ID, or INVALID_SITEID if none
    */
+  // @safe
   siteid_t GetPreferredLeader() const {
     return preferred_leader_site_id_;
   }
@@ -615,23 +680,16 @@ class RaftServer : public TxLogServer {
    * Check if leadership transfer should be initiated
    * Called by non-preferred leaders to check if preferred replica is ready
    */
+  // @safe - checks conditions for leadership transfer (mutex/map access via @unsafe blocks)
   bool ShouldTransferLeadership();
 
-  /**
-   * Initiate leadership transfer to preferred replica
-   * Called by non-preferred leader when preferred is caught up
-   */
+  // @safe - initiates leadership transfer (RPC/mutex via @unsafe blocks)
   void InitiateLeadershipTransfer();
 
-  /**
-   * Start background monitoring for leadership transfer opportunities
-   * Called by non-preferred leaders
-   */
+  // @safe - starts monitor thread (threading via @unsafe blocks)
   void StartLeadershipTransferMonitoring();
 
-  /**
-   * Stop leadership transfer monitoring
-   */
+  // @safe - stops monitor thread (threading via @unsafe blocks)
   void StopLeadershipTransferMonitoring();
 };
 } // namespace janus

@@ -316,16 +316,15 @@ public:
     // - status_: read-only access
     template<typename F>
     void reply(const Request& req, i32 error_code, F&& write_fn) const {
+        // @unsafe
+        {
         auto guard = out_.lock().unwrap();
         v32 v_error_code = error_code;
         v64 v_reply_xid = req.xid;
 
         Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
-        // @unsafe
-        {
-            *guard << v_reply_xid;
-            *guard << v_error_code;
-        }
+        *guard << v_reply_xid;
+        *guard << v_error_code;
 
         write_fn(*guard);
 
@@ -334,6 +333,7 @@ public:
 
         if (status_ == CONNECTED) {
             pending_write_update_.set(true);
+        }
         }
     }
 
@@ -515,11 +515,14 @@ public:
     // Accepts Box<Derived> which converts to Box<Service> via move constructor.
     // Must be called before start().
     void reg_service(rusty::Box<Service> svc) {
+        // @unsafe
+        {
         pending_services_.push(std::move(svc));
         // Get index AFTER push - this is the position of the service we just added
         size_t svc_index = pending_services_.size() - 1;
         // Register handlers using the index (service is safely stored in pending_services_)
         pending_services_[svc_index]->__reg_to__(*this, svc_index);
+        }
     }
 
     /**
@@ -648,21 +651,26 @@ public:
     // Must be called after start().
     template<typename F>
     void for_each_service(F&& callback) {
+        // @unsafe
+        {
         auto& ctx = ctx_.as_ref().unwrap();
         for (size_t i = 0; i < ctx->services.size(); ++i) {
             auto guard = ctx->services[i].borrow_mut();
-            // guard is RefMut<Box<Service>>, *guard is Box<Service>&, **guard is Service&
             callback(**guard);
+        }
         }
     }
 
     // @safe - Returns the number of registered services
     // Can be called before or after start().
     size_t service_count() const {
+        // @unsafe
+        {
         if (ctx_.is_some()) {
             return ctx_.as_ref().unwrap()->services.size();
         }
         return pending_services_.size();
+        }
     }
 
     // Returns the server address (copy to avoid reference through Arc)

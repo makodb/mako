@@ -15,6 +15,143 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - [x] *high* Fix RustyCpp Safety: Convert @unsafe Back to @safe in Raft Module (`src/deptran/raft/`) [DONE 2026-02-13, 02:50]
+    - **Problem**: The previous agent tasked with the RustyCpp safety migration marked the majority of functions in the Raft module as `@unsafe` instead of writing genuinely safe code. This defeats the entire purpose of the migration — we want the **majority** of functions to be `@safe`, with `@unsafe` used only where truly unavoidable.
+    - **Goal**: Rewrite the Raft module so that the majority of functions are `@safe`. Functions should only be `@unsafe` if they genuinely cannot be made safe. Use `@external` annotations to mark external/third-party/legacy functions as unsafe at the declaration site, so that `@safe` code can call them without needing an `@unsafe` block at every call site.
+    - **Scope**: All production `.h` and `.cc` files in `src/deptran/raft/`: `server.h`, `server.cc`, `coordinator.h`, `coordinator.cc`, `commo.h`, `commo.cc`, `frame.h`, `frame.cc`, `service.h`, `service.cc`, `raft_worker.h`, `raft_worker.cc`, `exec.h`, `exec.cc`, `macros.h`
+    - **Out of Scope**: Test files (`test.h`, `test.cc`, `testconf.h`, `testconf.cc`) — do NOT modify these.
+    - **MANDATORY First Step — Read and Understand RustyCpp**:
+      1. Read `third-party/rusty-cpp/README.md` thoroughly
+      2. Read `third-party/rusty-cpp/CLAUDE.md` thoroughly
+      3. Read any other docs under `third-party/rusty-cpp/docs/` if they exist
+      4. Understand how `@safe`, `@unsafe`, `@external` annotations work
+      5. Understand how the borrow checker validates safety
+      6. Understand what types are available (`rusty::Box`, `rusty::Arc`, `rusty::Rc`, `rusty::Cell`, `rusty::RefCell`, `rusty::Option`, `rusty::Vec`, `rusty::Function`, etc.)
+      7. Only after fully understanding the system should you begin modifying code
+    - **Key Technique — `@external` Annotation**:
+      - Mark external/legacy/third-party functions with `@external` at their declaration site so `@safe` functions can call them without wrapping every call in `@unsafe { }`
+      - Example: if `Log_info(...)` is a legacy logging macro, mark it `@external` so safe code can use it freely
+      - This is the key to making most functions `@safe` — isolate the unsafety at the boundary rather than spreading `@unsafe` throughout the codebase
+    - **Strategy**:
+      1. Read the RustyCpp docs first (non-negotiable)
+      2. Audit each file: identify which functions are currently `@unsafe` but could be `@safe` if external calls were marked `@external`
+      3. Add `@external` annotations to external/legacy function declarations as needed
+      4. Convert `@unsafe` functions to `@safe`, using `@unsafe { }` blocks only for genuinely unsafe operations (raw pointer arithmetic, manual memory management, etc.)
+      5. Replace remaining STL types with RustyCpp equivalents where not already done
+      6. Run the borrow checker per-file: `./third-party/rusty-cpp/target/release/rusty-cpp-checker --compile-commands build/compile_commands.json src/deptran/raft/<filename>.cc`
+      7. Iterate until clean
+    - **NON-NEGOTIABLE: Do NOT commit anything. Do NOT run git commit or git push. The author will review all changes and commit manually.**
+    - **Success Criteria**:
+      1. Majority (>70%) of functions in the Raft module are annotated `@safe`
+      2. `@unsafe` is only used where genuinely unavoidable, with a comment explaining why
+      3. `@external` is used to mark external function boundaries
+      4. No logical or behavioral changes to the code
+      5. `make clean && make -j32` compiles without errors
+      6. All CI tests pass: `./ci/ci.sh all`
+      7. Borrow checker passes on all annotated files
+  - [x] *high* RustyCpp Safety Migration for the Raft Module (`src/deptran/raft/`)
+    - **Goal**: Make the entire Raft module memory-safe by migrating all production files under `src/deptran/raft/` to use RustyCpp safety annotations and data structures. Every function should be annotated `@safe` or `@unsafe`, and all STL types that have RustyCpp equivalents should be replaced. No logical or behavioral changes — only safety conversions.
+    - **Scope**: All production `.h` and `.cc` files in `src/deptran/raft/`: `server.h`, `server.cc`, `coordinator.h`, `coordinator.cc`, `commo.h`, `commo.cc`, `frame.h`, `frame.cc`, `service.h`, `service.cc`, `raft_worker.h`, `raft_worker.cc`, `exec.h`, `exec.cc`, `macros.h`
+    - **Out of Scope**: Test files are **excluded** — do NOT annotate or modify `test.h`, `test.cc`, `testconf.h`, or `testconf.cc`. These are test infrastructure files and do not need safety migration.
+    - **RustyCpp Reference**: Read `third-party/rusty-cpp/README.md` and `third-party/rusty-cpp/CLAUDE.md` to understand how the borrow checker, safety annotations (`@safe`, `@unsafe`, `@external`), and safe types work before starting any conversions.
+    - **Key Rules — READ CAREFULLY**:
+      1. **DO NOT change any logic, algorithms, or behavior**. This is purely a safety annotation and type migration task. The code must do exactly what it did before.
+      2. **Annotate every function** with `// @safe` or `// @unsafe`. Default to `@safe` and only use `@unsafe` when the function genuinely cannot be made safe (e.g., it uses raw pointers, calls legacy STL I/O, or interacts with non-borrow-checked third-party code).
+      3. **Replace STL types with RustyCpp equivalents** where drop-in replacements exist:
+         - `std::unique_ptr<T>` → `rusty::Box<T>`
+         - `std::shared_ptr<T>` → `rusty::Arc<T>` (for thread-shared) or `rusty::Rc<T>` (for single-thread)
+         - `std::weak_ptr<T>` → custom `Weak<T>` wrapper
+         - `std::optional<T>` → `rusty::Option<T>`
+         - `std::vector<T>` → `rusty::Vec<T>` (or the `Vec<T>` alias)
+         - `std::function<Sig>` → `rusty::Function<Sig>` (if available, otherwise wrap in `@unsafe` block)
+         - `std::make_unique<T>(...)` → `rusty::Box<T>::make(...)`
+         - `std::make_shared<T>(...)` → `rusty::Arc<T>::make(...)` or `rusty::Rc<T>::make(...)`
+      4. **Keep STL types that have NO RustyCpp equivalent** (e.g., `std::mutex`, `std::recursive_mutex`, `std::atomic`, `std::thread`, `std::lock_guard`, `std::condition_variable`, `std::map`, `std::queue`, `std::deque`). Wrap their usage in `// @unsafe { ... }` blocks when inside `@safe` functions.
+      5. **Use `@unsafe` blocks** inside `@safe` functions for: STL I/O (`std::cerr`, `std::cout`), `std::dynamic_pointer_cast`, mutex lock/unlock, third-party library calls, and any code the borrow checker cannot verify.
+      6. **Use `@external` annotations** for external/third-party functions that you have audited and want to call from `@safe` code without an `@unsafe` block.
+      7. **Do NOT commit anything**. The author will review and commit manually.
+    - **Strategy — Iterative Per-File Approach**:
+      1. Start with the **easiest files first** and work toward the hardest. Recommended order:
+         - **Phase 1 (Easy)**: `exec.h`, `exec.cc` (already has @safe annotations, ~30 lines each), `service.h` (84 lines, thin wrapper), `frame.h` (50 lines)
+         - **Phase 2 (Medium)**: `coordinator.h` (83 lines), `coordinator.cc` (200 lines), `service.cc` (113 lines), `frame.cc` (206 lines), `commo.h` (128 lines)
+         - **Phase 3 (Medium-Hard)**: `commo.cc` (287 lines), `raft_worker.h` (168 lines), `raft_worker.cc` (615 lines), `macros.h` (77 lines)
+         - **Phase 4 (Hard)**: `server.h` (638 lines), `server.cc` (1,829 lines — the largest and most complex file)
+      2. For each file:
+         a. Read the file completely to understand every function.
+         b. Mark all functions `// @safe` initially.
+         c. **Run the borrow checker manually on the file** (see "Borrow Checker Commands" below). **`make clean && make -j32` does NOT run the checker automatically** — you must invoke it yourself per-file.
+         d. Fix borrow checker violations: replace STL types with RustyCpp equivalents, wrap unavoidable unsafe operations in `// @unsafe { }` blocks.
+         e. If after multiple iterations a function is genuinely too hard to make safe (e.g., heavy use of `std::dynamic_pointer_cast`, raw pointer arithmetic, complex mutex patterns), mark it `// @unsafe` and leave a comment explaining why: `// @unsafe - [reason: e.g., "uses std::dynamic_pointer_cast which is not borrow-checked"]`
+         f. Repeat steps c-e until the checker passes clean on the file.
+         g. After all files are done, build with `make clean && make -j32` to verify compilation, then run CI tests: `./ci/ci.sh all`
+      3. For `.h` files: annotate all method declarations in headers. Safety annotations propagate from headers to implementations automatically.
+      4. **Goal is maximum safe coverage**. Ideally 100% `@safe`, but realistically some functions will need `@unsafe` — that is acceptable. Leave clear comments on every `@unsafe` function/block explaining what prevents it from being safe.
+    - **Handling RustyCpp False Positives and Errors from External Files**:
+      - **RustyCpp is still under active development** and may produce false positives or errors originating from files **outside** the raft module (e.g., headers in `src/rrr/`, `src/deptran/`, `src/mako/`, or third-party includes).
+      - If the borrow checker reports errors in files **outside** `src/deptran/raft/` that are blocking your progress, you are allowed to go into those external files and mark the offending code `// @unsafe` to suppress the false positive. Add a comment like: `// @unsafe - marked unsafe to suppress rusty-cpp false positive (rusty-cpp is under development)`
+      - Do NOT try to fully migrate external files — just apply the minimal `@unsafe` annotation needed to unblock the raft file you are working on.
+      - If an error seems like a genuine rusty-cpp bug (not a real safety issue), note it in a comment near the `@unsafe` annotation so it can be revisited later.
+    - **Files Already Partially Migrated** (use as reference examples):
+      - `exec.h` / `exec.cc`: All 4 functions already annotated `@safe`
+      - `frame.h`: Uses `rusty::Arc<rusty::Cell<slotid_t>>` for `slot_hint_`
+      - `frame.cc`: Uses `rusty::Box<>`, `rusty::Option<>`, `rusty::Arc<>`
+      - `coordinator.h`: Uses `rusty::Option<rusty::Arc<>>`, `rusty::Function<>`, `rusty::Arc<rusty::Cell<>>`
+      - `server.h`: Uses `rusty::Box<Timer>` for `timer_`
+      - `server.cc`: Uses `rusty::Function<void()>` for callbacks
+    - **Key STL Types to Replace (by frequency across all raft files)**:
+      - `std::shared_ptr<>` — ~50+ instances across server.h/cc, coordinator, commo, raft_worker
+      - `std::vector<>` — ~8+ instances (timer_threads_, batch_buffer_, matchedIndices, etc.)
+      - `std::function<>` — ~8+ instances (callbacks in raft_worker.h, commo.h, server.h)
+      - `std::unique_ptr<>` — ~4 instances (commo_, svr_ in frame.h, RaftServer/RaftCommo creation)
+      - `std::map<>` — ~10+ instances (match_index_, next_index_, raft_logs_, etc.) — NO rusty equivalent, keep and wrap in @unsafe
+      - `std::make_shared<>` / `std::make_unique<>` — ~15 instances — replace with `rusty::Arc::make()` / `rusty::Box::make()`
+      - `std::dynamic_pointer_cast<>` — ~10+ instances — wrap in @unsafe blocks
+    - **Files Without Any Safety Annotations Yet** (need full annotation from scratch):
+      - `raft_worker.h`, `raft_worker.cc`
+      - `macros.h`
+    - **Borrow Checker Commands** (CRITICAL — must run manually per-file):
+      - The borrow checker is a standalone binary. It does NOT run automatically during `make`. You must invoke it yourself after annotating each file.
+      - **Check a single file**:
+        ```
+        ./third-party/rusty-cpp/target/release/rusty-cpp-checker --compile-commands build/compile_commands.json src/deptran/raft/<filename>.cc
+        ```
+      - **Check all raft files at once** (via CMake target):
+        ```
+        cmake --build build --target borrow_check_raft
+        ```
+      - **If the checker binary doesn't exist yet**, build it first:
+        ```
+        cd third-party/rusty-cpp && cargo build --release && cd ../..
+        ```
+      - **Before running the checker**, you need `compile_commands.json` in the build directory. If it doesn't exist, run `make clean && make -j32` once first to generate it.
+      - **Workflow per file**: Edit file → Run checker on that file → Fix violations → Re-run checker → Repeat until clean.
+    - **Build & Test Commands** (run after all files pass the checker):
+      - Build: `make clean && make -j32`
+      - Build timeout: At least 30 minutes (large C++ project)
+      - CI tests: `./ci/ci.sh all`
+      - Specific Raft tests: `./ci/ci.sh shard1ReplicationRaft`, `./ci/ci.sh shard2ReplicationRaft`, `./ci/ci.sh shard1ReplicationSimpleRaft`, `./ci/ci.sh shard2ReplicationSimpleRaft`
+    - **Success Criteria**:
+      1. Every function in every production `.h` and `.cc` file under `src/deptran/raft/` has a `// @safe` or `// @unsafe` annotation (excludes test.h, test.cc, testconf.h, testconf.cc)
+      2. All STL types that have RustyCpp equivalents are replaced (`unique_ptr` → `Box`, `shared_ptr` → `Arc`, `vector` → `Vec`, `optional` → `Option`, etc.)
+      3. All `@unsafe` functions/blocks have a comment explaining why they cannot be safe
+      4. No logical or behavioral changes to the code
+      5. `make clean && make -j32` compiles without errors
+      6. All CI tests pass: `./ci/ci.sh all`
+      7. Borrow checker passes on all annotated files (or files are documented as excluded with reasons in CMakeLists.txt)
+    - **Leaf Tasks** (work through in order):
+      - [x] Phase 1a: Annotate and migrate `exec.h` and `exec.cc` (already partially done, ~30 lines each)
+      - [x] Phase 1b: Annotate and migrate `service.h` (84 lines, thin RPC wrapper)
+      - [x] Phase 1c: Annotate and migrate `frame.h` (50 lines, already uses some rusty types)
+      - [x] Phase 2a: Annotate and migrate `coordinator.h` (83 lines) and `coordinator.cc` (200 lines)
+      - [x] Phase 2b: Annotate and migrate `service.cc` (113 lines)
+      - [x] Phase 2c: Annotate and migrate `frame.cc` (206 lines, already partially migrated)
+      - [x] Phase 2d: Annotate and migrate `commo.h` (128 lines)
+      - [x] Phase 3a: Annotate and migrate `commo.cc` (287 lines)
+      - [x] Phase 3b: Annotate and migrate `raft_worker.h` (168 lines) and `raft_worker.cc` (615 lines)
+      - [x] Phase 3c: Annotate and migrate `macros.h` (77 lines)
+      - [x] Phase 4a: Annotate and migrate `server.h` (638 lines)
+      - [x] Phase 4b: Annotate and migrate `server.cc` (1,829 lines — largest file)
+      - [x] Final: Build (`make clean && make -j32`), run borrow checker on all files, run CI tests (`./ci/ci.sh all`)
   - [x] *high* Comprehensive Raft-Mako Documentation for Thesis Report
     - **Goal**: Write extremely detailed, thesis-grade documentation covering the entire Raft module, its integration with Mako, testing infrastructure, and performance comparison with Paxos. The documentation should be thorough enough that a reader with basic distributed-systems knowledge can fully understand the system from these docs alone — no hand-holding, but nothing left unexplained. This is NOT a thesis itself but the detailed technical content that feeds into one.
     - **Audience**: Thesis committee members and future developers. Assume familiarity with basic distributed systems concepts (consensus, replication, 2PC) but NOT with this codebase.

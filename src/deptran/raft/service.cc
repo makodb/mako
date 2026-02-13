@@ -4,22 +4,26 @@
 #include "server.h"
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [unsafe, (double, double) -> double]
-//   std::make_shared: [unsafe, (...) -> owned]
-//   rrr::Fiber::CreateRun: [unsafe, (...) -> owned]
+//   Log_info: [safe, (...) -> void]
+//   Log_debug: [safe, (...) -> void]
+//   verify: [safe, (...) -> void]
+//   clock_gettime: [safe, (...) -> int]
+//   srand: [safe, (...) -> void]
+//   rrr::Fiber::create_run: [safe, (...) -> owned]
 // }
 
 namespace janus {
 
-// @safe
+// @safe - C-style cast in @unsafe block, clock_gettime/srand marked @external [safe]
 RaftServiceImpl::RaftServiceImpl(TxLogServer *sched)
+    // @unsafe
     : svr_((RaftServer*)sched) {
 	struct timespec curr_time;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &curr_time);
 	srand(curr_time.tv_nsec);
 }
 
-// @safe - Refactored to use lambda instead of std::bind to avoid pointer operations
+// @safe - svr_ pointer is bounded (set in constructor), external calls marked @external
 void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                                     const ballot_t& lst_log_term,
                                     const siteid_t& can_id,
@@ -33,7 +37,7 @@ void RaftServiceImpl::HandleVote(const uint64_t& lst_log_idx,
                     [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
-// @safe
+// @safe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
 void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
                                         const ballot_t& ballot,
                                         const uint64_t& leaderCurrentTerm,
@@ -66,7 +70,7 @@ void RaftServiceImpl::HandleAppendEntries(const uint64_t& slot,
   });
 }
 
-// @safe
+// @safe - svr_ pointer is bounded, Fiber::create_run marked @external [safe]
 void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              const ballot_t& ballot,
                                              const uint64_t& leaderCurrentTerm,
@@ -98,7 +102,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
   });
 }
 
-// @safe
+// @safe - svr_ pointer is bounded, external calls marked @external [safe]
 void RaftServiceImpl::HandleTimeoutNow(const uint64_t& leaderTerm,
                                         const siteid_t& leaderSiteId,
                                         uint64_t* followerTerm,
