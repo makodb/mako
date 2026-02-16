@@ -12,8 +12,8 @@ echo "Testing 2-shard setup with Raft replication using simpleTransactionRepRaft
 echo "========================================="
 
 # Kill any lingering processes
-ps aux | grep -i simpleTransactionRepRaft | grep -v grep | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i dbtest | grep -v grep | awk "{print \$2}" | xargs kill -9 2>/dev/null
+pkill -9 -f "build/simpleTransactionRepRaft" 2>/dev/null || true
+pkill -9 -f "build/dbtest" 2>/dev/null || true
 sleep 1
 
 # Clean up old log files

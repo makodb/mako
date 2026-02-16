@@ -31,15 +31,15 @@ check_for_hanging_processes() {
     # Wait a bit for processes to exit naturally
     sleep 3
 
-    # Count hanging dbtest/simpleRaft processes
-    local hanging_count=$(ps aux | grep -E "[d]btest|[s]impleRaft" | wc -l)
+    # Count hanging dbtest/simpleRaft binary processes (exclude shell scripts)
+    local hanging_count=$(ps aux | grep -E "[./]build/(dbtest|simpleRaft|simpleTransactionRepRaft)" | grep -v grep | grep -v "ci_mako_raft" | wc -l)
 
     if [ "$hanging_count" -gt 0 ]; then
         echo "=========================================
 ERROR: Test '$test_name' left $hanging_count hanging process(es)!
 =========================================
 Hanging processes:"
-        ps aux | grep -E "[d]btest|[s]impleRaft"
+        ps aux | grep -E "[./]build/(dbtest|simpleRaft|simpleTransactionRepRaft)" | grep -v grep | grep -v "ci_mako_raft"
         echo ""
         echo "These processes did not exit cleanly after the test completed."
         echo "This indicates a process cleanup issue that needs to be fixed."
@@ -113,7 +113,7 @@ compile() {
     echo "========================================="
     echo "Running: ./ci/ci_mako_raft.sh compile"
     echo "========================================="
-    make -j32
+    make mako-raft -j32
 }
 
 # Function 2: Run simple Raft test (basic replication)

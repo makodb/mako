@@ -15,8 +15,8 @@ rm -f shard0*.log shard1*.log
 rm -rf /tmp/mako_rocksdb_shard*
 
 # Kill any lingering processes
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleRaft | awk "{print \$2}" | xargs kill -9 2>/dev/null
+pkill -9 -f "build/dbtest" 2>/dev/null || true
+pkill -9 -f "build/simpleRaft" 2>/dev/null || true
 sleep 1
 
 # Start shard 0 in background
@@ -203,5 +203,5 @@ else
 fi
 
 # Final cleanup
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleRaft | awk "{print \$2}" | xargs kill -9 2>/dev/null
+pkill -9 -f "build/dbtest" 2>/dev/null || true
+pkill -9 -f "build/simpleRaft" 2>/dev/null || true

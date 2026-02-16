@@ -15,6 +15,62 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - [x] *high* Fix Raft CI: Make `./ci/ci_mako_raft.sh` pass all test cases reliably [DONE 2026-02-16, 23:42]
+    - **Problem**: The Raft CI test suite (`./ci/ci_mako_raft.sh`) is currently failing. The Raft replication integration is broken and needs to be debugged and fixed so that all test cases pass consistently.
+    - **Goal**: All test cases in `./ci/ci_mako_raft.sh` must pass reliably — not just once, but multiple consecutive runs to rule out flaky/accidental passes.
+    - **Approach — Iterative Debug Cycle**:
+      1. **Run the failing CI**: Execute `./ci/ci_mako_raft.sh` and capture the full output/logs.
+      2. **Analyse logs**: Read the test output carefully. Identify which specific test cases fail, what the error messages are, and what the root cause is (crash, timeout, assertion failure, incorrect output, etc.).
+      3. **Investigate the Raft source code**: Based on the log analysis, trace the failure back to the relevant source files in `src/deptran/raft/` (and any other files involved). Understand the bug before attempting a fix.
+      4. **Fix the code**: Make the minimal, targeted fix required. Do not refactor or make unrelated changes. Do not change test expectations to make tests pass — fix the actual Raft code.
+      5. **Rebuild**: Run `make clean && make -j32` to rebuild with the fix.
+      6. **Re-run the CI**: Execute `./ci/ci_mako_raft.sh` again. If tests still fail, go back to step 2.
+      7. **Verify reliability**: Once all tests pass, run `./ci/ci_mako_raft.sh` at least **3 more times** to confirm the fix is stable and not an accidental/flaky pass. If any run fails, go back to step 2.
+      8. **Also run the full CI**: Run `./ci/ci.sh all` to make sure no regressions were introduced in non-Raft tests.
+    - **NON-NEGOTIABLE: Do NOT commit anything. Do NOT run `git commit`, `git push`, or any git write operations. The author will review all changes and commit manually.**
+    - **Success Criteria**:
+      1. `./ci/ci_mako_raft.sh` passes ALL test cases
+      2. The test suite passes on at least 3 consecutive runs (to confirm it's not a flaky pass)
+      3. `./ci/ci.sh all` still passes (no regressions)
+      4. Fixes are minimal and targeted — no unrelated changes
+      5. No git commits or pushes were made
+  - [ ] *high* Fact-Check `doc/thesis/complete_thesis.md` Against Actual Codebase
+    - **Problem**: The thesis document (`doc/thesis/complete_thesis.md`) contains claims, descriptions, and conclusions about the Mako/Raft/Paxos implementation. Some of these claims may be inaccurate, outdated, or inconsistent with what the code actually does. We already found one example: the thesis claimed Paxos tests run for 40 seconds and Raft for 60 seconds, but both actually use a 30-second internal benchmark runtime. There may be more inaccuracies.
+    - **Goal**: Systematically fact-check every claim in the thesis against the actual source code. Fix any inaccuracies directly in `complete_thesis.md`. Do NOT trust other documentation or comments — only trust the code itself.
+    - **Approach — Exhaustive Verification**:
+      1. **Read the entire thesis**: Read `doc/thesis/complete_thesis.md` from start to finish. For every factual claim, note it for verification.
+      2. **Verify against code, not docs**: For each claim, find the relevant source code and confirm whether the claim is accurate. Do NOT rely on comments, READMEs, or other docs — read the actual implementation. Examples of things to verify:
+         - Numerical claims (throughput numbers, batch sizes, percentages, process counts, timing values)
+         - Architectural claims ("Raft does X", "Paxos does Y") — check if the code actually works that way
+         - Configuration claims (default values, config file paths, command-line flags)
+         - Protocol behaviour descriptions (election flow, log replication, commit rules, recovery steps)
+         - Test descriptions (what each CI test does, how many tests exist, what they validate)
+         - Safety/RustyCpp coverage percentages — count the actual `@safe` vs `@unsafe` annotations
+         - Benchmark descriptions (TPC-C transaction types, workload mix percentages)
+         - Performance analysis claims (pipelining behaviour, batch sizes, why throughput converges)
+      3. **Pay special attention to conclusions and claims**: The "Analysis" sections, "Conclusion" chapter, and "Lessons Learned" make strong claims. Every one of these must be traceable to evidence in the code or test results.
+      4. **Cross-check numbers**: If the thesis says "~8,500 ops/sec per shard" or "28% advantage" or "77% safe coverage", verify these numbers are still accurate. If they've changed due to code changes, update the thesis.
+      5. **Check code references**: If the thesis references specific files, functions, classes, or config paths, verify they exist and are named correctly.
+      6. **Fix anomalies in the thesis**: When you find an inaccuracy, fix it directly in `complete_thesis.md` with the correct information from the code. Add a brief comment or note in the TODO item about what was wrong and what you fixed.
+      7. **Document findings**: After completing the fact-check, add a summary of all corrections made (and things confirmed accurate) as notes under this TODO item.
+    - **Key Areas to Scrutinise** (known risk areas):
+      - Performance numbers and throughput claims — do they match actual CI output?
+      - Raft vs Paxos architectural comparisons — is the pipelining description accurate?
+      - Batch size claims (~26 for Raft, ~200 for Paxos) — where do these numbers come from?
+      - Process count claims (3 for Raft, 4 for Paxos) — verify from config files and test scripts
+      - RustyCpp safety percentages — count actual annotations in `src/deptran/raft/`
+      - Snapshot format description — does the code actually use magic numbers, CRC32, etc.?
+      - Recovery steps — does the code actually follow the described 5-step recovery process?
+      - Config defaults (runtime, timeouts, etc.) — verify from `benchmark_config.h` and YAML files
+      - Preferred leader mechanism — does the 3-phase design match the implementation?
+      - Test suite description — are there really 11 standalone tests? What do they actually test?
+    - **NON-NEGOTIABLE: Do NOT commit anything. Do NOT run `git commit`, `git push`, or any git write operations. The author will review all changes and commit manually.**
+    - **Success Criteria**:
+      1. Every factual claim in the thesis has been verified against actual source code
+      2. All inaccuracies have been corrected in `complete_thesis.md`
+      3. A summary of corrections (and confirmations) is documented under this TODO item
+      4. No claims remain that are unsupported by the code
+      5. No git commits or pushes were made
   - [x] *high* Fix RustyCpp Safety: Convert @unsafe Back to @safe in Raft Module (`src/deptran/raft/`) [DONE 2026-02-13, 02:50]
     - **Problem**: The previous agent tasked with the RustyCpp safety migration marked the majority of functions in the Raft module as `@unsafe` instead of writing genuinely safe code. This defeats the entire purpose of the migration — we want the **majority** of functions to be `@safe`, with `@unsafe` used only where truly unavoidable.
     - **Goal**: Rewrite the Raft module so that the majority of functions are `@safe`. Functions should only be `@unsafe` if they genuinely cannot be made safe. Use `@external` annotations to mark external/third-party/legacy functions as unsafe at the declaration site, so that `@safe` code can call them without needing an `@unsafe` block at every call site.
