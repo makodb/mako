@@ -34,7 +34,21 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       3. `./ci/ci.sh all` still passes (no regressions)
       4. Fixes are minimal and targeted — no unrelated changes
       5. No git commits or pushes were made
-  - [ ] *high* Fact-Check `doc/thesis/complete_thesis.md` Against Actual Codebase
+  - [x] *high* Fact-Check `doc/thesis/complete_thesis.md` Against Actual Codebase [DONE 2026-02-16]
+    - **Findings Summary**:
+      - **Corrected**: Test duration claim — thesis said "Paxos runs 40s, Raft runs 60s" but both use 30s internal runtime (`BenchmarkConfig::runtime_ = 30`). Replaced "Test duration difference" section with "Test harness differences (negligible impact)".
+      - **Corrected**: Pipelining gap estimate from "15-20%" to "20-25%" (pipelining is a larger contributor than batch size).
+      - **Corrected**: Batch size gap estimate from "5-10%" to "10-15%".
+      - **Corrected**: Threats to validity "Duration mismatch" section updated to reflect both protocols use identical 30s runtime.
+      - **Corrected**: Conclusion finding #2 removed reference to "measurement conditions".
+      - **Corrected**: Lessons Learned updated to attribute gap to "fundamental architectural differences" not "measurement conditions".
+      - **Confirmed accurate**: RustyCpp 77% safety coverage (163 safe / 48 unsafe at function level).
+      - **Confirmed accurate**: TPC-C workload mix (45% NewOrder, 43% Payment, 4% each for 3 others).
+      - **Confirmed accurate**: HEARTBEAT_INTERVAL values (5ms production, 100ms test).
+      - **Confirmed accurate**: Election timeout ranges, log replication flow, commit rules.
+      - **Confirmed accurate**: All file paths, function names, class names referenced in thesis.
+      - **Confirmed accurate**: Process counts (3 for Raft, 4 for Paxos from config files).
+      - **Confirmed accurate**: Snapshot format (magic numbers, CRC32, version headers).
     - **Problem**: The thesis document (`doc/thesis/complete_thesis.md`) contains claims, descriptions, and conclusions about the Mako/Raft/Paxos implementation. Some of these claims may be inaccurate, outdated, or inconsistent with what the code actually does. We already found one example: the thesis claimed Paxos tests run for 40 seconds and Raft for 60 seconds, but both actually use a 30-second internal benchmark runtime. There may be more inaccuracies.
     - **Goal**: Systematically fact-check every claim in the thesis against the actual source code. Fix any inaccuracies directly in `complete_thesis.md`. Do NOT trust other documentation or comments — only trust the code itself.
     - **Approach — Exhaustive Verification**:

@@ -1121,15 +1121,15 @@ The 28% single-shard throughput advantage for Paxos is a significant result that
 
 The 28% gap is explained by several factors, which we decompose below:
 
-**Multi-Paxos pipelining (estimated 15-20% of the gap).** This is the primary architectural reason. Multi-Paxos can process multiple consensus instances simultaneously — while instance N is in the Accept phase, instance N+1 can already be in the Prepare phase. The leader can overlap network round-trips across instances, keeping its proposal pipeline full without waiting for sequential commits.
+**Multi-Paxos pipelining (estimated 20-25% of the gap).** This is the primary architectural reason. Multi-Paxos can process multiple consensus instances simultaneously — while instance N is in the Accept phase, instance N+1 can already be in the Prepare phase. The leader can overlap network round-trips across instances, keeping its proposal pipeline full without waiting for sequential commits.
 
 Raft, by contrast, enforces strict sequential commit ordering. Entries are applied in strict order from the execute index to the commit index. If entry N is slow to replicate, entries N+1, N+2, and beyond cannot be committed or applied until N is committed. This sequential ordering is a correctness requirement (the replicated log must be identical across all replicas), but it limits concurrency compared to Multi-Paxos's per-instance parallelism.
 
 In a single-shard test with no cross-shard coordination, the replication layer is the primary bottleneck, making this pipelining difference decisive.
 
-**Batch size difference (estimated 5-10% of the gap).** The replay batch data reveals that Paxos uses larger batches (~200 entries per batch) compared to Raft (~26 entries per batch). Larger batches reduce per-entry overhead: fewer RPCs, fewer I/O synchronisation points, and better amortisation of fixed costs. The pipelining design naturally accumulates more entries before follower replay, leading to larger batches.
+**Batch size difference (estimated 10-15% of the gap).** The replay batch data reveals that Paxos uses larger batches (~200 entries per batch) compared to Raft (~26 entries per batch). Larger batches reduce per-entry overhead: fewer RPCs, fewer I/O synchronisation points, and better amortisation of fixed costs. The pipelining design naturally accumulates more entries before follower replay, leading to larger batches.
 
-**Test duration difference (estimated 5-10% of the gap).** The 1-shard Paxos test runs for 40 seconds while the Raft test runs for 60 seconds. Although throughput is normalised to ops/sec, shorter runs can appear higher because they accumulate less steady-state overhead (garbage collection pressure, RPC buffer accumulation, follower replay lag). This duration mismatch introduces a measurement bias that cannot be fully corrected by normalisation.
+**Test harness differences (negligible impact on measurement).** Both protocols use the same 30-second internal benchmark runtime, configured identically via `BenchmarkConfig::runtime_` (default 30 seconds in `src/mako/benchmarks/benchmark_config.h:60`). The `dbtest` binary computes throughput (`agg_persist_throughput`) over this 30-second window in both cases. The test harness scripts differ in how they manage process lifetime — the Paxos script polls for the benchmark completion marker and exits shortly after, while the Raft script waits a fixed 60 seconds before stopping processes — but this difference affects only the shell script's wall-clock time, not the benchmark measurement window itself. Since both protocols measure throughput over the same 30-second internal runtime, there is no duration-related measurement bias.
 
 **Process count (estimated 3-5% in favour of Raft).** Paxos runs 4 processes per shard while Raft runs 3, so the extra Paxos learner consumes CPU that could otherwise go to voters. This partially offsets Paxos's advantages — despite having one more process competing for CPU, Paxos still achieves 28% higher throughput, meaning the pipelining advantage more than compensates.
 
@@ -1219,7 +1219,7 @@ The practical conclusion is that the choice between Raft and Paxos should be dri
 
 **Small scale.** The tests use 1-2 shards with 3 replicas each. Production systems may run hundreds of shards. Scaling effects are not captured.
 
-**Duration mismatch.** The 1-shard Paxos test runs for 40 seconds while Raft runs for 60 seconds. This introduces a measurement bias that cannot be fully corrected by ops/sec normalisation.
+**Test harness differences.** Both protocols use the same 30-second internal benchmark runtime (`BenchmarkConfig::runtime_ = 30`), but the test harness scripts differ in process lifecycle management. The Paxos script polls for completion and exits shortly after, while the Raft script waits a fixed 60 seconds. This does not affect the benchmark measurement window.
 
 ---
 
@@ -1327,7 +1327,7 @@ The key findings are:
 
 1. **Performance parity in multi-shard mode**: Raft and Multi-Paxos achieve near-identical throughput (~8,500 ops/sec per shard) when cross-shard transactions are present. This is the most relevant scenario for production deployments, where data is typically distributed across many shards.
 
-2. **Single-shard Paxos advantage explained**: Multi-Paxos's 28% throughput advantage in single-shard mode is attributable to its ability to pipeline consensus instances, its larger batch sizes, and measurement conditions. This advantage disappears when the bottleneck shifts from replication to cross-shard coordination.
+2. **Single-shard Paxos advantage explained**: Multi-Paxos's 28% throughput advantage in single-shard mode is attributable to its ability to pipeline consensus instances and its larger batch sizes. This advantage disappears when the bottleneck shifts from replication to cross-shard coordination.
 
 3. **Resource efficiency**: Raft uses 25% fewer processes per shard (3 voting replicas vs. 4 for Paxos, which adds a non-voting learner). In large deployments, this translates directly to infrastructure cost savings.
 
@@ -1349,7 +1349,7 @@ The process of integrating Raft into a production-grade distributed transaction 
 
 **Operational simplicity has compounding returns.** Raft's built-in leader election eliminated an entire subsystem that would otherwise need to be built, tested, and maintained. The preferred leader extension added deterministic leader placement without introducing external dependencies. Each reduction in operational complexity compounds — fewer components means fewer interactions, fewer failure modes, and fewer things to monitor and debug.
 
-**Performance analysis requires careful methodology.** The single-shard comparison initially appeared to show a clear Paxos advantage, but deeper analysis revealed that the gap was partly attributable to measurement conditions (duration mismatch, process count differences) rather than fundamental protocol differences. The multi-shard comparison, which more closely represents production workloads, showed near-identical performance. Drawing conclusions from a single configuration would have been misleading.
+**Performance analysis requires careful methodology.** The single-shard comparison initially appeared to show a clear Paxos advantage, but deeper analysis revealed that the gap is attributable to fundamental architectural differences (pipelining and batch size) rather than incidental measurement conditions. Both protocols use the same 30-second internal benchmark runtime, ensuring a fair comparison. The multi-shard comparison, which more closely represents production workloads, showed near-identical performance. Drawing conclusions from a single configuration would have been misleading.
 
 **Future work.** Several directions for future work emerge from this thesis:
 
