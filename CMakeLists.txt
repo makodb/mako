@@ -838,6 +838,15 @@ set(DEPTRAN_BORROW_SRC
     src/deptran/stats_registry.cc
     src/deptran/executor.cc
     src/deptran/empty.cc
+    src/deptran/replication_helper.cc
+    src/deptran/scheduler.cc
+    # Files below excluded due to violations from included headers (not the .cc files themselves):
+    # src/deptran/config_client.cc          # 6 violations from RPC proxy headers
+    # src/deptran/config_service.cc         # 7 violations from sharding_policy.h, RPC base class
+    # src/deptran/config_store.cc           # 12 violations from RocksDB/Marshal headers
+    # src/deptran/shard_router.cc           # 51 violations from masstree/sharding headers
+    # src/deptran/sharding_policy_cache.cc  # 14 violations from sharding/Mutex headers
+    # src/deptran/tpcc_sharding.cc          # 23 violations from sharding_policy_builder.h headers
 )
 
 if(DEPTRAN_BORROW_SRC)

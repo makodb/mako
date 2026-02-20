@@ -183,10 +183,11 @@ class RaftServer : public TxLogServer {
   std::map<uint64_t, std::set<siteid_t>> memoryAcks_;   // track memory acks per index
   std::map<uint64_t, std::set<siteid_t>> durableAcks_;  // track durable acks per index
 
-  // @safe - Thread completion flag wrapping std::atomic<bool> for use with rusty::Arc.
+  // @unsafe - Thread completion flag wrapping std::atomic<bool> for use with rusty::Arc.
   // Arc only provides const access, so the atomic must be mutable to allow store().
+  // Uses C++ mutable for interior mutability (analogous to UnsafeCell in Rust).
   struct AtomicFlag {
-    mutable std::atomic<bool> value{false};
+    mutable std::atomic<bool> value{false}; // @unsafe { mutable field for interior mutability }
     explicit AtomicFlag(bool v) : value(v) {}
     void set(bool v, std::memory_order order = std::memory_order_release) const {
       value.store(v, order);
