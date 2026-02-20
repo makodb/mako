@@ -44,6 +44,10 @@ void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
 // @unsafe - uses raw global std::function, unbounded callback invocation
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
+// Watermark callback type used for per-partition leader/follower routing
+using watermark_callback_t = std::function<int(const char*&, int, int, int,
+    std::queue<std::tuple<int, int, int, int, const char*>>&)>;
+
 // @unsafe - class contains raw pointers and manual memory management
 class RaftWorker {
 private:
@@ -57,6 +61,13 @@ private:
     leader_callback_par_id_return_ = nullptr;
   std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
     follower_callback_par_id_return_ = nullptr;
+
+  // SINGLE-RAFT: Per-partition callback maps for routing apply callbacks
+  // When a single RaftWorker handles all partitions, Next() extracts par_id
+  // from the committed entry and routes to the correct partition's callback.
+  std::map<uint32_t, watermark_callback_t> leader_callbacks_by_partition_;
+  std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
+  std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
 
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
@@ -176,6 +187,13 @@ public:
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
   );
 
+  // SINGLE-RAFT: Per-partition callback registration
+  // Used when a single RaftWorker handles all partitions
+  // @safe - stores callback in per-partition map for later invocation
+  void register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb);
+  // @safe - stores callback in per-partition map for later invocation
+  void register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb);
+
   // Legacy method for compatibility (deprecated - use leader/follower specific methods)
   // @safe - delegates to register_follower_callback_par_id_return
   void register_apply_callback_par_id_return(
@@ -204,7 +222,8 @@ public:
   std::shared_ptr<TpcCommitCommand> CreateRaftLogCommand(
       const char* log_entry,
       int length,
-      txnid_t tx_id);
+      txnid_t tx_id,
+      uint32_t par_id);
 
 private:
   // @safe - mutex/condvar operations are bounded

@@ -251,6 +251,11 @@ class RaftServer : public TxLogServer {
   // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
   void applyLogs();
 
+  // SINGLE-RAFT: Dedicated apply fiber that replaces inline applyLogs() calls.
+  // Yields between entries to let PollThread process heartbeat responses.
+  // @safe - fiber creation and sleep are marked @external [safe]
+  void StartApplyFiber();
+
   // @safe - timer and atomic operations are safe internal operations
   void resetTimerBatch()
   {

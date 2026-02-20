@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <vector>
 #include <atomic>
 
@@ -92,8 +93,24 @@ void RaftWorker::SetupBase() {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
         is_leader = leader ? 1 : 0;
       }
-      uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
-      NotifyRaftLeaderChange(par_id, leader);
+      // SINGLE-RAFT: Notify ALL registered partitions on leader change.
+      // Collect unique par_ids from both per-partition callback maps.
+      std::set<uint32_t> par_ids;
+      for (const auto& kv : leader_callbacks_by_partition_) {
+        par_ids.insert(kv.first);
+      }
+      for (const auto& kv : follower_callbacks_by_partition_) {
+        par_ids.insert(kv.first);
+      }
+      if (par_ids.empty()) {
+        // Fallback: use site_info partition if no per-partition callbacks registered yet
+        uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
+        NotifyRaftLeaderChange(par_id, leader);
+      } else {
+        for (uint32_t pid : par_ids) {
+          NotifyRaftLeaderChange(pid, leader);
+        }
+      }
     });
   }
 
@@ -264,16 +281,9 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
   verify(rep_frame_ != nullptr);
   verify(rep_frame_->site_info_ != nullptr);
 
-  // @unsafe
-  { // rep_frame_->site_info_-> pointer dereference chain
-    // Check if this is the right partition
-    if (rep_frame_->site_info_->partition_id_ != par_id) {
-      return false;
-    }
-  }
-
+  // SINGLE-RAFT: No partition match check needed.
+  // A single RaftWorker handles all partitions, so leadership is global.
   // Check if Raft server thinks we're leader
-  // Use the public IsLeader() method instead of private is_leader_ field
   // @unsafe
   { // GetRaftServer uses dynamic_cast on raw pointer, raft_server-> pointer dereference
     auto raft_server = GetRaftServer();
@@ -287,12 +297,10 @@ bool RaftWorker::IsLeader(uint32_t par_id) {
 
 // @safe - pointer dereferences are bounded
 bool RaftWorker::IsPartition(uint32_t par_id) {
-  verify(rep_frame_ != nullptr);
-  verify(rep_frame_->site_info_ != nullptr);
-  // @unsafe
-  { // rep_frame_->site_info_-> pointer dereference chain
-    return rep_frame_->site_info_->partition_id_ == par_id;
-  }
+  // SINGLE-RAFT: A single RaftWorker handles all partitions.
+  // Always return true so find_worker() always returns this worker.
+  (void)par_id;
+  return true;
 }
 
 // @safe
@@ -363,7 +371,8 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
 std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
     const char* log_entry,
     int length,
-    txnid_t tx_id) {
+    txnid_t tx_id,
+    uint32_t par_id) {
 
   // Create TpcCommitCommand (outer wrapper required by batch optimization)
   auto tpc_cmd = std::make_shared<TpcCommitCommand>();
@@ -386,8 +395,8 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   (*simple_cmd->input.values_)[0] = Value(std::string(log_entry, length));
   simple_cmd->input.keys_.insert(0);
 
-  // Mark partition (required field)
-  simple_cmd->partition_id_ = 0;
+  // SINGLE-RAFT: Store the actual partition ID so Next() can route correctly
+  simple_cmd->partition_id_ = par_id;
 
   // Assemble the structure: TpcCommitCommand → VecPieceData → SimpleCommand
   vpd->sp_vec_piece_data_->push_back(simple_cmd);
@@ -421,7 +430,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   txnid_t tx_id = next_tx_id.fetch_add(1);
 
   // Use the production helper to create proper TpcCommitCommand{cmd_=VecPieceData}
-  auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id);
+  auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
 
   auto cmd = std::static_pointer_cast<Marshallable>(tpc_cmd);
 
@@ -620,27 +629,50 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
     return status;
   }
 
-  // RAFT CHANGE: Choose callback based on current leadership status
-  uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
+  // SINGLE-RAFT: Extract par_id from the committed entry's SimpleCommand::partition_id_
+  // instead of from site_info_ (which only has partition 0).
+  uint32_t par_id = 0;
+  if (tpc_cmd && tpc_cmd->cmd_) {
+    auto vpd_inner = std::dynamic_pointer_cast<VecPieceData>(tpc_cmd->cmd_);
+    if (vpd_inner && vpd_inner->sp_vec_piece_data_ && !vpd_inner->sp_vec_piece_data_->empty()) {
+      par_id = (*vpd_inner->sp_vec_piece_data_)[0]->partition_id_;
+    }
+  }
+
   bool am_leader = IsLeader(par_id);
 
-  auto& active_callback = am_leader ? leader_callback_par_id_return_ : follower_callback_par_id_return_;
+  // SINGLE-RAFT: Route to per-partition callback maps first, fall back to global callbacks
+  watermark_callback_t* active_callback_ptr = nullptr;
+  auto& cb_map = am_leader ? leader_callbacks_by_partition_ : follower_callbacks_by_partition_;
+  auto cb_it = cb_map.find(par_id);
+  if (cb_it != cb_map.end() && cb_it->second) {
+    active_callback_ptr = &cb_it->second;
+  } else {
+    // Fallback to global (non-per-partition) callbacks
+    auto& global_cb = am_leader ? leader_callback_par_id_return_ : follower_callback_par_id_return_;
+    if (global_cb) {
+      active_callback_ptr = &global_cb;
+    }
+  }
 
-  if (!active_callback) {
+  if (!active_callback_ptr) {
     Log_error("[RAFT-CALLBACK] No %s callback registered for partition %d",
               am_leader ? "leader" : "follower", par_id);
     return status;
   }
 
-  Log_debug("[RAFT-CALLBACK] Applying log at slot %d using %s callback",
-            slot_id, am_leader ? "LEADER" : "FOLLOWER");
+  Log_debug("[RAFT-CALLBACK] Applying log at slot %d par_id %d using %s callback",
+            slot_id, par_id, am_leader ? "LEADER" : "FOLLOWER");
 
-  int encoded_value = active_callback(
+  // SINGLE-RAFT: Use per-partition un_replay_logs queue
+  auto& un_replay_queue = un_replay_logs_by_partition_[par_id];
+
+  int encoded_value = (*active_callback_ptr)(
       log,
       len,
       par_id,
       slot_id,
-      un_replay_logs_);
+      un_replay_queue);
 
   status = encoded_value % 10;
   uint32_t timestamp = encoded_value / 10;
@@ -649,18 +681,63 @@ int RaftWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
       char* dest = static_cast<char*>(malloc(len));
       verify(dest != nullptr);
       memcpy(dest, log, len);
-      un_replay_logs_.push(std::make_tuple(timestamp,
+      un_replay_queue.push(std::make_tuple(timestamp,
                                            slot_id,
                                            status,
                                            len,
                                            static_cast<const char*>(dest)));
   }
 
-  Log_debug("Raft applied log at slot %d: status=%d, timestamp=%u, role=%s",
-            slot_id, status, timestamp, am_leader ? "leader" : "follower");
+  Log_debug("Raft applied log at slot %d: status=%d, timestamp=%u, role=%s, par_id=%d",
+            slot_id, status, timestamp, am_leader ? "leader" : "follower", par_id);
 
   return status;
   } // end @unsafe block for const char* log
+}
+
+// SINGLE-RAFT: Per-partition callback registration methods
+// @safe
+void RaftWorker::register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
+  leader_callbacks_by_partition_[par_id] = cb;
+
+  // Guard against accessing scheduler during shutdown
+  if (!rep_sched_) {
+    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip leader callback registration for partition %d", par_id);
+    return;
+  }
+
+  // Register Next() with RaftServer (idempotent - just overwrites app_next_)
+  // @unsafe
+  { // rep_sched_-> raw pointer dereference, RegLearnerAction
+    rep_sched_->RegLearnerAction(std::bind(&RaftWorker::Next,
+                                           this,
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
+  }
+
+  Log_info("[SINGLE-RAFT] Registered leader callback for partition %d", par_id);
+}
+
+// @safe
+void RaftWorker::register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb) {
+  follower_callbacks_by_partition_[par_id] = cb;
+
+  // Guard against accessing scheduler during shutdown
+  if (!rep_sched_) {
+    Log_warn("[RAFT-CALLBACK] Scheduler already torn down; skip follower callback registration for partition %d", par_id);
+    return;
+  }
+
+  // Register Next() with RaftServer (idempotent - just overwrites app_next_)
+  // @unsafe
+  { // rep_sched_-> raw pointer dereference, RegLearnerAction
+    rep_sched_->RegLearnerAction(std::bind(&RaftWorker::Next,
+                                           this,
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
+  }
+
+  Log_info("[SINGLE-RAFT] Registered follower callback for partition %d", par_id);
 }
 
 // @safe
