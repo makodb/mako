@@ -1,4 +1,3 @@
-
 #!/bin/bash
 
 set -e  # Exit on error
@@ -109,7 +108,7 @@ cleanup_processes() {
 
 # Pick a port base for simpleTransaction by checking that the full shard range is free.
 pick_simple_transaction_port_base() {
-    python - <<'PY'
+    python3 - <<'PY'
 import random
 import socket
 
@@ -141,7 +140,7 @@ write_simple_transaction_config() {
     local base_port=$1
     local src_config=$2
     local dest_config=$3
-    python - <<'PY' "$base_port" "$src_config" "$dest_config"
+    python3 - <<'PY' "$base_port" "$src_config" "$dest_config"
 import sys
 import yaml
 

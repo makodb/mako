@@ -189,10 +189,10 @@ class key {
         memcpy(data, s.data(), cplen);
         return cplen;
     }
-    // @safe - creates new String
+    // @unsafe - calls unparse() which writes to raw buffer
     static String unparse_ikey(ikey_type ikey) {
         key<ikey_type> k(ikey);
-        return k.unparse();
+        return k.unparse(); // @unsafe
     }
 
     // used during scan

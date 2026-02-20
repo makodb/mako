@@ -13,7 +13,7 @@ pick_simple_transaction_port_base() {
         base_min=31000
         base_max=37899
     fi
-    python - <<'PY' "$base_min" "$base_max"
+    python3 - <<'PY' "$base_min" "$base_max"
 import random
 import socket
 import sys
@@ -47,7 +47,7 @@ write_simple_transaction_config() {
     local base_port=$1
     local src_config=$2
     local dest_config=$3
-    python - <<'PY' "$base_port" "$src_config" "$dest_config"
+    python3 - <<'PY' "$base_port" "$src_config" "$dest_config"
 import sys
 import yaml
 
