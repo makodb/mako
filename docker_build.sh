@@ -313,6 +313,15 @@ case "$ACTION" in
         ;;
 
     build)
+        if [ -n "${3:-}" ]; then
+            echo -e "${RED}Error: Too many arguments for build.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh build' or './docker_build.sh build <jobs>'.${NC}"
+            exit 1
+        fi
+        if ! [[ "${JOBS}" =~ ^[0-9]+$ ]] || [ "${JOBS}" -lt 1 ]; then
+            echo -e "${RED}Error: Build jobs must be a positive integer (got '${JOBS}').${NC}"
+            exit 1
+        fi
         echo -e "${YELLOW}Building Mako in container...${NC}"
         ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
@@ -1022,7 +1031,7 @@ case "$ACTION" in
         echo ""
         echo "Commands:"
         echo "  build-image  - Build the Docker image"
-        echo "  build        - Build core runtime + RocksDB quick-test binaries (default)"
+        echo "  build [jobs] - Build core runtime + RocksDB quick-test binaries (default jobs: 32)"
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"
