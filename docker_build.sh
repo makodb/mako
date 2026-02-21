@@ -482,6 +482,11 @@ case "$ACTION" in
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+                if [ "${CREATE_RECREATED}" -eq 1 ]; then
+                    echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated and remains running. Use '$0 enter' to reconnect.${NC}"
+                else
+                    echo -e "${GREEN}Container '${CONTAINER_NAME}' remains running. Use '$0 enter' to reconnect.${NC}"
+                fi
             else
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
