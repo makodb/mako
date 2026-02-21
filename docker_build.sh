@@ -326,10 +326,42 @@ case "$ACTION" in
         ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; cd /workspace && \
-                     if [ -f build_docker/CMakeCache.txt ] && \
-                        ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
-                         echo 'Cleaning incompatible build_docker cache'; \
-                         rm -rf build_docker; \
+                     if [ -f build_docker/CMakeCache.txt ]; then \
+                         CACHE_INCOMPATIBLE=0; \
+                         CACHE_REASON=''; \
+                         if ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
+                             CACHE_INCOMPATIBLE=1; \
+                             CACHE_REASON='CMAKE_HOME_DIRECTORY mismatch'; \
+                         else \
+                             C_COMPILER=\$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
+                             CXX_COMPILER=\$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
+                             if [ -n \"\$C_COMPILER\" ]; then \
+                                 if [[ \"\$C_COMPILER\" == /* ]]; then \
+                                     if [ ! -x \"\$C_COMPILER\" ]; then \
+                                         CACHE_INCOMPATIBLE=1; \
+                                         CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
+                                     fi; \
+                                 elif ! command -v \"\$C_COMPILER\" >/dev/null 2>&1; then \
+                                     CACHE_INCOMPATIBLE=1; \
+                                     CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
+                                 fi; \
+                             fi; \
+                             if [ \"\$CACHE_INCOMPATIBLE\" -eq 0 ] && [ -n \"\$CXX_COMPILER\" ]; then \
+                                 if [[ \"\$CXX_COMPILER\" == /* ]]; then \
+                                     if [ ! -x \"\$CXX_COMPILER\" ]; then \
+                                         CACHE_INCOMPATIBLE=1; \
+                                         CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
+                                     fi; \
+                                 elif ! command -v \"\$CXX_COMPILER\" >/dev/null 2>&1; then \
+                                     CACHE_INCOMPATIBLE=1; \
+                                     CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
+                                 fi; \
+                             fi; \
+                         fi; \
+                         if [ \"\$CACHE_INCOMPATIBLE\" -eq 1 ]; then \
+                             echo \"Cleaning incompatible build_docker cache (\${CACHE_REASON})\"; \
+                             rm -rf build_docker; \
+                         fi; \
                      fi && \
                      if [ ! -f build_docker/CMakeCache.txt ]; then \
                          echo 'Configuring build_docker'; \
@@ -448,10 +480,42 @@ case "$ACTION" in
                          fi; \
                      fi; \
                      if [ \"\$NEED_BUILD\" -eq 1 ]; then \
-                         if [ -f build_docker/CMakeCache.txt ] && \
-                            ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
-                             echo 'Cleaning incompatible build_docker cache'; \
-                             rm -rf build_docker; \
+                         if [ -f build_docker/CMakeCache.txt ]; then \
+                             CACHE_INCOMPATIBLE=0; \
+                             CACHE_REASON=''; \
+                             if ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
+                                 CACHE_INCOMPATIBLE=1; \
+                                 CACHE_REASON='CMAKE_HOME_DIRECTORY mismatch'; \
+                             else \
+                                 C_COMPILER=\$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
+                                 CXX_COMPILER=\$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
+                                 if [ -n \"\$C_COMPILER\" ]; then \
+                                     if [[ \"\$C_COMPILER\" == /* ]]; then \
+                                         if [ ! -x \"\$C_COMPILER\" ]; then \
+                                             CACHE_INCOMPATIBLE=1; \
+                                             CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
+                                         fi; \
+                                     elif ! command -v \"\$C_COMPILER\" >/dev/null 2>&1; then \
+                                         CACHE_INCOMPATIBLE=1; \
+                                         CACHE_REASON=\"missing cached C compiler '\$C_COMPILER'\"; \
+                                     fi; \
+                                 fi; \
+                                 if [ \"\$CACHE_INCOMPATIBLE\" -eq 0 ] && [ -n \"\$CXX_COMPILER\" ]; then \
+                                     if [[ \"\$CXX_COMPILER\" == /* ]]; then \
+                                         if [ ! -x \"\$CXX_COMPILER\" ]; then \
+                                             CACHE_INCOMPATIBLE=1; \
+                                             CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
+                                         fi; \
+                                     elif ! command -v \"\$CXX_COMPILER\" >/dev/null 2>&1; then \
+                                         CACHE_INCOMPATIBLE=1; \
+                                         CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
+                                     fi; \
+                                 fi; \
+                             fi; \
+                             if [ \"\$CACHE_INCOMPATIBLE\" -eq 1 ]; then \
+                                 echo \"Cleaning incompatible build_docker cache (\${CACHE_REASON})\"; \
+                                 rm -rf build_docker; \
+                             fi; \
                          fi && \
                          if [ ! -f build_docker/CMakeCache.txt ]; then \
                              echo 'Configuring build_docker'; \
