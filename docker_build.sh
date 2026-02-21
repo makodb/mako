@@ -87,9 +87,16 @@ case "$ACTION" in
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-            echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
-            echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-            echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+            if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
+                echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+            else
+                echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was not found.${NC}"
+                echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
+                echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            fi
         fi
         ;;
 
