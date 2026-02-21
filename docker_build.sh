@@ -89,8 +89,8 @@ case "$ACTION" in
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                    echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
-                    echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                    echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
+                    echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
                     echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
                 else
                     echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
