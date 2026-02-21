@@ -898,13 +898,13 @@ case "$ACTION" in
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
         if docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
             docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
-                bash -c "cd /workspace && rm -rf build_docker target-docker && find . -maxdepth 1 -type f -name 'core.*' -delete"
+                bash -c "cd /workspace && rm -rf build_docker target-docker .cargo-docker && find . -maxdepth 1 -type f -name 'core.*' -delete"
         else
             echo -e "${YELLOW}Image '${IMAGE_NAME}' not found; cleaning workspace directly.${NC}"
-            rm -rf build_docker target-docker 2>/dev/null || true
+            rm -rf build_docker target-docker .cargo-docker 2>/dev/null || true
             find . -maxdepth 1 -type f -name 'core.*' -delete 2>/dev/null || true
             HAS_LEFTOVERS=0
-            if [ -d build_docker ] || [ -d target-docker ]; then
+            if [ -d build_docker ] || [ -d target-docker ] || [ -d .cargo-docker ]; then
                 HAS_LEFTOVERS=1
             fi
             if find . -maxdepth 1 -type f -name 'core.*' -print -quit | grep -q .; then
@@ -913,7 +913,7 @@ case "$ACTION" in
             if [ "${HAS_LEFTOVERS}" -eq 1 ]; then
                 echo -e "${YELLOW}Host cleanup lacked permissions; using temporary ubuntu helper container.${NC}"
                 docker run --rm -v "${WORKSPACE_ROOT}:/workspace" ubuntu:24.04 \
-                    bash -c "cd /workspace && rm -rf build_docker target-docker && find . -maxdepth 1 -type f -name 'core.*' -delete"
+                    bash -c "cd /workspace && rm -rf build_docker target-docker .cargo-docker && find . -maxdepth 1 -type f -name 'core.*' -delete"
             fi
         fi
         echo -e "${GREEN}Clean completed!${NC}"
