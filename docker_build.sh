@@ -42,9 +42,13 @@ fi
 DOCKER_DEV_USER="${MAKO_DOCKER_DEV_USER:-$(id -u):$(id -g)}"
 DOCKER_DEV_USER_OPTS=()
 DOCKER_DEV_USER_CMD_PREFIX=""
+COMPOSE_EXEC_USER_OPTS=()
+COMPOSE_EXEC_USER_CMD_PREFIX=""
 if [ "${DOCKER_DEV_USER}" != "root" ]; then
     DOCKER_DEV_USER_OPTS=(--user "${DOCKER_DEV_USER}")
     DOCKER_DEV_USER_CMD_PREFIX="--user ${DOCKER_DEV_USER} "
+    COMPOSE_EXEC_USER_OPTS=(--user "${DOCKER_DEV_USER}")
+    COMPOSE_EXEC_USER_CMD_PREFIX="--user ${DOCKER_DEV_USER} "
 fi
 DOCKER_SCRIPT_USER="${MAKO_DOCKER_SCRIPT_USER:-$(id -u):$(id -g)}"
 DOCKER_SCRIPT_USER_OPTS=()
@@ -338,8 +342,8 @@ print_stale_compose_selection_commands() {
     while IFS= read -r stale_project_name; do
         [ -n "${stale_project_name}" ] || continue
         printed_any=1
-        echo -e "${color}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose exec dev /bin/bash${NC}"
-        echo -e "${color}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${color}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+        echo -e "${color}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
     done < <(list_stale_compose_projects)
 
     [ "${printed_any}" -eq 1 ]
@@ -364,8 +368,8 @@ print_compose_access_guidance() {
 
     if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
         echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-        echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
-        echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+        echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
         echo -e "${GREEN}Compose teardown: ${COMPOSE_CMD_PREFIX} down${NC}"
         return 0
     fi
@@ -374,8 +378,8 @@ print_compose_access_guidance() {
     if stale_compose_project=$(select_single_stale_compose_project); then
         stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
         echo -e "${GREEN}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
-        echo -e "${GREEN}Compose access: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
-        echo -e "${GREEN}Compose non-interactive: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${GREEN}Compose access: ${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+        echo -e "${GREEN}Compose non-interactive: ${stale_compose_cmd_prefix} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
         echo -e "${GREEN}Compose teardown: ${stale_compose_cmd_prefix} down${NC}"
         return 0
     fi
@@ -600,8 +604,8 @@ case "$ACTION" in
                 print_legacy_container_scope_note || true
                 if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                     echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
-                    echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                     echo -e "${GREEN}Compose teardown: ${COMPOSE_CMD_PREFIX} down${NC}"
                 else
                     stale_compose_project=""
@@ -609,8 +613,8 @@ case "$ACTION" in
                     if stale_compose_project=$(select_single_stale_compose_project); then
                         stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                         echo -e "${GREEN}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
-                        echo -e "${GREEN}From a TTY, run: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
-                        echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                        echo -e "${GREEN}From a TTY, run: ${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+                        echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                         echo -e "${GREEN}Compose teardown: ${stale_compose_cmd_prefix} down${NC}"
                     elif [ "${stale_compose_count}" -gt 1 ]; then
                         stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
@@ -627,8 +631,8 @@ case "$ACTION" in
                         echo -e "${GREEN}Or stop stale compose containers, then run '$0 enter'.${NC}"
                     else
                         echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
-                        echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
-                        echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+                        echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+                        echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                     fi
                 fi
             fi
@@ -960,7 +964,7 @@ case "$ACTION" in
                 elif [ "${compose_already_running_for_checkout}" -eq 1 ]; then
                     echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped, and stale compose service(s) are already running for this checkout under different project IDs.${NC}"
                     if [ -n "${stale_compose_project}" ]; then
-                        echo -e "${YELLOW}'$0 enter' will reuse the running compose service for this checkout; use MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose exec dev /bin/bash to target it.${NC}"
+                        echo -e "${YELLOW}'$0 enter' will reuse the running compose service for this checkout; use MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash to target it.${NC}"
                     else
                         echo -e "${YELLOW}'$0 enter' will reuse the running compose service for this checkout; use the project-scoped compose exec commands shown below.${NC}"
                     fi
@@ -970,7 +974,7 @@ case "$ACTION" in
                 fi
             fi
             if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
-                echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
+                echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' to enter compose service 'dev'.${NC}"
             fi
         fi
         if [ "${compose_was_running}" -eq 0 ]; then
@@ -980,10 +984,10 @@ case "$ACTION" in
                 echo -e "${YELLOW}Reusing it to avoid starting a duplicate compose container.${NC}"
                 echo -e "${YELLOW}To stop this reused compose project later, run: ${stale_compose_cmd_prefix} down${NC}"
                 if [ "${HAS_TTY}" -eq 1 ]; then
-                    echo -e "${GREEN}Container already running. Connect with: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}Container already running. Connect with: ${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
                 else
                     echo -e "${GREEN}Container already running.${NC}"
-                    echo -e "${GREEN}Non-interactive session detected; run commands with: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}Non-interactive session detected; run commands with: ${stale_compose_cmd_prefix} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                 fi
                 exit 0
             elif [ "${stale_compose_count}" -gt 1 ]; then
@@ -1007,9 +1011,9 @@ case "$ACTION" in
         warn_stale_compose_dev_containers
         if [ "${HAS_TTY}" -eq 1 ]; then
             if [ "${compose_was_running}" -eq 1 ]; then
-                echo -e "${GREEN}Container already running. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                echo -e "${GREEN}Container already running. Connect with: ${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
             else
-                echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
             fi
             echo -e "${GREEN}Stop compose service 'dev' with: ${COMPOSE_CMD_PREFIX} down${NC}"
         else
@@ -1018,7 +1022,7 @@ case "$ACTION" in
             else
                 echo -e "${GREEN}Container started.${NC}"
             fi
-            echo -e "${GREEN}Non-interactive session detected; run commands with: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${GREEN}Non-interactive session detected; run commands with: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
             echo -e "${GREEN}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
         fi
         ;;
@@ -1087,8 +1091,8 @@ case "$ACTION" in
         elif [ -n "${create_stale_compose_project}" ]; then
             echo -e "${YELLOW}Warning: found running compose service 'dev' for this checkout under project '${create_stale_compose_project}'.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
-            echo -e "${YELLOW}Use 'MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec dev /bin/bash' if you want that compose container.${NC}"
-            echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${YELLOW}Use 'MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' if you want that compose container.${NC}"
+            echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
             echo -e "${YELLOW}To stop this compose project later, run: MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose down${NC}"
         elif [ "${create_stale_compose_count}" -gt 1 ]; then
             create_stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
@@ -1215,7 +1219,7 @@ case "$ACTION" in
            compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 echo -e "${YELLOW}Compose service 'dev' is also running; '$0 enter' will use standalone '${CONTAINER_NAME}'.${NC}"
-                echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' if you want the compose container.${NC}"
+                echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' if you want the compose container.${NC}"
                 echo -e "${YELLOW}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
             else
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running.${NC}"
@@ -1224,15 +1228,15 @@ case "$ACTION" in
                 if [ "${HAS_TTY}" -eq 1 ]; then
                     COMPOSE_INTERACTIVE_EXIT_CODE=0
                     set +e
-                    compose_cmd exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                    compose_cmd exec "${COMPOSE_EXEC_OPTS[@]}" "${COMPOSE_EXEC_USER_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                     COMPOSE_INTERACTIVE_EXIT_CODE=$?
                     set -e
-                    echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to reconnect.${NC}"
+                    echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' to reconnect.${NC}"
                     exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
                 fi
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-                echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+                echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                 exit 0
             fi
         fi
@@ -1248,15 +1252,15 @@ case "$ACTION" in
                 if [ "${HAS_TTY}" -eq 1 ]; then
                     COMPOSE_INTERACTIVE_EXIT_CODE=0
                     set +e
-                    MAKO_COMPOSE_PROJECT="${stale_compose_project}" docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                    MAKO_COMPOSE_PROJECT="${stale_compose_project}" docker compose exec "${COMPOSE_EXEC_OPTS[@]}" "${COMPOSE_EXEC_USER_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                     COMPOSE_INTERACTIVE_EXIT_CODE=$?
                     set -e
-                    echo -e "${GREEN}Compose service 'dev' (project '${stale_compose_project}') remains running. Reconnect with '${stale_compose_cmd_prefix} exec dev /bin/bash'.${NC}"
+                    echo -e "${GREEN}Compose service 'dev' (project '${stale_compose_project}') remains running. Reconnect with '${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash'.${NC}"
                     exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
                 fi
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-                echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                 exit 0
             elif [ "${stale_compose_count}" -gt 1 ]; then
                 stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
@@ -1286,15 +1290,15 @@ case "$ACTION" in
                     if [ "${HAS_TTY}" -eq 1 ]; then
                         COMPOSE_INTERACTIVE_EXIT_CODE=0
                         set +e
-                        MAKO_COMPOSE_PROJECT="${stale_compose_project}" docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                        MAKO_COMPOSE_PROJECT="${stale_compose_project}" docker compose exec "${COMPOSE_EXEC_OPTS[@]}" "${COMPOSE_EXEC_USER_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                         COMPOSE_INTERACTIVE_EXIT_CODE=$?
                         set -e
-                        echo -e "${GREEN}Compose service 'dev' (project '${stale_compose_project}') remains running. Reconnect with '${stale_compose_cmd_prefix} exec dev /bin/bash'.${NC}"
+                        echo -e "${GREEN}Compose service 'dev' (project '${stale_compose_project}') remains running. Reconnect with '${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash'.${NC}"
                         exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
                     fi
                     echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-                    echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                     exit 0
                 elif [ "${stale_compose_count}" -gt 1 ]; then
                     stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
@@ -1316,16 +1320,16 @@ case "$ACTION" in
             if [ "${HAS_TTY}" -eq 1 ]; then
                 COMPOSE_INTERACTIVE_EXIT_CODE=0
                 set +e
-                compose_cmd exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                compose_cmd exec "${COMPOSE_EXEC_OPTS[@]}" "${COMPOSE_EXEC_USER_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 COMPOSE_INTERACTIVE_EXIT_CODE=$?
                 set -e
-                echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to reconnect.${NC}"
+                echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' to reconnect.${NC}"
                 echo -e "${GREEN}Stop compose service 'dev' with: ${COMPOSE_CMD_PREFIX} down${NC}"
                 exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
             fi
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-            echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
-            echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+            echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
             echo -e "${GREEN}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
             exit 0
         fi
@@ -1390,8 +1394,8 @@ case "$ACTION" in
             else
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' exited after startup checks.${NC}"
                 if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
-                    echo -e "${GREEN}Compose service 'dev' is running; use: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}Compose service 'dev' is running; use: ${COMPOSE_CMD_PREFIX} exec ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T ${COMPOSE_EXEC_USER_CMD_PREFIX}dev /bin/bash -lc '<command>'${NC}"
                     echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', run '$0 create' to refresh it first.${NC}"
                 else
                     echo -e "${GREEN}Use '$0 create' to recreate/refresh standalone '${CONTAINER_NAME}'.${NC}"
