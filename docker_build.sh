@@ -1060,9 +1060,11 @@ case "$ACTION" in
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 echo -e "${YELLOW}Compose service 'dev' is also running; '$0 enter' will use standalone '${CONTAINER_NAME}'.${NC}"
                 echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' if you want the compose container.${NC}"
+                echo -e "${YELLOW}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
             else
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running.${NC}"
                 echo -e "${YELLOW}Reusing running compose service 'dev' instead of starting standalone.${NC}"
+                echo -e "${YELLOW}To stop this compose service later, run: ${COMPOSE_CMD_PREFIX} down${NC}"
                 if [ "${HAS_TTY}" -eq 1 ]; then
                     COMPOSE_INTERACTIVE_EXIT_CODE=0
                     set +e
@@ -1114,6 +1116,7 @@ case "$ACTION" in
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
             if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                 echo -e "${GREEN}Compose service 'dev' is already running; skipping compose-up.${NC}"
+                echo -e "${GREEN}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
             else
                 stale_compose_project=""
                 stale_compose_count=$(count_stale_compose_projects)
