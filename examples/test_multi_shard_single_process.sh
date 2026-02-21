@@ -26,6 +26,30 @@ rm -f nfs_sync_*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+PROCESS_PID=""
+CLEANUP_DONE=0
+
+cleanup_process() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    if [ -n "${PROCESS_PID:-}" ]; then
+        kill "$PROCESS_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PROCESS_PID" 2>/dev/null || true
+        wait "$PROCESS_PID" 2>/dev/null || true
+    fi
+}
+
+handle_interrupt() {
+    cleanup_process
+    exit 130
+}
+
+trap cleanup_process EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
