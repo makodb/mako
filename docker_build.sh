@@ -39,6 +39,13 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
     DOCKER_INTERACTIVE_OPTS=(-i)
     COMPOSE_EXEC_OPTS=(-T)
 fi
+DOCKER_DEV_USER="${MAKO_DOCKER_DEV_USER:-$(id -u):$(id -g)}"
+DOCKER_DEV_USER_OPTS=()
+DOCKER_DEV_USER_CMD_PREFIX=""
+if [ "${DOCKER_DEV_USER}" != "root" ]; then
+    DOCKER_DEV_USER_OPTS=(--user "${DOCKER_DEV_USER}")
+    DOCKER_DEV_USER_CMD_PREFIX="--user ${DOCKER_DEV_USER} "
+fi
 
 # Disable core dumps in script-driven Docker runs by default to avoid polluting
 # the workspace with large core.* artifacts after transient test crashes.
@@ -494,7 +501,7 @@ case "$ACTION" in
         ensure_image
         warn_incomplete_build_docker
         if [ "${HAS_TTY}" -eq 1 ]; then
-            docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+            docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_DEV_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
@@ -522,8 +529,8 @@ case "$ACTION" in
                             print_compose_access_guidance || true
                         else
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
-                            echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                            echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                            echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                            echo -e "${GREEN}For non-interactive usage, run: docker exec ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
                             print_compose_access_guidance || true
                         fi
                     else
@@ -1104,7 +1111,7 @@ case "$ACTION" in
             if [ "${HAS_TTY}" -eq 1 ]; then
                 INTERACTIVE_EXIT_CODE=0
                 set +e
-                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
+                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_DEV_USER_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                     bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 INTERACTIVE_EXIT_CODE=$?
                 set -e
@@ -1119,8 +1126,8 @@ case "$ACTION" in
             else
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
-                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
             fi
         else
             if [ "${HAS_TTY}" -eq 1 ]; then
@@ -1128,7 +1135,7 @@ case "$ACTION" in
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 INTERACTIVE_EXIT_CODE=0
                 set +e
-                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
+                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_DEV_USER_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                     bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 INTERACTIVE_EXIT_CODE=$?
                 set -e
@@ -1148,8 +1155,8 @@ case "$ACTION" in
                 else
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' created and started in background (non-interactive mode).${NC}"
                 fi
-                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
             fi
         fi
         ;;
@@ -1322,7 +1329,7 @@ case "$ACTION" in
         if [ "${HAS_TTY}" -eq 1 ]; then
             INTERACTIVE_EXIT_CODE=0
             set +e
-            docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
+            docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_DEV_USER_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
             INTERACTIVE_EXIT_CODE=$?
             set -e
@@ -1334,8 +1341,8 @@ case "$ACTION" in
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if is_container_stably_running "${CONTAINER_NAME}" 2 1; then
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
-                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec ${DOCKER_DEV_USER_CMD_PREFIX}-e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
             else
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' exited after startup checks.${NC}"
                 if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then

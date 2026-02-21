@@ -402,6 +402,7 @@ Notes:
 - Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `enter`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
 - Interactive standalone `shell`/`create`/`enter` sessions print a tip that `BUILD_DIR` is preset to `build_docker` for CI/scripts.
+- Standalone `shell`/`create`/`enter` exec sessions now run as host UID:GID by default (via `docker exec --user ...`) to avoid writing root-owned files into the checkout. Override with `MAKO_DOCKER_DEV_USER=root` if root shells are required.
 - Persistent Docker dev containers use an init/reaper process (`--init` for standalone `mako-dev`, `init: true` for compose `dev`) to prevent zombie child-process buildup during repeated test runs.
 - `./docker_build.sh shell`/`create`/`enter` auto-detect terminal availability: interactive TTY sessions use `-it`, while non-interactive environments fall back to non-TTY-safe Docker/Compose flags.
 - In non-interactive mode, `./docker_build.sh shell` prints guidance instead of trying to open an interactive shell (running standalone `mako-dev` guidance when available, recovery-safe standalone guidance when standalone exists but is stopped, direct compose-exec guidance when compose `dev` is already running, and compose-start guidance otherwise). For stopped standalone containers, guidance points to recovery-safe script flows rather than raw `docker start`: use `./docker_build.sh create` for explicit standalone recovery, or stop compose services first and then use `./docker_build.sh enter` if you need standalone.
@@ -448,7 +449,7 @@ Notes:
   - if standalone is running, `./docker_build.sh enter` prefers standalone `mako-dev`;
   - if standalone is stopped but compose `dev` is running (current project or a single same-checkout stale project), `./docker_build.sh enter` reuses compose `dev` instead of starting standalone.
 - For non-interactive usage against the standalone dev container, run:
-  `docker exec -e BUILD_DIR=build_docker "${MAKO_DEV_CONTAINER_NAME:-mako-dev}" /bin/bash -lc '<command>'`.
+  `docker exec --user "$(id -u):$(id -g)" -e BUILD_DIR=build_docker "${MAKO_DEV_CONTAINER_NAME:-mako-dev}" /bin/bash -lc '<command>'`.
   If `docker_build.sh` auto-scoped the container name (for example `mako-dev-<checkout-hash>`), use the printed standalone name from `./docker_build.sh shell|create|enter` instead of bare `mako-dev`.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, either use `./docker_build.sh enter` (recommended) or prefix raw compose commands with the checkout-specific project id:
