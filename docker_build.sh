@@ -286,7 +286,12 @@ case "$ACTION" in
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
         ensure_image
         docker compose up -d dev
-        echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
+        if [ "${HAS_TTY}" -eq 1 ]; then
+            echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
+        else
+            echo -e "${GREEN}Container started.${NC}"
+            echo -e "${GREEN}Non-interactive session detected; run commands with: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+        fi
         ;;
 
     compose-down)

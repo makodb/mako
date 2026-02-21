@@ -393,6 +393,7 @@ Notes:
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance instead of opening a shell.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).
+- For non-interactive compose usage (for example CI/headless), use `docker compose exec -T dev /bin/bash -lc '<command>'`.
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 - Jobs-only shorthand is supported: `./docker_build.sh ci 8` is equivalent to `./docker_build.sh ci all 8`.
