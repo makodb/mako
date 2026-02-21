@@ -615,6 +615,29 @@ case "$ACTION" in
             fi
             echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
         fi
+        if ! compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+            stale_compose_project=""
+            stale_compose_count=$(count_stale_compose_projects)
+            if stale_compose_project=$(select_single_stale_compose_project); then
+                stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
+                echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
+                echo -e "${YELLOW}Reusing it to avoid starting a duplicate compose container.${NC}"
+                if [ "${HAS_TTY}" -eq 1 ]; then
+                    echo -e "${GREEN}Container already running. Connect with: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
+                else
+                    echo -e "${GREEN}Container already running.${NC}"
+                    echo -e "${GREEN}Non-interactive session detected; run commands with: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                fi
+                exit 0
+            elif [ "${stale_compose_count}" -gt 1 ]; then
+                stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
+                echo -e "${YELLOW}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
+                echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
+                echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                echo -e "${YELLOW}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
+                exit 1
+            fi
+        fi
         compose_cmd up -d dev
         warn_stale_compose_dev_containers
         if [ "${HAS_TTY}" -eq 1 ]; then
