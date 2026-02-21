@@ -162,11 +162,13 @@ pkill -TERM -f "bash/shard.sh" 2>/dev/null || true
 pkill -TERM dbtest 2>/dev/null || true
 sleep 3
 
-# Force kill any remaining processes
-echo "Force killing remaining processes..."
-pkill -9 -f "bash/shard.sh" 2>/dev/null || true
-pkill -9 dbtest 2>/dev/null || true
-killall -9 dbtest 2>/dev/null || true
+# Force kill only if processes remain after graceful shutdown.
+if pgrep -f "bash/shard.sh" >/dev/null 2>&1 || pgrep -x dbtest >/dev/null 2>&1; then
+    echo "Force killing remaining processes..."
+    pkill -9 -f "bash/shard.sh" 2>/dev/null || true
+    pkill -9 dbtest 2>/dev/null || true
+    killall -9 dbtest 2>/dev/null || true
+fi
 
 # Wait for OS to clean up
 sleep 2
