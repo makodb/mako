@@ -5,6 +5,7 @@ services:
       context: .
       dockerfile: Dockerfile.ubuntu24
     image: mako-build:ubuntu24
+    init: true
     volumes:
       - .:/workspace
     working_dir: /workspace
@@ -18,6 +19,7 @@ services:
   dev:
     platform: linux/amd64
     image: mako-build:ubuntu24
+    init: true
     volumes:
       - .:/workspace
     working_dir: /workspace

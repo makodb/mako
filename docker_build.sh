@@ -19,6 +19,7 @@ CONTAINER_NAME="mako-dev"
 
 # Environment variables/options for Docker runs
 DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e BUILD_DIR=build_docker)
+DOCKER_INIT_OPTS=(--init)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
     # Rust tooling (cargo/rustc) can fail under restrictive AppArmor profiles.
@@ -305,6 +306,13 @@ case "$ACTION" in
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
         ensure_image
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
+            if [ "${EXISTING_INIT}" != "true" ]; then
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' was created without Docker init support; recreating it to enable child-process reaping.${NC}"
+                docker rm -f ${CONTAINER_NAME} >/dev/null
+            fi
+        fi
+        if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 echo -e "${YELLOW}Starting stopped container...${NC}"
@@ -320,11 +328,11 @@ case "$ACTION" in
             fi
         else
             if [ "${HAS_TTY}" -eq 1 ]; then
-                docker run "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
             else
-                docker run -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' created and started in background (non-interactive mode).${NC}"
                 echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
