@@ -182,9 +182,10 @@ else
 fi
 
 # Check 10: Look for throughput output (system is running)
-if grep -q "agg_persist_throughput" "$log_file"; then
+throughput_line=$(grep -oE "agg_persist_throughput:[[:space:]]*[0-9.]+[[:space:]]*ops/sec" "$log_file" | tail -1 || true)
+if [ -n "$throughput_line" ]; then
     echo "  ✓ Found 'agg_persist_throughput' keyword (system running)"
-    grep "agg_persist_throughput" "$log_file" | tail -1 | sed 's/^/    /'
+    echo "    $throughput_line"
 else
     echo "  ✗ 'agg_persist_throughput' keyword not found"
     failed=1
