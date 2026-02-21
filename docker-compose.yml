@@ -1,4 +1,4 @@
-name: mako
+name: ${MAKO_COMPOSE_PROJECT:-mako}
 
 services:
   build:

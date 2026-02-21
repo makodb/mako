@@ -413,18 +413,20 @@ Notes:
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-recover standalone containers that are unsuitable for persistent dev usage (transient behavior or non-keepalive command setups), recreating them with a persistent keepalive command before suggesting `docker exec`.
 - `./docker_build.sh create` and `./docker_build.sh enter` also auto-recreate standalone containers that point at a different `/workspace` bind mount or working directory, so reused `mako-dev` containers always match the current checkout.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-recreate standalone `mako-dev` containers that use a different image, ensuring the dev container always runs on `mako-build:ubuntu24`.
-- `docker_build.sh` resolves its own directory and bind mounts to canonical paths (`pwd -P`), so running via symlinked checkout paths does not create duplicate compose projects or trigger bind-mount creation failures.
-- `docker-compose.yml` now sets an explicit project name (`mako`) so `docker compose exec dev ...` targets the same dev service even when commands are run from symlinked checkout paths.
+- `docker_build.sh` resolves its own directory and bind mounts to canonical paths (`pwd -P`), and derives a per-checkout compose project id (`mako-<hash>`). Symlinked paths for the same checkout share one compose project, while different checkouts no longer collide on the same `dev` container.
+- `docker-compose.yml` parameterizes project naming via `MAKO_COMPOSE_PROJECT` (default: `mako`); `docker_build.sh` sets this automatically for its compose operations.
 - `./docker_build.sh enter` now also requires standalone liveness to remain stable before non-interactive `docker exec` guidance, so short-lived containers are redirected to recovery-safe instructions (or compose guidance when compose `dev` is running).
-- `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
+- `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `MAKO_COMPOSE_PROJECT=... docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
 - Interactive compose shells entered via `./docker_build.sh enter` now print the same `BUILD_DIR=build_docker` tip and a reconnect hint, while preserving the shell exit code.
 - When both standalone `mako-dev` and compose `dev` exist:
   - if standalone is running, `./docker_build.sh enter` prefers standalone `mako-dev`;
   - if standalone is stopped but compose `dev` is running, `./docker_build.sh enter` reuses compose `dev` instead of starting standalone.
 - For non-interactive usage against the standalone `mako-dev` container, run: `docker exec -e BUILD_DIR=build_docker mako-dev /bin/bash -lc '<command>'`.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
-- For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).
-- For non-interactive compose usage (for example CI/headless), use `docker compose exec -T dev /bin/bash -lc '<command>'`.
+- For compose-based sessions, either use `./docker_build.sh enter` (recommended) or prefix raw compose commands with the checkout-specific project id:
+  `MAKO_COMPOSE_PROJECT="mako-$(printf '%s' "$(pwd -P)" | sha256sum | cut -c1-10)" docker compose exec dev /bin/bash`
+- For non-interactive compose usage (for example CI/headless), use:
+  `MAKO_COMPOSE_PROJECT="mako-$(printf '%s' "$(pwd -P)" | sha256sum | cut -c1-10)" docker compose exec -T dev /bin/bash -lc '<command>'`.
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 - Jobs-only shorthand is supported: `./docker_build.sh ci 8` is equivalent to `./docker_build.sh ci all 8`.

@@ -17,6 +17,9 @@ NC='\033[0m' # No Color
 IMAGE_NAME="mako-build:ubuntu24"
 CONTAINER_NAME="mako-dev"
 WORKSPACE_ROOT="$(pwd -P)"
+WORKSPACE_HASH="$(printf '%s' "${WORKSPACE_ROOT}" | sha256sum | cut -c1-10)"
+COMPOSE_PROJECT_NAME="mako-${WORKSPACE_HASH}"
+COMPOSE_CMD_PREFIX="MAKO_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME} docker compose"
 
 # Environment variables/options for Docker runs
 DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e BUILD_DIR=build_docker)
@@ -42,6 +45,10 @@ DOCKER_CORE_ULIMIT_CMD="ulimit -c 0"
 if [ "${MAKO_DOCKER_ENABLE_COREDUMP:-0}" = "1" ]; then
     DOCKER_CORE_ULIMIT_CMD="ulimit -c unlimited"
 fi
+
+compose_cmd() {
+    MAKO_COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME}" docker compose "$@"
+}
 
 ensure_image() {
     if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
@@ -192,50 +199,50 @@ case "$ACTION" in
                         if ! has_expected_image "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but uses an unexpected image.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate it with '${IMAGE_NAME}'.${NC}"
-                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                                 echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
-                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                                echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                             fi
                         elif ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but points to a different /workspace mount or working directory.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it for this checkout.${NC}"
-                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                                 echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
-                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                                echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                             fi
                         elif ! has_init_enabled "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but was created without Docker init support.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it with '--init'.${NC}"
-                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                                 echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
-                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                                echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                             fi
                         elif ! has_keepalive_command "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but uses a non-keepalive command.${NC}"
                             echo -e "${GREEN}It may exit unexpectedly; use '$0 create' or '$0 enter' to normalize it for persistent dev usage.${NC}"
-                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                                 echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
-                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                                echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                             fi
                         else
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
                             echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
                             echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
-                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                                 echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
-                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                                echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                             fi
                         fi
                     else
                         echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was running briefly but exited.${NC}"
-                        if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
-                            echo -e "${GREEN}Compose service 'dev' is running; use: docker compose exec dev /bin/bash${NC}"
-                            echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                        if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            echo -e "${GREEN}Compose service 'dev' is running; use: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                            echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                             echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' or '$0 create' for recovery-safe setup.${NC}"
                         else
                             echo -e "${GREEN}Use '$0 enter' to start/recover standalone '${CONTAINER_NAME}' and attach when possible.${NC}"
@@ -244,10 +251,10 @@ case "$ACTION" in
                     fi
                 else
                     echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
-                    if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                    if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                         echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
-                        echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
-                        echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                        echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                        echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                         echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
                         echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
                     else
@@ -258,14 +265,14 @@ case "$ACTION" in
                 fi
             else
                 echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was not found.${NC}"
-                if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                     echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
-                    echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                 else
                     echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
-                    echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                 fi
             fi
         fi
@@ -482,20 +489,20 @@ case "$ACTION" in
                 echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists alongside compose service 'dev'.${NC}"
                 echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone '${CONTAINER_NAME}' remains stopped.${NC}"
             fi
-            echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' to enter compose service 'dev'.${NC}"
+            echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
         fi
-        docker compose up -d dev
+        compose_cmd up -d dev
         if [ "${HAS_TTY}" -eq 1 ]; then
-            echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
+            echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
         else
             echo -e "${GREEN}Container started.${NC}"
-            echo -e "${GREEN}Non-interactive session detected; run commands with: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${GREEN}Non-interactive session detected; run commands with: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
         fi
         ;;
 
     compose-down)
         echo -e "${YELLOW}Stopping services...${NC}"
-        docker compose down
+        compose_cmd down
         echo -e "${GREEN}Services stopped!${NC}"
         ;;
 
@@ -608,50 +615,50 @@ case "$ACTION" in
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
         warn_incomplete_build_docker
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
-           docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+           compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 echo -e "${YELLOW}Compose service 'dev' is also running; '$0 enter' will use standalone '${CONTAINER_NAME}'.${NC}"
-                echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' if you want the compose container.${NC}"
+                echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' if you want the compose container.${NC}"
             else
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running.${NC}"
                 echo -e "${YELLOW}Reusing running compose service 'dev' instead of starting standalone.${NC}"
                 if [ "${HAS_TTY}" -eq 1 ]; then
                     COMPOSE_INTERACTIVE_EXIT_CODE=0
                     set +e
-                    docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                    compose_cmd exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                     COMPOSE_INTERACTIVE_EXIT_CODE=$?
                     set -e
-                    echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or 'docker compose exec dev /bin/bash' to reconnect.${NC}"
+                    echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to reconnect.${NC}"
                     exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
                 fi
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-                echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                 exit 0
             fi
         fi
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
-            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                 echo -e "${GREEN}Compose service 'dev' is already running; skipping compose-up.${NC}"
             else
                 echo -e "${YELLOW}Starting services with docker-compose...${NC}"
                 ensure_image
-                docker compose up -d dev
+                compose_cmd up -d dev
                 echo -e "${GREEN}Compose service 'dev' started.${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 COMPOSE_INTERACTIVE_EXIT_CODE=0
                 set +e
-                docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                compose_cmd exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 COMPOSE_INTERACTIVE_EXIT_CODE=$?
                 set -e
-                echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or 'docker compose exec dev /bin/bash' to reconnect.${NC}"
+                echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to reconnect.${NC}"
                 exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
             fi
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-            echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
-            echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+            echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
             exit 0
         fi
         EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
@@ -714,9 +721,9 @@ case "$ACTION" in
                 echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
             else
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' exited after startup checks.${NC}"
-                if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
-                    echo -e "${GREEN}Compose service 'dev' is running; use: docker compose exec dev /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                    echo -e "${GREEN}Compose service 'dev' is running; use: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                     echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', run '$0 create' to refresh it first.${NC}"
                 else
                     echo -e "${GREEN}Use '$0 create' to recreate/refresh standalone '${CONTAINER_NAME}'.${NC}"
