@@ -879,6 +879,23 @@ case "$ACTION" in
         if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
             compose_was_running=1
         fi
+        if [ "${compose_was_running}" -eq 0 ]; then
+            single_stale_compose_project=""
+            if single_stale_compose_project=$(select_single_stale_compose_project); then
+                echo -e "${YELLOW}No running services found for current compose project '${COMPOSE_PROJECT_NAME}'.${NC}"
+                echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${single_stale_compose_project}'.${NC}"
+                echo -e "${YELLOW}Reusing it for compose-down to avoid leaving stale dev sessions running.${NC}"
+                MAKO_COMPOSE_PROJECT="${single_stale_compose_project}" docker compose down
+                stale_compose_count=$(count_stale_compose_projects)
+                if [ "${stale_compose_count}" -gt 0 ]; then
+                    warn_stale_compose_dev_containers
+                    echo -e "${YELLOW}Stopped compose project '${single_stale_compose_project}', but stale compose services are still running for this checkout.${NC}"
+                    exit 1
+                fi
+                echo -e "${GREEN}Stopped compose service 'dev' for project '${single_stale_compose_project}'.${NC}"
+                exit 0
+            fi
+        fi
         compose_cmd down
         stale_compose_count=$(count_stale_compose_projects)
         if [ "${stale_compose_count}" -gt 0 ]; then
