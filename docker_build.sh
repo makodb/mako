@@ -365,7 +365,11 @@ case "$ACTION" in
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
-            "$0" compose-up
+            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                echo -e "${GREEN}Compose service 'dev' is already running; skipping compose-up.${NC}"
+            else
+                "$0" compose-up
+            fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
                 exit $?
