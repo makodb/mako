@@ -198,6 +198,13 @@ static void warn_if_replicated_role_may_block() {
           benchConfig.getPaxosProcName().c_str());
 }
 
+static bool should_enable_replicated_startup_watchdog()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  return benchConfig.getIsReplicated() &&
+         benchConfig.getPaxosProcName() == mako::LOCALHOST_CENTER;
+}
+
 static int resolve_startup_timeout_sec(int startup_timeout_sec, bool startup_timeout_explicit)
 {
   int resolved_timeout_sec = startup_timeout_sec;
@@ -216,7 +223,9 @@ static int resolve_startup_timeout_sec(int startup_timeout_sec, bool startup_tim
     }
   }
 
-  if (!timeout_configured && !isatty(STDIN_FILENO)) {
+  if (!timeout_configured &&
+      should_enable_replicated_startup_watchdog() &&
+      !isatty(STDIN_FILENO)) {
     // In non-interactive/headless runs, avoid indefinite hangs by default.
     resolved_timeout_sec = 120;
     Notice("Non-interactive startup detected; applying default startup timeout (%ds). "
@@ -229,12 +238,9 @@ static int resolve_startup_timeout_sec(int startup_timeout_sec, bool startup_tim
 
 static void start_replicated_startup_watchdog(int startup_timeout_sec, std::atomic<bool>* startup_complete)
 {
-  if (startup_timeout_sec <= 0 || startup_complete == nullptr) {
-    return;
-  }
-
-  auto& benchConfig = BenchmarkConfig::getInstance();
-  if (!benchConfig.getIsReplicated() || benchConfig.getPaxosProcName() != mako::LOCALHOST_CENTER) {
+  if (startup_timeout_sec <= 0 ||
+      startup_complete == nullptr ||
+      !should_enable_replicated_startup_watchdog()) {
     return;
   }
 
