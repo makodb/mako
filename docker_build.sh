@@ -100,9 +100,15 @@ case "$ACTION" in
                 fi
             else
                 echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was not found.${NC}"
-                echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
-                echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                    echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
+                    echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                else
+                    echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
+                    echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                fi
             fi
         fi
         ;;
