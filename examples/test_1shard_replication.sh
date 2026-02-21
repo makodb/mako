@@ -15,6 +15,11 @@ echo "========================================="
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+SHARD0_LOCALHOST_PID=""
+SHARD0_LEARNER_PID=""
+SHARD0_P2_PID=""
+SHARD0_P1_PID=""
+CLEANUP_DONE=0
 
 TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
 if [ -z "$TEMP_CONFIG" ]; then
@@ -24,10 +29,43 @@ export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
 cleanup_temp_config() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started shard wrappers.
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest workers tied to this run's unique temp config.
+    # This prevents leaked workers when the script exits early (timeout/Ctrl-C).
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+        sleep 1
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    fi
+
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
 }
+
+handle_interrupt() {
+    cleanup_temp_config
+    exit 130
+}
+
 trap cleanup_temp_config EXIT
+trap handle_interrupt INT TERM
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
@@ -38,11 +76,14 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 # Start shard 0 in background
 echo "Starting shard 0..."
 nohup bash bash/shard.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
+SHARD0_LOCALHOST_PID=$!
 nohup bash bash/shard.sh 1 0 $trd learner 0 1 > $script_name\_shard0-learner-$trd.log 2>&1 &
+SHARD0_LEARNER_PID=$!
 nohup bash bash/shard.sh 1 0 $trd p2 0 1 > $script_name\_shard0-p2-$trd.log 2>&1 &
+SHARD0_P2_PID=$!
 sleep 1
 nohup bash bash/shard.sh 1 0 $trd p1 0 1 > $script_name\_shard0-p1-$trd.log 2>&1 &
-SHARD0_PID=$!
+SHARD0_P1_PID=$!
 sleep 2
 
 # Wait for benchmark to complete (poll for completion marker)
@@ -79,8 +120,8 @@ pkill -9 -f "dbtest.*shard-index 0" 2>/dev/null || true
 sleep 1
 
 # Original cleanup for good measure
-kill $SHARD0_PID 2>/dev/null || true
-wait $SHARD0_PID 2>/dev/null || true
+kill $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID 2>/dev/null || true
+wait $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID 2>/dev/null || true
 
 echo ""
 echo "========================================="
