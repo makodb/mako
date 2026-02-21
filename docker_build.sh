@@ -654,9 +654,12 @@ case "$ACTION" in
                     echo -e "${YELLOW}'$0 enter' will keep using standalone '${CONTAINER_NAME}' while it is running.${NC}"
                 fi
             else
-                if [ "${compose_already_running_for_checkout}" -eq 1 ]; then
-                    echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is already running for this checkout.${NC}"
+                if [ "${compose_was_running}" -eq 1 ]; then
+                    echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running for the current project.${NC}"
                     echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone remains stopped.${NC}"
+                elif [ "${compose_already_running_for_checkout}" -eq 1 ]; then
+                    echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped, and stale compose service(s) are already running for this checkout under different project IDs.${NC}"
+                    echo -e "${YELLOW}'$0 enter' will start/recover standalone '${CONTAINER_NAME}' by default; use MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash to target a running compose service.${NC}"
                 else
                     echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
                     echo -e "${YELLOW}If compose service 'dev' starts, '$0 enter' will reuse it while standalone remains stopped.${NC}"
