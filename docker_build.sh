@@ -651,8 +651,13 @@ case "$ACTION" in
     compose-down)
         echo -e "${YELLOW}Stopping services...${NC}"
         compose_cmd down
-        warn_stale_compose_dev_containers
-        echo -e "${GREEN}Services stopped!${NC}"
+        stale_compose_count=$(count_stale_compose_projects)
+        if [ "${stale_compose_count}" -gt 0 ]; then
+            warn_stale_compose_dev_containers
+            echo -e "${YELLOW}Current compose project services were stopped, but stale compose services are still running for this checkout.${NC}"
+        else
+            echo -e "${GREEN}Services stopped!${NC}"
+        fi
         ;;
 
     create)
