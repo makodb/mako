@@ -481,7 +481,8 @@ case "$ACTION" in
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
-                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
+                    bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 if [ "${CREATE_RECREATED}" -eq 1 ]; then
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated and remains running. Use '$0 enter' to reconnect.${NC}"
                 else
