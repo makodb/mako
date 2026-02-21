@@ -475,6 +475,17 @@ case "$ACTION" in
         if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
             docker start ${CONTAINER_NAME}
+            # Legacy containers configured to run /bin/bash can exit immediately
+            # after a detached start; allow brief settle time before status check.
+            sleep 1
+            if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' exited immediately after start (legacy shell command).${NC}"
+                echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
+                ensure_image
+                docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "exec tail -f /dev/null" >/dev/null
+            fi
         fi
         if [ "${HAS_TTY}" -eq 1 ]; then
             docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
