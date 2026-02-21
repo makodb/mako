@@ -96,6 +96,15 @@ is_container_stably_running() {
     return 0
 }
 
+has_keepalive_command() {
+    local container_name="$1"
+    local container_cmd
+
+    container_cmd=$(docker inspect -f '{{join .Config.Cmd " "}}' "${container_name}" 2>/dev/null || echo "")
+    [ "${container_cmd}" = "bash -lc exec tail -f /dev/null" ] || \
+        [ "${container_cmd}" = "/bin/bash -lc exec tail -f /dev/null" ]
+}
+
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
 
@@ -435,6 +444,12 @@ case "$ACTION" in
             fi
         fi
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            if ! has_keepalive_command "${CONTAINER_NAME}"; then
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' uses a non-keepalive command; recreating it for persistent dev usage.${NC}"
+                docker rm -f ${CONTAINER_NAME} >/dev/null
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "exec tail -f /dev/null" >/dev/null
+            fi
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             if ! is_container_running "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Starting stopped container...${NC}"
@@ -513,6 +528,12 @@ case "$ACTION" in
         EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
         if [ "${EXISTING_INIT}" != "true" ]; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' was created without Docker init support; recreating it to enable child-process reaping.${NC}"
+            docker rm -f ${CONTAINER_NAME} >/dev/null
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                bash -lc "exec tail -f /dev/null" >/dev/null
+        fi
+        if ! has_keepalive_command "${CONTAINER_NAME}"; then
+            echo -e "${YELLOW}Container '${CONTAINER_NAME}' uses a non-keepalive command; recreating it for persistent dev usage.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
             docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
