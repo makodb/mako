@@ -71,6 +71,15 @@ case "$ACTION" in
     ci)
         # Run a specific CI test or all tests
         CI_TEST=${2:-all}
+        case "${CI_TEST}" in
+            compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shardNoReplicationErpc|shard1Replication|shard2Replication|shard2ReplicationErpc|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|rrrTests|cpuThrottlingScaling|clientServer|all)
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
+                echo -e "${YELLOW}Run '$0' without args to see supported CI tests.${NC}"
+                exit 1
+                ;;
+        esac
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container...${NC}"
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j32 && BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
@@ -177,10 +186,15 @@ case "$ACTION" in
         echo "  compose-down - Stop persistent dev container"
         echo ""
         echo "CI Test Names:"
-        echo "  all, simpleTransaction, simplePaxos, shardNoReplication,"
-        echo "  shard1Replication, shard2Replication, shard1ReplicationSimple,"
-        echo "  shard2ReplicationSimple, rocksdbTests, shardFaultTolerance,"
-        echo "  multiShardSingleProcess, shard2SingleProcess, shard2SingleProcessReplication"
+        echo "  all, compile, cleanup, simpleTransaction, simplePaxos,"
+        echo "  shardNoReplication, shardNoReplicationErpc,"
+        echo "  shard1Replication, shard2Replication, shard2ReplicationErpc,"
+        echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
+        echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
+        echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
+        echo "  rocksdbTests, multiShardSingleProcess,"
+        echo "  shard2SingleProcess, shard2SingleProcessReplication,"
+        echo "  rrrTests, cpuThrottlingScaling, clientServer"
         echo ""
         echo "Examples:"
         echo "  $0 ci                    # Build and run all CI tests"

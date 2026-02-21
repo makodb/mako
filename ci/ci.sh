@@ -662,4 +662,19 @@ case "${1:-}" in
         run_2shard_single_process_replication
         echo "All CI steps completed successfully!"
         ;;
+    *)
+        echo "Error: Unknown CI test target '${1:-}'"
+        echo ""
+        echo "Supported targets:"
+        echo "  compile, cleanup, simpleTransaction, simplePaxos,"
+        echo "  shardNoReplication, shardNoReplicationErpc,"
+        echo "  shard1Replication, shard2Replication, shard2ReplicationErpc,"
+        echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
+        echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
+        echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
+        echo "  rocksdbTests, multiShardSingleProcess,"
+        echo "  shard2SingleProcess, shard2SingleProcessReplication,"
+        echo "  rrrTests, cpuThrottlingScaling, clientServer, all"
+        exit 1
+        ;;
 esac
