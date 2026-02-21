@@ -2,6 +2,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <unistd.h>
 #include <mako.hh>
 
 using namespace std;
@@ -189,10 +190,37 @@ static void warn_if_replicated_role_may_block() {
 
   Warning("Replicated dbtest started with --paxos-proc-name=%s. "
           "If peer role groups (p1, p2, learner) are not running, startup can wait indefinitely. "
-          "Use --startup-timeout-sec=<seconds> to fail fast in non-interactive runs. "
+          "Use --startup-timeout-sec=<seconds> or MAKO_STARTUP_TIMEOUT_SEC to fail fast in non-interactive runs. "
           "For local end-to-end runs use examples/test_1shard_replication.sh or "
           "examples/test_2shard_replication.sh.",
           benchConfig.getPaxosProcName().c_str());
+}
+
+static int resolve_startup_timeout_sec(int startup_timeout_sec)
+{
+  int resolved_timeout_sec = startup_timeout_sec;
+
+  if (resolved_timeout_sec <= 0) {
+    if (const char* env = getenv("MAKO_STARTUP_TIMEOUT_SEC")) {
+      char* endptr = nullptr;
+      long parsed = strtol(env, &endptr, 10);
+      if (endptr != env && *endptr == '\0' && parsed >= 0 && parsed <= 86400) {
+        resolved_timeout_sec = static_cast<int>(parsed);
+      } else {
+        Warning("Invalid MAKO_STARTUP_TIMEOUT_SEC='%s'; ignoring", env);
+      }
+    }
+  }
+
+  if (resolved_timeout_sec <= 0 && !isatty(STDIN_FILENO)) {
+    // In non-interactive/headless runs, avoid indefinite hangs by default.
+    resolved_timeout_sec = 120;
+    Notice("Non-interactive startup detected; applying default startup timeout (%ds). "
+           "Override with --startup-timeout-sec or MAKO_STARTUP_TIMEOUT_SEC.",
+           resolved_timeout_sec);
+  }
+
+  return resolved_timeout_sec;
 }
 
 static void start_replicated_startup_watchdog(int startup_timeout_sec, std::atomic<bool>* startup_complete)
@@ -416,6 +444,7 @@ main(int argc, char **argv)
   benchConfig.setIsReplicated(is_replicated);
   benchConfig.setPaxosConfigFile(paxos_config_file);
   warn_if_replicated_role_may_block();
+  startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec);
   std::atomic<bool> startup_complete(false);
   start_replicated_startup_watchdog(startup_timeout_sec, &startup_complete);
 

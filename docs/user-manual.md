@@ -218,7 +218,8 @@ Important:
 - In replicated configs like `config/1leader_2followers/paxos6_shardidx0.yml`, `-P localhost` starts only one role group.
 - You must start peer role groups (for example `-P p1`, `-P p2`, and `-P learner`) concurrently, or startup can wait indefinitely.
 - `dbtest` now prints an explicit startup warning when replicated mode is launched with `-P localhost` to highlight this requirement.
-- Use `--startup-timeout-sec <seconds>` in headless/non-interactive runs to fail fast instead of hanging indefinitely.
+- Use `--startup-timeout-sec <seconds>` (or `MAKO_STARTUP_TIMEOUT_SEC`) to fail fast instead of hanging indefinitely.
+- In non-interactive runs, when no timeout is provided, `dbtest` now applies a default startup timeout of 120 seconds.
 - For local end-to-end replicated runs, prefer `bash examples/test_1shard_replication.sh` or `bash examples/test_2shard_replication.sh`.
 
 #### Multi-shard single-process mode
@@ -262,6 +263,7 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 
 - `MAKO_CONFIG`: used by some example binaries/scripts to override default config path
 - `MAKO_TRANSPORT`: runtime transport backend (`rrr` default, or `erpc`)
+- `MAKO_STARTUP_TIMEOUT_SEC`: optional startup watchdog timeout for replicated localhost startup (`0` disables)
 - `BUILD_DIR`: lets CI/scripts use non-default build directories
 
 ## CLI and Runtime Options
