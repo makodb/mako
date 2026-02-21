@@ -283,6 +283,21 @@ warn_stale_compose_dev_containers() {
     fi
 }
 
+print_stale_compose_selection_commands() {
+    local color="$1"
+    local stale_project_name
+    local printed_any=0
+
+    while IFS= read -r stale_project_name; do
+        [ -n "${stale_project_name}" ] || continue
+        printed_any=1
+        echo -e "${color}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose exec dev /bin/bash${NC}"
+        echo -e "${color}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+    done < <(list_stale_compose_projects)
+
+    [ "${printed_any}" -eq 1 ]
+}
+
 print_compose_access_guidance() {
     local stale_compose_project=""
     local stale_compose_count
@@ -310,8 +325,11 @@ print_compose_access_guidance() {
     if [ "${stale_compose_count}" -gt 1 ]; then
         stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
-        echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-        echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${GREEN}Select one of the running compose projects:${NC}"
+        if ! print_stale_compose_selection_commands "${GREEN}"; then
+            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+        fi
         echo -e "${GREEN}Stop stale compose projects with:${NC}"
         while IFS= read -r stale_project_name; do
             [ -n "${stale_project_name}" ] || continue
@@ -515,8 +533,11 @@ case "$ACTION" in
                     elif [ "${stale_compose_count}" -gt 1 ]; then
                         stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
                         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
-                        echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                        echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                        echo -e "${GREEN}Select one of the running compose projects:${NC}"
+                        if ! print_stale_compose_selection_commands "${GREEN}"; then
+                            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                        fi
                         echo -e "${GREEN}Stop stale compose projects with:${NC}"
                         while IFS= read -r stale_project_name; do
                             [ -n "${stale_project_name}" ] || continue
@@ -875,8 +896,11 @@ case "$ACTION" in
                 stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
                 echo -e "${YELLOW}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                 echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
-                echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                echo -e "${YELLOW}Select one of the running compose projects:${NC}"
+                if ! print_stale_compose_selection_commands "${YELLOW}"; then
+                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                fi
                 echo -e "${YELLOW}Stop stale compose projects with:${NC}"
                 while IFS= read -r stale_compose_project; do
                     [ -n "${stale_compose_project}" ] || continue
@@ -977,8 +1001,11 @@ case "$ACTION" in
             create_stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
             echo -e "${YELLOW}Warning: multiple compose services are running for this checkout: ${create_stale_compose_projects}.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
-            echo -e "${YELLOW}Select a compose project explicitly with: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-            echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${YELLOW}Select one of the running compose projects:${NC}"
+            if ! print_stale_compose_selection_commands "${YELLOW}"; then
+                echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            fi
             echo -e "${YELLOW}Stop stale compose projects with:${NC}"
             while IFS= read -r create_stale_project; do
                 [ -n "${create_stale_project}" ] || continue
@@ -1143,8 +1170,11 @@ case "$ACTION" in
                 stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' is stopped while multiple compose services are running for this checkout: ${stale_compose_projects}.${NC}"
                 echo -e "${YELLOW}Refusing to start standalone '${CONTAINER_NAME}' to avoid duplicate dev sessions.${NC}"
-                echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                echo -e "${YELLOW}Select one of the running compose projects:${NC}"
+                if ! print_stale_compose_selection_commands "${YELLOW}"; then
+                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                fi
                 echo -e "${YELLOW}Or stop stale compose containers, then run '$0 enter' again.${NC}"
                 exit 1
             fi
@@ -1179,8 +1209,11 @@ case "$ACTION" in
                     stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
                     echo -e "${YELLOW}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                     echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
-                    echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                    echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${YELLOW}Select one of the running compose projects:${NC}"
+                    if ! print_stale_compose_selection_commands "${YELLOW}"; then
+                        echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                        echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    fi
                     echo -e "${YELLOW}Or stop stale compose containers, then run '$0 enter'.${NC}"
                     exit 1
                 fi
