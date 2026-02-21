@@ -173,7 +173,7 @@ case "$ACTION" in
                     "build_docker/test_stress_partitioned_queues"
                 )
                 ;;
-            clientServer)
+            shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|clientServer)
                 REQUIRED_BINS=("build_docker/simpleTransactionRep")
                 ;;
         esac
