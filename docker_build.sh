@@ -708,14 +708,26 @@ case "$ACTION" in
 
     compose-down)
         echo -e "${YELLOW}Stopping services...${NC}"
+        compose_was_running=0
+        if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+            compose_was_running=1
+        fi
         compose_cmd down
         stale_compose_count=$(count_stale_compose_projects)
         if [ "${stale_compose_count}" -gt 0 ]; then
             warn_stale_compose_dev_containers
-            echo -e "${YELLOW}Current compose project services were stopped, but stale compose services are still running for this checkout.${NC}"
+            if [ "${compose_was_running}" -eq 1 ]; then
+                echo -e "${YELLOW}Current compose project services were stopped, but stale compose services are still running for this checkout.${NC}"
+            else
+                echo -e "${YELLOW}No running services were found for the current compose project, and stale compose services are still running for this checkout.${NC}"
+            fi
             exit 1
         else
-            echo -e "${GREEN}Services stopped!${NC}"
+            if [ "${compose_was_running}" -eq 1 ]; then
+                echo -e "${GREEN}Services stopped!${NC}"
+            else
+                echo -e "${GREEN}No running services were found for the current compose project.${NC}"
+            fi
         fi
         ;;
 
