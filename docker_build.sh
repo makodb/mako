@@ -587,7 +587,8 @@ case "$ACTION" in
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if [ "${HAS_TTY}" -eq 1 ]; then
-            docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+            docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
+                bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if is_container_stably_running "${CONTAINER_NAME}" 2 1; then

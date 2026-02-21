@@ -399,6 +399,7 @@ Notes:
 - `./docker_build.sh clean` removes `build_docker`, `target-docker`, and top-level `core.*` crash artifacts (using a helper container when host permissions block deletion).
 - Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `enter`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
+- Interactive standalone `shell`/`create`/`enter` sessions print a tip that `BUILD_DIR` is preset to `build_docker` for CI/scripts.
 - Persistent Docker dev containers use an init/reaper process (`--init` for standalone `mako-dev`, `init: true` for compose `dev`) to prevent zombie child-process buildup during repeated test runs.
 - `./docker_build.sh shell`/`create`/`enter` auto-detect terminal availability: interactive TTY sessions use `-it`, while non-interactive environments fall back to non-TTY-safe Docker/Compose flags.
 - In non-interactive mode, `./docker_build.sh shell` prints guidance instead of trying to open an interactive shell (running standalone `mako-dev` guidance when available, recovery-safe standalone guidance when standalone exists but is stopped, direct compose-exec guidance when compose `dev` is already running, and compose-start guidance otherwise). For stopped standalone containers, guidance now points to recovery-safe script flows (`./docker_build.sh enter` / `./docker_build.sh create`) rather than relying on raw `docker start`.
