@@ -164,6 +164,10 @@ Pass a required role argument:
 ./${BUILD_DIR:-build}/simplePaxos learner
 ```
 
+Important:
+- Each role command above is a long-running process and expects peer roles to be started concurrently (typically in separate terminals).
+- Running only one role (for example, only `localhost`) will wait indefinitely for the rest of the cluster.
+
 For multi-process orchestration, use:
 
 ```bash
