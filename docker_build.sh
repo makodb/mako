@@ -618,18 +618,29 @@ case "$ACTION" in
         if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
             compose_was_running=1
         fi
+        stale_compose_project=""
+        stale_compose_count=0
+        compose_already_running_for_checkout=${compose_was_running}
+        if [ "${compose_was_running}" -eq 0 ]; then
+            stale_compose_count=$(count_stale_compose_projects)
+            if stale_compose_project=$(select_single_stale_compose_project); then
+                compose_already_running_for_checkout=1
+            elif [ "${stale_compose_count}" -gt 0 ]; then
+                compose_already_running_for_checkout=1
+            fi
+        fi
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                if [ "${compose_was_running}" -eq 1 ]; then
-                    echo -e "${YELLOW}Warning: compose service 'dev' is running alongside standalone container '${CONTAINER_NAME}'.${NC}"
+                if [ "${compose_already_running_for_checkout}" -eq 1 ]; then
+                    echo -e "${YELLOW}Warning: compose service 'dev' is already running for this checkout alongside standalone container '${CONTAINER_NAME}'.${NC}"
                     echo -e "${YELLOW}'$0 enter' will keep using standalone '${CONTAINER_NAME}' while it is running.${NC}"
                 else
                     echo -e "${YELLOW}Warning: starting compose service 'dev' will run alongside standalone container '${CONTAINER_NAME}'.${NC}"
                     echo -e "${YELLOW}'$0 enter' will keep using standalone '${CONTAINER_NAME}' while it is running.${NC}"
                 fi
             else
-                if [ "${compose_was_running}" -eq 1 ]; then
-                    echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running.${NC}"
+                if [ "${compose_already_running_for_checkout}" -eq 1 ]; then
+                    echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is already running for this checkout.${NC}"
                     echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone remains stopped.${NC}"
                 else
                     echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
@@ -641,9 +652,7 @@ case "$ACTION" in
             fi
         fi
         if [ "${compose_was_running}" -eq 0 ]; then
-            stale_compose_project=""
-            stale_compose_count=$(count_stale_compose_projects)
-            if stale_compose_project=$(select_single_stale_compose_project); then
+            if [ -n "${stale_compose_project}" ]; then
                 stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                 echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
                 echo -e "${YELLOW}Reusing it to avoid starting a duplicate compose container.${NC}"
