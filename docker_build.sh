@@ -35,6 +35,13 @@ if [ ! -t 0 ] || [ ! -t 1 ]; then
     COMPOSE_EXEC_OPTS=(-T)
 fi
 
+# Disable core dumps in script-driven Docker runs by default to avoid polluting
+# the workspace with large core.* artifacts after transient test crashes.
+DOCKER_CORE_ULIMIT_CMD="ulimit -c 0"
+if [ "${MAKO_DOCKER_ENABLE_COREDUMP:-0}" = "1" ]; then
+    DOCKER_CORE_ULIMIT_CMD="ulimit -c unlimited"
+fi
+
 ensure_image() {
     if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
         echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
@@ -84,7 +91,7 @@ case "$ACTION" in
         echo -e "${YELLOW}Building Mako in container...${NC}"
         ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
-            bash -c "cd /workspace && \
+            bash -c "${DOCKER_CORE_ULIMIT_CMD}; cd /workspace && \
                      if [ -f build_docker/CMakeCache.txt ] && \
                         ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
                          echo 'Cleaning incompatible build_docker cache'; \
@@ -142,7 +149,7 @@ case "$ACTION" in
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -c "NEED_BUILD=1; \
+            bash -c "${DOCKER_CORE_ULIMIT_CMD}; NEED_BUILD=1; \
                      if [ -x build_docker/dbtest ]; then \
                          RUNPATH=\$(readelf -d build_docker/dbtest 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'); \
                          if [[ \":\$RUNPATH:\" == *\":/workspace/build_docker:\"* ]]; then \
@@ -195,16 +202,16 @@ case "$ACTION" in
             compile|all)
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
                 docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
             cleanup)
                 # cleanup should not force an expensive build first.
                 docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh cleanup"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh cleanup"
                 ;;
             *)
                 docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-                    bash -c "rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} make BUILD_DIR=build_docker -j${CI_JOBS} && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} make BUILD_DIR=build_docker -j${CI_JOBS} && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
         esac
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
@@ -308,7 +315,7 @@ case "$ACTION" in
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
         ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -c "BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+            bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
 

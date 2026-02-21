@@ -394,6 +394,8 @@ Notes:
 - `./docker_build.sh test` performs a focused Docker smoke test.
 - It reuses `build_docker/dbtest` when that binary is Docker-compatible (RUNPATH contains `/workspace/build_docker`); otherwise it rebuilds `dbtest`.
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
+- Script-driven Docker commands (`build`, `test`, `ci`, `ci-quick`) disable core dumps by default to avoid large `core.*` files in the workspace after transient crashes.
+  Set `MAKO_DOCKER_ENABLE_COREDUMP=1` to re-enable core dumps for debugging.
 - Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
 - Persistent Docker dev containers use an init/reaper process (`--init` for standalone `mako-dev`, `init: true` for compose `dev`) to prevent zombie child-process buildup during repeated test runs.
