@@ -448,8 +448,17 @@ case "$ACTION" in
                          fi; \
                      fi; \
                      if [ \"\$NEED_BUILD\" -eq 1 ]; then \
-                         rm -rf build_docker && \
-                         cmake -S . -B build_docker && \
+                         if [ -f build_docker/CMakeCache.txt ] && \
+                            ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
+                             echo 'Cleaning incompatible build_docker cache'; \
+                             rm -rf build_docker; \
+                         fi && \
+                         if [ ! -f build_docker/CMakeCache.txt ]; then \
+                             echo 'Configuring build_docker'; \
+                             cmake -S . -B build_docker; \
+                         else \
+                             echo 'Reusing existing build_docker CMake cache'; \
+                         fi && \
                          cmake --build build_docker --parallel ${JOBS} --target dbtest && \
                          echo 'SUCCESS: dbtest build completed'; \
                      fi && \
