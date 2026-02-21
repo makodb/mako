@@ -62,7 +62,10 @@ case "$ACTION" in
                      else \
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
-                     cmake --build build_docker --parallel ${JOBS} --target dbtest simpleTransaction simplePaxos simpleTransactionRep"
+                     cmake --build build_docker --parallel ${JOBS} --target \
+                         dbtest simpleTransaction simplePaxos simpleTransactionRep \
+                         test_rocksdb_persistence test_callback_demo test_ordered_callbacks \
+                         test_partitioned_queues test_stress_partitioned_queues"
         echo -e "${GREEN}Build completed successfully!${NC}"
         ;;
 
@@ -153,19 +156,25 @@ case "$ACTION" in
                 exit 1
                 ;;
         esac
-        REQUIRED_BIN="build_docker/dbtest"
+        REQUIRED_BINS=("build_docker/dbtest")
         case "${CI_TEST}" in
             simpleTransaction)
-                REQUIRED_BIN="build_docker/simpleTransaction"
+                REQUIRED_BINS=("build_docker/simpleTransaction")
                 ;;
             simplePaxos)
-                REQUIRED_BIN="build_docker/simplePaxos"
+                REQUIRED_BINS=("build_docker/simplePaxos")
                 ;;
             rocksdbTests)
-                REQUIRED_BIN="build_docker/test_rocksdb_persistence"
+                REQUIRED_BINS=(
+                    "build_docker/test_rocksdb_persistence"
+                    "build_docker/test_callback_demo"
+                    "build_docker/test_ordered_callbacks"
+                    "build_docker/test_partitioned_queues"
+                    "build_docker/test_stress_partitioned_queues"
+                )
                 ;;
             clientServer)
-                REQUIRED_BIN="build_docker/simpleTransactionRep"
+                REQUIRED_BINS=("build_docker/simpleTransactionRep")
                 ;;
         esac
 
@@ -185,9 +194,19 @@ case "$ACTION" in
             echo -e "${RED}Error: build_docker/dbtest not found. Run './docker_build.sh ci' first.${NC}"
             exit 1
         fi
-        if [ ! -f "${REQUIRED_BIN}" ]; then
-            echo -e "${RED}Error: Required binary '${REQUIRED_BIN}' is missing for CI test '${CI_TEST}'.${NC}"
+        missing_bins=()
+        for required_bin in "${REQUIRED_BINS[@]}"; do
+            if [ ! -f "${required_bin}" ]; then
+                missing_bins+=("${required_bin}")
+            fi
+        done
+        if [ "${#missing_bins[@]}" -gt 0 ]; then
+            echo -e "${RED}Error: Required binaries are missing for CI test '${CI_TEST}':${NC}"
+            for bin in "${missing_bins[@]}"; do
+                echo -e "${RED}  - ${bin}${NC}"
+            done
             echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep).${NC}"
+            echo -e "${YELLOW}It also compiles RocksDB test binaries for ci-quick rocksdbTests.${NC}"
             echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to build test-specific binaries and run this suite.${NC}"
             exit 1
         fi
@@ -266,7 +285,7 @@ case "$ACTION" in
         echo ""
         echo "Commands:"
         echo "  build-image  - Build the Docker image"
-        echo "  build        - Build core runtime binaries in container (default)"
+        echo "  build        - Build core runtime + RocksDB quick-test binaries (default)"
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"

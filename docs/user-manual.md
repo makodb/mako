@@ -371,6 +371,7 @@ Main commands:
 Notes:
 - `./docker_build.sh build` supports incremental rebuilds: it reuses a compatible `build_docker` cache and skips CMake reconfigure unless cache is missing/incompatible.
 - `./docker_build.sh build` compiles core runtime binaries: `dbtest`, `simpleTransaction`, `simplePaxos`, and `simpleTransactionRep`.
+- It also compiles RocksDB quick-test binaries used by `ci-quick rocksdbTests`: `test_rocksdb_persistence`, `test_callback_demo`, `test_ordered_callbacks`, `test_partitioned_queues`, and `test_stress_partitioned_queues`.
 - `./docker_build.sh test` performs a focused Docker smoke test.
 - It reuses `build_docker/dbtest` when that binary is Docker-compatible (RUNPATH contains `/workspace/build_docker`); otherwise it rebuilds `dbtest`.
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
