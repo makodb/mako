@@ -495,6 +495,11 @@ case "$ACTION" in
             echo -e "${YELLOW}Use './docker_build.sh ci-quick' or './docker_build.sh ci-quick <test>'.${NC}"
             exit 1
         fi
+        if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+            echo -e "${RED}Error: ci-quick does not accept a jobs-only argument ('${2}').${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh ci ${2}' to set build jobs, or './docker_build.sh ci-quick <test>' without jobs.${NC}"
+            exit 1
+        fi
         CI_TEST=${2:-shardNoReplication}
         case "${CI_TEST}" in
             compile|cleanup|all|rrrTests)
