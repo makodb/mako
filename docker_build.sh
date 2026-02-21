@@ -81,8 +81,14 @@ case "$ACTION" in
     shell)
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+        if [ "${HAS_TTY}" -eq 1 ]; then
+            docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+                bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+        else
+            echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+            echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
+            echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+        fi
         ;;
 
     test)
