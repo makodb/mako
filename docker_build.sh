@@ -220,9 +220,18 @@ case "$ACTION" in
 
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
-        docker run -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
-            bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
-        echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
+        if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
+            if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                echo -e "${YELLOW}Starting stopped container...${NC}"
+                docker start ${CONTAINER_NAME}
+            fi
+            docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+        else
+            docker run -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+            echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
+        fi
         ;;
 
     enter)
