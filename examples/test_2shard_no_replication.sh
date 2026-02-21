@@ -21,6 +21,9 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+SHARD0_PID=""
+SHARD1_PID=""
+CLEANUP_DONE=0
 
 # Use a randomized port base to avoid collisions on shared hosts.
 TEMP_CONFIG=$(make_simple_txn_rep_config 2 $trd)
@@ -31,10 +34,43 @@ export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
 cleanup_temp_config() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started shard wrappers.
+    for pid in "${SHARD0_PID:-}" "${SHARD1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest processes tied to this run's unique temp config.
+    # This prevents leaked workers when the script exits early (timeout/Ctrl-C).
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+        sleep 1
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    fi
+
+    for pid in "${SHARD0_PID:-}" "${SHARD1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
 }
+
+handle_interrupt() {
+    cleanup_temp_config
+    exit 130
+}
+
 trap cleanup_temp_config EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
