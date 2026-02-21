@@ -73,6 +73,29 @@ warn_incomplete_build_docker() {
     fi
 }
 
+is_container_running() {
+    local container_name="$1"
+    docker ps --format '{{.Names}}' | grep -q "^${container_name}$"
+}
+
+is_container_stably_running() {
+    local container_name="$1"
+    local checks="${2:-3}"
+    local interval_seconds="${3:-1}"
+    local i=1
+
+    while [ "${i}" -le "${checks}" ]; do
+        if ! is_container_running "${container_name}"; then
+            return 1
+        fi
+        if [ "${i}" -lt "${checks}" ]; then
+            sleep "${interval_seconds}"
+        fi
+        i=$((i + 1))
+    done
+    return 0
+}
+
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
 
@@ -120,11 +143,10 @@ case "$ACTION" in
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                    # Legacy standalone containers can appear briefly "running"
-                    # and then exit immediately (for example /bin/bash command).
-                    sleep 1
-                    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                if is_container_running "${CONTAINER_NAME}"; then
+                    # Only advertise direct docker exec when standalone stays up
+                    # for a short window; legacy containers can flap briefly.
+                    if is_container_stably_running "${CONTAINER_NAME}" 3 1; then
                         echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
                         echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
                         echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
@@ -414,19 +436,16 @@ case "$ACTION" in
         fi
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
-            if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            if ! is_container_running "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Starting stopped container...${NC}"
                 docker start ${CONTAINER_NAME}
-                # Legacy containers configured to run /bin/bash can exit immediately
-                # after a detached start; allow brief settle time before status check.
-                sleep 1
-                if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                    echo -e "${YELLOW}Container '${CONTAINER_NAME}' exited immediately after start (legacy shell command).${NC}"
-                    echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
-                    docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
-                    docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
-                        bash -lc "exec tail -f /dev/null" >/dev/null
-                fi
+            fi
+            if ! is_container_stably_running "${CONTAINER_NAME}" 4 1; then
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' is transient or exited after start checks.${NC}"
+                echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
+                docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "exec tail -f /dev/null" >/dev/null
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
@@ -498,28 +517,37 @@ case "$ACTION" in
             docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
-        if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        if ! is_container_running "${CONTAINER_NAME}"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
             docker start ${CONTAINER_NAME}
-            # Legacy containers configured to run /bin/bash can exit immediately
-            # after a detached start; allow brief settle time before status check.
-            sleep 1
-            if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                echo -e "${YELLOW}Container '${CONTAINER_NAME}' exited immediately after start (legacy shell command).${NC}"
-                echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
-                ensure_image
-                docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
-                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
-                    bash -lc "exec tail -f /dev/null" >/dev/null
-            fi
+        fi
+        if ! is_container_stably_running "${CONTAINER_NAME}" 4 1; then
+            echo -e "${YELLOW}Container '${CONTAINER_NAME}' is transient or exited after start checks.${NC}"
+            echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
+            ensure_image
+            docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if [ "${HAS_TTY}" -eq 1 ]; then
             docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
-            echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
-            echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-            echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+            if is_container_stably_running "${CONTAINER_NAME}" 2 1; then
+                echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
+                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+            else
+                echo -e "${GREEN}Container '${CONTAINER_NAME}' exited after startup checks.${NC}"
+                if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                    echo -e "${GREEN}Compose service 'dev' is running; use: docker compose exec dev /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', run '$0 create' to refresh it first.${NC}"
+                else
+                    echo -e "${GREEN}Use '$0 create' to recreate/refresh standalone '${CONTAINER_NAME}'.${NC}"
+                    echo -e "${GREEN}Then use '$0 enter' again to access it.${NC}"
+                fi
+            fi
         fi
         ;;
 
