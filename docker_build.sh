@@ -298,6 +298,17 @@ print_stale_compose_selection_commands() {
     [ "${printed_any}" -eq 1 ]
 }
 
+print_compose_project_enumeration_fallback() {
+    local color="$1"
+    local action_hint="${2:-${ACTION}}"
+
+    echo -e "${color}Could not enumerate compose project IDs automatically.${NC}"
+    echo -e "${color}Inspect running dev containers with: docker ps --format '{{.Names}}' | grep -- '-dev-1'${NC}"
+    if [ -n "${action_hint}" ]; then
+        echo -e "${color}Then rerun '$0 ${action_hint}' for project-scoped compose commands.${NC}"
+    fi
+}
+
 print_compose_access_guidance() {
     local stale_compose_project=""
     local stale_compose_count
@@ -327,8 +338,7 @@ print_compose_access_guidance() {
         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
         echo -e "${GREEN}Select one of the running compose projects:${NC}"
         if ! print_stale_compose_selection_commands "${GREEN}"; then
-            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+            print_compose_project_enumeration_fallback "${GREEN}" "shell"
         fi
         echo -e "${GREEN}Stop stale compose projects with:${NC}"
         while IFS= read -r stale_project_name; do
@@ -535,8 +545,7 @@ case "$ACTION" in
                         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                         echo -e "${GREEN}Select one of the running compose projects:${NC}"
                         if ! print_stale_compose_selection_commands "${GREEN}"; then
-                            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                            print_compose_project_enumeration_fallback "${GREEN}" "shell"
                         fi
                         echo -e "${GREEN}Stop stale compose projects with:${NC}"
                         while IFS= read -r stale_project_name; do
@@ -902,8 +911,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
                 echo -e "${YELLOW}Select one of the running compose projects:${NC}"
                 if ! print_stale_compose_selection_commands "${YELLOW}"; then
-                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    print_compose_project_enumeration_fallback "${YELLOW}" "compose-up"
                 fi
                 echo -e "${YELLOW}Stop stale compose projects with:${NC}"
                 while IFS= read -r stale_compose_project; do
@@ -1007,8 +1015,7 @@ case "$ACTION" in
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
             echo -e "${YELLOW}Select one of the running compose projects:${NC}"
             if ! print_stale_compose_selection_commands "${YELLOW}"; then
-                echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                print_compose_project_enumeration_fallback "${YELLOW}" "create"
             fi
             echo -e "${YELLOW}Stop stale compose projects with:${NC}"
             while IFS= read -r create_stale_project; do
@@ -1176,8 +1183,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Refusing to start standalone '${CONTAINER_NAME}' to avoid duplicate dev sessions.${NC}"
                 echo -e "${YELLOW}Select one of the running compose projects:${NC}"
                 if ! print_stale_compose_selection_commands "${YELLOW}"; then
-                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                    echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    print_compose_project_enumeration_fallback "${YELLOW}" "enter"
                 fi
                 echo -e "${YELLOW}Or stop stale compose containers, then run '$0 enter' again.${NC}"
                 exit 1
@@ -1215,8 +1221,7 @@ case "$ACTION" in
                     echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
                     echo -e "${YELLOW}Select one of the running compose projects:${NC}"
                     if ! print_stale_compose_selection_commands "${YELLOW}"; then
-                        echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-                        echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                        print_compose_project_enumeration_fallback "${YELLOW}" "enter"
                     fi
                     echo -e "${YELLOW}Or stop stale compose containers, then run '$0 enter'.${NC}"
                     exit 1
