@@ -963,12 +963,14 @@ case "$ACTION" in
             echo -e "${YELLOW}Warning: found running compose service 'dev' for this checkout under project '${create_stale_compose_project}'.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
             echo -e "${YELLOW}Use 'MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec dev /bin/bash' if you want that compose container.${NC}"
+            echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
             echo -e "${YELLOW}To stop this compose project later, run: MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose down${NC}"
         elif [ "${create_stale_compose_count}" -gt 1 ]; then
             create_stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
             echo -e "${YELLOW}Warning: multiple compose services are running for this checkout: ${create_stale_compose_projects}.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
             echo -e "${YELLOW}Select a compose project explicitly with: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+            echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
             echo -e "${YELLOW}Stop stale compose projects with:${NC}"
             while IFS= read -r create_stale_project; do
                 [ -n "${create_stale_project}" ] || continue
