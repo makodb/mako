@@ -212,6 +212,11 @@ bash examples/simplePaxos.sh
   --replication=raft
 ```
 
+Important:
+- In replicated configs like `config/1leader_2followers/paxos6_shardidx0.yml`, `-P localhost` starts only one role group.
+- You must start peer role groups (for example `-P p1`, `-P p2`, and `-P learner`) concurrently, or startup can wait indefinitely.
+- For local end-to-end replicated runs, prefer `bash examples/test_1shard_replication.sh` or `bash examples/test_2shard_replication.sh`.
+
 #### Multi-shard single-process mode
 
 ```bash
