@@ -1167,7 +1167,7 @@ case "$ACTION" in
                     echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
                     echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
                     echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
-                    echo -e "${YELLOW}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
+                    echo -e "${YELLOW}Or stop stale compose containers, then run '$0 enter'.${NC}"
                     exit 1
                 fi
                 echo -e "${YELLOW}Starting services with docker-compose...${NC}"
