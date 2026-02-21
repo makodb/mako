@@ -256,8 +256,8 @@ warn_stale_compose_dev_containers() {
     done < <(list_stale_compose_projects)
 
     if [ "${#stale_compose_containers[@]}" -gt 0 ]; then
-        echo -e "${YELLOW}Warning: found additional running compose dev container(s) for this checkout: ${stale_compose_containers[*]}.${NC}"
-        echo -e "${YELLOW}These containers use different compose project IDs and may cause confusing behavior.${NC}"
+        echo -e "${YELLOW}Warning: found running compose dev container(s) for this checkout under non-current project ID(s): ${stale_compose_containers[*]}.${NC}"
+        echo -e "${YELLOW}These containers use different compose project IDs from '${COMPOSE_PROJECT_NAME}' and may cause confusing behavior.${NC}"
         if [ "${#stale_compose_projects[@]}" -eq 1 ]; then
             echo -e "${YELLOW}Stop stale compose project with: MAKO_COMPOSE_PROJECT=${stale_compose_projects[0]} docker compose down${NC}"
         elif [ "${#stale_compose_projects[@]}" -gt 1 ]; then
