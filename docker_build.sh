@@ -1180,7 +1180,7 @@ case "$ACTION" in
         echo "  build [jobs] - Build core runtime + RocksDB quick-test binaries (default jobs: 32)"
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
-        echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"
+        echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped unless compose duplicate-avoidance applies)"
         echo "  test         - Build dbtest and run shardNoReplication smoke test"
         echo "  ci [test] [jobs] - Build and run CI test (default: all, jobs: 32)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
