@@ -209,7 +209,7 @@ case "$ACTION" in
     compose-up)
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
         docker compose up -d dev
-        echo -e "${GREEN}Container started. Connect with: docker exec -it ${CONTAINER_NAME} /bin/bash${NC}"
+        echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
         ;;
 
     compose-down)

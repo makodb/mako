@@ -12,6 +12,8 @@ services:
     environment:
       # Use separate Cargo target directory to avoid conflicts with host builds
       - CARGO_TARGET_DIR=/workspace/target-docker
+      # Keep CI/scripts aligned with docker_build.sh output directory
+      - BUILD_DIR=build_docker
     command: /bin/bash -c "cd /workspace && rm -rf build_docker && mkdir -p build_docker && cd build_docker && cmake .. && make -j $(nproc) dbtest"
 
   dev:
@@ -24,6 +26,8 @@ services:
     environment:
       # Use separate Cargo target directory to avoid conflicts with host builds
       - CARGO_TARGET_DIR=/workspace/target-docker
+      # Keep CI/scripts aligned with docker_build.sh output directory
+      - BUILD_DIR=build_docker
     stdin_open: true
     tty: true
     command: /bin/bash
