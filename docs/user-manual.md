@@ -413,6 +413,7 @@ Notes:
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-recover standalone containers that are unsuitable for persistent dev usage (transient behavior or non-keepalive command setups), recreating them with a persistent keepalive command before suggesting `docker exec`.
 - `./docker_build.sh enter` now also requires standalone liveness to remain stable before non-interactive `docker exec` guidance, so short-lived containers are redirected to recovery-safe instructions (or compose guidance when compose `dev` is running).
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
+- Interactive compose shells entered via `./docker_build.sh enter` now print the same `BUILD_DIR=build_docker` tip and a reconnect hint, while preserving the shell exit code.
 - When both standalone `mako-dev` and compose `dev` exist:
   - if standalone is running, `./docker_build.sh enter` prefers standalone `mako-dev`;
   - if standalone is stopped but compose `dev` is running, `./docker_build.sh enter` reuses compose `dev` instead of starting standalone.

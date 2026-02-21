@@ -545,8 +545,13 @@ case "$ACTION" in
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running.${NC}"
                 echo -e "${YELLOW}Reusing running compose service 'dev' instead of starting standalone.${NC}"
                 if [ "${HAS_TTY}" -eq 1 ]; then
-                    docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
-                    exit $?
+                    COMPOSE_INTERACTIVE_EXIT_CODE=0
+                    set +e
+                    docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                    COMPOSE_INTERACTIVE_EXIT_CODE=$?
+                    set -e
+                    echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or 'docker compose exec dev /bin/bash' to reconnect.${NC}"
+                    exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
                 fi
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
                 echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
@@ -565,8 +570,13 @@ case "$ACTION" in
                 echo -e "${GREEN}Compose service 'dev' started.${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
-                docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
-                exit $?
+                COMPOSE_INTERACTIVE_EXIT_CODE=0
+                set +e
+                docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                COMPOSE_INTERACTIVE_EXIT_CODE=$?
+                set -e
+                echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or 'docker compose exec dev /bin/bash' to reconnect.${NC}"
+                exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
             fi
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
