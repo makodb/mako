@@ -244,6 +244,7 @@ warn_stale_compose_dev_containers() {
     local stale_compose_projects=()
     local container_name
     local project_name
+    local current_compose_running=0
 
     while IFS= read -r container_name; do
         [ -n "${container_name}" ] || continue
@@ -254,6 +255,17 @@ warn_stale_compose_dev_containers() {
         [ -n "${project_name}" ] || continue
         stale_compose_projects+=("${project_name}")
     done < <(list_stale_compose_projects)
+
+    if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+        current_compose_running=1
+    fi
+
+    # A single same-checkout stale compose service with no current-project compose
+    # service is usually a recoverable state that enter/compose-up can reuse cleanly.
+    # Skip warning noise in that case and keep warnings for ambiguous/conflicting states.
+    if [ "${#stale_compose_containers[@]}" -eq 1 ] && [ "${current_compose_running}" -eq 0 ]; then
+        return 0
+    fi
 
     if [ "${#stale_compose_containers[@]}" -gt 0 ]; then
         echo -e "${YELLOW}Warning: found running compose dev container(s) for this checkout under non-current project ID(s): ${stale_compose_containers[*]}.${NC}"
