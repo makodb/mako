@@ -527,7 +527,7 @@ bench_runner::run()
       uint32_t n_commits = 0 ;
       for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
       samplingTPUT.push_back({getEpochInms(), n_commits});
-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+      //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
     Warning("runtime_plus:%d",benchConfig.getRuntimePlus());
     runtime_loop = benchConfig.getRuntimePlus() * repeats;
@@ -539,7 +539,7 @@ bench_runner::run()
       uint32_t n_commits = 0 ;
       for (size_t j = 0; j < BenchmarkConfig::getInstance().getNthreads(); j++) { n_commits += workers[j]->get_ntxn_commits(); }
       samplingTPUT.push_back({getEpochInms(), n_commits});
-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+      //cerr << "Time: " << getEpochInms() << ", n_commits: " << n_commits << endl;
     }
   }
   // notify other leaders to shutdown as well
@@ -767,10 +767,10 @@ bench_runner::run()
 #endif
   }
 
-  cerr << "--- system counters for n_comits ---" << endl;
+  cerr << "--- system counters for n_commits ---" << endl;
 #if defined(COCO)
   for (int i = 0; i < samplingTPUT.size(); i++) {
-    cerr << "Time: " << samplingTPUT[i].first << ", n_comits: " << samplingTPUT[i].second << endl;
+    cerr << "Time: " << samplingTPUT[i].first << ", n_commits: " << samplingTPUT[i].second << endl;
   }
   std::cout<<"DONE"<<std::endl;
 #endif
