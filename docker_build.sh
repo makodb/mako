@@ -15,7 +15,8 @@ NC='\033[0m' # No Color
 
 # Docker image and container names
 IMAGE_NAME="mako-build:ubuntu24"
-CONTAINER_NAME="mako-dev"
+CONTAINER_NAME_DEFAULT="mako-dev"
+CONTAINER_NAME="${MAKO_DEV_CONTAINER_NAME:-${CONTAINER_NAME_DEFAULT}}"
 WORKSPACE_ROOT="$(pwd -P)"
 WORKSPACE_HASH="$(printf '%s' "${WORKSPACE_ROOT}" | sha256sum | cut -c1-10)"
 COMPOSE_PROJECT_NAME="mako-${WORKSPACE_HASH}"
@@ -144,6 +145,31 @@ has_expected_workspace_mount() {
 
     [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "${WORKSPACE_ROOT}" ] && [ "${working_dir}" = "/workspace" ]
 }
+
+resolve_container_name_for_workspace() {
+    local scoped_container_name
+
+    # Respect explicit caller override.
+    if [ -n "${MAKO_DEV_CONTAINER_NAME:-}" ]; then
+        return
+    fi
+
+    # Only auto-scope legacy default name.
+    if [ "${CONTAINER_NAME}" != "${CONTAINER_NAME_DEFAULT}" ]; then
+        return
+    fi
+
+    scoped_container_name="${CONTAINER_NAME_DEFAULT}-${WORKSPACE_HASH}"
+
+    # If legacy name is already tied to a different checkout, avoid clobbering it.
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME_DEFAULT}$"; then
+        if ! has_expected_workspace_mount "${CONTAINER_NAME_DEFAULT}"; then
+            CONTAINER_NAME="${scoped_container_name}"
+        fi
+    fi
+}
+
+resolve_container_name_for_workspace
 
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
