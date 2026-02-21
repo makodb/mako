@@ -25,6 +25,13 @@ if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=
     DOCKER_SECURITY_OPTS=(--security-opt apparmor=unconfined)
 fi
 
+ensure_image() {
+    if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+        echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
+        docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
+    fi
+}
+
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
 
@@ -41,6 +48,7 @@ case "$ACTION" in
 
     build)
         echo -e "${YELLOW}Building Mako in container...${NC}"
+        ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
             bash -c "cd /workspace && \
                      if [ -f build_docker/CMakeCache.txt ] && \
@@ -60,12 +68,14 @@ case "$ACTION" in
 
     shell)
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
+        ensure_image
         docker run --rm -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         ;;
 
     test)
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
+        ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "NEED_BUILD=1; \
                      if [ -x build_docker/dbtest ]; then \
@@ -106,6 +116,7 @@ case "$ACTION" in
                 ;;
         esac
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container with ${CI_JOBS} build jobs...${NC}"
+        ensure_image
         case "${CI_TEST}" in
             compile|all)
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
@@ -184,6 +195,7 @@ case "$ACTION" in
         fi
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
+        ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
@@ -208,10 +220,7 @@ case "$ACTION" in
 
     compose-up)
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
-        if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
-            echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
-            docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
-        fi
+        ensure_image
         docker compose up -d dev
         echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
         ;;
@@ -224,10 +233,7 @@ case "$ACTION" in
 
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
-        if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
-            echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
-            docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
-        fi
+        ensure_image
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then

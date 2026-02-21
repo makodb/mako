@@ -374,11 +374,10 @@ Notes:
 - `./docker_build.sh test` performs a focused Docker smoke test.
 - It reuses `build_docker/dbtest` when that binary is Docker-compatible (RUNPATH contains `/workspace/build_docker`); otherwise it rebuilds `dbtest`.
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
+- Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
-- `./docker_build.sh create` auto-builds `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed.
-- `./docker_build.sh compose-up` auto-builds `mako-build:ubuntu24` when the image is missing locally.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
