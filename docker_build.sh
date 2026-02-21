@@ -990,6 +990,7 @@ case "$ACTION" in
     enter)
         ensure_no_extra_args "enter"
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
+        ensure_image
         warn_incomplete_build_docker
         warn_stale_compose_dev_containers
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
