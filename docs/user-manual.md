@@ -402,7 +402,7 @@ Notes:
 - Persistent Docker dev containers use an init/reaper process (`--init` for standalone `mako-dev`, `init: true` for compose `dev`) to prevent zombie child-process buildup during repeated test runs.
 - `./docker_build.sh shell`/`create`/`enter` auto-detect terminal availability: interactive TTY sessions use `-it`, while non-interactive environments fall back to non-TTY-safe Docker/Compose flags.
 - In non-interactive mode, `./docker_build.sh shell` prints guidance instead of trying to open an interactive shell (running standalone `mako-dev` guidance when available, explicit `docker start` guidance when standalone exists but is stopped, direct compose-exec guidance when compose `dev` is already running, and compose-start guidance otherwise).
-- If both standalone `mako-dev` and compose `dev` are running, `shell` guidance includes both access paths (`docker exec ... mako-dev` and `docker compose exec dev ...`).
+- If both standalone `mako-dev` and compose `dev` are running, `shell` guidance includes both access paths (`docker exec ... mako-dev`, `docker compose exec dev ...`, and `docker compose exec -T dev ...` for non-interactive usage).
 - In non-interactive mode, `./docker_build.sh create` starts `mako-dev` in the background (detached) instead of trying to open an interactive shell.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-upgrade legacy standalone `mako-dev` containers created without Docker init support, recreating them with `--init` so child processes are reaped correctly.

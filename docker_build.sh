@@ -127,6 +127,7 @@ case "$ACTION" in
                     if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
                         echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
                         echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
+                        echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
                     fi
                 else
                     echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
