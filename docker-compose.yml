@@ -1,3 +1,5 @@
+name: mako
+
 services:
   build:
     platform: linux/amd64
