@@ -589,6 +589,7 @@ case "$ACTION" in
         if [ "${HAS_TTY}" -eq 1 ]; then
             docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+            echo -e "${GREEN}Container '${CONTAINER_NAME}' remains running. Use '$0 enter' to reconnect.${NC}"
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if is_container_stably_running "${CONTAINER_NAME}" 2 1; then
