@@ -514,7 +514,7 @@ case "$ACTION" in
                         echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
                         echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
                         echo -e "${GREEN}Teardown selected project with: MAKO_COMPOSE_PROJECT=<project> docker compose down${NC}"
-                        echo -e "${GREEN}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
+                        echo -e "${GREEN}Or stop stale compose containers, then run '$0 enter'.${NC}"
                     else
                         echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
                         echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
