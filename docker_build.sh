@@ -237,7 +237,7 @@ case "$ACTION" in
     enter)
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-            compose_dev_id=$(docker compose ps -q dev 2>/dev/null | head -n 1)
+            compose_dev_id=$(docker compose ps -aq dev 2>/dev/null | head -n 1)
             if [ -n "${compose_dev_id}" ]; then
                 echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; entering docker compose service 'dev'.${NC}"
                 if [ "$(docker inspect -f '{{.State.Running}}' "${compose_dev_id}" 2>/dev/null || echo false)" != "true" ]; then
