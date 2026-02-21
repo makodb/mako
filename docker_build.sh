@@ -24,10 +24,12 @@ if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=
     # Rust tooling (cargo/rustc) can fail under restrictive AppArmor profiles.
     DOCKER_SECURITY_OPTS=(--security-opt apparmor=unconfined)
 fi
+HAS_TTY=1
 DOCKER_INTERACTIVE_OPTS=(-it)
 COMPOSE_EXEC_OPTS=()
 if [ ! -t 0 ] || [ ! -t 1 ]; then
     # Avoid hard failures like "the input device is not a TTY" in non-interactive environments.
+    HAS_TTY=0
     DOCKER_INTERACTIVE_OPTS=(-i)
     COMPOSE_EXEC_OPTS=(-T)
 fi
@@ -296,11 +298,24 @@ case "$ACTION" in
                 echo -e "${YELLOW}Starting stopped container...${NC}"
                 docker start ${CONTAINER_NAME}
             fi
-            docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+            if [ "${HAS_TTY}" -eq 1 ]; then
+                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+            else
+                echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+                echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
+                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+            fi
         else
-            docker run "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
-                bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
-            echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
+            if [ "${HAS_TTY}" -eq 1 ]; then
+                docker run "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
+            else
+                docker run -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "exec tail -f /dev/null" >/dev/null
+                echo -e "${GREEN}Container '${CONTAINER_NAME}' created and started in background (non-interactive mode).${NC}"
+                echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+            fi
         fi
         ;;
 
@@ -309,14 +324,25 @@ case "$ACTION" in
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
             "$0" compose-up
-            docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
-            exit $?
+            if [ "${HAS_TTY}" -eq 1 ]; then
+                docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
+                exit $?
+            fi
+            echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+            echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+            exit 0
         fi
         if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
             docker start ${CONTAINER_NAME}
         fi
-        docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+        if [ "${HAS_TTY}" -eq 1 ]; then
+            docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
+        else
+            echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+            echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
+            echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+        fi
         ;;
 
     *)
