@@ -16,6 +16,7 @@ NC='\033[0m' # No Color
 # Docker image and container names
 IMAGE_NAME="mako-build:ubuntu24"
 CONTAINER_NAME="mako-dev"
+WORKSPACE_ROOT="$(pwd -P)"
 
 # Environment variables/options for Docker runs
 DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e BUILD_DIR=build_docker)
@@ -115,7 +116,7 @@ has_expected_workspace_mount() {
     mount_type=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Type}}{{end}}{{end}}' "${container_name}" 2>/dev/null || echo "")
     working_dir=$(docker inspect -f '{{.Config.WorkingDir}}' "${container_name}" 2>/dev/null || echo "")
 
-    [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "$(pwd)" ] && [ "${working_dir}" = "/workspace" ]
+    [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "${WORKSPACE_ROOT}" ] && [ "${working_dir}" = "/workspace" ]
 }
 
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
@@ -135,7 +136,7 @@ case "$ACTION" in
     build)
         echo -e "${YELLOW}Building Mako in container...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; cd /workspace && \
                      if [ -f build_docker/CMakeCache.txt ] && \
                         ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
@@ -160,7 +161,7 @@ case "$ACTION" in
         ensure_image
         warn_incomplete_build_docker
         if [ "${HAS_TTY}" -eq 1 ]; then
-            docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+            docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
@@ -230,7 +231,7 @@ case "$ACTION" in
     test)
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; NEED_BUILD=1; \
                      if [ -x build_docker/dbtest ]; then \
                          RUNPATH=\$(readelf -d build_docker/dbtest 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'); \
@@ -283,16 +284,16 @@ case "$ACTION" in
         case "${CI_TEST}" in
             compile|all)
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
-                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
             cleanup)
                 # cleanup should not force an expensive build first.
-                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh cleanup"
                 ;;
             *)
-                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} make BUILD_DIR=build_docker -j${CI_JOBS} && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
         esac
@@ -396,7 +397,7 @@ case "$ACTION" in
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
@@ -404,7 +405,7 @@ case "$ACTION" in
     clean)
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
         if docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
-            docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
+            docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
                 bash -c "cd /workspace && rm -rf build_docker target-docker && find . -maxdepth 1 -type f -name 'core.*' -delete"
         else
             echo -e "${YELLOW}Image '${IMAGE_NAME}' not found; cleaning workspace directly.${NC}"
@@ -419,7 +420,7 @@ case "$ACTION" in
             fi
             if [ "${HAS_LEFTOVERS}" -eq 1 ]; then
                 echo -e "${YELLOW}Host cleanup lacked permissions; using temporary ubuntu helper container.${NC}"
-                docker run --rm -v "$(pwd):/workspace" ubuntu:24.04 \
+                docker run --rm -v "${WORKSPACE_ROOT}:/workspace" ubuntu:24.04 \
                     bash -c "cd /workspace && rm -rf build_docker target-docker && find . -maxdepth 1 -type f -name 'core.*' -delete"
             fi
         fi
@@ -472,14 +473,14 @@ case "$ACTION" in
             if ! has_keepalive_command "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' uses a non-keepalive command; recreating it for persistent dev usage.${NC}"
                 docker rm -f ${CONTAINER_NAME} >/dev/null
-                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 CREATE_RECREATED=1
             fi
             if ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' is bound to a different workspace or working directory; recreating it for this checkout.${NC}"
                 docker rm -f ${CONTAINER_NAME} >/dev/null
-                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 CREATE_RECREATED=1
             fi
@@ -491,7 +492,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' is transient or exited after start checks.${NC}"
                 echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
                 docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
-                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 CREATE_RECREATED=1
             fi
@@ -523,7 +524,7 @@ case "$ACTION" in
             fi
         else
             if [ "${HAS_TTY}" -eq 1 ]; then
-                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 INTERACTIVE_EXIT_CODE=0
                 set +e
@@ -540,7 +541,7 @@ case "$ACTION" in
                     exit "${INTERACTIVE_EXIT_CODE}"
                 fi
             else
-                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 if [ "${CREATE_RECREATED}" -eq 1 ]; then
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated and started in background (non-interactive mode).${NC}"
@@ -608,21 +609,21 @@ case "$ACTION" in
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' was created without Docker init support; recreating it to enable child-process reaping.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
             ensure_image
-            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if ! has_keepalive_command "${CONTAINER_NAME}"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' uses a non-keepalive command; recreating it for persistent dev usage.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
             ensure_image
-            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' is bound to a different workspace or working directory; recreating it for this checkout.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
             ensure_image
-            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if ! is_container_running "${CONTAINER_NAME}"; then
@@ -634,7 +635,7 @@ case "$ACTION" in
             echo -e "${YELLOW}Recreating '${CONTAINER_NAME}' with a persistent keepalive command for reliable re-entry.${NC}"
             ensure_image
             docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
-            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if [ "${HAS_TTY}" -eq 1 ]; then
