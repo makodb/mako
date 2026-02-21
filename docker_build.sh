@@ -382,7 +382,6 @@ case "$ACTION" in
                 fi
             else
                 echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was not found.${NC}"
-                warn_stale_compose_dev_containers
                 if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                     echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
                     echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
