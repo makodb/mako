@@ -185,26 +185,26 @@ case "$ACTION" in
                 ;;
         esac
 
-        # Check if binary exists and has Docker build path in RUNPATH.
-        if [ -f "build_docker/dbtest" ]; then
-            RUNPATH=$(readelf -d build_docker/dbtest 2>/dev/null | grep RUNPATH | grep -o '\[.*\]' | tr -d '[]')
-            if [[ ":$RUNPATH:" != *":/workspace/build_docker:"* ]]; then
-                echo -e "${RED}Error: build_docker/dbtest is not Docker-compatible (RUNPATH: $RUNPATH)${NC}"
-                echo -e "${YELLOW}Cannot run locally-built binary in Docker due to library path mismatch.${NC}"
-                echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild and test in Docker.${NC}"
-                exit 1
-            fi
-            if [ "$RUNPATH" != "/workspace/build_docker" ]; then
-                echo -e "${YELLOW}Warning: RUNPATH has extra entries ($RUNPATH); forcing Docker library path.${NC}"
-            fi
-        else
-            echo -e "${RED}Error: build_docker/dbtest not found. Run './docker_build.sh ci' first.${NC}"
-            exit 1
-        fi
         missing_bins=()
+        non_executable_bins=()
+        incompatible_bins=()
+        warning_runpaths=()
         for required_bin in "${REQUIRED_BINS[@]}"; do
             if [ ! -f "${required_bin}" ]; then
                 missing_bins+=("${required_bin}")
+                continue
+            fi
+            if [ ! -x "${required_bin}" ]; then
+                non_executable_bins+=("${required_bin}")
+                continue
+            fi
+            RUNPATH=$(readelf -d "${required_bin}" 2>/dev/null | grep RUNPATH | grep -o '\[.*\]' | tr -d '[]')
+            if [[ ":$RUNPATH:" != *":/workspace/build_docker:"* ]]; then
+                incompatible_bins+=("${required_bin} (RUNPATH: ${RUNPATH:-<none>})")
+                continue
+            fi
+            if [ "$RUNPATH" != "/workspace/build_docker" ]; then
+                warning_runpaths+=("${required_bin}: ${RUNPATH}")
             fi
         done
         if [ "${#missing_bins[@]}" -gt 0 ]; then
@@ -212,10 +212,33 @@ case "$ACTION" in
             for bin in "${missing_bins[@]}"; do
                 echo -e "${RED}  - ${bin}${NC}"
             done
-            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep).${NC}"
-            echo -e "${YELLOW}It also compiles RocksDB test binaries for ci-quick rocksdbTests.${NC}"
-            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to build test-specific binaries and run this suite.${NC}"
+            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep)${NC}"
+            echo -e "${YELLOW}and RocksDB test binaries for ci-quick rocksdbTests.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to build missing binaries and run this suite.${NC}"
             exit 1
+        fi
+        if [ "${#non_executable_bins[@]}" -gt 0 ]; then
+            echo -e "${RED}Error: Required binaries are not executable for CI test '${CI_TEST}':${NC}"
+            for bin in "${non_executable_bins[@]}"; do
+                echo -e "${RED}  - ${bin}${NC}"
+            done
+            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild executable binaries in Docker.${NC}"
+            exit 1
+        fi
+        if [ "${#incompatible_bins[@]}" -gt 0 ]; then
+            echo -e "${RED}Error: Required binaries are not Docker-compatible for CI test '${CI_TEST}':${NC}"
+            for bin in "${incompatible_bins[@]}"; do
+                echo -e "${RED}  - ${bin}${NC}"
+            done
+            echo -e "${YELLOW}Cannot run locally-built binaries in Docker due to library path mismatch.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild and test in Docker.${NC}"
+            exit 1
+        fi
+        if [ "${#warning_runpaths[@]}" -gt 0 ]; then
+            echo -e "${YELLOW}Warning: Some RUNPATH entries include extra paths; forcing Docker library path.${NC}"
+            for entry in "${warning_runpaths[@]}"; do
+                echo -e "${YELLOW}  - ${entry}${NC}"
+            done
         fi
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
