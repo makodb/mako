@@ -438,6 +438,11 @@ case "$ACTION" in
 
     ci)
         # Run a specific CI test or all tests
+        if [ -n "${4:-}" ]; then
+            echo -e "${RED}Error: Too many arguments for ci.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh ci', './docker_build.sh ci <jobs>', or './docker_build.sh ci <test> <jobs>'.${NC}"
+            exit 1
+        fi
         CI_TEST=${2:-all}
         CI_JOBS=${3:-32}
         if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
