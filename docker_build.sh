@@ -355,6 +355,13 @@ case "$ACTION" in
             echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
             exit 0
         fi
+        EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
+        if [ "${EXISTING_INIT}" != "true" ]; then
+            echo -e "${YELLOW}Container '${CONTAINER_NAME}' was created without Docker init support; recreating it to enable child-process reaping.${NC}"
+            docker rm -f ${CONTAINER_NAME} >/dev/null
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                bash -lc "exec tail -f /dev/null" >/dev/null
+        fi
         if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
             docker start ${CONTAINER_NAME}
