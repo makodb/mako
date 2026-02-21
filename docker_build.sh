@@ -347,6 +347,7 @@ case "$ACTION" in
     compose-up)
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
         ensure_image
+        warn_incomplete_build_docker
         docker compose up -d dev
         if [ "${HAS_TTY}" -eq 1 ]; then
             echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
