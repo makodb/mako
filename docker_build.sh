@@ -363,10 +363,11 @@ case "$ACTION" in
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' is running alongside compose service 'dev'.${NC}"
+                echo -e "${YELLOW}'$0 enter' will use standalone '${CONTAINER_NAME}' while it is running.${NC}"
             else
                 echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists alongside compose service 'dev'.${NC}"
+                echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone '${CONTAINER_NAME}' remains stopped.${NC}"
             fi
-            echo -e "${YELLOW}'$0 enter' targets standalone '${CONTAINER_NAME}' first.${NC}"
             echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' to enter compose service 'dev'.${NC}"
         fi
         docker compose up -d dev
