@@ -562,12 +562,14 @@ case "$ACTION" in
         if [ "${EXISTING_INIT}" != "true" ]; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' was created without Docker init support; recreating it to enable child-process reaping.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
+            ensure_image
             docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if ! has_keepalive_command "${CONTAINER_NAME}"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' uses a non-keepalive command; recreating it for persistent dev usage.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
+            ensure_image
             docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi

@@ -397,7 +397,7 @@ Notes:
 - Script-driven Docker commands (`build`, `test`, `ci`, `ci-quick`) disable core dumps by default to avoid large `core.*` files in the workspace after transient crashes.
   Set `MAKO_DOCKER_ENABLE_COREDUMP=1` to re-enable core dumps for debugging.
 - `./docker_build.sh clean` removes `build_docker`, `target-docker`, and top-level `core.*` crash artifacts (using a helper container when host permissions block deletion).
-- Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
+- Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `enter`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
 - Persistent Docker dev containers use an init/reaper process (`--init` for standalone `mako-dev`, `init: true` for compose `dev`) to prevent zombie child-process buildup during repeated test runs.
 - `./docker_build.sh shell`/`create`/`enter` auto-detect terminal availability: interactive TTY sessions use `-it`, while non-interactive environments fall back to non-TTY-safe Docker/Compose flags.
