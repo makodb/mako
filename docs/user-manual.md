@@ -143,10 +143,12 @@ bash examples/test_multi_shard_single_process.sh
 
 ### Option B: Run binaries directly
 
+These commands use `BUILD_DIR` when set, and default to `build` otherwise.
+
 #### `simpleTransaction`
 
 ```bash
-./build/simpleTransaction
+./${BUILD_DIR:-build}/simpleTransaction
 ```
 
 Uses `MAKO_CONFIG` if set, otherwise falls back to a local config template.
@@ -156,10 +158,10 @@ Uses `MAKO_CONFIG` if set, otherwise falls back to a local config template.
 Pass a required role argument:
 
 ```bash
-./build/simplePaxos localhost
-./build/simplePaxos p1
-./build/simplePaxos p2
-./build/simplePaxos learner
+./${BUILD_DIR:-build}/simplePaxos localhost
+./${BUILD_DIR:-build}/simplePaxos p1
+./${BUILD_DIR:-build}/simplePaxos p2
+./${BUILD_DIR:-build}/simplePaxos learner
 ```
 
 For multi-process orchestration, use:
@@ -171,7 +173,7 @@ bash examples/simplePaxos.sh
 #### `dbtest` baseline (single shard, non-replicated)
 
 ```bash
-./build/dbtest \
+./${BUILD_DIR:-build}/dbtest \
   --num-threads 6 \
   --shard-index 0 \
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
@@ -181,7 +183,7 @@ bash examples/simplePaxos.sh
 #### `dbtest` with replication (Paxos)
 
 ```bash
-./build/dbtest \
+./${BUILD_DIR:-build}/dbtest \
   --num-threads 6 \
   --shard-index 0 \
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
@@ -195,7 +197,7 @@ bash examples/simplePaxos.sh
 #### `dbtest` with replication (Raft runtime switch)
 
 ```bash
-./build/dbtest \
+./${BUILD_DIR:-build}/dbtest \
   --num-threads 6 \
   --shard-index 0 \
   --shard-config src/mako/config/local-shards1-warehouses6.yml \
@@ -209,7 +211,7 @@ bash examples/simplePaxos.sh
 #### Multi-shard single-process mode
 
 ```bash
-./build/dbtest \
+./${BUILD_DIR:-build}/dbtest \
   --num-threads 6 \
   --shard-config src/mako/config/local-shards2-warehouses6.yml \
   -P localhost \
@@ -278,8 +280,8 @@ Note: `dbtest` does not currently expose a standard `--help` output.
 Runtime selection:
 
 ```bash
-MAKO_TRANSPORT=rrr  ./build/dbtest ...   # default behavior
-MAKO_TRANSPORT=erpc ./build/dbtest ...
+MAKO_TRANSPORT=rrr  ./${BUILD_DIR:-build}/dbtest ...   # default behavior
+MAKO_TRANSPORT=erpc ./${BUILD_DIR:-build}/dbtest ...
 ```
 
 Additional build context:
@@ -299,7 +301,7 @@ Additional build context:
 Per-worker throttling flags:
 
 ```bash
-./build/dbtest ... --cpu-limit 5 --throttle-cycle 100
+./${BUILD_DIR:-build}/dbtest ... --cpu-limit 5 --throttle-cycle 100
 ```
 
 - `--cpu-limit`: percentage in `[0,100]`
@@ -310,9 +312,9 @@ Per-worker throttling flags:
 `simpleTransactionRep` modes:
 
 ```bash
-./build/simpleTransactionRep <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
-./build/simpleTransactionRep --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
-./build/simpleTransactionRep --client <server_host> <server_port>
+./${BUILD_DIR:-build}/simpleTransactionRep <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
+./${BUILD_DIR:-build}/simpleTransactionRep --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
+./${BUILD_DIR:-build}/simpleTransactionRep --client <server_host> <server_port>
 ```
 
 Current status in this repository version:
