@@ -1063,6 +1063,7 @@ case "$ACTION" in
                 stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' is stopped while compose service 'dev' is running under project '${stale_compose_project}'.${NC}"
                 echo -e "${YELLOW}Reusing compose service 'dev' instead of starting standalone to avoid duplicate sessions.${NC}"
+                echo -e "${YELLOW}To stop this reused compose project later, run: ${stale_compose_cmd_prefix} down${NC}"
                 if [ "${HAS_TTY}" -eq 1 ]; then
                     COMPOSE_INTERACTIVE_EXIT_CODE=0
                     set +e
@@ -1097,6 +1098,7 @@ case "$ACTION" in
                     stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                     echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
                     echo -e "${YELLOW}Reusing it to avoid starting a duplicate compose container.${NC}"
+                    echo -e "${YELLOW}To stop this reused compose project later, run: ${stale_compose_cmd_prefix} down${NC}"
                     if [ "${HAS_TTY}" -eq 1 ]; then
                         COMPOSE_INTERACTIVE_EXIT_CODE=0
                         set +e
