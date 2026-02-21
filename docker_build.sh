@@ -121,13 +121,28 @@ case "$ACTION" in
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                    echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
-                    echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
-                    if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
-                        echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
-                        echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
-                        echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                    # Legacy standalone containers can appear briefly "running"
+                    # and then exit immediately (for example /bin/bash command).
+                    sleep 1
+                    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                        echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
+                        echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                        echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                        if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
+                            echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
+                            echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                        fi
+                    else
+                        echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was running briefly but exited.${NC}"
+                        if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                            echo -e "${GREEN}Compose service 'dev' is running; use: docker compose exec dev /bin/bash${NC}"
+                            echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                            echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' or '$0 create' for recovery-safe setup.${NC}"
+                        else
+                            echo -e "${GREEN}Use '$0 enter' to start/recover standalone '${CONTAINER_NAME}' and attach when possible.${NC}"
+                            echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
+                        fi
                     fi
                 else
                     echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
