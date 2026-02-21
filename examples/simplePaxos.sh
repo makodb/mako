@@ -62,6 +62,10 @@ localhost_pid=$!
 
 echo "Waiting for completion..."
 max_wait="${MAKO_MAX_WAIT_SECONDS:-60}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 60s"
+    max_wait=60
+fi
 wait_count=0
 while [ "$wait_count" -lt "$max_wait" ]; do
     if log_has_pass a1.log && log_has_pass a2.log && log_has_pass a3.log && log_has_pass a4.log; then

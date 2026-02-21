@@ -172,6 +172,10 @@ LEADER_PID=$!
 # Wait for benchmark to complete
 echo "Waiting for benchmark to complete..."
 max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
 wait_count=0
 leader_exited_early=0
 
