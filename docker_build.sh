@@ -71,6 +71,11 @@ case "$ACTION" in
     ci)
         # Run a specific CI test or all tests
         CI_TEST=${2:-all}
+        CI_JOBS=${3:-32}
+        if ! [[ "${CI_JOBS}" =~ ^[0-9]+$ ]] || [ "${CI_JOBS}" -lt 1 ]; then
+            echo -e "${RED}Error: CI jobs must be a positive integer (got '${CI_JOBS}').${NC}"
+            exit 1
+        fi
         case "${CI_TEST}" in
             compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shardNoReplicationErpc|shard1Replication|shard2Replication|shard2ReplicationErpc|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|rrrTests|cpuThrottlingScaling|clientServer|all)
                 ;;
@@ -80,9 +85,9 @@ case "$ACTION" in
                 exit 1
                 ;;
         esac
-        echo -e "${YELLOW}Running CI test '${CI_TEST}' in container...${NC}"
+        echo -e "${YELLOW}Running CI test '${CI_TEST}' in container with ${CI_JOBS} build jobs...${NC}"
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j32 && BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+            bash -c "rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} make BUILD_DIR=build_docker -j${CI_JOBS} && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
 
@@ -199,7 +204,7 @@ case "$ACTION" in
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"
         echo "  test         - Build dbtest and run shardNoReplication smoke test"
-        echo "  ci [test]    - Build and run CI test (default: all)"
+        echo "  ci [test] [jobs] - Build and run CI test (default: all, jobs: 32)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
         echo "  clean        - Clean build artifacts"
         echo "  compose-up   - Start persistent dev container via docker-compose"
@@ -219,6 +224,7 @@ case "$ACTION" in
         echo "Examples:"
         echo "  $0 ci                    # Build and run all CI tests"
         echo "  $0 ci shardNoReplication # Build and run shardNoReplication test"
+        echo "  $0 ci shardNoReplication 8 # Use 8 build jobs for CI flow"
         echo "  $0 ci-quick shard2Replication # Run shard2Replication without rebuild"
         exit 1
         ;;

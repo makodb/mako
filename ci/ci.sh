@@ -187,8 +187,10 @@ compile() {
     echo "========================================="
     echo "Running: ./ci/ci.sh compile"
     echo "========================================="
+    local jobs="${CI_MAKE_JOBS:-32}"
+    echo "Using ${jobs} parallel build jobs"
     set -o pipefail
-    make BUILD_DIR=${BUILD_DIR} -j32 2>&1 | tee build.log
+    make BUILD_DIR=${BUILD_DIR} -j"${jobs}" 2>&1 | tee build.log
     # Generate configuration
     bash ./src/mako/update_config.sh
 }

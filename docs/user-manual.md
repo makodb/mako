@@ -369,6 +369,8 @@ Notes:
 - `./docker_build.sh test` performs a focused Docker smoke test.
 - It builds `dbtest` in `build_docker`.
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
+- `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
+- Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 
 Relevant files:
 - `Dockerfile.ubuntu24`
