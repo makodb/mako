@@ -410,6 +410,7 @@ Notes:
 - After interactive standalone `create`/`enter` sessions end, the script prints a reconnect hint and preserves the shell exit code.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - If legacy standalone name `mako-dev` is already bound to a different checkout path, `docker_build.sh` automatically scopes standalone container naming to `mako-dev-<checkout-hash>` for the current checkout, preventing cross-checkout clobbering.
+  For legacy same-checkout containers (for example wrong working directory/command/init), it keeps using `mako-dev` and normalizes that container in place.
 - You can explicitly pin standalone naming with `MAKO_DEV_CONTAINER_NAME=<name> ./docker_build.sh <action>`.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-upgrade legacy standalone `mako-dev` containers created without Docker init support, recreating them with `--init` so child processes are reaped correctly.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-recover standalone containers that are unsuitable for persistent dev usage (transient behavior or non-keepalive command setups), recreating them with a persistent keepalive command before suggesting `docker exec`.

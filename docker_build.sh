@@ -146,6 +146,17 @@ has_expected_workspace_mount() {
     [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "${WORKSPACE_ROOT}" ] && [ "${working_dir}" = "/workspace" ]
 }
 
+has_expected_workspace_source() {
+    local container_name="$1"
+    local mount_source
+    local mount_type
+
+    mount_source=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "${container_name}" 2>/dev/null || echo "")
+    mount_type=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Type}}{{end}}{{end}}' "${container_name}" 2>/dev/null || echo "")
+
+    [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "${WORKSPACE_ROOT}" ]
+}
+
 resolve_container_name_for_workspace() {
     local scoped_container_name
 
@@ -163,7 +174,7 @@ resolve_container_name_for_workspace() {
 
     # If legacy name is already tied to a different checkout, avoid clobbering it.
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME_DEFAULT}$"; then
-        if ! has_expected_workspace_mount "${CONTAINER_NAME_DEFAULT}"; then
+        if ! has_expected_workspace_source "${CONTAINER_NAME_DEFAULT}"; then
             CONTAINER_NAME="${scoped_container_name}"
         fi
     fi
