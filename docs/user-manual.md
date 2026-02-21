@@ -377,6 +377,7 @@ Notes:
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
 - Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
+- `./docker_build.sh shell`/`create`/`enter` auto-detect terminal availability: interactive TTY sessions use `-it`, while non-interactive environments fall back to non-TTY-safe Docker/Compose flags.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
