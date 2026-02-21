@@ -377,6 +377,7 @@ Notes:
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts the compose service if needed.
+- `./docker_build.sh compose-up` auto-builds `mako-build:ubuntu24` when the image is missing locally.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.

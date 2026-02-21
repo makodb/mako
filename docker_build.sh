@@ -208,6 +208,10 @@ case "$ACTION" in
 
     compose-up)
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
+        if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+            echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
+            docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
+        fi
         docker compose up -d dev
         echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
         ;;
