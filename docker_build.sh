@@ -112,6 +112,15 @@ case "$ACTION" in
         # Run a specific CI test or all tests
         CI_TEST=${2:-all}
         CI_JOBS=${3:-32}
+        if [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+            CI_TEST=all
+            CI_JOBS=${2}
+            if [ -n "${3:-}" ]; then
+                echo -e "${RED}Error: Too many arguments for jobs-only CI shorthand.${NC}"
+                echo -e "${YELLOW}Use './docker_build.sh ci ${2}' or './docker_build.sh ci <test> <jobs>'.${NC}"
+                exit 1
+            fi
+        fi
         if ! [[ "${CI_JOBS}" =~ ^[0-9]+$ ]] || [ "${CI_JOBS}" -lt 1 ]; then
             echo -e "${RED}Error: CI jobs must be a positive integer (got '${CI_JOBS}').${NC}"
             exit 1
@@ -339,6 +348,7 @@ case "$ACTION" in
         echo ""
         echo "Examples:"
         echo "  $0 ci                    # Build and run all CI tests"
+        echo "  $0 ci 8                  # Build and run all CI tests with 8 build jobs"
         echo "  $0 ci shardNoReplication # Build and run shardNoReplication test"
         echo "  $0 ci shardNoReplication 8 # Use 8 build jobs for CI flow"
         echo "  $0 ci-quick shard2Replication # Run shard2Replication without rebuild"
