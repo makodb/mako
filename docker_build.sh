@@ -59,10 +59,22 @@ case "$ACTION" in
     test)
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -c "rm -rf build_docker && \
-                     cmake -S . -B build_docker && \
-                     cmake --build build_docker --parallel ${JOBS} --target dbtest && \
-                     echo 'SUCCESS: dbtest build completed' && \
+            bash -c "NEED_BUILD=1; \
+                     if [ -x build_docker/dbtest ]; then \
+                         RUNPATH=\$(readelf -d build_docker/dbtest 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'); \
+                         if [[ \":\$RUNPATH:\" == *\":/workspace/build_docker:\"* ]]; then \
+                             NEED_BUILD=0; \
+                             echo 'Reusing existing Docker-compatible build_docker/dbtest'; \
+                         else \
+                             echo \"Rebuilding dbtest (incompatible RUNPATH: \${RUNPATH:-<none>})\"; \
+                         fi; \
+                     fi; \
+                     if [ \"\$NEED_BUILD\" -eq 1 ]; then \
+                         rm -rf build_docker && \
+                         cmake -S . -B build_docker && \
+                         cmake --build build_docker --parallel ${JOBS} --target dbtest && \
+                         echo 'SUCCESS: dbtest build completed'; \
+                     fi && \
                      BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication && \
                      ls -la build_docker/dbtest"
         echo -e "${GREEN}Test completed successfully!${NC}"
