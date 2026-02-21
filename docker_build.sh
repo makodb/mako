@@ -18,7 +18,7 @@ IMAGE_NAME="mako-build:ubuntu24"
 CONTAINER_NAME="mako-dev"
 
 # Environment variables/options for Docker runs
-DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker)
+DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e BUILD_DIR=build_docker)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
     # Rust tooling (cargo/rustc) can fail under restrictive AppArmor profiles.
@@ -60,7 +60,8 @@ case "$ACTION" in
 
     shell)
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
-        docker run --rm -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} /bin/bash
+        docker run --rm -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+            bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         ;;
 
     test)
@@ -219,7 +220,8 @@ case "$ACTION" in
 
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
-        docker run -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" --name ${CONTAINER_NAME} ${IMAGE_NAME} /bin/bash
+        docker run -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+            bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
         ;;
 
@@ -234,7 +236,7 @@ case "$ACTION" in
             echo -e "${YELLOW}Starting stopped container...${NC}"
             docker start ${CONTAINER_NAME}
         fi
-        docker exec -it ${CONTAINER_NAME} /bin/bash
+        docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
         ;;
 
     *)

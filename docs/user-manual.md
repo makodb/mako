@@ -370,6 +370,7 @@ Notes:
 - `./docker_build.sh test` performs a focused Docker smoke test.
 - It reuses `build_docker/dbtest` when that binary is Docker-compatible (RUNPATH contains `/workspace/build_docker`); otherwise it rebuilds `dbtest`.
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
+- `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 
