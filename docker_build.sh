@@ -1141,7 +1141,7 @@ case "$ACTION" in
             fi
             if ! is_container_running "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Starting stopped container...${NC}"
-                docker start ${CONTAINER_NAME}
+                docker start ${CONTAINER_NAME} >/dev/null
             fi
             if ! is_container_stably_running "${CONTAINER_NAME}" 4 1; then
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' is transient or exited after start checks.${NC}"
@@ -1364,7 +1364,7 @@ case "$ACTION" in
         fi
         if ! is_container_running "${CONTAINER_NAME}"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
-            docker start ${CONTAINER_NAME}
+            docker start ${CONTAINER_NAME} >/dev/null
         fi
         if ! is_container_stably_running "${CONTAINER_NAME}" 4 1; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' is transient or exited after start checks.${NC}"
