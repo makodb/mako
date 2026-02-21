@@ -175,6 +175,23 @@ list_stale_compose_dev_containers() {
     done < <(docker ps --format '{{.Names}}')
 }
 
+select_single_stale_compose_project() {
+    local stale_compose_containers=()
+    local container_name
+
+    while IFS= read -r container_name; do
+        [ -n "${container_name}" ] || continue
+        stale_compose_containers+=("${container_name}")
+    done < <(list_stale_compose_dev_containers)
+
+    if [ "${#stale_compose_containers[@]}" -eq 1 ]; then
+        echo "${stale_compose_containers[0]%-dev-1}"
+        return 0
+    fi
+
+    return 1
+}
+
 warn_stale_compose_dev_containers() {
     local stale_compose_containers=()
     local container_name
@@ -342,9 +359,17 @@ case "$ACTION" in
                     echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
                     echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                 else
-                    echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
-                    echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
-                    echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    stale_compose_project=""
+                    if stale_compose_project=$(select_single_stale_compose_project); then
+                        stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
+                        echo -e "${GREEN}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
+                        echo -e "${GREEN}From a TTY, run: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
+                        echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    else
+                        echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
+                        echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+                        echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    fi
                 fi
             fi
         fi
@@ -717,6 +742,25 @@ case "$ACTION" in
             if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                 echo -e "${GREEN}Compose service 'dev' is already running; skipping compose-up.${NC}"
             else
+                stale_compose_project=""
+                if stale_compose_project=$(select_single_stale_compose_project); then
+                    stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
+                    echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
+                    echo -e "${YELLOW}Reusing it to avoid starting a duplicate compose container.${NC}"
+                    if [ "${HAS_TTY}" -eq 1 ]; then
+                        COMPOSE_INTERACTIVE_EXIT_CODE=0
+                        set +e
+                        MAKO_COMPOSE_PROJECT="${stale_compose_project}" docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                        COMPOSE_INTERACTIVE_EXIT_CODE=$?
+                        set -e
+                        echo -e "${GREEN}Compose service 'dev' (project '${stale_compose_project}') remains running. Reconnect with '${stale_compose_cmd_prefix} exec dev /bin/bash'.${NC}"
+                        exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
+                    fi
+                    echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+                    echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    exit 0
+                fi
                 echo -e "${YELLOW}Starting services with docker-compose...${NC}"
                 ensure_image
                 compose_cmd up -d dev
