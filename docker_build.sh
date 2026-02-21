@@ -614,6 +614,10 @@ case "$ACTION" in
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
         ensure_image
         warn_incomplete_build_docker
+        compose_was_running=0
+        if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+            compose_was_running=1
+        fi
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 echo -e "${YELLOW}Warning: starting compose service 'dev' will run alongside standalone container '${CONTAINER_NAME}'.${NC}"
@@ -626,7 +630,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
             fi
         fi
-        if ! compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+        if [ "${compose_was_running}" -eq 0 ]; then
             stale_compose_project=""
             stale_compose_count=$(count_stale_compose_projects)
             if stale_compose_project=$(select_single_stale_compose_project); then
@@ -653,9 +657,17 @@ case "$ACTION" in
         compose_cmd up -d dev
         warn_stale_compose_dev_containers
         if [ "${HAS_TTY}" -eq 1 ]; then
-            echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+            if [ "${compose_was_running}" -eq 1 ]; then
+                echo -e "${GREEN}Container already running. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+            else
+                echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
+            fi
         else
-            echo -e "${GREEN}Container started.${NC}"
+            if [ "${compose_was_running}" -eq 1 ]; then
+                echo -e "${GREEN}Container already running.${NC}"
+            else
+                echo -e "${GREEN}Container started.${NC}"
+            fi
             echo -e "${GREEN}Non-interactive session detected; run commands with: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
         fi
         ;;
