@@ -430,7 +430,9 @@ Notes:
 - When both standalone `mako-dev` and compose `dev` exist:
   - if standalone is running, `./docker_build.sh enter` prefers standalone `mako-dev`;
   - if standalone is stopped but compose `dev` is running, `./docker_build.sh enter` reuses compose `dev` instead of starting standalone.
-- For non-interactive usage against the standalone `mako-dev` container, run: `docker exec -e BUILD_DIR=build_docker mako-dev /bin/bash -lc '<command>'`.
+- For non-interactive usage against the standalone dev container, run:
+  `docker exec -e BUILD_DIR=build_docker "${MAKO_DEV_CONTAINER_NAME:-mako-dev}" /bin/bash -lc '<command>'`.
+  If `docker_build.sh` auto-scoped the container name (for example `mako-dev-<checkout-hash>`), use the printed standalone name from `./docker_build.sh shell|create|enter` instead of bare `mako-dev`.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, either use `./docker_build.sh enter` (recommended) or prefix raw compose commands with the checkout-specific project id:
   `MAKO_COMPOSE_PROJECT="mako-$(printf '%s' "$(pwd -P)" | sha256sum | cut -c1-10)" docker compose exec dev /bin/bash`
