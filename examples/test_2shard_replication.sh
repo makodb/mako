@@ -124,9 +124,8 @@ killall -9 dbtest 2>/dev/null || true
 sleep 2
 
 # Check for and kill any remaining non-zombie dbtest processes.
-# Ignore zombie entries here: they cannot be killed and will be reaped by parent wait().
+# Ignore zombie entries here: they cannot be killed and are often unrelated stale entries.
 remaining_live=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 !~ /^Z/ {c++} END {print c+0}')
-remaining_zombies=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 ~ /^Z/ {c++} END {print c+0}')
 
 if [ "$remaining_live" -gt 0 ]; then
     echo "WARNING: $remaining_live live dbtest process(es) still present after kill attempt"
@@ -140,10 +139,6 @@ if [ "$remaining_live" -gt 0 ]; then
     done
 
     sleep 1
-fi
-
-if [ "$remaining_zombies" -gt 0 ]; then
-    echo "Note: $remaining_zombies zombie dbtest process(es) observed; they will clear after parent reaps them."
 fi
 
 # Final verification - reap zombie processes by explicitly waiting on child PIDs
