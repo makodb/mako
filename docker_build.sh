@@ -138,6 +138,7 @@ case "$ACTION" in
                         echo -e "${GREEN}Alternatively, start standalone '${CONTAINER_NAME}' with: docker start ${CONTAINER_NAME}${NC}"
                     else
                         echo -e "${GREEN}Start it with: docker start ${CONTAINER_NAME}${NC}"
+                        echo -e "${GREEN}Preferred: use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
                         echo -e "${GREEN}Then run (TTY): docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
                         echo -e "${GREEN}Or non-interactive: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
                     fi
