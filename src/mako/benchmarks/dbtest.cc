@@ -164,6 +164,23 @@ static vector<int> parse_local_shards(const string& local_shards_str) {
   return shard_indices;
 }
 
+static void warn_if_replicated_role_may_block() {
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  if (!benchConfig.getIsReplicated()) {
+    return;
+  }
+
+  if (benchConfig.getPaxosProcName() != mako::LOCALHOST_CENTER) {
+    return;
+  }
+
+  Warning("Replicated dbtest started with --paxos-proc-name=%s. "
+          "If peer role groups (p1, p2, learner) are not running, startup can wait indefinitely. "
+          "For local end-to-end runs use examples/test_1shard_replication.sh or "
+          "examples/test_2shard_replication.sh.",
+          benchConfig.getPaxosProcName().c_str());
+}
+
 static void handle_new_config_format(const string& site_name)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -351,6 +368,7 @@ main(int argc, char **argv)
   benchConfig.setIsMicro(is_micro);
   benchConfig.setIsReplicated(is_replicated);
   benchConfig.setPaxosConfigFile(paxos_config_file);
+  warn_if_replicated_role_may_block();
 
   // Parse local shards if specified
   if (!local_shards_str.empty() && benchConfig.getConfig() != nullptr) {
