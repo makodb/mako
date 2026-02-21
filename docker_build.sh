@@ -1019,6 +1019,7 @@ case "$ACTION" in
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
            ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             stale_compose_project=""
+            stale_compose_count=$(count_stale_compose_projects)
             if stale_compose_project=$(select_single_stale_compose_project); then
                 stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                 echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' is stopped while compose service 'dev' is running under project '${stale_compose_project}'.${NC}"
@@ -1036,6 +1037,14 @@ case "$ACTION" in
                 echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
                 echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
                 exit 0
+            elif [ "${stale_compose_count}" -gt 1 ]; then
+                stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
+                echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' is stopped while multiple compose services are running for this checkout: ${stale_compose_projects}.${NC}"
+                echo -e "${YELLOW}Refusing to start standalone '${CONTAINER_NAME}' to avoid duplicate dev sessions.${NC}"
+                echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                echo -e "${YELLOW}Or stop stale compose containers, then run '$0 enter' again.${NC}"
+                exit 1
             fi
         fi
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
