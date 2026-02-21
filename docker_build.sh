@@ -655,6 +655,7 @@ case "$ACTION" in
         if [ "${stale_compose_count}" -gt 0 ]; then
             warn_stale_compose_dev_containers
             echo -e "${YELLOW}Current compose project services were stopped, but stale compose services are still running for this checkout.${NC}"
+            exit 1
         else
             echo -e "${GREEN}Services stopped!${NC}"
         fi
