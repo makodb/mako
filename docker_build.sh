@@ -89,6 +89,20 @@ case "$ACTION" in
     ci-quick)
         # Run CI tests without rebuild (assumes build exists and was built in Docker)
         CI_TEST=${2:-shardNoReplication}
+        case "${CI_TEST}" in
+            compile|cleanup|all)
+                echo -e "${RED}Error: ci-quick does not support '${CI_TEST}'.${NC}"
+                echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
+                exit 1
+                ;;
+            simpleTransaction|simplePaxos|shardNoReplication|shardNoReplicationErpc|shard1Replication|shard2Replication|shard2ReplicationErpc|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|rrrTests|cpuThrottlingScaling|clientServer)
+                ;;
+            *)
+                echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
+                echo -e "${YELLOW}Run '$0' without args to see supported CI tests.${NC}"
+                exit 1
+                ;;
+        esac
         REQUIRED_BIN="build_docker/dbtest"
         case "${CI_TEST}" in
             simpleTransaction)
@@ -96,6 +110,12 @@ case "$ACTION" in
                 ;;
             simplePaxos)
                 REQUIRED_BIN="build_docker/simplePaxos"
+                ;;
+            rocksdbTests)
+                REQUIRED_BIN="build_docker/test_rocksdb_persistence"
+                ;;
+            rrrTests)
+                REQUIRED_BIN="build_docker/test_marshal"
                 ;;
             clientServer)
                 REQUIRED_BIN="build_docker/simpleTransactionRep"
