@@ -481,12 +481,19 @@ case "$ACTION" in
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
+                INTERACTIVE_EXIT_CODE=0
+                set +e
                 docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                     bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                INTERACTIVE_EXIT_CODE=$?
+                set -e
                 if [ "${CREATE_RECREATED}" -eq 1 ]; then
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated and remains running. Use '$0 enter' to reconnect.${NC}"
                 else
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' remains running. Use '$0 enter' to reconnect.${NC}"
+                fi
+                if [ "${INTERACTIVE_EXIT_CODE}" -ne 0 ]; then
+                    exit "${INTERACTIVE_EXIT_CODE}"
                 fi
             else
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
@@ -498,12 +505,19 @@ case "$ACTION" in
             if [ "${HAS_TTY}" -eq 1 ]; then
                 docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
+                INTERACTIVE_EXIT_CODE=0
+                set +e
                 docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                     bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                INTERACTIVE_EXIT_CODE=$?
+                set -e
                 if [ "${CREATE_RECREATED}" -eq 1 ]; then
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated and remains running. Use '$0 enter' to reconnect.${NC}"
                 else
                     echo -e "${GREEN}Container '${CONTAINER_NAME}' remains running. Use '$0 enter' to reconnect.${NC}"
+                fi
+                if [ "${INTERACTIVE_EXIT_CODE}" -ne 0 ]; then
+                    exit "${INTERACTIVE_EXIT_CODE}"
                 fi
             else
                 docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
@@ -587,9 +601,16 @@ case "$ACTION" in
                 bash -lc "exec tail -f /dev/null" >/dev/null
         fi
         if [ "${HAS_TTY}" -eq 1 ]; then
+            INTERACTIVE_EXIT_CODE=0
+            set +e
             docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+            INTERACTIVE_EXIT_CODE=$?
+            set -e
             echo -e "${GREEN}Container '${CONTAINER_NAME}' remains running. Use '$0 enter' to reconnect.${NC}"
+            if [ "${INTERACTIVE_EXIT_CODE}" -ne 0 ]; then
+                exit "${INTERACTIVE_EXIT_CODE}"
+            fi
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if is_container_stably_running "${CONTAINER_NAME}" 2 1; then

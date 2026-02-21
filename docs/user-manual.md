@@ -407,6 +407,7 @@ Notes:
 - If both standalone `mako-dev` and compose `dev` are running, `shell` guidance includes both access paths (`docker exec ... mako-dev`, `docker compose exec dev ...`, and `docker compose exec -T dev ...` for non-interactive usage).
 - In non-interactive mode, `./docker_build.sh create` starts `mako-dev` in the background (detached) instead of trying to open an interactive shell.
 - In interactive TTY mode, `./docker_build.sh create` now also bootstraps `mako-dev` with a persistent keepalive command and then attaches via `docker exec`, so exiting the shell keeps the container running for later `enter` sessions.
+- After interactive standalone `create`/`enter` sessions end, the script prints a reconnect hint and preserves the shell exit code.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-upgrade legacy standalone `mako-dev` containers created without Docker init support, recreating them with `--init` so child processes are reaped correctly.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-recover standalone containers that are unsuitable for persistent dev usage (transient behavior or non-keepalive command setups), recreating them with a persistent keepalive command before suggesting `docker exec`.
