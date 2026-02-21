@@ -443,7 +443,8 @@ case "$ACTION" in
                     else
                         echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was running briefly but exited.${NC}"
                         if print_compose_access_guidance; then
-                            echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' or '$0 create' for recovery-safe setup.${NC}"
+                            echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 create' to recover it explicitly.${NC}"
+                            echo -e "${GREEN}Or stop compose services first, then run '$0 enter' to target standalone.${NC}"
                         else
                             echo -e "${GREEN}Use '$0 enter' to start/recover standalone '${CONTAINER_NAME}' and attach when possible.${NC}"
                             echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
@@ -452,8 +453,8 @@ case "$ACTION" in
                 else
                     echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
                     if print_compose_access_guidance; then
-                        echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
-                        echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
+                        echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 create' to explicitly recreate/refresh it.${NC}"
+                        echo -e "${GREEN}Or stop compose services first, then run '$0 enter' to target standalone.${NC}"
                     else
                         echo -e "${GREEN}Use '$0 enter' to start/recover standalone '${CONTAINER_NAME}' and attach when possible.${NC}"
                         echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
