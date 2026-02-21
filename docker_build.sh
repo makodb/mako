@@ -490,12 +490,14 @@ case "$ACTION" in
             fi
         else
             if [ "${HAS_TTY}" -eq 1 ]; then
-                docker run "${DOCKER_INIT_OPTS[@]}" "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "exec tail -f /dev/null" >/dev/null
+                docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} \
                     bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
                 if [ "${CREATE_RECREATED}" -eq 1 ]; then
-                    echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated. Session ended. Use '$0 enter' to reconnect.${NC}"
+                    echo -e "${GREEN}Container '${CONTAINER_NAME}' was recreated and remains running. Use '$0 enter' to reconnect.${NC}"
                 else
-                    echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
+                    echo -e "${GREEN}Container '${CONTAINER_NAME}' remains running. Use '$0 enter' to reconnect.${NC}"
                 fi
             else
                 docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
