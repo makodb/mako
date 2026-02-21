@@ -588,7 +588,8 @@ case "$ACTION" in
             done
             echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep)${NC}"
             echo -e "${YELLOW}and RocksDB test binaries for ci-quick rocksdbTests.${NC}"
-            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to build missing binaries and run this suite.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh build' to rebuild Docker binaries, then rerun './docker_build.sh ci-quick ${CI_TEST}'.${NC}"
+            echo -e "${YELLOW}Or run './docker_build.sh ci ${CI_TEST}' to build and run this suite in one command.${NC}"
             exit 1
         fi
         if [ "${#non_executable_bins[@]}" -gt 0 ]; then
@@ -596,7 +597,8 @@ case "$ACTION" in
             for bin in "${non_executable_bins[@]}"; do
                 echo -e "${RED}  - ${bin}${NC}"
             done
-            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild executable binaries in Docker.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh build' to refresh binaries, then rerun './docker_build.sh ci-quick ${CI_TEST}'.${NC}"
+            echo -e "${YELLOW}Or run './docker_build.sh ci ${CI_TEST}' to rebuild and run this suite in one command.${NC}"
             exit 1
         fi
         if [ "${#incompatible_bins[@]}" -gt 0 ]; then
@@ -605,7 +607,8 @@ case "$ACTION" in
                 echo -e "${RED}  - ${bin}${NC}"
             done
             echo -e "${YELLOW}Cannot run locally-built binaries in Docker due to library path mismatch.${NC}"
-            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild and test in Docker.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh build' to regenerate Docker-compatible binaries, then rerun './docker_build.sh ci-quick ${CI_TEST}'.${NC}"
+            echo -e "${YELLOW}Or run './docker_build.sh ci ${CI_TEST}' to rebuild and run this suite in one command.${NC}"
             exit 1
         fi
         if [ "${#warning_runpaths[@]}" -gt 0 ]; then
