@@ -54,7 +54,7 @@ case "$ACTION" in
                      else \
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
-                     cmake --build build_docker --parallel ${JOBS} --target dbtest"
+                     cmake --build build_docker --parallel ${JOBS} --target dbtest simpleTransaction simplePaxos simpleTransactionRep"
         echo -e "${GREEN}Build completed successfully!${NC}"
         ;;
 
@@ -262,7 +262,7 @@ case "$ACTION" in
         echo ""
         echo "Commands:"
         echo "  build-image  - Build the Docker image"
-        echo "  build        - Build dbtest in container (default)"
+        echo "  build        - Build core runtime binaries in container (default)"
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"
