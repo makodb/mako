@@ -616,11 +616,11 @@ case "$ACTION" in
         warn_incomplete_build_docker
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' is running alongside compose service 'dev'.${NC}"
-                echo -e "${YELLOW}'$0 enter' will use standalone '${CONTAINER_NAME}' while it is running.${NC}"
+                echo -e "${YELLOW}Warning: starting compose service 'dev' will run alongside standalone container '${CONTAINER_NAME}'.${NC}"
+                echo -e "${YELLOW}'$0 enter' will keep using standalone '${CONTAINER_NAME}' while it is running.${NC}"
             else
-                echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists alongside compose service 'dev'.${NC}"
-                echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone '${CONTAINER_NAME}' remains stopped.${NC}"
+                echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
+                echo -e "${YELLOW}If compose service 'dev' is running, '$0 enter' will reuse it while standalone remains stopped.${NC}"
             fi
             if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                 echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
