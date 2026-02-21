@@ -57,10 +57,13 @@ case "$ACTION" in
         ;;
 
     test)
-        echo -e "${YELLOW}Running build test in container...${NC}"
+        echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
-            bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j${JOBS} && \
-                     echo 'SUCCESS: build completed' && \
+            bash -c "rm -rf build_docker && \
+                     cmake -S . -B build_docker && \
+                     cmake --build build_docker --parallel ${JOBS} --target dbtest && \
+                     echo 'SUCCESS: dbtest build completed' && \
+                     BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication && \
                      ls -la build_docker/dbtest"
         echo -e "${GREEN}Test completed successfully!${NC}"
         ;;
@@ -166,7 +169,7 @@ case "$ACTION" in
         echo "  shell        - Start temporary interactive shell (auto-removed on exit)"
         echo "  create       - Create persistent dev container named '${CONTAINER_NAME}'"
         echo "  enter        - Enter existing '${CONTAINER_NAME}' container (auto-starts if stopped)"
-        echo "  test         - Run quick build test"
+        echo "  test         - Build dbtest and run shardNoReplication smoke test"
         echo "  ci [test]    - Build and run CI test (default: all)"
         echo "  ci-quick [test] - Run CI test without rebuild (default: shardNoReplication)"
         echo "  clean        - Clean build artifacts"

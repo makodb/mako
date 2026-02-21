@@ -365,6 +365,11 @@ Main commands:
 ./docker_build.sh ci all
 ```
 
+Notes:
+- `./docker_build.sh test` performs a focused Docker smoke test.
+- It builds `dbtest` in `build_docker`.
+- It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
+
 Relevant files:
 - `Dockerfile.ubuntu24`
 - `docker-compose.yml`

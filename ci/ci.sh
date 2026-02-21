@@ -19,9 +19,10 @@ check_for_hanging_processes() {
     # Wait a bit for processes to exit naturally
     sleep 3
 
-    # Count hanging dbtest processes for the current user only
+    # Count real dbtest processes for the current user.
+    # Avoid matching parent shell command lines that only contain the word "dbtest".
     local hanging_pids
-    hanging_pids=$(pgrep -u "$user_name" -f dbtest || true)
+    hanging_pids=$(ps -u "$user_name" -o pid=,comm= | awk '$2=="dbtest" {print $1}')
     local hanging_count=0
     if [ -n "$hanging_pids" ]; then
         hanging_count=$(echo "$hanging_pids" | wc -l)
@@ -32,7 +33,7 @@ check_for_hanging_processes() {
 ERROR: Test '$test_name' left $hanging_count hanging dbtest process(es)!
 =========================================
 Hanging processes:"
-        ps -u "$user_name" -f | grep -E "[d]btest"
+        ps -u "$user_name" -o pid,ppid,comm,args | awk '$3=="dbtest"'
         echo ""
         echo "These processes did not exit cleanly after the test completed."
         echo "This indicates a process cleanup issue that needs to be fixed."
