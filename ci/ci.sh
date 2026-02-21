@@ -84,7 +84,17 @@ cleanup_processes() {
                 continue
             fi
             kill -9 "$pid" 2>/dev/null || true
-        done < <(pgrep -u "$user_name" -f "$proc" 2>/dev/null || true)
+        done < <(
+            # Match by executable basename only to avoid killing wrapper shells
+            # whose command lines merely contain strings like "dbtest".
+            ps -u "$user_name" -o pid=,args= 2>/dev/null | awk -v proc="$proc" '
+                {
+                    cmd=$2
+                    n=split(cmd, parts, "/")
+                    if (parts[n] == proc) print $1
+                }
+            '
+        )
     done
 
     # Kill test wrapper scripts (2shard tests with/without replication)
