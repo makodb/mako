@@ -138,10 +138,9 @@ case "$ACTION" in
                         echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
                         echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
                     else
-                        echo -e "${GREEN}Start it with: docker start ${CONTAINER_NAME}${NC}"
-                        echo -e "${GREEN}Preferred: use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
-                        echo -e "${GREEN}Then run (TTY): docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                        echo -e "${GREEN}Or non-interactive: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                        echo -e "${GREEN}Use '$0 enter' to start/recover standalone '${CONTAINER_NAME}' and attach when possible.${NC}"
+                        echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
+                        echo -e "${GREEN}If you use raw Docker commands, verify '${CONTAINER_NAME}' stays running before docker exec.${NC}"
                     fi
                 fi
             else
