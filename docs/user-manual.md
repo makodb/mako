@@ -387,6 +387,7 @@ Main commands:
 
 Notes:
 - `./docker_build.sh build` supports incremental rebuilds: it reuses a compatible `build_docker` cache and skips CMake reconfigure unless cache is missing/incompatible.
+- Docker build flows now persist Cargo registry/git caches in workspace directory `.cargo-docker` (`CARGO_HOME=/workspace/.cargo-docker`) so repeated `build`/`test`/`ci` runs do not re-download crates each time.
 - `./docker_build.sh build` compiles core runtime binaries: `dbtest`, `simpleTransaction`, `simplePaxos`, and `simpleTransactionRep`.
 - It also compiles RocksDB quick-test binaries used by `ci-quick rocksdbTests`: `test_rocksdb_persistence`, `test_callback_demo`, `test_ordered_callbacks`, `test_partitioned_queues`, and `test_stress_partitioned_queues`.
 - If you open `shell`/`create`/`enter`/`compose-up` before running `build`, in-container `BUILD_DIR=build_docker ./ci/ci.sh ...` commands can fail due to missing binaries.
@@ -400,7 +401,7 @@ Notes:
   Set `MAKO_DOCKER_ENABLE_COREDUMP=1` to re-enable core dumps for debugging.
 - Script-driven Docker commands (`build`, `test`, `ci`, `ci-quick`) now run as host UID:GID by default to keep `build_docker`, `target-docker`, and generated logs writable from the host checkout.
   Override with `MAKO_DOCKER_SCRIPT_USER=root` if root-owned artifacts are intentionally desired.
-- When stale root-owned `build_docker`/`target-docker` directories exist from older runs, these commands now auto-normalize ownership before executing.
+- When stale root-owned `build_docker`/`target-docker`/`.cargo-docker` directories exist from older runs, these commands now auto-normalize ownership before executing.
 - `./docker_build.sh clean` removes `build_docker`, `target-docker`, and top-level `core.*` crash artifacts (using a helper container when host permissions block deletion).
 - Image-dependent commands (`build`, `shell`, `test`, `ci`, `ci-quick`, `create`, `enter`, `compose-up`) auto-build `mako-build:ubuntu24` when the image is missing locally.
 - `./docker_build.sh shell`/`create`/`enter` set `BUILD_DIR=build_docker` by default so `./ci/ci.sh ...` in the container uses Docker-built artifacts.

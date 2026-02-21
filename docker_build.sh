@@ -23,7 +23,7 @@ COMPOSE_PROJECT_NAME="mako-${WORKSPACE_HASH}"
 COMPOSE_CMD_PREFIX="MAKO_COMPOSE_PROJECT=${COMPOSE_PROJECT_NAME} docker compose"
 
 # Environment variables/options for Docker runs
-DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e BUILD_DIR=build_docker)
+DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker -e CARGO_HOME=/workspace/.cargo-docker -e BUILD_DIR=build_docker)
 DOCKER_INIT_OPTS=(--init)
 DOCKER_SECURITY_OPTS=()
 if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
@@ -84,7 +84,7 @@ normalize_script_build_ownership() {
         return 0
     fi
 
-    for target_path in build_docker target-docker; do
+    for target_path in build_docker target-docker .cargo-docker; do
         if [ -e "${target_path}" ] && [ ! -w "${target_path}" ]; then
             needs_fix=1
             break
@@ -104,9 +104,9 @@ normalize_script_build_ownership() {
         return 0
     fi
 
-    echo -e "${YELLOW}Detected stale non-writable build artifacts; normalizing ownership of build_docker/target-docker to ${script_uid}:${script_gid}.${NC}"
+    echo -e "${YELLOW}Detected stale non-writable Docker build/cache artifacts; normalizing ownership to ${script_uid}:${script_gid}.${NC}"
     docker run --rm "${DOCKER_SECURITY_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
-        bash -lc "for d in /workspace/build_docker /workspace/target-docker; do if [ -e \"\$d\" ]; then chown -R ${script_uid}:${script_gid} \"\$d\"; fi; done"
+        bash -lc "for d in /workspace/build_docker /workspace/target-docker /workspace/.cargo-docker; do if [ -e \"\$d\" ]; then chown -R ${script_uid}:${script_gid} \"\$d\"; fi; done"
 }
 
 warn_incomplete_build_docker() {
