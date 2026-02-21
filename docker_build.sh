@@ -66,17 +66,43 @@ warn_incomplete_build_docker() {
         "build_docker/simpleTransactionRep"
     )
     local missing_bins=()
+    local incompatible_bins=()
+    local use_docker_readelf=0
     local required_bin
+
+    if ! readelf --version >/dev/null 2>&1; then
+        use_docker_readelf=1
+    fi
+
     for required_bin in "${required_bins[@]}"; do
         if [ ! -x "${required_bin}" ]; then
             missing_bins+=("${required_bin}")
+            continue
+        fi
+
+        local runpath
+        if [ "${use_docker_readelf}" -eq 1 ]; then
+            runpath=$(docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+                bash -lc "readelf -d '${required_bin}' 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'")
+        else
+            runpath=$(readelf -d "${required_bin}" 2>/dev/null | awk '/RUNPATH/ {print $5}' | tr -d '[]')
+        fi
+
+        if [[ ":${runpath}:" != *":/workspace/build_docker:"* ]]; then
+            incompatible_bins+=("${required_bin} (RUNPATH: ${runpath:-<none>})")
         fi
     done
-    if [ "${#missing_bins[@]}" -gt 0 ]; then
-        echo -e "${YELLOW}Warning: Docker build artifacts are missing or incomplete in build_docker.${NC}"
+    if [ "${#missing_bins[@]}" -gt 0 ] || [ "${#incompatible_bins[@]}" -gt 0 ]; then
+        echo -e "${YELLOW}Warning: Docker build artifacts are missing or incompatible in build_docker.${NC}"
         for required_bin in "${missing_bins[@]}"; do
             echo -e "${YELLOW}  - ${required_bin}${NC}"
         done
+        for required_bin in "${incompatible_bins[@]}"; do
+            echo -e "${YELLOW}  - ${required_bin}${NC}"
+        done
+        if [ "${use_docker_readelf}" -eq 1 ]; then
+            echo -e "${YELLOW}Host 'readelf' is unavailable or not working; compatibility was checked with Docker tools.${NC}"
+        fi
         echo -e "${YELLOW}Run '$0 build' before running './ci/ci.sh ...' inside dev containers.${NC}"
         echo -e "${YELLOW}Or run '$0 ci <test>' to build and execute a CI suite in one command.${NC}"
     fi
