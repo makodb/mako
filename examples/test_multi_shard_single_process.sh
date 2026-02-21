@@ -26,7 +26,6 @@ rm -f nfs_sync_*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
-run_seconds="${MAKO_RUN_SECONDS:-50}"
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
@@ -59,14 +58,36 @@ nohup $GDB_PREFIX $CMD > "$log_file" 2>&1 &
 PROCESS_PID=$!
 sleep 2
 
-# Wait for experiments to run
-echo "Running experiments for ${run_seconds} seconds..."
-sleep "$run_seconds"
+# Wait for benchmark completion (poll for completion marker)
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+wait_count=0
+echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
+while [ "$wait_count" -lt "$max_wait" ]; do
+    if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+        echo "Benchmark completed after ${wait_count}s"
+        sleep 2
+        break
+    fi
 
-# Kill the process
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed)"
+    fi
+done
+
+if [ "$wait_count" -ge "$max_wait" ]; then
+    echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+fi
+
+# Stop process (graceful first, force if still alive)
 echo "Stopping process..."
-kill $PROCESS_PID 2>/dev/null
-wait $PROCESS_PID 2>/dev/null
+kill "$PROCESS_PID" 2>/dev/null || true
+sleep 2
+if kill -0 "$PROCESS_PID" 2>/dev/null; then
+    kill -9 "$PROCESS_PID" 2>/dev/null || true
+fi
+wait "$PROCESS_PID" 2>/dev/null
 
 echo ""
 echo "========================================="
@@ -152,11 +173,12 @@ else
 fi
 
 # Check 9: Benchmark started (at least one shard)
-benchmark_count=$(grep -c "starting benchmark" "$log_file" || echo "0")
+benchmark_count=$(grep -c "starting benchmark" "$log_file" 2>/dev/null || true)
 if [ "$benchmark_count" -ge 1 ]; then
     echo "  ✓ Benchmark started ($benchmark_count shard(s))"
 else
-    echo "  ⚠ Benchmark not started (may still be loading)"
+    echo "  ✗ Benchmark not started"
+    failed=1
 fi
 
 # Check 10: Look for throughput output (system is running)
@@ -164,7 +186,8 @@ if grep -q "agg_persist_throughput" "$log_file"; then
     echo "  ✓ Found 'agg_persist_throughput' keyword (system running)"
     grep "agg_persist_throughput" "$log_file" | tail -1 | sed 's/^/    /'
 else
-    echo "  ⚠ 'agg_persist_throughput' keyword not found (may still be initializing)"
+    echo "  ✗ 'agg_persist_throughput' keyword not found"
+    failed=1
 fi
 
 echo ""
