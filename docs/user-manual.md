@@ -194,6 +194,7 @@ bash examples/simplePaxos.sh
   -P localhost \
   -F config/1leader_2followers/paxos6_shardidx0.yml \
   -F config/occ_paxos.yml \
+  --startup-timeout-sec 60 \
   --is-replicated \
   --replication=paxos
 ```
@@ -208,6 +209,7 @@ bash examples/simplePaxos.sh
   -P localhost \
   -F config/1leader_2followers/paxos6_shardidx0.yml \
   -F config/occ_raft.yml \
+  --startup-timeout-sec 60 \
   --is-replicated \
   --replication=raft
 ```
@@ -216,6 +218,7 @@ Important:
 - In replicated configs like `config/1leader_2followers/paxos6_shardidx0.yml`, `-P localhost` starts only one role group.
 - You must start peer role groups (for example `-P p1`, `-P p2`, and `-P learner`) concurrently, or startup can wait indefinitely.
 - `dbtest` now prints an explicit startup warning when replicated mode is launched with `-P localhost` to highlight this requirement.
+- Use `--startup-timeout-sec <seconds>` in headless/non-interactive runs to fail fast instead of hanging indefinitely.
 - For local end-to-end replicated runs, prefer `bash examples/test_1shard_replication.sh` or `bash examples/test_2shard_replication.sh`.
 
 #### Multi-shard single-process mode
@@ -276,6 +279,7 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 - `--throttle-cycle`
 - `--sync-dir`
 - `--replication` (`paxos` or `raft`)
+- `--startup-timeout-sec` (optional fail-fast guard for replicated localhost startup)
 - `--is-config-node`
 - `--config-node-addr`
 - `--config-db-path`
