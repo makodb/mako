@@ -255,6 +255,7 @@ print_compose_access_guidance() {
         stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
         echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+        echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
         return 0
     fi
 
@@ -398,6 +399,7 @@ case "$ACTION" in
                         stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
                         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                         echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                        echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
                         echo -e "${GREEN}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
                     else
                         echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
@@ -641,6 +643,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                 echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
                 echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
                 echo -e "${YELLOW}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
                 exit 1
             fi
@@ -829,6 +832,7 @@ case "$ACTION" in
                     echo -e "${YELLOW}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                     echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
                     echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                    echo -e "${YELLOW}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
                     echo -e "${YELLOW}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
                     exit 1
                 fi
