@@ -88,9 +88,16 @@ case "$ACTION" in
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
-                echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
-                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                    echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
+                    echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                    echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                else
+                    echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
+                    echo -e "${GREEN}Start it with: docker start ${CONTAINER_NAME}${NC}"
+                    echo -e "${GREEN}Then run (TTY): docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                    echo -e "${GREEN}Or non-interactive: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
+                fi
             else
                 echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was not found.${NC}"
                 echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
