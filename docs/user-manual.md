@@ -220,6 +220,7 @@ Important:
 - `dbtest` now prints an explicit startup warning when replicated mode is launched with `-P localhost` to highlight this requirement.
 - Use `--startup-timeout-sec <seconds>` (or `MAKO_STARTUP_TIMEOUT_SEC`) to fail fast instead of hanging indefinitely.
 - In non-interactive runs, when no timeout is provided, `dbtest` now applies a default startup timeout of 120 seconds.
+  Use value `0` to explicitly disable the startup watchdog.
 - For local end-to-end replicated runs, prefer `bash examples/test_1shard_replication.sh` or `bash examples/test_2shard_replication.sh`.
 
 #### Multi-shard single-process mode

@@ -14,6 +14,7 @@ static void parse_command_line_args(int argc,
                                     int &is_micro,
                                     int &is_replicated,
                                     int &startup_timeout_sec,
+                                    bool &startup_timeout_explicit,
                                     string& site_name,
                                     vector<string>& paxos_config_file,
                                     string& local_shards_str,
@@ -149,6 +150,7 @@ static void parse_command_line_args(int argc,
       ALWAYS_ASSERT(endptr != optarg && *endptr == '\0');
       ALWAYS_ASSERT(parsed >= 0 && parsed <= 86400);
       startup_timeout_sec = static_cast<int>(parsed);
+      startup_timeout_explicit = true;
       }
       break;
 
@@ -196,23 +198,25 @@ static void warn_if_replicated_role_may_block() {
           benchConfig.getPaxosProcName().c_str());
 }
 
-static int resolve_startup_timeout_sec(int startup_timeout_sec)
+static int resolve_startup_timeout_sec(int startup_timeout_sec, bool startup_timeout_explicit)
 {
   int resolved_timeout_sec = startup_timeout_sec;
+  bool timeout_configured = startup_timeout_explicit;
 
-  if (resolved_timeout_sec <= 0) {
+  if (!timeout_configured) {
     if (const char* env = getenv("MAKO_STARTUP_TIMEOUT_SEC")) {
       char* endptr = nullptr;
       long parsed = strtol(env, &endptr, 10);
       if (endptr != env && *endptr == '\0' && parsed >= 0 && parsed <= 86400) {
         resolved_timeout_sec = static_cast<int>(parsed);
+        timeout_configured = true;
       } else {
         Warning("Invalid MAKO_STARTUP_TIMEOUT_SEC='%s'; ignoring", env);
       }
     }
   }
 
-  if (resolved_timeout_sec <= 0 && !isatty(STDIN_FILENO)) {
+  if (!timeout_configured && !isatty(STDIN_FILENO)) {
     // In non-interactive/headless runs, avoid indefinite hangs by default.
     resolved_timeout_sec = 120;
     Notice("Non-interactive startup detected; applying default startup timeout (%ds). "
@@ -419,6 +423,7 @@ main(int argc, char **argv)
   int is_micro = 0;  // Flag for micro benchmark mode
   int is_replicated = 0;  // if use Paxos to replicate
   int startup_timeout_sec = 0;  // Optional startup watchdog timeout for replicated localhost mode
+  bool startup_timeout_explicit = false;
   vector<string> paxos_config_file{};
   string site_name = "";  // For new config format
   string local_shards_str = "";  // For multi-shard mode: comma-separated list
@@ -426,7 +431,7 @@ main(int argc, char **argv)
 
   auto& benchConfig = BenchmarkConfig::getInstance();
   // Parse command line arguments
-  parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec,
+  parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec, startup_timeout_explicit,
                           site_name, paxos_config_file, local_shards_str, replication_type);
 
   // Set replication type before any initialization (default is paxos)
@@ -444,7 +449,7 @@ main(int argc, char **argv)
   benchConfig.setIsReplicated(is_replicated);
   benchConfig.setPaxosConfigFile(paxos_config_file);
   warn_if_replicated_role_may_block();
-  startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec);
+  startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec, startup_timeout_explicit);
   std::atomic<bool> startup_complete(false);
   start_replicated_startup_watchdog(startup_timeout_sec, &startup_complete);
 
