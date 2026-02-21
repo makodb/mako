@@ -887,6 +887,28 @@ case "$ACTION" in
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
         ensure_image
         warn_incomplete_build_docker
+        create_compose_was_running=0
+        create_stale_compose_project=""
+        create_stale_compose_count=0
+        if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+            create_compose_was_running=1
+        else
+            create_stale_compose_count=$(count_stale_compose_projects)
+            create_stale_compose_project=$(select_single_stale_compose_project || true)
+        fi
+        if [ "${create_compose_was_running}" -eq 1 ]; then
+            echo -e "${YELLOW}Warning: compose service 'dev' is already running for this checkout.${NC}"
+            echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
+        elif [ -n "${create_stale_compose_project}" ]; then
+            echo -e "${YELLOW}Warning: found running compose service 'dev' for this checkout under project '${create_stale_compose_project}'.${NC}"
+            echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
+            echo -e "${YELLOW}Use 'MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec dev /bin/bash' if you want that compose container.${NC}"
+        elif [ "${create_stale_compose_count}" -gt 1 ]; then
+            create_stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
+            echo -e "${YELLOW}Warning: multiple compose services are running for this checkout: ${create_stale_compose_projects}.${NC}"
+            echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
+            echo -e "${YELLOW}Select a compose project explicitly with: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+        fi
         CREATE_RECREATED=0
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
