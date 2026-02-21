@@ -1,9 +1,12 @@
 #!/bin/bash
 
-# Script to test 2-shard experiments without replication
-# Each shard should:
+# Script to test 1-shard experiments without replication.
+# Success criteria:
 # 1. Show "agg_persist_throughput" keyword
-# 2. Have NewOrder_remote_abort_ratio < 20%
+# 2. NewOrder_remote_abort_ratio is < 20%, or N/A when no remote txns occur
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
 
 echo "========================================="
 echo "Testing 1-shard setup without replication"
@@ -15,18 +18,139 @@ script_name="$(basename "$0")"
 # Clean up old log files
 rm -f nfs_sync_*
 
+# Clean up RocksDB data from previous runs
+USERNAME=${USER:-$(whoami)}
+rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
+
+# Use a randomized port base to avoid collisions on shared hosts.
+TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "dbtest config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+trap cleanup_temp_config EXIT
+
+# Determine transport type and create unique log prefix
+transport="${MAKO_TRANSPORT:-rrr}"
+log_prefix="${script_name}_${transport}"
+log_file="${log_prefix}_shard0-$trd.log"
+
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
+
 # Start shard 0 in background
 echo "Starting shard 0..."
-nohup bash bash/shard.sh 1 0 $trd localhost > $script_name\_shard0-$trd.log 2>&1 &
+nohup bash bash/shard.sh 1 0 $trd localhost > "$log_file" 2>&1 &
 SHARD0_PID=$!
 sleep 2
 
-# Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 50
+# Wait for benchmark completion (poll for completion marker)
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+wait_count=0
+echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
+while [ "$wait_count" -lt "$max_wait" ]; do
+    if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+        echo "Benchmark completed after ${wait_count}s"
+        sleep 2
+        break
+    fi
 
-# Kill the processes
-echo "Stopping shards..."
-kill $SHARD0_PID $SHARD1_PID 2>/dev/null
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed)"
+    fi
+done
+
+if [ "$wait_count" -ge "$max_wait" ]; then
+    echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+fi
+
+# Stop process (graceful first, force if still alive)
+echo "Stopping shard..."
+kill "$SHARD0_PID" 2>/dev/null || true
+sleep 2
+if kill -0 "$SHARD0_PID" 2>/dev/null; then
+    kill -9 "$SHARD0_PID" 2>/dev/null || true
+fi
+wait "$SHARD0_PID" 2>/dev/null
+
+echo ""
+echo "========================================="
+echo "Checking test results..."
+echo "========================================="
+
+failed=0
+
+echo ""
+echo "Checking $log_file:"
+echo "-----------------"
+
+if [ ! -f "$log_file" ]; then
+    echo "  ✗ Log file not found"
+    exit 1
+fi
+
+# Check for TPC-C sharding policy initialization
+if grep -q "TPC-C Sharding: Initialized policy" "$log_file"; then
+    echo "  ✓ TPC-C sharding policy initialized"
+    grep "TPC-C Sharding: Initialized policy" "$log_file" | tail -1 | sed 's/^/    /'
+else
+    echo "  ✗ TPC-C sharding policy not initialized"
+    failed=1
+fi
+
+# Check for throughput output
+if grep -q "agg_persist_throughput" "$log_file"; then
+    echo "  ✓ Found 'agg_persist_throughput' keyword"
+    grep "agg_persist_throughput" "$log_file" | tail -1 | sed 's/^/    /'
+else
+    echo "  ✗ 'agg_persist_throughput' keyword not found"
+    failed=1
+fi
+
+# Check NewOrder_remote_abort_ratio
+if grep -q "NewOrder_remote_abort_ratio:" "$log_file"; then
+    abort_ratio=$(grep "NewOrder_remote_abort_ratio:" "$log_file" | tail -1 | awk '{print $2}')
+    if [ -z "$abort_ratio" ]; then
+        echo "  ✗ Could not extract NewOrder_remote_abort_ratio value"
+        failed=1
+    else
+        abort_value=$(echo "$abort_ratio" | sed 's/%//')
+        abort_value_lower=$(echo "$abort_value" | tr '[:upper:]' '[:lower:]')
+
+        if [ "$abort_value_lower" = "nan" ] || [ "$abort_value_lower" = "-nan" ]; then
+            echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (N/A: no remote transactions in single-shard run)"
+        elif awk "BEGIN {exit !($abort_value < 20)}"; then
+            echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 20%)"
+        else
+            echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 20%)"
+            failed=1
+        fi
+    fi
+else
+    echo "  ✗ NewOrder_remote_abort_ratio not found"
+    failed=1
+fi
+
+echo ""
+echo "========================================="
+if [ $failed -eq 0 ]; then
+    echo "All checks passed!"
+    echo "========================================="
+    exit 0
+else
+    echo "Some checks failed!"
+    echo "========================================="
+    echo ""
+    echo "Debug information:"
+    echo "Check $log_file for details"
+    tail -n 20 "$log_file"
+    exit 1
+fi
