@@ -1154,6 +1154,7 @@ case "$ACTION" in
                 ensure_image
                 compose_cmd up -d dev
                 echo -e "${GREEN}Compose service 'dev' started.${NC}"
+                echo -e "${GREEN}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 COMPOSE_INTERACTIVE_EXIT_CODE=0
@@ -1162,11 +1163,13 @@ case "$ACTION" in
                 COMPOSE_INTERACTIVE_EXIT_CODE=$?
                 set -e
                 echo -e "${GREEN}Compose service 'dev' remains running. Use '$0 enter' or '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to reconnect.${NC}"
+                echo -e "${GREEN}Stop compose service 'dev' with: ${COMPOSE_CMD_PREFIX} down${NC}"
                 exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
             fi
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             echo -e "${GREEN}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
             echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${GREEN}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
             exit 0
         fi
         EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)

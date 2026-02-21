@@ -429,6 +429,7 @@ Notes:
 - `./docker_build.sh compose-down` distinguishes full vs partial shutdown: it stops current-project `dev` when running, auto-stops a single stale same-checkout `dev` when current is absent, and exits non-zero when stale compose services still remain (for example multiple stale projects).
 - `./docker_build.sh enter` now also requires standalone liveness to remain stable before non-interactive `docker exec` guidance, so short-lived containers are redirected to recovery-safe instructions (or compose guidance when compose `dev` is running).
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `MAKO_COMPOSE_PROJECT=... docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
+- When `enter` auto-starts compose `dev` (because standalone is absent), it also prints the matching project-scoped teardown command (`MAKO_COMPOSE_PROJECT=... docker compose down`).
 - Interactive compose shells entered via `./docker_build.sh enter` now print the same `BUILD_DIR=build_docker` tip and a reconnect hint, while preserving the shell exit code.
 - When both standalone `mako-dev` and compose `dev` exist:
   - if standalone is running, `./docker_build.sh enter` prefers standalone `mako-dev`;
