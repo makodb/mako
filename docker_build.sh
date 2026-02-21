@@ -46,6 +46,11 @@ if [ "${DOCKER_DEV_USER}" != "root" ]; then
     DOCKER_DEV_USER_OPTS=(--user "${DOCKER_DEV_USER}")
     DOCKER_DEV_USER_CMD_PREFIX="--user ${DOCKER_DEV_USER} "
 fi
+DOCKER_SCRIPT_USER="${MAKO_DOCKER_SCRIPT_USER:-$(id -u):$(id -g)}"
+DOCKER_SCRIPT_USER_OPTS=()
+if [ "${DOCKER_SCRIPT_USER}" != "root" ]; then
+    DOCKER_SCRIPT_USER_OPTS=(--user "${DOCKER_SCRIPT_USER}")
+fi
 
 # Disable core dumps in script-driven Docker runs by default to avoid polluting
 # the workspace with large core.* artifacts after transient test crashes.
@@ -63,6 +68,41 @@ ensure_image() {
         echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
         docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
     fi
+}
+
+normalize_script_build_ownership() {
+    local needs_fix=0
+    local target_path
+    local script_uid=""
+    local script_gid=""
+
+    if [ "${DOCKER_SCRIPT_USER}" = "root" ]; then
+        return 0
+    fi
+
+    for target_path in build_docker target-docker; do
+        if [ -e "${target_path}" ] && [ ! -w "${target_path}" ]; then
+            needs_fix=1
+            break
+        fi
+    done
+
+    if [ "${needs_fix}" -eq 0 ]; then
+        return 0
+    fi
+
+    if [[ "${DOCKER_SCRIPT_USER}" =~ ^([0-9]+):([0-9]+)$ ]]; then
+        script_uid="${BASH_REMATCH[1]}"
+        script_gid="${BASH_REMATCH[2]}"
+    else
+        echo -e "${YELLOW}Warning: MAKO_DOCKER_SCRIPT_USER='${DOCKER_SCRIPT_USER}' is not numeric uid:gid; skipping auto-fix for stale root-owned build artifacts.${NC}"
+        echo -e "${YELLOW}If build/test/ci fail with permission errors, run './docker_build.sh clean' or set MAKO_DOCKER_SCRIPT_USER=root.${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Detected stale non-writable build artifacts; normalizing ownership of build_docker/target-docker to ${script_uid}:${script_gid}.${NC}"
+    docker run --rm "${DOCKER_SECURITY_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
+        bash -lc "for d in /workspace/build_docker /workspace/target-docker; do if [ -e \"\$d\" ]; then chown -R ${script_uid}:${script_gid} \"\$d\"; fi; done"
 }
 
 warn_incomplete_build_docker() {
@@ -443,7 +483,8 @@ case "$ACTION" in
         fi
         echo -e "${YELLOW}Building Mako in container...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
+        normalize_script_build_ownership
+        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; cd /workspace && \
                      if [ -f build_docker/CMakeCache.txt ]; then \
                          CACHE_INCOMPATIBLE=0; \
@@ -604,7 +645,8 @@ case "$ACTION" in
             DOCKER_TEST_MAX_WAIT_SECONDS=180
         fi
         echo -e "${YELLOW}Using shardNoReplication wait timeout: ${DOCKER_TEST_MAX_WAIT_SECONDS}s (override with MAKO_DOCKER_TEST_MAX_WAIT_SECONDS).${NC}"
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e "MAKO_MAX_WAIT_SECONDS=${DOCKER_TEST_MAX_WAIT_SECONDS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+        normalize_script_build_ownership
+        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e "MAKO_MAX_WAIT_SECONDS=${DOCKER_TEST_MAX_WAIT_SECONDS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; NEED_BUILD=1; \
                      if [ -x build_docker/dbtest ]; then \
                          RUNPATH=\$(readelf -d build_docker/dbtest 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'); \
@@ -700,19 +742,20 @@ case "$ACTION" in
         esac
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container with ${CI_JOBS} build jobs...${NC}"
         ensure_image
+        normalize_script_build_ownership
         case "${CI_TEST}" in
             compile|all)
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
-                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+                docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
             cleanup)
                 # cleanup should not force an expensive build first.
-                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+                docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh cleanup"
                 ;;
             *)
-                docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+                docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} make BUILD_DIR=build_docker -j${CI_JOBS} && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
                 ;;
         esac
@@ -840,7 +883,8 @@ case "$ACTION" in
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+        normalize_script_build_ownership
+        docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
