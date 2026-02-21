@@ -89,10 +89,14 @@ sleep 2
 # Wait for benchmark to complete (poll for completion marker)
 echo "Waiting for benchmark to complete..."
 log_file="${script_name}_shard0-localhost-$trd.log"
-max_wait=120  # Maximum wait time in seconds
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
 wait_count=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     # Check if throughput output appeared (indicates completion)
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
@@ -106,7 +110,7 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
-if [ $wait_count -ge $max_wait ]; then
+if [ "$wait_count" -ge "$max_wait" ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
 fi
 

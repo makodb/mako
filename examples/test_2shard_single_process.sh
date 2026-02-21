@@ -87,10 +87,14 @@ sleep 2
 
 # Wait for benchmark to complete (check for throughput output)
 echo "Waiting for benchmark to complete..."
-max_wait=90
+max_wait="${MAKO_MAX_WAIT_SECONDS:-90}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 90s"
+    max_wait=90
+fi
 wait_count=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
         sleep 2

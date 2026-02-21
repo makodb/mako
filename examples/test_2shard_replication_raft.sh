@@ -72,10 +72,14 @@ SHARD1_P1_PID=$!
 echo "Waiting for benchmarks to complete..."
 log_file0="${log_prefix}_shard0-localhost.log"
 log_file1="${log_prefix}_shard1-localhost.log"
-max_wait=120  # Maximum wait time in seconds
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
 wait_count=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     shard0_done=0
     shard1_done=0
 
@@ -87,7 +91,7 @@ while [ $wait_count -lt $max_wait ]; do
         shard1_done=1
     fi
 
-    if [ $shard0_done -eq 1 ] && [ $shard1_done -eq 1 ]; then
+    if [ "$shard0_done" -eq 1 ] && [ "$shard1_done" -eq 1 ]; then
         echo "Both benchmarks completed after ${wait_count}s"
         sleep 2  # Give a moment for final output
         break
@@ -100,7 +104,7 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
-if [ $wait_count -ge $max_wait ]; then
+if [ "$wait_count" -ge "$max_wait" ]; then
     echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
 fi
 

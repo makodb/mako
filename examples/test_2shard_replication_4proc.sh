@@ -79,10 +79,14 @@ echo ""
 # Wait for benchmarks to complete
 echo "Waiting for benchmarks to complete..."
 log_file="4proc-localhost.log"
-max_wait=120
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
 wait_count=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     done_flag=0
 
     # Check if throughput output appeared
@@ -90,7 +94,7 @@ while [ $wait_count -lt $max_wait ]; do
         done_flag=1
     fi
 
-    if [ $done_flag -eq 1 ]; then
+    if [ "$done_flag" -eq 1 ]; then
         echo "Benchmark completed after ${wait_count}s"
         sleep 2
         break
@@ -107,7 +111,7 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
-if [ $wait_count -ge $max_wait ]; then
+if [ "$wait_count" -ge "$max_wait" ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
 fi
 
