@@ -175,17 +175,38 @@ list_stale_compose_dev_containers() {
     done < <(docker ps --format '{{.Names}}')
 }
 
-select_single_stale_compose_project() {
-    local stale_compose_containers=()
-    local container_name
+list_stale_compose_projects() {
+    local stale_compose_container
 
-    while IFS= read -r container_name; do
-        [ -n "${container_name}" ] || continue
-        stale_compose_containers+=("${container_name}")
+    while IFS= read -r stale_compose_container; do
+        [ -n "${stale_compose_container}" ] || continue
+        echo "${stale_compose_container%-dev-1}"
     done < <(list_stale_compose_dev_containers)
+}
 
-    if [ "${#stale_compose_containers[@]}" -eq 1 ]; then
-        echo "${stale_compose_containers[0]%-dev-1}"
+count_stale_compose_projects() {
+    local stale_compose_count=0
+    local stale_compose_project
+
+    while IFS= read -r stale_compose_project; do
+        [ -n "${stale_compose_project}" ] || continue
+        stale_compose_count=$((stale_compose_count + 1))
+    done < <(list_stale_compose_projects)
+
+    echo "${stale_compose_count}"
+}
+
+select_single_stale_compose_project() {
+    local stale_compose_projects=()
+    local stale_compose_project
+
+    while IFS= read -r stale_compose_project; do
+        [ -n "${stale_compose_project}" ] || continue
+        stale_compose_projects+=("${stale_compose_project}")
+    done < <(list_stale_compose_projects)
+
+    if [ "${#stale_compose_projects[@]}" -eq 1 ]; then
+        echo "${stale_compose_projects[0]}"
         return 0
     fi
 
@@ -360,11 +381,17 @@ case "$ACTION" in
                     echo -e "${GREEN}For non-interactive usage, run: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
                 else
                     stale_compose_project=""
+                    stale_compose_count=$(count_stale_compose_projects)
                     if stale_compose_project=$(select_single_stale_compose_project); then
                         stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                         echo -e "${GREEN}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
                         echo -e "${GREEN}From a TTY, run: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
                         echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                    elif [ "${stale_compose_count}" -gt 1 ]; then
+                        stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
+                        echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
+                        echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                        echo -e "${GREEN}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
                     else
                         echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
                         echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
@@ -743,6 +770,7 @@ case "$ACTION" in
                 echo -e "${GREEN}Compose service 'dev' is already running; skipping compose-up.${NC}"
             else
                 stale_compose_project=""
+                stale_compose_count=$(count_stale_compose_projects)
                 if stale_compose_project=$(select_single_stale_compose_project); then
                     stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                     echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
@@ -760,6 +788,13 @@ case "$ACTION" in
                     echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
                     echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
                     exit 0
+                elif [ "${stale_compose_count}" -gt 1 ]; then
+                    stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
+                    echo -e "${YELLOW}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
+                    echo -e "${YELLOW}Refusing to start another compose container to avoid duplicates.${NC}"
+                    echo -e "${YELLOW}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+                    echo -e "${YELLOW}Or stop stale compose containers, then run '$0 compose-up'.${NC}"
+                    exit 1
                 fi
                 echo -e "${YELLOW}Starting services with docker-compose...${NC}"
                 ensure_image
