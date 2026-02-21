@@ -123,20 +123,27 @@ killall -9 dbtest 2>/dev/null || true
 # Wait for OS to clean up
 sleep 2
 
-# Check for and kill any remaining processes including zombies
-remaining=$(ps aux | grep "dbtest" | grep -v grep | wc -l)
-if [ "$remaining" -gt 0 ]; then
-    echo "WARNING: $remaining dbtest processes still present after kill attempt"
-    ps aux | grep "dbtest" | grep -v grep
+# Check for and kill any remaining non-zombie dbtest processes.
+# Ignore zombie entries here: they cannot be killed and will be reaped by parent wait().
+remaining_live=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 !~ /^Z/ {c++} END {print c+0}')
+remaining_zombies=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 ~ /^Z/ {c++} END {print c+0}')
 
-    # Get PIDs and kill individually
-    pids=$(ps aux | grep "dbtest" | grep -v grep | awk '{print $2}')
+if [ "$remaining_live" -gt 0 ]; then
+    echo "WARNING: $remaining_live live dbtest process(es) still present after kill attempt"
+    ps -eo stat,pid,ppid,args | awk '$4 ~ /dbtest/ && $1 !~ /^Z/'
+
+    # Get PIDs and kill live processes individually
+    pids=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 !~ /^Z/ {print $2}')
     for pid in $pids; do
         echo "Force killing PID $pid"
         kill -9 $pid 2>/dev/null || true
     done
 
     sleep 1
+fi
+
+if [ "$remaining_zombies" -gt 0 ]; then
+    echo "Note: $remaining_zombies zombie dbtest process(es) observed; they will clear after parent reaps them."
 fi
 
 # Final verification - reap zombie processes by explicitly waiting on child PIDs
