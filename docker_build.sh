@@ -868,6 +868,7 @@ case "$ACTION" in
             else
                 echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
             fi
+            echo -e "${GREEN}Stop compose service 'dev' with: ${COMPOSE_CMD_PREFIX} down${NC}"
         else
             if [ "${compose_was_running}" -eq 1 ]; then
                 echo -e "${GREEN}Container already running.${NC}"
@@ -875,6 +876,7 @@ case "$ACTION" in
                 echo -e "${GREEN}Container started.${NC}"
             fi
             echo -e "${GREEN}Non-interactive session detected; run commands with: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+            echo -e "${GREEN}To stop compose service 'dev', run: ${COMPOSE_CMD_PREFIX} down${NC}"
         fi
         ;;
 
