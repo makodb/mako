@@ -548,10 +548,21 @@ static void wait_for_termination()
   auto& benchConfig = BenchmarkConfig::getInstance();
   bool isLearner = benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0 ;
 
-  // Timeout after 90 seconds if no end signal is received
-  // This prevents hanging processes when leader exits abnormally or test script kills leader early
-  // 90 seconds is longer than typical test duration (60s) to ensure we don't timeout during normal runs
-  constexpr int kMaxWaitSeconds = 90;
+  // Timeout while waiting for end signal from leader.
+  // Docker runs can be noticeably slower than local runs, especially during
+  // RocksDB-heavy startup/load phases. Keep a conservative default and allow
+  // override via MAKO_FOLLOWER_END_WAIT_SECONDS.
+  int max_wait_seconds = 180;
+  if (const char* env = getenv("MAKO_FOLLOWER_END_WAIT_SECONDS")) {
+    char* endptr = nullptr;
+    long parsed = strtol(env, &endptr, 10);
+    if (endptr != env && *endptr == '\0' && parsed > 0 && parsed <= 3600) {
+      max_wait_seconds = static_cast<int>(parsed);
+    } else {
+      Warning("Invalid MAKO_FOLLOWER_END_WAIT_SECONDS='%s'; using default %d",
+              env, max_wait_seconds);
+    }
+  }
   int wait_count = 0;
 
   // in case, the Paxos streams on other side is terminated,
@@ -570,9 +581,9 @@ static void wait_for_termination()
              sync_util::sync_logger::noops_cnt.load(), benchConfig.getReplayBatch(), wait_count);
 
     // Timeout check: exit gracefully if we've waited too long
-    if (wait_count >= kMaxWaitSeconds) {
+    if (wait_count >= max_wait_seconds) {
       Warning("%s timed out waiting for end signal after %d seconds - exiting gracefully",
-              isLearner ? "Learner" : "Follower", kMaxWaitSeconds);
+              isLearner ? "Learner" : "Follower", max_wait_seconds);
       break;
     }
     //if (benchConfig.getEndReceived() > 0) {std::quick_exit( EXIT_SUCCESS );}
