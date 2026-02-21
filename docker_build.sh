@@ -106,6 +106,14 @@ has_keepalive_command() {
         [ "${container_cmd}" = "/bin/bash -lc exec tail -f /dev/null" ]
 }
 
+has_init_enabled() {
+    local container_name="$1"
+    local existing_init
+
+    existing_init=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' "${container_name}" 2>/dev/null || echo false)
+    [ "${existing_init}" = "true" ]
+}
+
 has_expected_image() {
     local container_name="$1"
     local expected_image_id
@@ -192,6 +200,14 @@ case "$ACTION" in
                         elif ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but points to a different /workspace mount or working directory.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it for this checkout.${NC}"
+                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                                echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
+                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                            fi
+                        elif ! has_init_enabled "${CONTAINER_NAME}"; then
+                            echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but was created without Docker init support.${NC}"
+                            echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it with '--init'.${NC}"
                             if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
                                 echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
                                 echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
