@@ -300,6 +300,7 @@ case "$ACTION" in
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
         else
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+            warn_stale_compose_dev_containers
             if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
                 if is_container_running "${CONTAINER_NAME}"; then
                     # Only advertise direct docker exec when standalone stays up
