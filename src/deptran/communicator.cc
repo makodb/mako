@@ -1433,7 +1433,7 @@ void Communicator::SetNewLeaderProxy(parid_t par_id, locid_t loc_id) {
         });
      verify (proxy_it != partition_proxies.end()) ;
      leader_cache_[par_id] = *proxy_it;*/
-  Log_debug("set leader porxy for parition %d is %d", par_id, loc_id);
+  Log_debug("set leader proxy for partition %d is %d", par_id, loc_id);
 }
 
 void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,

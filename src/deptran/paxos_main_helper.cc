@@ -293,7 +293,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
       PaxosWorker* worker = new PaxosWorker();
       pxs_workers_g.push_back(std::shared_ptr<PaxosWorker>(worker));
       pxs_workers_g.back()->site_info_ = const_cast<Config::SiteInfo*>(&(Config::GetConfig()->SiteById(server_infos[i].id)));
-      Log_info("parition id of each Paxos group is %d, site-name: %s, site-id: %d", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
+      Log_info("partition id of each Paxos group is %d, site-name: %s, site-id: %d", pxs_workers_g.back()->site_info_->partition_id_, server_infos[i].name.c_str(), server_infos[i].id);
       // setup frame and scheduler
       pxs_workers_g.back()->SetupBase();
     }
