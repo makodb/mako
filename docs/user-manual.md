@@ -406,6 +406,7 @@ Notes:
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-upgrade legacy standalone `mako-dev` containers created without Docker init support, recreating them with `--init` so child processes are reaped correctly.
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
+- When both standalone `mako-dev` and compose `dev` exist, `./docker_build.sh enter` prefers standalone `mako-dev`; use `docker compose exec dev /bin/bash` to enter the compose container.
 - For non-interactive usage against the standalone `mako-dev` container, run: `docker exec -e BUILD_DIR=build_docker mako-dev /bin/bash -lc '<command>'`.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).

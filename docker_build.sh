@@ -348,6 +348,15 @@ case "$ACTION" in
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
         ensure_image
         warn_incomplete_build_docker
+        if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' is running alongside compose service 'dev'.${NC}"
+            else
+                echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists alongside compose service 'dev'.${NC}"
+            fi
+            echo -e "${YELLOW}'$0 enter' targets standalone '${CONTAINER_NAME}' first.${NC}"
+            echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' to enter compose service 'dev'.${NC}"
+        fi
         docker compose up -d dev
         if [ "${HAS_TTY}" -eq 1 ]; then
             echo -e "${GREEN}Container started. Connect with: docker compose exec dev /bin/bash${NC}"
@@ -406,6 +415,11 @@ case "$ACTION" in
     enter)
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
         warn_incomplete_build_docker
+        if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
+           docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+            echo -e "${YELLOW}Compose service 'dev' is also running; '$0 enter' will use standalone '${CONTAINER_NAME}'.${NC}"
+            echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' if you want the compose container.${NC}"
+        fi
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
             if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
