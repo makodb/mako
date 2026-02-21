@@ -240,6 +240,7 @@ select_single_stale_compose_project() {
 }
 
 warn_stale_compose_dev_containers() {
+    local force_warn_single_stale="${1:-0}"
     local stale_compose_containers=()
     local stale_compose_projects=()
     local container_name
@@ -263,7 +264,7 @@ warn_stale_compose_dev_containers() {
     # A single same-checkout stale compose service with no current-project compose
     # service is usually a recoverable state that enter/compose-up can reuse cleanly.
     # Skip warning noise in that case and keep warnings for ambiguous/conflicting states.
-    if [ "${#stale_compose_containers[@]}" -eq 1 ] && [ "${current_compose_running}" -eq 0 ]; then
+    if [ "${force_warn_single_stale}" != "1" ] && [ "${#stale_compose_containers[@]}" -eq 1 ] && [ "${current_compose_running}" -eq 0 ]; then
         return 0
     fi
 
@@ -908,7 +909,7 @@ case "$ACTION" in
                 MAKO_COMPOSE_PROJECT="${single_stale_compose_project}" docker compose down
                 stale_compose_count=$(count_stale_compose_projects)
                 if [ "${stale_compose_count}" -gt 0 ]; then
-                    warn_stale_compose_dev_containers
+                    warn_stale_compose_dev_containers 1
                     echo -e "${YELLOW}Stopped compose project '${single_stale_compose_project}', but stale compose services are still running for this checkout.${NC}"
                     exit 1
                 fi
@@ -919,7 +920,7 @@ case "$ACTION" in
         compose_cmd down
         stale_compose_count=$(count_stale_compose_projects)
         if [ "${stale_compose_count}" -gt 0 ]; then
-            warn_stale_compose_dev_containers
+            warn_stale_compose_dev_containers 1
             if [ "${compose_was_running}" -eq 1 ]; then
                 echo -e "${YELLOW}Current compose project services were stopped, but stale compose services are still running for this checkout.${NC}"
             else
