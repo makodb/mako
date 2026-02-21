@@ -836,6 +836,7 @@ case "$ACTION" in
                 stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
                 echo -e "${YELLOW}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
                 echo -e "${YELLOW}Reusing it to avoid starting a duplicate compose container.${NC}"
+                echo -e "${YELLOW}To stop this reused compose project later, run: ${stale_compose_cmd_prefix} down${NC}"
                 if [ "${HAS_TTY}" -eq 1 ]; then
                     echo -e "${GREEN}Container already running. Connect with: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
                 else
