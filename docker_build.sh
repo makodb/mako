@@ -351,6 +351,29 @@ print_compose_access_guidance() {
     return 1
 }
 
+print_legacy_container_scope_note() {
+    local legacy_workspace_source
+
+    # Only relevant when automatic scoping is active and legacy default exists.
+    if [ -n "${MAKO_DEV_CONTAINER_NAME:-}" ] || [ "${CONTAINER_NAME}" = "${CONTAINER_NAME_DEFAULT}" ]; then
+        return 1
+    fi
+    if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME_DEFAULT}$"; then
+        return 1
+    fi
+    if has_expected_workspace_source "${CONTAINER_NAME_DEFAULT}"; then
+        return 1
+    fi
+
+    legacy_workspace_source=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "${CONTAINER_NAME_DEFAULT}" 2>/dev/null || echo "")
+    echo -e "${GREEN}Detected legacy standalone container '${CONTAINER_NAME_DEFAULT}' bound to a different workspace.${NC}"
+    if [ -n "${legacy_workspace_source}" ]; then
+        echo -e "${GREEN}Legacy '${CONTAINER_NAME_DEFAULT}' workspace: ${legacy_workspace_source}${NC}"
+    fi
+    echo -e "${GREEN}This checkout uses scoped standalone name '${CONTAINER_NAME}'.${NC}"
+    return 0
+}
+
 resolve_container_name_for_workspace() {
     local scoped_container_name
 
@@ -526,6 +549,7 @@ case "$ACTION" in
                 fi
             else
                 echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was not found.${NC}"
+                print_legacy_container_scope_note || true
                 if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
                     echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
                     echo -e "${GREEN}From a TTY, run: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
