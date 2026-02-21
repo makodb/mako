@@ -915,15 +915,18 @@ case "$ACTION" in
         if [ "${create_compose_was_running}" -eq 1 ]; then
             echo -e "${YELLOW}Warning: compose service 'dev' is already running for this checkout.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
+            echo -e "${YELLOW}To stop compose service 'dev' later, run: ${COMPOSE_CMD_PREFIX} down${NC}"
         elif [ -n "${create_stale_compose_project}" ]; then
             echo -e "${YELLOW}Warning: found running compose service 'dev' for this checkout under project '${create_stale_compose_project}'.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
             echo -e "${YELLOW}Use 'MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose exec dev /bin/bash' if you want that compose container.${NC}"
+            echo -e "${YELLOW}To stop this compose project later, run: MAKO_COMPOSE_PROJECT=${create_stale_compose_project} docker compose down${NC}"
         elif [ "${create_stale_compose_count}" -gt 1 ]; then
             create_stale_compose_projects=$(list_stale_compose_projects | paste -sd' ' -)
             echo -e "${YELLOW}Warning: multiple compose services are running for this checkout: ${create_stale_compose_projects}.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
             echo -e "${YELLOW}Select a compose project explicitly with: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
+            echo -e "${YELLOW}Then stop it with: MAKO_COMPOSE_PROJECT=<project> docker compose down${NC}"
         fi
         CREATE_RECREATED=0
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
