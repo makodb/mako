@@ -135,8 +135,8 @@ case "$ACTION" in
                         echo -e "${GREEN}Compose service 'dev' is already running.${NC}"
                         echo -e "${GREEN}From a TTY, run: docker compose exec dev /bin/bash${NC}"
                         echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
-                        echo -e "${GREEN}Alternatively, start standalone '${CONTAINER_NAME}' with: docker start ${CONTAINER_NAME}${NC}"
-                        echo -e "${GREEN}Preferred: use '$0 enter' if you need standalone access (auto-recovers legacy containers that exit immediately after start).${NC}"
+                        echo -e "${GREEN}If you need standalone '${CONTAINER_NAME}', use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
+                        echo -e "${GREEN}Or run '$0 create' to explicitly recreate/refresh standalone before entering it.${NC}"
                     else
                         echo -e "${GREEN}Start it with: docker start ${CONTAINER_NAME}${NC}"
                         echo -e "${GREEN}Preferred: use '$0 enter' (auto-recovers legacy containers that exit immediately after start).${NC}"
