@@ -636,6 +636,12 @@ case "$ACTION" in
         non_executable_bins=()
         incompatible_bins=()
         warning_runpaths=()
+        USE_DOCKER_READELF=0
+        if ! readelf --version >/dev/null 2>&1; then
+            USE_DOCKER_READELF=1
+            echo -e "${YELLOW}Host 'readelf' is unavailable or not working; using Docker tools for RUNPATH checks.${NC}"
+            ensure_image
+        fi
         for required_bin in "${REQUIRED_BINS[@]}"; do
             if [ ! -f "${required_bin}" ]; then
                 missing_bins+=("${required_bin}")
@@ -645,7 +651,12 @@ case "$ACTION" in
                 non_executable_bins+=("${required_bin}")
                 continue
             fi
-            RUNPATH=$(readelf -d "${required_bin}" 2>/dev/null | grep RUNPATH | grep -o '\[.*\]' | tr -d '[]')
+            if [ "${USE_DOCKER_READELF}" -eq 1 ]; then
+                RUNPATH=$(docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+                    bash -lc "readelf -d '${required_bin}' 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'")
+            else
+                RUNPATH=$(readelf -d "${required_bin}" 2>/dev/null | awk '/RUNPATH/ {print $5}' | tr -d '[]')
+            fi
             if [[ ":$RUNPATH:" != *":/workspace/build_docker:"* ]]; then
                 incompatible_bins+=("${required_bin} (RUNPATH: ${RUNPATH:-<none>})")
                 continue
