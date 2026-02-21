@@ -622,7 +622,9 @@ case "$ACTION" in
                 echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists alongside compose service 'dev'.${NC}"
                 echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone '${CONTAINER_NAME}' remains stopped.${NC}"
             fi
-            echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
+            if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
+            fi
         fi
         if ! compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
             stale_compose_project=""
