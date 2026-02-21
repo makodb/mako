@@ -43,11 +43,18 @@ case "$ACTION" in
         echo -e "${YELLOW}Building Mako in container...${NC}"
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
             bash -c "cd /workspace && \
-                     rm -rf build_docker && \
-                     mkdir -p build_docker && \
-                     cd build_docker && \
-                     cmake .. && \
-                     make -j${JOBS} dbtest"
+                     if [ -f build_docker/CMakeCache.txt ] && \
+                        ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
+                         echo 'Cleaning incompatible build_docker cache'; \
+                         rm -rf build_docker; \
+                     fi && \
+                     if [ ! -f build_docker/CMakeCache.txt ]; then \
+                         echo 'Configuring build_docker'; \
+                         cmake -S . -B build_docker; \
+                     else \
+                         echo 'Reusing existing build_docker CMake cache'; \
+                     fi && \
+                     cmake --build build_docker --parallel ${JOBS} --target dbtest"
         echo -e "${GREEN}Build completed successfully!${NC}"
         ;;
 
