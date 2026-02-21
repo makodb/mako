@@ -969,7 +969,11 @@ case "$ACTION" in
             echo -e "${YELLOW}Warning: multiple compose services are running for this checkout: ${create_stale_compose_projects}.${NC}"
             echo -e "${YELLOW}'$0 create' will start/recover standalone '${CONTAINER_NAME}' in parallel; while standalone is running, '$0 enter' will prefer standalone.${NC}"
             echo -e "${YELLOW}Select a compose project explicitly with: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
-            echo -e "${YELLOW}Then stop it with: MAKO_COMPOSE_PROJECT=<project> docker compose down${NC}"
+            echo -e "${YELLOW}Stop stale compose projects with:${NC}"
+            while IFS= read -r create_stale_project; do
+                [ -n "${create_stale_project}" ] || continue
+                echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=${create_stale_project} docker compose down${NC}"
+            done < <(list_stale_compose_projects)
         fi
         CREATE_RECREATED=0
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then

@@ -408,6 +408,7 @@ Notes:
 - In non-interactive mode, `./docker_build.sh create` starts `mako-dev` in the background (detached) instead of trying to open an interactive shell.
 - In interactive TTY mode, `./docker_build.sh create` now also bootstraps `mako-dev` with a persistent keepalive command and then attaches via `docker exec`, so exiting the shell keeps the container running for later `enter` sessions.
 - If compose `dev` is already running for this checkout (current project or stale project), `./docker_build.sh create` warns that it is starting/recovering standalone in parallel; once standalone is running, `./docker_build.sh enter` will prefer standalone. The warning also includes project-scoped teardown commands (`MAKO_COMPOSE_PROJECT=... docker compose down`) so you can clean up compose sessions explicitly.
+- When multiple stale compose projects exist for this checkout, `./docker_build.sh create` now prints explicit per-project cleanup commands (`MAKO_COMPOSE_PROJECT=... docker compose down`) so you can clean up without manually reconstructing project IDs.
 - After interactive standalone `create`/`enter` sessions end, the script prints a reconnect hint and preserves the shell exit code.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - If legacy standalone name `mako-dev` is already bound to a different checkout path, `docker_build.sh` automatically scopes standalone container naming to `mako-dev-<checkout-hash>` for the current checkout, preventing cross-checkout clobbering.
