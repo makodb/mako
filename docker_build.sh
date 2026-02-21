@@ -241,17 +241,32 @@ select_single_stale_compose_project() {
 
 warn_stale_compose_dev_containers() {
     local stale_compose_containers=()
+    local stale_compose_projects=()
     local container_name
+    local project_name
 
     while IFS= read -r container_name; do
         [ -n "${container_name}" ] || continue
         stale_compose_containers+=("${container_name}")
     done < <(list_stale_compose_dev_containers)
 
+    while IFS= read -r project_name; do
+        [ -n "${project_name}" ] || continue
+        stale_compose_projects+=("${project_name}")
+    done < <(list_stale_compose_projects)
+
     if [ "${#stale_compose_containers[@]}" -gt 0 ]; then
         echo -e "${YELLOW}Warning: found additional running compose dev container(s) for this checkout: ${stale_compose_containers[*]}.${NC}"
         echo -e "${YELLOW}These containers use different compose project IDs and may cause confusing behavior.${NC}"
-        echo -e "${YELLOW}Stop stale containers with: docker stop <container> (or docker rm -f <container>).${NC}"
+        if [ "${#stale_compose_projects[@]}" -eq 1 ]; then
+            echo -e "${YELLOW}Stop stale compose project with: MAKO_COMPOSE_PROJECT=${stale_compose_projects[0]} docker compose down${NC}"
+        elif [ "${#stale_compose_projects[@]}" -gt 1 ]; then
+            echo -e "${YELLOW}Stop stale compose projects with:${NC}"
+            for project_name in "${stale_compose_projects[@]}"; do
+                echo -e "${YELLOW}  MAKO_COMPOSE_PROJECT=${project_name} docker compose down${NC}"
+            done
+        fi
+        echo -e "${YELLOW}If needed, stop/remove individual containers with: docker stop <container> (or docker rm -f <container>).${NC}"
     fi
 }
 
