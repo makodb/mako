@@ -1016,6 +1016,28 @@ case "$ACTION" in
                 exit 0
             fi
         fi
+        if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
+           ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+            stale_compose_project=""
+            if stale_compose_project=$(select_single_stale_compose_project); then
+                stale_compose_cmd_prefix="MAKO_COMPOSE_PROJECT=${stale_compose_project} docker compose"
+                echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' is stopped while compose service 'dev' is running under project '${stale_compose_project}'.${NC}"
+                echo -e "${YELLOW}Reusing compose service 'dev' instead of starting standalone to avoid duplicate sessions.${NC}"
+                if [ "${HAS_TTY}" -eq 1 ]; then
+                    COMPOSE_INTERACTIVE_EXIT_CODE=0
+                    set +e
+                    MAKO_COMPOSE_PROJECT="${stale_compose_project}" docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
+                    COMPOSE_INTERACTIVE_EXIT_CODE=$?
+                    set -e
+                    echo -e "${GREEN}Compose service 'dev' (project '${stale_compose_project}') remains running. Reconnect with '${stale_compose_cmd_prefix} exec dev /bin/bash'.${NC}"
+                    exit "${COMPOSE_INTERACTIVE_EXIT_CODE}"
+                fi
+                echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+                echo -e "${GREEN}Use '${stale_compose_cmd_prefix} exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+                exit 0
+            fi
+        fi
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
             if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
