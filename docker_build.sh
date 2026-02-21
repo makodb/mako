@@ -157,6 +157,40 @@ has_expected_workspace_source() {
     [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "${WORKSPACE_ROOT}" ]
 }
 
+list_stale_compose_dev_containers() {
+    local active_compose_container="${COMPOSE_PROJECT_NAME}-dev-1"
+    local candidate
+
+    while IFS= read -r candidate; do
+        case "${candidate}" in
+            mako-*-dev-1)
+                if [ "${candidate}" = "${active_compose_container}" ]; then
+                    continue
+                fi
+                if has_expected_workspace_source "${candidate}"; then
+                    echo "${candidate}"
+                fi
+                ;;
+        esac
+    done < <(docker ps --format '{{.Names}}')
+}
+
+warn_stale_compose_dev_containers() {
+    local stale_compose_containers=()
+    local container_name
+
+    while IFS= read -r container_name; do
+        [ -n "${container_name}" ] || continue
+        stale_compose_containers+=("${container_name}")
+    done < <(list_stale_compose_dev_containers)
+
+    if [ "${#stale_compose_containers[@]}" -gt 0 ]; then
+        echo -e "${YELLOW}Warning: found additional running compose dev container(s) for this checkout: ${stale_compose_containers[*]}.${NC}"
+        echo -e "${YELLOW}These containers use different compose project IDs and may cause confusing behavior.${NC}"
+        echo -e "${YELLOW}Stop stale containers with: docker stop <container> (or docker rm -f <container>).${NC}"
+    fi
+}
+
 resolve_container_name_for_workspace() {
     local scoped_container_name
 
@@ -529,6 +563,7 @@ case "$ACTION" in
             echo -e "${YELLOW}Use '${COMPOSE_CMD_PREFIX} exec dev /bin/bash' to enter compose service 'dev'.${NC}"
         fi
         compose_cmd up -d dev
+        warn_stale_compose_dev_containers
         if [ "${HAS_TTY}" -eq 1 ]; then
             echo -e "${GREEN}Container started. Connect with: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
         else
@@ -540,6 +575,7 @@ case "$ACTION" in
     compose-down)
         echo -e "${YELLOW}Stopping services...${NC}"
         compose_cmd down
+        warn_stale_compose_dev_containers
         echo -e "${GREEN}Services stopped!${NC}"
         ;;
 
