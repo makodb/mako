@@ -342,24 +342,24 @@ case "$ACTION" in
                         if ! has_expected_image "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but uses an unexpected image.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate it with '${IMAGE_NAME}'.${NC}"
-                            print_compose_access_guidance
+                            print_compose_access_guidance || true
                         elif ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but points to a different /workspace mount or working directory.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it for this checkout.${NC}"
-                            print_compose_access_guidance
+                            print_compose_access_guidance || true
                         elif ! has_init_enabled "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but was created without Docker init support.${NC}"
                             echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it with '--init'.${NC}"
-                            print_compose_access_guidance
+                            print_compose_access_guidance || true
                         elif ! has_keepalive_command "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but uses a non-keepalive command.${NC}"
                             echo -e "${GREEN}It may exit unexpectedly; use '$0 create' or '$0 enter' to normalize it for persistent dev usage.${NC}"
-                            print_compose_access_guidance
+                            print_compose_access_guidance || true
                         else
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is already running.${NC}"
                             echo -e "${GREEN}Use '$0 enter' from a TTY, or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
                             echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
-                            print_compose_access_guidance
+                            print_compose_access_guidance || true
                         fi
                     else
                         echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' was running briefly but exited.${NC}"
