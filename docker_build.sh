@@ -241,18 +241,10 @@ case "$ACTION" in
     enter)
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-            compose_dev_id=$(docker compose ps -aq dev 2>/dev/null | head -n 1)
-            if [ -n "${compose_dev_id}" ]; then
-                echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; entering docker compose service 'dev'.${NC}"
-                if [ "$(docker inspect -f '{{.State.Running}}' "${compose_dev_id}" 2>/dev/null || echo false)" != "true" ]; then
-                    docker compose up -d dev
-                fi
-                docker compose exec dev /bin/bash
-                exit $?
-            fi
-            echo -e "${RED}Error: Container '${CONTAINER_NAME}' does not exist.${NC}"
-            echo -e "${YELLOW}Create it first with: $0 create${NC}"
-            exit 1
+            echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
+            "$0" compose-up
+            docker compose exec dev /bin/bash
+            exit $?
         fi
         if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Starting stopped container...${NC}"
