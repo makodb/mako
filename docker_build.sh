@@ -88,6 +88,7 @@ case "$ACTION" in
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             echo -e "${GREEN}Use '$0 create' to start a persistent container, then enter from a TTY.${NC}"
             echo -e "${GREEN}Or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+            echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
         fi
         ;;
 
@@ -315,6 +316,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
                 echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
             fi
         else
             if [ "${HAS_TTY}" -eq 1 ]; then
@@ -326,6 +328,7 @@ case "$ACTION" in
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 echo -e "${GREEN}Container '${CONTAINER_NAME}' created and started in background (non-interactive mode).${NC}"
                 echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
             fi
         fi
         ;;
@@ -354,6 +357,7 @@ case "$ACTION" in
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             echo -e "${GREEN}Container '${CONTAINER_NAME}' is running.${NC}"
             echo -e "${GREEN}Use '$0 enter' from a TTY or run: docker exec -it -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash${NC}"
+            echo -e "${GREEN}For non-interactive usage, run: docker exec -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash -lc '<command>'${NC}"
         fi
         ;;
 

@@ -392,6 +392,7 @@ Notes:
 - In non-interactive mode, `./docker_build.sh create` starts `mako-dev` in the background (detached) instead of trying to open an interactive shell.
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
+- For non-interactive usage against the standalone `mako-dev` container, run: `docker exec -e BUILD_DIR=build_docker mako-dev /bin/bash -lc '<command>'`.
 - `docker compose` services also export `BUILD_DIR=build_docker` for the same reason.
 - For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).
 - For non-interactive compose usage (for example CI/headless), use `docker compose exec -T dev /bin/bash -lc '<command>'`.
