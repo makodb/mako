@@ -224,6 +224,10 @@ case "$ACTION" in
 
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
+        if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+            echo -e "${YELLOW}Image '${IMAGE_NAME}' not found locally; building it first...${NC}"
+            docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
+        fi
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
