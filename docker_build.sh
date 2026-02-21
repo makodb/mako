@@ -293,9 +293,20 @@ echo
 # Parse command line arguments
 ACTION=${1:-build}
 JOBS=${2:-32}
+EXTRA_ARG=${2:-}
+
+ensure_no_extra_args() {
+    local action_name="$1"
+    if [ -n "${EXTRA_ARG}" ]; then
+        echo -e "${RED}Error: '${action_name}' does not accept extra arguments (got '${EXTRA_ARG}').${NC}"
+        echo -e "${YELLOW}Run '$0' without args to see supported usage.${NC}"
+        exit 1
+    fi
+}
 
 case "$ACTION" in
     build-image)
+        ensure_no_extra_args "build-image"
         echo -e "${YELLOW}Building Docker image...${NC}"
         docker build -f Dockerfile.ubuntu24 -t ${IMAGE_NAME} .
         echo -e "${GREEN}Docker image built successfully!${NC}"
@@ -325,6 +336,7 @@ case "$ACTION" in
         ;;
 
     shell)
+        ensure_no_extra_args "shell"
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
         ensure_image
         warn_incomplete_build_docker
@@ -412,6 +424,7 @@ case "$ACTION" in
         ;;
 
     test)
+        ensure_no_extra_args "test"
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         ensure_image
         docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
@@ -601,6 +614,7 @@ case "$ACTION" in
         ;;
 
     clean)
+        ensure_no_extra_args "clean"
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
         if docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
             docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
@@ -626,6 +640,7 @@ case "$ACTION" in
         ;;
 
     compose-up)
+        ensure_no_extra_args "compose-up"
         echo -e "${YELLOW}Starting services with docker-compose...${NC}"
         ensure_image
         warn_incomplete_build_docker
@@ -719,6 +734,7 @@ case "$ACTION" in
         ;;
 
     compose-down)
+        ensure_no_extra_args "compose-down"
         echo -e "${YELLOW}Stopping services...${NC}"
         compose_was_running=0
         if compose_cmd ps --services --status running 2>/dev/null | grep -qx "dev"; then
@@ -744,6 +760,7 @@ case "$ACTION" in
         ;;
 
     create)
+        ensure_no_extra_args "create"
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
         ensure_image
         warn_incomplete_build_docker
@@ -849,6 +866,7 @@ case "$ACTION" in
         ;;
 
     enter)
+        ensure_no_extra_args "enter"
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
         warn_incomplete_build_docker
         warn_stale_compose_dev_containers
