@@ -35,19 +35,9 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 
-# Build the rusty-cpp-checker binary first before enabling borrow checking
-set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp")
-set(CPP_BORROW_CHECKER "${RUSTYCPP_DIR}/target/${RUSTYCPP_BUILD_TYPE}/rusty-cpp-checker")
-
-# Create a custom command to build the checker if it doesn't exist
-if(NOT EXISTS ${CPP_BORROW_CHECKER})
-    message(STATUS "Building rusty-cpp-checker binary...")
-    execute_process(
-        COMMAND cargo build --${RUSTYCPP_BUILD_TYPE}
-        WORKING_DIRECTORY ${RUSTYCPP_DIR}
-        RESULT_VARIABLE BUILD_RESULT
-    )
-endif()
+# NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
+# build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
+# support is bypassed.
 
 # Enable borrow checking (can be disabled with -DENABLE_BORROW_CHECKING=OFF)
 # Don't use FORCE so command-line option takes precedence
@@ -144,7 +134,23 @@ else()
 endif()
 
 add_subdirectory(third-party/erpc)
-set_target_properties(erpc PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/third-party/erpc")
+# Keep all eRPC artifacts inside the active build tree.
+# The eRPC submodule sets output dirs to ${CMAKE_SOURCE_DIR}/build, which
+# pollutes host builds when compiling in Docker.
+set(ERPC_BINARY_DIR "${CMAKE_BINARY_DIR}/third-party/erpc")
+get_property(ERPC_TARGETS DIRECTORY "${ERPC_BINARY_DIR}" PROPERTY BUILDSYSTEM_TARGETS)
+foreach(ERPC_TARGET IN LISTS ERPC_TARGETS)
+  if(TARGET "${ERPC_TARGET}")
+    get_target_property(ERPC_TARGET_TYPE "${ERPC_TARGET}" TYPE)
+    if(NOT ERPC_TARGET_TYPE STREQUAL "INTERFACE_LIBRARY")
+      set_target_properties("${ERPC_TARGET}" PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY "${ERPC_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${ERPC_BINARY_DIR}"
+      )
+    endif()
+  endif()
+endforeach()
 
 # eRPC flags
 set(ERPC_CFLAGS_DPDK

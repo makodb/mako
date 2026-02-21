@@ -17,8 +17,13 @@ NC='\033[0m' # No Color
 IMAGE_NAME="mako-build:ubuntu24"
 CONTAINER_NAME="mako-dev"
 
-# Environment variables for Docker runs
-DOCKER_ENV="-e CARGO_TARGET_DIR=/workspace/target-docker"
+# Environment variables/options for Docker runs
+DOCKER_ENV_OPTS=(-e CARGO_TARGET_DIR=/workspace/target-docker)
+DOCKER_SECURITY_OPTS=()
+if docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q "name=apparmor"; then
+    # Rust tooling (cargo/rustc) can fail under restrictive AppArmor profiles.
+    DOCKER_SECURITY_OPTS=(--security-opt apparmor=unconfined)
+fi
 
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
@@ -36,7 +41,7 @@ case "$ACTION" in
 
     build)
         echo -e "${YELLOW}Building Mako in container...${NC}"
-        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
             bash -c "cd /workspace && \
                      rm -rf build_docker && \
                      mkdir -p build_docker && \
@@ -48,12 +53,12 @@ case "$ACTION" in
 
     shell)
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
-        docker run --rm -it ${DOCKER_ENV} -v "$(pwd):/workspace" ${IMAGE_NAME} /bin/bash
+        docker run --rm -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} /bin/bash
         ;;
 
     test)
         echo -e "${YELLOW}Running build test in container...${NC}"
-        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j${JOBS} && \
                      echo 'SUCCESS: build completed' && \
                      ls -la build_docker/dbtest"
@@ -64,7 +69,7 @@ case "$ACTION" in
         # Run a specific CI test or all tests
         CI_TEST=${2:-all}
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container...${NC}"
-        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "rm -rf build_docker && make BUILD_DIR=build_docker -j32 && BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
@@ -72,30 +77,50 @@ case "$ACTION" in
     ci-quick)
         # Run CI tests without rebuild (assumes build exists and was built in Docker)
         CI_TEST=${2:-shardNoReplication}
+        REQUIRED_BIN="build_docker/dbtest"
+        case "${CI_TEST}" in
+            simpleTransaction)
+                REQUIRED_BIN="build_docker/simpleTransaction"
+                ;;
+            simplePaxos)
+                REQUIRED_BIN="build_docker/simplePaxos"
+                ;;
+            clientServer)
+                REQUIRED_BIN="build_docker/simpleTransactionRep"
+                ;;
+        esac
 
-        # Check if binary exists and was built for Docker (RUNPATH should be /workspace/build_docker)
+        # Check if binary exists and has Docker build path in RUNPATH.
         if [ -f "build_docker/dbtest" ]; then
             RUNPATH=$(readelf -d build_docker/dbtest 2>/dev/null | grep RUNPATH | grep -o '\[.*\]' | tr -d '[]')
-            if [ "$RUNPATH" != "/workspace/build_docker" ]; then
-                echo -e "${RED}Error: build_docker/dbtest was built locally (RUNPATH: $RUNPATH)${NC}"
+            if [[ ":$RUNPATH:" != *":/workspace/build_docker:"* ]]; then
+                echo -e "${RED}Error: build_docker/dbtest is not Docker-compatible (RUNPATH: $RUNPATH)${NC}"
                 echo -e "${YELLOW}Cannot run locally-built binary in Docker due to library path mismatch.${NC}"
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to rebuild and test in Docker.${NC}"
                 exit 1
+            fi
+            if [ "$RUNPATH" != "/workspace/build_docker" ]; then
+                echo -e "${YELLOW}Warning: RUNPATH has extra entries ($RUNPATH); forcing Docker library path.${NC}"
             fi
         else
             echo -e "${RED}Error: build_docker/dbtest not found. Run './docker_build.sh ci' first.${NC}"
             exit 1
         fi
+        if [ ! -f "${REQUIRED_BIN}" ]; then
+            echo -e "${RED}Error: Required binary '${REQUIRED_BIN}' is missing for CI test '${CI_TEST}'.${NC}"
+            echo -e "${YELLOW}'build' only compiles dbtest. Use './docker_build.sh ci ${CI_TEST}' for full test binaries.${NC}"
+            exit 1
+        fi
 
         echo -e "${YELLOW}Running CI test '${CI_TEST}' (no rebuild)...${NC}"
-        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e LD_LIBRARY_PATH=/workspace/build_docker -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
         echo -e "${GREEN}CI test '${CI_TEST}' completed!${NC}"
         ;;
 
     clean)
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
-        docker run --rm ${DOCKER_ENV} -v "$(pwd):/workspace" ${IMAGE_NAME} \
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
             bash -c "cd /workspace && rm -rf build_docker target-docker"
         echo -e "${GREEN}Clean completed!${NC}"
         ;;
@@ -114,7 +139,7 @@ case "$ACTION" in
 
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
-        docker run -it ${DOCKER_ENV} -v "$(pwd):/workspace" --name ${CONTAINER_NAME} ${IMAGE_NAME} /bin/bash
+        docker run -it "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" --name ${CONTAINER_NAME} ${IMAGE_NAME} /bin/bash
         echo -e "${GREEN}Container session ended. Use '$0 enter' to reconnect.${NC}"
         ;;
 
