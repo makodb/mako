@@ -567,7 +567,9 @@ case "$ACTION" in
         ensure_no_extra_args "test"
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         ensure_image
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+        DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS:-180}"
+        echo -e "${YELLOW}Using shardNoReplication wait timeout: ${DOCKER_TEST_MAX_WAIT_SECONDS}s (override with MAKO_DOCKER_TEST_MAX_WAIT_SECONDS).${NC}"
+        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e "MAKO_MAX_WAIT_SECONDS=${DOCKER_TEST_MAX_WAIT_SECONDS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; NEED_BUILD=1; \
                      if [ -x build_docker/dbtest ]; then \
                          RUNPATH=\$(readelf -d build_docker/dbtest 2>/dev/null | awk '/RUNPATH/ {print \$5}' | tr -d '[]'); \
