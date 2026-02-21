@@ -411,6 +411,7 @@ Notes:
 - `./docker_build.sh create` reuses an existing standalone `mako-dev` container instead of failing on name conflicts.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-upgrade legacy standalone `mako-dev` containers created without Docker init support, recreating them with `--init` so child processes are reaped correctly.
 - `./docker_build.sh create` and `./docker_build.sh enter` auto-recover standalone containers that are unsuitable for persistent dev usage (transient behavior or non-keepalive command setups), recreating them with a persistent keepalive command before suggesting `docker exec`.
+- `./docker_build.sh create` and `./docker_build.sh enter` also auto-recreate standalone containers that point at a different `/workspace` bind mount or working directory, so reused `mako-dev` containers always match the current checkout.
 - `./docker_build.sh enter` now also requires standalone liveness to remain stable before non-interactive `docker exec` guidance, so short-lived containers are redirected to recovery-safe instructions (or compose guidance when compose `dev` is running).
 - `./docker_build.sh enter` falls back to compose `dev` when standalone `mako-dev` does not exist, and auto-starts/bootstrap the compose service if needed. In non-interactive mode it prints guidance, including the `docker compose exec -T dev /bin/bash -lc '<command>'` pattern.
 - Interactive compose shells entered via `./docker_build.sh enter` now print the same `BUILD_DIR=build_docker` tip and a reconnect hint, while preserving the shell exit code.

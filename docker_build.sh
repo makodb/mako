@@ -105,6 +105,19 @@ has_keepalive_command() {
         [ "${container_cmd}" = "/bin/bash -lc exec tail -f /dev/null" ]
 }
 
+has_expected_workspace_mount() {
+    local container_name="$1"
+    local mount_source
+    local mount_type
+    local working_dir
+
+    mount_source=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}' "${container_name}" 2>/dev/null || echo "")
+    mount_type=$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Type}}{{end}}{{end}}' "${container_name}" 2>/dev/null || echo "")
+    working_dir=$(docker inspect -f '{{.Config.WorkingDir}}' "${container_name}" 2>/dev/null || echo "")
+
+    [ "${mount_type}" = "bind" ] && [ "${mount_source}" = "$(pwd)" ] && [ "${working_dir}" = "/workspace" ]
+}
+
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
 
@@ -463,6 +476,13 @@ case "$ACTION" in
                     bash -lc "exec tail -f /dev/null" >/dev/null
                 CREATE_RECREATED=1
             fi
+            if ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' is bound to a different workspace or working directory; recreating it for this checkout.${NC}"
+                docker rm -f ${CONTAINER_NAME} >/dev/null
+                docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                    bash -lc "exec tail -f /dev/null" >/dev/null
+                CREATE_RECREATED=1
+            fi
             if ! is_container_running "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Starting stopped container...${NC}"
                 docker start ${CONTAINER_NAME}
@@ -593,6 +613,13 @@ case "$ACTION" in
         fi
         if ! has_keepalive_command "${CONTAINER_NAME}"; then
             echo -e "${YELLOW}Container '${CONTAINER_NAME}' uses a non-keepalive command; recreating it for persistent dev usage.${NC}"
+            docker rm -f ${CONTAINER_NAME} >/dev/null
+            ensure_image
+            docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
+                bash -lc "exec tail -f /dev/null" >/dev/null
+        fi
+        if ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
+            echo -e "${YELLOW}Container '${CONTAINER_NAME}' is bound to a different workspace or working directory; recreating it for this checkout.${NC}"
             docker rm -f ${CONTAINER_NAME} >/dev/null
             ensure_image
             docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
