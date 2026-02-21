@@ -383,6 +383,7 @@ Notes:
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
 - `./docker_build.sh ci-quick <test>` skips rebuild and requires prebuilt binaries for that suite; use `./docker_build.sh ci <test>` when `ci-quick` reports a missing binary.
+- `rrrTests` is not supported in `ci-quick` because it runs broad CTest suites; use `./docker_build.sh ci rrrTests`.
 
 Relevant files:
 - `Dockerfile.ubuntu24`
