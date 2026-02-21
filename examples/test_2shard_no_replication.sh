@@ -39,27 +39,61 @@ trap cleanup_temp_config EXIT
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
+log_file0="${log_prefix}_shard0-$trd.log"
+log_file1="${log_prefix}_shard1-$trd.log"
 
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
-nohup bash bash/shard.sh 2 0 $trd localhost > ${log_prefix}_shard0-$trd.log 2>&1 &
+nohup bash bash/shard.sh 2 0 $trd localhost > "$log_file0" 2>&1 &
 SHARD0_PID=$!
 sleep 5
 
 # Start shard 1 in background (delayed start ensures shard1 stays running while shard0 shuts down)
 echo "Starting shard 1..."
-nohup bash bash/shard.sh 2 1 $trd localhost > ${log_prefix}_shard1-$trd.log 2>&1 &
+nohup bash bash/shard.sh 2 1 $trd localhost > "$log_file1" 2>&1 &
 SHARD1_PID=$!
 
-# Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 50
+# Wait for benchmarks to complete (poll for completion markers)
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+wait_count=0
+echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
 
-# Kill the processes
+while [ "$wait_count" -lt "$max_wait" ]; do
+    shard0_done=0
+    shard1_done=0
+
+    if [ -f "$log_file0" ] && grep -q "agg_persist_throughput" "$log_file0" 2>/dev/null; then
+        shard0_done=1
+    fi
+
+    if [ -f "$log_file1" ] && grep -q "agg_persist_throughput" "$log_file1" 2>/dev/null; then
+        shard1_done=1
+    fi
+
+    if [ "$shard0_done" -eq 1 ] && [ "$shard1_done" -eq 1 ]; then
+        echo "Both benchmarks completed after ${wait_count}s"
+        sleep 2
+        break
+    fi
+
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed, shard0=$shard0_done, shard1=$shard1_done)"
+    fi
+done
+
+if [ "$wait_count" -ge "$max_wait" ]; then
+    echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
+fi
+
+# Stop any remaining processes
 echo "Stopping shards..."
-kill $SHARD0_PID $SHARD1_PID 2>/dev/null
+kill $SHARD0_PID $SHARD1_PID 2>/dev/null || true
+sleep 2
+kill -9 $SHARD0_PID $SHARD1_PID 2>/dev/null || true
 wait $SHARD0_PID $SHARD1_PID 2>/dev/null
 
 echo ""

@@ -26,6 +26,7 @@ rm -f nfs_sync_*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+run_seconds="${MAKO_RUN_SECONDS:-50}"
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
@@ -59,8 +60,8 @@ PROCESS_PID=$!
 sleep 2
 
 # Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 50
+echo "Running experiments for ${run_seconds} seconds..."
+sleep "$run_seconds"
 
 # Kill the process
 echo "Stopping process..."
