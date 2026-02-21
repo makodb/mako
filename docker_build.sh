@@ -280,6 +280,7 @@ print_compose_access_guidance() {
         echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
         echo -e "${GREEN}Compose access: ${COMPOSE_CMD_PREFIX} exec dev /bin/bash${NC}"
         echo -e "${GREEN}Compose non-interactive: ${COMPOSE_CMD_PREFIX} exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${GREEN}Compose teardown: ${COMPOSE_CMD_PREFIX} down${NC}"
         return 0
     fi
 
@@ -289,6 +290,7 @@ print_compose_access_guidance() {
         echo -e "${GREEN}Found running compose service 'dev' for this checkout under project '${stale_compose_project}'.${NC}"
         echo -e "${GREEN}Compose access: ${stale_compose_cmd_prefix} exec dev /bin/bash${NC}"
         echo -e "${GREEN}Compose non-interactive: ${stale_compose_cmd_prefix} exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${GREEN}Compose teardown: ${stale_compose_cmd_prefix} down${NC}"
         return 0
     fi
 
@@ -297,6 +299,7 @@ print_compose_access_guidance() {
         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
         echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
         echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+        echo -e "${GREEN}Teardown selected project with: MAKO_COMPOSE_PROJECT=<project> docker compose down${NC}"
         return 0
     fi
 
