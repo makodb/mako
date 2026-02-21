@@ -42,6 +42,30 @@ ensure_image() {
     fi
 }
 
+warn_incomplete_build_docker() {
+    local required_bins=(
+        "build_docker/dbtest"
+        "build_docker/simpleTransaction"
+        "build_docker/simplePaxos"
+        "build_docker/simpleTransactionRep"
+    )
+    local missing_bins=()
+    local required_bin
+    for required_bin in "${required_bins[@]}"; do
+        if [ ! -x "${required_bin}" ]; then
+            missing_bins+=("${required_bin}")
+        fi
+    done
+    if [ "${#missing_bins[@]}" -gt 0 ]; then
+        echo -e "${YELLOW}Warning: Docker build artifacts are missing or incomplete in build_docker.${NC}"
+        for required_bin in "${missing_bins[@]}"; do
+            echo -e "${YELLOW}  - ${required_bin}${NC}"
+        done
+        echo -e "${YELLOW}Run '$0 build' before running './ci/ci.sh ...' inside dev containers.${NC}"
+        echo -e "${YELLOW}Or run '$0 ci <test>' to build and execute a CI suite in one command.${NC}"
+    fi
+}
+
 echo -e "${GREEN}=== Mako Ubuntu 24.04 Docker Build Script ===${NC}"
 echo
 
@@ -82,6 +106,7 @@ case "$ACTION" in
     shell)
         echo -e "${YELLOW}Starting interactive shell in container...${NC}"
         ensure_image
+        warn_incomplete_build_docker
         if [ "${HAS_TTY}" -eq 1 ]; then
             docker run --rm "${DOCKER_INTERACTIVE_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace ${IMAGE_NAME} \
                 bash -lc "echo 'Tip: BUILD_DIR is set to build_docker for CI/scripts.'; exec /bin/bash"
@@ -325,6 +350,7 @@ case "$ACTION" in
     create)
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
         ensure_image
+        warn_incomplete_build_docker
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
             if [ "${EXISTING_INIT}" != "true" ]; then
@@ -363,6 +389,7 @@ case "$ACTION" in
 
     enter)
         echo -e "${YELLOW}Entering persistent dev container...${NC}"
+        warn_incomplete_build_docker
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
             if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
