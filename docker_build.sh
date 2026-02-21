@@ -428,8 +428,21 @@ case "$ACTION" in
         warn_incomplete_build_docker
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$" && \
            docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
-            echo -e "${YELLOW}Compose service 'dev' is also running; '$0 enter' will use standalone '${CONTAINER_NAME}'.${NC}"
-            echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' if you want the compose container.${NC}"
+            if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                echo -e "${YELLOW}Compose service 'dev' is also running; '$0 enter' will use standalone '${CONTAINER_NAME}'.${NC}"
+                echo -e "${YELLOW}Use 'docker compose exec dev /bin/bash' if you want the compose container.${NC}"
+            else
+                echo -e "${YELLOW}Standalone '${CONTAINER_NAME}' exists but is stopped while compose service 'dev' is running.${NC}"
+                echo -e "${YELLOW}Reusing running compose service 'dev' instead of starting standalone.${NC}"
+                if [ "${HAS_TTY}" -eq 1 ]; then
+                    docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
+                    exit $?
+                fi
+                echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
+                echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+                echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                exit 0
+            fi
         fi
         if ! docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             echo -e "${YELLOW}Standalone container '${CONTAINER_NAME}' not found; using docker compose service 'dev'.${NC}"
