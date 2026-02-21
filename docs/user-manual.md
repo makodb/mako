@@ -382,6 +382,7 @@ Notes:
 - For compose-based sessions, use `docker compose exec dev /bin/bash` (works regardless of generated container name).
 - `./docker_build.sh ci <test> <jobs>` accepts an optional jobs argument.
 - Example: `./docker_build.sh ci all 8` to run CI with 8 build jobs.
+- `./docker_build.sh ci-quick <test>` skips rebuild and requires prebuilt binaries for that suite; use `./docker_build.sh ci <test>` when `ci-quick` reports a missing binary.
 
 Relevant files:
 - `Dockerfile.ubuntu24`

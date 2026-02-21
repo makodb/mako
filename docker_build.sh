@@ -190,7 +190,8 @@ case "$ACTION" in
         fi
         if [ ! -f "${REQUIRED_BIN}" ]; then
             echo -e "${RED}Error: Required binary '${REQUIRED_BIN}' is missing for CI test '${CI_TEST}'.${NC}"
-            echo -e "${YELLOW}'build' only compiles dbtest. Use './docker_build.sh ci ${CI_TEST}' for full test binaries.${NC}"
+            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep).${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' to build test-specific binaries and run this suite.${NC}"
             exit 1
         fi
 
