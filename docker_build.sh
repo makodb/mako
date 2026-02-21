@@ -171,8 +171,18 @@ case "$ACTION" in
 
     clean)
         echo -e "${YELLOW}Cleaning build artifacts...${NC}"
-        docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
-            bash -c "cd /workspace && rm -rf build_docker target-docker"
+        if docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+            docker run --rm "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" ${IMAGE_NAME} \
+                bash -c "cd /workspace && rm -rf build_docker target-docker"
+        else
+            echo -e "${YELLOW}Image '${IMAGE_NAME}' not found; cleaning workspace directly.${NC}"
+            rm -rf build_docker target-docker 2>/dev/null || true
+            if [ -d build_docker ] || [ -d target-docker ]; then
+                echo -e "${YELLOW}Host cleanup lacked permissions; using temporary ubuntu helper container.${NC}"
+                docker run --rm -v "$(pwd):/workspace" ubuntu:24.04 \
+                    bash -c "cd /workspace && rm -rf build_docker target-docker"
+            fi
+        fi
         echo -e "${GREEN}Clean completed!${NC}"
         ;;
 
