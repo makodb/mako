@@ -189,6 +189,14 @@ case "$ACTION" in
                                 echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
                                 echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
                             fi
+                        elif ! has_expected_workspace_mount "${CONTAINER_NAME}"; then
+                            echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but points to a different /workspace mount or working directory.${NC}"
+                            echo -e "${GREEN}Use '$0 create' or '$0 enter' to recreate/normalize it for this checkout.${NC}"
+                            if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
+                                echo -e "${GREEN}Compose service 'dev' is also running.${NC}"
+                                echo -e "${GREEN}Compose access: docker compose exec dev /bin/bash${NC}"
+                                echo -e "${GREEN}Compose non-interactive: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
+                            fi
                         elif ! has_keepalive_command "${CONTAINER_NAME}"; then
                             echo -e "${GREEN}Standalone container '${CONTAINER_NAME}' is running but uses a non-keepalive command.${NC}"
                             echo -e "${GREEN}It may exit unexpectedly; use '$0 create' or '$0 enter' to normalize it for persistent dev usage.${NC}"
