@@ -16,6 +16,7 @@
 # Source common utilities (includes GDB_PREFIX for debugging)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../bash/util.sh"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
 
 echo "========================================="
 echo "Testing 2-shard single process mode WITH replication"
@@ -32,6 +33,22 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+TEMP_CONFIG=$(make_simple_txn_rep_config 2 "$trd")
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+config_path="$MAKO_CONFIG"
+echo "dbtest config: $config_path"
+
+LEADER_PID=""
+SHARD0_LEARNER_PID=""
+SHARD0_P2_PID=""
+SHARD0_P1_PID=""
+SHARD1_LEARNER_PID=""
+SHARD1_P2_PID=""
+SHARD1_P1_PID=""
+CLEANUP_DONE=0
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
@@ -40,7 +57,66 @@ log_prefix="${script_name}_${transport}"
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 
-path=$(pwd)/src/mako
+# This test launches many replicated processes and RocksDB instances.
+# Raise nofile for this shell so all child dbtest processes inherit it.
+target_nofile=65535
+hard_nofile=$(ulimit -Hn 2>/dev/null || echo "")
+if [ -n "$hard_nofile" ] && [ "$hard_nofile" != "unlimited" ] && [ "$hard_nofile" -lt "$target_nofile" ]; then
+    target_nofile="$hard_nofile"
+fi
+ulimit -n "$target_nofile" 2>/dev/null || true
+current_nofile=$(ulimit -n 2>/dev/null || echo "unknown")
+
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop started wrapper/leader processes first.
+    for pid in "${LEADER_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest/shard wrappers tied to this run's config.
+    # This prevents leaked followers when the leader aborts or the script is interrupted.
+    pkill -TERM -f "bash/shard.sh 2 " 2>/dev/null || true
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+    else
+        pkill -TERM -f "local-shards2-warehouses${trd}\\.yml.*--is-replicated" 2>/dev/null || true
+    fi
+    sleep 1
+    pkill -9 -f "bash/shard.sh 2 " 2>/dev/null || true
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    else
+        pkill -9 -f "local-shards2-warehouses${trd}\\.yml.*--is-replicated" 2>/dev/null || true
+    fi
+
+    for pid in "${LEADER_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        rm -f "$TEMP_CONFIG"
+    fi
+    unset MAKO_CONFIG
+}
+
+handle_interrupt() {
+    cleanup_processes
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
 
 echo ""
 echo "Configuration:"
@@ -49,6 +125,7 @@ echo "  Number of threads: $trd"
 echo "  Local shards:      0,1 (single leader process)"
 echo "  Replication:       enabled (Paxos)"
 echo "  Processes:         7 total (1 combined leader + 6 followers)"
+echo "  Open files limit:  $current_nofile"
 echo ""
 
 # Start follower processes for both shards first
@@ -84,7 +161,7 @@ sleep 3
 echo "Starting combined leader process for shards 0 and 1..."
 log_file="${log_prefix}_leader.log"
 
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated"
 
 echo "Command: $CMD"
 echo ""
@@ -94,10 +171,17 @@ LEADER_PID=$!
 
 # Wait for benchmark to complete
 echo "Waiting for benchmark to complete..."
-max_wait=120
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
 wait_count=0
+leader_exited_early=0
 
 while [ $wait_count -lt $max_wait ]; do
+    if ! kill -0 "$LEADER_PID" 2>/dev/null; then
+        echo "Leader process exited unexpectedly after ${wait_count}s"
+        leader_exited_early=1
+        break
+    fi
+
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
         sleep 2
@@ -116,27 +200,7 @@ fi
 
 # Graceful shutdown
 echo "Stopping processes (graceful)..."
-
-# First kill the bash wrapper scripts
-pkill -TERM -f "bash/shard.sh" 2>/dev/null || true
-
-# Send SIGTERM to all dbtest processes
-pkill -TERM dbtest 2>/dev/null || true
-sleep 3
-
-# Force kill any remaining
-echo "Force killing remaining processes..."
-pkill -9 -f "bash/shard.sh" 2>/dev/null || true
-pkill -9 dbtest 2>/dev/null || true
-killall -9 dbtest 2>/dev/null || true
-
-sleep 2
-
-# Reap child processes
-for pid in $LEADER_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID \
-           $SHARD1_LEARNER_PID $SHARD1_P2_PID $SHARD1_P1_PID; do
-    wait $pid 2>/dev/null || true
-done
+cleanup_processes
 
 echo ""
 echo "========================================="
@@ -144,6 +208,11 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$leader_exited_early" -eq 1 ]; then
+    echo "  X Combined leader exited before benchmark completion"
+    failed=1
+fi
 
 echo ""
 echo "Checking $log_file (combined leader):"
