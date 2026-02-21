@@ -354,7 +354,6 @@ bench_worker::run()
 #if defined(COCO)
   shardTxnAll[TThread::getGlobalPartitionID()]=TThread::txn;
 #endif
-  std::cout<<"jump out the while loop"<<std::endl;
   // clockid_t cid;
   // int s;
   // s = pthread_getcpuclockid(pthread_self(), &cid);
