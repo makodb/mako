@@ -802,10 +802,10 @@ case "$ACTION" in
                     echo -e "${YELLOW}'$0 enter' will reuse compose service 'dev' while standalone remains stopped.${NC}"
                 elif [ "${stale_compose_count}" -gt 1 ]; then
                     echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped, and multiple stale compose services are already running for this checkout under different project IDs.${NC}"
-                    echo -e "${YELLOW}'$0 enter' will start/recover standalone '${CONTAINER_NAME}' by default; select a compose project explicitly with MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash.${NC}"
+                    echo -e "${YELLOW}'$0 enter' will refuse to start standalone '${CONTAINER_NAME}' to avoid duplicate sessions; select a compose project explicitly with MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash.${NC}"
                 elif [ "${compose_already_running_for_checkout}" -eq 1 ]; then
                     echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped, and stale compose service(s) are already running for this checkout under different project IDs.${NC}"
-                    echo -e "${YELLOW}'$0 enter' will start/recover standalone '${CONTAINER_NAME}' by default; use MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash to target a running compose service.${NC}"
+                    echo -e "${YELLOW}'$0 enter' will reuse the running compose service for this checkout; use MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash to target a specific compose service.${NC}"
                 else
                     echo -e "${YELLOW}Warning: standalone container '${CONTAINER_NAME}' exists but is stopped.${NC}"
                     echo -e "${YELLOW}If compose service 'dev' starts, '$0 enter' will reuse it while standalone remains stopped.${NC}"
