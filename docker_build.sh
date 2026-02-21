@@ -368,7 +368,10 @@ case "$ACTION" in
             if docker compose ps --services --status running 2>/dev/null | grep -qx "dev"; then
                 echo -e "${GREEN}Compose service 'dev' is already running; skipping compose-up.${NC}"
             else
-                "$0" compose-up
+                echo -e "${YELLOW}Starting services with docker-compose...${NC}"
+                ensure_image
+                docker compose up -d dev
+                echo -e "${GREEN}Compose service 'dev' started.${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 docker compose exec "${COMPOSE_EXEC_OPTS[@]}" dev /bin/bash
