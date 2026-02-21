@@ -3,7 +3,7 @@
 # Script to test 1-shard experiments with RAFT replication
 # Each shard should:
 # 1. Show "agg_persist_throughput" keyword
-# 2. Have NewOrder_remote_abort_ratio < 20%
+# 2. Have NewOrder_remote_abort_ratio < 20%, or N/A when no remote txns occur
 # 3. Followers replay at least 1000 batches
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -125,8 +125,13 @@ failed=0
             # Remove % sign if present and convert to float
             abort_value=$(echo "$abort_ratio" | sed 's/%//')
 
+            abort_value_lower=$(echo "$abort_value" | tr '[:upper:]' '[:lower:]')
+
+            # In 1-shard mode there are no remote transactions, so ratio may be nan/-nan.
+            if [ "$abort_value_lower" = "nan" ] || [ "$abort_value_lower" = "-nan" ]; then
+                echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (N/A: no remote transactions in single-shard run)"
             # Check if value is less than 20 using awk (more portable than bc)
-            if awk "BEGIN {exit !($abort_value < 20)}"; then
+            elif awk "BEGIN {exit !($abort_value < 20)}"; then
                 echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 20%)"
             else
                 echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 20%)"
