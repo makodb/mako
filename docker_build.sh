@@ -485,6 +485,11 @@ case "$ACTION" in
 
     ci-quick)
         # Run CI tests without rebuild (assumes build exists and was built in Docker)
+        if [ -n "${3:-}" ]; then
+            echo -e "${RED}Error: Too many arguments for ci-quick.${NC}"
+            echo -e "${YELLOW}Use './docker_build.sh ci-quick' or './docker_build.sh ci-quick <test>'.${NC}"
+            exit 1
+        fi
         CI_TEST=${2:-shardNoReplication}
         case "${CI_TEST}" in
             compile|cleanup|all|rrrTests)
