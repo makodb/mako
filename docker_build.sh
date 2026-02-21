@@ -341,6 +341,7 @@ case "$ACTION" in
             fi
             echo -e "${YELLOW}Non-interactive session detected; not opening an interactive shell.${NC}"
             echo -e "${GREEN}Use 'docker compose exec dev /bin/bash' from a TTY to enter compose service 'dev'.${NC}"
+            echo -e "${GREEN}For non-interactive usage, run: docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
             exit 0
         fi
         if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
