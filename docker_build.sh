@@ -312,7 +312,11 @@ print_compose_access_guidance() {
         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
         echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
         echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
-        echo -e "${GREEN}Teardown selected project with: MAKO_COMPOSE_PROJECT=<project> docker compose down${NC}"
+        echo -e "${GREEN}Stop stale compose projects with:${NC}"
+        while IFS= read -r stale_project_name; do
+            [ -n "${stale_project_name}" ] || continue
+            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose down${NC}"
+        done < <(list_stale_compose_projects)
         return 0
     fi
 
@@ -513,7 +517,11 @@ case "$ACTION" in
                         echo -e "${GREEN}Found multiple running compose services for this checkout: ${stale_compose_projects}.${NC}"
                         echo -e "${GREEN}Select one explicitly: MAKO_COMPOSE_PROJECT=<project> docker compose exec dev /bin/bash${NC}"
                         echo -e "${GREEN}Non-interactive: MAKO_COMPOSE_PROJECT=<project> docker compose exec -T dev /bin/bash -lc '<command>'${NC}"
-                        echo -e "${GREEN}Teardown selected project with: MAKO_COMPOSE_PROJECT=<project> docker compose down${NC}"
+                        echo -e "${GREEN}Stop stale compose projects with:${NC}"
+                        while IFS= read -r stale_project_name; do
+                            [ -n "${stale_project_name}" ] || continue
+                            echo -e "${GREEN}  MAKO_COMPOSE_PROJECT=${stale_project_name} docker compose down${NC}"
+                        done < <(list_stale_compose_projects)
                         echo -e "${GREEN}Or stop stale compose containers, then run '$0 enter'.${NC}"
                     else
                         echo -e "${GREEN}Use '$0 compose-up' to start compose service 'dev'.${NC}"
