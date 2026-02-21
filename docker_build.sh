@@ -446,11 +446,13 @@ case "$ACTION" in
         echo -e "${YELLOW}Creating persistent dev container...${NC}"
         ensure_image
         warn_incomplete_build_docker
+        CREATE_RECREATED=0
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             EXISTING_INIT=$(docker inspect -f '{{if .HostConfig.Init}}true{{else}}false{{end}}' ${CONTAINER_NAME} 2>/dev/null || echo false)
             if [ "${EXISTING_INIT}" != "true" ]; then
                 echo -e "${YELLOW}Container '${CONTAINER_NAME}' was created without Docker init support; recreating it to enable child-process reaping.${NC}"
                 docker rm -f ${CONTAINER_NAME} >/dev/null
+                CREATE_RECREATED=1
             fi
         fi
         if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -459,8 +461,8 @@ case "$ACTION" in
                 docker rm -f ${CONTAINER_NAME} >/dev/null
                 docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
+                CREATE_RECREATED=1
             fi
-            echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             if ! is_container_running "${CONTAINER_NAME}"; then
                 echo -e "${YELLOW}Starting stopped container...${NC}"
                 docker start ${CONTAINER_NAME}
@@ -471,6 +473,12 @@ case "$ACTION" in
                 docker rm -f ${CONTAINER_NAME} >/dev/null 2>&1 || true
                 docker run "${DOCKER_INIT_OPTS[@]}" -d "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "$(pwd):/workspace" -w /workspace --name ${CONTAINER_NAME} ${IMAGE_NAME} \
                     bash -lc "exec tail -f /dev/null" >/dev/null
+                CREATE_RECREATED=1
+            fi
+            if [ "${CREATE_RECREATED}" -eq 1 ]; then
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' was recreated for persistent dev usage.${NC}"
+            else
+                echo -e "${YELLOW}Container '${CONTAINER_NAME}' already exists; reusing it.${NC}"
             fi
             if [ "${HAS_TTY}" -eq 1 ]; then
                 docker exec "${DOCKER_INTERACTIVE_OPTS[@]}" -e BUILD_DIR=build_docker ${CONTAINER_NAME} /bin/bash
