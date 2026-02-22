@@ -644,12 +644,22 @@ case "$ACTION" in
         ensure_no_extra_args "test"
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         ensure_image
-        DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS:-180}"
+        DOCKER_TEST_MAX_WAIT_SECONDS=180
+        DOCKER_TEST_WAIT_SOURCE=""
+        if [ -n "${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS:-}" ]; then
+            DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}"
+            DOCKER_TEST_WAIT_SOURCE="MAKO_DOCKER_TEST_MAX_WAIT_SECONDS"
+        elif [ -n "${MAKO_MAX_WAIT_SECONDS:-}" ]; then
+            DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_MAX_WAIT_SECONDS}"
+            DOCKER_TEST_WAIT_SOURCE="MAKO_MAX_WAIT_SECONDS"
+        fi
         if ! [[ "${DOCKER_TEST_MAX_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || [ "${DOCKER_TEST_MAX_WAIT_SECONDS}" -le 0 ]; then
-            echo -e "${YELLOW}Warning: MAKO_DOCKER_TEST_MAX_WAIT_SECONDS='${DOCKER_TEST_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
+            if [ -n "${DOCKER_TEST_WAIT_SOURCE}" ]; then
+                echo -e "${YELLOW}Warning: ${DOCKER_TEST_WAIT_SOURCE}='${DOCKER_TEST_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
+            fi
             DOCKER_TEST_MAX_WAIT_SECONDS=180
         fi
-        echo -e "${YELLOW}Using shardNoReplication wait timeout: ${DOCKER_TEST_MAX_WAIT_SECONDS}s (override with MAKO_DOCKER_TEST_MAX_WAIT_SECONDS).${NC}"
+        echo -e "${YELLOW}Using shardNoReplication wait timeout: ${DOCKER_TEST_MAX_WAIT_SECONDS}s (override with MAKO_DOCKER_TEST_MAX_WAIT_SECONDS or MAKO_MAX_WAIT_SECONDS).${NC}"
         normalize_script_build_ownership
         docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -e "MAKO_MAX_WAIT_SECONDS=${DOCKER_TEST_MAX_WAIT_SECONDS}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
             bash -c "${DOCKER_CORE_ULIMIT_CMD}; NEED_BUILD=1; \
