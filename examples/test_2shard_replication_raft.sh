@@ -23,6 +23,15 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 trd=${1:-6}
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
+SHARD0_LOCALHOST_PID=""
+SHARD0_LEARNER_PID=""
+SHARD0_P2_PID=""
+SHARD0_P1_PID=""
+SHARD1_LOCALHOST_PID=""
+SHARD1_LEARNER_PID=""
+SHARD1_P2_PID=""
+SHARD1_P1_PID=""
+CLEANUP_DONE=0
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: dbtest binary not found or not executable at '$binary_path'"
@@ -37,17 +46,63 @@ fi
 export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
-cleanup_temp_config() {
-    rm -f "$TEMP_CONFIG"
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop started wrapper/leader processes first.
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest/shard wrappers tied to this run's config.
+    pkill -TERM -f "bash/shard.sh 2 " 2>/dev/null || true
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+    else
+        pkill -TERM -f "local-shards2-warehouses${trd}\\.yml.*raft" 2>/dev/null || true
+    fi
+    sleep 1
+    pkill -9 -f "bash/shard.sh 2 " 2>/dev/null || true
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    else
+        pkill -9 -f "local-shards2-warehouses${trd}\\.yml.*raft" 2>/dev/null || true
+    fi
+
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        rm -f "$TEMP_CONFIG"
+    fi
     unset MAKO_CONFIG
 }
-trap cleanup_temp_config EXIT
+
+handle_interrupt() {
+    cleanup_processes
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 # Start shard 0 in background with RAFT replication
 echo "Starting shard 0 with Raft..."
@@ -290,5 +345,3 @@ else
     tail -10 ${log_prefix}_shard1-localhost.log
     exit 1
 fi
-
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
