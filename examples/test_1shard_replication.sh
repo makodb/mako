@@ -74,7 +74,9 @@ handle_interrupt() {
 trap cleanup_temp_config EXIT
 trap handle_interrupt INT TERM
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 # Clean up old log files
 rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
