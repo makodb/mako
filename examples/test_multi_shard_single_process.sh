@@ -26,8 +26,15 @@ rm -f nfs_sync_*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+binary_path="./${BUILD_DIR:-build}/dbtest"
 PROCESS_PID=""
 CLEANUP_DONE=0
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
 
 cleanup_process() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then

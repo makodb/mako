@@ -15,11 +15,18 @@ echo "========================================="
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+binary_path="./${BUILD_DIR:-build}/dbtest"
 SHARD0_LOCALHOST_PID=""
 SHARD0_LEARNER_PID=""
 SHARD0_P2_PID=""
 SHARD0_P1_PID=""
 CLEANUP_DONE=0
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
 
 TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
 if [ -z "$TEMP_CONFIG" ]; then
