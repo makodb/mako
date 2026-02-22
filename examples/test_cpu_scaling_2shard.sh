@@ -82,8 +82,9 @@ if [ ! -f "$path/config/local-shards2-warehouses${NUM_THREADS}.yml" ]; then
 fi
 
 # Check if dbtest exists
-if [ ! -f "./${BUILD_DIR:-build}/dbtest" ]; then
-    echo "ERROR: ./${BUILD_DIR:-build}/dbtest not found. Please build first."
+if [ ! -x "./${BUILD_DIR:-build}/dbtest" ]; then
+    echo "ERROR: ./${BUILD_DIR:-build}/dbtest not found or not executable. Please build first."
+    echo "For Docker workflows, run: ./docker_build.sh build"
     exit 1
 fi
 
@@ -93,8 +94,17 @@ if ! command -v systemd-run &> /dev/null; then
     exit 1
 fi
 
+# In Docker/headless environments, systemd-run may exist but the user bus is unavailable.
+if ! systemd-run --user --scope -p CPUQuota=100% /bin/true >/dev/null 2>&1; then
+    echo "ERROR: systemd-run --user is not usable in this environment (missing user systemd bus)."
+    echo "CPU scaling test requires a host session with systemd user services."
+    echo "If running in Docker, run this script on the host instead."
+    exit 1
+fi
+
 # Results storage
 declare -A THROUGHPUT_RESULTS
+has_failures=0
 
 # Function to extract throughput from log
 extract_throughput() {
@@ -209,6 +219,11 @@ run_test_with_cpu_cap() {
     echo "Result for ${cpu_percent}% CPU cap:"
     echo "  Throughput: $throughput txn/s"
 
+    if [ "$throughput" = "N/A" ]; then
+        echo "  ✗ Throughput not captured; check $log_file for errors"
+        has_failures=1
+    fi
+
     # Show throughput line for verification
     if [ "$throughput" != "N/A" ]; then
         echo "  Full output:"
@@ -297,3 +312,8 @@ fi
 echo ""
 echo "Log files: cpu_scaling_*.log"
 echo "========================================="
+
+if [ "$has_failures" -ne 0 ]; then
+    echo "CPU scaling test failed due to missing throughput data."
+    exit 1
+fi
