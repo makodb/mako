@@ -22,6 +22,12 @@ log_learner="simple-shard0-learner.log"
 log_p2="simple-shard0-p2.log"
 log_p1="simple-shard0-p1.log"
 verification_marker="ALL VERIFICATIONS PASSED"
+PROC_MATCH="[/]simpleTransactionRep( |$)"
+PID_LOCALHOST=""
+PID_LEARNER=""
+PID_P2=""
+PID_P1=""
+CLEANUP_DONE=0
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: simpleTransactionRep binary not found or not executable at '$binary_path'"
@@ -29,7 +35,9 @@ if [ ! -x "$binary_path" ]; then
     exit 1
 fi
 
-ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only target worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
+pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 # Clean up old log files
 rm -f "$log_localhost" "$log_learner" "$log_p2" "$log_p1" nfs_sync_*
 USERNAME=${USER:-unknown}
@@ -51,10 +59,47 @@ export MAKO_CONFIG="$TEMP_CONFIG"
 echo "simpleTransactionRep config: $MAKO_CONFIG"
 
 cleanup_temp_config() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    for pid in "${PID_LOCALHOST:-}" "${PID_LEARNER:-}" "${PID_P2:-}" "${PID_P1:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 1
+
+    for pid in "${PID_LOCALHOST:-}" "${PID_LEARNER:-}" "${PID_P2:-}" "${PID_P1:-}"; do
+        if [ -n "$pid" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Last-resort cleanup for any lingering workers in this shell namespace.
+    pkill -TERM -f "$PROC_MATCH" 2>/dev/null || true
+    sleep 1
+    pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
+
+    for pid in "${PID_LOCALHOST:-}" "${PID_LEARNER:-}" "${PID_P2:-}" "${PID_P1:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
 }
+
+handle_interrupt() {
+    cleanup_temp_config
+    exit 130
+}
+
 trap cleanup_temp_config EXIT
+trap handle_interrupt INT TERM
 
 # Start shard 0 in background with RAFT replication - capture ALL PIDs
 echo "Starting shard 0 with Raft..."
@@ -163,10 +208,7 @@ fi
 
 # Kill ALL processes
 echo "Stopping shards..."
-kill -TERM "$PID_LOCALHOST" "$PID_LEARNER" "$PID_P2" "$PID_P1" 2>/dev/null || true
-sleep 2
-kill -9 "$PID_LOCALHOST" "$PID_LEARNER" "$PID_P2" "$PID_P1" 2>/dev/null || true
-wait "$PID_LOCALHOST" "$PID_LEARNER" "$PID_P2" "$PID_P1" 2>/dev/null || true
+cleanup_temp_config
 
 echo ""
 echo "========================================="
