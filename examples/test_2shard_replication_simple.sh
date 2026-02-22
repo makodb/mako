@@ -26,6 +26,15 @@ log_s1_localhost="simple-shard1-localhost.log"
 log_s1_learner="simple-shard1-learner.log"
 log_s1_p2="simple-shard1-p2.log"
 log_s1_p1="simple-shard1-p1.log"
+PID_S0_LOCALHOST=""
+PID_S0_LEARNER=""
+PID_S0_P2=""
+PID_S0_P1=""
+PID_S1_LOCALHOST=""
+PID_S1_LEARNER=""
+PID_S1_P2=""
+PID_S1_P1=""
+CLEANUP_DONE=0
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: simpleTransactionRep binary not found or not executable at '$binary_path'"
@@ -40,8 +49,10 @@ rm -f "$log_s0_localhost" "$log_s0_learner" "$log_s0_p2" "$log_s0_p1" \
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only target worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
+pkill -9 -x dbtest 2>/dev/null || true
+pkill -9 -x simpleTransactionRep 2>/dev/null || true
 sleep 1
 
 for run_log in "$log_s0_localhost" "$log_s0_learner" "$log_s0_p2" "$log_s0_p1" \
@@ -60,11 +71,52 @@ fi
 export MAKO_CONFIG="$TEMP_CONFIG"
 echo "simpleTransactionRep config: $MAKO_CONFIG"
 
-cleanup_temp_config() {
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started simpleTransactionRep processes first.
+    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
+               "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 1
+
+    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
+               "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
+        if [ -n "$pid" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Last-resort cleanup for any lingering workers in this shell namespace.
+    pkill -TERM -x simpleTransactionRep 2>/dev/null || true
+    sleep 1
+    pkill -9 -x simpleTransactionRep 2>/dev/null || true
+
+    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
+               "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
 }
-trap cleanup_temp_config EXIT
+
+handle_interrupt() {
+    cleanup_processes
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
 
 # Start BOTH shards simultaneously to avoid timing issues where shard 0 tries
 # to connect to shard 1 before shard 1 is ready
