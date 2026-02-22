@@ -91,7 +91,9 @@ trap handle_interrupt INT TERM
 transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
@@ -334,5 +336,3 @@ else
     tail -10 ${log_prefix}_shard1-localhost.log
     exit 1
 fi
-
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
