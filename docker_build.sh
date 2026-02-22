@@ -745,6 +745,13 @@ case "$ACTION" in
                 exit 1
                 ;;
         esac
+        if [ "${CI_TEST}" = "cpuThrottlingScaling" ]; then
+            echo -e "${RED}Error: CI test 'cpuThrottlingScaling' is not supported in Docker.${NC}"
+            echo -e "${YELLOW}It requires 'systemd-run --user' with a host user systemd bus for CPU quota control.${NC}"
+            echo -e "${YELLOW}Run it on the host instead, for example:${NC}"
+            echo -e "${YELLOW}  BUILD_DIR=build ./ci/ci.sh cpuThrottlingScaling${NC}"
+            exit 1
+        fi
         echo -e "${YELLOW}Running CI test '${CI_TEST}' in container with ${CI_JOBS} build jobs...${NC}"
         ensure_image
         normalize_script_build_ownership
@@ -794,6 +801,12 @@ case "$ACTION" in
                 exit 1
                 ;;
         esac
+        if [ "${CI_TEST}" = "cpuThrottlingScaling" ]; then
+            echo -e "${RED}Error: ci-quick does not support 'cpuThrottlingScaling' in Docker.${NC}"
+            echo -e "${YELLOW}This test requires host systemd user services for CPU quota control.${NC}"
+            echo -e "${YELLOW}Run on host: BUILD_DIR=build ./ci/ci.sh cpuThrottlingScaling${NC}"
+            exit 1
+        fi
         REQUIRED_BINS=("build_docker/dbtest")
         case "${CI_TEST}" in
             simpleTransaction)
