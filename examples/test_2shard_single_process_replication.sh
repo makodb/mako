@@ -178,10 +178,13 @@ if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
 fi
 wait_count=0
 leader_exited_early=0
+benchmark_completed=0
+timed_out=0
 
 while [ $wait_count -lt $max_wait ]; do
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2
         break
     fi
@@ -193,6 +196,7 @@ while [ $wait_count -lt $max_wait ]; do
 
         if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
             echo "Benchmark completed after ${wait_count}s (leader exited after writing results)"
+            benchmark_completed=1
             sleep 1
             break
         fi
@@ -215,8 +219,9 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
-if [ $wait_count -ge $max_wait ]; then
+if [ $wait_count -ge $max_wait ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Graceful shutdown
@@ -232,6 +237,11 @@ failed=0
 
 if [ "$leader_exited_early" -eq 1 ]; then
     echo "  X Combined leader exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  X Benchmark timed out before throughput was observed"
     failed=1
 fi
 
@@ -290,17 +300,13 @@ for shard in 0 1; do
     fi
 done
 
-# Check 5: Throughput output - warning only if not found
+# Check 5: Throughput output (required for success)
 if grep -q "agg_persist_throughput" "$log_file"; then
     echo "  OK Found 'agg_persist_throughput' keyword"
     grep "agg_persist_throughput" "$log_file" | tail -1 | sed 's/^/    /'
 else
-    # Also accept "starting benchmark" as proof the system is running correctly
-    if grep -q "starting benchmark" "$log_file"; then
-        echo "  OK Benchmark started (throughput not yet output)"
-    else
-        echo "  WARN 'agg_persist_throughput' keyword not found (may need more time)"
-    fi
+    echo "  X 'agg_persist_throughput' keyword not found"
+    failed=1
 fi
 
 # Check 6: No transaction abort panics
