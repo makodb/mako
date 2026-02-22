@@ -9,7 +9,6 @@ if [ "$GDB_ENABLED" == "1" ]; then
 fi
 
 binary_path="./${BUILD_DIR:-build}/simplePaxos"
-paxos_proc_match="[/]simplePaxos (localhost|p1|p2|learner)( |$)"
 startup_wait_per_role="${MAKO_PAXOS_ROLE_STARTUP_WAIT_SECONDS:-5}"
 if ! [[ "$startup_wait_per_role" =~ ^[0-9]+$ ]] || [ "$startup_wait_per_role" -le 0 ]; then
     echo "Warning: MAKO_PAXOS_ROLE_STARTUP_WAIT_SECONDS='${startup_wait_per_role}' is invalid; using default 5s"
@@ -29,10 +28,20 @@ for run_log in a1.log a2.log a3.log a4.log; do
     fi
 done
 
+kill_lingering_simple_paxos() {
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -TERM -x simplePaxos 2>/dev/null || true
+        sleep 1
+        pkill -9 -x simplePaxos 2>/dev/null || true
+    elif command -v killall >/dev/null 2>&1; then
+        killall -TERM simplePaxos 2>/dev/null || true
+        sleep 1
+        killall -9 simplePaxos 2>/dev/null || true
+    fi
+}
+
 # Kill any lingering role processes from previous runs.
-pkill -TERM -f "$paxos_proc_match" 2>/dev/null || true
-sleep 1
-pkill -9 -f "$paxos_proc_match" 2>/dev/null || true
+kill_lingering_simple_paxos
 sleep 1
 
 p1_pid=""
@@ -60,9 +69,7 @@ cleanup_simple_paxos() {
     done
 
     # Last-resort cleanup for lingering role workers.
-    pkill -TERM -f "$paxos_proc_match" 2>/dev/null || true
-    sleep 1
-    pkill -9 -f "$paxos_proc_match" 2>/dev/null || true
+    kill_lingering_simple_paxos
 
     for pid in "$localhost_pid" "$learner_pid" "$p2_pid" "$p1_pid"; do
         if [ -n "$pid" ]; then
