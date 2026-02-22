@@ -41,6 +41,16 @@ transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 log_file="${log_prefix}_shard0-$trd.log"
 
+# Ensure this run uses a fresh writable log file to avoid stale false positives.
+if [ -f "$log_file" ]; then
+    rm -f "$log_file" 2>/dev/null || true
+fi
+if ! : > "$log_file"; then
+    echo "Error: Cannot write log file '$log_file'."
+    echo "Fix file permissions or remove stale files, then retry."
+    exit 1
+fi
+
 ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 
@@ -57,11 +67,28 @@ if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
     max_wait=120
 fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
 while [ "$wait_count" -lt "$max_wait" ]; do
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2
+        break
+    fi
+
+    if ! kill -0 "$SHARD0_PID" 2>/dev/null; then
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (process exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Shard 0 process exited unexpectedly after ${wait_count}s"
+        process_exited_early=1
         break
     fi
 
@@ -72,8 +99,9 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 done
 
-if [ "$wait_count" -ge "$max_wait" ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Stop process (graceful first, force if still alive)
@@ -91,6 +119,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Shard process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmark timed out before throughput was observed"
+    failed=1
+fi
 
 echo ""
 echo "Checking $log_file:"
