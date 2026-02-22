@@ -65,6 +65,7 @@ echo "CPU Throttling Scaling Test"
 echo "========================================="
 echo "Config: 2 shards, $THREADS threads per shard"
 echo "Testing CPU limits: 1%, 2%, 4%, 8%"
+echo "Detailed logs: $LOG_DIR"
 echo ""
 
 declare -A throughputs
@@ -77,6 +78,7 @@ for cpu_limit in 1 2 4 8; do
     rm -f /tmp/${USERNAME}_mako_rocksdb_shard* 2>/dev/null
 
     LOG_FILE="$LOG_DIR/cpu_${cpu_limit}pct.log"
+    echo "  Running benchmark (log: $LOG_FILE)"
 
     # Run test to completion so final benchmark summary is emitted.
     set +e
@@ -86,12 +88,13 @@ for cpu_limit in 1 2 4 8; do
         -P localhost \
         -L 0,1 \
         --cpu-limit "$cpu_limit" \
-        2>&1 | tee "$LOG_FILE"
-    test_exit=${PIPESTATUS[0]}
+        >"$LOG_FILE" 2>&1
+    test_exit=$?
     set -e
 
     if [ "$test_exit" -eq 124 ]; then
-        echo "  ERROR: Test timed out before completion"
+        echo "  ERROR: Test timed out before completion (see $LOG_FILE)"
+        tail -n 20 "$LOG_FILE" || true
         throughputs[$cpu_limit]=0
         all_passed=false
         sleep 2
@@ -99,7 +102,8 @@ for cpu_limit in 1 2 4 8; do
     fi
 
     if [ "$test_exit" -ne 0 ]; then
-        echo "  ERROR: dbtest exited with status $test_exit"
+        echo "  ERROR: dbtest exited with status $test_exit (see $LOG_FILE)"
+        tail -n 20 "$LOG_FILE" || true
         throughputs[$cpu_limit]=0
         all_passed=false
         sleep 2
@@ -109,7 +113,8 @@ for cpu_limit in 1 2 4 8; do
     throughput=$(extract_throughput "$LOG_FILE")
 
     if [ -z "$throughput" ] || ! float_gt "$throughput" "0"; then
-        echo "  ERROR: Could not extract agg_persist_throughput from benchmark summary"
+        echo "  ERROR: Could not extract agg_persist_throughput from benchmark summary (see $LOG_FILE)"
+        tail -n 20 "$LOG_FILE" || true
         throughputs[$cpu_limit]=0
         all_passed=false
     else
