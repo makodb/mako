@@ -2,6 +2,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <unistd.h>
 #include <mako.hh>
 
@@ -264,6 +265,15 @@ static void start_replicated_startup_watchdog(int startup_timeout_sec, std::atom
   }).detach();
 }
 
+static void restore_default_termination_signals()
+{
+  // FastTransport/libevent installs process-wide SIGTERM/SIGINT handlers.
+  // For dbtest CLI usage we want standard process semantics for timeout/docker stop:
+  // SIGTERM/SIGINT should terminate the process unless explicitly handled here.
+  std::signal(SIGTERM, SIG_DFL);
+  std::signal(SIGINT, SIG_DFL);
+}
+
 static void handle_new_config_format(const string& site_name)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
@@ -440,6 +450,10 @@ main(int argc, char **argv)
   parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec, startup_timeout_explicit,
                           site_name, paxos_config_file, local_shards_str, replication_type);
 
+  // Keep dbtest CLI responsive to process-level termination signals (SIGTERM/SIGINT),
+  // which are commonly used by timeout/docker stop/script cleanup flows.
+  set_fasttransport_signal_handlers_enabled(false);
+
   // Set replication type before any initialization (default is paxos)
   if (!replication_type.empty()) {
     janus::set_replication_type_from_string(replication_type);
@@ -523,6 +537,7 @@ main(int argc, char **argv)
       cerr << "[ERROR] Failed to initialize multi-shard transports" << endl;
       return 1;
     }
+    restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
 
     // Run workers on all local shards
@@ -534,6 +549,7 @@ main(int argc, char **argv)
   } else {
     // Single-shard mode: keep existing behavior
     abstract_db * db = initWithDB(); // Some init is required for followers/learners
+    restore_default_termination_signals();
     startup_complete.store(true, std::memory_order_release);
     // Run worker threads on the leader
     if (benchConfig.getLeaderConfig()) {

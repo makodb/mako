@@ -32,6 +32,7 @@
 
 void register_fasttransport_for_bench(std::function<int(int,int)>);
 void register_fasttransport_for_dbtest(std::function<int(int,int)>);
+void set_fasttransport_signal_handlers_enabled(bool enabled);
 
 /*
  * Class FastTransport implements a multi-threaded transport layer
