@@ -20,7 +20,7 @@ rm -f simple-shard0*.log simple-shard1*.log
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-trd=6
+trd=${1:-6}
 script_name="$(basename "$0")"
 SHARD0_LOCALHOST_PID=""
 SHARD0_LEARNER_PID=""
