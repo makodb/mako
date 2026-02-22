@@ -26,6 +26,7 @@ log_s1_localhost="simple-shard1-localhost.log"
 log_s1_learner="simple-shard1-learner.log"
 log_s1_p2="simple-shard1-p2.log"
 log_s1_p1="simple-shard1-p1.log"
+PROC_MATCH="[/]simpleTransactionRep( |$)"
 PID_S0_LOCALHOST=""
 PID_S0_LEARNER=""
 PID_S0_P2=""
@@ -52,7 +53,7 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 # Kill only target worker processes by executable name.
 # Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
 pkill -9 -x dbtest 2>/dev/null || true
-pkill -9 -x simpleTransactionRep 2>/dev/null || true
+pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 sleep 1
 
 for run_log in "$log_s0_localhost" "$log_s0_learner" "$log_s0_p2" "$log_s0_p1" \
@@ -95,9 +96,9 @@ cleanup_processes() {
     done
 
     # Last-resort cleanup for any lingering workers in this shell namespace.
-    pkill -TERM -x simpleTransactionRep 2>/dev/null || true
+    pkill -TERM -f "$PROC_MATCH" 2>/dev/null || true
     sleep 1
-    pkill -9 -x simpleTransactionRep 2>/dev/null || true
+    pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 
     for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
                "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do

@@ -11,6 +11,7 @@ binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 log_shard0="simple-shard0-localhost.log"
 log_shard1="simple-shard1-localhost.log"
 completion_marker="All tests completed successfully!"
+PROC_MATCH="[/]simpleTransactionRep( |$)"
 SHARD0_PID=""
 SHARD1_PID=""
 CLEANUP_DONE=0
@@ -30,7 +31,7 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 # Kill only target worker processes by executable name.
 # Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
 pkill -9 -x dbtest 2>/dev/null || true
-pkill -9 -x simpleTransactionRep 2>/dev/null || true
+pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 sleep 1
 
 cleanup_processes() {
@@ -54,9 +55,9 @@ cleanup_processes() {
     done
 
     # Last-resort cleanup for lingering test workers.
-    pkill -TERM -x simpleTransactionRep 2>/dev/null || true
+    pkill -TERM -f "$PROC_MATCH" 2>/dev/null || true
     sleep 1
-    pkill -9 -x simpleTransactionRep 2>/dev/null || true
+    pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 
     for pid in "${SHARD0_PID:-}" "${SHARD1_PID:-}"; do
         if [ -n "$pid" ]; then
