@@ -26,7 +26,7 @@ rm -f 4proc-*.log
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-trd=6
+trd=${1:-6}
 script_name="$(basename "$0")"
 path=$(pwd)/src/mako
 
@@ -85,6 +85,9 @@ if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
     max_wait=120
 fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 
 while [ "$wait_count" -lt "$max_wait" ]; do
     done_flag=0
@@ -96,7 +99,39 @@ while [ "$wait_count" -lt "$max_wait" ]; do
 
     if [ "$done_flag" -eq 1 ]; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2
+        break
+    fi
+
+    localhost_alive=1
+    p1_alive=1
+    p2_alive=1
+    learner_alive=1
+    if ! kill -0 "$LOCALHOST_PID" 2>/dev/null; then
+        localhost_alive=0
+    fi
+    if ! kill -0 "$P1_PID" 2>/dev/null; then
+        p1_alive=0
+    fi
+    if ! kill -0 "$P2_PID" 2>/dev/null; then
+        p2_alive=0
+    fi
+    if ! kill -0 "$LEARNER_PID" 2>/dev/null; then
+        learner_alive=0
+    fi
+
+    if [ "$localhost_alive" -eq 0 ] || [ "$p1_alive" -eq 0 ] || [ "$p2_alive" -eq 0 ] || [ "$learner_alive" -eq 0 ]; then
+        # Give logs a brief moment to flush before classifying as failure.
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (processes exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Process exited unexpectedly before benchmark completion (localhost_alive=$localhost_alive, p1_alive=$p1_alive, p2_alive=$p2_alive, learner_alive=$learner_alive)"
+        process_exited_early=1
         break
     fi
 
@@ -111,8 +146,9 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 done
 
-if [ "$wait_count" -ge "$max_wait" ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Graceful shutdown
@@ -132,6 +168,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  [X] Process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  [X] Benchmark timed out before throughput was observed"
+    failed=1
+fi
 
 echo ""
 echo "Checking 4proc-localhost.log:"
