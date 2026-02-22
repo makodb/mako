@@ -50,16 +50,25 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 # Get the script directory and construct path to executable
 MAKO_ROOT="$( cd "$SCRIPT_DIR/.." && pwd )"
+BINARY_PATH="$MAKO_ROOT/${BUILD_DIR:-build}/continuousTransactions"
+
+if [ ! -x "$BINARY_PATH" ]; then
+    echo "Error: continuousTransactions binary not found or not executable at '$BINARY_PATH'."
+    echo "Build it first, e.g.:"
+    echo "  cmake --build ${BUILD_DIR:-build} --target continuousTransactions"
+    echo "For Docker workflows, run this inside the dev container with BUILD_DIR=build_docker."
+    exit 1
+fi
 
 # Function to start a shard
 start_shard() {
     local shard_id=$1
     local num_workers=$2
 
-    echo "Starting shard $shard_id with $num_workers workers..."
+    echo "Starting shard $shard_id with $num_workers workers..." >&2
 
     # Usage: continuousTransactions <nshards> <shardIdx> <nthreads> <paxos_proc_name> [is_replicated]
-    nohup $GDB_PREFIX "$MAKO_ROOT/${BUILD_DIR:-build}/continuousTransactions" $SHARDS $shard_id $num_workers localhost 0 > continuous-shard${shard_id}.log 2>&1 &
+    nohup $GDB_PREFIX "$BINARY_PATH" $SHARDS $shard_id $num_workers localhost 0 > continuous-shard${shard_id}.log 2>&1 &
 
     echo $!
 }
@@ -68,6 +77,10 @@ start_shard() {
 declare -a PIDS
 for ((i=0; i<$SHARDS; i++)); do
     PID=$(start_shard $i $WORKERS)
+    if ! [[ "$PID" =~ ^[0-9]+$ ]]; then
+        echo "Error: Failed to capture a valid PID for shard $i (got '$PID')."
+        exit 1
+    fi
     PIDS+=($PID)
     echo "  Shard $i started with PID: $PID"
     sleep 0.5  # Minimal delay to avoid overwhelming the system
@@ -82,7 +95,16 @@ echo ""
 
 # Wait for the specified duration
 echo "Running for $DURATION seconds..."
-sleep $DURATION
+for ((sec=1; sec<=DURATION; sec++)); do
+    for PID in "${PIDS[@]}"; do
+        if ! kill -0 "$PID" 2>/dev/null; then
+            echo "Error: shard process PID $PID exited unexpectedly after ${sec}s."
+            echo "Check continuous-shard*.log for details."
+            exit 1
+        fi
+    done
+    sleep 1
+done
 
 # Gracefully stop all shards
 echo ""
