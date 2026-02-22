@@ -85,7 +85,9 @@ log_prefix="${script_name}_${transport}"
 log_file0="${log_prefix}_shard0-$trd.log"
 log_file1="${log_prefix}_shard1-$trd.log"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
