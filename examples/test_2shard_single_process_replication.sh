@@ -180,17 +180,34 @@ wait_count=0
 leader_exited_early=0
 
 while [ $wait_count -lt $max_wait ]; do
-    if ! kill -0 "$LEADER_PID" 2>/dev/null; then
-        echo "Leader process exited unexpectedly after ${wait_count}s"
-        leader_exited_early=1
-        break
-    fi
-
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
         sleep 2
         break
     fi
+
+    if ! kill -0 "$LEADER_PID" 2>/dev/null; then
+        # Leader may exit immediately after writing final metrics.
+        # Give log output a brief moment to flush before classifying as failure.
+        sleep 1
+
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (leader exited after writing results)"
+            sleep 1
+            break
+        fi
+
+        # If benchmark started, continue with log-based validation below.
+        if [ -f "$log_file" ] && grep -q "starting benchmark" "$log_file" 2>/dev/null; then
+            echo "Leader exited after benchmark start; continuing with log-based checks"
+            break
+        fi
+
+        echo "Leader process exited unexpectedly after ${wait_count}s"
+        leader_exited_early=1
+        break
+    fi
+
     sleep 1
     wait_count=$((wait_count + 1))
     if [ $((wait_count % 10)) -eq 0 ]; then
