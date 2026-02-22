@@ -15,6 +15,8 @@ echo "========================================="
 trd=${1:-6}
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
+SHARD0_PID=""
+CLEANUP_DONE=0
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: dbtest binary not found or not executable at '$binary_path'"
@@ -38,10 +40,37 @@ export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
 cleanup_temp_config() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started shard wrapper/process.
+    if [ -n "${SHARD0_PID:-}" ]; then
+        kill "$SHARD0_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$SHARD0_PID" 2>/dev/null || true
+        wait "$SHARD0_PID" 2>/dev/null || true
+    fi
+
+    # Best-effort cleanup for dbtest workers tied to this run's unique temp config.
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+        sleep 1
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    fi
+
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
 }
+
+handle_interrupt() {
+    cleanup_temp_config
+    exit 130
+}
+
 trap cleanup_temp_config EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
@@ -58,7 +87,9 @@ if ! : > "$log_file"; then
     exit 1
 fi
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 
 # Start shard 0 in background
