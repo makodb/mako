@@ -1,9 +1,9 @@
 #!/bin/bash
 
-# Script to test 2-shard experiments with replication using simpleTransactionRep
+# Script to test 2-shard experiments without replication using simpleTransactionRep
 
 echo "========================================="
-echo "Testing 2-shard setup with replication using simpleTransactionRep"
+echo "Testing 2-shard setup without replication using simpleTransactionRep"
 echo "========================================="
 
 #skill dbtest
@@ -19,7 +19,7 @@ sleep 1
 
 # Start shard 0 in background
 echo "Starting shard 0..."
-trd=6
+trd=${1:-6}
 nohup ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 $trd localhost 0 > simple-shard0-localhost.log 2>&1 &
 SHARD0_PID=$!
 
