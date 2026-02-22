@@ -30,6 +30,57 @@ trd=${1:-6}
 script_name="$(basename "$0")"
 path=$(pwd)/src/mako
 binary_path="./${BUILD_DIR:-build}/dbtest"
+LOCALHOST_PID=""
+P1_PID=""
+P2_PID=""
+LEARNER_PID=""
+STARTED_PROCESSES=0
+CLEANUP_DONE=0
+
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    if [ "$STARTED_PROCESSES" -eq 0 ]; then
+        return
+    fi
+
+    echo ""
+    echo "Stopping processes..."
+
+    for pid in "$LOCALHOST_PID" "$P1_PID" "$P2_PID" "$LEARNER_PID"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 3
+
+    for pid in "$LOCALHOST_PID" "$P1_PID" "$P2_PID" "$LEARNER_PID"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Last-resort cleanup for descendant dbtest processes that can survive wrapper exits.
+    pkill -TERM -f "${binary_path}.*local-shards2-warehouses${trd}.yml" 2>/dev/null || true
+    sleep 1
+    pkill -9 -f "${binary_path}.*local-shards2-warehouses${trd}.yml" 2>/dev/null || true
+
+    # Wait for cleanup
+    sleep 2
+}
+
+handle_interrupt() {
+    echo ""
+    echo "Received interrupt signal; aborting run."
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: dbtest binary not found or not executable at '$binary_path'"
@@ -68,6 +119,7 @@ echo ""
 echo "Starting localhost (leaders for shards 0,1)..."
 nohup $GDB_PREFIX ./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated > 4proc-localhost.log 2>&1 &
 LOCALHOST_PID=$!
+STARTED_PROCESSES=1
 
 sleep 2
 
@@ -179,16 +231,7 @@ if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     timed_out=1
 fi
 
-# Graceful shutdown
-echo ""
-echo "Stopping processes..."
-kill -TERM $LOCALHOST_PID $P1_PID $P2_PID $LEARNER_PID 2>/dev/null
-sleep 3
-kill -9 $LOCALHOST_PID $P1_PID $P2_PID $LEARNER_PID 2>/dev/null
-pkill -9 dbtest 2>/dev/null
-
-# Wait for cleanup
-sleep 2
+cleanup_processes
 
 echo ""
 echo "========================================="
