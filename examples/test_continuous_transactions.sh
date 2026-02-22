@@ -19,6 +19,8 @@ fi
 DEFAULT_SHARDS=2
 DEFAULT_WORKERS=4
 DEFAULT_DURATION=30
+PROC_MATCH_CONTINUOUS="[/]continuousTransactions( |$)"
+CLEANUP_DONE=0
 
 # Parse command line arguments
 SHARDS=${1:-$DEFAULT_SHARDS}
@@ -33,11 +35,53 @@ echo "  Transaction mix: 70% reads, 30% writes"
 echo "  Cross-shard detection: Automatic (based on key hash)"
 echo ""
 
+# Start all shards (minimize delay between shard starts)
+declare -a PIDS
+
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    for pid in "${PIDS[@]}"; do
+        if [ -n "$pid" ]; then
+            kill -SIGINT "$pid" 2>/dev/null || true
+        fi
+    done
+    sleep 2
+
+    for pid in "${PIDS[@]}"; do
+        if [ -n "$pid" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Last-resort cleanup for lingering workers.
+    pkill -TERM -f "$PROC_MATCH_CONTINUOUS" 2>/dev/null || true
+    sleep 1
+    pkill -9 -f "$PROC_MATCH_CONTINUOUS" 2>/dev/null || true
+
+    for pid in "${PIDS[@]}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+}
+
+handle_interrupt() {
+    cleanup_processes
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
+
 # Clean up any existing processes
 echo "Cleaning up existing processes..."
-pkill -9 continuousTransactions 2>/dev/null
-pkill -9 dbtest 2>/dev/null
-pkill -9 simpleTransactionRep 2>/dev/null
+pkill -9 -f "$PROC_MATCH_CONTINUOUS" 2>/dev/null || true
+pkill -9 -x dbtest 2>/dev/null || true
+pkill -9 -f "[/]simpleTransactionRep( |$)" 2>/dev/null || true
 # Wait for ports to be released
 sleep 2
 
@@ -73,8 +117,6 @@ start_shard() {
     echo $!
 }
 
-# Start all shards (minimize delay between shard starts)
-declare -a PIDS
 for ((i=0; i<$SHARDS; i++)); do
     PID=$(start_shard $i $WORKERS)
     if ! [[ "$PID" =~ ^[0-9]+$ ]]; then
@@ -111,18 +153,7 @@ echo ""
 echo "========================================="
 echo "Stopping all shards..."
 echo "========================================="
-
-for PID in "${PIDS[@]}"; do
-    kill -SIGINT $PID 2>/dev/null
-done
-
-# Wait a bit for graceful shutdown
-sleep 3
-
-# Force kill if still running
-for PID in "${PIDS[@]}"; do
-    kill -9 $PID 2>/dev/null
-done
+cleanup_processes
 
 echo ""
 echo "Log files saved to:"
@@ -134,9 +165,5 @@ echo ""
 echo "========================================="
 echo "Test completed successfully!"
 echo "========================================="
-
-# Clean up processes one more time
-pkill -9 continuousTransactions 2>/dev/null
-sleep 1
 
 exit 0
