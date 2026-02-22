@@ -673,9 +673,9 @@ void RrrRpcBackend::Stop() {
     // @unsafe { std::atomic load for statistics - not borrow-checked }
     auto resp_size = msg_size_resp_sent_.load(std::memory_order_relaxed);
     auto resp_count = msg_counter_resp_sent_.load(std::memory_order_relaxed);
+    double resp_avg = resp_count > 0 ? static_cast<double>(resp_size) / static_cast<double>(resp_count) : 0.0;
     Notice("RrrRpcBackend stats: msg_size_resp_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
-           resp_size, resp_count,
-           resp_size / (resp_count + 0.0));
+           resp_size, resp_count, resp_avg);
     Notice("RrrRpcBackend::Stop: END");
 }
 
@@ -684,9 +684,9 @@ void RrrRpcBackend::Stop() {
 void RrrRpcBackend::PrintStats() {
     auto req_size = msg_size_req_sent_.load(std::memory_order_relaxed);
     auto req_count = msg_counter_req_sent_.load(std::memory_order_relaxed);
+    double req_avg = req_count > 0 ? static_cast<double>(req_size) / static_cast<double>(req_count) : 0.0;
     Notice("RrrRpcBackend request stats: msg_size_req_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
-           req_size, req_count,
-           req_size / (req_count + 0.0));
+           req_size, req_count, req_avg);
 }
 
 // Static request handler for rrr::Server
