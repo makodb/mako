@@ -95,14 +95,33 @@ if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
     max_wait=120
 fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 
 while [ "$wait_count" -lt "$max_wait" ]; do
     # Check if throughput output appeared (indicates completion)
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2  # Give a moment for final output
         break
     fi
+
+    if ! kill -0 "$SHARD0_LOCALHOST_PID" 2>/dev/null; then
+        # Process may exit immediately after writing final metrics.
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (process exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Shard 0 localhost process exited unexpectedly after ${wait_count}s"
+        process_exited_early=1
+        break
+    fi
+
     sleep 1
     wait_count=$((wait_count + 1))
     if [ $((wait_count % 10)) -eq 0 ]; then
@@ -110,8 +129,9 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 done
 
-if [ "$wait_count" -ge "$max_wait" ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Graceful shutdown: SIGTERM first
@@ -133,6 +153,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Shard 0 localhost process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmark timed out before throughput was observed"
+    failed=1
+fi
 
 # Check each shard's output
 {
