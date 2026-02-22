@@ -20,6 +20,11 @@ localhost_log="${script_name}_shard0-localhost-$trd.log"
 learner_log="${script_name}_shard0-learner-$trd.log"
 p2_log="${script_name}_shard0-p2-$trd.log"
 p1_log="${script_name}_shard0-p1-$trd.log"
+LOCALHOST_PID=""
+LEARNER_PID=""
+P2_PID=""
+P1_PID=""
+CLEANUP_DONE=0
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: dbtest binary not found or not executable at '$binary_path'"
@@ -34,13 +39,47 @@ fi
 export MAKO_CONFIG="$TEMP_CONFIG"
 echo "dbtest config: $MAKO_CONFIG"
 
-cleanup_temp_config() {
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started shard wrappers.
+    for pid in "${LOCALHOST_PID:-}" "${LEARNER_PID:-}" "${P2_PID:-}" "${P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest workers tied to this run's unique temp config.
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+        sleep 1
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    fi
+
+    for pid in "${LOCALHOST_PID:-}" "${LEARNER_PID:-}" "${P2_PID:-}" "${P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
     rm -f "$TEMP_CONFIG"
     unset MAKO_CONFIG
 }
-trap cleanup_temp_config EXIT
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+handle_interrupt() {
+    cleanup_processes
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
+
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 # Clean up old log files
 rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
