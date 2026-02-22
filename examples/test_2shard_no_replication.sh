@@ -98,6 +98,9 @@ if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
     max_wait=120
 fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
 
 while [ "$wait_count" -lt "$max_wait" ]; do
@@ -114,7 +117,38 @@ while [ "$wait_count" -lt "$max_wait" ]; do
 
     if [ "$shard0_done" -eq 1 ] && [ "$shard1_done" -eq 1 ]; then
         echo "Both benchmarks completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2
+        break
+    fi
+
+    shard0_alive=1
+    shard1_alive=1
+    if ! kill -0 "$SHARD0_PID" 2>/dev/null; then
+        shard0_alive=0
+    fi
+    if ! kill -0 "$SHARD1_PID" 2>/dev/null; then
+        shard1_alive=0
+    fi
+
+    if { [ "$shard0_alive" -eq 0 ] && [ "$shard0_done" -eq 0 ]; } || \
+       { [ "$shard1_alive" -eq 0 ] && [ "$shard1_done" -eq 0 ]; }; then
+        # Give logs a brief moment to flush before classifying as failure.
+        sleep 1
+        if [ -f "$log_file0" ] && grep -q "agg_persist_throughput" "$log_file0" 2>/dev/null; then
+            shard0_done=1
+        fi
+        if [ -f "$log_file1" ] && grep -q "agg_persist_throughput" "$log_file1" 2>/dev/null; then
+            shard1_done=1
+        fi
+        if [ "$shard0_done" -eq 1 ] && [ "$shard1_done" -eq 1 ]; then
+            echo "Both benchmarks completed after ${wait_count}s (processes exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Shard process exited unexpectedly before benchmark completion (shard0_alive=$shard0_alive, shard1_alive=$shard1_alive)"
+        process_exited_early=1
         break
     fi
 
@@ -125,8 +159,9 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 done
 
-if [ "$wait_count" -ge "$max_wait" ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Stop any remaining processes
@@ -142,6 +177,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Shard process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmarks timed out before throughput was observed"
+    failed=1
+fi
 
 # Check each shard's output
 for i in 0 1; do
