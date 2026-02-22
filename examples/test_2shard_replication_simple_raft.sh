@@ -25,7 +25,7 @@ ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
 ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
 sleep 1
 
-trd=6
+trd=${1:-6}
 
 TEMP_CONFIG=$(make_simple_txn_rep_config 2 $trd)
 if [ -z "$TEMP_CONFIG" ]; then
