@@ -15,6 +15,10 @@ echo "========================================="
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+localhost_log="${script_name}_shard0-localhost-$trd.log"
+learner_log="${script_name}_shard0-learner-$trd.log"
+p2_log="${script_name}_shard0-p2-$trd.log"
+p1_log="${script_name}_shard0-p1-$trd.log"
 
 TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
 if [ -z "$TEMP_CONFIG" ]; then
@@ -35,31 +39,80 @@ rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
+# Ensure this run uses fresh writable logs to avoid stale false positives.
+for run_log in "$localhost_log" "$learner_log" "$p2_log" "$p1_log"; do
+    if [ -f "$run_log" ]; then
+        rm -f "$run_log" 2>/dev/null || true
+    fi
+    if ! : > "$run_log"; then
+        echo "Error: Cannot write log file '$run_log'."
+        echo "Fix file permissions or remove stale files, then retry."
+        exit 1
+    fi
+done
+
 # Start shard 0 in background with RAFT replication
 echo "Starting shard 0 with Raft..."
-nohup bash bash/shard.sh 1 0 $trd localhost 0 1 raft > $script_name\_shard0-localhost-$trd.log 2>&1 &
-nohup bash bash/shard.sh 1 0 $trd learner 0 1 raft > $script_name\_shard0-learner-$trd.log 2>&1 &
-nohup bash bash/shard.sh 1 0 $trd p2 0 1 raft > $script_name\_shard0-p2-$trd.log 2>&1 &
+nohup bash bash/shard.sh 1 0 $trd localhost 0 1 raft > "$localhost_log" 2>&1 &
+LOCALHOST_PID=$!
+nohup bash bash/shard.sh 1 0 $trd learner 0 1 raft > "$learner_log" 2>&1 &
+LEARNER_PID=$!
+nohup bash bash/shard.sh 1 0 $trd p2 0 1 raft > "$p2_log" 2>&1 &
+P2_PID=$!
 sleep 1
-nohup bash bash/shard.sh 1 0 $trd p1 0 1 raft > $script_name\_shard0-p1-$trd.log 2>&1 &
-SHARD0_PID=$!
+nohup bash bash/shard.sh 1 0 $trd p1 0 1 raft > "$p1_log" 2>&1 &
+P1_PID=$!
 sleep 2
 
 # Wait for benchmark to complete (poll for completion marker)
 echo "Waiting for benchmark to complete..."
-log_file="${script_name}_shard0-localhost-$trd.log"
+log_file="$localhost_log"
 max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
 if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
     echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
     max_wait=120
 fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 
 while [ "$wait_count" -lt "$max_wait" ]; do
     # Check if throughput output appeared (indicates completion)
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2  # Give a moment for final output
+        break
+    fi
+
+    localhost_alive=1
+    learner_alive=1
+    p2_alive=1
+    p1_alive=1
+    if ! kill -0 "$LOCALHOST_PID" 2>/dev/null; then
+        localhost_alive=0
+    fi
+    if ! kill -0 "$LEARNER_PID" 2>/dev/null; then
+        learner_alive=0
+    fi
+    if ! kill -0 "$P2_PID" 2>/dev/null; then
+        p2_alive=0
+    fi
+    if ! kill -0 "$P1_PID" 2>/dev/null; then
+        p1_alive=0
+    fi
+
+    if [ "$localhost_alive" -eq 0 ] || [ "$learner_alive" -eq 0 ] || [ "$p2_alive" -eq 0 ] || [ "$p1_alive" -eq 0 ]; then
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (processes exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Process exited unexpectedly before benchmark completion (localhost_alive=$localhost_alive, learner_alive=$learner_alive, p2_alive=$p2_alive, p1_alive=$p1_alive)"
+        process_exited_early=1
         break
     fi
     sleep 1
@@ -69,22 +122,23 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 done
 
-if [ "$wait_count" -ge "$max_wait" ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Graceful shutdown: SIGTERM first
 echo "Stopping shards (graceful)..."
+kill -TERM "$LOCALHOST_PID" "$LEARNER_PID" "$P2_PID" "$P1_PID" 2>/dev/null || true
 pkill -TERM -f "dbtest.*shard-index 0" 2>/dev/null || true
 sleep 3
 
 # Force kill any remaining processes
+kill -9 "$LOCALHOST_PID" "$LEARNER_PID" "$P2_PID" "$P1_PID" 2>/dev/null || true
 pkill -9 -f "dbtest.*shard-index 0" 2>/dev/null || true
 sleep 1
 
-# Original cleanup for good measure
-kill $SHARD0_PID 2>/dev/null || true
-wait $SHARD0_PID 2>/dev/null || true
+wait "$LOCALHOST_PID" "$LEARNER_PID" "$P2_PID" "$P1_PID" 2>/dev/null || true
 
 echo ""
 echo "========================================="
@@ -93,10 +147,20 @@ echo "========================================="
 
 failed=0
 
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmark timed out before throughput was observed"
+    failed=1
+fi
+
 # Check each shard's output
 {
     i=0
-    log="${script_name}_shard${i}-localhost-$trd.log"
+    log="$localhost_log"
     echo ""
     echo "Checking $log:"
     echo "-----------------"
@@ -150,7 +214,7 @@ failed=0
 
 # Check replay_batch counter in shard0-p1.log
 echo ""
-log_p1="${script_name}_shard0-p1-$trd.log"
+log_p1="$p1_log"
 echo "Checking $log_p1:"
 echo "-----------------"
 
