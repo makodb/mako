@@ -30,6 +30,7 @@ fi
 # Configuration
 NUM_THREADS=6  # Use 6 threads to avoid TPC-C workload crashes with high thread counts
 NUM_CPUS=$(nproc)
+DBTEST_MATCH="local-shards2-warehouses${NUM_THREADS}\\.yml.*-P localhost.*-L 0,1"
 
 # Wait times - need to account for DB loading which is slower with CPU caps
 # Lower CPU caps need longer wait times for loading + benchmark (30s runtime)
@@ -46,7 +47,7 @@ CPU_CAPS="5 10 20 40 100"
 # Clean up any existing processes
 cleanup() {
     echo "Cleaning up..."
-    pkill -f "dbtest.*-L 0,1" 2>/dev/null || true
+    pkill -f "$DBTEST_MATCH" 2>/dev/null || true
     sleep 1
 }
 
@@ -58,8 +59,9 @@ rm -f cpu_scaling_*.log
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-# Kill any existing dbtest processes
-pkill -f dbtest 2>/dev/null || true
+# Kill only stale dbtest workers from this CPU-scaling scenario.
+# Avoid global dbtest cleanup that can terminate unrelated processes.
+pkill -f "$DBTEST_MATCH" 2>/dev/null || true
 sleep 2
 
 path=$(pwd)/src/mako
@@ -137,7 +139,7 @@ run_test_with_cpu_cap() {
     local max_wait=$(get_wait_time $cpu_percent)
 
     # Clean up before test
-    pkill -f "dbtest.*-L 0,1" 2>/dev/null || true
+    pkill -f "$DBTEST_MATCH" 2>/dev/null || true
     rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
     sleep 2
 
