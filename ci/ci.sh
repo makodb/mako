@@ -505,10 +505,12 @@ run_2shard_single_process_replication() {
     echo "========================================="
     cleanup_processes
     set +e
-    # Memory limit: 30GB (30 * 1024 * 1024 KB = 31457280 KB)
-    # This test runs 7 processes and can consume significant memory
-    # The limit prevents memory overuse from crashing CI servers
-    run_with_memory_limit 31457280 bash ./examples/test_2shard_single_process_replication.sh
+    # Memory limit: 50GB (50 * 1024 * 1024 KB = 52428800 KB)
+    # This test runs 7 processes and can consume significant memory.
+    # The leader process hosts 6 RocksDB partition databases in a single
+    # process (2 shards x 6 threads), each with up to 256MB x 6 write
+    # buffers = ~9GB for memtables alone.  30GB was consistently too low.
+    run_with_memory_limit 52428800 bash ./examples/test_2shard_single_process_replication.sh
     local test_result=$?
     set -e
     check_for_hanging_processes "shard2SingleProcessReplication"

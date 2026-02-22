@@ -11,7 +11,8 @@ cd "$PROJECT_ROOT"
 THREADS=6
 CONFIG="src/mako/config/local-shards2-warehouses6.yml"
 RUNTIME=20  # seconds per test
-LOG_DIR="/tmp/cpu_throttling_test"
+USERNAME=${USER:-$(id -un)}
+LOG_DIR="/tmp/${USERNAME}_cpu_throttling_test"
 
 # Clean up
 rm -rf "$LOG_DIR"
@@ -32,7 +33,7 @@ for cpu_limit in 1 2 4 8; do
     echo "--- Testing CPU limit: ${cpu_limit}% ---"
 
     # Clean up RocksDB files
-    rm -f /tmp/shuai_mako_rocksdb_shard* 2>/dev/null
+    rm -f /tmp/${USERNAME}_mako_rocksdb_shard* 2>/dev/null
 
     LOG_FILE="$LOG_DIR/cpu_${cpu_limit}pct.log"
 

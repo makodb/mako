@@ -33,7 +33,54 @@ Each commit may have multiple issues tracked with severity levels:
 
 ---
 
-*Last updated: 2026-02-10 (db176a90 reviewed)*
+*Last updated: 2026-02-20 (25c87ef5 reviewed)*
+
+---
+
+## Commit 25c87ef5 - "Expand borrow checking coverage, fix 3 safety annotations"
+**Date**: 2026-02-20
+**Author**: Shuai Mu
+
+**Changes**: CMakeLists.txt (+2 files to borrow checking, +6 documented exclusions), server.h (AtomicFlag @safe→@unsafe), replication_helper.cc (set_replication_type @safe→@unsafe), recovery_manager.hpp (success_fresh @safe→@unsafe)
+
+**Verdict**: No issues found (correct safety annotation fixes expanding borrow check coverage)
+
+Good changes:
+- All 3 annotation fixes are correct: `mutable std::atomic` (interior mutability), `std::cerr` (unchecked I/O), `std::string` construction (unchecked STL)
+- 6 excluded files properly documented with violation counts from header code (not the source files themselves)
+- Brings borrow-checked file count to 12
+
+---
+
+## Commit dae2bc06 - "commit TODO.md"
+**Date**: 2026-02-20
+
+**Verdict**: No issues found (TODO.md timestamp update only)
+
+---
+
+## Commit 754cc0b2 - "Fix CI test infrastructure: shebang, python3, borrow check"
+**Date**: 2026-02-20
+**Author**: Shuai Mu
+
+**Changes**: ci/ci.sh (shebang fix + python3), simple_transaction_rep_port_utils.sh (python3), masstree_key.hh (@safe→@unsafe annotation fix)
+
+**Verdict**: No issues found (correct infrastructure fixes)
+
+Good changes:
+- Shebang fix: removed leading newline before `#!/bin/bash` in ci.sh that caused fallback to `sh` (which lacks process substitution)
+- `python` → `python3` in 4 call sites across 2 files (necessary since `python` binary not available)
+- `unparse_ikey()` correctly re-annotated from `@safe` to `@unsafe` since it calls `unparse()` which writes to raw buffer via `memcpy`
+
+---
+
+## Commit c253cc36 - "docs: add code-verified user manual"
+**Date**: 2026-02-20
+**Author**: Shuai Mu
+
+**Changes**: docs/user-manual.md (430 lines, new file)
+
+**Verdict**: No issues found (documentation only — user manual with no code changes)
 
 ---
 
