@@ -30,6 +30,7 @@ trd=${1:-6}
 script_name="$(basename "$0")"
 path=$(pwd)/src/mako
 binary_path="./${BUILD_DIR:-build}/dbtest"
+dbtest_match="local-shards2-warehouses${trd}.yml.*--is-replicated"
 LOCALHOST_PID=""
 P1_PID=""
 P2_PID=""
@@ -64,10 +65,10 @@ cleanup_processes() {
         fi
     done
 
-    # Last-resort cleanup for descendant dbtest processes that can survive wrapper exits.
-    pkill -TERM -f "${binary_path}.*local-shards2-warehouses${trd}.yml" 2>/dev/null || true
+    # Last-resort cleanup for descendant dbtest processes tied to this scenario.
+    pkill -TERM -f "$dbtest_match" 2>/dev/null || true
     sleep 1
-    pkill -9 -f "${binary_path}.*local-shards2-warehouses${trd}.yml" 2>/dev/null || true
+    pkill -9 -f "$dbtest_match" 2>/dev/null || true
 
     # Wait for cleanup
     sleep 2
@@ -98,8 +99,9 @@ fi
 ulimit -n "$target_nofile" 2>/dev/null || true
 current_nofile=$(ulimit -n 2>/dev/null || echo "unknown")
 
-# Kill any existing dbtest processes
-ps aux | grep -i dbtest | grep -v grep | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only stale dbtest workers tied to this 4-process replicated scenario.
+# Avoid global grep/xargs cleanup that can terminate unrelated shells or workloads.
+pkill -9 -f "$dbtest_match" 2>/dev/null || true
 sleep 1
 
 echo ""
