@@ -29,6 +29,23 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 trd=${1:-6}
 script_name="$(basename "$0")"
 path=$(pwd)/src/mako
+binary_path="./${BUILD_DIR:-build}/dbtest"
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
+
+# This scenario opens many sockets/files across 4 replicated processes.
+# Raise nofile so dbtest/yaml open operations do not fail under default 1024 limits.
+target_nofile=65535
+hard_nofile=$(ulimit -Hn 2>/dev/null || echo "")
+if [ -n "$hard_nofile" ] && [ "$hard_nofile" != "unlimited" ] && [ "$hard_nofile" -lt "$target_nofile" ]; then
+    target_nofile="$hard_nofile"
+fi
+ulimit -n "$target_nofile" 2>/dev/null || true
+current_nofile=$(ulimit -n 2>/dev/null || echo "unknown")
 
 # Kill any existing dbtest processes
 ps aux | grep -i dbtest | grep -v grep | awk "{print \$2}" | xargs kill -9 2>/dev/null
@@ -41,6 +58,7 @@ echo "  Number of threads: $trd"
 echo "  Shards: 0, 1 (multi-shard mode)"
 echo "  Replicas: localhost, p1, p2, learner"
 echo "  Processes: 4 (one per replica role)"
+echo "  Open files limit: $current_nofile"
 echo ""
 
 # The key difference: use -L 0,1 to run both shards in each process
@@ -88,6 +106,7 @@ wait_count=0
 benchmark_completed=0
 timed_out=0
 process_exited_early=0
+non_leader_exited=0
 
 while [ "$wait_count" -lt "$max_wait" ]; do
     done_flag=0
@@ -121,7 +140,9 @@ while [ "$wait_count" -lt "$max_wait" ]; do
         learner_alive=0
     fi
 
-    if [ "$localhost_alive" -eq 0 ] || [ "$p1_alive" -eq 0 ] || [ "$p2_alive" -eq 0 ] || [ "$learner_alive" -eq 0 ]; then
+    # Leader must stay alive until throughput appears. Follower/learner roles may
+    # auto-stop once replication reaches terminal state, so do not fail early on those.
+    if [ "$localhost_alive" -eq 0 ]; then
         # Give logs a brief moment to flush before classifying as failure.
         sleep 1
         if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
@@ -130,9 +151,16 @@ while [ "$wait_count" -lt "$max_wait" ]; do
             sleep 1
             break
         fi
-        echo "Process exited unexpectedly before benchmark completion (localhost_alive=$localhost_alive, p1_alive=$p1_alive, p2_alive=$p2_alive, learner_alive=$learner_alive)"
+        echo "Leader process exited unexpectedly before benchmark completion (localhost_alive=$localhost_alive, p1_alive=$p1_alive, p2_alive=$p2_alive, learner_alive=$learner_alive)"
         process_exited_early=1
         break
+    fi
+
+    if [ "$p1_alive" -eq 0 ] || [ "$p2_alive" -eq 0 ] || [ "$learner_alive" -eq 0 ]; then
+        if [ "$non_leader_exited" -eq 0 ]; then
+            echo "Non-leader process exited while leader is still running; continuing to wait for leader throughput (p1_alive=$p1_alive, p2_alive=$p2_alive, learner_alive=$learner_alive)"
+        fi
+        non_leader_exited=1
     fi
 
     sleep 1
@@ -174,6 +202,10 @@ if [ "$process_exited_early" -eq 1 ]; then
     failed=1
 fi
 
+if [ "$non_leader_exited" -eq 1 ]; then
+    echo "  [INFO] One or more non-leader processes exited before leader completion; accepted for this topology"
+fi
+
 if [ "$timed_out" -eq 1 ]; then
     echo "  [X] Benchmark timed out before throughput was observed"
     failed=1
@@ -208,10 +240,10 @@ else
 
     # Check for SiloRuntime creation for both shards
     for shard in 0 1; do
-        if grep -q "SiloRuntime.*for shard $shard" "4proc-localhost.log"; then
-            echo "  [OK] SiloRuntime created for shard $shard"
+        if grep -q "Assigned shared SiloRuntime.*to shard $shard" "4proc-localhost.log"; then
+            echo "  [OK] SiloRuntime assigned for shard $shard"
         else
-            echo "  [X] SiloRuntime not created for shard $shard"
+            echo "  [X] SiloRuntime not assigned for shard $shard"
             failed=1
         fi
     done
