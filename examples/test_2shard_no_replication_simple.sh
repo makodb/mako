@@ -7,9 +7,16 @@ echo "Testing 2-shard setup without replication using simpleTransactionRep"
 echo "========================================="
 
 trd=${1:-6}
+binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 log_shard0="simple-shard0-localhost.log"
 log_shard1="simple-shard1-localhost.log"
 completion_marker="All tests completed successfully!"
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: simpleTransactionRep binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
 
 # Clean up old files and processes
 rm -f nfs_sync_*

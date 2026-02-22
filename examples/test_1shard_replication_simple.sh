@@ -16,11 +16,18 @@ if [ "$GDB_ENABLED" == "1" ]; then
 fi
 
 trd=${1:-6}
+binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 log_localhost="simple-shard0-localhost.log"
 log_learner="simple-shard0-learner.log"
 log_p2="simple-shard0-p2.log"
 log_p1="simple-shard0-p1.log"
 verification_marker="ALL VERIFICATIONS PASSED"
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: simpleTransactionRep binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
 
 ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
 # Clean up old log files
