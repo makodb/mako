@@ -115,6 +115,7 @@ warn_incomplete_build_docker() {
         "build_docker/simpleTransaction"
         "build_docker/simplePaxos"
         "build_docker/simpleTransactionRep"
+        "build_docker/continuousTransactions"
     )
     local missing_bins=()
     local incompatible_bins=()
@@ -534,7 +535,7 @@ case "$ACTION" in
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
                      cmake --build build_docker --parallel ${JOBS} --target \
-                         dbtest simpleTransaction simplePaxos simpleTransactionRep \
+                         dbtest simpleTransaction simplePaxos simpleTransactionRep continuousTransactions \
                          test_rocksdb_persistence test_callback_demo test_ordered_callbacks \
                          test_partitioned_queues test_stress_partitioned_queues"
         echo -e "${GREEN}Build completed successfully!${NC}"
@@ -853,7 +854,7 @@ case "$ACTION" in
             for bin in "${missing_bins[@]}"; do
                 echo -e "${RED}  - ${bin}${NC}"
             done
-            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep)${NC}"
+            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep, continuousTransactions)${NC}"
             echo -e "${YELLOW}and RocksDB test binaries for ci-quick rocksdbTests.${NC}"
             echo -e "${YELLOW}Use './docker_build.sh build' to rebuild Docker binaries, then rerun './docker_build.sh ci-quick ${CI_TEST}'.${NC}"
             echo -e "${YELLOW}Or run './docker_build.sh ci ${CI_TEST}' to build and run this suite in one command.${NC}"

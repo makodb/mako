@@ -388,7 +388,7 @@ Main commands:
 Notes:
 - `./docker_build.sh build` supports incremental rebuilds: it reuses a compatible `build_docker` cache and skips CMake reconfigure unless cache is missing/incompatible.
 - Docker build flows now persist Cargo registry/git caches in workspace directory `.cargo-docker` (`CARGO_HOME=/workspace/.cargo-docker`) so repeated `build`/`test`/`ci` runs do not re-download crates each time.
-- `./docker_build.sh build` compiles core runtime binaries: `dbtest`, `simpleTransaction`, `simplePaxos`, and `simpleTransactionRep`.
+- `./docker_build.sh build` compiles core runtime binaries: `dbtest`, `simpleTransaction`, `simplePaxos`, `simpleTransactionRep`, and `continuousTransactions`.
 - It also compiles RocksDB quick-test binaries used by `ci-quick rocksdbTests`: `test_rocksdb_persistence`, `test_callback_demo`, `test_ordered_callbacks`, `test_partitioned_queues`, and `test_stress_partitioned_queues`.
 - If you open `shell`/`create`/`enter`/`compose-up` before running `build`, in-container `BUILD_DIR=build_docker ./ci/ci.sh ...` commands can fail due to missing binaries.
   Run `./docker_build.sh build` first (or use `./docker_build.sh ci <test>` which builds and runs in one step).
