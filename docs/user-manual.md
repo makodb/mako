@@ -396,7 +396,7 @@ Notes:
 - It reuses `build_docker/dbtest` when that binary is Docker-compatible (RUNPATH contains `/workspace/build_docker`); otherwise it rebuilds `dbtest`.
 - It then runs `BUILD_DIR=build_docker ./ci/ci.sh shardNoReplication`.
 - To reduce noisy timeout/retry flakes in Docker smoke runs, `./docker_build.sh test` uses a default wait timeout of 180 seconds.
-  Override with `MAKO_DOCKER_TEST_MAX_WAIT_SECONDS=<seconds>` (preferred), or `MAKO_MAX_WAIT_SECONDS=<seconds>` when the Docker-specific override is unset.
+  Override with `MAKO_DOCKER_TEST_MAX_WAIT_SECONDS=<seconds>` (preferred), or `MAKO_MAX_WAIT_SECONDS=<seconds>` when the Docker-specific override is unset or invalid.
 - `MAKO_DOCKER_TEST_MAX_WAIT_SECONDS` and `MAKO_MAX_WAIT_SECONDS` must be positive integers; invalid values now emit warnings and fall back to safe defaults across Docker smoke plus no-replication/replication/single-process example scripts instead of causing integer-expression errors.
 - Script-driven Docker commands (`build`, `test`, `ci`, `ci-quick`) disable core dumps by default to avoid large `core.*` files in the workspace after transient crashes.
   Set `MAKO_DOCKER_ENABLE_COREDUMP=1` to re-enable core dumps for debugging.

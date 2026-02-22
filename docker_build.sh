@@ -109,6 +109,11 @@ normalize_script_build_ownership() {
         bash -lc "for d in /workspace/build_docker /workspace/target-docker /workspace/.cargo-docker; do if [ -e \"\$d\" ]; then chown -R ${script_uid}:${script_gid} \"\$d\"; fi; done"
 }
 
+is_positive_integer() {
+    local value="$1"
+    [[ "${value}" =~ ^[0-9]+$ ]] && [ "${value}" -gt 0 ]
+}
+
 warn_incomplete_build_docker() {
     local required_bins=(
         "build_docker/dbtest"
@@ -645,19 +650,28 @@ case "$ACTION" in
         echo -e "${YELLOW}Running Docker smoke test (build + dbtest runtime)...${NC}"
         ensure_image
         DOCKER_TEST_MAX_WAIT_SECONDS=180
-        DOCKER_TEST_WAIT_SOURCE=""
         if [ -n "${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS:-}" ]; then
-            DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}"
-            DOCKER_TEST_WAIT_SOURCE="MAKO_DOCKER_TEST_MAX_WAIT_SECONDS"
-        elif [ -n "${MAKO_MAX_WAIT_SECONDS:-}" ]; then
-            DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_MAX_WAIT_SECONDS}"
-            DOCKER_TEST_WAIT_SOURCE="MAKO_MAX_WAIT_SECONDS"
-        fi
-        if ! [[ "${DOCKER_TEST_MAX_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || [ "${DOCKER_TEST_MAX_WAIT_SECONDS}" -le 0 ]; then
-            if [ -n "${DOCKER_TEST_WAIT_SOURCE}" ]; then
-                echo -e "${YELLOW}Warning: ${DOCKER_TEST_WAIT_SOURCE}='${DOCKER_TEST_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
+            if is_positive_integer "${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}"; then
+                DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}"
+            else
+                echo -e "${YELLOW}Warning: MAKO_DOCKER_TEST_MAX_WAIT_SECONDS='${MAKO_DOCKER_TEST_MAX_WAIT_SECONDS}' is invalid.${NC}"
+                if [ -n "${MAKO_MAX_WAIT_SECONDS:-}" ]; then
+                    if is_positive_integer "${MAKO_MAX_WAIT_SECONDS}"; then
+                        DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_MAX_WAIT_SECONDS}"
+                        echo -e "${YELLOW}Using fallback MAKO_MAX_WAIT_SECONDS='${MAKO_MAX_WAIT_SECONDS}'.${NC}"
+                    else
+                        echo -e "${YELLOW}Warning: MAKO_MAX_WAIT_SECONDS='${MAKO_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
+                    fi
+                else
+                    echo -e "${YELLOW}Using default 180.${NC}"
+                fi
             fi
-            DOCKER_TEST_MAX_WAIT_SECONDS=180
+        elif [ -n "${MAKO_MAX_WAIT_SECONDS:-}" ]; then
+            if is_positive_integer "${MAKO_MAX_WAIT_SECONDS}"; then
+                DOCKER_TEST_MAX_WAIT_SECONDS="${MAKO_MAX_WAIT_SECONDS}"
+            else
+                echo -e "${YELLOW}Warning: MAKO_MAX_WAIT_SECONDS='${MAKO_MAX_WAIT_SECONDS}' is invalid; using default 180.${NC}"
+            fi
         fi
         echo -e "${YELLOW}Using shardNoReplication wait timeout: ${DOCKER_TEST_MAX_WAIT_SECONDS}s (override with MAKO_DOCKER_TEST_MAX_WAIT_SECONDS or MAKO_MAX_WAIT_SECONDS).${NC}"
         normalize_script_build_ownership
