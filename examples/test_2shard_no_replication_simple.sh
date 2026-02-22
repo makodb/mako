@@ -11,6 +11,9 @@ binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 log_shard0="simple-shard0-localhost.log"
 log_shard1="simple-shard1-localhost.log"
 completion_marker="All tests completed successfully!"
+SHARD0_PID=""
+SHARD1_PID=""
+CLEANUP_DONE=0
 
 if [ ! -x "$binary_path" ]; then
     echo "Error: simpleTransactionRep binary not found or not executable at '$binary_path'"
@@ -24,9 +27,51 @@ rm -f "$log_shard0" "$log_shard1"
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
-ps aux | grep -i simpleTransactionRep | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only target worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
+pkill -9 -x dbtest 2>/dev/null || true
+pkill -9 -x simpleTransactionRep 2>/dev/null || true
 sleep 1
+
+cleanup_processes() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    for pid in "${SHARD0_PID:-}" "${SHARD1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    sleep 1
+
+    for pid in "${SHARD0_PID:-}" "${SHARD1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Last-resort cleanup for lingering test workers.
+    pkill -TERM -x simpleTransactionRep 2>/dev/null || true
+    sleep 1
+    pkill -9 -x simpleTransactionRep 2>/dev/null || true
+
+    for pid in "${SHARD0_PID:-}" "${SHARD1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+}
+
+handle_interrupt() {
+    cleanup_processes
+    exit 130
+}
+
+trap cleanup_processes EXIT
+trap handle_interrupt INT TERM
 
 # Ensure logs are writable and fresh so old data cannot produce false positives.
 for run_log in "$log_shard0" "$log_shard1"; do
