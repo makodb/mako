@@ -31,7 +31,25 @@ else()
     message(WARNING "You are not using GCC. Current compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
-# Configure and enable rusy-cpp-checker
+# Auto-detect the latest available libclang for rusty-cpp-checker.
+# The checker uses libclang to parse C++ headers; if the system installs newer
+# clang headers (e.g., clang 19 with __builtin_nondeterministic_value in AVX
+# intrinsics), the checker must be linked against the matching libclang version
+# to avoid "Fatal parsing errors" from unknown builtins.
+if(NOT DEFINED ENV{LIBCLANG_PATH})
+    # Search for the newest libclang, preferring higher versions
+    foreach(_CLANG_VER 19 18 17 16 15 14)
+        set(_CLANG_LIB_DIR "/usr/lib/llvm-${_CLANG_VER}/lib")
+        if(EXISTS "${_CLANG_LIB_DIR}/libclang-${_CLANG_VER}.so" OR
+           EXISTS "${_CLANG_LIB_DIR}/libclang.so")
+            set(ENV{LIBCLANG_PATH} "${_CLANG_LIB_DIR}")
+            message(STATUS "Auto-detected LIBCLANG_PATH=${_CLANG_LIB_DIR} (clang ${_CLANG_VER})")
+            break()
+        endif()
+    endforeach()
+endif()
+
+# Configure and enable rusty-cpp-checker
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 
