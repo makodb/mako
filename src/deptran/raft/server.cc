@@ -443,39 +443,128 @@ uint64_t RaftServer::GetElectionTimeout() {
   }
 }
 
-// SINGLE-RAFT: StartApplyFiber - dedicated fiber that applies committed entries
-// one at a time with yields between, preventing PollThread starvation.
+// SINGLE-RAFT: StartApplyFiber - lightweight status monitor on PollThread.
+// Actual entry application is handled by the background apply thread.
 // @safe - Fiber::create_run and Fiber::sleep marked @external [safe]
 void RaftServer::StartApplyFiber() {
   Fiber::create_run([this]() {
-    Log_info("[APPLY-FIBER] Site %d: Started apply fiber", site_id_);
-    uint64_t last_status_log = 0;
-    uint64_t entries_applied = 0;
-
+    Log_info("[APPLY-FIBER] Site %d: Started apply fiber (monitor only)", site_id_);
     while (!stop_) {
-      if (executeIndex < commitIndex) {
-        // Apply all pending committed entries in bulk via applyLogs()
-        applyLogs();
-        entries_applied = executeIndex;
-
-        // Yield to let PollThread process heartbeat responses
-        Fiber::sleep(1000);  // 1ms yield
-      } else {
-        // Nothing to apply - sleep longer
-        Fiber::sleep(3000);  // 3ms idle sleep
-      }
-
-      // Periodic status logging
-      uint64_t now = Time::now();
-      if (now - last_status_log > 5000000) {  // Every 5 seconds
-        Log_info("[APPLY-FIBER] Site %d: executeIndex=%lu commitIndex=%lu lastLogIndex=%lu applied=%lu",
-                 site_id_, executeIndex, commitIndex, lastLogIndex, entries_applied);
-        last_status_log = now;
-      }
+      Fiber::sleep(5000000);  // 5s status check
+      Log_info("[APPLY-FIBER] Site %d: executeIndex=%lu commitIndex=%lu lastLogIndex=%lu",
+               site_id_, executeIndex, commitIndex, lastLogIndex);
     }
-
     Log_info("[APPLY-FIBER] Site %d: Apply fiber exiting (stop_=true)", site_id_);
   });
+}
+
+// SINGLE-RAFT: Enqueue newly committed entries for the background apply thread.
+// Called from OnAppendEntries (already under mtx_) when commitIndex advances.
+void RaftServer::EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit) {
+  std::vector<std::pair<slotid_t, shared_ptr<Marshallable>>> batch;
+  slotid_t first_missing = 0;
+  for (slotid_t id = old_commit + 1; id <= new_commit; id++) {
+    auto it = raft_logs_.find(id);
+    if (it != raft_logs_.end() && it->second && it->second->log_) {
+      batch.emplace_back(id, it->second->log_);
+    } else {
+      first_missing = id;
+      break;  // Gap in log — stop here
+    }
+  }
+  if (!batch.empty()) {
+    std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+    for (auto& entry : batch) {
+      apply_queue_.push_back(std::move(entry));
+    }
+  }
+  // Log if we couldn't enqueue the full range
+  if (first_missing > 0) {
+    Log_info("[ENQUEUE] Site %d: gap at slot %lu (range %lu..%lu, enqueued %zu)",
+             site_id_, first_missing, old_commit + 1, new_commit, batch.size());
+  }
+  static uint64_t enqueue_log_counter = 0;
+  if (enqueue_log_counter++ % 50 == 0) {
+    size_t qsize = 0;
+    {
+      std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+      qsize = apply_queue_.size();
+    }
+    Log_info("[ENQUEUE] Site %d: enqueued %zu entries (%lu..%lu) queue_total=%zu",
+             site_id_, batch.size(), old_commit + 1, new_commit, qsize);
+  }
+}
+
+// SINGLE-RAFT: Background OS thread for entry application.
+// Drains from apply_queue_ (populated by OnAppendEntries) to avoid contention on mtx_.
+void RaftServer::StartApplyThread() {
+  apply_thread_running_.store(true);
+  apply_thread_ = std::thread([this]() {
+    Log_info("[APPLY-THREAD] Site %d: Started background apply thread", site_id_);
+    uint64_t apply_count = 0;
+    auto last_log_time = std::chrono::steady_clock::now();
+    while (!stop_ && apply_thread_running_.load()) {
+      // Drain entries from the queue
+      std::pair<slotid_t, shared_ptr<Marshallable>> entry;
+      bool got_entry = false;
+      size_t queue_size = 0;
+      {
+        std::lock_guard<std::mutex> lock(apply_queue_mtx_);
+        queue_size = apply_queue_.size();
+        if (!apply_queue_.empty()) {
+          entry = std::move(apply_queue_.front());
+          apply_queue_.pop_front();
+          got_entry = true;
+        }
+      }
+
+      if (got_entry) {
+        slotid_t id = entry.first;
+        auto& log_entry = entry.second;
+        // Log entries near the stall point for debugging
+        if (id >= 470 && id <= 500) {
+          Log_info("[APPLY-THREAD] Site %d: ABOUT TO APPLY entry %lu (queue_remaining=%zu)",
+                   site_id_, id, queue_size);
+        }
+        // @unsafe - callback may have side effects
+        RuleWitnessGC(log_entry);
+        app_next_(id, log_entry);
+        if (id >= 470 && id <= 500) {
+          Log_info("[APPLY-THREAD] Site %d: DONE APPLYING entry %lu", site_id_, id);
+        }
+        executeIndex = id;
+        apply_count++;
+
+        // Log progress periodically
+        if (apply_count % 100 == 0) {
+          Log_info("[APPLY-THREAD] Site %d: applied %lu entries, executeIndex=%lu queue_remaining=%zu",
+                   site_id_, apply_count, executeIndex, queue_size);
+        }
+
+        // Cleanup old commands periodically (needs mtx_ for raft_logs_)
+        if (id % 1000 == 0) {
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          int i = min_active_slot_;
+          while (i + 60000 < (slotid_t)executeIndex) {
+            removeCmd(i);
+            i++;
+          }
+          min_active_slot_ = i;
+        }
+      } else {
+        // Periodic heartbeat when queue is empty
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_log_time).count() >= 5) {
+          Log_info("[APPLY-THREAD] Site %d: IDLE executeIndex=%lu commitIndex=%lu queue_size=%zu applied_total=%lu",
+                   site_id_, executeIndex, commitIndex, queue_size, apply_count);
+          last_log_time = now;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    Log_info("[APPLY-THREAD] Site %d: Background apply thread exiting", site_id_);
+  });
+  apply_thread_.detach();
 }
 
 // @safe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
@@ -513,8 +602,14 @@ void RaftServer::Setup() {
 	}
 #endif
 
-  // SINGLE-RAFT: Start the apply fiber to process committed entries
+  // SINGLE-RAFT: Start the apply fiber (for status monitoring)
   StartApplyFiber();
+  // SINGLE-RAFT: Enqueue any pre-existing committed entries (e.g., from persistence recovery)
+  if (commitIndex > executeIndex) {
+    EnqueueCommittedEntries(executeIndex, commitIndex);
+  }
+  // SINGLE-RAFT: Start background apply thread (handles actual entry application)
+  StartApplyThread();
 
   // Election timer will be started in Start() method when first command is submitted
 }
@@ -853,10 +948,12 @@ void RaftServer::HeartbeatLoop() {
           auto commitInstance = GetRaftInstance(newCommitIndex);
           if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
             Log_debug("newCommitIndex %d", newCommitIndex);
+            auto old_commit = commitIndex;
             commitIndex = newCommitIndex;
+            EnqueueCommittedEntries(old_commit, commitIndex);
           }
         }
-        if (commitIndex > executeIndex) applyLogs();
+        // Background apply thread handles entry application
         term = currentTerm;
       }
       mtx_.unlock();
@@ -1082,10 +1179,12 @@ void RaftServer::HeartbeatLoop() {
           }
           auto commitInstance = GetRaftInstance(newCommitIndex);
           if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
+            auto old_commit = commitIndex;
             commitIndex = newCommitIndex;
+            EnqueueCommittedEntries(old_commit, commitIndex);
           }
         }
-        if (commitIndex > executeIndex) applyLogs();
+        // Background apply thread handles entry application
         mtx_.unlock();
       }
     }
@@ -1537,13 +1636,17 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 #endif
       }
 
-      // update commitIndex and trigger log application
+      // update commitIndex and enqueue newly committed entries for the apply thread
       bool need_apply = false;
       if (leaderCommitIndex > commitIndex) {
+        auto old_commit = commitIndex;
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
         need_apply = true;
         PersistCommitIndex();  // Persist commitIndex update
+        // Enqueue entries [old_commit+1 .. commitIndex] for the background apply thread.
+        // We're already under mtx_ here so raft_logs_ access is safe.
+        EnqueueCommittedEntries(old_commit, commitIndex);
       }
 
       // @unsafe
@@ -1553,12 +1656,9 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       *followerLastLogIndex = this->lastLogIndex;
       }
 
-      // Apply committed entries inline on follower side
-      if (need_apply) {
-        mtx_.unlock();
-        applyLogs();
-        mtx_.lock();
-      }
+      // Don't apply inline — the background apply thread handles it.
+      // This keeps the PollThread responsive for RPCs so the follower's
+      // commitIndex continues to advance via incoming AppendEntries.
 
 #ifndef RAFT_TEST_CORO
       if (cmd != nullptr) {

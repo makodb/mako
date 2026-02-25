@@ -107,7 +107,6 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                 }
                 break ;
             } catch (...) {   // if abort happens, replay it until it succeeds
-                // std::cout << "exception, retry#:" << try_cnt << std::endl;
                 try_cnt += 1 ;
             }
         }

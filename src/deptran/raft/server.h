@@ -5,6 +5,7 @@
 #include "../scheduler.h"
 #include "../classic/tpc_command.h"
 #include "commo.h"
+#include <deque>
 #include <rusty/box.hpp>
 #include "rpc/log_storage.hpp"
 #include "rpc/snapshot_manager.hpp"
@@ -255,6 +256,21 @@ class RaftServer : public TxLogServer {
   // Yields between entries to let PollThread process heartbeat responses.
   // @safe - fiber creation and sleep are marked @external [safe]
   void StartApplyFiber();
+
+  // Background OS thread that applies committed entries without blocking the PollThread.
+  // This decouples entry application (which calls slow treplay on followers) from
+  // RPC processing, keeping the follower responsive to AppendEntries RPCs.
+  std::thread apply_thread_;
+  std::atomic<bool> apply_thread_running_{false};
+
+  // Lock-free queue: OnAppendEntries pushes committed entries here (under mtx_ already),
+  // and the apply thread drains from here using its own lightweight lock.
+  // This eliminates contention on mtx_ between PollThread and the apply thread.
+  std::mutex apply_queue_mtx_;
+  std::deque<std::pair<slotid_t, shared_ptr<Marshallable>>> apply_queue_;
+
+  void StartApplyThread();
+  void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
 
   // @safe - timer and atomic operations are safe internal operations
   void resetTimerBatch()
