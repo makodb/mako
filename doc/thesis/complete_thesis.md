@@ -4,7 +4,7 @@
 
 This thesis documents the design, implementation, testing, and performance evaluation of a Raft consensus module integrated into the Mako distributed transaction system as an alternative replication backend to its existing Multi-Paxos atomic broadcast layer. The work encompasses a complete Raft protocol implementation with leader election, log replication, and safety guarantees; a novel preferred leader election mechanism that provides deterministic leader placement in geo-replicated deployments while preserving all Raft safety invariants; a runtime-switchable integration architecture that allows operators to choose between Paxos and Raft with a single configuration change; comprehensive standalone and continuous integration test suites; and a performance evaluation comparing both protocols under industry-standard TPC-C workloads.
 
-The key findings are that Raft and Multi-Paxos achieve near-identical throughput in multi-shard configurations where cross-shard coordination dominates the transaction latency, while Multi-Paxos retains a single-shard throughput advantage due to its ability to pipeline consensus instances. Raft offers operational advantages including 25% fewer processes per shard, built-in leader election, and deterministic leader placement through the preferred leader mechanism.
+The key findings are that Raft and Multi-Paxos achieve near-identical throughput in multi-shard configurations where cross-shard coordination dominates the transaction latency, while Multi-Paxos retains a single-shard throughput advantage due to its ability to pipeline consensus instances. Raft offers operational advantages including 25% fewer processes per shard, built-in leader election, and deterministic leader placement through the preferred leader mechanism. Additionally, consolidating multiple per-partition Raft groups into a single Raft instance yields a 51.6% throughput improvement with dramatically reduced variance (CV 1.9% vs 34.6%), by eliminating election interference and reducing heartbeat overhead.
 
 **Author contribution scope**: The Raft module, its integration with Mako, standalone tests, preferred leader election, and the CI test suite were implemented by the author. Mako itself (storage engine, concurrency control, transaction coordination, sharding) is pre-existing infrastructure.
 
@@ -51,7 +51,15 @@ The key findings are that Raft and Multi-Paxos achieve near-identical throughput
   - [Standalone Raft Tests](#standalone-raft-tests)
   - [Continuous Integration Test Suite](#continuous-integration-test-suite)
   - [Test Scenarios and Pass Criteria](#test-scenarios-and-pass-criteria)
-- [Chapter 7: Performance Evaluation](#chapter-7-performance-evaluation)
+- [Chapter 7: From Many to One — Consolidating Raft Instances](#chapter-7-from-many-to-one--consolidating-raft-instances)
+  - [What Is a Partition?](#what-is-a-partition)
+  - [The Problem with Per-Partition Raft Groups](#the-problem-with-per-partition-raft-groups)
+  - [The Consolidated Design](#the-consolidated-design)
+  - [Experimental Evaluation](#experimental-evaluation)
+  - [Interpreting the Results](#interpreting-the-results)
+  - [Trade-offs and Applicability](#trade-offs-and-applicability)
+  - [Implications for Geo-Replication](#implications-for-geo-replication)
+- [Chapter 8: Performance Evaluation](#chapter-8-performance-evaluation)
   - [Benchmark Methodology](#benchmark-methodology)
   - [Single-Shard Results](#single-shard-results)
   - [Multi-Shard Results](#multi-shard-results)
@@ -60,11 +68,11 @@ The key findings are that Raft and Multi-Paxos achieve near-identical throughput
   - [Replication Batching Behaviour](#replication-batching-behaviour)
   - [Production Deployment Implications](#production-deployment-implications)
   - [Threats to Validity](#threats-to-validity)
-- [Chapter 8: Log Persistence and Recovery](#chapter-8-log-persistence-and-recovery)
+- [Chapter 9: Log Persistence and Recovery](#chapter-9-log-persistence-and-recovery)
   - [Persistent Log Storage](#persistent-log-storage)
   - [Crash Recovery](#crash-recovery)
   - [Snapshot Support](#snapshot-support)
-- [Chapter 9: Appendix](#chapter-9-appendix)
+- [Chapter 10: Appendix](#chapter-10-appendix)
   - [Glossary](#glossary)
   - [Memory Safety with RustyCpp](#memory-safety-with-rustycpp)
 
@@ -120,11 +128,13 @@ This thesis is organised as follows:
 
 - **Chapter 6** covers the testing infrastructure: standalone Raft correctness tests and the CI integration test suite.
 
-- **Chapter 7** presents the performance evaluation: methodology, results, and analysis comparing Raft and Multi-Paxos under TPC-C workloads.
+- **Chapter 7** describes the consolidation of multiple per-partition Raft instances into a single Raft instance, explaining the motivation, design, and the dramatic performance improvements it achieves.
 
-- **Chapter 8** describes the persistent log storage subsystem, crash recovery, and snapshot support.
+- **Chapter 8** presents the performance evaluation: methodology, results, and analysis comparing Raft and Multi-Paxos under TPC-C workloads.
 
-- **Chapter 9** provides a glossary of terms and a description of the memory safety approach using RustyCpp annotations.
+- **Chapter 9** describes the persistent log storage subsystem, crash recovery, and snapshot support.
+
+- **Chapter 10** provides a glossary of terms and a description of the memory safety approach using RustyCpp annotations.
 
 ---
 
@@ -211,7 +221,7 @@ A transaction in Mako proceeds through the following stages:
    - **Prepare phase**: The coordinator sends a Prepare message to each participating shard. Each shard votes to commit or abort based on whether its local piece succeeded.
    - **Commit/Abort phase**: If all shards vote to commit, the coordinator sends a Commit message. If any shard votes to abort, the coordinator sends an Abort message. Each shard then applies or rolls back its local changes.
 
-   The 2PC protocol adds significant latency to cross-shard transactions because it requires a round-trip to all participating shards on top of the per-shard replication latency. As shown in Chapter 7, this coordination latency dominates in multi-shard configurations, making the choice of replication protocol less significant.
+   The 2PC protocol adds significant latency to cross-shard transactions because it requires a round-trip to all participating shards on top of the per-shard replication latency. As shown in Chapter 8, this coordination latency dominates in multi-shard configurations, making the choice of replication protocol less significant.
 
 7. **Response**: The client receives the commit or abort result from the coordinator.
 
@@ -229,7 +239,7 @@ Each shard has a replication group of replicas spread across datacenters. The to
 
 This topology difference means Raft uses 25% fewer processes per shard, which has implications for resource consumption, CPU contention, and operational complexity. Both topologies provide the same fault tolerance (tolerating 1 replica failure out of 3 voters), since quorum in both cases requires 2 out of 3 voters.
 
-Cross-shard transactions introduce additional latency through the 2PC protocol. Even on localhost, the coordination overhead (~10ms round-trip for Prepare + Commit across shards) dominates over the sub-millisecond replication latency. This has important implications for the relative performance of Raft and Paxos, as discussed in Chapter 7.
+Cross-shard transactions introduce additional latency through the 2PC protocol. Even on localhost, the coordination overhead (~10ms round-trip for Prepare + Commit across shards) dominates over the sub-millisecond replication latency. This has important implications for the relative performance of Raft and Paxos, as discussed in Chapter 8.
 
 ## The Existing Multi-Paxos Path
 
@@ -899,7 +909,7 @@ The fundamental issue is a time-of-check-to-time-of-use (TOCTOU) race: the corou
 
 **Solution.** The destructor sets the stop flag and then sleeps for a brief interval (100ms) before allowing C++ destruction to proceed. This gives the detached coroutines time to notice the stop flag and exit cleanly before the vtable is collapsed. Additionally, each coroutine checks the stop flag immediately before calling any virtual method, minimising the TOCTOU window. While this sleep is not a theoretically perfect solution (a coroutine could be blocked on I/O for longer than 100ms), it works reliably in practice because the coroutines' blocking operations have bounded timeouts.
 
-**Lesson.** Detached coroutines interacting with objects that have non-trivial destructors are a source of subtle lifetime bugs. The Rust ownership model, which prevents references from outliving the objects they refer to, would catch this class of bug at compile time. The RustyCpp annotations applied to the Raft module (see Chapter 9) are a step toward this kind of compile-time safety, marking the coroutine-spawning methods as `@unsafe` to flag them for manual review.
+**Lesson.** Detached coroutines interacting with objects that have non-trivial destructors are a source of subtle lifetime bugs. The Rust ownership model, which prevents references from outliving the objects they refer to, would catch this class of bug at compile time. The RustyCpp annotations applied to the Raft module (see Chapter 10) are a step toward this kind of compile-time safety, marking the coroutine-spawning methods as `@unsafe` to flag them for manual review.
 
 ### Process Cleanup in Multi-Process Tests
 
@@ -1032,7 +1042,166 @@ All test scenarios are also run with Paxos for comparison, ensuring that the Raf
 
 ---
 
-# Chapter 7: Performance Evaluation
+# Chapter 7: From Many to One — Consolidating Raft Instances
+
+## What Is a Partition?
+
+Before diving into the consolidation, it is important to clarify what we mean by a *partition*, as this term is central to the discussion that follows.
+
+In Mako, data is first divided into **shards** — coarse-grained units of the keyspace that can be placed on different machines. In a TPC-C deployment, for example, each shard handles a range of warehouses. Shards are the unit of replication: each shard has its own replication group (a set of leader and follower replicas spread across datacenters), and each shard can be placed on a different set of machines for fault isolation.
+
+Within a single shard, the data is further subdivided into **partitions**. A partition is simply a slice of the shard's data, assigned to a dedicated worker thread for processing. If a shard has 6 warehouse threads, it has 6 partitions — one per thread. Each partition handles a subset of the transactions for that shard. Partitions exist for concurrency: by giving each worker thread its own partition, the system avoids contention between threads within the same shard.
+
+Crucially, each partition has its own independent consensus instance. It is not one Raft group per shard, but one per partition. In a configuration with 1 shard and 6 partitions (which is the setup used in this chapter's benchmarks), there are 6 independent Raft groups — all on the same machine, all replicating to the same set of follower machines, but each maintaining its own leader election, its own log, and its own heartbeat loop. This is the architectural starting point that motivated the consolidation described below.
+
+## The Problem with Per-Partition Raft Groups
+
+The previous chapters described an architecture in which every partition maintains its own independent Raft group — its own leader, its own election timer, its own replicated log, and its own heartbeat loop. This per-partition design is a natural first step: it mirrors the logical independence of partitions and keeps the consensus layer simple. In practice, however, running many Raft groups on a single machine introduces subtle performance problems that only become visible under measurement.
+
+When every partition runs its own Raft group, the system on each server looks like this:
+
+```
+Partition 0 → Raft Group 0   (election, log, heartbeat)
+Partition 1 → Raft Group 1   (election, log, heartbeat)
+Partition 2 → Raft Group 2   (election, log, heartbeat)
+   ...            ...
+Partition 5 → Raft Group 5   (election, log, heartbeat)
+```
+
+Each group elects its own leader, maintains its own heartbeat timer, and replicates its own log independently. While conceptually clean, this design suffers from four interrelated problems:
+
+**Election interference.** When a server starts up (or recovers from a network partition), all 6 groups begin their election timers simultaneously. Each election involves random timeouts and vote requests. With 6 partitions, the probability that at least one group experiences a split vote — where two candidates split the majority and neither wins — becomes significant. When a split vote occurs, that partition's throughput drops to zero until the next election attempt succeeds. Because the elections are independent, some partitions may be fully operational while others are still trying to elect a leader, leading to highly variable aggregate throughput.
+
+**Heartbeat amplification.** The Raft protocol requires the leader to send periodic heartbeats (AppendEntries RPCs) to each follower to maintain its authority. With 6 groups, each with 2 followers, the leader machine sends 12 heartbeat streams concurrently, each consuming CPU cycles, network bandwidth, and poll-thread attention.
+
+**Throughput unpredictability.** Because election timing is randomised, some runs of the system start up smoothly (all six groups elect leaders quickly) and achieve high throughput, while other runs experience one or more delayed elections and achieve significantly lower throughput. This creates a bimodal distribution in observed performance: the system is either "lucky" (all elections succeeded) or "unlucky" (some elections stalled), with little in between.
+
+**Operational burden.** Monitoring, debugging, and reasoning about 6 independent Raft groups is harder than reasoning about one. Each group has its own term, its own leader, and its own commit progress. Diagnosing a throughput regression requires checking all 6 groups to determine which one (if any) experienced a leadership disruption.
+
+## The Consolidated Design
+
+The single-instance design replaces 6 independent Raft groups with one shared group that serves all partitions within the shard:
+
+```
+Partition 0 ──→ ┐
+Partition 1 ──→ │
+Partition 2 ──→ ├──→  Single Raft Instance  ──→  Single Replicated Log
+Partition 3 ──→ │     (1 leader, 1 election, 1 heartbeat loop)
+Partition 4 ──→ │
+Partition 5 ──→ ┘
+```
+
+All partitions submit their transaction log entries to the same Raft instance. The Raft protocol replicates these entries in a single, interleaved log. When entries are committed and applied, the system routes each entry back to the partition it originated from.
+
+The key insight is that Raft does not care about the *meaning* of the entries it replicates — it simply ensures that all replicas agree on the same sequence of entries. By tagging each entry with its partition identifier, we can multiplex all partitions through one consensus group and demultiplex on the apply path.
+
+### How Routing Works
+
+Each log entry carries a partition identifier that records which partition submitted it. When the Raft instance commits an entry and hands it to the application layer for execution, the system inspects this identifier and dispatches the entry to the correct partition's callback handler. This is analogous to how a network switch routes packets based on destination addresses — the consensus layer acts as a reliable, totally-ordered broadcast channel, and the routing layer ensures each entry reaches the right consumer.
+
+### Maintaining Connectivity
+
+In Mako's architecture, remote replicas establish network connections to every partition's port. With multiple Raft groups, each group listens on its own port. With a single Raft group, only one port is "real" — the others must still accept connections to avoid breaking remote replicas that expect to connect to them. The solution is lightweight forwarding servers on the unused ports that transparently redirect all traffic to the single Raft instance. Remote replicas are completely unaware of this consolidation; from their perspective, the system looks identical to the multi-instance configuration.
+
+### Decoupling Entry Application from Replication
+
+One subtle but important change is the introduction of a dedicated thread for applying committed entries. In the multi-instance design, each Raft group applies its entries on the same thread that handles RPC communication. If applying an entry is slow (for example, replaying a complex transaction on a follower), the RPC thread is blocked and cannot respond to heartbeats, potentially triggering unnecessary elections.
+
+In the consolidated design, committed entries are placed into a queue and applied by a separate background thread. This ensures that the RPC thread remains responsive to heartbeats even when transaction replay is slow, which is particularly important because the single Raft instance handles a higher volume of entries than any individual group did before.
+
+### Election Timeout Adjustments
+
+Because the single instance handles more work per heartbeat cycle, election timeouts are increased to give the system more breathing room:
+
+| Role | Multi-Instance | Single Instance |
+|------|---------------|-----------------|
+| Preferred leader | 150–300 ms | 300–600 ms |
+| Non-preferred (grace period) | 1–2 s | 5–10 s |
+| Non-preferred (normal) | 0.5–1 s | 3–6 s |
+
+These longer timeouts prevent false election triggers during periods of high load, without meaningfully increasing failover time in genuine failure scenarios.
+
+## Experimental Evaluation
+
+To quantify the impact of this consolidation, we benchmarked both configurations using the same test scenario: a single shard with 6 partitions, 3 replicas, running the TPC-C benchmark with 6 warehouse threads. Each configuration was run 10 times on identical hardware to capture the distribution of outcomes, not just a single point estimate.
+
+### Throughput Results
+
+| Run | Single Instance (ops/sec) | Multiple Instances (ops/sec) |
+|-----|---------------------------|------------------------------|
+| 1   | 215,503                   | 190,831                      |
+| 2   | 207,083                   | 91,464                       |
+| 3   | 209,322                   | 199,653                      |
+| 4   | 216,419                   | 160,187                      |
+| 5   | 210,284                   | 88,979                       |
+| 6   | 208,124                   | 88,078                       |
+| 7   | 205,792                   | 89,871                       |
+| 8   | 208,597                   | 198,647                      |
+| 9   | 205,853                   | 149,909                      |
+| 10  | 204,853                   | 121,899                      |
+
+### Summary Statistics
+
+| Metric | Single Instance | Multiple Instances | Change |
+|--------|-----------------|--------------------|--------|
+| Mean throughput   | 209,183 ops/sec | 137,952 ops/sec | **+51.6%** |
+| Median throughput | 208,361 ops/sec | 135,904 ops/sec | +53.3% |
+| Minimum           | 204,853 ops/sec | 88,078 ops/sec  | +132.6% |
+| Maximum           | 216,419 ops/sec | 199,653 ops/sec | +8.4%  |
+| Standard deviation| 3,955 ops/sec   | 47,774 ops/sec  | −91.7% |
+| Coefficient of variation | 1.9%    | 34.6%           | −32.7 pp |
+
+### Follower Replay Progress
+
+The number of entries successfully replayed on followers during each test provides a second perspective on consistency:
+
+| Metric | Single Instance | Multiple Instances |
+|--------|-----------------|--------------------|
+| Mean   | 10,848 entries  | 5,265 entries      |
+| Median | 11,578 entries  | 4,759 entries      |
+| Min    | 9,030 entries   | 976 entries        |
+| Max    | 12,346 entries  | 12,069 entries     |
+
+The single instance consistently replays roughly twice as many entries, with far less variation. The multi-instance minimum of 976 entries (compared to 9,030 for the single instance) indicates that some runs experienced severe replication delays, likely due to the election interference discussed earlier.
+
+## Interpreting the Results
+
+Three patterns stand out in the data:
+
+**The single instance is both faster and more predictable.** Its mean throughput is 51.6% higher, but perhaps more importantly, its coefficient of variation is 1.9% compared to 34.6%. In practical terms, this means that the single instance delivers approximately the same performance on every run, while the multi-instance configuration is a gamble — some runs are nearly as fast, but others achieve barely half the peak throughput.
+
+**The multi-instance results are bimodal.** Looking at the raw data, the multi-instance runs cluster into two groups: roughly 190,000–200,000 ops/sec when all six elections succeed quickly, and roughly 88,000–91,000 ops/sec when one or more elections stall. This bimodality is a direct consequence of independent elections — the system's aggregate throughput is limited by its slowest partition, and independent elections create a lottery where some partitions may be slow to elect a leader.
+
+**The worst case improves dramatically.** The single instance's worst run (204,853 ops/sec) is 2.3 times better than the multi-instance worst run (88,078 ops/sec). For systems that need to provide throughput guarantees — which is most production systems — the worst case matters more than the average. The consolidation transforms Raft's throughput from unpredictable to reliable.
+
+These improvements stem from three reinforcing factors. First, a single election eliminates the possibility of split elections on individual partitions. Second, a single heartbeat loop reduces the RPC overhead from 12 streams to 2. Third, the background apply thread prevents slow transaction replay from disrupting heartbeat responses.
+
+## Trade-offs and Applicability
+
+The consolidation is not without trade-offs. The following table summarises the key differences:
+
+| Aspect | Multiple Instances | Single Instance |
+|--------|--------------------|-----------------|
+| Mean throughput | 137,952 ops/sec | 209,183 ops/sec |
+| Throughput predictability | Low (CV 34.6%) | High (CV 1.9%) |
+| Partition isolation | Full — each partition fails independently | Shared — a Raft failure affects all partitions |
+| Failover granularity | Per-partition | All-or-nothing |
+| Number of elections | 6 independent | 1 global |
+| Heartbeat overhead | O(partitions x replicas) | O(replicas) |
+
+**When the single instance is the better choice.** When partitions are co-located on the same physical server (as is typical in Mako's deployment model), they already share the same failure domain — if the server crashes, all partitions go down together regardless of how many Raft groups they use. In this setting, per-partition Raft groups provide only the *illusion* of isolation without the *reality*, while incurring real performance costs. The single instance is the natural choice.
+
+**When multiple instances may be preferable.** If partitions are distributed across different physical servers with genuinely independent failure domains, per-partition Raft groups allow one partition to continue operating even when another's server fails. This scenario is less common in Mako but could arise in other system designs.
+
+## Implications for Geo-Replication
+
+The single Raft instance interacts particularly well with the preferred leader election mechanism described in Chapter 4. With a single Raft instance, one election determines the leader for all partitions on that server. Combined with preferred leader election, this means the system can guarantee that a specific datacenter holds leadership for all partitions with a single election cycle.
+
+Under the multi-instance design, it was theoretically possible for different partitions to elect leaders in different datacenters — partition 0 might elect a leader in the US datacenter while partition 1 elects a leader in the EU datacenter. This "split leadership" scenario would force cross-shard transactions to coordinate across datacenters even when it is unnecessary. The single instance eliminates this possibility entirely: either the server is the leader for all partitions or it is the leader for none. This all-or-nothing property simplifies routing, reduces cross-datacenter traffic, and makes the system's behaviour easier to reason about in a geo-replicated setting.
+
+---
+
+# Chapter 8: Performance Evaluation
 
 ## Benchmark Methodology
 
@@ -1215,7 +1384,7 @@ The practical conclusion is that the choice between Raft and Paxos should be dri
 
 **Single-node testing.** All benchmarks run on a single machine with localhost networking. Production deployments spread replicas across machines with real network latency. The relative performance of Raft vs Paxos may differ when network latency is the dominant factor.
 
-**Single run.** Results are from a single CI run, not averaged across multiple runs. Statistical confidence would require multiple runs with variance analysis.
+**Single run (Paxos vs Raft comparison).** The Paxos vs Raft comparison results in this chapter are from a single CI run. The single vs multiple Raft instance comparison in Chapter 7 uses 10 runs per configuration with statistical analysis, demonstrating that variance can be significant (particularly for the multi-instance configuration with CV 34.6%).
 
 **Small scale.** The tests use 1-2 shards with 3 replicas each. Production systems may run hundreds of shards. Scaling effects are not captured.
 
@@ -1223,7 +1392,7 @@ The practical conclusion is that the choice between Raft and Paxos should be dri
 
 ---
 
-# Chapter 8: Log Persistence and Recovery
+# Chapter 9: Log Persistence and Recovery
 
 ## Persistent Log Storage
 
@@ -1361,7 +1530,7 @@ The process of integrating Raft into a production-grade distributed transaction 
 
 ---
 
-# Chapter 9: Appendix
+# Chapter 10: Appendix
 
 ## Glossary
 
