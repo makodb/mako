@@ -1,5 +1,6 @@
 //#include "all.h"
 #include <algorithm>
+#include <cctype>
 
 #include "__dep__.h"
 #include "multi_value.h"
@@ -38,6 +39,14 @@
 
 
 namespace janus {
+namespace {
+// @safe - in-place ASCII/locale-independent lowercase transform for config keys.
+void to_lower_in_place(std::string& s) {
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+}
+}  // namespace
+
 Config *Config::config_s = nullptr;
 size_t bulkBatchCount=10000;
 
@@ -293,7 +302,7 @@ Config::Config(char           *ctrl_hostname,
 
 void Config::Load() {
   for (auto &name: config_paths_) {
-    if (boost::algorithm::ends_with(name, "yml")) {
+    if (name.ends_with("yml")) {
       LoadYML(name);
     } else {
       verify(0);
@@ -542,16 +551,16 @@ std::string Config::site2host_name(std::string& sitename) {
 
 void Config::LoadModeYML(YAML::Node config) {
   auto mode_str = config["cc"].as<string>();
-  boost::algorithm::to_lower(mode_str);
+  to_lower_in_place(mode_str);
   auto ab_str = config["ab"].as<string>();
-  boost::algorithm::to_lower(ab_str);
+  to_lower_in_place(ab_str);
   this->InitMode(mode_str, ab_str);
   max_retry_ = config["retry"].as<int32_t>();
 //  concurrent_txn_ = config["ongoing"].as<uint32_t>();
   batch_start_ = config["batch"].as<bool>();
   if (config["timestamp"]) {
     string ts_str = config["timestamp"].as<string>();
-    boost::algorithm::to_lower(ts_str);
+    to_lower_in_place(ts_str);
     if (ts_str == "clock") {
       timestamp_ = CLOCK;
     } else if (ts_str == "counter") {
@@ -739,9 +748,9 @@ void Config::LoadClientYML(YAML::Node client) {
 
 void Config::LoadFailoverYML(YAML::Node config) {
   auto mode_str = config["method"].as<string>();
-  boost::algorithm::to_lower(mode_str);
+  to_lower_in_place(mode_str);
   auto fail_srv_str = config["failserver"].as<string>();
-  boost::algorithm::to_lower(mode_str);
+  to_lower_in_place(mode_str);
   failover_srv_idx_ = -1;
   if (mode_str == "none") {
     failover_ = false;

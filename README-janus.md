@@ -18,7 +18,6 @@ sudo apt-get install -y \
     build-essential \
     clang \
     libapr1-dev libaprutil1-dev \
-    libboost-all-dev \
     libyaml-cpp-dev \
     python3-dev \
     python3-pip \
@@ -58,4 +57,3 @@ Check out the doc directory to find more about how to build the system on older 
 | janus          | 2c2s1p    | tpcc      | concurrent_100 | OK     	 | 25.14s |
 | janus          | 64c8s1p   | tpcc      | concurrent_100 | OK     	 | 37.72s |
 | janus          | 3c3s3r1p  | tpcc      | concurrent_100 | OK     	 | 38.43s |
-

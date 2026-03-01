@@ -8,7 +8,7 @@ INCLUDE	:= -Iinclude -Ilib \
  -I/usr/local/include/bsoncxx/v_noabi
 LIB		:= lib
 
-LIBRARIES	:= -lboost_system -lpthread -lcrypto \
+LIBRARIES	:= -lpthread -lcrypto \
 -lssl -lmongocxx -lbsoncxx
 EXECUTABLE	:= main
 

@@ -125,6 +125,7 @@ Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file,
       const_cast<Fiber&>(coro_ref).id = Fiber::global_id++;  // id is not Cell yet
       *coro_ref.func_.borrow_mut() = std::move(func);
       *coro_ref.boost_coro_task_.borrow_mut() = rusty::None;
+      coro_ref.boost_coro_yield_.set(nullptr);
       coro_ref.status_.set(Fiber::INIT);
       return coro;
     } else {

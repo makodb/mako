@@ -8,7 +8,6 @@
 #include <functional>
 #include <iostream>
 #include <memory>
-#include <boost/coroutine2/protected_fixedsize_stack.hpp>
 #include "../base/all.hpp"
 #include "fiber_impl.h"
 #include "reactor.h"
@@ -23,7 +22,6 @@ Fiber::Fiber(rusty::Function<void()> func)
       needs_finalize_(false),
       func_(std::move(func)),
       boost_coro_task_(rusty::None),
-      boost_coro_yield_(boost::none),
       id(Fiber::global_id++) {
 }
 
@@ -33,7 +31,7 @@ Fiber::~Fiber() {
 }
 
 void Fiber::boost_run_wrapper(boost_coro_yield_t& yield) {
-  boost_coro_yield_ = yield;
+  boost_coro_yield_.set(&yield);
   verify(*func_.borrow());
   auto reactor = Reactor::get_reactor();
   while (true) {
@@ -55,7 +53,7 @@ void Fiber::boost_run_wrapper(boost_coro_yield_t& yield) {
 
 // @safe - Initializes and starts a fiber
 // SAFETY: Single-threaded fiber execution, no concurrent mutation.
-// Uses @unsafe blocks for: RefCell operations, get_reactor, STL, const_cast, std::bind, boost.
+// Uses @unsafe blocks for: RefCell operations, get_reactor, STL, const_cast, std::bind, fiber runtime calls.
 void Fiber::run() const {
   // @unsafe
   {
@@ -78,7 +76,8 @@ void Fiber::run() const {
 void Fiber::yield_() const {
   // @unsafe
   {
-    verify(boost_coro_yield_);
+    auto* yield_ptr = boost_coro_yield_.get();
+    verify(yield_ptr != nullptr);
     auto s = status_.get();
     verify(s == STARTED || s == RESUMED || s == FINALIZING);
     status_.set(PAUSED);
@@ -86,7 +85,7 @@ void Fiber::yield_() const {
       auto reactor = Reactor::get_reactor();
       reactor->n_active_coroutines_.set(reactor->n_active_coroutines_.get() - 1);
     }
-    boost_coro_yield_.value()();
+    (*yield_ptr)();
   }
 }
 

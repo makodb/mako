@@ -22,7 +22,6 @@ RUN apt-get install -y \
     clang \
     cgroup-tools \
     libapr1-dev libaprutil1-dev \
-    libboost-all-dev \
     libyaml-cpp-dev \
     libjemalloc-dev \
     python3-dev \

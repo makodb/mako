@@ -5,8 +5,6 @@ sudo apt-get update
 sudo apt-get --assume-yes install make automake cmake
 sudo apt-get --assume-yes install gcc
 sudo apt-get --assume-yes install g++
-# sudo apt-get --assume-yes install boost
-sudo apt-get --assume-yes install libboost-all-dev
 sudo apt-get --assume-yes install libyaml-cpp-dev
 # sudo apt-get --assume-yes install libyaml-cpp0.3-dev
 sudo apt-get --assume-yes install -y libjemalloc-dev

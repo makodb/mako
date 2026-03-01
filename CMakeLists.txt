@@ -70,12 +70,6 @@ pkg_check_modules(DPDK REQUIRED libdpdk)
 # Find Python for txlog library
 find_package(Python3 COMPONENTS Development REQUIRED)
 
-# Find Boost libraries for txlog library (use shared libs for linking into shared txlog)
-set(Boost_USE_STATIC_LIBS OFF)
-set(Boost_USE_STATIC_RUNTIME OFF)
-set(Boost_USE_MULTITHREADED ON)
-find_package(Boost REQUIRED COMPONENTS system filesystem thread)
-
 # Define paths
 set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
 set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -520,8 +514,6 @@ endif()
 list(APPEND LDFLAGS
   -levent_pthreads
   -pthread
-  -lboost_system
-  -lboost_thread
 )
 
 pkg_check_modules(LIBEVENT REQUIRED libevent)
@@ -742,7 +734,6 @@ target_include_directories(txlog PRIVATE
     src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     dependencies/yaml-cpp/include
-    ${Boost_INCLUDE_DIRS}
     ${Python3_INCLUDE_DIRS}
 )
 
@@ -751,9 +742,6 @@ target_compile_definitions(txlog PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
 target_link_libraries(txlog
     yaml-cpp
-    Boost::system
-    Boost::filesystem
-    Boost::thread
     pthread
     ${CMAKE_DL_LIBS}
     Python3::Python

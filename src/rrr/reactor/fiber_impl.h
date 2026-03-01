@@ -23,8 +23,6 @@
 #include <rusty/refcell.hpp>
 #include <rusty/function.hpp>
 
-#include <boost/optional.hpp>
-
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -186,8 +184,9 @@ class Fiber {
 
   // Migrated from std::unique_ptr to rusty::Box with Option for nullable semantics
   rusty::RefCell<rusty::Option<rusty::Box<boost_coro_task_t>>> boost_coro_task_{};
-  // boost::optional with reference - keep mutable as it's inherently unsafe
-  mutable boost::optional<boost_coro_yield_t&> boost_coro_yield_{};
+  // Non-owning pointer to the yield handle owned by boost_coro_task_t.
+  // Cell provides interior mutability for const yield_().
+  rusty::Cell<boost_coro_yield_t*> boost_coro_yield_{nullptr};
 
   Fiber() = delete;
   explicit Fiber(rusty::Function<void()> func);
@@ -204,7 +203,7 @@ class Fiber {
 
   /**
    * Yield control back to the reactor.
-   * @safe - Uses boost::optional reference and Cell for status.
+   * @safe - Uses non-owning yield pointer and Cell for status.
    */
   void yield_() const;
 

@@ -213,7 +213,6 @@ def install_apt_packages():
         sudo('apt-get -y -qq install pkg-config libgoogle-perftools-dev')
         sudo('apt-get -y -qq install build-essential clang')
         sudo('apt-get -y -qq install libapr1-dev libaprutil1-dev')
-        sudo('apt-get -y -qq install libboost-all-dev')
         sudo('apt-get -y -qq install libyaml-cpp-dev')
         sudo('apt-get -y -qq install python3-dev python3-pip')
 
@@ -265,21 +264,6 @@ def build(args=None, clean=True):
 @task
 @runs_once
 @roles('leaders')
-def retrieve_boost():
-    return
-    with cd(env.nfs_home):
-        # get from beaker-1
-        boost_archive = 'boost_1_58_0.tar.gz' 
-        boost = 'http://216.165.108.10/~lamont/{boost_archive}'.format(**locals())
-        run('wget {boost}'.format(**locals()))
-        run('tar -xzvf {boost_archive}'.format(boost_archive=boost_archive))
-    with cd(env.nfs_home + "/" + boost_archive.replace('.tar.gz','')):
-        sudo('./bootstrap')
-        sudo('./b2 install')
-
-@task
-@runs_once
-@roles('leaders')
 def retrieve_code():
     parent = os.path.dirname(env.nfs_home)
     with cd(parent):
@@ -297,8 +281,6 @@ def retrieve_code():
                 run('git checkout master')
                 run('git pull origin master')
                 run('git checkout {rev}'.format(rev=env.git_revision))
-#        execute('retrieve_boost')
-
 @task
 @hosts('localhost')
 def ping():
