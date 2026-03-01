@@ -34,48 +34,57 @@ make -j32
 
 ## Testing Commands
 
+**MANDATORY: Run all tests via Docker. Do not run `./ci/ci.sh ...` directly on the host.**
+
 ```bash
-# run all experiments
-./ci/ci.sh all
+# run all experiments (Docker)
+./docker_build.sh ci all
 
-# simple transactions
-./ci/ci.sh simpleTransaction
+# simple transactions (Docker)
+./docker_build.sh ci simpleTransaction
 
-# simple replication
-./ci/ci.sh simplePaxos
+# simple replication (Docker)
+./docker_build.sh ci simplePaxos
 
-# two shards without replication
-./ci/ci.sh shardNoReplication
+# two shards without replication (Docker)
+./docker_build.sh ci shardNoReplication
 
-# 1 shard with replication on dbtest
-./ci/ci.sh shard1Replication
+# 1 shard with replication on dbtest (Docker)
+./docker_build.sh ci shard1Replication
 
-# 2 shards with replication on dbtest
-./ci/ci.sh shard2Replication
+# 2 shards with replication on dbtest (Docker)
+./docker_build.sh ci shard2Replication
 
-# 1 shard with replication on simple transaction
-./ci/ci.sh shard1ReplicationSimple
+# 1 shard with replication on simple transaction (Docker)
+./docker_build.sh ci shard1ReplicationSimple
 
-# 2 shards with replication on simple transaction
-./ci/ci.sh shard2ReplicationSimple
+# 2 shards with replication on simple transaction (Docker)
+./docker_build.sh ci shard2ReplicationSimple
 
 # Raft replication tests (same as above but with Raft instead of Paxos)
-./ci/ci.sh shard1ReplicationRaft
-./ci/ci.sh shard2ReplicationRaft
-./ci/ci.sh shard1ReplicationSimpleRaft
-./ci/ci.sh shard2ReplicationSimpleRaft
+./docker_build.sh ci shard1ReplicationRaft
+./docker_build.sh ci shard2ReplicationRaft
+./docker_build.sh ci shard1ReplicationSimpleRaft
+./docker_build.sh ci shard2ReplicationSimpleRaft
 
-# RocksDB persistence and partitioned queues tests
-./ci/ci.sh rocksdbTests
+# RocksDB persistence and partitioned queues tests (Docker)
+./docker_build.sh ci rocksdbTests
 
-# Shard fault tolerance test (reboots shards to test independent operation)
-./ci/ci.sh shardFaultTolerance
+# Shard fault tolerance test (Docker container fallback)
+# 1) enter Docker dev environment
+./docker_build.sh enter
+# 2) inside container, run:
+BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 
-# Multi-shard single-process mode (runs multiple shards in one process)
-./ci/ci.sh multiShardSingleProcess
+# Multi-shard single-process mode (runs multiple shards in one process) (Docker)
+./docker_build.sh ci multiShardSingleProcess
 
-# CPU throttling scaling test (verifies throughput doubles when CPU cap doubles)
-./ci/ci.sh cpuThrottlingScaling
+# CPU throttling scaling test (verifies throughput doubles when CPU cap doubles) (Docker)
+./docker_build.sh ci cpuThrottlingScaling
+
+# Optional quick path (no rebuild): build once, then run a suite
+./docker_build.sh build
+./docker_build.sh ci-quick shardNoReplication
 ```
 
 ## Code Architecture

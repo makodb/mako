@@ -74,7 +74,7 @@ find_package(Python3 COMPONENTS Development REQUIRED)
 set(Boost_USE_STATIC_LIBS OFF)
 set(Boost_USE_STATIC_RUNTIME OFF)
 set(Boost_USE_MULTITHREADED ON)
-find_package(Boost REQUIRED COMPONENTS system filesystem thread coroutine context)
+find_package(Boost REQUIRED COMPONENTS system filesystem thread)
 
 # Define paths
 set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
@@ -520,8 +520,6 @@ endif()
 list(APPEND LDFLAGS
   -levent_pthreads
   -pthread
-  -lboost_fiber
-  -lboost_context
   -lboost_system
   -lboost_thread
 )
@@ -756,8 +754,6 @@ target_link_libraries(txlog
     Boost::system
     Boost::filesystem
     Boost::thread
-    Boost::coroutine
-    Boost::context
     pthread
     ${CMAKE_DL_LIBS}
     Python3::Python

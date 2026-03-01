@@ -6,7 +6,6 @@
 #include "lib/common.h"
 #include <stdlib.h>
 #include "benchmarks/common.h"
-#include <boost/fiber/all.hpp>
 #include "unordered_map"
 #include "util.h"
 #include "benchmarks/sto/sync_util.hh"
@@ -105,33 +104,6 @@ void erpc_instance_exp_seq(int num) {
                                       i+500);
         instances.push_back(transport);
         system("rdma resource >> a.log");
-    }
-}
-
-void fiber_instance_exp(int id) {
-    static __thread int nshards=id;
-    //__thread int TThread::the_id;
-    static thread_local int a=id;
-    static int b=id;
-    int c=id;
-
-    std::cout << "enter the function..." << std::endl;
-    uint64_t g=0;
-    while(g<10000000) {g++;boost::this_fiber::yield();} ;
-    std::cout << "id: " << id << ",g:" << g << "," << nshards << "," << a << "," << b << "," << c << std::endl;
-}
-
-// https://github.com/shenweihai1/meerkat/blob/master/store/benchmark/benchClient.cc
-void fiber_testing() {
-    // fiber
-    boost::fibers::fiber client_fibers[10];
-    for (auto i=0; i< 10; i++) {
-        boost::fibers::fiber f(fiber_instance_exp, i+1);
-        client_fibers[i] = std::move(f);
-    }
-
-    for (auto i=0; i< 10; i++) {
-        client_fibers[i].join();
     }
 }
 
@@ -243,7 +215,6 @@ void test_static_scope() {
 int main(int argc, char ** argv)
 {
     test_static_scope();
-    fiber_testing();
     request_trim();
     erpc_instance_exp_seq(3);
     testing_map_get();

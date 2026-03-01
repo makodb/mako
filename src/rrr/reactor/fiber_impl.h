@@ -3,7 +3,7 @@
  * @brief Core fiber (stackful coroutine) implementation.
  *
  * This file contains the Fiber class, which provides stackful execution
- * contexts using Boost.Coroutine2. "Fiber" is the preferred terminology
+ * contexts without Boost.Coroutine2. "Fiber" is the preferred terminology
  * for stackful coroutines, aligning with industry conventions.
  *
  * For the modern API, see fiber.h which provides:
@@ -23,40 +23,97 @@
 #include <rusty/refcell.hpp>
 #include <rusty/function.hpp>
 
-#define USE_BOOST_COROUTINE2
-
-#ifdef USE_BOOST_COROUTINE2
-#define BOOST_COROUTINE_NO_DEPRECATION_WARNING 1
-#define BOOST_COROUTINES_NO_DEPRECATION_WARNING 1
-#include <boost/coroutine2/all.hpp>
-#endif
-
-#ifdef USE_BOOST_COROUTINE1
-#include <boost/coroutine/symmetric_coroutine.hpp>
-#endif
-
 #include <boost/optional.hpp>
-#include <functional>
-#include <memory>
+
+#include <cstddef>
+#include <cstdint>
+#include <type_traits>
 #include <utility>
-#include <vector>
 
 namespace rrr {
 
 // Forward declaration
 class Fiber;
 
-#ifdef USE_BOOST_COROUTINE2
-typedef boost::coroutines2::coroutine<void>::pull_type boost_coro_task_t;
-typedef boost::coroutines2::coroutine<void>::push_type boost_coro_yield_t;
-typedef boost::coroutines2::coroutine<void()> coro_t;
-#endif
+/**
+ * CPU context for x86_64 SysV user-space context switching.
+ *
+ * Stores callee-saved registers plus stack/instruction pointer.
+ */
+struct FiberContext {
+  void* rsp{nullptr};
+  void* rip{nullptr};
+  std::uintptr_t rbx{0};
+  std::uintptr_t rbp{0};
+  std::uintptr_t r12{0};
+  std::uintptr_t r13{0};
+  std::uintptr_t r14{0};
+  std::uintptr_t r15{0};
+};
 
-#ifdef USE_BOOST_COROUTINE1
-typedef boost::coroutines::symmetric_coroutine<void>::call_type boost_coro_task_t;
-typedef boost::coroutines::symmetric_coroutine<void>::yield_type boost_coro_yield_t;
-typedef boost::coroutines::symmetric_coroutine<void()> coro_t;
-#endif
+extern "C" void fiber_swap_context(FiberContext* from, FiberContext* to);
+
+class boost_coro_task_t;
+
+class boost_coro_yield_t {
+ public:
+  explicit boost_coro_yield_t(boost_coro_task_t& task) : task_(&task) {}
+  void operator()();
+
+ private:
+  boost_coro_task_t* task_{nullptr};
+};
+
+class boost_coro_task_t {
+ public:
+  using TaskFn = rusty::Function<void(boost_coro_yield_t&)>;
+
+  explicit boost_coro_task_t(TaskFn fn);
+
+  template <typename Fn,
+            typename = std::enable_if_t<!std::is_same_v<std::decay_t<Fn>, boost_coro_task_t>>>
+  explicit boost_coro_task_t(Fn&& fn)
+      : boost_coro_task_t(TaskFn(std::forward<Fn>(fn))) {}
+
+  ~boost_coro_task_t();
+
+  boost_coro_task_t(const boost_coro_task_t&) = delete;
+  boost_coro_task_t& operator=(const boost_coro_task_t&) = delete;
+  boost_coro_task_t(boost_coro_task_t&&) = delete;
+  boost_coro_task_t& operator=(boost_coro_task_t&&) = delete;
+
+  void operator()();
+
+ private:
+  friend class boost_coro_yield_t;
+
+  enum class State : uint8_t {
+    NEW = 0,
+    RUNNING,
+    SUSPENDED,
+    FINISHED
+  };
+
+  static constexpr std::size_t kDefaultStackBytes = 1u << 20;  // 1 MiB
+  static thread_local boost_coro_task_t* tls_active_task_;
+
+  static void entry_trampoline();
+  [[noreturn]] void entry();
+
+  void init_context();
+  void resume();
+  void yield_to_caller();
+
+  TaskFn fn_;
+  boost_coro_yield_t yield_;
+  FiberContext caller_ctx_{};
+  FiberContext fiber_ctx_{};
+  void* stack_mapping_{nullptr};
+  std::size_t stack_mapping_bytes_{0};
+  State state_{State::NEW};
+};
+
+typedef boost_coro_task_t coro_t;
 
 class Reactor;
 class Event;
@@ -69,7 +126,7 @@ class Event;
  *
  * Key differences from C++20 coroutines:
  *   - C++20 coroutines are stackless (state machines)
- *   - Fibers use Boost.Coroutine2 for stackful execution
+ *   - Fibers use custom stackful execution
  *   - Stackful contexts are properly called "fibers"
  *
  * @unsafe - Uses rusty::Rc ownership and mutable fields for interior mutability

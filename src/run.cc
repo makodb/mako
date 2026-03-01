@@ -1,7 +1,6 @@
 #include "deptran/s_main.h"
 #include <assert.h>
 #include <iostream>
-#include <boost/coroutine/all.hpp>
 #include "rrr/rrr.hpp"
 
 using namespace std;
