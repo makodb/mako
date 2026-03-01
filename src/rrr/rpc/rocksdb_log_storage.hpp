@@ -69,12 +69,12 @@ private:
         return err;
     }
 
-    // @safe - std::string copy from byte buffer
+    // @unsafe - std::string construction from raw pointer is not borrow-checked
     static std::string copy_slice(const char* data, size_t len) {
         if (data == nullptr || len == 0) {
-            return "";
+            return ""; // @unsafe
         }
-        return std::string(data, len);
+        return std::string(data, len); // @unsafe
     }
 
     // @unsafe - Uses ostringstream operations

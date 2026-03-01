@@ -208,19 +208,28 @@ void RocksDBPersistence::shutdown() {
         }
     }
 
-    // Close all partition databases
+    // Flush and close all partition databases
+    rocksdb_flushoptions_t* shutdown_flush_opts = rocksdb_flushoptions_create();
+    if (shutdown_flush_opts != nullptr) {
+        rocksdb_flushoptions_set_wait(shutdown_flush_opts, 1);
+    }
     for (size_t i = 0; i < partition_dbs_.size(); ++i) {
         if (partition_dbs_[i] != nullptr) {
-            char* err = nullptr;
-            rocksdb_flush_wal(partition_dbs_[i], 1, &err);
-            if (err != nullptr) {
-                std::string err_str = take_rocksdb_error(&err);
-                fprintf(stderr, "[RocksDB] FlushWAL failed for partition %zu during shutdown: %s\n",
-                        i, err_str.c_str());
+            if (shutdown_flush_opts != nullptr) {
+                char* err = nullptr;
+                rocksdb_flush(partition_dbs_[i], shutdown_flush_opts, &err);
+                if (err != nullptr) {
+                    std::string err_str = take_rocksdb_error(&err);
+                    fprintf(stderr, "[RocksDB] Flush failed for partition %zu during shutdown: %s\n",
+                            i, err_str.c_str());
+                }
             }
             rocksdb_close(partition_dbs_[i]);
             partition_dbs_[i] = nullptr;
         }
+    }
+    if (shutdown_flush_opts != nullptr) {
+        rocksdb_flushoptions_destroy(shutdown_flush_opts);
     }
 
     // Debug logging: indicate shutdown complete
@@ -523,19 +532,6 @@ bool RocksDBPersistence::flushAll() {
         fprintf(stderr, "RocksDB flush failed for some partitions\n");
         rocksdb_flushoptions_destroy(flush_options);
         return false;
-    }
-
-    // Flush WAL for all partition databases
-    for (size_t i = 0; i < partition_dbs_.size(); ++i) {
-        if (partition_dbs_[i] != nullptr) {
-            char* err = nullptr;
-            rocksdb_flush_wal(partition_dbs_[i], 1, &err);
-            if (err != nullptr) {
-                std::string err_str = take_rocksdb_error(&err);
-                fprintf(stderr, "RocksDB WAL flush failed for partition %zu: %s\n", i, err_str.c_str());
-                all_success = false;
-            }
-        }
     }
 
     rocksdb_flushoptions_destroy(flush_options);
