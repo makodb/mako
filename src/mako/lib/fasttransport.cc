@@ -14,7 +14,6 @@
 #include "lib/erpc_backend.h"
 #include "lib/rrr_rpc_backend.h"
 
-#include <google/protobuf/message.h>
 #include <event2/event.h>
 #include <event2/thread.h>
 

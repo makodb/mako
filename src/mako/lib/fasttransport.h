@@ -16,7 +16,6 @@
 #include "lib/message.h"
 #include "lib/transport_backend.h"
 
-#include <gflags/gflags.h>
 #include <event2/event.h>
 
 #include <map>
