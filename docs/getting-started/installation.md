@@ -63,10 +63,11 @@ bash apt_packages.sh
 
 This script installs:
 - Build tools: `git`, `pkg-config`, `build-essential`, `clang`, `cmake`
-- Libraries: `libapr1-dev`, `libaprutil1-dev`, `libboost-all-dev`, `libyaml-cpp-dev`
+- Libraries: `libapr1-dev`, `libaprutil1-dev`, `libboost-all-dev`
 - Python: `python3-dev`, `python3-pip`
 - Performance tools: `libgoogle-perftools-dev`
 - Other dependencies as needed
+- `yaml-cpp` is built from the vendored submodule at `third-party/yaml-cpp`
 
 **Manual Installation** (if the script doesn't work):
 ```bash
@@ -80,7 +81,6 @@ sudo apt-get install -y \
     libapr1-dev \
     libaprutil1-dev \
     libboost-all-dev \
-    libyaml-cpp-dev \
     python3-dev \
     python3-pip \
     libgoogle-perftools-dev \

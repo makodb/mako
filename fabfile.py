@@ -213,7 +213,6 @@ def install_apt_packages():
         sudo('apt-get -y -qq install pkg-config libgoogle-perftools-dev')
         sudo('apt-get -y -qq install build-essential clang')
         sudo('apt-get -y -qq install libapr1-dev libaprutil1-dev')
-        sudo('apt-get -y -qq install libyaml-cpp-dev')
         sudo('apt-get -y -qq install python3-dev python3-pip')
 
 @task

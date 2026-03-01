@@ -8,7 +8,6 @@ import glob
 from waflib import Logs
 from waflib import Options
 
-pargs = ['--cflags', '--libs']
 #BOOST_LIBS = 'BOOST_SYSTEM BOOST_FILESYSTEM BOOST_THREAD BOOST_COROUTINE'
 
 #g++ -Wall -Wextra -std=c++17 -ggdb -Iinclude -Ilib -I/usr/local/include/mongocxx/v_noabi -I/usr/local/include/bsoncxx/v_noabi -Llib main.cpp -o bin/main -lpthread -lcrypto -lssl -lmongocxx -lbsoncxx
@@ -102,8 +101,6 @@ def configure(conf):
 #    conf.env.append_value('INCLUDES', [os.path.expanduser('~') + '/.linuxbrew/include'])
 #    conf.env.append_value('LIBPATH', [os.path.expanduser('~') + '/.linuxbrew/lib'])
     conf.env.LIB_PTHREAD = 'pthread'
-    conf.check_cfg(package='yaml-cpp', uselib_store='YAML-CPP', args=pargs)
-
     if sys.platform != 'darwin':
         conf.env.LIB_RT = 'rt'
 
@@ -170,6 +167,12 @@ def build(bld):
               includes="src src/rrr src/deptran src/base third-party/rusty-cpp/include",
               use="rrr PTHREAD")
 
+    # Build yaml-cpp from vendored source instead of system package.
+    bld.stlib(source=bld.path.ant_glob("third-party/yaml-cpp/src/*.cpp"),
+              target="yamlcpp",
+              includes="third-party/yaml-cpp/include third-party/yaml-cpp/src",
+              use="")
+
     bld.shlib(features="pyext",
               source=bld.path.ant_glob("src/rrr/pylib/simplerpc/*.cpp"),
               target="_pyrpc",
@@ -181,28 +184,24 @@ def build(bld):
                                        "src/bench/*/*.cc",
                                        excl=['src/deptran/s_main.cc', 'src/deptran/paxos_main_helper.cc','src/deptran/lab_solution_raft/*.cc', 'src/bench/paxos_lib/network_bench.cc']),
               target="deptran_objects",
-              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
-              uselib="YAML-CPP",
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include third-party/yaml-cpp/include",
               use="externc rrr memdb PTHREAD PROFILER RT")
 
     bld.shlib(source=bld.path.ant_glob("src/deptran/paxos_main_helper.cc "),
               target="txlog",
-              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
-              uselib="YAML-CPP",
-              use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include third-party/yaml-cpp/include",
+              use="externc rrr memdb deptran_objects yamlcpp PTHREAD PROFILER RT")
 
     bld.program(source=bld.path.ant_glob("src/deptran/s_main.cc"),
               target="deptran_server",
-              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
-              uselib="YAML-CPP",
-              use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include third-party/yaml-cpp/include",
+              use="externc rrr memdb deptran_objects yamlcpp PTHREAD PROFILER RT")
 
     #bld.program(source=bld.path.ant_glob("src/run.cc "
     #                                     "src/deptran/paxos_main_helper.cc"),
     #            target="microbench",
     #            includes="src src/rrr src/deptran ",
-    #            uselib="YAML-CPP",
-    #            use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+    #            use="externc rrr memdb deptran_objects yamlcpp PTHREAD PROFILER RT")
 
     bld.add_post_fun(post)
 

@@ -18,7 +18,6 @@ sudo apt-get install -y \
     build-essential \
     clang \
     libapr1-dev libaprutil1-dev \
-    libyaml-cpp-dev \
     python3-dev \
     python3-pip \
     libgoogle-perftools-dev

@@ -5,8 +5,6 @@ sudo apt-get update
 sudo apt-get --assume-yes install make automake cmake
 sudo apt-get --assume-yes install gcc
 sudo apt-get --assume-yes install g++
-sudo apt-get --assume-yes install libyaml-cpp-dev
-# sudo apt-get --assume-yes install libyaml-cpp0.3-dev
 sudo apt-get --assume-yes install -y libjemalloc-dev
 sudo apt-get --assume-yes install libgoogle-perftools-dev
 sudo apt-get --assume-yes install -y libaio-dev
@@ -20,7 +18,6 @@ sudo apt-get --assume-yes install net-tools
 sudo apt-get --assume-yes install -y pkg-config
 sudo apt-get --assume-yes install -y strace
 sudo apt-get --assume-yes install -y libprotobuf-dev
-sudo apt-get --assume-yes install libyaml-cpp-dev
 sudo apt-get --assume-yes install python2
 sudo apt-get --assume-yes install sshpass
 

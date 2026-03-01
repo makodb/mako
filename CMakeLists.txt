@@ -79,6 +79,12 @@ message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
 
+# Build yaml-cpp from vendored source to avoid system ABI/version drift.
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "Disable yaml-cpp tests" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "Disable yaml-cpp install targets" FORCE)
+add_subdirectory(third-party/yaml-cpp)
+
 # RUST
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})
@@ -733,7 +739,7 @@ target_include_directories(txlog PRIVATE
     src/mako
     src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-    dependencies/yaml-cpp/include
+    third-party/yaml-cpp/include
     ${Python3_INCLUDE_DIRS}
 )
 
@@ -868,7 +874,7 @@ if(DEPTRAN_BORROW_SRC)
         src/deptran
         src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-        dependencies/yaml-cpp/include
+        third-party/yaml-cpp/include
     )
     target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
