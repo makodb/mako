@@ -869,7 +869,6 @@ if(DEPTRAN_BORROW_SRC)
         src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
         dependencies/yaml-cpp/include
-        ${Boost_INCLUDE_DIRS}
     )
     target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
@@ -1108,7 +1107,7 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     )
     target_compile_options(rrr PUBLIC ${BENCH_CXXFLAGS})
-    target_link_libraries(rrr pthread ${Boost_LIBRARIES})
+    target_link_libraries(rrr pthread)
 
     # RRR files for borrow checking (explicit list to control what gets checked)
     # NOTE: Many RRR files are currently excluded from borrow checking due to
