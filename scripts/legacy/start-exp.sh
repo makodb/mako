@@ -1,5 +1,9 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
 # 1: name
 # 2: duration
 # 3: exp
@@ -22,7 +26,7 @@ env=$9
 cc=none
 
 # for workload: echo "1" > ./ips/is_rw for rw, echo "0" > ./ips/is_rw for tpca
-is_rw=$( cat ./ips/is_rw )
+is_rw=$( cat "${REPO_ROOT}/ips/is_rw" )
 if [ $is_rw -eq 1 ]
 then
   echo "using rw..."
@@ -42,9 +46,9 @@ else
 	exp="_exp$e"
 fi
 
-cp scripts/${typ}_slow/run_all.py .
-cp scripts/${typ}_slow/run$exp.py .
-cp inf ~
+cp "scripts/${typ}_slow/run_all.py" .
+cp "scripts/${typ}_slow/run$exp.py" .
+cp "${SCRIPT_DIR}/inf" ~
 
 if [[ $rep == "3" ]]; then
 	./run_all.py -e ./run$exp.py -d $dur -hh config/hosts-$env.yml -s '1:2:1' -c $nc:$((nc+1)):1 -r '3' -cc config/${workload}.yml -cc config/client_closed.yml -cc config/${cc}_${ab}.yml -cc config/concurrent_$conc.yml -b ${workload} -m $cc:$ab $name

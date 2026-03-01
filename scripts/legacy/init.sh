@@ -1,6 +1,8 @@
 #!/bin/bash
 
-sudo ./cleanup.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+sudo bash "${SCRIPT_DIR}/cleanup.sh"
 sudo mkdir /db
 echo y | sudo mkfs -t ext4 /dev/sdc
 sudo mount /dev/sdc /db

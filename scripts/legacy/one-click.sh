@@ -1,13 +1,19 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
 repos="depfast"  # repos name, default
 workdir="~/code"  # we default put our repos under the root
 
-s1=$( cat ./ips/ip_s1 )
-s2=$( cat ./ips/ip_s2 )
-s3=$( cat ./ips/ip_s3 )
-s4=$( cat ./ips/ip_s4 )
-s5=$( cat ./ips/ip_s5 )
-c1=$( cat ./ips/ip_c1 )
-is_rw=$( cat ./ips/is_rw )
+s1=$( cat "${REPO_ROOT}/ips/ip_s1" )
+s2=$( cat "${REPO_ROOT}/ips/ip_s2" )
+s3=$( cat "${REPO_ROOT}/ips/ip_s3" )
+s4=$( cat "${REPO_ROOT}/ips/ip_s4" )
+s5=$( cat "${REPO_ROOT}/ips/ip_s5" )
+c1=$( cat "${REPO_ROOT}/ips/ip_c1" )
+is_rw=$( cat "${REPO_ROOT}/ips/is_rw" )
 TPS="tps: "
 servers=(
   $s1
@@ -42,14 +48,14 @@ FIGURE5b_TARIALS=3
 FIGURE6a_TARIALS=3
 FIGURE6b_TARIALS=3
 ulimit -n 10000
-LOG_FILE="./log.txt"
+LOG_FILE="${REPO_ROOT}/log.txt"
 echo "" > $LOG_FILE
 
 setup () {
     if [ $ONLY_CMD -eq 0 ]
     then
       echo "TRY to kill"
-      bash ./batch_op.sh kill
+      bash "${SCRIPT_DIR}/batch_op.sh" kill
       #bash ./batch_op.sh init
       sleep 5
     fi
@@ -57,7 +63,7 @@ setup () {
 
 build_scp() {
   python3 waf configure -J build
-  bash ./batch_op.sh scp
+  bash "${SCRIPT_DIR}/batch_op.sh" scp
 }
 
 timeout_process() {
@@ -70,7 +76,7 @@ timeout_process() {
   if kill -0 "$myPid"; then
     # still alive, kill it then re-run it
     kill -9 "$myPid"
-    bash ./batch_op.sh kill
+    bash "${SCRIPT_DIR}/batch_op.sh" kill
     if [ $rerun -eq 1 ]
     then
        setup
@@ -104,7 +110,7 @@ experiment5a() {
     for i in "${conc[@]}"
     do
       mkdir results
-      cmd="./start-exp.sh testname $TUPT_DUR 0 3 follower 1 $i fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 3 follower 1 $i fpga_raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -129,7 +135,7 @@ experiment5a() {
     for i in "${conc[@]}"
     do
       mkdir results
-      cmd="./start-exp.sh testname $TUPT_DUR 0 5 follower 1 $i fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 5 follower 1 $i fpga_raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -166,7 +172,7 @@ experiment5b() {
     for i in "${exp[@]}"
     do
       mkdir results
-      cmd="./start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 1 $SLOW_CONCURRENT_RAFT fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 1 $SLOW_CONCURRENT_RAFT fpga_raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -191,7 +197,7 @@ experiment5b() {
     for i in "${exp[@]}"
     do
       mkdir results
-      cmd="./start-exp.sh testname $SLOWDOWN_DUR $i 5 follower 1 $SLOW_CONCURRENT_RAFT fpga_raft nonlocal &"
+      cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 5 follower 1 $SLOW_CONCURRENT_RAFT fpga_raft nonlocal &"
       if [ $ONLY_CMD -eq 1 ]
       then
         echo $cmd
@@ -233,7 +239,7 @@ experiment6a() {
   for i in "${conc[@]}"
   do
     mkdir results
-    cmd="./start-exp.sh testname $TUPT_DUR 0 3 follower 10 $i copilot nonlocal &"
+    cmd="${SCRIPT_DIR}/start-exp.sh testname $TUPT_DUR 0 3 follower 10 $i copilot nonlocal &"
     if [ $ONLY_CMD -eq 1 ]
     then
       echo $cmd
@@ -270,7 +276,7 @@ experiment6b() {
   for i in "${exp[@]}"
   do
     mkdir results
-    cmd="./start-exp.sh testname $SLOWDOWN_DUR $i 3 leader 10 4 copilot nonlocal &"
+    cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 leader 10 4 copilot nonlocal &"
     if [ $ONLY_CMD -eq 1 ]
     then
       echo $cmd
@@ -295,7 +301,7 @@ experiment6b() {
   for i in "${exp[@]}"
   do
     mkdir results
-    cmd="./start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 10 4 copilot nonlocal &"
+    cmd="${SCRIPT_DIR}/start-exp.sh testname $SLOWDOWN_DUR $i 3 follower 10 4 copilot nonlocal &"
     if [ $ONLY_CMD -eq 1 ]
     then
       echo $cmd

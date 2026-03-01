@@ -1,12 +1,18 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
 repos="depfast"  # repos name, default
 workdir="~/code"  # we default put our repos under the root
 
-s1=$( cat ./ips/ip_s1 )
-s2=$( cat ./ips/ip_s2 )
-s3=$( cat ./ips/ip_s3 )
-s4=$( cat ./ips/ip_s4 )
-s5=$( cat ./ips/ip_s5 )
-c1=$( cat ./ips/ip_c1 )
+s1=$( cat "${REPO_ROOT}/ips/ip_s1" )
+s2=$( cat "${REPO_ROOT}/ips/ip_s2" )
+s3=$( cat "${REPO_ROOT}/ips/ip_s3" )
+s4=$( cat "${REPO_ROOT}/ips/ip_s4" )
+s5=$( cat "${REPO_ROOT}/ips/ip_s5" )
+c1=$( cat "${REPO_ROOT}/ips/ip_c1" )
 servers=(
   $s1
   $s2
@@ -19,7 +25,7 @@ servers=(
 cmd1="cd $workdir/$repos ; mkdir -p log; mkdir -p archive; mkdir -p tmp;"
 cmd2="cd $workdir/$repos ; sudo bash dep.sh; sudo pip3 install -r requirements.txt"
 cmd3=""
-cmd4="cd $workdir/$repos ; sudo bash batch_kill.sh"
+cmd4="cd $workdir/$repos ; sudo bash scripts/legacy/batch_kill.sh"
 cmd5=""
 
 if [ $1 == 'scp' ]; then
@@ -40,8 +46,8 @@ fi
 # sync to others
 cmd1="mkdir -p $workdir; cd $workdir ; sudo rm -rf $repos; scp -r $USER@$c1:$workdir/$repos ."
 cmd2="cd $workdir/$repos ; sudo bash dep.sh; sudo pip3 install -r requirements.txt"
-cmd3="cd $workdir/$repos ; sudo bash init.sh "
-cmd4="cd $workdir/$repos ; sudo bash batch_kill.sh"
+cmd3="cd $workdir/$repos ; sudo bash scripts/legacy/init.sh "
+cmd4="cd $workdir/$repos ; sudo bash scripts/legacy/batch_kill.sh"
 cmd5="cd $workdir/$repos/tmp; scp -r $USER@$c1:$workdir/$repos/tmp/* ."
 cmd6=""
 
@@ -85,4 +91,3 @@ then
 else
     echo "FAIL! ($FAIL)"
 fi
-
