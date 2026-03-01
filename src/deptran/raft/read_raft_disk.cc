@@ -1,12 +1,34 @@
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
+#include <rocksdb/c.h>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <cstdint>
 #include <iomanip>
+#include <vector>
+#include <cstring>
 
 using namespace std;
+
+namespace {
+
+string take_rocksdb_error(char** errptr) {
+    if (errptr == nullptr || *errptr == nullptr) {
+        return "";
+    }
+    string err(*errptr);
+    rocksdb_free(*errptr);
+    *errptr = nullptr;
+    return err;
+}
+
+string copy_db_value(const char* data, size_t len) {
+    if (data == nullptr || len == 0) {
+        return "";
+    }
+    return string(data, len);
+}
+
+}  // namespace
 
 // Read a uint64_t from RocksDB value
 bool ReadUInt64(const string& value, uint64_t& result) {
@@ -91,88 +113,130 @@ int main(int argc, char* argv[]) {
     cout << "Reading Raft persistence: " << db_path << endl;
     cout << "======================================" << endl;
 
-    // Open database with all column families
-    rocksdb::Options options;
-    options.create_if_missing = false;
+    rocksdb_options_t* options = rocksdb_options_create();
+    if (options == nullptr) {
+        cerr << "Failed to create RocksDB options" << endl;
+        return 1;
+    }
+    rocksdb_options_set_create_if_missing(options, 0);
 
     // List existing column families
-    vector<string> column_families;
-    rocksdb::Status status = rocksdb::DB::ListColumnFamilies(options, db_path, &column_families);
+    size_t cf_count = 0;
+    char* err = nullptr;
+    char** cf_names = rocksdb_list_column_families(options, db_path.c_str(), &cf_count, &err);
 
-    if (!status.ok()) {
-        cerr << "Failed to list column families: " << status.ToString() << endl;
+    if (err != nullptr || cf_names == nullptr) {
+        string err_str = take_rocksdb_error(&err);
+        cerr << "Failed to list column families: "
+             << (err_str.empty() ? "unknown error" : err_str) << endl;
         cerr << "Database may not exist at: " << db_path << endl;
+        rocksdb_options_destroy(options);
         return 1;
     }
 
     cout << "\nColumn families found: ";
-    for (const auto& cf : column_families) {
-        cout << cf << " ";
+    for (size_t i = 0; i < cf_count; ++i) {
+        cout << cf_names[i] << " ";
     }
     cout << endl;
 
-    // Open database with all column families
-    vector<rocksdb::ColumnFamilyDescriptor> cf_descriptors;
-    for (const auto& cf_name : column_families) {
-        cf_descriptors.push_back(
-            rocksdb::ColumnFamilyDescriptor(cf_name, rocksdb::ColumnFamilyOptions())
-        );
+    vector<const char*> cf_name_ptrs(cf_count);
+    vector<const rocksdb_options_t*> cf_options(cf_count, options);
+    vector<rocksdb_column_family_handle_t*> handles(cf_count, nullptr);
+
+    for (size_t i = 0; i < cf_count; ++i) {
+        cf_name_ptrs[i] = cf_names[i];
     }
 
-    rocksdb::DB* db_raw;
-    vector<rocksdb::ColumnFamilyHandle*> handles;
-    status = rocksdb::DB::OpenForReadOnly(options, db_path, cf_descriptors, &handles, &db_raw);
+    rocksdb_t* db = rocksdb_open_for_read_only_column_families(
+        options,
+        db_path.c_str(),
+        static_cast<int>(cf_count),
+        cf_name_ptrs.data(),
+        cf_options.data(),
+        handles.data(),
+        0,
+        &err);
 
-    if (!status.ok()) {
-        cerr << "Failed to open database: " << status.ToString() << endl;
+    if (err != nullptr || db == nullptr) {
+        string err_str = take_rocksdb_error(&err);
+        cerr << "Failed to open database: "
+             << (err_str.empty() ? "null handle" : err_str) << endl;
+        rocksdb_list_column_families_destroy(cf_names, cf_count);
+        rocksdb_options_destroy(options);
         return 1;
     }
 
-    unique_ptr<rocksdb::DB> db(db_raw);
+    rocksdb_column_family_handle_t* state_cf = nullptr;
+    rocksdb_column_family_handle_t* logs_cf = nullptr;
+    rocksdb_column_family_handle_t* meta_cf = nullptr;
 
-    // Find our column family handles
-    rocksdb::ColumnFamilyHandle* state_cf = nullptr;
-    rocksdb::ColumnFamilyHandle* logs_cf = nullptr;
-    rocksdb::ColumnFamilyHandle* meta_cf = nullptr;
-
-    for (auto handle : handles) {
-        string cf_name = handle->GetName();
-        if (cf_name == "state") state_cf = handle;
-        else if (cf_name == "logs") logs_cf = handle;
-        else if (cf_name == "meta") meta_cf = handle;
+    for (size_t i = 0; i < cf_count; ++i) {
+        string cf_name = cf_names[i];
+        if (cf_name == "state") {
+            state_cf = handles[i];
+        } else if (cf_name == "logs") {
+            logs_cf = handles[i];
+        } else if (cf_name == "meta") {
+            meta_cf = handles[i];
+        }
     }
 
-    rocksdb::ReadOptions read_options;
+    rocksdb_readoptions_t* read_options = rocksdb_readoptions_create();
+    if (read_options == nullptr) {
+        cerr << "Failed to create read options" << endl;
+        for (auto* handle : handles) {
+            if (handle != nullptr) {
+                rocksdb_column_family_handle_destroy(handle);
+            }
+        }
+        rocksdb_close(db);
+        rocksdb_list_column_families_destroy(cf_names, cf_count);
+        rocksdb_options_destroy(options);
+        return 1;
+    }
 
     // ========== Read State Column Family ==========
     cout << "\n========== STATE ==========" << endl;
 
     if (state_cf) {
-        string value;
-
         // Read term
-        status = db->Get(read_options, state_cf, "term", &value);
-        if (status.ok()) {
+        size_t value_len = 0;
+        char* value_ptr = rocksdb_get_cf(db, read_options, state_cf,
+                                         "term", std::strlen("term"),
+                                         &value_len, &err);
+        if (err != nullptr) {
+            cerr << "Failed to read term: " << take_rocksdb_error(&err) << endl;
+        } else if (value_ptr != nullptr) {
+            string value = copy_db_value(value_ptr, value_len);
+            rocksdb_free(value_ptr);
             uint64_t term;
             if (ReadUInt64(value, term)) {
                 cout << "Term: " << term << endl;
             }
-        } else if (status.IsNotFound()) {
+        } else {
             cout << "Term: <not set>" << endl;
         }
 
         // Read votedFor
-        status = db->Get(read_options, state_cf, "voted_for", &value);
-        if (status.ok()) {
+        value_len = 0;
+        value_ptr = rocksdb_get_cf(db, read_options, state_cf,
+                                   "voted_for", std::strlen("voted_for"),
+                                   &value_len, &err);
+        if (err != nullptr) {
+            cerr << "Failed to read voted_for: " << take_rocksdb_error(&err) << endl;
+        } else if (value_ptr != nullptr) {
+            string value = copy_db_value(value_ptr, value_len);
+            rocksdb_free(value_ptr);
             uint32_t voted_for;
             if (ReadUInt32(value, voted_for)) {
-                if (voted_for == (uint32_t)-1) {
+                if (voted_for == static_cast<uint32_t>(-1)) {
                     cout << "VotedFor: INVALID_SITEID" << endl;
                 } else {
                     cout << "VotedFor: " << voted_for << endl;
                 }
             }
-        } else if (status.IsNotFound()) {
+        } else {
             cout << "VotedFor: <not set>" << endl;
         }
     } else {
@@ -183,14 +247,20 @@ int main(int argc, char* argv[]) {
     cout << "\n========== METADATA ==========" << endl;
 
     if (meta_cf) {
-        string value;
-        status = db->Get(read_options, meta_cf, "commit_index", &value);
-        if (status.ok()) {
+        size_t value_len = 0;
+        char* value_ptr = rocksdb_get_cf(db, read_options, meta_cf,
+                                         "commit_index", std::strlen("commit_index"),
+                                         &value_len, &err);
+        if (err != nullptr) {
+            cerr << "Failed to read commit_index: " << take_rocksdb_error(&err) << endl;
+        } else if (value_ptr != nullptr) {
+            string value = copy_db_value(value_ptr, value_len);
+            rocksdb_free(value_ptr);
             uint64_t commit_index;
             if (ReadUInt64(value, commit_index)) {
                 cout << "CommitIndex: " << commit_index << endl;
             }
-        } else if (status.IsNotFound()) {
+        } else {
             cout << "CommitIndex: <not set>" << endl;
         }
     } else {
@@ -201,40 +271,65 @@ int main(int argc, char* argv[]) {
     cout << "\n========== LOGS ==========" << endl;
 
     if (logs_cf) {
-        rocksdb::Iterator* it = db->NewIterator(read_options, logs_cf);
-
-        int count = 0;
-        for (it->SeekToFirst(); it->Valid(); it->Next()) {
-            RaftData entry;
-            if (DecodeRaftData(it->value().ToString(), entry)) {
-                cout << "\nLog Entry [" << count++ << "]:" << endl;
-                cout << "  Key: " << it->key().ToString() << endl;
-                cout << "  SlotID: " << entry.slot_id << endl;
-                cout << "  Term: " << entry.term << endl;
-                cout << "  PrevTerm: " << entry.prevTerm << endl;
-                cout << "  Ballot: " << entry.ballot << endl;
-                cout << "  MaxBallotSeen: " << entry.max_ballot_seen_ << endl;
-                cout << "  MaxBallotAccepted: " << entry.max_ballot_accepted_ << endl;
-            } else {
-                cerr << "Failed to decode log entry: " << it->key().ToString() << endl;
-            }
-        }
-
-        if (count == 0) {
-            cout << "No log entries found" << endl;
+        rocksdb_iterator_t* it = rocksdb_create_iterator_cf(db, read_options, logs_cf);
+        if (it == nullptr) {
+            cerr << "Failed to create logs iterator" << endl;
         } else {
-            cout << "\nTotal log entries: " << count << endl;
-        }
+            rocksdb_iter_seek_to_first(it);
 
-        delete it;
+            int count = 0;
+            for (; rocksdb_iter_valid(it); rocksdb_iter_next(it)) {
+                size_t key_len = 0;
+                size_t value_len = 0;
+                const char* key_ptr = rocksdb_iter_key(it, &key_len);
+                const char* value_ptr = rocksdb_iter_value(it, &value_len);
+
+                string key = copy_db_value(key_ptr, key_len);
+                string value = copy_db_value(value_ptr, value_len);
+
+                RaftData entry;
+                if (DecodeRaftData(value, entry)) {
+                    cout << "\nLog Entry [" << count++ << "]:" << endl;
+                    cout << "  Key: " << key << endl;
+                    cout << "  SlotID: " << entry.slot_id << endl;
+                    cout << "  Term: " << entry.term << endl;
+                    cout << "  PrevTerm: " << entry.prevTerm << endl;
+                    cout << "  Ballot: " << entry.ballot << endl;
+                    cout << "  MaxBallotSeen: " << entry.max_ballot_seen_ << endl;
+                    cout << "  MaxBallotAccepted: " << entry.max_ballot_accepted_ << endl;
+                } else {
+                    cerr << "Failed to decode log entry: " << key << endl;
+                }
+            }
+
+            char* iter_err = nullptr;
+            rocksdb_iter_get_error(it, &iter_err);
+            if (iter_err != nullptr) {
+                cerr << "Iterator error: " << take_rocksdb_error(&iter_err) << endl;
+            }
+
+            if (count == 0) {
+                cout << "No log entries found" << endl;
+            } else {
+                cout << "\nTotal log entries: " << count << endl;
+            }
+
+            rocksdb_iter_destroy(it);
+        }
     } else {
         cout << "Logs column family not found" << endl;
     }
 
-    // Cleanup column family handles
-    for (auto handle : handles) {
-        db->DestroyColumnFamilyHandle(handle);
+    // Cleanup
+    rocksdb_readoptions_destroy(read_options);
+    for (auto* handle : handles) {
+        if (handle != nullptr) {
+            rocksdb_column_family_handle_destroy(handle);
+        }
     }
+    rocksdb_close(db);
+    rocksdb_list_column_families_destroy(cf_names, cf_count);
+    rocksdb_options_destroy(options);
 
     cout << "\n======================================" << endl;
     return 0;

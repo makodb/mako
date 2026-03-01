@@ -9,20 +9,66 @@
 
 namespace janus {
 
+namespace {
+
+// @unsafe - Uses RocksDB C API allocation semantics
+std::string take_rocksdb_error(char** errptr) {
+    if (errptr == nullptr || *errptr == nullptr) {
+        return "";
+    }
+    std::string err(*errptr);
+    rocksdb_free(*errptr);
+    *errptr = nullptr;
+    return err;
+}
+
+// @safe - std::string copy from byte buffer
+std::string copy_db_value(const char* data, size_t len) {
+    if (data == nullptr || len == 0) {
+        return "";
+    }
+    return std::string(data, len);
+}
+
+}  // namespace
+
 // @safe - Constructor, no side effects
 ConfigStore::ConfigStore(const std::string& db_path)
     : db_path_(db_path) {
+    options_ = rocksdb_options_create();
+    write_options_ = rocksdb_writeoptions_create();
+    read_options_ = rocksdb_readoptions_create();
+
+    if (options_ == nullptr || write_options_ == nullptr || read_options_ == nullptr) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Failed to allocate RocksDB C API options");
+        return;
+    }
+
     // Configure RocksDB options
-    options_.create_if_missing = true;
-    options_.error_if_exists = false;
+    rocksdb_options_set_create_if_missing(options_, 1);
+    rocksdb_options_set_error_if_exists(options_, 0);
 
     // Use synchronous writes for durability
-    write_options_.sync = true;
+    rocksdb_writeoptions_set_sync(write_options_, 1);
 }
 
 // @unsafe - Calls RocksDB delete
 ConfigStore::~ConfigStore() {
     close();
+
+    if (read_options_ != nullptr) {
+        rocksdb_readoptions_destroy(read_options_);
+        read_options_ = nullptr;
+    }
+    if (write_options_ != nullptr) {
+        rocksdb_writeoptions_destroy(write_options_);
+        write_options_ = nullptr;
+    }
+    if (options_ != nullptr) {
+        rocksdb_options_destroy(options_);
+        options_ = nullptr;
+    }
 }
 
 // @unsafe - RocksDB I/O
@@ -31,12 +77,27 @@ bool ConfigStore::open() {
         return true;  // Already open
     }
 
-    // @unsafe { RocksDB Open is not borrow-checked }
-    rocksdb::Status status = rocksdb::DB::Open(options_, db_path_, &db_);
-    if (!status.ok()) {
+    if (options_ == nullptr || write_options_ == nullptr || read_options_ == nullptr) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Cannot open database, options not initialized");
+        return false;
+    }
+
+    char* err = nullptr;
+    // @unsafe { RocksDB C API open is not borrow-checked }
+    db_ = rocksdb_open(options_, db_path_.c_str(), &err);
+    if (err != nullptr) {
+        std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
         Log_error("ConfigStore: Failed to open database at %s: %s",
-                  db_path_.c_str(), status.ToString().c_str());
+                  db_path_.c_str(), err_str.c_str());
+        db_ = nullptr;
+        return false;
+    }
+    if (db_ == nullptr) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Failed to open database at %s (null handle)",
+                  db_path_.c_str());
         return false;
     }
 
@@ -53,8 +114,8 @@ void ConfigStore::close() {
     }
 
     if (db_ != nullptr) {
-        // @unsafe { RocksDB delete is not borrow-checked }
-        delete db_;
+        // @unsafe { RocksDB C API close is not borrow-checked }
+        rocksdb_close(db_);
         db_ = nullptr;
     }
 
@@ -87,8 +148,13 @@ bool ConfigStore::save(const PersistentConfig& config) {
         return false;
     }
 
-    // @unsafe { RocksDB WriteBatch is not borrow-checked }
-    rocksdb::WriteBatch batch;
+    // @unsafe { RocksDB C API WriteBatch is not borrow-checked }
+    rocksdb_writebatch_t* batch = rocksdb_writebatch_create();
+    if (batch == nullptr) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Failed to create write batch");
+        return false;
+    }
 
     // Serialize and write version
     {
@@ -96,7 +162,9 @@ bool ConfigStore::save(const PersistentConfig& config) {
         uint64_t version = config.version;
         // @unsafe { memcpy is not borrow-checked }
         std::memcpy(version_str.data(), &version, sizeof(uint64_t));
-        batch.Put(config_keys::VERSION, version_str);
+        rocksdb_writebatch_put(batch,
+                               config_keys::VERSION, std::strlen(config_keys::VERSION),
+                               version_str.data(), version_str.size());
     }
 
     // Serialize and write sites
@@ -110,7 +178,9 @@ bool ConfigStore::save(const PersistentConfig& config) {
         }
         std::string sites_str;
         serialize_to_string(m, &sites_str);
-        batch.Put(config_keys::SITES, sites_str);
+        rocksdb_writebatch_put(batch,
+                               config_keys::SITES, std::strlen(config_keys::SITES),
+                               sites_str.data(), sites_str.size());
     }
 
     // Serialize and write replica groups
@@ -124,7 +194,9 @@ bool ConfigStore::save(const PersistentConfig& config) {
         }
         std::string replicas_str;
         serialize_to_string(m, &replicas_str);
-        batch.Put(config_keys::REPLICAS, replicas_str);
+        rocksdb_writebatch_put(batch,
+                               config_keys::REPLICAS, std::strlen(config_keys::REPLICAS),
+                               replicas_str.data(), replicas_str.size());
     }
 
     // Serialize and write settings
@@ -134,15 +206,20 @@ bool ConfigStore::save(const PersistentConfig& config) {
         m << config.settings;
         std::string settings_str;
         serialize_to_string(m, &settings_str);
-        batch.Put(config_keys::SETTINGS, settings_str);
+        rocksdb_writebatch_put(batch,
+                               config_keys::SETTINGS, std::strlen(config_keys::SETTINGS),
+                               settings_str.data(), settings_str.size());
     }
 
-    // @unsafe { RocksDB Write is not borrow-checked }
-    rocksdb::Status status = db_->Write(write_options_, &batch);
-    if (!status.ok()) {
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Write is not borrow-checked }
+    rocksdb_write(db_, write_options_, batch, &err);
+    rocksdb_writebatch_destroy(batch);
+    if (err != nullptr) {
+        std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
         Log_error("ConfigStore: Failed to save configuration: %s",
-                  status.ToString().c_str());
+                  err_str.c_str());
         return false;
     }
 
@@ -163,19 +240,26 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
 
     // Read version
     {
-        std::string value;
-        // @unsafe { RocksDB Get is not borrow-checked }
-        rocksdb::Status status = db_->Get(read_options_, config_keys::VERSION, &value);
-        if (!status.ok()) {
+        size_t value_len = 0;
+        char* err = nullptr;
+        // @unsafe { RocksDB C API Get is not borrow-checked }
+        char* value_ptr = rocksdb_get(db_, read_options_, config_keys::VERSION,
+                                      std::strlen(config_keys::VERSION), &value_len, &err);
+        if (err != nullptr) {
+            std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            if (status.IsNotFound()) {
-                Log_debug("ConfigStore: No configuration found");
-            } else {
-                Log_error("ConfigStore: Failed to read version: %s",
-                          status.ToString().c_str());
-            }
+            Log_error("ConfigStore: Failed to read version: %s", err_str.c_str());
             return rusty::None;
         }
+        if (value_ptr == nullptr) {
+            // @unsafe { logging I/O }
+            Log_debug("ConfigStore: No configuration found");
+            return rusty::None;
+        }
+
+        std::string value = copy_db_value(value_ptr, value_len);
+        rocksdb_free(value_ptr);
+
         if (value.size() != sizeof(uint64_t)) {
             // @unsafe { logging I/O }
             Log_error("ConfigStore: Invalid version data size");
@@ -187,15 +271,24 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
 
     // Read sites
     {
-        std::string value;
-        // @unsafe { RocksDB Get is not borrow-checked }
-        rocksdb::Status status = db_->Get(read_options_, config_keys::SITES, &value);
-        if (!status.ok()) {
+        size_t value_len = 0;
+        char* err = nullptr;
+        // @unsafe { RocksDB C API Get is not borrow-checked }
+        char* value_ptr = rocksdb_get(db_, read_options_, config_keys::SITES,
+                                      std::strlen(config_keys::SITES), &value_len, &err);
+        if (err != nullptr) {
+            std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read sites: %s",
-                      status.ToString().c_str());
+            Log_error("ConfigStore: Failed to read sites: %s", err_str.c_str());
             return rusty::None;
         }
+        if (value_ptr == nullptr) {
+            // @unsafe { logging I/O }
+            Log_error("ConfigStore: Failed to read sites: not found");
+            return rusty::None;
+        }
+        std::string value = copy_db_value(value_ptr, value_len);
+        rocksdb_free(value_ptr);
         rrr::Marshal m;
         deserialize_from_string(value, &m);
         uint32_t size;
@@ -209,15 +302,24 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
 
     // Read replica groups
     {
-        std::string value;
-        // @unsafe { RocksDB Get is not borrow-checked }
-        rocksdb::Status status = db_->Get(read_options_, config_keys::REPLICAS, &value);
-        if (!status.ok()) {
+        size_t value_len = 0;
+        char* err = nullptr;
+        // @unsafe { RocksDB C API Get is not borrow-checked }
+        char* value_ptr = rocksdb_get(db_, read_options_, config_keys::REPLICAS,
+                                      std::strlen(config_keys::REPLICAS), &value_len, &err);
+        if (err != nullptr) {
+            std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read replica groups: %s",
-                      status.ToString().c_str());
+            Log_error("ConfigStore: Failed to read replica groups: %s", err_str.c_str());
             return rusty::None;
         }
+        if (value_ptr == nullptr) {
+            // @unsafe { logging I/O }
+            Log_error("ConfigStore: Failed to read replica groups: not found");
+            return rusty::None;
+        }
+        std::string value = copy_db_value(value_ptr, value_len);
+        rocksdb_free(value_ptr);
         rrr::Marshal m;
         deserialize_from_string(value, &m);
         uint32_t size;
@@ -231,15 +333,24 @@ rusty::Option<PersistentConfig> ConfigStore::load() {
 
     // Read settings
     {
-        std::string value;
-        // @unsafe { RocksDB Get is not borrow-checked }
-        rocksdb::Status status = db_->Get(read_options_, config_keys::SETTINGS, &value);
-        if (!status.ok()) {
+        size_t value_len = 0;
+        char* err = nullptr;
+        // @unsafe { RocksDB C API Get is not borrow-checked }
+        char* value_ptr = rocksdb_get(db_, read_options_, config_keys::SETTINGS,
+                                      std::strlen(config_keys::SETTINGS), &value_len, &err);
+        if (err != nullptr) {
+            std::string err_str = take_rocksdb_error(&err);
             // @unsafe { logging I/O }
-            Log_error("ConfigStore: Failed to read settings: %s",
-                      status.ToString().c_str());
+            Log_error("ConfigStore: Failed to read settings: %s", err_str.c_str());
             return rusty::None;
         }
+        if (value_ptr == nullptr) {
+            // @unsafe { logging I/O }
+            Log_error("ConfigStore: Failed to read settings: not found");
+            return rusty::None;
+        }
+        std::string value = copy_db_value(value_ptr, value_len);
+        rocksdb_free(value_ptr);
         rrr::Marshal m;
         deserialize_from_string(value, &m);
         // @unsafe { Marshal read not borrow-checked }
@@ -259,10 +370,22 @@ uint64_t ConfigStore::get_version() {
         return 0;
     }
 
-    std::string value;
-    // @unsafe { RocksDB Get is not borrow-checked }
-    rocksdb::Status status = db_->Get(read_options_, config_keys::VERSION, &value);
-    if (!status.ok() || value.size() != sizeof(uint64_t)) {
+    size_t value_len = 0;
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Get is not borrow-checked }
+    char* value_ptr = rocksdb_get(db_, read_options_, config_keys::VERSION,
+                                  std::strlen(config_keys::VERSION), &value_len, &err);
+    if (err != nullptr) {
+        take_rocksdb_error(&err);
+        return 0;
+    }
+    if (value_ptr == nullptr) {
+        return 0;
+    }
+    std::string value = copy_db_value(value_ptr, value_len);
+    rocksdb_free(value_ptr);
+
+    if (value.size() != sizeof(uint64_t)) {
         return 0;
     }
 
@@ -278,10 +401,20 @@ bool ConfigStore::has_config() {
         return false;
     }
 
-    std::string value;
-    // @unsafe { RocksDB Get is not borrow-checked }
-    rocksdb::Status status = db_->Get(read_options_, config_keys::VERSION, &value);
-    return status.ok();
+    size_t value_len = 0;
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Get is not borrow-checked }
+    char* value_ptr = rocksdb_get(db_, read_options_, config_keys::VERSION,
+                                  std::strlen(config_keys::VERSION), &value_len, &err);
+    if (err != nullptr) {
+        take_rocksdb_error(&err);
+        return false;
+    }
+    if (value_ptr != nullptr) {
+        rocksdb_free(value_ptr);
+        return true;
+    }
+    return false;
 }
 
 // ============================================================================
@@ -296,8 +429,13 @@ bool ConfigStore::save_sharding_policy(const ShardingPolicySet& policy) {
         return false;
     }
 
-    // @unsafe { RocksDB WriteBatch is not borrow-checked }
-    rocksdb::WriteBatch batch;
+    // @unsafe { RocksDB C API WriteBatch is not borrow-checked }
+    rocksdb_writebatch_t* batch = rocksdb_writebatch_create();
+    if (batch == nullptr) {
+        // @unsafe { logging I/O }
+        Log_error("ConfigStore: Failed to create write batch");
+        return false;
+    }
 
     // Serialize and write version
     {
@@ -305,7 +443,9 @@ bool ConfigStore::save_sharding_policy(const ShardingPolicySet& policy) {
         uint64_t version = policy.version;
         // @unsafe { memcpy is not borrow-checked }
         std::memcpy(version_str.data(), &version, sizeof(uint64_t));
-        batch.Put(sharding_keys::VERSION, version_str);
+        rocksdb_writebatch_put(batch,
+                               sharding_keys::VERSION, std::strlen(sharding_keys::VERSION),
+                               version_str.data(), version_str.size());
     }
 
     // Serialize and write the full policy
@@ -315,15 +455,20 @@ bool ConfigStore::save_sharding_policy(const ShardingPolicySet& policy) {
         m << policy;
         std::string policy_str;
         serialize_to_string(m, &policy_str);
-        batch.Put(sharding_keys::POLICY, policy_str);
+        rocksdb_writebatch_put(batch,
+                               sharding_keys::POLICY, std::strlen(sharding_keys::POLICY),
+                               policy_str.data(), policy_str.size());
     }
 
-    // @unsafe { RocksDB Write is not borrow-checked }
-    rocksdb::Status status = db_->Write(write_options_, &batch);
-    if (!status.ok()) {
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Write is not borrow-checked }
+    rocksdb_write(db_, write_options_, batch, &err);
+    rocksdb_writebatch_destroy(batch);
+    if (err != nullptr) {
+        std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
         Log_error("ConfigStore: Failed to save sharding policy: %s",
-                  status.ToString().c_str());
+                  err_str.c_str());
         return false;
     }
 
@@ -342,19 +487,25 @@ rusty::Option<ShardingPolicySet> ConfigStore::load_sharding_policy() {
     }
 
     // Read the full policy (version is inside ShardingPolicySet)
-    std::string value;
-    // @unsafe { RocksDB Get is not borrow-checked }
-    rocksdb::Status status = db_->Get(read_options_, sharding_keys::POLICY, &value);
-    if (!status.ok()) {
+    size_t value_len = 0;
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Get is not borrow-checked }
+    char* value_ptr = rocksdb_get(db_, read_options_, sharding_keys::POLICY,
+                                  std::strlen(sharding_keys::POLICY), &value_len, &err);
+    if (err != nullptr) {
+        std::string err_str = take_rocksdb_error(&err);
         // @unsafe { logging I/O }
-        if (status.IsNotFound()) {
-            Log_debug("ConfigStore: No sharding policy found");
-        } else {
-            Log_error("ConfigStore: Failed to read sharding policy: %s",
-                      status.ToString().c_str());
-        }
+        Log_error("ConfigStore: Failed to read sharding policy: %s",
+                  err_str.c_str());
         return rusty::None;
     }
+    if (value_ptr == nullptr) {
+        // @unsafe { logging I/O }
+        Log_debug("ConfigStore: No sharding policy found");
+        return rusty::None;
+    }
+    std::string value = copy_db_value(value_ptr, value_len);
+    rocksdb_free(value_ptr);
 
     // Deserialize
     rrr::Marshal m;
@@ -376,10 +527,22 @@ uint64_t ConfigStore::get_sharding_policy_version() {
         return 0;
     }
 
-    std::string value;
-    // @unsafe { RocksDB Get is not borrow-checked }
-    rocksdb::Status status = db_->Get(read_options_, sharding_keys::VERSION, &value);
-    if (!status.ok() || value.size() != sizeof(uint64_t)) {
+    size_t value_len = 0;
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Get is not borrow-checked }
+    char* value_ptr = rocksdb_get(db_, read_options_, sharding_keys::VERSION,
+                                  std::strlen(sharding_keys::VERSION), &value_len, &err);
+    if (err != nullptr) {
+        take_rocksdb_error(&err);
+        return 0;
+    }
+    if (value_ptr == nullptr) {
+        return 0;
+    }
+    std::string value = copy_db_value(value_ptr, value_len);
+    rocksdb_free(value_ptr);
+
+    if (value.size() != sizeof(uint64_t)) {
         return 0;
     }
 
@@ -395,10 +558,20 @@ bool ConfigStore::has_sharding_policy() {
         return false;
     }
 
-    std::string value;
-    // @unsafe { RocksDB Get is not borrow-checked }
-    rocksdb::Status status = db_->Get(read_options_, sharding_keys::VERSION, &value);
-    return status.ok();
+    size_t value_len = 0;
+    char* err = nullptr;
+    // @unsafe { RocksDB C API Get is not borrow-checked }
+    char* value_ptr = rocksdb_get(db_, read_options_, sharding_keys::VERSION,
+                                  std::strlen(sharding_keys::VERSION), &value_len, &err);
+    if (err != nullptr) {
+        take_rocksdb_error(&err);
+        return false;
+    }
+    if (value_ptr != nullptr) {
+        rocksdb_free(value_ptr);
+        return true;
+    }
+    return false;
 }
 
 }  // namespace janus
