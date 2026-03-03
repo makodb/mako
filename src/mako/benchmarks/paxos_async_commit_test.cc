@@ -194,7 +194,7 @@ int main(int argc, char **argv) {
         return -1;
     }
 
-    register_leader_election_callback([&, new_leader_elected](int control) {
+    register_leader_election_callback([&](int control) {
       std::cout << "notify a new leader is elected! I'm " << paxos_proc_name << ", control: " << control << "\n" ;
       new_leader_elected=true;
     });
@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
 
     setup2();
 
-    std::thread background2([&, partitions, new_leader_elected]{
+    std::thread background2([&, partitions]{
             while (1) {
                 sleep(1);
                 if (new_leader_elected) {

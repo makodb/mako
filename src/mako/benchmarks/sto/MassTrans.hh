@@ -508,16 +508,18 @@ public:
 
   // non-transaction put/get. These just wrap a transaction get/put
   bool put(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
-    Transaction t;
-    auto ret = transPut(t, key, value, ti);
-    t.commit();
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transPut(key, value, ti);
+    Sto::commit();
     return ret;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
-    Transaction t;
-    auto ret = transGet(t, key, value, ti);
-    t.commit();
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transGet(key, value, ti);
+    Sto::commit();
     return ret;
   }
 
@@ -890,4 +892,3 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
-

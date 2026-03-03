@@ -69,7 +69,7 @@ private:
         return err;
     }
 
-    // @unsafe - std::string construction from raw pointer is not borrow-checked
+    // @unsafe - std::string constructor is treated as non-borrow-checked
     static std::string copy_slice(const char* data, size_t len) {
         if (data == nullptr || len == 0) {
             return ""; // @unsafe

@@ -152,6 +152,13 @@ else()
 endif()
 
 add_subdirectory(third-party/erpc)
+
+# eRPC's latency target enables -flto at compile time when PERF=ON. With Clang,
+# object files become LLVM bitcode and require matching link-time -flto.
+if(TARGET latency AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_link_options(latency PRIVATE -flto)
+endif()
+
 # Keep all eRPC artifacts inside the active build tree.
 # The eRPC submodule sets output dirs to ${CMAKE_SOURCE_DIR}/build, which
 # pollutes host builds when compiling in Docker.
