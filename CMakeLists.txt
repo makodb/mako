@@ -1775,8 +1775,8 @@ if(BUILD_TESTS)
 
     # RPC benchmark test - starts server, runs client, verifies it works
     add_test(NAME rpcbench
-        COMMAND bash -c "pkill -9 rpcbench || true; ./build/rpcbench -s 127.0.0.1:8848 > /dev/null 2>&1 & SERVER_PID=$!; sleep 1; ./build/rpcbench -c 127.0.0.1:8848 -n 3 -t 4 -o 100; RESULT=$?; kill $SERVER_PID 2>/dev/null || true; exit $RESULT"
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMAND bash -c "pkill -9 rpcbench || true; '$<TARGET_FILE:rpcbench>' -s 127.0.0.1:8848 > /dev/null 2>&1 & SERVER_PID=$!; sleep 1; '$<TARGET_FILE:rpcbench>' -c 127.0.0.1:8848 -n 3 -t 4 -o 100; RESULT=$?; kill $SERVER_PID 2>/dev/null || true; exit $RESULT"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
     set_tests_properties(rpcbench PROPERTIES TIMEOUT 30)
 
