@@ -1,0 +1,13 @@
+[package]
+name = "mako-test-rpc-bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+fragile-driver = { path = "../../../crates/fragile-driver" }
+# For standalone Mako folders:
+# fragile-driver = { git = "https://github.com/shuaimu/fragile.git", package = "fragile-driver" }

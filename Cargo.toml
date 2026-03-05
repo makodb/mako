@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "cargo-mako-test-rpc",
+]
+default-members = [
+    "cargo-mako-test-rpc",
+]
+exclude = [
+    "third-party/rusty-cpp",
+    "third-party/makocon/makocon",
+]
+
+[workspace.metadata.mako]
+bridge_targets = ["test_rpc"]
+

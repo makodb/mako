@@ -1,0 +1,4 @@
+[alias]
+mako-test-rpc-build = "build -p mako-test-rpc-bridge"
+mako-test-rpc-test = "test -p mako-test-rpc-bridge"
+

@@ -2,6 +2,7 @@
 /build
 /build_docker
 /target-docker
+/target
 /.cargo-docker
 .lock-waf*
 *.pyc
