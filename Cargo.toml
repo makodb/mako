@@ -9,8 +9,11 @@ default-members = [
 exclude = [
     "third-party/rusty-cpp",
     "third-party/makocon/makocon",
+    # CMake builds this crate directly (via rust-lib symlink); keep it out of
+    # the bridge workspace to avoid Cargo workspace-membership errors.
+    "third-party/makocon/mako/rust-lib",
+    "rust-lib",
 ]
 
 [workspace.metadata.mako]
 bridge_targets = ["test_rpc"]
-
