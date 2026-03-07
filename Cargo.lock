@@ -307,6 +307,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mako-root-build"
+version = "0.1.0"
+dependencies = [
+ "fragile-driver",
+ "serde",
+ "serde_json",
+ "shell-words",
+]
+
+[[package]]
 name = "mako-test-rpc-bridge"
 version = "0.1.0"
 dependencies = [

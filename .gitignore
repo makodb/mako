@@ -2,6 +2,7 @@
 /build
 /build_*/
 /build_docker
+/dist
 /core.*
 /third-party/fragile/
 /.apas

@@ -18,6 +18,8 @@ Use Cargo as the entrypoint:
 
 ```bash
 cargo mako help
+# Root package runs the Fragile/rust-lld bridge directly
+cargo build
 ```
 
 Examples:
@@ -80,10 +82,10 @@ cd /home/shuai/workspace/mako
 
 RUSTC_BIN=rustc \
 MAKO_BUILD_DIR=/home/shuai/workspace/mako/build \
-cargo build -p mako-cmake-bridge
+cargo build
 ```
 
-By default, `cargo-mako-cmake-bridge` uses:
+By default, root `cargo build` (or `cargo build -p mako-cmake-bridge`) uses:
 
 - `MAKO_CMAKE_TARGET=test_rpc`
 - target discovery from CMake link scripts under `MAKO_BUILD_DIR`
@@ -93,12 +95,13 @@ You can force an exact link script (recommended for nested third-party targets):
 ```bash
 MAKO_BUILD_DIR=/home/shuai/workspace/mako/build_clean_cargo \
 MAKO_CMAKE_LINK_TXT=/home/shuai/workspace/mako/build_clean_cargo/third-party/erpc/third_party/gflags/test/CMakeFiles/gflags_unittest.dir/link.txt \
-cargo build -p mako-cmake-bridge
+cargo build
 ```
 
 The linked binary is emitted to:
 
-- `cargo-mako-cmake-bridge/dist/<output-name>`
+- `dist/<output-name>` (root package)
+- `cargo-mako-cmake-bridge/dist/<output-name>` (`-p mako-cmake-bridge`)
 
 and staged into the CMake build tree by default (`MAKO_CMAKE_STAGE_TO_BUILD=1`).
 

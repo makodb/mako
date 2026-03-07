@@ -711,12 +711,31 @@ fn expand_wl_forwarded_args(arg: &str) -> Vec<String> {
     vec![arg.to_string()]
 }
 
+fn is_compiler_only_flag(arg: &str) -> bool {
+    if matches!(
+        arg,
+        "-fPIC" | "-fpic" | "-fPIE" | "-fpie" | "-DNDEBUG" | "-pipe" | "-pedantic"
+    ) {
+        return true;
+    }
+
+    if arg.starts_with("-std=")
+        || arg.starts_with("-W")
+        || arg.starts_with("-f")
+        || arg.starts_with("-m")
+        || arg.starts_with("-O")
+        || arg.starts_with("-g")
+        || arg.starts_with("-pedantic")
+    {
+        return true;
+    }
+
+    false
+}
+
 fn normalize_link_args_for_rust_lld<'a>(args: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let mut normalized: Vec<String> = Vec::new();
     for arg in args {
-        if matches!(arg, "-fPIC" | "-DNDEBUG") {
-            continue;
-        }
         if arg == "-rdynamic" {
             normalized.push("--export-dynamic".to_string());
             continue;
@@ -732,6 +751,9 @@ fn normalize_link_args_for_rust_lld<'a>(args: impl IntoIterator<Item = &'a str>)
                 }
                 normalized.push(token);
             }
+            continue;
+        }
+        if is_compiler_only_flag(arg) {
             continue;
         }
         normalized.push(arg.to_string());

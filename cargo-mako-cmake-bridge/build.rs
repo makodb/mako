@@ -1054,10 +1054,23 @@ fn main() {
 
     let manifest_dir =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR must be set"));
-    let repo_root = manifest_dir
-        .parent()
-        .expect("cargo-mako-cmake-bridge must live under repo root")
-        .to_path_buf();
+    let repo_root = if manifest_dir.join("CMakeLists.txt").is_file() {
+        // Root package mode: Cargo manifest lives at repo root.
+        manifest_dir.clone()
+    } else {
+        // Subcrate mode: Cargo manifest lives under repo root.
+        let parent = manifest_dir
+            .parent()
+            .expect("cargo-mako-cmake-bridge must live under repo root");
+        if parent.join("CMakeLists.txt").is_file() {
+            parent.to_path_buf()
+        } else {
+            panic!(
+                "failed to locate repo root from CARGO_MANIFEST_DIR={}",
+                manifest_dir.display()
+            );
+        }
+    };
 
     let build_dir = env::var("MAKO_BUILD_DIR")
         .map(PathBuf::from)
