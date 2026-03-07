@@ -1,4 +1,7 @@
 [alias]
+mako = "run -p mako-xtask --"
+mako-native = "run -p mako-native-build --"
+mako-cmake-bridge-build = "build -p mako-cmake-bridge"
+mako-cmake-bridge-test = "test -p mako-cmake-bridge"
 mako-test-rpc-build = "build -p mako-test-rpc-bridge"
 mako-test-rpc-test = "test -p mako-test-rpc-bridge"
-

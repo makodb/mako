@@ -1,12 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
+    "cargo-mako-xtask",
+    "cargo-mako-native-build",
+    "cargo-mako-cmake-bridge",
     "cargo-mako-test-rpc",
 ]
 default-members = [
-    "cargo-mako-test-rpc",
+    "cargo-mako-cmake-bridge",
 ]
 exclude = [
+    "third-party/fragile",
     "third-party/rusty-cpp",
     "third-party/makocon/makocon",
     # CMake builds this crate directly (via rust-lib symlink); keep it out of
@@ -16,4 +20,4 @@ exclude = [
 ]
 
 [workspace.metadata.mako]
-bridge_targets = ["test_rpc"]
+bridge_targets = ["cmake-dynamic", "test_rpc"]

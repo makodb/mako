@@ -1,6 +1,10 @@
 .waf*
 /build
+/build_*/
 /build_docker
+/core.*
+/third-party/fragile/
+/.apas
 /target-docker
 /target
 /.cargo-docker
