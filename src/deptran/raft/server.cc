@@ -425,21 +425,20 @@ uint64_t RaftServer::GetElectionTimeout() {
   bool in_grace_period = (current_time - startup_timestamp_) < 5000000; // 5 seconds in microseconds
 
   if (AmIPreferredLeader()) {
-    // SINGLE-RAFT: Preferred replica: 300-600ms timeout
-    base_timeout = 300000; // 300ms
-    uint64_t jitter = RandomGenerator::rand(0, 300000);
-    return base_timeout + jitter; // 300-600ms
+    // Preferred replica: Short timeout (150-300ms) to win elections quickly
+    base_timeout = 150000; // 150ms
+    uint64_t jitter = RandomGenerator::rand(0, 150000);
+    return base_timeout + jitter; // 150-300ms
   } else if (in_grace_period) {
-    // SINGLE-RAFT: Non-preferred during grace period: 5-10s timeout
-    base_timeout = 5000000; // 5s
-    uint64_t jitter = RandomGenerator::rand(0, 5000000);
-    return base_timeout + jitter; // 5-10s
+    // Non-preferred during grace period: Long timeout (1-2s) to allow preferred to win
+    base_timeout = 1000000; // 1s
+    uint64_t jitter = RandomGenerator::rand(0, 1000000);
+    return base_timeout + jitter; // 1-2s
   } else {
-    // SINGLE-RAFT: Non-preferred after grace: 3-6s timeout
-    // Must be >> 500ms parallel wait to prevent spurious elections
-    base_timeout = 3000000; // 3s
-    uint64_t jitter = RandomGenerator::rand(0, 3000000);
-    return base_timeout + jitter; // 3-6s
+    // Non-preferred after grace: Medium timeout (500ms-1s) to enable failover
+    base_timeout = 500000; // 500ms
+    uint64_t jitter = RandomGenerator::rand(0, 500000);
+    return base_timeout + jitter; // 500ms-1s
   }
 }
 
