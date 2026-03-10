@@ -15,7 +15,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
-  - [ ] *high* Root-Cause Analysis: Multi-Raft Instance Throughput Variance vs Single-Raft Consistency
+  - [x] *high* Root-Cause Analysis: Multi-Raft Instance Throughput Variance vs Single-Raft Consistency [DONE 2026-03-10, 18:45]
     - **Problem**: In commit `4f99ffb6` (multi-Raft instances — 6 independent Raft groups), the `shard1ReplicationRaft` benchmark over 10 runs showed highly inconsistent throughput: mean 137,952 ops/sec, CV 34.6%, bimodal distribution with runs ranging from 88K to 200K ops/sec. When replaced by a single Raft instance (commit `bba1a5d4`), throughput became consistent: mean 209,183 ops/sec, CV 1.9%, tight range 204K–216K. The single-raft version is also **faster on average** (~52% higher mean throughput), which is counterintuitive because multi-raft should enable parallelism.
     - **Benchmark Data**: See `docs/dev/multi_raft_benchmark_results.md` and `docs/dev/single_raft_benchmark_results.md` for full 10-run results with summary statistics.
     - **Key Questions to Investigate**:
@@ -41,6 +41,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       4. Detailed root-cause analysis document in `docs/dev/multi_raft_variance_root_cause.md`
       5. If a code fix is identified, implement it and verify with 10 benchmark runs showing consistent throughput
       6. No `git push` or `git pull` operations were executed
+    - **Findings Summary**: Three interacting root causes identified: (1) Election timing interference — 6 concurrent elections in 150-300ms window give ~50-74% probability of at least one stall; (2) 500ms blocking RPC wait in HeartbeatLoop is 100x the 5ms heartbeat interval, amplifying any network jitter into cascading delays; (3) Thread resource contention — 30+ OS threads in multi-Raft vs ~12 in single-Raft causes context switching and cache thrashing. No code fix needed since single-Raft consolidation already addresses all three issues. See `docs/dev/multi_raft_variance_root_cause.md` for full analysis.
   - [x] *high* Fix Raft CI: Make `./ci/ci_mako_raft.sh` pass all test cases reliably [DONE 2026-02-16, 23:42]
     - **Problem**: The Raft CI test suite (`./ci/ci_mako_raft.sh`) is currently failing. The Raft replication integration is broken and needs to be debugged and fixed so that all test cases pass consistently.
     - **Goal**: All test cases in `./ci/ci_mako_raft.sh` must pass reliably — not just once, but multiple consecutive runs to rule out flaky/accidental passes.
