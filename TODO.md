@@ -15,6 +15,32 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - [ ] *high* Root-Cause Analysis: Multi-Raft Instance Throughput Variance vs Single-Raft Consistency
+    - **Problem**: In commit `4f99ffb6` (multi-Raft instances — 6 independent Raft groups), the `shard1ReplicationRaft` benchmark over 10 runs showed highly inconsistent throughput: mean 137,952 ops/sec, CV 34.6%, bimodal distribution with runs ranging from 88K to 200K ops/sec. When replaced by a single Raft instance (commit `bba1a5d4`), throughput became consistent: mean 209,183 ops/sec, CV 1.9%, tight range 204K–216K. The single-raft version is also **faster on average** (~52% higher mean throughput), which is counterintuitive because multi-raft should enable parallelism.
+    - **Benchmark Data**: See `docs/dev/multi_raft_benchmark_results.md` and `docs/dev/single_raft_benchmark_results.md` for full 10-run results with summary statistics.
+    - **Key Questions to Investigate**:
+      1. **Why the bimodal distribution?** Multi-raft runs cluster around ~88K or ~200K — what causes some runs to hit half the peak? Is it Raft election timing variance, split elections, or leader contention across the 6 groups?
+      2. **Why is multi-raft slower on average?** With 6 parallel Raft groups one would expect higher throughput through parallelism, not lower. Is there resource contention (CPU, threads, locks, network ports)? Are the Raft groups competing for shared resources?
+      3. **Is the test environment correct?** Verify that `shard1ReplicationRaft` is actually testing the right thing for single-shard replication with Raft — check the config files, CI scripts (`./ci/ci_mako_raft.sh` or `./ci/ci.sh`), process topology, and that both benchmarks used equivalent and correct configurations.
+      4. **Election timeout and heartbeat configuration**: Check if the election timeout randomization window is too narrow for 6 concurrent Raft groups, causing election storms or cascading re-elections.
+      5. **Thread/CPU contention**: With 6 Raft groups in the same process, are threads competing for CPU time? Check thread pool sizing, coroutine scheduling, and whether the benchmark machine has enough cores.
+      6. **Log replication contention**: Are 6 Raft groups competing for the same I/O or network resources during log replication, causing some groups to stall?
+    - **Approach — Iterative Root-Cause Analysis**:
+      1. **Read the raft source code**: Thoroughly examine `src/deptran/raft/` — especially `server.cc`, `raft_worker.cc`, `commo.cc` — to understand how multiple Raft instances are created and managed.
+      2. **Examine config and CI**: Read the config files and CI scripts for `shard1ReplicationRaft` to understand the exact topology (how many shards, replicas, Raft groups).
+      3. **Compare the two commits**: `git diff bba1a5d4..4f99ffb6` (or parent commits) to understand exactly what changed between single-raft and multi-raft implementations.
+      4. **Analyze election timing**: Check `ELECTION_TIMEOUT`, `HEARTBEAT_INTERVAL`, and randomization logic. Calculate probability of election collisions with 6 groups.
+      5. **Check resource contention**: Look for shared mutexes, thread pools, network sockets, or other resources that 6 Raft groups would contend on.
+      6. **Reproduce if needed**: Run `shard1ReplicationRaft` multiple times with both configurations to confirm the variance pattern. Add logging/instrumentation if needed to identify the bottleneck.
+      7. **Document findings**: Write a detailed root-cause analysis in `docs/dev/multi_raft_variance_root_cause.md` with evidence, data, and recommendations.
+    - **NON-NEGOTIABLE: Do NOT run `git push` or `git pull` at all — any push/pull will discard work. You may `git commit` locally but do NOT push or pull.**
+    - **Success Criteria**:
+      1. Root cause of the bimodal throughput distribution in multi-raft is identified with evidence
+      2. Root cause of why multi-raft is slower than single-raft on average is explained
+      3. Verification that the test environment and configuration are correct for `shard1ReplicationRaft`
+      4. Detailed root-cause analysis document in `docs/dev/multi_raft_variance_root_cause.md`
+      5. If a code fix is identified, implement it and verify with 10 benchmark runs showing consistent throughput
+      6. No `git push` or `git pull` operations were executed
   - [x] *high* Fix Raft CI: Make `./ci/ci_mako_raft.sh` pass all test cases reliably [DONE 2026-02-16, 23:42]
     - **Problem**: The Raft CI test suite (`./ci/ci_mako_raft.sh`) is currently failing. The Raft replication integration is broken and needs to be debugged and fixed so that all test cases pass consistently.
     - **Goal**: All test cases in `./ci/ci_mako_raft.sh` must pass reliably — not just once, but multiple consecutive runs to rule out flaky/accidental passes.
@@ -2112,3 +2138,44 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Files Changed**: ~50 files across src/rrr/, src/deptran/, test/
     - **Plan**: docs/dev/legacy_api_removal_plan.md
     - **Test Log**: logs/20260117_005921_f9ee09c5_legacy_api_removal_ci.log
+
+  - [x] *high* Single Raft Instance vs Multiple Raft Instances: Benchmarking & Thesis Chapter [DONE 2026-02-27, 19:31]
+    - **CRITICAL CONSTRAINT: NO `git push` and NO `git pull` allowed. This will be heavily penalised. Use only local git operations (checkout, stash, log, diff, show).**
+    - **Task 1: Understand Single Raft vs Multiple Raft Instances**
+      1. Study the current HEAD implementation of the **single Raft instance** approach. Read the relevant source files under `src/deptran/raft/` and any related config/test changes.
+      2. Compare it against the **multiple Raft instances** implementation at commit `4f99ffb6f9d728bb12377f362779248b2d16031b`. Use `git diff`, `git log`, and `git show` to understand what changed between the two approaches.
+      3. Document the key architectural differences:
+         - How the single instance consolidates what was previously multiple Raft groups
+         - Changes to leader election, log replication, and state machine application
+         - Impact on configuration and shard topology
+         - Any simplifications or added complexity
+    - **Task 2: Benchmark Both Implementations (10 runs each)**
+      1. **Single Raft instance (current HEAD):**
+         - Run `./ci/ci_mako_raft.sh all` 10 times.
+         - Record the throughput from each run.
+         - Compute average, min, max, and standard deviation.
+      2. **Multiple Raft instances (commit `4f99ffb6`):**
+         - `git stash` any local changes if needed, then `git checkout 4f99ffb6`.
+         - Build the project (`make clean && make mako-raft -j128`).
+         - Run `./ci/ci_mako_raft.sh all` 10 times.
+         - Record the throughput from each run.
+         - Compute average, min, max, and standard deviation.
+         - Switch back to the original branch when done (`git checkout -`).
+      3. Compare the results side by side: throughput differences, variance, and any anomalies.
+    - **Task 3: Write a New Chapter in `doc/thesis/complete_thesis.md`**
+      - Introduce a new chapter covering:
+        1. **Motivation**: Why move from multiple Raft instances to a single Raft instance.
+        2. **Design**: Architectural overview of the single Raft instance approach, with comparison to the multiple-instance design.
+        3. **Implementation Differences**: Key code-level changes, configuration changes, and protocol adjustments.
+        4. **Evaluation / Benchmarks**: Present the throughput data collected in Task 2 in a table format. Include per-test throughput for single vs multiple Raft (all 10 runs), summary statistics (average, min, max, stddev), and analysis of performance differences.
+        5. **Discussion**: Trade-offs, when each approach is preferable, and implications for geo-replication.
+      - Update the table of contents and any cross-references in the thesis document accordingly.
+    - **Leaf Tasks** (work through in order):
+      - [x] Leaf 1: Understand & document architectural differences between single vs multiple Raft instances. Study the diff between HEAD and commit 4f99ffb6. Output: `docs/dev/single_vs_multi_raft_analysis.md` [DONE 2026-02-27]
+      - [x] Leaf 2: Benchmark single Raft instance (current HEAD) — 10 runs of shard1ReplicationRaft. Mean: 209,183 ops/sec (CV 1.9%). Output: `docs/dev/single_raft_benchmark_results.md` [DONE 2026-02-27]
+      - [x] Leaf 3: Benchmark multiple Raft instances (commit 4f99ffb6) — 10 runs of shard1ReplicationRaft. Mean: 137,952 ops/sec (CV 34.6%). Output: `docs/dev/multi_raft_benchmark_results.md` [DONE 2026-02-27]
+      - [x] Leaf 4: Write thesis chapter (Chapter 8) in `doc/thesis/complete_thesis.md` — covers motivation, design, implementation, benchmarks (51.6% improvement), and discussion. [DONE 2026-02-27]
+    - **Reminders**:
+      - Use long timeouts for builds (at least 600000ms for incremental, 1800000ms for full builds).
+      - Build command: `make mako-raft -j128`
+      - CI test command: `./ci/ci_mako_raft.sh all`
