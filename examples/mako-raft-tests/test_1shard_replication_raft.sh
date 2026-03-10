@@ -19,13 +19,17 @@ rm -f nfs_sync_*
 rm -rf /tmp/mako_rocksdb_shard*
 
 # Start shard 0 with 3 Raft replicas (no learner in Raft)
+# Start preferred leader (localhost) first, give it time to initialize
 echo "Starting shard 0 with 3 Raft replicas..."
 nohup bash bash/shard_raft.sh 1 0 $trd localhost 0 1 > $script_name\_shard0-localhost-$trd.log 2>&1 &
+sleep 2
+# Start followers — stagger to allow connection establishment
 nohup bash bash/shard_raft.sh 1 0 $trd p2 0 1 > $script_name\_shard0-p2-$trd.log 2>&1 &
 sleep 1
 nohup bash bash/shard_raft.sh 1 0 $trd p1 0 1 > $script_name\_shard0-p1-$trd.log 2>&1 &
 SHARD0_PID=$!
-sleep 2
+# Wait for leader election to complete (preferred leader needs 150-300ms + connection setup)
+sleep 5
 
 # Wait for experiments to run
 echo "Running experiments for 60 seconds..."

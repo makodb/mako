@@ -251,7 +251,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
-      if (par_id==0){
+      if (par_id==0 && benchConfig.getNshards() > 1){
         std::cout << "we can start a advancer" << std::endl;
         sync_util::sync_logger::start_advancer();
       }

@@ -15,6 +15,17 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - [x] *high* Fix Raft Replay Batch Variance: Achieve consistent >= 8,000 replay batches in `shard1ReplicationRaft` [DONE 26:03:10, 06:30]
+    - **Problem**: The `shard1ReplicationRaft` benchmark produces wildly inconsistent replay batch counts across runs (1,143 to 7,548, a 6.6x spread). One run failed entirely (N/A). Throughput also varies 1.8x (89K-160K ops/sec).
+    - **Root Causes Found**: (1) sequential follower processing in HeartbeatLoop, (2) race condition in `ready_for_replication_` event, (3) insufficient startup time, (4) CRITICAL: advancer thread started for single-shard tests, enabling watermark-gated safety_check that blocks ~60% of entries when the slowest partition falls behind.
+    - **Result**: replay_batch 14,028-14,799 across 7 runs (CV ~2%), throughput 194K-206K ops/sec. All exceed 8,000 target.
+    - **Fixes Applied**:
+      - [x] Fix 1: Mutex-protect `ready_for_replication_` creation/nulling to prevent race condition
+      - [x] Fix 2: Parallelize follower replication — 4-phase HeartbeatLoop (prepare all, dispatch all, wait all, process all)
+      - [x] Fix 3: Increase startup wait in test script for reliable leader election
+      - [x] Fix 4: Skip advancer start for single-shard (nshards<=1) in follower callback — the watermark safety check is only needed for multi-shard coordination
+      - [x] Fix 5: Add Phase 5 to HeartbeatLoop — immediate commitIndex update after processing responses (halves commit latency)
+      - [x] Verify: 7 consecutive runs all >= 14,000 replay batches, all CI tests pass
   - [x] *high* Fix Raft CI: Make `./ci/ci_mako_raft.sh` pass all test cases reliably [DONE 2026-02-16, 23:42]
     - **Problem**: The Raft CI test suite (`./ci/ci_mako_raft.sh`) is currently failing. The Raft replication integration is broken and needs to be debugged and fixed so that all test cases pass consistently.
     - **Goal**: All test cases in `./ci/ci_mako_raft.sh` must pass reliably — not just once, but multiple consecutive runs to rule out flaky/accidental passes.

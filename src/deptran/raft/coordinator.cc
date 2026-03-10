@@ -146,6 +146,7 @@ void CoordinatorRaft::AppendEntries() {
     verify(ok);
     // @unsafe
     {
+    std::lock_guard<std::recursive_mutex> lock(svr_->ready_for_replication_mtx_);
     if (svr_->ready_for_replication_ != nullptr)
       svr_->ready_for_replication_->set(1);
     }
