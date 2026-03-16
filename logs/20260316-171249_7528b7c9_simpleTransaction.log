@@ -1,0 +1,35 @@
+=========================================
+Running: ./ci/ci.sh simpleTransaction
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+simpleTransaction base port: 36926
+20260316-17:13.19-606700(us) 1048580 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20260316-17:13.19-607243(us) 1048580 * thread_init     (mbta_wrapper.hh:1048): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=0
+20260316-17:13.19-610380(us) 1048580 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20260316-17:13.19-613578(us) 1048580 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+=== Mako Transaction Tests  ===
+[TRANSPORT] Using default: rrr
+20260316-17:13.19-613853(us) 1048580 * Initialize      (rrr_rpc_backend.cc:65): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260316-17:13.19-613977(us) 1048580 * Initialize      (rrr_rpc_backend.cc:95): RrrRpcBackend initialized on 127.0.0.1:36926 (listening on 0.0.0.0:36926)
+20260316-17:13.19-613996(us) 1048580 * FastTransport   (fasttransport.cc:135): FastTransport initialized with rrr/rpc backend on 127.0.0.1:36926
+20260316-17:13.19-617156(us) 1048580 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+
+--- Testing Basic Transactions ---
+new table is created with name: customer_0, table-id: 1, on shard-server id:0
+existing table is created with name: customer_0, table-id: 1, on shard-server id:0
+[[32mPASS[0m] Write 5 records
+[[32mPASS[0m] Read and verify 5 records
+[[32mPASS[0m] Table scan verification
+
+--- Testing OverwrittenOperations ---
+new table is created with name: overwritten_table, table-id: 2, on shard-server id:0
+[[32mPASS[0m] value check
+
+--- Testing DifferentLengthOverwrites ---
+new table is created with name: difflen_table, table-id: 3, on shard-server id:0
+[[32mPASS[0m] Growing overwrite value check
+[[32mPASS[0m] Size transition final value check
+[[32mPASS[0m] Different-length overwrites (regression test)
+
+[32mAll tests completed successfully![0m

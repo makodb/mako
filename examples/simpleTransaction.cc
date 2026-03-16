@@ -153,6 +153,101 @@ public:
         }
     }
 
+    void test_different_length_overwrites() {
+        printf("\n--- Testing DifferentLengthOverwrites ---\n");
+        static abstract_ordered_index *table = db->open_index("difflen_table");
+
+        // Regression test for MassTrans.hh overwrite bug:
+        // Before fix, overwriting a key with a LARGER value that crosses
+        // a Masstree allocation boundary caused a spurious OCC abort due
+        // to a stale TransItem left in the transaction set.
+
+        // Test 1: Small → Large (growing value, crosses allocation boundary)
+        {
+            std::string key = "difflen_key_1";
+            // Write small value (1 byte raw → ~21 bytes encoded)
+            {
+                void *txn = db->new_txn(0, arena, txn_buf());
+                std::string value = mako::Encode("A");
+                try {
+                    table->put(txn, key, value);
+                    db->commit_txn(txn);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    db->abort_txn(txn);
+                    VERIFY(false, "Small value write should not abort");
+                }
+            }
+            // Overwrite with large value (100 bytes raw → ~120 bytes encoded)
+            {
+                void *txn = db->new_txn(0, arena, txn_buf());
+                std::string large(100, 'B');
+                std::string value = mako::Encode(large);
+                try {
+                    table->put(txn, key, value);
+                    db->commit_txn(txn);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    db->abort_txn(txn);
+                    VERIFY(false, "Growing overwrite should not abort (MassTrans fix)");
+                }
+            }
+            // Verify the large value was written
+            {
+                void *txn = db->new_txn(0, arena, txn_buf());
+                std::string readback = "";
+                try {
+                    table->get(txn, key, readback);
+                    db->commit_txn(txn);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    db->abort_txn(txn);
+                }
+                std::string expected(100, 'B');
+                VERIFY(readback.substr(0, expected.length()) == expected,
+                       "Growing overwrite value check");
+            }
+        }
+
+        // Test 2: Multiple size transitions (the full cycle)
+        {
+            std::string key = "difflen_key_2";
+            struct { const char* label; std::string val; } steps[] = {
+                {"tiny(1B)",      std::string(1, 'X')},
+                {"small(10B)",    std::string(10, 'Y')},
+                {"medium(50B)",   std::string(50, 'Z')},
+                {"large(200B)",   std::string(200, 'W')},
+                {"shrink(5B)",    std::string(5, 'V')},
+                {"grow_again(500B)", std::string(500, 'U')},
+            };
+
+            for (auto& step : steps) {
+                void *txn = db->new_txn(0, arena, txn_buf());
+                std::string value = mako::Encode(step.val);
+                try {
+                    table->put(txn, key, value);
+                    db->commit_txn(txn);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    db->abort_txn(txn);
+                    printf("  ABORT on step: %s\n", step.label);
+                    VERIFY(false, "Size transition should not abort");
+                }
+            }
+            // Verify final value
+            {
+                void *txn = db->new_txn(0, arena, txn_buf());
+                std::string readback = "";
+                try {
+                    table->get(txn, key, readback);
+                    db->commit_txn(txn);
+                } catch (abstract_db::abstract_abort_exception &ex) {
+                    db->abort_txn(txn);
+                }
+                std::string expected(500, 'U');
+                VERIFY(readback.substr(0, expected.length()) == expected,
+                       "Size transition final value check");
+            }
+        }
+        VERIFY_PASS("Different-length overwrites (regression test)");
+    }
+
 protected:
     abstract_db *const db;
     str_arena arena;
@@ -165,6 +260,7 @@ void run_tests(abstract_db *db) {
     worker->initialize();
     worker->test_basic_transactions();
     worker->test_overwritten_operations();
+    worker->test_different_length_overwrites();
     delete worker;
 }
 

@@ -1,0 +1,247 @@
+=========================================
+Running: ./ci/ci.sh rrrTests
+=========================================
+rrrTests simpleTransaction base port: 27477
+Test project /home/users/wshen24/mako/build
+        Start   1: test_marshal
+  1/117 Test   #1: test_marshal ...........................   Passed    0.01 sec
+        Start   2: test_client_service
+  2/117 Test   #2: test_client_service ....................   Passed    0.01 sec
+        Start   3: test_config_schema
+  3/117 Test   #3: test_config_schema .....................   Passed    0.00 sec
+        Start   4: test_sharding_policy
+  4/117 Test   #4: test_sharding_policy ...................   Passed    0.01 sec
+        Start   5: test_sharding_policy_cache
+  5/117 Test   #5: test_sharding_policy_cache .............   Passed    0.01 sec
+        Start   6: test_shard_router
+  6/117 Test   #6: test_shard_router ......................   Passed    0.01 sec
+        Start   7: test_tpcc_sharding
+  7/117 Test   #7: test_tpcc_sharding .....................   Passed    0.01 sec
+        Start   8: test_fiber
+  8/117 Test   #8: test_fiber .............................   Passed    0.01 sec
+        Start   9: test_config_store
+  9/117 Test   #9: test_config_store ......................   Passed    0.15 sec
+        Start  10: test_config_service
+ 10/117 Test  #10: test_config_service ....................   Passed    0.12 sec
+        Start  11: test_config_client
+ 11/117 Test  #11: test_config_client .....................   Passed    2.09 sec
+        Start  12: test_config_failure
+ 12/117 Test  #12: test_config_failure ....................   Passed    0.80 sec
+        Start  13: test_sharding_startup
+ 13/117 Test  #13: test_sharding_startup ..................   Passed    0.59 sec
+        Start  14: test_rpc
+ 14/117 Test  #14: test_rpc ...............................   Passed    3.46 sec
+        Start  15: test_load_balancer
+ 15/117 Test  #15: test_load_balancer .....................   Passed    0.52 sec
+        Start  16: test_idempotency
+ 16/117 Test  #16: test_idempotency .......................   Passed    0.02 sec
+        Start  17: test_completion_tracker
+ 17/117 Test  #17: test_completion_tracker ................   Passed    0.01 sec
+        Start  18: rpc_chaos_test
+ 18/117 Test  #18: rpc_chaos_test .........................   Passed    8.76 sec
+        Start  19: test_future
+ 19/117 Test  #19: test_future ............................   Passed    2.29 sec
+        Start  20: test_masstree
+ 20/117 Test  #20: test_masstree ..........................   Passed    0.01 sec
+        Start  21: test_masstree_internals
+ 21/117 Test  #21: test_masstree_internals ................   Passed    0.02 sec
+        Start  22: test_masstree_multi_instance
+ 22/117 Test  #22: test_masstree_multi_instance ...........   Passed    0.02 sec
+        Start  23: test_silo_runtime
+ 23/117 Test  #23: test_silo_runtime ......................   Passed    0.02 sec
+        Start  24: test_silo_multi_site_stress
+ 24/117 Test  #24: test_silo_multi_site_stress ............   Passed    0.87 sec
+        Start  25: test_reactor
+ 25/117 Test  #25: test_reactor ...........................   Passed    1.78 sec
+        Start  26: test_coroutine
+ 26/117 Test  #26: test_coroutine .........................   Passed    1.01 sec
+        Start  27: test_rpc_extended
+ 27/117 Test  #27: test_rpc_extended ......................   Passed    5.86 sec
+        Start  28: test_reactor_extended
+ 28/117 Test  #28: test_reactor_extended ..................   Passed    0.20 sec
+        Start  29: test_arc_mutex_thread
+ 29/117 Test  #29: test_arc_mutex_thread ..................   Passed    0.01 sec
+        Start  30: test_timeout_race
+ 30/117 Test  #30: test_timeout_race ......................   Passed    0.41 sec
+        Start  31: test_and_event
+ 31/117 Test  #31: test_and_event .........................   Passed    0.26 sec
+        Start  32: test_transport_backend
+ 32/117 Test  #32: test_transport_backend .................   Passed    0.07 sec
+        Start  33: stress_transport_backend
+ 33/117 Test  #33: stress_transport_backend ...............   Passed    5.73 sec
+        Start  34: test_transport_integration
+ 34/117 Test  #34: test_transport_integration .............   Passed   13.91 sec
+        Start  35: test_erpc_integration
+ 35/117 Test  #35: test_erpc_integration ..................   Passed    1.34 sec
+        Start  36: test_rpc_connection_state
+ 36/117 Test  #36: test_rpc_connection_state ..............   Passed    0.01 sec
+        Start  37: test_rpc_reconnect_policy
+ 37/117 Test  #37: test_rpc_reconnect_policy ..............   Passed    0.00 sec
+        Start  38: test_rpc_circuit_breaker
+ 38/117 Test  #38: test_rpc_circuit_breaker ...............   Passed    0.31 sec
+        Start  39: test_rpc_heartbeat
+ 39/117 Test  #39: test_rpc_heartbeat .....................   Passed    0.16 sec
+        Start  40: test_rpc_errors
+ 40/117 Test  #40: test_rpc_errors ........................   Passed    0.01 sec
+        Start  41: test_rpc_callbacks
+ 41/117 Test  #41: test_rpc_callbacks .....................   Passed    0.01 sec
+        Start  42: test_rpc_request_queue
+ 42/117 Test  #42: test_rpc_request_queue .................   Passed    0.24 sec
+        Start  43: test_rpc_request_buffering
+ 43/117 Test  #43: test_rpc_request_buffering .............   Passed    0.29 sec
+        Start  44: test_rpc_timeout_retry
+ 44/117 Test  #44: test_rpc_timeout_retry .................   Passed    0.01 sec
+        Start  45: test_rpc_state_integration
+ 45/117 Test  #45: test_rpc_state_integration .............   Passed    1.37 sec
+        Start  46: test_rpc_reconnect_integration
+ 46/117 Test  #46: test_rpc_reconnect_integration .........   Passed    0.86 sec
+        Start  47: test_rpc_circuit_breaker_integration
+ 47/117 Test  #47: test_rpc_circuit_breaker_integration ...   Passed    0.43 sec
+        Start  48: test_rpc_error_integration
+ 48/117 Test  #48: test_rpc_error_integration .............   Passed    0.13 sec
+        Start  49: test_rpc_combined_reliability
+ 49/117 Test  #49: test_rpc_combined_reliability ..........   Passed    0.96 sec
+        Start  50: test_rpc_graceful_shutdown
+ 50/117 Test  #50: test_rpc_graceful_shutdown .............   Passed    0.29 sec
+        Start  51: test_rpc_restart_detection
+ 51/117 Test  #51: test_rpc_restart_detection .............   Passed    0.03 sec
+        Start  52: test_rpc_validation
+ 52/117 Test  #52: test_rpc_validation ....................   Passed    1.15 sec
+        Start  53: test_rpc_metrics
+ 53/117 Test  #53: test_rpc_metrics .......................   Passed    0.23 sec
+        Start  54: test_rpc_client_pool
+ 54/117 Test  #54: test_rpc_client_pool ...................   Passed    0.19 sec
+        Start  55: test_rpc_log_storage
+ 55/117 Test  #55: test_rpc_log_storage ...................   Passed    0.01 sec
+        Start  56: test_rpc_rocksdb_log_storage
+ 56/117 Test  #56: test_rpc_rocksdb_log_storage ...........   Passed    0.28 sec
+        Start  57: test_txn_timeout
+ 57/117 Test  #57: test_txn_timeout .......................   Passed    0.01 sec
+        Start  58: test_rpc_stress_crash
+ 58/117 Test  #58: test_rpc_stress_crash ..................   Passed    3.50 sec
+        Start  59: test_rpc_partition
+ 59/117 Test  #59: test_rpc_partition .....................   Passed    7.98 sec
+        Start  60: simpleTransaction
+ 60/117 Test  #60: simpleTransaction ......................   Passed    1.04 sec
+        Start  61: rpcbench
+ 61/117 Test  #61: rpcbench ...............................   Passed    4.07 sec
+        Start  62: SiloVarintTests
+ 62/117 Test  #62: SiloVarintTests ........................   Passed    0.01 sec
+        Start  63: SiloRCUThreadTests
+ 63/117 Test  #63: SiloRCUThreadTests .....................   Passed    0.01 sec
+        Start  64: SiloAllocatorTupleTests
+ 64/117 Test  #64: SiloAllocatorTupleTests ................   Passed    0.06 sec
+        Start  65: STOTransactionTests
+ 65/117 Test  #65: STOTransactionTests ....................   Passed    0.01 sec
+        Start  66: STOTransactionRealTests
+ 66/117 Test  #66: STOTransactionRealTests ................   Passed    0.02 sec
+        Start  67: strip_flags_help
+ 67/117 Test  #67: strip_flags_help .......................   Passed    0.03 sec
+        Start  68: unittest
+ 68/117 Test  #68: unittest ...............................   Passed    0.02 sec
+        Start  69: help-reporting
+ 69/117 Test  #69: help-reporting .........................   Passed    0.03 sec
+        Start  70: long-helpstring
+ 70/117 Test  #70: long-helpstring ........................   Passed    0.04 sec
+        Start  71: changed_bool1
+ 71/117 Test  #71: changed_bool1 ..........................   Passed    0.04 sec
+        Start  72: changed_bool2
+ 72/117 Test  #72: changed_bool2 ..........................   Passed    0.03 sec
+        Start  73: changeable_string_var
+ 73/117 Test  #73: changeable_string_var ..................   Passed    0.03 sec
+        Start  74: nohelp
+ 74/117 Test  #74: nohelp .................................   Passed    0.02 sec
+        Start  75: help=false
+ 75/117 Test  #75: help=false .............................   Passed    0.02 sec
+        Start  76: helpfull
+ 76/117 Test  #76: helpfull ...............................   Passed    0.03 sec
+        Start  77: helpshort
+ 77/117 Test  #77: helpshort ..............................   Passed    0.02 sec
+        Start  78: helpshort-tldflag1
+ 78/117 Test  #78: helpshort-tldflag1 .....................   Passed    0.04 sec
+        Start  79: helpshort-tldflag2
+ 79/117 Test  #79: helpshort-tldflag2 .....................   Passed    0.04 sec
+        Start  80: helpshort-main
+ 80/117 Test  #80: helpshort-main .........................   Passed    0.04 sec
+        Start  81: helpshort_main
+ 81/117 Test  #81: helpshort_main .........................   Passed    0.04 sec
+        Start  82: helpon
+ 82/117 Test  #82: helpon .................................   Passed    0.03 sec
+        Start  83: helpon=gflags
+ 83/117 Test  #83: helpon=gflags ..........................   Passed    0.03 sec
+        Start  84: helpon_gflags
+ 84/117 Test  #84: helpon_gflags ..........................   Passed    0.03 sec
+        Start  85: helpon=gflags_unittest
+ 85/117 Test  #85: helpon=gflags_unittest .................   Passed    0.04 sec
+        Start  86: helpmatch_reporting
+ 86/117 Test  #86: helpmatch_reporting ....................   Passed    0.03 sec
+        Start  87: helpmatch=unittest
+ 87/117 Test  #87: helpmatch=unittest .....................   Passed    0.04 sec
+        Start  88: helpmatch=nosuchsubstring
+ 88/117 Test  #88: helpmatch=nosuchsubstring ..............   Passed    0.03 sec
+        Start  89: helpon=nosuchmodule
+ 89/117 Test  #89: helpon=nosuchmodule ....................   Passed    0.02 sec
+        Start  90: helppackage
+ 90/117 Test  #90: helppackage ............................   Passed    0.05 sec
+        Start  91: helpxml
+ 91/117 Test  #91: helpxml ................................   Passed    0.03 sec
+        Start  92: version-1
+ 92/117 Test  #92: version-1 ..............................   Passed    0.03 sec
+        Start  93: version-2
+ 93/117 Test  #93: version-2 ..............................   Passed    0.02 sec
+        Start  94: undefok-1
+ 94/117 Test  #94: undefok-1 ..............................   Passed    0.02 sec
+        Start  95: undefok-2
+ 95/117 Test  #95: undefok-2 ..............................   Passed    0.02 sec
+        Start  96: undefok-3
+ 96/117 Test  #96: undefok-3 ..............................   Passed    0.02 sec
+        Start  97: undefok-4
+ 97/117 Test  #97: undefok-4 ..............................   Passed    0.02 sec
+        Start  98: undefok-5
+ 98/117 Test  #98: undefok-5 ..............................   Passed    0.02 sec
+        Start  99: undefok-6
+ 99/117 Test  #99: undefok-6 ..............................   Passed    0.02 sec
+        Start 100: flagfile.1
+100/117 Test #100: flagfile.1 .............................   Passed    0.02 sec
+        Start 101: flagfile.2
+101/117 Test #101: flagfile.2 .............................   Passed    0.03 sec
+        Start 102: flagfile.3
+102/117 Test #102: flagfile.3 .............................   Passed    0.03 sec
+        Start 103: fromenv=version
+103/117 Test #103: fromenv=version ........................   Passed    0.03 sec
+        Start 104: tryfromenv=version
+104/117 Test #104: tryfromenv=version .....................   Passed    0.02 sec
+        Start 105: fromenv=help
+105/117 Test #105: fromenv=help ...........................   Passed    0.02 sec
+        Start 106: tryfromenv=help
+106/117 Test #106: tryfromenv=help ........................   Passed    0.02 sec
+        Start 107: fromenv=helpfull
+107/117 Test #107: fromenv=helpfull .......................   Passed    0.02 sec
+        Start 108: tryfromenv=helpfull
+108/117 Test #108: tryfromenv=helpfull ....................   Passed    0.02 sec
+        Start 109: tryfromenv=undefok
+109/117 Test #109: tryfromenv=undefok .....................   Passed    0.02 sec
+        Start 110: tryfromenv=weirdo
+110/117 Test #110: tryfromenv=weirdo ......................   Passed    0.02 sec
+        Start 111: tryfromenv-multiple
+111/117 Test #111: tryfromenv-multiple ....................   Passed    0.02 sec
+        Start 112: fromenv=test_bool
+112/117 Test #112: fromenv=test_bool ......................   Passed    0.03 sec
+        Start 113: fromenv=test_bool-ok
+113/117 Test #113: fromenv=test_bool-ok ...................   Passed    0.02 sec
+        Start 114: version-overrides-fromenv
+114/117 Test #114: version-overrides-fromenv ..............   Passed    0.03 sec
+        Start 115: dashdash
+115/117 Test #115: dashdash ...............................   Passed    0.02 sec
+        Start 116: always_fail
+116/117 Test #116: always_fail ............................   Passed    0.02 sec
+        Start 117: gflags_declare
+117/117 Test #117: gflags_declare .........................   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 117
+
+Label Time Summary:
+chaos     =   8.76 sec*proc (1 test)
+stress    =  11.48 sec*proc (2 tests)
+
+Total Test time (real) =  75.72 sec

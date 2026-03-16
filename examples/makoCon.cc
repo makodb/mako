@@ -146,6 +146,19 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                 if (!s.ok()) {
                     all_success = false;
                 }
+            } else if (op.op == TXN_OP_DEL) {
+                // DEL operation
+                // @unsafe { g_table->Delete calls non-borrow-checked Masstree code }
+                // Note: Delete always returns OK (remove is fire-and-forget).
+                // We avoid Get+Delete in same txn to prevent OCC read-write conflict.
+                // data_len=1 signals success to Rust; actual key existence can be
+                // verified by a separate GET after the DEL transaction commits.
+                mako::Status s = g_table->Delete(txn, tl_key_buf);
+                result.success = s.ok();
+                result.data_len = s.ok() ? 1 : 0;
+                if (!s.ok()) {
+                    all_success = false;
+                }
             } else {
                 // Unknown operation
                 all_success = false;
