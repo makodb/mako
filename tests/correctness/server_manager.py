@@ -94,6 +94,20 @@ def stop_server():
                 pass
         _server_proc = None
         print("[server_manager] makoCon stopped.")
+    else:
+        # Fallback: kill any makoCon process started by a different Python process
+        # (e.g., when this module is imported fresh and _server_proc is None).
+        # This ensures test scripts that restart the server always get a clean state.
+        try:
+            result = subprocess.run(
+                ["pkill", "-TERM", "-f", "build/makoCon"],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                print("[server_manager] Stopped external makoCon process via pkill.")
+                time.sleep(1)  # give it time to exit before caller restarts
+        except Exception:
+            pass
 
 
 def get_server_pid():

@@ -115,47 +115,29 @@ def test_9_4_delete_in_multi():
     r.set(key, "before_multi_del")
     assert extract_user_value(r.get(key)) == b"before_multi_del"
 
-    # DEL inside MULTI via raw socket (redis-py's pipeline has issues
-    # parsing integer responses from DEL within EXEC arrays)
-    import socket as _sock
-    sock = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
-    sock.connect(("127.0.0.1", 6380))
-    sock.settimeout(10)
-
-    def _send(cmd):
-        parts = cmd.split()
-        msg = f"*{len(parts)}\r\n"
-        for p in parts:
-            msg += f"${len(p)}\r\n{p}\r\n"
-        sock.sendall(msg.encode())
-        time.sleep(0.05)
-        try:
-            return sock.recv(4096).decode(errors='replace')
-        except Exception:
-            return "<timeout>"
-
-    _send("MULTI")
-    _send(f"DEL {key}")
-    exec_resp = _send("EXEC")
-    sock.close()
-
-    aborted = "*-1" in exec_resp
+    # DEL inside MULTI/EXEC via redis-py pipeline (transaction=True sends MULTI/EXEC).
+    # redis-py 7.x correctly parses integer responses from DEL within EXEC arrays.
+    try:
+        pipe = r.pipeline(transaction=True)
+        pipe.delete(key)
+        results = pipe.execute()
+        # results[0] is the DEL return value (integer: keys deleted)
+        del_count = results[0] if results else 0
+    except Exception as exc:
+        report("9.4", "Delete in MULTI/EXEC", False,
+               f"Pipeline raised exception: {exc}")
+        return
 
     # Verify key is gone using fresh client
-    time.sleep(0.2)
     r2 = get_client(socket_timeout=10, retry_on_timeout=True)
     raw = r2.get(key)
-    if not aborted and raw is None:
+    if raw is None:
         report("9.4", "Delete in MULTI/EXEC", True,
-               f"DEL in MULTI committed. EXEC response: {exec_resp.strip()!r}. "
-               "Key absent after commit.")
-    elif aborted:
-        report("9.4", "Delete in MULTI/EXEC", False,
-               f"MULTI DEL aborted: {exec_resp.strip()!r}")
+               f"DEL in MULTI committed (del_count={del_count}). Key absent after commit.")
     else:
         report("9.4", "Delete in MULTI/EXEC", False,
                f"Key still exists after MULTI DEL: {extract_user_value(raw)!r}. "
-               f"EXEC response: {exec_resp.strip()!r}")
+               f"del_count={del_count}")
 
 
 def test_9_5_delete_discard():

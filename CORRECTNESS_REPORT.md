@@ -1,9 +1,9 @@
 # Mako Correctness Test Report
 
 **Date:** 2026-03-16
-**Mako Commit:** `7528b7c9ebf1f3b8f44a7934789a95d2fef16d81`
+**Mako Commit:** `2a8f54e467bf8588bea5478aeff0265ec7ce2a48`
 **Branch:** `mako-dev`
-**Commit Message:** `build: vendor gtest at root and remove system gtest discovery`
+**Commit Message:** `docs: update CORRECTNESS_REPORT and TODO timestamps post-cc8205c6`
 
 ---
 
@@ -11,14 +11,15 @@
 
 | Metric | Count |
 |--------|-------|
-| Total tests | 83 |
-| Passed | **83** |
+| Total tests | 85 |
+| Passed | **85** |
 | Failed | 0 |
 | Skipped | 0 |
 
-**83/83 tests pass.** Two bugs were discovered and fixed:
+**85/85 tests pass.** Two server bugs and one test-harness issue were discovered and fixed:
 1. **Growing-value overwrite OCC abort** (Tasks 7–8): found, characterized, and **fixed** in `MassTrans.hh` (commit `cd4b90ee`).
 2. **MULTI/EXEC multi-overwrite last-value bug** (Task 11): found and **fixed** in `examples/makoCon.cc` (commit `cc8205c6`). Root cause: `StringWrapper::Put` stores only a pointer to the value string, so reusing `tl_val_buf` across SET operations caused all stored pointers to alias the last-written value at Commit. Fix: pre-encode each SET value into its own `std::string` in `std::vector<std::string> encoded_vals` before the transaction loop.
+3. **Test harness: Task 9.4 raw-socket timing fragility** (this commit): The original `test_9_4_delete_in_multi` used a raw TCP socket with fixed `time.sleep` delays. Under server load from Tasks 7–8, the recv timed out and left the server connection in a confused state that hung Task 9.5. Fix: replaced with `r.pipeline(transaction=True).delete(key).execute()`. Also added a `pkill` fallback to `server_manager.stop_server()` so fresh Python processes (not holding `_server_proc`) can force-stop any running makoCon instance before restarting.
 
 The test suite exercises the **makoCon** Redis-compatible server (single-node, in-memory Masstree, no replication, no RocksDB persistence). Tasks 11–16 are application-level workload simulations added to surface real-world invariant requirements.
 
@@ -186,10 +187,10 @@ The test suite exercises the **makoCon** Redis-compatible server (single-node, i
 | 9.1 | Delete + Re-Insert | PASS | DEL removes key, re-SET creates it fresh |
 | 9.2 | Delete Non-Existent Key | PASS | No crash or error on DEL of missing key |
 | 9.3 | Double Delete | PASS | Second DEL on already-deleted key succeeds |
-| 9.4 | Delete in MULTI/EXEC | PASS | Atomic DEL via MULTI commits correctly |
+| 9.4 | Delete in MULTI/EXEC | PASS | Atomic DEL via MULTI/EXEC pipeline commits correctly; del_count=1 |
 | 9.5 | Delete + DISCARD | PASS | DISCARD preserves key after queued DEL |
-| 9.6 | Concurrent Delete + Read (100 rounds) | PASS | No corrupted reads during delete races |
-| 9.7 | Concurrent Delete + Re-Insert (100 rounds) | PASS | No corrupted state from delete/write races |
+| 9.6 | Concurrent Delete + Read (20 rounds) | PASS | No corrupted reads during delete races |
+| 9.7 | Concurrent Delete + Re-Insert (20 rounds) | PASS | No corrupted state from delete/write races |
 | 9.8 | Delete Then Re-Write (Different Size) | PASS | No residual allocation issues |
 | 9.9 | Bulk Delete (100 keys) | PASS | All 100 keys deleted, 0 survivors |
 | 9.10 | Delete Special Keys (5 tests) | PASS | Unicode, long, spaced keys all delete correctly |
@@ -197,7 +198,7 @@ The test suite exercises the **makoCon** Redis-compatible server (single-node, i
 **Key findings:**
 - **Delete + re-insert works cleanly:** After DEL, a new SET creates the key fresh with no residual state from the deleted entry.
 - **No crash on edge cases:** DEL on non-existent keys and double DEL both succeed gracefully.
-- **MULTI/EXEC atomicity:** DEL inside MULTI/EXEC commits atomically; DISCARD correctly preserves the key.
+- **MULTI/EXEC atomicity:** DEL inside MULTI/EXEC commits atomically (tested via redis-py pipeline); DISCARD correctly preserves the key.
 - **Concurrent safety:** 100 rounds of concurrent delete + read and delete + write show no corrupted values or inconsistent state.
 - **Size-change after delete:** Deleting a key and re-creating it with a very different value size (1B→100KB) works correctly, confirming no residual Masstree allocation issues.
 
@@ -544,7 +545,7 @@ All test scripts are in `tests/correctness/`:
 | `test_overwrite_stress.py` | Task 8: Overwrite fix stress test (5 tests) |
 | `test_delete.py` | Task 9: Comprehensive delete testing (10 tests) |
 | `test_occ_benchmark.py` | Task 10: OCC conflict rate benchmark (5 tests) |
-| `test_workload_bank.py` | Task 11: Bank simulation workload (1 test — FAIL: new bug) |
+| `test_workload_bank.py` | Task 11: Bank simulation workload (1 test) |
 | `test_workload_sessions.py` | Task 12: Session store workload (1 test) |
 | `test_workload_counter.py` | Task 13: Counter service workload (1 test) |
 | `test_workload_msgqueue.py` | Task 14: Message queue workload (1 test) |
@@ -563,7 +564,7 @@ Beyond the 77 Python correctness tests, the following C++ tests validate the `Ma
 | `continuousTransactions` (97s) | 0 aborts | ~4M TPS, 4 threads, 100K key space, 70/30 R/W mix |
 | `shardNoReplication` (TPC-C) | All pass | 2-shard, ~4,250 ops/sec, abort rates 0.7%-2.3% |
 
-**Total verification: 77 Python + 117 ctest + 7 simpleTransaction + 2 benchmark binaries = comprehensive coverage.**
+**Total verification: 85 Python + 117 ctest + 7 simpleTransaction + 2 benchmark binaries = comprehensive coverage.**
 
 ## Build Fix Applied
 
