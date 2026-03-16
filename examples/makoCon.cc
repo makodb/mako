@@ -89,6 +89,26 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
         tl_arena->reset();
     }
 
+    // Pre-encode all SET values before starting the transaction.
+    // StringWrapper (used internally by Put) stores only a pointer to the string —
+    // no copy is made. All encoded strings must therefore outlive Commit().
+    // Using tl_val_buf for all ops would alias every stored pointer to the same
+    // buffer, causing each key to commit with the last-written value.
+    // Solution: give each SET op its own std::string in this vector.
+    // @safe - Vec of strings, all stack-lifetime relative to Commit below
+    std::vector<std::string> encoded_vals(request->num_ops);
+    for (size_t i = 0; i < request->num_ops; i++) {
+        const TxnOperation& op = request->ops[i];
+        if (op.op == TXN_OP_SET) {
+            if (op.val_ptr && op.val_len > 0) {
+                std::string raw_val(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
+                encoded_vals[i] = mako::Encode(raw_val);
+            } else {
+                encoded_vals[i] = mako::Encode("");
+            }
+        }
+    }
+
     // Begin a single database transaction for all operations
     // NOTE: mbta_wrapper::new_txn() always returns NULL - it uses thread-local TThread::txn state
     // The actual transaction is started via Sto::start_transaction() internally
@@ -132,16 +152,8 @@ bool execute_transaction(const TxnRequest* request, TxnResponse* response) {
                     all_success = false;
                 }
             } else if (op.op == TXN_OP_SET) {
-                // SET operation - build value with encoding
-                tl_val_buf.clear();
-                if (op.val_ptr && op.val_len > 0) {
-                    std::string raw_val(reinterpret_cast<const char*>(op.val_ptr), op.val_len);
-                    tl_val_buf = mako::Encode(raw_val);
-                } else {
-                    tl_val_buf = mako::Encode("");
-                }
-
-                mako::Status s = g_table->Put(txn, tl_key_buf, tl_val_buf);
+                // SET operation - use pre-encoded value (encoded_vals[i] owns the buffer)
+                mako::Status s = g_table->Put(txn, tl_key_buf, encoded_vals[i]);
                 result.success = s.ok();
                 if (!s.ok()) {
                     all_success = false;
