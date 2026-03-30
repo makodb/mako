@@ -236,6 +236,11 @@ public:
     ITable* GetTable(const std::string& name) override;
 
     /**
+     * List all table names tracked by this database instance
+     */
+    std::vector<std::string> ListTables() override;
+
+    /**
      * Connect to the database (no-op for local DB)
      * Implements IDatabase interface - always returns OK
      */
@@ -433,6 +438,16 @@ inline void DB::Rollback(void* txn) {
     //if (txn && db_) {
         db_->abort_txn(txn);
     //}
+}
+
+inline std::vector<std::string> DB::ListTables() {
+    std::lock_guard<std::mutex> lock(tables_mutex_);
+    std::vector<std::string> names;
+    names.reserve(tables_.size());
+    for (const auto& kv : tables_) {
+        names.push_back(kv.first);
+    }
+    return names;
 }
 
 inline ITable* DB::GetTable(const std::string& name) {

@@ -19,7 +19,9 @@
  */
 
 #include "status.hh"
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace mako {
 
@@ -64,6 +66,58 @@ public:
      * Get the table name
      */
     virtual const std::string& GetName() const = 0;
+
+    /**
+     * Forward range scan
+     * @param txn       - Transaction handle from BeginTransaction()
+     * @param start_key - First key to scan (inclusive)
+     * @param end_key   - Last key to scan (exclusive), or nullptr for end of table
+     * @param callback  - Called for each key-value pair; return true to continue, false to stop
+     * @return Status::OK() on success
+     */
+    virtual Status Scan(void* txn,
+                        const std::string& start_key,
+                        const std::string* end_key,
+                        std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
+
+    /**
+     * Reverse range scan
+     * @param txn       - Transaction handle from BeginTransaction()
+     * @param start_key - First key to scan descending from (inclusive)
+     * @param end_key   - Last key to scan descending to (exclusive), or nullptr for start of table
+     * @param callback  - Called for each key-value pair in descending order; return true to continue
+     * @return Status::OK() on success
+     */
+    virtual Status ReverseScan(void* txn,
+                               const std::string& start_key,
+                               const std::string* end_key,
+                               std::function<bool(const std::string& key, const std::string& value)> callback) = 0;
+
+    /**
+     * Check key existence without reading the value
+     * @param txn    - Transaction handle from BeginTransaction()
+     * @param key    - Key to check
+     * @param exists - Output: true if key exists, false if not
+     * @return Status::OK() on success (including when key is absent), error on failure
+     */
+    virtual Status Exists(void* txn, const std::string& key, bool* exists) = 0;
+
+    /**
+     * Insert a key only if it does not already exist
+     * @param txn   - Transaction handle from BeginTransaction()
+     * @param key   - Key to insert
+     * @param value - Value to insert (encoded with mako::Encode())
+     * @return Status::OK() on success, Status::InvalidArgument if key already exists
+     */
+    virtual Status Insert(void* txn, const std::string& key, const std::string& value) = 0;
+
+    /**
+     * Get approximate number of keys in the table (no transaction required)
+     * @param size - Output: approximate key count
+     * @return Status::OK() on success
+     * Note: Currently always returns 0 (Masstree approx_size() not yet implemented)
+     */
+    virtual Status GetApproximateSize(size_t* size) = 0;
 };
 
 /**
@@ -112,6 +166,12 @@ public:
      * For remote DB: Creates RemoteTable proxy
      */
     virtual ITable* GetTable(const std::string& name) = 0;
+
+    /**
+     * List all table names currently tracked by this database instance
+     * @return Vector of table name strings (only tables opened via GetTable)
+     */
+    virtual std::vector<std::string> ListTables() = 0;
 
     // =========================================================================
     // Connection Management (optional for local DB)
