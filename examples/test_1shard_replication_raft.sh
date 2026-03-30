@@ -108,8 +108,10 @@ failed=0
             # Remove % sign if present and convert to float
             abort_value=$(echo "$abort_ratio" | sed 's/%//')
 
-            # Check if value is less than 20 using awk (more portable than bc)
-            if awk "BEGIN {exit !($abort_value < 20)}"; then
+            # Handle -nan/nan (0 remote txns = 0/0 division, perfectly fine)
+            if echo "$abort_value" | grep -qi "nan"; then
+                echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (no remote txns, OK)"
+            elif awk "BEGIN {exit !($abort_value < 20)}"; then
                 echo "  ✓ NewOrder_remote_abort_ratio: $abort_ratio (< 20%)"
             else
                 echo "  ✗ NewOrder_remote_abort_ratio: $abort_ratio (>= 20%)"
