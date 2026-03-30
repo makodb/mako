@@ -1,0 +1,20 @@
+site:
+  server:
+    # 3 partitions, each with 3 replicas (localhost, p1, p2)
+    - ["localhost:38100", "p1:38101", "p2:38102"]
+    - ["localhost:38103", "p1:38104", "p2:38105"]
+    - ["localhost:38106", "p1:38107", "p2:38108"]
+  client:
+    - ["c01"]
+
+process:
+  localhost: localhost
+  p1: p1
+  p2: p2
+  c01: client
+
+host:
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
+  p2: 127.0.0.1
+  client: 127.0.0.1

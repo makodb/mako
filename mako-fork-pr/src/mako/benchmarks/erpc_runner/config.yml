@@ -1,0 +1,36 @@
+# Ref: https://github.com/shenweihai1/srolis/wiki/Documentation
+# for num_shards = n, num_warehouses = m
+# the client id in one shard belongs to [0, m)
+# the server id in one shard belongs to [0, (n - 1) * m)
+
+# How to calculate the target server id:
+## assume client i at shard x sends a request to shard y
+## the receiver server id at shard y is j
+## j = x * m + i - (x < y ? 0 : m)
+
+num_shards: 2
+num_replicas: 2 
+num_warehouses: 2
+num_erpc_runner_uri: 8
+num_erpc_runner_per_shard: 2
+
+# Each shard is assigned two erpc runners, totaling 2 * 2 * 2 = 8 erpc runners
+erpc_runner_uri: 
+  - 127.0.0.1:31000
+  - 127.0.0.1:32000
+  - 127.0.0.1:33000
+  - 127.0.0.1:34000
+  - 127.0.0.1:35000
+  - 127.0.0.1:36000
+  - 127.0.0.1:37000
+  - 127.0.0.1:38000
+
+# Assuming that the erpc runner configuration method is the same for each shard
+# The following describes the configuration for a shard
+
+client_id_range: 
+  - [0, 1] # runner 0 holds clients with ids belonging to [0, 1)
+  - [1, 2] # runner 1 holds clients with ids belonging to [1, 2)
+server_id_range:
+  - [0, 2] # runner 0 holds servers with ids belonging to [0, 2)
+  - [2, 4] # runner 1 holds servers with ids belonging to [2, 4)

@@ -1,0 +1,10 @@
+/target
+/target-docker
+.vscode
+*.out
+*.swp
+tests/build/
+build/*
+*.lock
+
+build-tests/

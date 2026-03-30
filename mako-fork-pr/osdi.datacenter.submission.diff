@@ -1,0 +1,87 @@
+diff --git a/src/deptran/paxos_main_helper.cc b/src/deptran/paxos_main_helper.cc
+index da1fd24a..66586db0 100644
+--- a/src/deptran/paxos_main_helper.cc
++++ b/src/deptran/paxos_main_helper.cc
+@@ -50,7 +50,7 @@ std::map<int, std::function<std::vector<uint32_t>(const char*&, int, int, int, s
+ 
+ 
+ shared_ptr<ElectionState> es = ElectionState::instance();
+-const bool is_datacenter_failure = false;  // data center failures
++const bool is_datacenter_failure = true;  // data center failures
+ 
+ int get_epoch(){
+   int x;
+@@ -775,20 +775,22 @@ void* heartbeatBackground2(void* arg) {
+ 
+ // learner maintains heartbeat with the leader (connect to the first PaxosWorker::SetupHeartbeat())
+ void* heartbeatMonitor2(void* arg) { // happens on the learner
++  Log_info("start a heartbeatMonitor2");
+   time_t st = time(NULL);
+   std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
+ 
+   while (es->running) {
+     auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
+-    WAN_WAIT_TIME(5); // 5ms is far enough within the same data center, otherwise, several seconds across data-center
++    WAN_WAIT_TIME(100); // 5ms is far enough within the same data center, otherwise, several seconds across data-center
+     auto xx1 = std::chrono::high_resolution_clock::now() ;
+-    if (duration2.count()/1000.0/1000.0 > 35) { // 35ms heartbeat timeout
++    //std::cout<<"duration2:"<<duration2.count()/1000.0/1000.0<<std::endl;
++    if (duration2.count()/1000.0/1000.0 > 10*1000) { // 35ms heartbeat timeout
+      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
+      time_t end = time (NULL);
+-     if (end - st > 35) {
+-       Log_info("Let's stop it automatically without failover!!!");
+-       std::quick_exit( EXIT_SUCCESS );
+-     }
++     //if (end - st > 35) {
++     //  Log_info("Let's stop it automatically without failover!!!");
++     //  std::quick_exit( EXIT_SUCCESS );
++     //}
+ 
+      Log_info("trigger an new leader: %lf ms, %d sec", duration2.count()/1000.0/1000.0, (int)(end - st));
+      auto x0 = std::chrono::high_resolution_clock::now() ;
+@@ -823,15 +825,15 @@ void* heartbeatMonitor3(void* arg) {
+                   std::chrono::high_resolution_clock::now() - es->heartbeat_seen);
+     WAN_WAIT_TIME(100);
+     // 1. detect
+-    if (duration2.count()/1000.0/1000.0 > 1000) { // if not received about 10 times, datacenter failure very expensive
++    if (duration2.count()/1000.0/1000.0 > 10*1000) { // if not received about 10 times, datacenter failure very expensive
+      Log_info("the time for the heartbeat: %lf ms", duration2.count()/1000.0/1000.0);
+      // reach threshold to trigger a failover
+      // 5ms is far enough within the same data center, otherwise, several seconds across data-center
+      time_t end = time (NULL);
+-     if (end - st > 35) {
+-       Log_info("Let's stop it automatically without failover2!!!");
+-       exit(0);
+-     }
++     //if (end - st > 35) {
++     //  Log_info("Let's stop it automatically without failover2!!!");
++     //  exit(0);
++     //}
+ 
+      // by default, p1 is the new leader datacenter, p2 is still the follower datacenter
+      // the synchrnization is equivalent to the leader election overhead
+diff --git a/wscript b/wscript
+index a752ed20..9e126fed 100755
+--- a/wscript
++++ b/wscript
+@@ -248,13 +248,14 @@ def _enable_snappy(conf):
+     conf.env.append_value("LINKFLAGS", "-Wl,--as-needed")
+ 
+ def _enable_tcmalloc(conf):
+-    if Options.options.tcmalloc:
+-        Logs.pprint("PINK", "tcmalloc enabled")
+-        conf.env.append_value("LINKFLAGS", "-Wl,--no-as-needed")
+-        conf.env.append_value("LINKFLAGS", "-ltcmalloc")
+-        conf.env.append_value("LINKFLAGS", "-Wl,--as-needed")
++    #if Options.options.tcmalloc:
++    Logs.pprint("PINK", "tcmalloc enabled")
++    conf.env.append_value("LINKFLAGS", "-Wl,--no-as-needed")
++    conf.env.append_value("LINKFLAGS", "-ljemalloc")
++    conf.env.append_value("LINKFLAGS", "-Wl,--as-needed")
+ 
+ def _enable_pic(conf):
++    print("enable -fPIC")
+     conf.env.append_value("CXXFLAGS", "-fPIC")
+     conf.env.append_value("LINKFLAGS", "-fPIC")
+ 

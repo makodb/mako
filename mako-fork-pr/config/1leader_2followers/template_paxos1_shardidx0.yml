@@ -1,0 +1,18 @@
+site:
+  # each line is a partition (Paxos group), the first is the master site_name:port
+  # the last column is the learner
+  # - ["s101:7001", "s201:7101", "s301:7201", "s401:7301"]
+  server: 
+
+# s101: localhost
+# s201: p1
+# s301: p2
+# s401: learner 
+process:
+
+# process_name - host_addr map
+host:
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
+  p2: 127.0.0.1
+  learner: 127.0.0.1

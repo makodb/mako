@@ -1,0 +1,23 @@
+
+# Consider dependencies only in project.
+set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)
+
+# The set of languages for which implicit dependencies are needed:
+set(CMAKE_DEPENDS_LANGUAGES
+  )
+
+# The set of dependency files which are needed:
+set(CMAKE_DEPENDS_DEPENDENCY_FILES
+  "/home/users/ssoumojit/mako/test/test_reactor_extended.cc" "CMakeFiles/test_reactor_extended.dir/test/test_reactor_extended.cc.o" "gcc" "CMakeFiles/test_reactor_extended.dir/test/test_reactor_extended.cc.o.d"
+  )
+
+# Targets to which this target links.
+set(CMAKE_TARGET_LINKED_INFO_FILES
+  "/home/users/ssoumojit/mako/build_debug/CMakeFiles/rrr.dir/DependInfo.cmake"
+  "/home/users/ssoumojit/mako/build_debug/CMakeFiles/memdb.dir/DependInfo.cmake"
+  "/home/users/ssoumojit/mako/build_debug/third-party/erpc/third_party/googletest/googletest/CMakeFiles/gtest_main.dir/DependInfo.cmake"
+  "/home/users/ssoumojit/mako/build_debug/third-party/erpc/third_party/googletest/googletest/CMakeFiles/gtest.dir/DependInfo.cmake"
+  )
+
+# Fortran module output directory.
+set(CMAKE_Fortran_TARGET_MODULE_DIR "")

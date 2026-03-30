@@ -1,0 +1,85 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 039a7f63..e528496d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -36,6 +36,12 @@ add_subdirectory(third_party/googletest)
+ enable_testing()
+ include_directories(${gtest_SOURCE_DIR}/include ${gtest_SOURCE_DIR})
+ 
++# add a DPDK
++set(CMAKE_DPDK_DIR "/var/services/homes/weihshen/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc")
++include_directories(${CMAKE_DPDK_DIR}/include)
++message(STATUS "here is the library path: ${CMAKE_DPDK_DIR}/lib")
++link_directories(${CMAKE_DPDK_DIR}/lib)
++
+ # Common sub-projects: gflags
+ add_subdirectory(third_party/gflags)
+ 
+diff --git a/run.sh b/run.sh
+index 9db158af..f70f9a6e 100755
+--- a/run.sh
++++ b/run.sh
+@@ -1,4 +1,4 @@
+ make clean
+-#cmake . -DTRANSPORT=dpdk -DAZURE=off -DPERF=ON -DLOG_LEVEL=none
+-cmake . -DTRANSPORT=infiniband -DROCE=on -DPERF=ON
++cmake . -DTRANSPORT=dpdk -DAZURE=off -DPERF=ON -DLOG_LEVEL=none
++#cmake . -DTRANSPORT=infiniband -DROCE=on -DPERF=ON
+ make -j10
+diff --git a/src/transport_impl/dpdk/dpdk_transport.h b/src/transport_impl/dpdk/dpdk_transport.h
+index 8abb2129..32298200 100644
+--- a/src/transport_impl/dpdk/dpdk_transport.h
++++ b/src/transport_impl/dpdk/dpdk_transport.h
+@@ -28,7 +28,7 @@ namespace erpc {
+ 
+ class DpdkTransport : public Transport {
+  public:
+-  static constexpr size_t kMaxQueuesPerPort = kIsWindows ? 1 : 16;
++  static constexpr size_t kMaxQueuesPerPort = kIsWindows ? 1 : 32;
+   static constexpr size_t kInvalidQpId = SIZE_MAX;
+ 
+   /// Contents of the memzone created by the eRPC DPDK daemon process
+diff --git a/src/util/math_utils.h b/src/util/math_utils.h
+index fc903589..b34e726a 100644
+--- a/src/util/math_utils.h
++++ b/src/util/math_utils.h
+@@ -33,10 +33,8 @@ static inline size_t lsb_index(int x) {
+ /// Return the index of the most significant bit of x. The index of the 2^0
+ /// bit is 1. (x = 0 returns 0, x = 1 returns 1.)
+ static inline size_t msb_index(int x) {
+-  assert(x < INT32_MAX / 2);
+-  int index;
+-  asm("bsrl %1, %0" : "=r"(index) : "r"(x << 1));
+-  return static_cast<size_t>(index);
++  if (x==0) return 0;
++  return 32 - __builtin_clz(x<<1)-1;
+ }
+ 
+ /// C++11 constexpr ceil
+diff --git a/src/util/timer.h b/src/util/timer.h
+index 0cfedcfe..84ae39e0 100644
+--- a/src/util/timer.h
++++ b/src/util/timer.h
+@@ -14,10 +14,9 @@ namespace erpc {
+ 
+ /// Return the TSC
+ static inline size_t rdtsc() {
+-  uint64_t rax;
+-  uint64_t rdx;
+-  asm volatile("rdtsc" : "=a"(rax), "=d"(rdx));
+-  return static_cast<size_t>((rdx << 32) | rax);
++  uint64_t tsc;
++  asm volatile("mrs %0, cntvct_el0" : "=r"(tsc));
++  return tsc;
+ }
+ 
+ /// An alias for rdtsc() to distinguish calls on the critical path
+@@ -71,7 +70,7 @@ static double measure_rdtsc_freq() {
+ 
+   const uint64_t rdtsc_cycles = rdtsc() - rdtsc_start;
+   const double freq_ghz = rdtsc_cycles * 1.0 / chrono_timer.get_ns();
+-  rt_assert(freq_ghz >= 0.5 && freq_ghz <= 5.0, "Invalid RDTSC frequency");
++  rt_assert(freq_ghz >= 0 && freq_ghz <= 5.0, "Invalid RDTSC frequency, freq: " + std::to_string(freq_ghz));
+ 
+   return freq_ghz;
+ }

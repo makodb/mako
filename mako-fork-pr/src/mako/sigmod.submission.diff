@@ -1,0 +1,624 @@
+diff --git a/bash/ips b/bash/ips
+index aaddf16..19d7a74 100644
+--- a/bash/ips
++++ b/bash/ips
+@@ -1,24 +1,40 @@
+-10.1.0.11
+-10.1.0.10
+-10.1.0.13
+-10.1.0.12
+-10.1.0.14
+-10.1.0.15
+-10.1.0.4
+-10.1.0.5
+-10.1.0.8
+-10.1.0.7
+-10.1.0.6
+-10.1.0.9
+-10.2.0.4
+-10.2.0.15
+-10.2.0.6
+-10.2.0.5
+-10.2.0.8
+-10.2.0.7
+-10.11.0.4
+-10.11.0.14
+-10.11.0.6
+-10.11.0.5
+-10.11.0.7
+-10.11.0.8
++10.1.0.28
++10.1.0.29
++10.1.0.37
++10.1.0.36
++10.1.0.39
++10.1.0.38
++10.1.0.35
++10.1.0.34
++10.1.0.45
++10.1.0.32
++10.1.0.48
++10.1.0.49
++10.1.0.50
++10.1.0.51
++10.1.0.53
++10.1.0.52
++10.1.0.54
++10.1.0.55
++10.1.0.56
++10.1.0.57
++10.1.0.68
++10.1.0.69
++10.1.0.70
++10.1.0.71
++10.1.0.72
++10.1.0.73
++10.1.0.75
++10.1.0.74
++10.1.0.76
++10.1.0.77
++10.1.0.88
++10.1.0.89
++10.1.0.91
++10.1.0.90
++10.1.0.92
++10.1.0.93
++10.1.0.94
++10.1.0.95
++10.1.0.96
++10.1.0.97
+diff --git a/bash/ips.pub b/bash/ips.pub
+index cfdc7ab..9f3b783 100644
+--- a/bash/ips.pub
++++ b/bash/ips.pub
+@@ -1,24 +1,40 @@
+-20.81.186.191
+-20.81.186.46
+-20.81.191.206
+-20.81.191.186
+-20.242.120.115
+-20.242.120.140
+-20.81.130.254
+-20.81.185.46
+-20.81.189.102
+-20.81.191.33
+-20.81.190.70
+-20.81.191.105
+-20.98.105.220
+-20.57.184.174
+-20.98.107.110
+-20.98.107.45
+-20.120.162.20
+-20.120.161.237
+-20.163.31.46
+-20.163.31.23
+-20.14.89.96
+-20.14.91.205
+-20.163.31.134
+-20.163.31.156
++20.7.75.5
++20.114.170.255
++20.97.161.113
++20.97.161.36
++20.97.162.180
++20.97.162.170
++20.119.180.46
++20.161.4.243
++20.110.131.171
++20.22.210.204
++20.7.73.161
++172.177.43.196
++172.177.44.39
++20.242.21.226
++20.98.252.16
++20.242.21.227
++20.98.239.172
++20.98.251.234
++20.242.22.50
++20.7.74.198
++20.65.59.171
++20.65.59.224
++172.177.48.80
++172.177.48.119
++172.177.48.238
++20.12.42.68
++172.177.48.239
++20.12.43.52
++20.12.43.204
++20.12.43.255
++20.230.88.107
++20.119.184.193
++20.119.186.135
++20.119.185.89
++20.119.186.174
++20.119.186.202
++20.114.138.242
++20.119.187.240
++20.119.234.31
++20.119.234.161
+diff --git a/bash/kill_leader_datacenter.sh b/bash/kill_leader_datacenter.sh
+index 3a65a8c..850ffc3 100755
+--- a/bash/kill_leader_datacenter.sh
++++ b/bash/kill_leader_datacenter.sh
+@@ -1,13 +1,52 @@
+-servers=(
+-  127.0.0.1
++leaders=(
++  10.1.0.48
++  10.1.0.49
++  10.1.0.50
++  10.1.0.51
++  10.1.0.53
++  10.1.0.52
++  10.1.0.54
++  10.1.0.55
++  10.1.0.56
++  10.1.0.57
+ )
++##p1s=(
++#learners=(
++#  10.1.0.68
++#  10.1.0.69
++#  10.1.0.70
++#  10.1.0.71
++#  10.1.0.72
++#  10.1.0.73
++#  10.1.0.75
++#  10.1.0.74
++#  10.1.0.76
++#  10.1.0.77
++#)
++
++#p1s=(
++learners=(
++10.1.0.28
++10.1.0.29
++10.1.0.37
++10.1.0.36
++10.1.0.39
++10.1.0.38
++10.1.0.35
++10.1.0.34
++10.1.0.45
++10.1.0.32
++)
++n_partitions=10
++leaders=("${leaders[@]:0:$n_partitions}")
++learners=("${learners[@]:0:$n_partitions}")
+ 
+ # kill all leader servers
+-for i in "${!servers[@]}"
++for i in "${!leaders[@]}"
+ do
+-  ip=${servers[$i]}
+-  echo "ssh to reqest to $ip"
+-  cmd="ps aux|grep -i localhost|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
++  ip=${leaders[$i]}
++  cmd="ps aux|grep -i localhost|awk '{print \$2}'|xargs sudo kill -9; sleep 1;echo 'aa'> /home/azureuser/srolis/results/$i.log"
++  echo "ssh to reqest to $ip, $cmd"
+   ssh $ip "$cmd" &
+ done
+ 
+@@ -15,12 +54,9 @@ done
+ sleep 5
+ 
+ # kill all learner servers
+-servers=(
+-  127.0.0.1
+-)
+-for i in "${!servers[@]}"
++for i in "${!learners[@]}"
+ do
+-  ip=${servers[$i]}
++  ip=${learners[$i]}
+   echo "ssh to reqest to $ip"
+   cmd="ps aux|grep -i learner|awk '{print \$2}'|xargs sudo kill -9; sleep 1;"
+   ssh $ip "$cmd" &
+diff --git a/bash/shard.sh b/bash/shard.sh
+index 064dc78..2b5f189 100755
+--- a/bash/shard.sh
++++ b/bash/shard.sh
+@@ -4,7 +4,16 @@ sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimit
+ nshard=$1
+ shard=$2
+ trd=$3
+-let up=trd+3
++
++if (( $trd >= 1 && $trd <= 8 )); then
++  let up=trd+3  # 4 cpus
++elif (( $trd >= 9 && $trd <= 16 )); then
++  let up=trd+4  # 5 cpus
++else
++  # 20 sometimes weird 
++  let up=trd+5  # 6 cpus
++fi
++
+ sec=${4:-30}
+ cluster=${5:-localhost}
+ sudo cgset -r cpuset.mems=0 cpulimit
+diff --git a/benchmarks/bench.cc b/benchmarks/bench.cc
+index dbf9921..111e940 100644
+--- a/benchmarks/bench.cc
++++ b/benchmarks/bench.cc
+@@ -424,9 +424,10 @@ bench_runner::run()
+         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
+       runtime_loop--;
+       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+-      //uint64_t n_commits = 0 ;
++      uint64_t n_commits = 0 ;
+       //for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
+       //samplingTPUT.push_back({getEpochInms(), n_commits});
++      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+     }
+     Warning("runtime_plus:%d",runtime_plus);
+     runtime_loop = runtime_plus * repeats;
+@@ -435,9 +436,10 @@ bench_runner::run()
+       if (runtime_loop % repeats == 0) 
+         Warning("runtime time left:%d ms, bool:%d",runtime_loop * interval, runtime_loop>0);
+       runtime_loop--;
+-      //uint64_t n_commits = 0 ;
++      uint64_t n_commits = 0 ;
+       //for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
+       //samplingTPUT.push_back({getEpochInms(), n_commits});
++      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+     }
+   }
+   // notify other leaders to shutdown as well
+diff --git a/benchmarks/tpcc.cc b/benchmarks/tpcc.cc
+index fe26746..6dd74ec 100644
+--- a/benchmarks/tpcc.cc
++++ b/benchmarks/tpcc.cc
+@@ -211,13 +211,14 @@ static unsigned g_txn_workload_mix[] = { 100, 0, 0, 0, 0 };
+ static unsigned g_txn_workload_mix[] = { 50, 50, 0, 0, 0 };
+ #else
+ static unsigned g_txn_workload_mix[] = { 45, 43, 4, 4, 4 }; // default TPC-C workload mix
++//static unsigned g_txn_workload_mix[] = { 100, 0, 0, 0, 0 }; // default TPC-C workload mix
+ #endif
+ static aligned_padded_elem<spinlock> *g_partition_locks = nullptr;
+ static aligned_padded_elem<atomic<uint64_t>> *g_district_ids = nullptr;
+ 
+ // configuration microbenchmark
+ static int nkeys = 100 * 10000 ; // 1 million, TODO: it's better for in proportion to scale_factor
+-static const size_t g_micro_remote_item_pct = 1; // different from new-order, it always on the remote server
++static const size_t g_micro_remote_item_pct = 5; // different from new-order, it always on the remote server
+ static const size_t RMW_count = 4; // the updated keys in a RMW transaction
+ // change ITEM_MICRO_KEY_FIELDS from 8 -> 16
+ static const bool drtm = false;
+diff --git a/benchmarks/ut/erpc_client.cc b/benchmarks/ut/erpc_client.cc
+index 7d9b992..27823ab 100644
+--- a/benchmarks/ut/erpc_client.cc
++++ b/benchmarks/ut/erpc_client.cc
+@@ -29,12 +29,12 @@ static void client_thread(int thread_id) {
+     req_tag_t* thread_tag = new req_tag_t();
+     context_t* c = new context_t();
+ 
+-    std::string client_uri = "127.0.0.1:" + std::to_string(clientPort+thread_id);
++    std::string client_uri = "10.1.0.49:" + std::to_string(clientPort+thread_id);
+     erpc::Nexus nexus(client_uri);
+     c->rpc = new erpc::Rpc<erpc::CTransport>(&nexus, static_cast<void *>(c), /* context */ thread_id, sm_handler, 0);
+ 
+     int serverD = serverPort + thread_id % 2;
+-    std::string server_uri = "127.0.0.1:" + std::to_string(serverD);
++    std::string server_uri = "10.1.0.48:" + std::to_string(serverD);
+     int session_num = c->rpc->create_session(server_uri, 100);
+ 
+     while (!c->rpc->is_connected(session_num)) 
+@@ -85,4 +85,4 @@ int main() {
+     running = false;
+     sleep(1);
+     return 0;
+-}
+\ No newline at end of file
++}
+diff --git a/benchmarks/ut/erpc_server.cc b/benchmarks/ut/erpc_server.cc
+index c766e77..8ce502f 100644
+--- a/benchmarks/ut/erpc_server.cc
++++ b/benchmarks/ut/erpc_server.cc
+@@ -37,7 +37,7 @@ void transport_request1(erpc::ReqHandle *req_handle, void *) {
+ 
+ void start_server(int thread_id) {
+     if (thread_id==0) {
+-        std::string server_uri = "127.0.0.1:" + std::to_string(serverPort);
++        std::string server_uri = "10.1.0.48:" + std::to_string(serverPort);
+         std::cout<<"server_uri:"<<server_uri<<std::endl;
+         erpc::Nexus nexus(server_uri);
+ 
+@@ -49,7 +49,7 @@ void start_server(int thread_id) {
+             rpc->run_event_loop_once();
+         }
+     } else {
+-        std::string server_uri = "127.0.0.1:" + std::to_string(serverPort+1);
++        std::string server_uri = "10.1.0.48:" + std::to_string(serverPort+1);
+         std::cout<<"server_uri:"<<server_uri<<std::endl;
+         erpc::Nexus nexus(server_uri);
+ 
+@@ -71,4 +71,4 @@ int main() {
+     }
+ 
+     sleep(10000);
+-}
+\ No newline at end of file
++}
+diff --git a/initial.sh b/initial.sh
+index 3dd5c53..caa604d 100755
+--- a/initial.sh
++++ b/initial.sh
+@@ -1,3 +1,6 @@
++# check resolution
++sudo systemctl start systemd-resolved
++
+ ulimit -n 20000
+ # which is used for eRPC and dpdk configuration
+ sudo modprobe ib_uverbs
+diff --git a/one-click.sh b/one-click.sh
+index 9ddf0f1..3db1663 100755
+--- a/one-click.sh
++++ b/one-click.sh
+@@ -28,7 +28,9 @@ experiment0_0() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=1 MICRO_BENCHMARK=0
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp0_0_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -40,7 +42,9 @@ experiment0_1() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=1 MICRO_BENCHMARK=1
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp0_1_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -54,7 +58,9 @@ experiment1_0() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=0 MICRO_BENCHMARK=0
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp1_0_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -66,7 +72,9 @@ experiment1_1() {
+   make clean && MODE=perf make -j dbtest PAXOS_LIB_ENABLED=0 DISABLE_MULTI_VERSION=0 MICRO_BENCHMARK=1
+   start=1
+   end=12
+-  for (( trd=$start; trd<=$end; trd++ ))
++  #for (( trd=$start; trd<=$end; trd++ ))
++    needToRunTrds=(1 4 8 12 16 20 24)
++    for trd in "${needToRunTrds[@]}"
+ do
+     LOGFILE="./results/exp1_1_$trd.log"
+     ps aux  |  grep -i dbtest  |  awk '{print $2}'  |  xargs sudo kill -9
+@@ -177,9 +185,9 @@ done
+ #}
+ setup
+ 
+-#experiment0_0
+-#experiment0_1
+-#experiment1_0
+-#experiment1_1
++experiment0_0
++experiment0_1
++experiment1_0
++experiment1_1
+ #experiment2_0
+-#experiment2_1
+\ No newline at end of file
++#experiment2_1
+diff --git a/results/commands.txt b/results/commands.txt
+index 28537f9..49dd505 100644
+--- a/results/commands.txt
++++ b/results/commands.txt
+@@ -3,3 +3,34 @@
+ 
+ bash bash/shard.sh 2 0 12 > ./results/exp2_0_nshard2_sIdx0_trd12.log 2>&1
+ bash bash/shard.sh 2 1 12 > ./results/exp2_0_nshard2_sIdx1_trd12.log 2>&1
++
++----->>> start to run 
++
++bash bash/shard.sh 1 0 1 > ./results/exp0_0_1.log 2>&1
++bash bash/shard.sh 1 0 4 > ./results/exp0_0_4.log 2>&1
++bash bash/shard.sh 1 0 8 > ./results/exp0_0_8.log 2>&1
++bash bash/shard.sh 1 0 12 > ./results/exp0_0_12.log 2>&1
++bash bash/shard.sh 1 0 16 > ./results/exp0_0_16.log 2>&1
++bash bash/shard.sh 1 0 20 > ./results/exp0_0_20.log 2>&1
++bash bash/shard.sh 1 0 24 > ./results/exp0_0_24.log 2>&1
++bash bash/shard.sh 1 0 1 > ./results/exp0_1_1.log 2>&1
++bash bash/shard.sh 1 0 4 > ./results/exp0_1_4.log 2>&1
++bash bash/shard.sh 1 0 8 > ./results/exp0_1_8.log 2>&1
++bash bash/shard.sh 1 0 12 > ./results/exp0_1_12.log 2>&1
++bash bash/shard.sh 1 0 16 > ./results/exp0_1_16.log 2>&1
++bash bash/shard.sh 1 0 20 > ./results/exp0_1_20.log 2>&1
++bash bash/shard.sh 1 0 24 > ./results/exp0_1_24.log 2>&1
++bash bash/shard.sh 1 0 1 > ./results/exp1_0_1.log 2>&1
++bash bash/shard.sh 1 0 4 > ./results/exp1_0_4.log 2>&1
++bash bash/shard.sh 1 0 8 > ./results/exp1_0_8.log 2>&1
++bash bash/shard.sh 1 0 12 > ./results/exp1_0_12.log 2>&1
++bash bash/shard.sh 1 0 16 > ./results/exp1_0_16.log 2>&1
++bash bash/shard.sh 1 0 20 > ./results/exp1_0_20.log 2>&1
++bash bash/shard.sh 1 0 24 > ./results/exp1_0_24.log 2>&1
++bash bash/shard.sh 1 0 1 > ./results/exp1_1_1.log 2>&1
++bash bash/shard.sh 1 0 4 > ./results/exp1_1_4.log 2>&1
++bash bash/shard.sh 1 0 8 > ./results/exp1_1_8.log 2>&1
++bash bash/shard.sh 1 0 12 > ./results/exp1_1_12.log 2>&1
++bash bash/shard.sh 1 0 16 > ./results/exp1_1_16.log 2>&1
++bash bash/shard.sh 1 0 20 > ./results/exp1_1_20.log 2>&1
++bash bash/shard.sh 1 0 24 > ./results/exp1_1_24.log 2>&1
+diff --git a/results/extractor.py b/results/extractor.py
+index 49a0d29..9ea5b2c 100644
+--- a/results/extractor.py
++++ b/results/extractor.py
+@@ -128,7 +128,7 @@ def extract_time_ncommits(f):
+ def extract_failover():
+     # Prompt the user to enter a filename
+     # extract_time_ncommits("./leader.log")
+-    ret = extract_time_ncommits("./leader-1.log")
++    ret = extract_time_ncommits("./exp-localhost-v4-10-24-1-0.log")
+ 
+     ret_update = []
+     interval = 10 # 10ms
+@@ -138,22 +138,51 @@ def extract_failover():
+     for i, (t, n) in enumerate(ret_update):
+         print("{a}\t{b}\t{c}\t{d}".format(a=t, b=n, c=ret[i][0], d=ret[i][1]))
+ 
++def extract_failover_complete():
++    leader = extract_time_ncommits("./exp-localhost-v4-8-24-0-0.log")
++    p1 = extract_time_ncommits("./exp-p1-v4-8-24-0-0.log")
++    ret = leader + p1
++    ret_update = []
++    interval = 10 # 10ms
++
++    gap = p1[0][0] - leader[-1][0]
++
++    cnt = 1
++    for i, (t, n) in enumerate(leader[1:]):
++        t, n = int(t), int(n)
++        ret_update.append((cnt, (1000/interval)*(n-leader[i][1])))
++        cnt += 1
++
++    for j in range(gap/interval):
++        ret_update.append((cnt, 0))
++        cnt += 1
++    
++    prev = 0
++    for i, (t, n) in enumerate(p1):
++        t, n = int(t), int(n)
++        ret_update.append((cnt, (1000/interval)*(n-prev)))
++        cnt += 1
++        prev = p1[i][1]
++   
++    for i, (t, n) in enumerate(ret_update):
++        print("{a}\t{b}".format(a=t, b=n))
++
+ if __name__ == "__main__":
+     # print "exp_0_0"
+     # exp_0_0()
+     # print "\n"
+ 
+-    # print "exp_0_1"
+-    # exp_0_1()
+-    # print "\n"
++    #print "exp_0_1"
++    #exp_0_1()
++    #print "\n"
+ 
+-    # print "exp_1_0"
+-    # exp_1_0()
+-    # print "\n"
++    #print "exp_1_0"
++    #exp_1_0()
++    #print "\n"
+ 
+-    # print "exp_1_1"
+-    # exp_1_1()
+-    # print "\n"
++    #print "exp_1_1"
++    #exp_1_1()
++    #print "\n"
+ 
+     # print "exp_2_0"
+     # exp_2_0()
+@@ -163,4 +192,5 @@ if __name__ == "__main__":
+     # exp_2_1()
+     # print "\n"
+ 
+-    extract_failover()
+\ No newline at end of file
++    #extract_failover()
++    extract_failover_complete()
+diff --git a/results/run.sh b/results/run.sh
+index acab964..678e025 100755
+--- a/results/run.sh
++++ b/results/run.sh
+@@ -9,12 +9,67 @@
+ #   echo ""
+ #done
+ 
+-# for v3
+-threads=(1 4 8 12 16 20 24 28)
++# for the threads
++n_partitions=10
++vv="v4"
++#threads=(1 4 8 12 16 20 24 28)
++#threads=(25 26 27 28)
++#threads=(16 18 20 22 24)
++#threads=(12 16 20 24)
++#threads=(16 17 18 19 20 24)
++threads=(1 4 8 12 16 20 24)
+ for thr in "${threads[@]}"; do
+-   log="v3-10-tpcc-replicated/exp-localhost-v3-10-$thr-*.log"
+-   cat $log| ag 'agg_throughput'| ag 'agg_throughput' | wc -l
+-   cat $log| ag 'agg_throughput'| awk '{sum += $2} END {print sum}'
+-   cat $log| ag 'NewOrder_remote_commit_latency'| awk '{sum += $2} END {print sum/10.0}'
++   log="exp-localhost-$vv-$n_partitions-$thr-*-0.log"
++   echo "trd: $thr, log: $log"
++   k="agg_throughput"; echo -n -e "count:\t"; 
++   cat $log| ag $k| ag $k | wc -l
++   k="agg_throughput"; echo -n -e "TPUT:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum}'
++   k="NewOrder_remote_abort_ratio"; echo -n -e "$k:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum/10.0}'
++   k="NewOrder_remote_commit_latency"; echo -n -e "$k:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum/10.0}'
++   k="NewOrder_remote_abort_latency"; echo -n -e "$k:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum/10.0}'
++   k="NewOrder_remote_ratio"; echo -n -e "$k:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum/10.0}'
++   k="Payment_remote_ratio"; echo -n -e "$k:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum/10.0}'
++   k="runtime: "; echo -n -e "$k:\t"; 
++   cat $log| ag "$k"| awk '{sum += $2} END {print sum/10.0}'
++   k="agg_abort_rate:"; echo -n -e "$k:\t"; 
++   cat $log| ag $k| awk '{sum += $2} END {print sum/10.0}'
+    echo ""
+-done
+\ No newline at end of file
++done
++
++#vv="v4"
++#partitions=(1 2 3 4 5 6 7 8 9 10)
++#for n_partitions in "${partitions[@]}"; do
++#   log="exp-localhost-$vv-$n_partitions-24-*-0.log"
++#   echo "partition: $n_partitions, log: $log"
++#   cat $log| ag 'agg_throughput'| ag 'agg_throughput' | wc -l
++#   cat $log| ag 'agg_throughput'| awk '{sum += $2} END {print sum}'
++#   cat $log| ag 'NewOrder_remote_abort_ratio'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'NewOrder_remote_commit_latency'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'NewOrder_remote_ratio'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'Payment_remote_ratio'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'runtime: '| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'agg_abort_rate:'| awk '{sum += $2} END {print sum/10.0}'
++#   echo ""
++#done
++
++#vv="v4"
++#rr=(1 2 3 5 10 25 50 100)
++#for r in "${rr[@]}"; do
++#   log="exp-localhost-$vv-10-24-*-$r.log"
++#   echo "rr: $r, log: $log"
++#   cat $log| ag 'agg_throughput'| ag 'agg_throughput' | wc -l
++#   cat $log| ag 'agg_throughput'| awk '{sum += $2} END {print sum}'
++#   cat $log| ag 'NewOrder_remote_abort_ratio'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'NewOrder_remote_commit_latency'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'NewOrder_remote_ratio'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'Payment_remote_ratio'| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'runtime: '| awk '{sum += $2} END {print sum/10.0}'
++#   cat $log| ag 'agg_abort_rate:'| awk '{sum += $2} END {print sum/10.0}'
++#   echo ""
++#done
+diff --git a/third-party/paxos b/third-party/paxos
+index 883af11..01c686f 160000
+--- a/third-party/paxos
++++ b/third-party/paxos
+@@ -1 +1 @@
+-Subproject commit 883af112fba1412f411891f6e345691f70ff55f3
++Subproject commit 01c686f263eb0c575ce53316a811162a33d3bf5f-dirty

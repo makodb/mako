@@ -1,0 +1,744 @@
+#include "paxos/server.h"
+#include "paxos/commo.h"
+#include "service.h"
+#include <chrono>
+#include <thread>
+#include <cstdlib>
+#include <ctime>
+
+namespace janus {
+// Paxos worker thread
+vector<shared_ptr<PaxosWorker>> pxs_workers_g = {};
+// Learner worker thread on the server side
+vector<shared_ptr<PaxosWorker>> ler_workers_g = {};
+
+moodycamel::ConcurrentQueue<shared_ptr<Coordinator>> PaxosWorker::coo_queue;
+std::queue<shared_ptr<Coordinator>> PaxosWorker::coo_queue_nc;
+
+shared_ptr<ElectionState> es_pw = ElectionState::instance();
+
+static int volatile xx =
+    MarshallDeputy::reg_initializer(MarshallDeputy::CONTAINER_CMD,
+                                   []() -> Marshallable* {
+                                     return new LogEntry();
+                                   });
+static int volatile xxx =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_BLK_PXS,
+                                     []() -> Marshallable* {
+                                       return new BulkPaxosCmd();
+                                     });
+static int volatile x4 =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_BLK_PREP_PXS,
+                                     []() -> Marshallable* {
+                                       return new BulkPrepareLog();
+                                     });
+static int volatile x5 =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_HRTBT_PXS,
+                                     []() -> Marshallable* {
+                                       return new HeartBeatLog();
+                                     });
+
+static int volatile x6 =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCREQ_PXS,
+                                     []() -> Marshallable* {
+                                       return new SyncLogRequest();
+                                     });
+
+static int volatile x7 =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCRESP_PXS,
+                                     []() -> Marshallable* {
+                                       return new SyncLogResponse();
+                                     });
+static int volatile x8 =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_SYNCNOOP_PXS,
+                                     []() -> Marshallable* {
+                                       return new SyncNoOpRequest();
+                                     });
+static int volatile x9 =
+      MarshallDeputy::reg_initializer(MarshallDeputy::CMD_PREP_PXS,
+                                     []() -> Marshallable* {
+                                       return new PaxosPrepCmd();
+                                     });
+
+static int shared_ptr_apprch = 1;
+Marshal& LogEntry::to_marshal(Marshal& m) const {
+  m << length;
+  //Log_info("The legnth of the log is %d", length);
+  if(shared_ptr_apprch){
+	 if(operation_test.get())
+	   m << std::string(operation_test.get(), length);
+         else
+	   m << log_entry;
+  } else{
+	  m << log_entry;
+  }
+  return m;
+};
+
+Marshal& LogEntry::from_marshal(Marshal& m) {
+  //return m;
+  m >> length;
+  if(false && shared_ptr_apprch){
+	  std::string str;
+	  m >> str;
+	  // marker:ansh check here
+	  //std::cout << str << " " << length << std::endl;
+	  Log_info("from_marshal %d", length);
+	  operation_test = shared_ptr<char>(new char[length+1]);
+	  operation_test.get()[length] = '\0';
+	  memcpy(operation_test.get(), str.c_str(), str.length());
+	  //fprintf(stderr, "%s\n", operation_test.get());
+  }else{
+ 	 m >> log_entry;
+  }
+  return m;
+};
+
+void PaxosWorker::SetupBase() {
+  auto config = Config::GetConfig();
+  rep_frame_ = Frame::GetFrame(config->replica_proto_);
+  rep_frame_->site_info_ = site_info_;
+  rep_sched_ = rep_frame_->CreateScheduler();
+  rep_sched_->loc_id_ = site_info_->locale_id;
+  rep_sched_->partition_id_ = site_info_->partition_id_;
+  this->tot_num = config->get_tot_req();
+}
+
+
+int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
+  int status=-1;
+  // if (site_info_->proc_name.compare("learner")==0){
+  //   Log_info("receive a slot_id:%d",slot_id);
+  // }
+  auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
+  int len = sp_log_entry.length;
+
+  //Log_info("apply a log, par_id:%d, epoch:%d, slot_id:%d, len:%d,",site_info_->partition_id_, cur_epoch, slot_id, len);
+  if (cmd.get()->kind_== MarshallDeputy::CONTAINER_CMD) {
+    if (this->callback_par_id_return_ != nullptr) {
+      // forward the cmd to the learner
+      // we use p1 to forward requests to save leader's bandwidth
+      // it's better to start p1 at the end
+      if ((site_info_->proc_name.compare("p1")==0)) {
+        // Forward commits to learner
+        // Note: rep_commo_ should be initialized before workload starts
+        // If workload starts before all sites connect, this will be skipped
+        if (rep_commo_ != nullptr) {
+          ((MultiPaxosCommo*)rep_commo_)->ForwardToLearner(site_info_->partition_id_,
+                                         slot_id,
+                                         cur_epoch,  // Use PaxosWorker's cur_epoch instead of coordinator
+                                         cmd,
+                                         [](uint64_t slot, ballot_t ballot) {
+                                           //Log_info("received a ack from the learner, slot: %d, ballot: %d", slot, ballot);
+                                         });
+        }
+      }
+
+      auto& sp_log_entry = dynamic_cast<LogEntry&>(*cmd.get());
+      int len = sp_log_entry.length;
+      if(sp_log_entry.length == 0){
+	      Log_info("Recieved a zero length log");
+      }
+      //Log_info("Paxos commit a log, par_id:%d, len: %d, epoch:%d, slot_id:%d",site_info_->partition_id_, len, cur_epoch, slot_id);
+      //Log_info("in Next, partition_id: %d, id: %d, proc_name: %s, role: %d, slot: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role, slot);                                 
+      if (len > 0) {
+         const char *log = sp_log_entry.log_entry.c_str() ;
+         
+         // Single timestamp system: get encoded value (timestamp * 10 + status)
+         int encoded_value = callback_par_id_return_(log, 
+                                                    len, 
+                                                    site_info_->partition_id_,
+                                                    slot_id,
+                                                    un_replay_logs_);
+         status = encoded_value % 10;  // Extract status from last digit
+         uint32_t timestamp = encoded_value / 10;  // Extract timestamp
+         //Log_info("XXXXX: partition_id: %d, id: %d, proc_name: %s, role: %d", site_info_->partition_id_, site_info_->id, site_info_->proc_name.c_str(), site_info_->role);                                 
+         //Log_info("received a message: %d, status: %d, timestamp: %u", sp_log_entry.length, status, timestamp);
+         // status: 1 => init, 2 => ending of paxos group, 3 => can't pass the safety check, 4 => complete replay
+         //Log_info("par_id: %d, append a log into un_replay_logs, size: %lld, status: %d, first[0]: %llu, received: %d", 
+         //         site_info_->partition_id_, un_replay_logs_.size(), status, latest_commit_id_v[0], sp_log_entry.length);
+         if (status == janus::PaxosStatus::STATUS_SAFETY_FAIL) {
+             char *dest = (char *)malloc(len) ;
+             memcpy(dest, log, len) ;
+             un_replay_logs_.push(std::make_tuple(timestamp, slot_id, status, len, (const char*)dest)) ;
+             //un_replay_logs_.push(std::make_tuple(timestamp, slot_id, status, len, (const char*)log)) ;
+         } else if (status == janus::PaxosStatus::STATUS_INIT) {
+             std::cout << "this should never happen!!!" << std::endl;
+         } else if (status == janus::PaxosStatus::STATUS_NOOPS) {
+            Log_info("update the no-ops, par_id:%d, slot_id:%d",site_info_->partition_id_, slot_id);
+            noops_received=true;
+         }
+      } else {
+        // the ending signal
+        const char *log = sp_log_entry.log_entry.c_str() ;
+        int ending_status = callback_par_id_return_(log, len, site_info_->partition_id_, slot_id, un_replay_logs_) ;
+      }
+    } else {
+      verify(0);
+    }
+  } else {
+    verify(0);
+  }
+
+  if (n_current >= n_tot) {
+    //Log_info("Current pair id %d loc id %d n_current and n_tot and accept size is %d %d", site_info_->partition_id_, site_info_->locale_id, (int)n_current, (int)n_tot);
+    finish_cond.notify_all();
+  }
+  return status;
+}
+
+void PaxosWorker::SetupService() {
+  std::string bind_addr = site_info_->GetBindAddress();
+  svr_poll_thread_worker_ = PollThread::create();
+
+  uint32_t num_threads = 1;
+  thread_pool_g = new base::ThreadPool(num_threads);
+
+  // init rrr::Server first (before registering services)
+  rpc_server_ = new rrr::Server(rusty::Some(svr_poll_thread_worker_.as_ref().unwrap().clone()));
+
+  // Create and register services (ownership transferred to rpc_server_)
+  if (rep_frame_ != nullptr) {
+    auto services = rep_frame_->CreateRpcServices(site_info_->id,
+                                                   rep_sched_,
+                                                   svr_poll_thread_worker_.as_ref().unwrap());
+    Log_info("[service]loc_id: %d, name: %s, proc: %s, id: %d",
+      site_info_->locale_id, site_info_->name.c_str(), site_info_->proc_name.c_str(), site_info_->id);
+    for (auto& svc : services) {
+      rpc_server_->reg_service(std::move(svc));
+    }
+  }
+
+  // start rpc server
+  Log_debug("starting server at %s", bind_addr.c_str());
+  std::cout << "starting server at " << bind_addr.c_str() << std::endl;
+  int ret = rpc_server_->start(bind_addr.c_str());
+  if (ret != 0) {
+    Log_fatal("server launch failed.");
+    std::cout << "server launch failed.\n";
+  }
+
+  Log_info("Server %s ready at %s",
+           site_info_->name.c_str(),
+           bind_addr.c_str());
+}
+
+void PaxosWorker::SetupCommo() {
+  if (rep_frame_) {
+    // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThread()
+    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
+    if (rep_commo_) {
+      rep_commo_->loc_id_ = site_info_->locale_id;
+    }
+    rep_sched_->commo_ = rep_commo_;
+  }
+  //if (IsLeader(site_info_->partition_id_))submit_pool = new SubmitPool();
+}
+
+void PaxosWorker::SetupHeartbeat() {
+  bool hb = Config::GetConfig()->do_heart_beat();
+  if (!hb) return;
+  auto timeout = Config::GetConfig()->get_ctrl_timeout();
+  svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
+  hb_thread_pool_g = new rrr::ThreadPool(1);
+  hb_rpc_server_ = new rrr::Server(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone()));
+
+  // Create shared status and pass clone to service
+  server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
+  hb_rpc_server_->reg_service(rusty::make_box<ServerControlServiceImpl>(server_status_.as_ref().unwrap().clone(), timeout));
+
+  auto port = site_info_->port + CtrlPortDelta;
+  std::string addr_port = std::string("0.0.0.0:") +
+                          std::to_string(port);
+  hb_rpc_server_->start(addr_port.c_str());
+  if (hb_rpc_server_ != nullptr) {
+    // Log_info("notify ready to control script for %s", bind_addr.c_str());
+    server_status_.as_ref().unwrap()->set_ready();
+  }
+  Log_info("heartbeat setup for %s on %s",
+           site_info_->name.c_str(), addr_port.c_str());
+}
+
+void PaxosWorker::WaitForShutdown() {
+  if (submit_pool != nullptr) {
+    delete submit_pool;
+    submit_pool = nullptr;
+  }
+  if (hb_rpc_server_ != nullptr) {
+//    scsi_->server_heart_beat();
+    hb_rpc_server_->wait_for_shutdown();
+    delete hb_rpc_server_;  // Server destructor cleans up owned scsi_
+    // svr_hb_poll_thread_worker_g automatically released by shared_ptr
+    hb_thread_pool_g->release();
+
+    // Use for_each_service to access services owned by rpc_server_
+    if (rpc_server_ != nullptr) {
+      rpc_server_->for_each_service([](rrr::Service& service) {
+        if (auto* s = dynamic_cast<DepTranServiceImpl*>(&service)) {
+          auto& recorder = s->recorder_;
+          if (recorder) {
+            auto n_flush_avg_ = recorder->stat_cnt_.peek().avg_;
+            auto sz_flush_avg_ = recorder->stat_sz_.peek().avg_;
+            Log::info("Log to disk, average log per flush: %lld,"
+                      " average size per flush: %lld",
+                      n_flush_avg_, sz_flush_avg_);
+          }
+        }
+      });
+    }
+  }
+}
+
+void PaxosWorker::ShutDown() {
+  Log_info("site %s shutting down, n_current: %d, n_tot: %d", site_info_->name.c_str(), (int)n_current, (int)n_tot);
+  verify(rpc_server_ != nullptr);
+  // Services are now owned by rpc_server_ and will be deleted with it
+  delete rpc_server_;
+  rpc_server_ = nullptr;
+  thread_pool_g->release();
+  for (auto c : created_coordinators_) {
+    delete c;
+  }
+  if (rep_sched_ != nullptr) {
+    delete rep_sched_;
+  }
+}
+
+void PaxosWorker::IncSubmit(){	
+	n_tot++;
+}
+
+void PaxosWorker::BulkSubmit(const vector<shared_ptr<Coordinator>>& entries){
+    auto sp_cmd = make_shared<BulkPaxosCmd>();
+    election_state_lock.lock();
+    ballot_t send_epoch = this->cur_epoch;
+    election_state_lock.unlock();
+    sp_cmd->leader_id = es_pw->machine_id;
+    for(auto coo : entries){
+        auto mpc = dynamic_pointer_cast<CoordinatorMultiPaxos>(coo);
+        sp_cmd->slots.push_back(mpc.get()->slot_id_);
+        sp_cmd->ballots.push_back(send_epoch);
+        verify(mpc->cmd_ != nullptr);
+        MarshallDeputy* md =  new MarshallDeputy(mpc.get()->cmd_);
+        sp_cmd->cmds.push_back(shared_ptr<MarshallDeputy>(md));
+    }
+    auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+    _BulkSubmit(sp_m, entries.size());
+    //Log_debug("Current reference count after submit: %d", sp_cmd.use_count());
+}
+
+inline void PaxosWorker::_BulkSubmit(shared_ptr<Marshallable> sp_m, int cnt = 0){
+    auto coord = shared_ptr<Coordinator>(rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0));
+    coord.get()->par_id_ = site_info_->partition_id_;
+    coord.get()->loc_id_ = site_info_->locale_id;
+
+    coord.get()->BulkSubmit(sp_m, [this, cnt]() {
+      this->n_current += cnt;
+      if(this->n_current >= this->n_tot)this->finish_cond.notify_all();
+    });
+}
+
+// marker:ansh
+int PaxosWorker::SendBulkPrepare(shared_ptr<BulkPrepareLog> bp_log){
+    auto sp_m = dynamic_pointer_cast<Marshallable>(bp_log);
+  ballot_t received_epoch = -1;
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  auto sp_quorum = coord->commo_->BroadcastBulkPrepare(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int valid) {
+    Log_info("BulkPrepare: response received %d", valid);
+    if(!valid){
+      //Log_info("BulkPrepare: response received");
+      received_epoch = max(received_epoch, ballot);
+    }
+  });
+  Log_info("BulkPrepare: waiting for response");
+  WAN_WAIT;
+  sp_quorum->wait();
+  if (sp_quorum->yes()) {
+    Log_info("SendBulkPrepare: Leader election successfull");
+    return -1;
+  } else{
+    Log_debug("SendBulkPrepare: Leader election unsuccessfull");
+  }
+  return received_epoch;
+}
+
+// marker:ansh
+int PaxosWorker::SendHeartBeat(shared_ptr<HeartBeatLog> hb_log){
+  void(0);
+  auto sp_m = dynamic_pointer_cast<Marshallable>(hb_log);
+  ballot_t received_epoch = -1;
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  auto sp_quorum = coord->commo_->BroadcastHeartBeat(site_info_->partition_id_, sp_m, [&received_epoch](ballot_t ballot, int resp_type) {
+    if(!resp_type)
+      received_epoch = ballot;
+  });
+  sp_quorum->wait();
+  if (sp_quorum->yes()) {
+    return -1;
+  }
+  return received_epoch;
+}
+
+int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
+  auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
+  ballot_t received_epoch = -1;
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  bool done = false;
+  auto es_pww = es_pw;
+  vector<shared_ptr<SyncLogResponse>> responses;
+  auto sp_quorum = coord->commo_->BroadcastSyncLog(site_info_->partition_id_, 
+                                                   sp_m, 
+                                                   [&received_epoch, &done, es_pww, &responses](shared_ptr<MarshallDeputy> md, 
+                                                                                    ballot_t ballot, 
+                                                                                    int resp_type) {
+    if(!resp_type)
+      es_pww->step_down(ballot);
+    else{
+      if(!done){
+        auto x = dynamic_pointer_cast<SyncLogResponse>(md->sp_data_);
+        responses.emplace_back(x);
+      } else{
+        return;
+      }
+    }
+  });
+  sp_quorum->wait();
+  done = true;
+  if (sp_quorum->yes()) {
+    map<pair<int,slotid_t>, shared_ptr<MarshallDeputy>> commited_slots;
+    for(int i = 0; i < responses.size(); i++){
+      for(int j = 0; j < responses[i]->sync_data.size(); j++){
+        auto bp_cmd = dynamic_pointer_cast<BulkPaxosCmd>(responses[i]->sync_data[j]->sp_data_);
+        for(int k = 0; k < bp_cmd->slots.size(); k++){
+          commited_slots[make_pair(j, bp_cmd->slots[k])] = bp_cmd->cmds[k];
+        }
+      }
+    }
+    Log_info("Responses size is %d", responses.size());
+    for(int i = 0; i < responses.size(); i++){
+      for(int j = 0; j < responses[i]->missing_slots.size(); j++){
+        auto ps_j = dynamic_cast<PaxosServer*>(pxs_workers_g[j]->rep_sched_);
+        for(int k = 0; k < responses[i]->missing_slots[j].size(); k++){
+          auto inst = ps_j->GetInstance(responses[i]->missing_slots[j][k]);
+          if(inst->committed_cmd_){
+	    //Log_info("The slots are for partition %d slot %d", j, responses[i]->missing_slots[j][k]);
+            auto tmp = inst->committed_cmd_;
+            commited_slots[make_pair(j, responses[i]->missing_slots[j][k])] = make_shared<MarshallDeputy>(MarshallDeputy(tmp));
+          }
+        }
+      }
+    }
+
+    vector<shared_ptr<BulkPaxosCmd>> sync_cmds;
+    for(int i = 0; i < pxs_workers_g.size(); i++){
+      auto bp_cmd = make_shared<BulkPaxosCmd>();
+      bp_cmd->leader_id = es_pw->machine_id;
+      sync_cmds.push_back(bp_cmd);
+    }
+    for(auto const& x : commited_slots){
+      sync_cmds[x.first.first]->slots.push_back(x.first.second);
+      sync_cmds[x.first.first]->cmds.push_back(x.second);
+      sync_cmds[x.first.first]->ballots.push_back(sync_log_req->epoch);
+    }
+    vector<shared_ptr<PaxosAcceptQuorumEvent>> events;
+    for(int i = 0; i < pxs_workers_g.size(); i++){
+      if(sync_cmds[i]->ballots.size() == 0)
+        continue;
+      //Log_info("Should receive some uncommitted slots here %d", i);
+      //for(int kk = 0; kk < sync_cmds[i]->slots.size(); kk++)
+      //      std::cout << sync_cmds[i]->slots[kk] << " ";
+      //std::cout << std::endl;
+      auto pw = pxs_workers_g[i];
+      auto send_cmd = dynamic_pointer_cast<Marshallable>(sync_cmds[i]);
+      auto sp_quorum = pw->rep_commo_->BroadcastSyncCommit(i, 
+                                                           send_cmd,
+                                                           [es_pww](ballot_t ballot, int valid){
+          if(!valid){
+            es_pww->step_down(ballot);
+          }
+      });
+      events.push_back(sp_quorum);
+      //sp_quorum->wait();
+    }
+    for(int i = 0; i < events.size(); i++){
+      events[i]->wait();
+    }
+    return -1;
+  }
+  return received_epoch;
+}
+
+int PaxosWorker::SendSyncNoOpLog(shared_ptr<SyncNoOpRequest> sync_log_req){
+  auto sp_m = dynamic_pointer_cast<Marshallable>(sync_log_req);
+  ballot_t received_epoch = -1;
+  auto coord = rep_frame_->CreateBulkCoordinator(Config::GetConfig(), 0);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  bool done = false;
+  auto es_pww = es_pw;
+  auto sp_quorum = coord->commo_->BroadcastSyncNoOps(site_info_->partition_id_, 
+                                                   sp_m, 
+                                                   [&received_epoch, &done, es_pww](ballot_t ballot, 
+                                                                                    int resp_type) {
+    if(!resp_type)
+      es_pww->step_down(ballot);
+    else{
+      if(!done){
+      } else{
+        return;
+      }
+    }
+  });
+  WAN_WAIT;
+  sp_quorum->wait();
+  done = true;
+  if(sp_quorum->yes()){
+    return -1;
+  }
+  return received_epoch;
+}
+
+void PaxosWorker::AddAccept(shared_ptr<Coordinator> coord) {
+  //Log_info("current batch cnt %d", cnt);
+  PaxosWorker::coo_queue.enqueue(coord);
+}
+
+int PaxosWorker::deq_from_coo(vector<shared_ptr<Coordinator>>& current){
+  int qcnt = PaxosWorker::coo_queue.try_dequeue_bulk(&current[0], cnt);
+  return qcnt;
+}
+
+
+void* PaxosWorker::StartReadAccept(void* arg){
+  PaxosWorker* pw = (PaxosWorker*)arg;
+  //std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
+  int sent = 0;
+  while (!pw->stop_flag) {
+    std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
+    int cnt = pw->deq_from_coo(current);
+    if(cnt <= 0)continue;
+    std::vector<shared_ptr<Coordinator>> sub(current.begin(), current.begin() + cnt);
+    //Log_debug("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)sub.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, sub]() {
+      pw->BulkSubmit(sub);
+    }));
+    auto arc_job_base = rusty::Arc<Job>(arc_job);
+    pw->GetPollThread()->add(arc_job_base);
+    sent += cnt;
+    if(sent % 2 == 0)Log_info("Total submits %d", sent);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  pthread_exit(nullptr);
+  return nullptr;
+}
+
+void PaxosWorker::AddAcceptNc(shared_ptr<Coordinator> coord) {
+  //nc_submit_l_.lock();
+  //PaxosWorker::coo_queue_nc.push(coord);
+  //nc_submit_l_.unlock();
+  all_coords[bulk_writer++] = coord;
+}
+
+void PaxosWorker::submitJob(rusty::Arc<Job> arc_job){
+	GetPollThread()->add(arc_job);
+}
+
+void* PaxosWorker::StartReadAcceptNc(void* arg){
+  PaxosWorker* pw = (PaxosWorker*)arg;
+  std::vector<shared_ptr<Coordinator>> current(pw->cnt, nullptr);
+  int sent = 0;
+  while (!pw->stop_flag) {
+    int cur_req = pw->cnt;
+    /*pw->nc_submit_l_.lock();
+    while(!PaxosWorker::coo_queue_nc.empty() && cur_req > 0){
+      auto x = PaxosWorker::coo_queue_nc.front();
+      PaxosWorker::coo_queue_nc.pop();
+      current.push_back(x);
+      cur_req--;
+    }
+    pw->nc_submit_l_.unlock();*/
+    while(cur_req > 0 and pw->all_coords[pw->bulk_reader] != nullptr){
+	   //pw->bulk_reader++; 
+	   current[pw->cnt - cur_req] = pw->all_coords[pw->bulk_reader];
+	   cur_req--;
+	   pw->bulk_reader++;
+    }
+    int cnt = pw->cnt - cur_req;
+    if(cnt == 0)continue;
+    std::vector<shared_ptr<Coordinator>> curr2(current.begin(), current.begin() + cnt);
+    //Log_info("Pushing coordinators for bulk accept coordinators here having size %d %d %d %d", (int)curr2.size(), pw->n_current.load(), pw->n_tot.load(),pw->site_info_->locale_id);
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([&pw, curr2]() {
+      pw->BulkSubmit(curr2);
+    }));
+    auto arc_job_base = rusty::Arc<Job>(arc_job);
+    /*Log_info("alalslal %d %d %d", cnt, (int)pw->n_tot, (int)pw->n_current);
+    if(pw->n_current + cnt >= pw->n_tot){
+	    pw->finish_cond.bcast();
+    }*/
+    auto strt = std::chrono::high_resolution_clock::now();
+    pw->submitJob(arc_job_base);
+    auto endt = std::chrono::high_resolution_clock::now();
+    sent += cnt;
+    //if(sent % 2 == 0)Log_info("The number of submitted entries is %d %d", sent, cnt);
+    //pw->n_current+= cnt;
+    auto secs = std::chrono::duration_cast<std::chrono::nanoseconds>(endt - strt).count();
+    //if(sent % 2 == 0)Log_info("Time spent is submitting the job %f", secs/(1000.0*1000.0*1000.0));
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  pthread_exit(nullptr);
+  return nullptr;
+}
+
+void PaxosWorker::WaitForNoops() {
+  while(1){
+    if(noops_received) break;
+    sleep(0);
+  }
+}
+void PaxosWorker::WaitForSubmit() {
+  /*while(true){
+	sleep(1);
+        Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
+  }*/
+  {
+    std::unique_lock<std::mutex> lock(finish_mutex);
+    while (n_current < n_tot) {
+      Log_info("wait for task, amount: %d - n_tot: %d, n_current: %d", (int)n_tot-(int)n_current, (int)n_tot, (int)n_current);
+      finish_cond.wait(lock);
+    }
+  }
+  Log_debug("finish task.");
+}
+
+void PaxosWorker::InitQueueRead(){
+  if(IsLeader(site_info_->partition_id_)){
+    stop_flag = false;
+    //Pthread_create(&bulkops_th_, nullptr, PaxosWorker::StartReadAcceptNc, this);
+    //pthread_detach(bulkops_th_);
+  }
+}
+
+void PaxosWorker::AddReplayEntry(Marshallable& entry){
+  Marshallable *p = &entry;
+  replay_queue.enqueue(p);
+}
+
+void* PaxosWorker::StartReplayRead(void* arg){
+  PaxosWorker* pw = (PaxosWorker*)arg;
+  while(!pw->stop_replay_flag){
+    sleep(10000); // this is NOT used again, we sleep here for a cpu saving
+    Marshallable* p;
+    auto res = pw->replay_queue.try_dequeue(p);
+    if(!res)continue;
+    exit(1);
+    //pw->Next(*p);
+  }
+  return nullptr;
+}
+
+PaxosWorker::PaxosWorker() {
+  stop_replay_flag = true;
+  // Pthread_create(&replay_th_, nullptr, PaxosWorker::StartReplayRead, this);
+  // pthread_detach(replay_th_);
+}
+
+PaxosWorker::~PaxosWorker() {
+  Log_info("Ending worker with n_tot %d and n_current %d", (int)n_tot, (int)n_current);
+  stop_flag = true;
+  stop_replay_flag = true;
+
+  // Shutdown PollThreads if we own them
+  if (svr_poll_thread_worker_.is_some()) {
+    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
+  }
+  if (svr_hb_poll_thread_worker_g.is_some()) {
+    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
+  }
+}
+
+void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
+  auto sp_cmd = make_shared<LogEntry>();
+  // Use std::string for payload to avoid mismatched allocation/deallocation
+  sp_cmd->log_entry = std::string(log_entry, length);
+  sp_cmd->length = length;
+  auto sp_m = dynamic_pointer_cast<Marshallable>(sp_cmd);
+  _Submit(sp_m);
+}
+
+inline void PaxosWorker::_Submit(shared_ptr<Marshallable> sp_m) {
+  static cooid_t cid{1};
+  static id_t id{1};
+  verify(rep_frame_ != nullptr);
+  auto coord = rep_frame_->CreateCoordinator(cid++,
+                                             Config::GetConfig(),
+                                             0,
+                                             rusty::None,
+                                             id++,
+                                             nullptr);
+  coord->par_id_ = site_info_->partition_id_;
+  coord->loc_id_ = site_info_->locale_id;
+  //marker:ansh slot_hint not being used anymore.
+  slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
+  coord->set_slot(x);
+  coord->assignCmd(sp_m);
+  if(stop_flag != true) {
+    auto sp_coo = shared_ptr<Coordinator>(coord);
+    vector<shared_ptr<Coordinator>> curr2;
+    curr2.push_back(sp_coo);
+    auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([this, curr2]() {
+      this->BulkSubmit(curr2);
+    }));
+    auto arc_job_base = rusty::Arc<Job>(arc_job);
+    submitJob(arc_job_base);
+  } else{
+    coord->Submit(sp_m);
+  }
+}
+
+bool PaxosWorker::IsLeader(uint32_t par_id) {
+  verify(rep_frame_ != nullptr);
+  verify(rep_frame_->site_info_ != nullptr);
+  return rep_frame_->site_info_->partition_id_ == par_id &&
+         rep_frame_->site_info_->locale_id == 0;
+}
+
+bool PaxosWorker::IsPartition(uint32_t par_id) {
+  verify(rep_frame_ != nullptr);
+  verify(rep_frame_->site_info_ != nullptr);
+  return rep_frame_->site_info_->partition_id_ == par_id;
+}
+
+void PaxosWorker::register_apply_callback(std::function<void(const char*, int)> cb) {
+  this->callback_ = cb;
+  verify(rep_sched_ != nullptr);
+  rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
+                                         this,
+                                         std::placeholders::_1,
+                                         std::placeholders::_2));
+}
+
+void PaxosWorker::register_apply_callback_par_id(std::function<void(const char *&, int, int)> cb) {
+    this->callback_par_id_ = cb;
+    verify(rep_sched_ != nullptr);
+    rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,  // the commit entry
+                                           this,
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
+}
+
+void PaxosWorker::register_apply_callback_par_id_return(std::function<int(const char *&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)> cb) {
+    this->callback_par_id_return_ = cb;
+    verify(rep_sched_ != nullptr);
+    rep_sched_->RegLearnerAction(std::bind(&PaxosWorker::Next,
+                                           this,
+                                           std::placeholders::_1,
+                                           std::placeholders::_2));
+}
+
+} // namespace janus

@@ -1,0 +1,56 @@
+Connected successfully:True
+
+--- Cleanup Redis Data ---
+No keys to delete
+
+--- Basic SET and GET Operations ---
+greeting: b'Hello from Redis-py'
+greeting (updated): b'Hello again!'
+
+--- Numeric Operations ---
+Initial counter: b'10'
+After incr: b'11'
+After incrby 5: b'16'
+After decr: b'15'
+
+--- List Operations ---
+List after lpush: b'third,second,first'
+List after rpush: b'third,second,first,fourth'
+Popped from left: b'third'
+List after lpop: b'second,first,fourth'
+List length: 3
+
+--- Key Management ---
+temp1 exists: True
+temp1 TTL: 9 seconds
+Keys matching 'temp*': [b'temp1', b'temp2']
+Deleted temp2: 1
+temp2 exists after deletion: False
+
+--- Hash Operations ---
+User name: b'Alice'
+All user data: {b'age': b'30', b'city': b'New York', b'name': b'Alice'}
+Name and age: [b'Alice', b'30']
+Email field exists: False
+
+--- Set Operations ---
+All colors: {b'yellow', b'red', b'blue', b'green'}
+Red is in colors: True
+Intersection: {b'blue', b'red', b'green'}
+Difference: {b'yellow'}
+Number of colors: 4
+
+--- Direct MULTI/EXEC (no pipeline) ---
+Direct MULTI/EXEC results: [b'OK', b'OK', b'1', b'2']
+direct:counter:  b'2'
+
+--- Transactions with pipeline ---
+Transaction results: [True, True, 101, 49]
+Account 1: b'101', Account 2: b'49'
+
+--- MULTI/EXEC Transaction ---
+MULTI/EXEC results: [True, True, b'value1']
+
+--- WATCH Transaction ---
+WATCH transaction results: [True]
+Final balance: b'90'

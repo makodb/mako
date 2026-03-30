@@ -1,0 +1,206 @@
+diff --git a/bash/ips b/bash/ips
+index a20e317..72db42e 100644
+--- a/bash/ips
++++ b/bash/ips
+@@ -1,23 +1,3 @@
+-10.1.0.69
+-10.1.0.68
+-10.1.0.70
+-10.1.0.71
+-10.1.0.72
+-10.1.0.73
+-10.1.0.75
+-10.1.0.74
+-10.1.0.76
+-10.1.0.77
+-10.1.0.48
+-10.1.0.49
+-10.1.0.50
+-10.1.0.51
+-10.1.0.53
+-10.1.0.52
+-10.1.0.54
+-10.1.0.55
+-10.1.0.56
+-10.1.0.57
+ 10.1.0.28
+ 10.1.0.29
+ 10.1.0.37
+@@ -28,6 +8,26 @@
+ 10.1.0.34
+ 10.1.0.45
+ 10.1.0.32
++10.1.0.48
++10.1.0.49
++10.1.0.50
++10.1.0.51
++10.1.0.53
++10.1.0.52
++10.1.0.54
++10.1.0.55
++10.1.0.56
++10.1.0.57
++10.1.0.69
++10.1.0.68
++10.1.0.70
++10.1.0.71
++10.1.0.72
++10.1.0.73
++10.1.0.75
++10.1.0.74
++10.1.0.76
++10.1.0.77
+ 10.1.0.88
+ 10.1.0.89
+ 10.1.0.91
+diff --git a/bash/ips.pub b/bash/ips.pub
+index bce2e4e..1f63422 100644
+--- a/bash/ips.pub
++++ b/bash/ips.pub
+@@ -1,23 +1,3 @@
+-20.65.59.224
+-20.65.59.171
+-172.177.48.80
+-172.177.48.119
+-172.177.48.238
+-20.12.42.68
+-172.177.48.239
+-20.12.43.52
+-20.12.43.204
+-20.12.43.255
+-20.7.73.161
+-172.177.43.196
+-172.177.44.39
+-20.242.21.226
+-20.98.252.16
+-20.242.21.227
+-20.98.239.172
+-20.98.251.234
+-20.242.22.50
+-20.7.74.198
+ 20.7.75.5
+ 20.114.170.255
+ 20.97.161.113
+@@ -28,6 +8,26 @@
+ 20.161.4.243
+ 20.110.131.171
+ 20.22.210.204
++20.7.73.161
++172.177.43.196
++172.177.44.39
++20.242.21.226
++20.98.252.16
++20.242.21.227
++20.98.239.172
++20.98.251.234
++20.242.22.50
++20.7.74.198
++20.65.59.224
++20.65.59.171
++172.177.48.80
++172.177.48.119
++172.177.48.238
++20.12.42.68
++172.177.48.239
++20.12.43.52
++20.12.43.204
++20.12.43.255
+ 20.230.88.107
+ 20.119.184.193
+ 20.119.186.135
+diff --git a/bash/kill_leader_datacenter.sh b/bash/kill_leader_datacenter.sh
+index e5d5843..9b7a332 100755
+--- a/bash/kill_leader_datacenter.sh
++++ b/bash/kill_leader_datacenter.sh
+@@ -3,6 +3,7 @@ ssh 10.1.0.48 "$cmd1" &
+ ssh 10.1.0.49 "$cmd1" &
+ ssh 10.1.0.50 "$cmd1" &
+ ssh 10.1.0.51 "$cmd1" &
++sleep 10
+ #leaders=(
+ #  10.1.0.48
+ #  10.1.0.49
+diff --git a/batch-runner.sh b/batch-runner.sh
+index a52b5de..41bd95b 100755
+--- a/batch-runner.sh
++++ b/batch-runner.sh
+@@ -10,7 +10,7 @@ leaders=(
+ 10.1.0.56
+ 10.1.0.57
+ )
+-learners=(
++p1s=(
+ 10.1.0.69
+ 10.1.0.68
+ 10.1.0.70
+@@ -22,7 +22,7 @@ learners=(
+ 10.1.0.76
+ 10.1.0.77
+ )
+-p1s=(
++learners=(
+ 10.1.0.28
+ 10.1.0.29
+ 10.1.0.37
+@@ -126,11 +126,11 @@ else
+     echo "FAIL! ($FAIL)"
+ fi
+ 
+-#while ! grep -q "20000 ms" ./results/exp-localhost-v14-$n_partitions-24-0-0.log; do
+-#    sleep 0.1
+-#done
+-#echo "kill leader-datacenter"
+-#bash bash/kill_leader_datacenter.sh
++while ! grep -q "20000 ms" ./results/exp-localhost-v14-$n_partitions-24-0-0.log; do
++    sleep 0.1
++done
++echo "kill leader-datacenter"
++bash bash/kill_leader_datacenter.sh
+ #echo "event triggerd, Kill the leader-0"
+ #ps aux |  grep -i localhost | grep -i "shard-index 0" |  awk '{print $2}'  |  xargs sudo kill -9
+ 
+diff --git a/benchmarks/bench.cc b/benchmarks/bench.cc
+index fd3e40b..75726b6 100644
+--- a/benchmarks/bench.cc
++++ b/benchmarks/bench.cc
+@@ -421,8 +421,8 @@ bench_runner::run()
+       std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+       uint32_t n_commits = 0 ;
+       for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
+-      samplingTPUT.push_back({getEpochInms(), n_commits});
+-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
++      //samplingTPUT.push_back({getEpochInms(), n_commits});
++      cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+     }
+     Warning("runtime_plus:%d",runtime_plus);
+     runtime_loop = runtime_plus * repeats;
+@@ -433,8 +433,8 @@ bench_runner::run()
+       runtime_loop--;
+       uint32_t n_commits = 0 ;
+       for (size_t j = 0; j < nthreads; j++) { n_commits += workers[j]->get_ntxn_commits(); }
+-      samplingTPUT.push_back({getEpochInms(), n_commits});
+-      //cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
++      //samplingTPUT.push_back({getEpochInms(), n_commits});
++      cerr << "Time: " << getEpochInms() << ", n_comits: " << n_commits << endl;
+     }
+   }
+   // notify other leaders to shutdown as well
+diff --git a/benchmarks/dbtest.cc b/benchmarks/dbtest.cc
+index 092ddcf..140fda3 100644
+--- a/benchmarks/dbtest.cc
++++ b/benchmarks/dbtest.cc
+@@ -777,7 +777,7 @@ main(int argc, char **argv)
+       start_workers_tpcc(leader_config, db, nthreads, false, 1, r);
+     }
+     delete db;
+-  } else if (cluster.compare(srolis::LEARNER_CENTER)==0) { // learner cluster
++  } else { // if (cluster.compare(srolis::LEARNER_CENTER)==0) { // learner cluster
+     if (bench_type == "tpcc") {
+       abstract_db * db = tpool_mbta.getDBWrapper(nthreads)->getDB () ;
+       bench_runner *r = start_workers_tpcc(1, db, nthreads, true);
+diff --git a/third-party/paxos b/third-party/paxos
+--- a/third-party/paxos
++++ b/third-party/paxos
+@@ -1 +1 @@
+-Subproject commit 7dea3aabfdefd47947550e954d0465d616b173ff
++Subproject commit 7dea3aabfdefd47947550e954d0465d616b173ff-dirty

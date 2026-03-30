@@ -1,0 +1,42 @@
+# Z3 and LLVM/Clang are auto-detected via pkg-config at build time.
+# Install via: brew install llvm z3 (macOS) or apt install libz3-dev (Linux)
+
+[target.aarch64-apple-darwin]
+# macOS ARM64 (Apple Silicon) specific settings
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../lib",
+    "-C", "link-arg=-Wl,-rpath,@loader_path/../lib",
+    "-C", "link-arg=-Wl,-rpath,/opt/homebrew/lib",
+    "-C", "link-arg=-Wl,-rpath,/opt/homebrew/opt/llvm/lib"
+]
+
+[target.x86_64-apple-darwin]
+# macOS Intel specific settings
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,@executable_path/../lib",
+    "-C", "link-arg=-Wl,-rpath,@loader_path/../lib",
+    "-C", "link-arg=-Wl,-rpath,/usr/local/lib",
+    "-C", "link-arg=-Wl,-rpath,/usr/local/opt/llvm/lib"
+]
+
+[target.x86_64-unknown-linux-gnu]
+# Linux x86_64 settings
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,$ORIGIN/../lib",
+    "-C", "link-arg=-Wl,-rpath,/usr/lib/llvm/lib",
+    "-C", "link-arg=-Wl,-rpath,/usr/local/lib"
+]
+
+[target.aarch64-unknown-linux-gnu]
+# Linux ARM64 settings
+rustflags = [
+    "-C", "link-arg=-Wl,-rpath,$ORIGIN/../lib",
+    "-C", "link-arg=-Wl,-rpath,/usr/lib/llvm/lib",
+    "-C", "link-arg=-Wl,-rpath,/usr/local/lib"
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3

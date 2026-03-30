@@ -1,0 +1,318 @@
+#include <chrono>
+#include <functional>
+#include <sys/time.h>
+
+#include "misc.hpp"
+#include "threading.hpp"
+
+// External safety annotations for atomic operations
+// @external: {
+//   std::__atomic_base::load: [unsafe]
+//   std::__atomic_base::store: [unsafe]
+//   std::__atomic_base::fetch_add: [unsafe]
+//   std::__atomic_base::fetch_sub: [unsafe]
+// }
+
+
+using namespace std;
+
+namespace rrr {
+
+// @unsafe - Uses address-of operator for nanosleep call
+// SAFETY: Only takes address of stack-allocated timespec which remains valid throughout nanosleep
+void SpinLock::lock() {
+    // Fast path: try to acquire lock immediately
+    bool expected = false;
+    if (locked_.compare_exchange_strong(expected, true, 
+                                        std::memory_order_acquire,
+                                        std::memory_order_relaxed)) {
+        return;
+    }
+    
+    // Spin for a short while before sleeping
+    int wait = 1000;
+    while ((wait-- > 0) && locked_.load(std::memory_order_relaxed)) {
+        // CPU-specific pause instruction to reduce contention
+#if defined(__i386__) || defined(__x86_64__)
+        asm volatile("pause");
+#endif
+    }
+    
+    // Fall back to sleeping if still contended
+    struct timespec t;
+    t.tv_sec = 0;
+    t.tv_nsec = 50000;  // 50 microseconds
+    
+    expected = false;
+    while (!locked_.compare_exchange_weak(expected, true,
+                                          std::memory_order_acquire,
+                                          std::memory_order_relaxed)) {
+        nanosleep(&t, nullptr);
+        expected = false;
+    }
+}
+
+struct start_thread_pool_args {
+    ThreadPool* thrpool;
+    int id_in_pool;
+};
+
+void* ThreadPool::start_thread_pool(void* args) {
+    start_thread_pool_args* t_args = (start_thread_pool_args *) args;
+    t_args->thrpool->run_thread(t_args->id_in_pool);
+    delete t_args;
+    pthread_exit(nullptr);
+    return nullptr;
+}
+
+ThreadPool::ThreadPool(int n /* =... */)
+    : n_(n), round_robin_(), th_(n), q_(n) {
+    verify(n_ >= 0);
+
+    for (int i = 0; i < n_; i++) {
+        start_thread_pool_args* args = new start_thread_pool_args();
+        args->thrpool = this;
+        args->id_in_pool = i;
+        Pthread_create(&th_[i], nullptr, ThreadPool::start_thread_pool, args);
+    }
+}
+
+ThreadPool::~ThreadPool() {
+    should_stop_ = true;
+    for (int i = 0; i < n_; i++) {
+        q_[i].push(rusty::Box<function<void()>>(nullptr));  // death pill
+    }
+    for (int i = 0; i < n_; i++) {
+        Pthread_join(th_[i], nullptr);
+    }
+    // check if there's left over jobs
+    for (int i = 0; i < n_; i++) {
+        rusty::Box<function<void()>> job(nullptr);
+        while (q_[i].try_pop(&job)) {
+            if (job.is_valid()) {
+                (*job)();
+            }
+        }
+    }
+    // th_ and q_ are now std::vector, automatically cleaned up
+}
+
+int ThreadPool::run_async(const std::function<void()>& f) {
+    if (should_stop_) {
+        return EPERM;
+    }
+    int queue_id = round_robin_.next() % n_;
+    q_[queue_id].push(rusty::make_box<function<void()>>(f));
+    return 0;
+}
+
+void ThreadPool::run_thread(int id_in_pool) {
+    struct timespec sleep_req;
+    const int min_sleep_nsec = 1000;  // 1us
+    const int max_sleep_nsec = 50 * 1000;  // 50us
+    sleep_req.tv_nsec = 1000;  // 1us
+    sleep_req.tv_sec = 0;
+    int stage = 0;
+
+    // randomized stealing order
+    std::vector<int> steal_order(n_);
+    for (int i = 0; i < n_; i++) {
+        steal_order[i] = i;
+    }
+    Rand r;
+    for (int i = 0; i < n_ - 1; i++) {
+        int j = r.next(i, n_);
+        if (j != i) {
+            std::swap(steal_order[j], steal_order[i]);
+        }
+    }
+
+    // fallback stages: try_pop -> sleep -> try_pop -> steal -> pop
+    // succeed: sleep - 1
+    // failure: sleep + 10
+    for (;;) {
+        rusty::Box<function<void()>> job(nullptr);
+
+        switch(stage) {
+        case 0:
+        case 2:
+            if (q_[id_in_pool].try_pop(&job)) {
+                stage = 0;
+            } else {
+                stage++;
+            }
+            break;
+        case 1:
+            nanosleep(&sleep_req, nullptr);
+            stage++;
+            break;
+        case 3:
+            for (int i = 0; i < n_; i++) {
+                if (steal_order[i] != id_in_pool) {
+                    // just don't steal other thread's death pill (null Box), otherwise they won't die
+                    if (q_[steal_order[i]].try_pop_but_ignore_invalid(&job)) {
+                        stage = 0;
+                        break;
+                    }
+                }
+            }
+            if (stage != 0) {
+                stage++;
+            }
+            break;
+        case 4:
+            job = q_[id_in_pool].pop();
+            stage = 0;
+            break;
+        }
+
+        if (stage == 0) {
+            if (!job.is_valid()) {
+                break;
+            }
+            (*job)();
+            // job is automatically cleaned up when it goes out of scope
+            sleep_req.tv_nsec = clamp(sleep_req.tv_nsec - 1000, min_sleep_nsec, max_sleep_nsec);
+        } else {
+            sleep_req.tv_nsec = clamp(sleep_req.tv_nsec + 1000, min_sleep_nsec, max_sleep_nsec);
+        }
+    }
+    // steal_order is automatically cleaned up (std::vector)
+}
+
+void* RunLater::start_run_later(void* thiz) {
+    RunLater* rl = (RunLater *) thiz;
+    rl->run_later_loop();
+    pthread_exit(nullptr);
+    return nullptr;
+}
+
+RunLater::RunLater() :
+    th_(), m_(), cv_() {
+    should_stop_ = false;
+    latest_ = 0.0;
+    Pthread_mutex_init(&m_, nullptr);
+    Pthread_cond_init(&cv_, nullptr);
+    Pthread_create(&th_, nullptr, RunLater::start_run_later, this);
+}
+
+RunLater::~RunLater() {
+    should_stop_ = true;
+
+    Pthread_mutex_lock(&m_);
+    jobs_.push(make_pair(0.0, nullptr)); // death pill
+    Pthread_cond_signal(&cv_);
+    Pthread_mutex_unlock(&m_);
+
+    Pthread_join(th_, nullptr);
+    Pthread_mutex_destroy(&m_);
+    Pthread_cond_destroy(&cv_);
+}
+
+// @unsafe - rusty-cpp false positives: now_f is initialized, job_func null check is done before dereference
+void RunLater::try_one_job() {
+    // @unsafe - pthread mutex operations
+    { Pthread_mutex_lock(&m_); }
+    if (!jobs_.empty()) {
+        // Copy job data before potentially modifying container
+        auto job_time = jobs_.top().first;
+        auto job_func = jobs_.top().second;
+
+        struct timeval now;
+        // @unsafe - gettimeofday uses address-of
+        { gettimeofday(&now, nullptr); }
+        double now_f = now.tv_sec + now.tv_usec / 1000.0 / 1000.0;
+        double wait = job_time - now_f;
+        if (wait < 0.0) {
+            // Pop now that we've copied the data
+            // @unsafe - STL container method
+            { jobs_.pop(); }
+            if (job_func == nullptr) {
+                // death pill
+                // @unsafe
+                { Pthread_mutex_unlock(&m_); }
+                return;
+            } else {
+                // @unsafe - function pointer dereference and delete
+                {
+                    (*job_func)();
+                    delete job_func;
+                }
+            }
+        } else {
+            // @unsafe - wait for the time to execute a job (C-style casts, pthread calls)
+            {
+                struct timespec abstime;
+                int wait_sec = (int) wait;
+                int wait_nsec = (int) ((wait - wait_sec) * 1000.0 * 1000.0 * 1000.0);
+                abstime.tv_sec = now.tv_sec;
+                abstime.tv_nsec = now.tv_usec * 1000 + wait_nsec;
+                if (abstime.tv_nsec > 1000 * 1000 * 1000) {
+                    abstime.tv_sec += 1;
+                    abstime.tv_nsec -= 1000 * 1000 * 1000;
+                }
+                int ret = pthread_cond_timedwait(&cv_, &m_, &abstime);
+                verify(ret == ETIMEDOUT || ret == 0);
+            }
+        }
+    } else {
+        // wait for inserting a new job
+        // @unsafe
+        { Pthread_cond_wait(&cv_, &m_); }
+    }
+    // @unsafe
+    { Pthread_mutex_unlock(&m_); }
+}
+
+void RunLater::run_later_loop() {
+    while (!should_stop_) {
+        try_one_job();
+    }
+
+    bool done = false;
+    while (!done) {
+        Pthread_mutex_lock(&m_);
+        if (jobs_.empty()) {
+            done = true;
+        }
+        Pthread_mutex_unlock(&m_);
+        if (!done) {
+            try_one_job();
+        }
+    }
+}
+
+int RunLater::run_later(double sec, const std::function<void()>& f) {
+    if (should_stop_) {
+        return EPERM;
+    }
+
+    struct timeval now;
+    gettimeofday(&now, nullptr);
+    double later = now.tv_sec + now.tv_usec / 1000.0 / 1000.0;
+    if (sec > 0.0) {
+        later += sec;
+    }
+
+    latest_l_.lock();
+    if (later > latest_) {
+        latest_ = later;
+    }
+    latest_l_.unlock();
+
+    Pthread_mutex_lock(&m_);
+    jobs_.push(make_pair(later, new std::function<void()>(f)));
+    Pthread_cond_signal(&cv_);
+    Pthread_mutex_unlock(&m_);
+
+    return 0;
+}
+
+double RunLater::max_wait() const {
+    struct timeval now;
+    gettimeofday(&now, nullptr);
+    double now_f = now.tv_sec + now.tv_usec / 1000.0 / 1000.0;
+    return max(0.0, latest_ - now_f);
+}
+
+} // namespace base

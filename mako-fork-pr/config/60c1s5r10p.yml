@@ -1,0 +1,99 @@
+
+
+site:
+  server: # each line is a partition, the first is the master site_name:port
+    - ["s101:38000", "s201:38001", "s301:38002", "s401:38003", "s501:38004"]
+  client: # each line is a partition
+    - ["c01", "c02", "c03", "c04", "c05",
+       "c06", "c07", "c08", "c09", "c10",
+       "c11", "c12", "c13", "c14", "c15",
+       "c16", "c17", "c18", "c19", "c20",
+       "c21", "c22", "c23", "c24", "c25",
+       "c26", "c27", "c28", "c29", "c30",
+       "c31", "c32", "c33", "c34", "c35",
+       "c36", "c37", "c38", "c39", "c40",
+       "c41", "c42", "c43", "c44", "c45",
+       "c46", "c47", "c48", "c49", "c50",
+       "c51", "c52", "c53", "c54", "c55",
+       "c56", "c57", "c58", "c59", "c60",]
+
+
+process:
+  s101: server0
+  s201: server1
+  s301: server2
+  s401: server3
+  s501: server4
+  c01: server0
+  c02: server1
+  c03: server2
+  c04: server3
+  c05: server4
+  c06: server5
+  c07: server6
+  c08: server7
+  c09: server8
+  c10: server9
+  c11: server0
+  c12: server1
+  c13: server2
+  c14: server3
+  c15: server4
+  c16: server5
+  c17: server6
+  c18: server7
+  c19: server8
+  c20: server9
+  c21: server0
+  c22: server1
+  c23: server2
+  c24: server3
+  c25: server4
+  c26: server5
+  c27: server6
+  c28: server7
+  c29: server8
+  c30: server9
+  c31: server0
+  c32: server1
+  c33: server2
+  c34: server3
+  c35: server4
+  c36: server5
+  c37: server6
+  c38: server7
+  c39: server8
+  c40: server9
+  c41: server0
+  c42: server1
+  c43: server2
+  c44: server3
+  c45: server4
+  c46: server5
+  c47: server6
+  c48: server7
+  c49: server8
+  c50: server9
+  c51: server0
+  c52: server1
+  c53: server2
+  c54: server3
+  c55: server4
+  c56: server5
+  c57: server6
+  c58: server7
+  c59: server8
+  c60: server9
+  
+  
+host:
+  server0: 184.72.49.232
+  server1: 44.225.32.130
+  server2: 3.6.253.80
+  server3: 18.198.73.192
+  server4: 16.171.74.27
+  server5: 35.179.49.225
+  server6: 16.163.96.221
+  server7: 3.1.129.2
+  server8: 108.129.57.113
+  server9: 35.181.118.171

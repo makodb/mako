@@ -1,0 +1,51 @@
+# New configuration format for Mako
+# Sites define all the servers with their network addresses
+# Shard_map defines the sharding and replication topology
+
+sites:
+    # Shard 0 replicas
+    - name: "s0_leader"
+      id: 1
+      ip: 127.0.0.1
+      port: 31000
+    - name: "s0_follower1"
+      id: 2
+      ip: 127.0.0.1
+      port: 32000
+    - name: "s0_follower2"
+      id: 3
+      ip: 127.0.0.1
+      port: 33000
+    - name: "s0_learner"
+      id: 4
+      ip: 127.0.0.1
+      port: 34000
+      
+    # Shard 1 replicas (if using multiple shards)
+    - name: "s1_leader"
+      id: 5
+      ip: 127.0.0.1
+      port: 31001
+    - name: "s1_follower1"
+      id: 6
+      ip: 127.0.0.1
+      port: 32001
+    - name: "s1_follower2"
+      id: 7
+      ip: 127.0.0.1
+      port: 33001
+
+# Shard map: each line is a shard with its replicas
+# First replica is the leader, rest are followers
+shard_map:
+    - ["s0_leader", "s0_follower1", "s0_follower2", "s0_learner"]  # Shard 0
+    # - ["s1_leader", "s1_follower1", "s1_follower2"]  # Shard 1 (commented for single shard test)
+
+# Additional configuration for Mako
+warehouses: 6  # number of warehouses per shard
+
+# Memory control ports (for backward compatibility)
+memlocalhost: 6001
+memlearner: 6001  
+memp1: 6002
+memp2: 6003

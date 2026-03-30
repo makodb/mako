@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  LIBCLANG_PATH: /usr/lib/llvm-18/lib
+  Z3_SYS_Z3_HEADER: /usr/include/z3.h
+
+jobs:
+  build-and-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show CPU count
+        run: nproc
+
+      - name: Build
+        run: cargo build --release -j $(nproc)
+
+      - name: Run tests
+        run: cargo test --release -j $(nproc) -- --test-threads=$(nproc)
+
+      - name: Test CMake example project
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd cmake-example-project
+          rm -rf build
+          mkdir build && cd build
+          cmake ..
+          make -j $(nproc)

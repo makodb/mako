@@ -1,0 +1,233 @@
+ 
+ ------- 1 shared timestamp ------ 
+Enter number of shards: 64
+Enter size of value: 4
+Using 64 worker threads.
+Load data complete
+Throughput: 1982636 txn/sec
+Aborts: 1 txn/sec
+ 
+Enter number of shards: 128
+Enter size of value: 4
+Using 128 worker threads.
+Load data complete
+Throughput: 3909125 txn/sec
+Aborts: 4 txn/sec
+ 
+Enter number of shards: 192
+Enter size of value: 4
+Using 192 worker threads.
+Load data complete
+Throughput: 5682407 txn/sec
+Aborts: 10 txn/sec
+ 
+Enter number of shards: 256
+Enter size of value: 4
+Using 256 worker threads.
+Load data complete
+Throughput: 7463733 txn/sec
+Aborts: 32 txn/sec
+ 
+Enter number of shards: 320
+Enter size of value: 4
+Using 320 worker threads.
+Load data complete
+Throughput: 9180651 txn/sec
+Aborts: 10 txn/sec
+ 
+Enter number of shards: 384
+Enter size of value: 4
+Using 384 worker threads.
+Load data complete
+Throughput: 10765708 txn/sec
+Aborts: 16 txn/sec
+ 
+Enter number of shards: 448
+Enter size of value: 4
+Using 448 worker threads.
+Load data complete
+Throughput: 12307016 txn/sec
+Aborts: 27 txn/sec
+ 
+Enter number of shards: 512
+Enter size of value: 4
+Using 512 worker threads.
+Load data complete
+Throughput: 13672198 txn/sec
+Aborts: 29 txn/sec
+ 
+ 
+ ------- 10 shared timestamps ------ 
+Enter number of shards: 64
+Enter size of value: 40
+Using 64 worker threads.
+Load data complete
+Throughput: 1966719 txn/sec
+Aborts: 1 txn/sec
+ 
+Enter number of shards: 128
+Enter size of value: 40
+Using 128 worker threads.
+Load data complete
+Throughput: 3872057 txn/sec
+Aborts: 3 txn/sec
+ 
+Enter number of shards: 192
+Enter size of value: 40
+Using 192 worker threads.
+Load data complete
+Throughput: 5593445 txn/sec
+Aborts: 6 txn/sec
+ 
+Enter number of shards: 256
+Enter size of value: 40
+Using 256 worker threads.
+Load data complete
+Throughput: 7313365 txn/sec
+Aborts: 5 txn/sec
+ 
+Enter number of shards: 320
+Enter size of value: 40
+Using 320 worker threads.
+Load data complete
+Throughput: 8927283 txn/sec
+Aborts: 9 txn/sec
+ 
+Enter number of shards: 384
+Enter size of value: 40
+Using 384 worker threads.
+Load data complete
+Throughput: 10429445 txn/sec
+Aborts: 7 txn/sec
+ 
+Enter number of shards: 448
+Enter size of value: 40
+Using 448 worker threads.
+Load data complete
+Throughput: 11785969 txn/sec
+Aborts: 13 txn/sec
+ 
+Enter number of shards: 512
+Enter size of value: 40
+Using 512 worker threads.
+Load data complete
+Throughput: 13061231 txn/sec
+Aborts: 28 txn/sec
+ 
+ ------- full-sized shared timestamps ------ 
+Enter number of shards: 64
+Enter size of value: 256
+Using 64 worker threads.
+Load data complete
+Throughput: 1943382 txn/sec
+Aborts: 1 txn/sec
+ 
+Enter number of shards: 128
+Enter size of value: 512
+Using 128 worker threads.
+Load data complete
+Throughput: 3772250 txn/sec
+Aborts: 2 txn/sec
+ 
+Enter number of shards: 192
+Enter size of value: 768
+Using 192 worker threads.
+Load data complete
+Throughput: 5363165 txn/sec
+Aborts: 5 txn/sec
+ 
+Enter number of shards: 256
+Enter size of value: 1024
+Using 256 worker threads.
+Load data complete
+Throughput: 6666096 txn/sec
+Aborts: 8 txn/sec
+ 
+Enter number of shards: 320
+Enter size of value: 1280
+Using 320 worker threads.
+Load data complete
+Throughput: 6850392 txn/sec
+Aborts: 68 txn/sec
+ 
+Enter number of shards: 384
+Enter size of value: 1536
+Using 384 worker threads.
+Load data complete
+Throughput: 6474498 txn/sec
+Aborts: 24 txn/sec
+ 
+Enter number of shards: 448
+Enter size of value: 1792
+Using 448 worker threads.
+Load data complete
+Throughput: 3812947 txn/sec
+Aborts: 23 txn/sec
+ 
+Enter number of shards: 512
+Enter size of value: 2048
+Using 512 worker threads.
+Load data complete
+Throughput: 2967311 txn/sec
+Aborts: 17 txn/sec
+ 
+ 
+ ------- 64 shared timestamps ------ 
+Enter number of shards: 64
+Enter size of value: 256
+Using 64 worker threads.
+Load data complete
+Throughput: 1921410 txn/sec
+Aborts: 1 txn/sec
+ 
+Enter number of shards: 128
+Enter size of value: 256
+Using 128 worker threads.
+Load data complete
+Throughput: 3806389 txn/sec
+Aborts: 2 txn/sec
+ 
+Enter number of shards: 192
+Enter size of value: 256
+Using 192 worker threads.
+Load data complete
+Throughput: 5500402 txn/sec
+Aborts: 3 txn/sec
+ 
+Enter number of shards: 256
+Enter size of value: 256
+Using 256 worker threads.
+Load data complete
+Throughput: 7149565 txn/sec
+Aborts: 5 txn/sec
+ 
+Enter number of shards: 320
+Enter size of value: 256
+Using 320 worker threads.
+Load data complete
+Throughput: 8645254 txn/sec
+Aborts: 12 txn/sec
+ 
+Enter number of shards: 384
+Enter size of value: 256
+Using 384 worker threads.
+Load data complete
+Throughput: 10031251 txn/sec
+Aborts: 9 txn/sec
+ 
+Enter number of shards: 448
+Enter size of value: 256
+Using 448 worker threads.
+Load data complete
+Throughput: 11226843 txn/sec
+Aborts: 18 txn/sec
+ 
+Enter number of shards: 512
+Enter size of value: 256
+Using 512 worker threads.
+Load data complete
+Throughput: 12332841 txn/sec
+Aborts: 16 txn/sec
+ 
+ Throughput: 646006 txn/sec
+Aborts: 2 txn/sec

@@ -1,0 +1,27 @@
+site:
+  server: # each line is a partition, the first is the master site_name:port
+    - ["s101:39000", "s201:39001", "s301:39002"]
+  client: # each line is a partition
+    - ["c01", "c02", "c03", "c04", "c05", "c06", "c07", "c08", "c09", "c10"]
+
+# site_name - process_name map
+process:
+  s101: p1 
+  s201: p2 
+  s301: p3 
+  c01: c1
+  c02: c1
+  c03: c1
+  c04: c1
+  c05: c1
+  c06: c1
+  c07: c1
+  c08: c1
+  c09: c1
+  c10: c1
+
+host:
+  p1: 172.17.0.8
+  p2: 172.17.0.9
+  p3: 172.17.0.10
+  c1: 172.17.0.11

@@ -1,0 +1,4 @@
+client:
+    type: open
+    rate: 1000 
+    max_undone: 5000 

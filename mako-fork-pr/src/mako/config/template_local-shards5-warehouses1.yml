@@ -1,0 +1,96 @@
+# yaml-cpp online: https://yaml-online-parser.appspot.com/
+# suppose m shards and n warehouse each shard; 
+# the first replica to be the leader by default
+# https://aju9mlkupe.feishu.cn/docs/doccnG7AZ1gjFmo9CcgRMidJO5f Port allocation policy
+
+shards: 5  # number of shards
+replicas: 3  # number of replicas
+warehouses: w_id  # number of warehouses per shard, keep same as the tpcc worker threads
+localhost:
+  - name: shard0
+    index: 0
+    ip:   ip_shard0_localhost
+    port: 31000
+  - name: shard1
+    index: 1
+    ip:   ip_shard1_localhost
+    port: 31100
+  - name: shard2
+    index: 2
+    ip:   ip_shard2_localhost
+    port: 31200
+  - name: shard3
+    index: 3
+    ip:   ip_shard3_localhost
+    port: 31300
+  - name: shard4
+    index: 4
+    ip:   ip_shard4_localhost
+    port: 31400
+p1:
+  - name: shard0
+    index: 0
+    ip:  ip_shard0_p1
+    port: 32000
+  - name: shard1
+    index: 1
+    ip: ip_shard1_p1
+    port: 32100
+  - name: shard2
+    index: 2
+    ip:  ip_shard2_p1
+    port: 32200
+  - name: shard3
+    index: 3
+    ip:  ip_shard3_p1
+    port: 32300
+  - name: shard4
+    index: 4
+    ip:  ip_shard4_p1
+    port: 32400
+p2:
+  - name: shard0
+    index: 0
+    ip:  ip_shard0_p2
+    port: 33000
+  - name: shard1
+    index: 1
+    ip:  ip_shard1_p2
+    port: 33100
+  - name: shard2
+    index: 2
+    ip:  ip_shard2_p2
+    port: 33200
+  - name: shard3
+    index: 3
+    ip:  ip_shard3_p2
+    port: 33300
+  - name: shard4
+    index: 4
+    ip:  ip_shard4_p2
+    port: 33400
+learner:
+ - name: shard0
+   index: 0
+   ip:  ip_shard0_learner
+   port: 34000
+ - name: shard1
+   index: 1
+   ip:  ip_shard1_learner
+   port: 34100
+ - name: shard2
+   index: 2
+   ip:  ip_shard2_learner
+   port: 34200
+ - name: shard3
+   index: 3
+   ip:  ip_shard3_learner
+   port: 34300
+ - name: shard4
+   index: 4
+   ip:  ip_shard4_learner
+   port: 34400
+memlocalhost: 6001 # mem control port
+memlearner: 6001
+memp1: 6002
+memp2: 6003

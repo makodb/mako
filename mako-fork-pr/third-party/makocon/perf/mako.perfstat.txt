@@ -1,0 +1,96 @@
+     5.003539554     11,252,594,177      cycles                           #    2.247 GHz                      (66.53%)
+     5.003539554      8,606,155,459      instructions                     #    0.76  insn per cycle           (83.32%)
+     5.003539554      1,456,976,067      branches                         #  290.884 M/sec                    (83.39%)
+     5.003539554         26,635,350      branch-misses                    #    1.83% of all branches          (83.39%)
+     5.003539554        328,791,860      cache-references                 #   65.643 M/sec                    (83.40%)
+     5.003539554         13,894,260      cache-misses                     #    4.226 % of all cache refs      (83.30%)
+     5.003539554           5,009.00 msec task-clock                       #    1.002 CPUs utilized          
+     5.003539554           5,008.58 msec cpu-clock                        #    1.002 CPUs utilized          
+    10.009153970     11,497,998,865      cycles                           #    2.295 GHz                      (66.77%)
+    10.009153970      8,878,320,332      instructions                     #    0.77  insn per cycle           (83.37%)
+    10.009153970      1,505,102,391      branches                         #  300.361 M/sec                    (83.22%)
+    10.009153970         26,981,569      branch-misses                    #    1.79% of all branches          (83.33%)
+    10.009153970        331,468,551      cache-references                 #   66.148 M/sec                    (83.32%)
+    10.009153970         12,366,180      cache-misses                     #    3.731 % of all cache refs      (83.35%)
+    10.009153970           5,011.17 msec task-clock                       #    1.002 CPUs utilized          
+    10.009153970           5,010.79 msec cpu-clock                        #    1.002 CPUs utilized          
+    15.014697592     12,453,164,619      cycles                           #    2.485 GHz                      (66.64%)
+    15.014697592      9,446,256,021      instructions                     #    0.76  insn per cycle           (83.32%)
+    15.014697592      1,598,821,932      branches                         #  319.085 M/sec                    (83.21%)
+    15.014697592         28,966,732      branch-misses                    #    1.81% of all branches          (83.40%)
+    15.014697592        342,615,507      cache-references                 #   68.378 M/sec                    (83.40%)
+    15.014697592         13,285,387      cache-misses                     #    3.878 % of all cache refs      (83.35%)
+    15.014697592           5,010.79 msec task-clock                       #    1.002 CPUs utilized          
+    15.014697592           5,010.49 msec cpu-clock                        #    1.002 CPUs utilized          
+    20.019582508     10,129,648,915      cycles                           #    2.021 GHz                      (66.78%)
+    20.019582508      8,280,726,190      instructions                     #    0.82  insn per cycle           (83.40%)
+    20.019582508      1,395,968,555      branches                         #  278.501 M/sec                    (83.32%)
+    20.019582508         25,322,960      branch-misses                    #    1.81% of all branches          (83.26%)
+    20.019582508        309,690,166      cache-references                 #   61.784 M/sec                    (83.33%)
+    20.019582508         13,306,852      cache-misses                     #    4.297 % of all cache refs      (83.31%)
+    20.019582508           5,012.64 msec task-clock                       #    1.003 CPUs utilized          
+    20.019582508           5,012.23 msec cpu-clock                        #    1.002 CPUs utilized          
+    25.025114841     11,356,192,384      cycles                           #    2.266 GHz                      (66.64%)
+    25.025114841      8,829,921,956      instructions                     #    0.78  insn per cycle           (83.32%)
+    25.025114841      1,488,120,076      branches                         #  296.990 M/sec                    (83.32%)
+    25.025114841         27,034,153      branch-misses                    #    1.82% of all branches          (83.27%)
+    25.025114841        325,161,358      cache-references                 #   64.894 M/sec                    (83.37%)
+    25.025114841         13,019,299      cache-misses                     #    4.004 % of all cache refs      (83.40%)
+    25.025114841           5,010.87 msec task-clock                       #    1.002 CPUs utilized          
+    25.025114841           5,010.50 msec cpu-clock                        #    1.002 CPUs utilized          
+    30.027539906     11,728,372,863      cycles                           #    2.342 GHz                      (66.74%)
+    30.027539906      8,967,968,835      instructions                     #    0.76  insn per cycle           (83.39%)
+    30.027539906      1,508,738,696      branches                         #  301.276 M/sec                    (83.39%)
+    30.027539906         27,562,977      branch-misses                    #    1.83% of all branches          (83.34%)
+    30.027539906        320,828,816      cache-references                 #   64.065 M/sec                    (83.31%)
+    30.027539906         12,493,055      cache-misses                     #    3.894 % of all cache refs      (83.23%)
+    30.027539906           5,008.02 msec task-clock                       #    1.002 CPUs utilized          
+    30.027539906           5,007.64 msec cpu-clock                        #    1.002 CPUs utilized          
+    35.033048922     12,941,090,797      cycles                           #    2.583 GHz                      (66.53%)
+    35.033048922      9,664,888,724      instructions                     #    0.75  insn per cycle           (83.25%)
+    35.033048922      1,624,916,536      branches                         #  324.298 M/sec                    (83.31%)
+    35.033048922         29,502,555      branch-misses                    #    1.82% of all branches          (83.37%)
+    35.033048922        338,327,741      cache-references                 #   67.523 M/sec                    (83.39%)
+    35.033048922         17,751,514      cache-misses                     #    5.247 % of all cache refs      (83.40%)
+    35.033048922           5,010.76 msec task-clock                       #    1.002 CPUs utilized          
+    35.033048922           5,010.38 msec cpu-clock                        #    1.002 CPUs utilized          
+    40.038549177     11,723,401,088      cycles                           #    2.340 GHz                      (66.74%)
+    40.038549177      9,237,718,245      instructions                     #    0.79  insn per cycle           (83.40%)
+    40.038549177      1,550,365,517      branches                         #  309.413 M/sec                    (83.34%)
+    40.038549177         28,999,851      branch-misses                    #    1.87% of all branches          (83.29%)
+    40.038549177        322,867,042      cache-references                 #   64.436 M/sec                    (83.31%)
+    40.038549177         15,492,591      cache-misses                     #    4.798 % of all cache refs      (83.32%)
+    40.038549177           5,010.88 msec task-clock                       #    1.002 CPUs utilized          
+    40.038549177           5,010.47 msec cpu-clock                        #    1.002 CPUs utilized          
+    45.044096701     12,110,259,238      cycles                           #    2.417 GHz                      (66.70%)
+    45.044096701      9,698,701,080      instructions                     #    0.80  insn per cycle           (83.32%)
+    45.044096701      1,626,231,587      branches                         #  324.522 M/sec                    (83.32%)
+    45.044096701         30,472,771      branch-misses                    #    1.87% of all branches          (83.25%)
+    45.044096701        338,625,688      cache-references                 #   67.574 M/sec                    (83.33%)
+    45.044096701         14,094,681      cache-misses                     #    4.162 % of all cache refs      (83.40%)
+    45.044096701           5,011.35 msec task-clock                       #    1.002 CPUs utilized          
+    45.044096701           5,010.95 msec cpu-clock                        #    1.002 CPUs utilized          
+    50.047546384     12,013,022,677      cycles                           #    2.419 GHz                      (66.63%)
+    50.047546384      9,392,814,045      instructions                     #    0.78  insn per cycle           (83.27%)
+    50.047546384      1,578,575,094      branches                         #  317.850 M/sec                    (83.33%)
+    50.047546384         27,763,891      branch-misses                    #    1.76% of all branches          (83.40%)
+    50.047546384        335,461,818      cache-references                 #   67.546 M/sec                    (83.30%)
+    50.047546384         16,549,436      cache-misses                     #    4.933 % of all cache refs      (83.34%)
+    50.047546384           4,966.69 msec task-clock                       #    0.993 CPUs utilized          
+    50.047546384           4,966.15 msec cpu-clock                        #    0.993 CPUs utilized          
+    55.051548513     12,297,669,175      cycles                           #    2.455 GHz                      (66.50%)
+    55.051548513      8,375,253,017      instructions                     #    0.68  insn per cycle           (83.32%)
+    55.051548513      1,416,653,093      branches                         #  282.765 M/sec                    (83.40%)
+    55.051548513         24,576,874      branch-misses                    #    1.73% of all branches          (83.39%)
+    55.051548513        360,497,652      cache-references                 #   71.956 M/sec                    (83.40%)
+    55.051548513         27,247,708      cache-misses                     #    7.558 % of all cache refs      (83.32%)
+    55.051548513           5,010.22 msec task-clock                       #    1.002 CPUs utilized          
+    55.051548513           5,009.79 msec cpu-clock                        #    1.002 CPUs utilized          
+    60.003584549     11,534,101,836      cycles                           #    2.327 GHz                      (66.65%)
+    60.003584549      8,237,482,462      instructions                     #    0.71  insn per cycle           (83.35%)
+    60.003584549      1,397,964,540      branches                         #  282.005 M/sec                    (83.29%)
+    60.003584549         24,811,465      branch-misses                    #    1.77% of all branches          (83.30%)
+    60.003584549        327,343,825      cache-references                 #   66.034 M/sec                    (83.38%)
+    60.003584549         20,956,492      cache-misses                     #    6.402 % of all cache refs      (83.38%)
+    60.003584549           4,957.43 msec task-clock                       #    0.991 CPUs utilized          
+    60.003584549           4,957.04 msec cpu-clock                        #    0.991 CPUs utilized   

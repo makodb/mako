@@ -1,0 +1,285 @@
+diff --git a/Makefile b/Makefile
+index 54694e4..fbbe72b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -7,13 +7,13 @@ $(info BUILD_DIR is: ${BUILD_DIR}, HOME is: $(HOME))
+ 
+ ### eRPC
+ ERPC_PATH="$(BUILD_DIR)/eRPC"
+-ERPC_CFLAGS_DPDK := -I $(ERPC_PATH)/src -DERPC_DPDK=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
++ERPC_CFLAGS_DPDK := -I $(ERPC_PATH)/src -DERPC_DPDK=true -march=native -I $(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/include -L$(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/lib -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+ ERPC_LDFLAGS_DPDK := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lerpc -lpthread  -lnuma -ldl -lgflags  -ldl -libverbs -lmlx4 -lmlx5
+ 
+-ERPC_CFLAGS_IB := -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
++ERPC_CFLAGS_IB := -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I $(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/include -L $(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/lib -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+ ERPC_LDFLAGS_IB := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lpthread -lerpc -lnuma -ldl -lgflags -ldl -libverbs -lmlx4 -lmlx5
+ 
+-CXX_INCLUDES = -I $(ERPC_PATH)/third_party/googletest/googletest/include -I $(ERPC_PATH)/third_party/googletest/googletest -isystem $(ERPC_PATH)/third_party/asio/include -I $(ERPC_PATH)/src -isystem $(ERPC_PATH)/third_party -isystem /usr/include/dpdk -I$(ERPC_PATH)/third_party/gflags/include -I$(ERPC_PATH)/third_party/HdrHistogram_c/src
++CXX_INCLUDES = -I $(ERPC_PATH)/third_party/googletest/googletest/include -I $(ERPC_PATH)/third_party/googletest/googletest -isystem $(ERPC_PATH)/third_party/asio/include -I $(ERPC_PATH)/src -isystem $(ERPC_PATH)/third_party -isystem  -I $(HOME)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/include -I$(ERPC_PATH)/third_party/gflags/include -I$(ERPC_PATH)/third_party/HdrHistogram_c/src -L$(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/lib -I $(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/include
+ CXX_INCLUDES := $(CXX_INCLUDES)
+ ### Options ###
+ 
+@@ -112,7 +112,7 @@ endif
+ # suppress all warning: https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
+ CXXFLAGS := -w -g
+ CXXFLAGS += -MD -MP -Ithird-party/lz4 -Ithird-party/paxos/src -I$(HOME) -DCONFIG_H=\"$(CONFIG_H)\"
+-CXXFLAGS += $(ERPC_CFLAGS_IB)
++CXXFLAGS += $(ERPC_CFLAGS_DPDK)
+ ifeq ($(GPROF_S),1)
+ 	CXXFLAGS += -pg -static-libstdc++ -static-libgcc
+ endif
+@@ -193,8 +193,8 @@ endif
+ ASIO_PATH="$(BUILD_DIR)/eRPC/third_party/asio"
+ ASIO_CFLAGS := -I $(ASIO_PATH)/include
+ CFLAGS += $(ASIO_CFLAGS)
+-CFLAGS += $(ERPC_CFLAGS_IB)
+-LDFLAGS += $(ERPC_LDFLAGS_IB)
++CFLAGS += $(ERPC_CFLAGS_DPDK)
++LDFLAGS += $(ERPC_LDFLAGS_DPDK)
+ LDFLAGS += -levent_pthreads -pthread -lboost_fiber -lboost_context -lboost_system -lboost_thread
+ LIBEVENT_CFLAGS := $(shell pkg-config --cflags libevent)
+ LIBEVENT_LDFLAGS := $(shell pkg-config --libs libevent)
+@@ -412,7 +412,7 @@ masstree/configure masstree/config.h.in: masstree/configure.ac
+ dbtest: $(O)/benchmarks/dbtest
+ 
+ $(O)/benchmarks/dbtest: $(O)/benchmarks/dbtest.o $(OBJFILES) $(MASSTREE_OBJFILES) $(OBJS) $(BENCH_OBJFILES) third-party/paxos/build/libtxlog.so third-party/lz4/liblz4.so
+-	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lthird-party/paxos/build
++	$(CXX) -o $(O)/benchmarks/dbtest $^ $(BENCH_LDFLAGS) $(LZ4LDFLAGS) -lyaml-cpp -Lthird-party/paxos/build -L$(BUILD_DIR)/dpdk-stable-19.11.5/arm64-armv8a-linuxapp-gcc/lib
+ 
+ DEPFILES := $(wildcard $(O)/*.d $(O)/*/*.d $(O)/*/*/*.d masstree/_masstree_config.d)
+ ifneq ($(DEPFILES),)
+diff --git a/amd64.h b/amd64.h
+index 6a8c673..4783012 100644
+--- a/amd64.h
++++ b/amd64.h
+@@ -7,7 +7,7 @@
+ inline ALWAYS_INLINE void
+ nop_pause()
+ {
+-  __asm volatile("pause" : :);
++  __asm volatile("yield" : :);
+ }
+ 
+ inline ALWAYS_INLINE uint64_t
+diff --git a/bash/shard0.sh b/bash/shard0.sh
+index 88cc778..a9d658c 100755
+--- a/bash/shard0.sh
++++ b/bash/shard0.sh
+@@ -1,18 +1,18 @@
+ #!/bin/bash
+ sudo cgdelete -g cpuset:/cpulimita
+-sudo cgcreate -t $USER:$USER -a $USER:$USER -g cpuset:/cpulimita
++sudo cgcreate -t $USER:users -a $USER:users -g cpuset:/cpulimita
+ nshard=$1
+ shard=$2
+ trd=$3
+-let yyml=trd+0
++let yyml=trd+1
+ sec=${4:-30}
+ cluster=${5:-localhost}
+-#sudo cgset -r cpuset.mems=0 cpulimita
+-#sudo cgset -r cpuset.cpus=0-$trd cpulimita
++sudo cgset -r cpuset.mems=0 cpulimita
++sudo cgset -r cpuset.cpus=0-$yyml cpulimita
+ mkdir -p results
+ path=$(pwd)
+ 
+-sudo cgexec -g cpuset:cpulimita ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp \
++sudo gdb --args cgexec -g cpuset:cpulimita ./out-perf.masstree/benchmarks/dbtest --verbose --bench tpcc --basedir ./tmp \
+                                       --db-type mbta --num-threads $trd --scale-factor $trd \
+                                       --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml \
+                                       -F third-party/paxos/config/1leader_2followers/paxos$yyml\_shardidx0.yml  -F third-party/paxos/config/occ_paxos.yml \
+diff --git a/benchmarks/sto/Transaction.hh b/benchmarks/sto/Transaction.hh
+index 5262e4d..e75cdec 100644
+--- a/benchmarks/sto/Transaction.hh
++++ b/benchmarks/sto/Transaction.hh
+@@ -11,7 +11,6 @@
+ #include <unistd.h>
+ #include <iostream>
+ #include <sstream>
+-#include <x86intrin.h>
+ #include <atomic>
+ #include <vector>
+ #include <cstring> // for memcpy
+@@ -721,11 +720,18 @@ public:
+         return commit_tid_;
+     }
+ 
++    static inline size_t rdtsc() {
++	uint64_t tsc;
++	asm volatile("mrs %0, cntvct_el0" : "=r"(tsc));
++	return tsc;
++    }
++
+     void updateVectorizedTimestamp(std::vector<uint64_t> &vectorT) const {
+         assert(state_ == s_committing_locked || state_ == s_committing);
++	static int tid = 1;
+         unsigned int ui;
+ 	    if(!tid_unique_)
+-            tid_unique_ = __rdtscp(&ui);
++            tid_unique_ = Transaction::rdtsc();
+ 
+         if (TThread::writeset_shard_bits > 0) {
+             TThread::sclient->remoteGetTimestamp(vectorT);
+diff --git a/benchmarks/sto/compiler.hh b/benchmarks/sto/compiler.hh
+index 2547b9e..986bb9b 100644
+--- a/benchmarks/sto/compiler.hh
++++ b/benchmarks/sto/compiler.hh
+@@ -109,7 +109,7 @@ inline void release_fence() {
+ 
+     Use this in spinloops, for example. */
+ inline void relax_fence() {
+-    asm volatile("pause" : : : "memory"); // equivalent to "rep; nop"
++    asm volatile("yield" : : : "memory"); // equivalent to "rep; nop"
+ }
+ 
+ /** @brief Full memory fence. */
+diff --git a/benchmarks/sto/rwlock.hh b/benchmarks/sto/rwlock.hh
+index 381afce..f47b279 100644
+--- a/benchmarks/sto/rwlock.hh
++++ b/benchmarks/sto/rwlock.hh
+@@ -10,7 +10,7 @@ public:
+   inline void read_lock() {
+     uint32_t v = value;
+     while ( (v & write_bit) || !bool_cmpxchg(&value, v, v+1)) {
+-      __asm volatile("pause" : :);
++      __asm volatile("yield" : :);
+       v = value;
+     }
+     fence();
+@@ -24,7 +24,7 @@ public:
+   inline void write_lock() {
+     uint32_t v = value;
+     while ( v || !bool_cmpxchg(&value, v, write_bit)) {
+-      __asm volatile("pause" : :);
++      __asm volatile("yield" : :);
+       v = value;
+     }
+     fence();
+diff --git a/lib/common.h b/lib/common.h
+index f3341ed..8acf32c 100644
+--- a/lib/common.h
++++ b/lib/common.h
+@@ -339,10 +339,9 @@ namespace srolis
+ 
+     /// Return the TSC
+     static inline size_t rdtsc() {
+-        uint64_t rax;
+-        uint64_t rdx;
+-        asm volatile("rdtsc" : "=a"(rax), "=d"(rdx));
+-        return static_cast<size_t>((rdx << 32) | rax);
++	uint64_t tsc;
++        asm volatile("mrs %0, cntvct_el0" : "=r"(tsc));
++        return tsc;
+     }
+ 
+     static double measure_rdtsc_freq() {
+@@ -369,4 +368,4 @@ namespace srolis
+     }
+ }
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/lib/server.cc b/lib/server.cc
+index e9663f9..3e0b59b 100644
+--- a/lib/server.cc
++++ b/lib/server.cc
+@@ -11,7 +11,6 @@
+ #include "benchmarks/common.h"
+ #include "benchmarks/bench.h"
+ #include "benchmarks/tpcc.h"
+-#include <x86intrin.h>
+ #include "deptran/s_main.h"
+ #include "benchmarks/sto/sync_util.hh"
+ 
+@@ -173,8 +172,9 @@ namespace srolis
+         resp->req_nr = req->req_nr;
+         respLen = sizeof(get_int_response_t);
+         resp->status = status;
++
+         unsigned int ui;
+-		result = __rdtscp(&ui);
++		result = ShardReceiver::rdtsc();
+         resp->result = result;
+     }
+ 
+@@ -380,4 +380,4 @@ namespace srolis
+             }
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/lib/server.h b/lib/server.h
+index ba0f55e..ef5e2a4 100644
+--- a/lib/server.h
++++ b/lib/server.h
+@@ -34,6 +34,11 @@ namespace srolis
+                                                                          // do not need to communicate
+                                                                          // with eachother; they will need
+                                                                          // to for synchronization
++  static inline size_t rdtsc() {
++        uint64_t tsc;
++        asm volatile("mrs %0, cntvct_el0" : "=r"(tsc));
++        return tsc;
++    }
+         bool Blocked() override { return false; };
+         // new handlers
+         void HandleGetRequest(char *reqBuf, char *respBuf, size_t &respLen);
+@@ -104,4 +109,4 @@ namespace srolis
+         map<string, vector<abstract_ordered_index *>> dummy_partitions;
+     };
+ }
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/masstree/compiler.hh b/masstree/compiler.hh
+index 6e0c40b..44ef337 100644
+--- a/masstree/compiler.hh
++++ b/masstree/compiler.hh
+@@ -103,7 +103,7 @@ inline void release_fence() {
+ 
+     Use this in spinloops, for example. */
+ inline void relax_fence() {
+-    asm volatile("pause" : : : "memory"); // equivalent to "rep; nop"
++    asm volatile("yield" : : : "memory"); // equivalent to "rep; nop"
+ }
+ 
+ /** @brief Full memory fence. */
+@@ -569,7 +569,7 @@ inline void prefetch(const void *ptr) {
+     (void) ptr;
+ #else
+     typedef struct { char x[CACHE_LINE_SIZE]; } cacheline_t;
+-    asm volatile("prefetcht0 %0" : : "m" (*(const cacheline_t *)ptr));
++    asm volatile("prfm pldl1keep, %a0\n" : : "p" (ptr));
+ #endif
+ }
+ #endif
+@@ -579,7 +579,7 @@ inline void prefetchnta(const void *ptr) {
+     (void) ptr;
+ #else
+     typedef struct { char x[CACHE_LINE_SIZE]; } cacheline_t;
+-    asm volatile("prefetchnta %0" : : "m" (*(const cacheline_t *)ptr));
++    asm volatile("prfm pldl1keep, %a0\n" : : "p" (ptr));
+ #endif
+ }
+ 
+@@ -613,7 +613,9 @@ inline uint64_t ntohq(uint64_t val) {
+         : "+r" (v.s.a), "+r" (v.s.b));
+     return v.u;
+ #else /* __i386__ */
+-    asm("bswapq %0" : "+r" (val));
++    uint64_t ret_;
++    asm ("rev %0,%1" : "=r"(ret_) : "r"(val));
++    val = ret_;
+     return val;
+ #endif
+ }
+diff --git a/third-party/paxos b/third-party/paxos
+index c22b75f..292508e 160000
+--- a/third-party/paxos
++++ b/third-party/paxos
+@@ -1 +1 @@
+-Subproject commit c22b75fe60abda7f969df54eb90dea477b39e6a5
++Subproject commit 292508e389d364ac87f8d4e025653041d263d4f0-dirty

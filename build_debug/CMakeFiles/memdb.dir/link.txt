@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmemdb.a CMakeFiles/memdb.dir/src/memdb/MurmurHash3.cc.o CMakeFiles/memdb.dir/src/memdb/row.cc.o CMakeFiles/memdb.dir/src/memdb/schema.cc.o CMakeFiles/memdb.dir/src/memdb/table.cc.o CMakeFiles/memdb.dir/src/memdb/txn.cc.o CMakeFiles/memdb.dir/src/memdb/txn_2pl.cc.o CMakeFiles/memdb.dir/src/memdb/txn_nested.cc.o CMakeFiles/memdb.dir/src/memdb/txn_occ.cc.o CMakeFiles/memdb.dir/src/memdb/txn_unsafe.cc.o CMakeFiles/memdb.dir/src/memdb/utils.cc.o CMakeFiles/memdb.dir/src/memdb/value.cc.o CMakeFiles/memdb.dir/src/memdb/xxhash.cc.o
+/usr/bin/ranlib libmemdb.a

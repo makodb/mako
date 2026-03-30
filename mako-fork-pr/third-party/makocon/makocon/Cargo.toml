@@ -1,0 +1,15 @@
+[package]
+name = "makocon"
+version = "0.1.1"
+edition = "2021"
+
+[dependencies]
+bytes = "1.4"
+redis-protocol = { version = "6.0.0", features = ["resp3", "bytes", "codec"] }
+autocxx = "0.28.0"
+cxx = "1.0.160"
+
+[build-dependencies]
+cc = "1.0"
+autocxx-build = "0.28.0"
+miette = { version = "5", features = ["fancy"] }

@@ -1,0 +1,68 @@
+diff --cc bash/ips
+index b10b984,e652ba6..0000000
+--- a/bash/ips
++++ b/bash/ips
+diff --cc bash/ips.pub
+index 6f0b127,c87a4e3..0000000
+--- a/bash/ips.pub
++++ b/bash/ips.pub
+diff --git a/Makefile b/Makefile
+index 0abad48..6beb6b5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -11,7 +11,7 @@ env := $(shell cat env.txt 2>/dev/null || echo "ib")
+ ### eRPC
+ ERPC_PATH="$(BUILD_DIR)/eRPC"
+ ERPC_CFLAGS_DPDK := -I $(ERPC_PATH)/src -DERPC_DPDK=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+-ERPC_LDFLAGS_DPDK := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lerpc -lpthread  -lnuma -ldl -lgflags  -ldl -libverbs -lmlx4 -lmlx5
++ERPC_LDFLAGS_DPDK := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lstdc++ -lm -lerpc -lpthread  -lnuma -ldl -lgflags  -ldl -libverbs -lmlx4 -lmlx5
+ 
+ ERPC_CFLAGS_IB := -I $(ERPC_PATH)/src -DERPC_INFINIBAND=true -march=native -I /usr/include/dpdk -DERPC_LOG_LEVEL=6 -DERPC_TESTING=false -DGFLAGS_IS_A_DLL=0
+ ERPC_LDFLAGS_IB := -L $(ERPC_PATH)/build -Wl,--whole-archive -ldpdk -Wl,--no-whole-archive -lpthread -lerpc -lnuma -ldl -lgflags -ldl -libverbs -lmlx4 -lmlx5
+diff --git a/benchmarks/dbtest.cc b/benchmarks/dbtest.cc
+index 7c37ebe..89d59b0 100644
+--- a/benchmarks/dbtest.cc
++++ b/benchmarks/dbtest.cc
+@@ -816,7 +816,7 @@ main(int argc, char **argv)
+           sync_util::sync_logger::local_timestamp_[par_id].store(latest_commit_id_v[shardIndex], memory_order_release) ;
+   
+   #if defined(TRACKING_LATENCY)
+-          if (par_id==4){
++          if (par_id==2){
+             uint32_t vw = sync_util::sync_logger::computeLocal();
+             //Warning("Update here: %llu, before:%llu",vw/10,vw);
+             advanceWatermarkTracker.push_back(std::make_pair(vw/10 /* actual watermark */, srolis::getCurrentTimeMillis()));
+diff --git a/benchmarks/sto/Transaction.cc b/benchmarks/sto/Transaction.cc
+index 1536db0..0ba80bb 100644
+--- a/benchmarks/sto/Transaction.cc
++++ b/benchmarks/sto/Transaction.cc
+@@ -608,7 +608,7 @@ bool Transaction::try_commit(bool no_paxos) {
+         #if defined(SIMPLE_WORKLOAD)
+             int large_batch_num=5;
+         #elif defined(MICRO_BENCHMARK)
+-            int large_batch_num=3000;
++            int large_batch_num=1000;
+         #else
+             int large_batch_num=400;
+         #endif
+@@ -647,7 +647,7 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int
+     unsigned short int table_id = 0; // 2 bytes
+ 
+ #if defined(TRACKING_LATENCY)
+-    if (vectorT[TThread::get_shard_index()]%1000==0&&TThread::getPartitionID()==4){
++    if (vectorT[TThread::get_shard_index()]%1000==0&&TThread::getPartitionID()==2){
+         uint32_t cur_time = srolis::getCurrentTimeMillis();
+         if (cur_time - start_time>= 5*1000 && cur_time - start_time <= 15*1000){ // time duration: [5,15]
+             sample_transaction_tracker[vectorT[TThread::get_shard_index()]] = srolis::getCurrentTimeMillis() ;
+diff --git a/third-party/paxos b/third-party/paxos
+--- a/third-party/paxos
++++ b/third-party/paxos
+@@ -1 +1 @@
+-Subproject commit 5035bcd632342d1e4acd5a3c0bcf56690434ad72
++Subproject commit 5035bcd632342d1e4acd5a3c0bcf56690434ad72-dirty
+
+# Compile
+MODE=perf make -j dbtest PAXOS_LIB_ENABLED=1 DISABLE_MULTI_VERSION=0 MICRO_BENCHMARK=1 TRACKING_LATENCY=1 SHARDS=1 MERGE_KEYS_GROUPS=1 MEGA_BENCHMARK=0 FAIL_NEW_VERSION=1 TRACKING_ROLLBACK=0
+
+# Run
+bash ../batch-runner.sh 1 1

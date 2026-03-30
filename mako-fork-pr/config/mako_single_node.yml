@@ -1,0 +1,18 @@
+# Single node configuration for Mako testing
+# This configuration runs everything on localhost without replication
+
+sites:
+    - name: "local_s0"
+      id: 1
+      ip: 127.0.0.1
+      port: 31000
+
+# Single shard with no replication
+shard_map:
+    - ["local_s0"]  # Shard 0 with only one node (leader)
+
+# Configuration parameters
+warehouses: 6  # number of warehouses per shard
+
+# Memory control ports
+memlocalhost: 31500

@@ -1,0 +1,255 @@
+from simplerpcgen.misc import SourceFile
+
+def emit_struct(struct, f):
+    f.writeln("struct %s {" % struct.name)
+    with f.indent():
+        for field in struct.fields:
+            f.writeln("%s %s;" % (field.type, field.name))
+    f.writeln("};")
+    f.writeln()
+    f.writeln("inline rrr::Marshal& operator <<(rrr::Marshal& m, const %s& o) {" % struct.name)
+    with f.indent():
+        for field in struct.fields:
+            f.writeln("m << o.%s;" % field.name)
+        f.writeln("return m;")
+    f.writeln("}")
+    f.writeln()
+    f.writeln("inline rrr::Marshal& operator >>(rrr::Marshal& m, %s& o) {" % struct.name)
+    with f.indent():
+        for field in struct.fields:
+            f.writeln("m >> o.%s;" % field.name)
+        f.writeln("return m;")
+    f.writeln("}")
+    f.writeln()
+
+def emit_service_and_proxy(service, f, rpc_table):
+    f.writeln("class %sService: public rrr::Service {" % service.name)
+    f.writeln("public:")
+    with f.indent():
+        f.writeln("enum {")
+        with f.indent():
+            for func in service.functions:
+                rpc_code = rpc_table["%s.%s" % (service.name, func.name)]
+                f.writeln("%s = %s," % (func.name.upper(), hex(rpc_code)))
+        f.writeln("};")
+        f.writeln("// Registers RPC IDs with server using service index")
+        f.writeln("// @safe")
+        f.writeln("int __reg_to__(rrr::Server& svr, size_t svc_index) override {")
+        with f.indent():
+            f.writeln("int ret = 0;")
+            for func in service.functions:
+                f.writeln("if ((ret = svr.reg_rpc(%s, svc_index)) != 0) {" % func.name.upper())
+                with f.indent():
+                    f.writeln("goto err;")
+                f.writeln("}")
+            f.writeln("return 0;")
+        f.writeln("err:")
+        with f.indent():
+            for func in service.functions:
+                f.writeln("svr.unreg(%s);" % func.name.upper())
+            f.writeln("return ret;")
+        f.writeln("}")
+        f.writeln("// @safe - Virtual dispatch for RPC requests")
+        f.writeln("void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) override {")
+        with f.indent():
+            f.writeln("switch (rpc_id) {")
+            for func in service.functions:
+                if func.attr == "raw":
+                    f.writeln("case %s: %s(std::move(req), weak_sconn); break;" % (func.name.upper(), func.name))
+                else:
+                    f.writeln("case %s: __%s__wrapper__(std::move(req), weak_sconn); break;" % (func.name.upper(), func.name))
+            f.writeln("default: break;  // Unknown RPC ID, ignore")
+            f.writeln("}")
+        f.writeln("}")
+        f.writeln("// these RPC handler functions need to be implemented by user")
+        f.writeln("// for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use")
+        for func in service.functions:
+            if service.abstract or func.abstract:
+                postfix = " = 0"
+            else:
+                postfix = ""
+            if func.attr == "raw":
+                f.writeln("virtual void %s(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn)%s;" % (func.name, postfix))
+            else:
+                func_args = []
+                for in_arg in func.input:
+                    if in_arg.name != None:
+                        func_args += "const %s& %s" % (in_arg.type, in_arg.name),
+                    else:
+                        func_args += "const %s&" % in_arg.type,
+                for out_arg in func.output:
+                    if out_arg.name != None:
+                        func_args += "%s* %s" % (out_arg.type, out_arg.name),
+                    else:
+                        func_args += "%s*" % out_arg.type,
+                if func.attr == "defer":
+                    func_args += "rrr::DeferredReply defer",
+                f.writeln("virtual void %s(%s)%s;" % (func.name, ", ".join(func_args), postfix))
+    f.writeln("private:")
+    with f.indent():
+        for func in service.functions:
+            if func.attr == "raw":
+                continue
+            f.writeln("void __%s__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {" % func.name)
+            with f.indent():
+                if func.attr == "defer":
+                    invoke_with = []
+                    in_counter = 0
+                    out_counter = 0
+                    for in_arg in func.input:
+                        f.writeln("%s* in_%d = new %s;" % (in_arg.type, in_counter, in_arg.type))
+                        f.writeln("req->m >> *in_%d;" % in_counter)
+                        invoke_with += "*in_%d" % in_counter,
+                        in_counter += 1
+                    for out_arg in func.output:
+                        f.writeln("%s* out_%d = new %s;" % (out_arg.type, out_counter, out_arg.type))
+                        invoke_with += "out_%d" % out_counter,
+                        out_counter += 1
+                    f.writeln("auto __marshal_reply__ = [=](rrr::Marshal& m) {");
+                    with f.indent():
+                        out_counter = 0
+                        for out_arg in func.output:
+                            f.writeln("m << *out_%d;" % out_counter)
+                            out_counter += 1
+                    f.writeln("};");
+                    f.writeln("auto __cleanup__ = [=] {");
+                    with f.indent():
+                        in_counter = 0
+                        out_counter = 0
+                        for in_arg in func.input:
+                            f.writeln("delete in_%d;" % in_counter)
+                            in_counter += 1
+                        for out_arg in func.output:
+                            f.writeln("delete out_%d;" % out_counter)
+                            out_counter += 1
+                    f.writeln("};");
+                    f.writeln("rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
+                    invoke_with += "std::move(__defer__)",
+                    f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
+                else: # normal and fast rpc
+                    # Don't use lambda - execute directly for all methods
+                    invoke_with = []
+                    in_counter = 0
+                    out_counter = 0
+                    for in_arg in func.input:
+                        f.writeln("%s in_%d;" % (in_arg.type, in_counter))
+                        f.writeln("req->m >> in_%d;" % in_counter)
+                        invoke_with += "in_%d" % in_counter,
+                        in_counter += 1
+                    for out_arg in func.output:
+                        f.writeln("%s out_%d;" % (out_arg.type, out_counter))
+                        invoke_with += "&out_%d" % out_counter,
+                        out_counter += 1
+                    f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
+                    f.writeln("auto sconn_opt = weak_sconn.upgrade();")
+                    f.writeln("if (sconn_opt.is_some()) {")
+                    with f.indent():
+                        f.writeln("auto sconn = sconn_opt.unwrap();")
+                        if out_counter == 0:
+                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
+                        else:
+                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
+                            with f.indent():
+                                for i in range(out_counter):
+                                    f.writeln("m << out_%d;" % i)
+                            f.writeln("});")
+                    f.writeln("}")
+                    f.writeln("// req automatically cleaned up by rusty::Box")
+            f.writeln("}")
+    f.writeln("};")
+    f.writeln()
+    f.writeln("class %sProxy {" % service.name)
+    f.writeln("protected:")
+    with f.indent():
+        f.writeln("rrr::Client* __cl__;")
+    f.writeln("public:")
+    with f.indent():
+        f.writeln("%sProxy(rrr::Client* cl): __cl__(cl) { }" % service.name)
+        for func in service.functions:
+            async_func_params = []
+            async_call_params = []
+            sync_func_params = []
+            sync_out_params = []
+            in_counter = 0
+            out_counter = 0
+            for in_arg in func.input:
+                if in_arg.name != None:
+                    async_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
+                    async_call_params += in_arg.name,
+                    sync_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
+                else:
+                    async_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
+                    async_call_params += "in_%d" % in_counter,
+                    sync_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
+                in_counter += 1
+            for out_arg in func.output:
+                if out_arg.name != None:
+                    sync_func_params += "%s* %s" % (out_arg.type, out_arg.name),
+                    sync_out_params += out_arg.name,
+                else:
+                    sync_func_params += "%s* out_%d" % (out_arg.type, out_counter),
+                    sync_out_params += "out_%d" % out_counter,
+                out_counter += 1
+            f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
+            with f.indent():
+                if len(async_call_params) > 0:
+                    f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
+                    with f.indent():
+                        for param in async_call_params:
+                            f.writeln("__m__ << %s;" % param)
+                    f.writeln("});")
+                else:
+                    f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
+            f.writeln("}")
+            f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
+            with f.indent():
+                f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
+                f.writeln("if (__fu_result__.is_err()) {")
+                with f.indent():
+                    f.writeln("return __fu_result__.unwrap_err();  // Return error code")
+                f.writeln("}")
+                f.writeln("auto __fu__ = __fu_result__.unwrap();")
+                f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
+                if len(sync_out_params) > 0:
+                    f.writeln("if (__ret__ == 0) {")
+                    with f.indent():
+                        for param in sync_out_params:
+                            f.writeln("__fu__->get_reply() >> *%s;" % param)
+                    f.writeln("}")
+                f.writeln("// Arc auto-released")
+                f.writeln("return __ret__;")
+            f.writeln("}")
+    f.writeln("};")
+    f.writeln()
+
+
+def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
+    with open(fpath, "w") as f:
+        f = SourceFile(f)
+        f.writeln("#pragma once")
+        f.writeln()
+#        f.writeln('#include "rpc/server.h"')
+        f.writeln('#include "rrr.hpp"')
+        f.writeln()
+        f.writeln("#include <errno.h>")
+        f.writeln()
+        f.write(cpp_header)
+        f.writeln()
+
+        if rpc_source.namespace != None:
+            f.writeln(" ".join(map(lambda x:"namespace %s {" % x, rpc_source.namespace)))
+            f.writeln()
+
+        for struct in rpc_source.structs:
+            emit_struct(struct, f)
+
+        for service in rpc_source.services:
+            emit_service_and_proxy(service, f, rpc_table)
+
+        if rpc_source.namespace != None:
+            f.writeln(" ".join(["}"] * len(rpc_source.namespace)) + " // namespace " + "::".join(rpc_source.namespace))
+            f.writeln()
+
+        f.writeln()
+        f.write(cpp_footer)
+        f.writeln()

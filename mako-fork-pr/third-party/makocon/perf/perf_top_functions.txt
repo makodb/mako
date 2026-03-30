@@ -1,0 +1,100 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 20K of event 'cycles'
+# Event count (approx.): 6599457879
+#
+# Overhead
+# ........
+#
+   100.00%
+            |          
+            |--4.13%--syscall_exit_to_user_mode
+            |          |          
+            |           --4.07%--do_syscall_64
+            |                     entry_SYSCALL_64_after_hwframe
+            |                     |          
+            |                     |--2.01%--__libc_send (inlined)
+            |                     |          __libc_send (inlined)
+            |                     |          std::sys_common::net::TcpStream::write (inlined)
+            |                     |          <&std::net::tcp::TcpStream as std::io::Write>::write
+            |                     |          <&mio::net::tcp::stream::TcpStream as std::io::Write>::write::{{closure}} (inlined)
+            |                     |          mio::sys::unix::selector::stateless_io_source::IoSourceState::do_io (inlined)
+            |                     |          mio::io_source::IoSource<T>::do_io (inlined)
+            |                     |          <&mio::net::tcp::stream::TcpStream as std::io::Write>::write
+            |                     |          tokio::io::poll_evented::PollEvented<E>::poll_write (inlined)
+            |                     |          tokio::net::tcp::stream::TcpStream::poll_write_priv
+            |                     |          tokio::io::util::buf_writer::BufWriter<W>::flush_buf
+            |                     |          <tokio::io::util::buf_writer::BufWriter<W> as tokio::io::async_write::AsyncWrite>::poll_flush (inlined)
+            |                     |          <&mut T as tokio::io::async_write::AsyncWrite>::poll_flush (inlined)
+            |                     |          <tokio::io::util::flush::Flush<A> as core::future::future::Future>::poll (inlined)
+            |                     |          rust_redis::handle_client_async::{{closure}} (inlined)
+            |                     |          rust_redis::start_async_server::{{closure}}::{{closure}}
+            |                     |          tokio::runtime::task::core::Core<T,S>::poll::{{closure}} (inlined)
+            |                     |          tokio::loom::std::unsafe_cell::UnsafeCell<T>::with_mut (inlined)
+            |                     |          tokio::runtime::task::core::Core<T,S>::poll
+            |                     |          0xffffffffffffffff
+            |                     |          
+            |                      --1.97%--__libc_recv
+            |                                __libc_recv
+            |                                std::sys::pal::unix::net::Socket::recv_with_flags (inlined)
+            |                                std::sys::pal::unix::net::Socket::read (inlined)
+            |                                std::sys_common::net::TcpStream::read (inlined)
+            |                                <&std::net::tcp::TcpStream as std::io::Read>::read (inlined)
+            |                                <&mio::net::tcp::stream::TcpStream as std::io::Read>::read::{{closure}} (inlined)
+            |                                mio::sys::unix::selector::stateless_io_source::IoSourceState::do_io (inlined)
+            |                                mio::io_source::IoSource<T>::do_io (inlined)
+            |                                <&mio::net::tcp::stream::TcpStream as std::io::Read>::read
+            |                                tokio::io::poll_evented::PollEvented<E>::poll_read (inlined)
+            |                                tokio::net::tcp::stream::TcpStream::poll_read_priv
+            |                                <&mut T as tokio::io::async_read::AsyncRead>::poll_read (inlined)
+            |                                <tokio::io::util::read::Read<R> as core::future::future::Future>::poll (inlined)
+            |                                rust_redis::handle_client_async::{{closure}} (inlined)
+            |                                rust_redis::start_async_server::{{closure}}::{{closure}}
+            |                                tokio::runtime::task::core::Core<T,S>::poll::{{closure}} (inlined)
+            |                                tokio::loom::std::unsafe_cell::UnsafeCell<T>::with_mut (inlined)
+            |                                tokio::runtime::task::core::Core<T,S>::poll
+            |                                0xffffffffffffffff
+            |          
+            |--2.44%--__memcpy_avx_unaligned_erms_rtm (inlined)
+            |          |          
+            |          |--0.91%--core::intrinsics::copy_nonoverlapping (inlined)
+            |          |          |          
+            |          |           --0.51%--bytes::bytes_mut::BytesMut::extend_from_slice (inlined)
+            |          |                     rust_redis::resp3_handler::Resp3Handler::read_bytes (inlined)
+            |          |                     rust_redis::handle_client_async::{{closure}} (inlined)
+            |          |                     rust_redis::start_async_server::{{closure}}::{{closure}}
+            |          |                     tokio::runtime::task::core::Core<T,S>::poll::{{closure}} (inlined)
+            |          |                     tokio::loom::std::unsafe_cell::UnsafeCell<T>::with_mut (inlined)
+            |          |                     tokio::runtime::task::core::Core<T,S>::poll
+            |          |                     0xffffffffffffffff
+            |          |          
+            |           --0.70%--MultiVersionValue::mvInstall
+            |                     MassTrans<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, versioned_str_struct, false>::install
+            |                     Transaction::try_commit
+            |                     Sto::try_commit (inlined)
+            |                     mbta_wrapper::commit_txn
+            |                     RustWrapper::execute_request
+            |                     cpp_execute_request_sync
+            |                     rust_redis::ffi_getset (inlined)
+            |                     rust_redis::handle_client_async::{{closure}} (inlined)
+            |                     rust_redis::start_async_server::{{closure}}::{{closure}}
+            |                     tokio::runtime::task::core::Core<T,S>::poll::{{closure}} (inlined)
+            |                     tokio::loom::std::unsafe_cell::UnsafeCell<T>::with_mut (inlined)
+            |                     tokio::runtime::task::core::Core<T,S>::poll
+            |                     0xffffffffffffffff
+            |          
+            |--2.22%--ipt_do_table
+            |          |          
+            |           --2.08%--nf_hook_slow
+            |                     |          
+            |                      --1.11%--__ip_local_out
+            |                                ip_local_out
+            |                                __ip_queue_xmit
+            |                                ip_queue_xmit
+            |                                __tcp_transmit_skb
+            |                                tcp_write_xmit
+            |                                __tcp_push_pending_frames
+            |                                tcp_push

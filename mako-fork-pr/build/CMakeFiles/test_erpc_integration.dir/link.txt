@@ -1,0 +1,1 @@
+/usr/bin/g++ CMakeFiles/test_erpc_integration.dir/test/test_erpc_integration.cc.o -o test_erpc_integration  -Wl,-rpath,/home/users/ssoumojit/mako/build:/home/users/ssoumojit/mako/build/lib liberpc.so lib/libgtest_main.so.1.11.0 -lpthread -lnuma lib/libgtest.so.1.11.0 
