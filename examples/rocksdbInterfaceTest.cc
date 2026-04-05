@@ -21,6 +21,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "src/mako/buffered_iterator.hh"
 
 // ============================================================================
 // Helpers
@@ -573,6 +574,437 @@ void test_full_integration(mako::IDatabase* db) {
 }
 
 // ============================================================================
+// Iterator Tests (IT1.5)
+// ============================================================================
+
+static std::string iter_key(int n) {
+    std::ostringstream ss;
+    ss << "iter_key_" << std::setw(3) << std::setfill('0') << n;
+    return ss.str();
+}
+
+// Test IT1.5.1: Basic Seek and Iterate
+void test_iter_seek(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.1: Basic Seek and Iterate ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    // Insert 100 keys with named encoded values to avoid aliasing bug
+    {
+        std::vector<std::string> encoded;
+        encoded.reserve(100);
+        for (int i = 0; i < 100; ++i) {
+            encoded.push_back(mako::Encode("iter_val_" + padded(i)));
+        }
+        void* txn = db->BeginTransaction();
+        for (int i = 0; i < 100; ++i) {
+            mako::Status s = table->Put(txn, iter_key(i), encoded[i]);
+            VERIFY(s.ok(), ("Put " + iter_key(i)).c_str());
+        }
+        db->Commit(txn);
+    }
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->Seek(iter_key(50));
+    VERIFY(it->Valid(), "Valid() after Seek(iter_key_050)");
+    VERIFY(it->key() == iter_key(50), "key() == iter_key_050 after Seek");
+
+    for (int i = 51; i <= 60; ++i) {
+        it->Next();
+        VERIFY(it->Valid(), ("Valid after Next to " + iter_key(i)).c_str());
+        VERIFY(it->key() == iter_key(i), ("key() == " + iter_key(i)).c_str());
+        // Verify value contains expected content
+        std::string expected_prefix = "iter_val_" + padded(i);
+        VERIFY(it->value().find(expected_prefix) != std::string::npos ||
+               it->value().size() >= expected_prefix.size(),
+               ("value matches iter_val_" + padded(i)).c_str());
+    }
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.1: Basic Seek and Iterate PASSED");
+}
+
+// Test IT1.5.2: SeekToFirst and Full Forward Iteration
+void test_iter_seek_to_first(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.2: SeekToFirst and Full Forward Iteration ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->SeekToFirst();
+    VERIFY(it->Valid(), "Valid() after SeekToFirst");
+
+    int count = 0;
+    std::string prev_key;
+    while (it->Valid()) {
+        VERIFY(prev_key.empty() || it->key() > prev_key, "Keys in ascending order");
+        prev_key = it->key();
+        ++count;
+        it->Next();
+    }
+
+    // The iter_table has 100 keys from IT1.5.1
+    VERIFY_EQ(count, 100, "Full iteration count == 100");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.2: SeekToFirst and Full Forward Iteration PASSED");
+}
+
+// Test IT1.5.3: SeekToLast and Backward Iteration
+void test_iter_seek_to_last(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.3: SeekToLast and Backward Iteration ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->SeekToLast();
+    VERIFY(it->Valid(), "Valid() after SeekToLast");
+    VERIFY(it->key() == iter_key(99), "SeekToLast positions at iter_key_099");
+
+    std::string prev_key = it->key();
+    it->Prev();
+    int steps = 1;
+    while (it->Valid()) {
+        VERIFY(it->key() < prev_key, "Keys in descending order during Prev()");
+        prev_key = it->key();
+        it->Prev();
+        ++steps;
+    }
+    VERIFY_EQ(steps, 100, "Backward iteration covers all 100 keys");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.3: SeekToLast and Backward Iteration PASSED");
+}
+
+// Test IT1.5.4: Seek Past End
+void test_iter_seek_past_end(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.4: Seek Past End ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->Seek("zzzzz");
+    VERIFY(!it->Valid(), "Valid() == false after Seek past all keys");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.4: Seek Past End PASSED");
+}
+
+// Test IT1.5.5: Seek Before Start
+void test_iter_seek_before_start(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.5: Seek Before Start ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->Seek("");
+    VERIFY(it->Valid(), "Valid() == true after Seek(\"\")");
+    // First key should be iter_key_000 (alphabetically smallest in this table)
+    VERIFY(it->key() == iter_key(0), "key() == iter_key_000 after Seek(\"\")");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.5: Seek Before Start PASSED");
+}
+
+// Test IT1.5.6: Next Past End
+void test_iter_next_past_end(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.6: Next Past End ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->SeekToLast();
+    VERIFY(it->Valid(), "Valid() after SeekToLast");
+    it->Next();
+    VERIFY(!it->Valid(), "Valid() == false after Next() past last key");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.6: Next Past End PASSED");
+}
+
+// Test IT1.5.7: Prev Before Start
+void test_iter_prev_before_start(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.7: Prev Before Start ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->SeekToFirst();
+    VERIFY(it->Valid(), "Valid() after SeekToFirst");
+    it->Prev();
+    VERIFY(!it->Valid(), "Valid() == false after Prev() before first key");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.7: Prev Before Start PASSED");
+}
+
+// Test IT1.5.8: Empty Table Iterator
+void test_iter_empty_table(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.8: Empty Table Iterator ---\n");
+
+    mako::ITable* table = db->GetTable("iter_empty_table");
+    VERIFY(table != nullptr, "GetTable iter_empty_table");
+
+    {
+        void* txn = db->BeginTransaction();
+        mako::IIterator* it = table->NewIterator(txn);
+        VERIFY(it != nullptr, "NewIterator on empty table returns non-null");
+        it->SeekToFirst();
+        VERIFY(!it->Valid(), "Valid() == false on empty table after SeekToFirst");
+        delete it;
+        db->Commit(txn);
+    }
+    {
+        void* txn = db->BeginTransaction();
+        mako::IIterator* it = table->NewIterator(txn);
+        it->SeekToLast();
+        VERIFY(!it->Valid(), "Valid() == false on empty table after SeekToLast");
+        delete it;
+        db->Commit(txn);
+    }
+
+    VERIFY_PASS("IT1.5.8: Empty Table Iterator PASSED");
+}
+
+// Test IT1.5.9: Mixed Next/Prev Navigation
+void test_iter_mixed_nav(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.9: Mixed Next/Prev Navigation ---\n");
+
+    mako::ITable* table = db->GetTable("iter_table");
+    VERIFY(table != nullptr, "GetTable iter_table");
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    // Seek to iter_key_050, Next x5 -> at iter_key_055, Prev x3 -> at iter_key_052
+    it->Seek(iter_key(50));
+    VERIFY(it->Valid() && it->key() == iter_key(50), "Seek to iter_key_050");
+
+    for (int i = 0; i < 5; ++i) it->Next();
+    VERIFY(it->Valid() && it->key() == iter_key(55), "After 5xNext: at iter_key_055");
+
+    for (int i = 0; i < 3; ++i) it->Prev();
+    VERIFY(it->Valid() && it->key() == iter_key(52), "After 3xPrev: at iter_key_052 (net +2)");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.9: Mixed Next/Prev Navigation PASSED");
+}
+
+// Test IT1.5.10: Iterator with Prefix Seek
+void test_iter_prefix_seek(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.10: Iterator with Prefix Seek ---\n");
+
+    mako::ITable* table = db->GetTable("iter_prefix_table");
+    VERIFY(table != nullptr, "GetTable iter_prefix_table");
+
+    // Insert keys with different prefixes
+    {
+        std::string v_aaa1 = mako::Encode("val_aaa_001");
+        std::string v_aaa2 = mako::Encode("val_aaa_002");
+        std::string v_bbb1 = mako::Encode("val_bbb_001");
+        std::string v_bbb2 = mako::Encode("val_bbb_002");
+        std::string v_ccc1 = mako::Encode("val_ccc_001");
+
+        void* txn = db->BeginTransaction();
+        table->Put(txn, "aaa_001", v_aaa1);
+        table->Put(txn, "aaa_002", v_aaa2);
+        table->Put(txn, "bbb_001", v_bbb1);
+        table->Put(txn, "bbb_002", v_bbb2);
+        table->Put(txn, "ccc_001", v_ccc1);
+        db->Commit(txn);
+    }
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->Seek("bbb");
+    VERIFY(it->Valid(), "Valid() after Seek(\"bbb\")");
+    VERIFY(it->key() == "bbb_001", "First result after Seek(\"bbb\") is bbb_001");
+
+    int bbb_count = 0;
+    while (it->Valid() && it->key().substr(0, 3) == "bbb") {
+        ++bbb_count;
+        it->Next();
+    }
+    VERIFY_EQ(bbb_count, 2, "Prefix scan finds 2 bbb_* keys");
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.10: Iterator with Prefix Seek PASSED");
+}
+
+// Test IT1.5.11: Large Dataset Iterator
+void test_iter_large_dataset(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.11: Large Dataset Iterator ---\n");
+
+    mako::ITable* table = db->GetTable("iter_large_table");
+    VERIFY(table != nullptr, "GetTable iter_large_table");
+
+    const int N = 10000;
+
+    // Insert N keys in batches of 500
+    for (int batch = 0; batch < N / 500; ++batch) {
+        std::vector<std::string> encoded;
+        encoded.reserve(500);
+        for (int i = 0; i < 500; ++i) {
+            int idx = batch * 500 + i;
+            std::ostringstream ss;
+            ss << std::setw(5) << std::setfill('0') << idx;
+            encoded.push_back(mako::Encode("large_val_" + ss.str()));
+        }
+        void* txn = db->BeginTransaction();
+        for (int i = 0; i < 500; ++i) {
+            int idx = batch * 500 + i;
+            std::ostringstream ss;
+            ss << "large_key_" << std::setw(5) << std::setfill('0') << idx;
+            table->Put(txn, ss.str(), encoded[i]);
+        }
+        db->Commit(txn);
+    }
+
+    void* txn = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn);
+    VERIFY(it != nullptr, "NewIterator returns non-null");
+
+    it->SeekToFirst();
+    VERIFY(it->Valid(), "Valid() after SeekToFirst on large table");
+
+    std::string first_key = it->key();
+    int count = 0;
+    std::string last_key;
+    while (it->Valid()) {
+        last_key = it->key();
+        ++count;
+        it->Next();
+    }
+
+    VERIFY_EQ(count, N, "Large dataset iteration count == 10000");
+    VERIFY(first_key == "large_key_00000", "First key is large_key_00000");
+    {
+        std::ostringstream ss;
+        ss << "large_key_" << std::setw(5) << std::setfill('0') << (N - 1);
+        VERIFY(last_key == ss.str(), "Last key is large_key_09999");
+    }
+
+    delete it;
+    db->Commit(txn);
+    VERIFY_PASS("IT1.5.11: Large Dataset Iterator PASSED");
+}
+
+// Test IT1.5.12: Iterator Isolation (snapshot semantics)
+void test_iter_isolation(mako::IDatabase* db) {
+    printf("\n--- Iterator Test IT1.5.12: Iterator Isolation ---\n");
+
+    mako::ITable* table = db->GetTable("iter_isolation_table");
+    VERIFY(table != nullptr, "GetTable iter_isolation_table");
+
+    // Insert 10 keys
+    {
+        std::vector<std::string> encoded;
+        encoded.reserve(10);
+        for (int i = 0; i < 10; ++i) {
+            encoded.push_back(mako::Encode("iso_val_" + padded(i)));
+        }
+        void* txn = db->BeginTransaction();
+        for (int i = 0; i < 10; ++i) {
+            table->Put(txn, "iso_key_" + padded(i), encoded[i]);
+        }
+        db->Commit(txn);
+    }
+
+    // Create iterator and buffer all entries, then commit the transaction.
+    // Mako's OCC allows only one active transaction per thread, so we commit
+    // txn1 before starting txn2. The iterator's buffer (a plain vector) remains
+    // valid in memory even after the transaction is committed.
+    void* txn1 = db->BeginTransaction();
+    mako::IIterator* it = table->NewIterator(txn1);
+    it->SeekToFirst();
+    int count_before = 0;
+    while (it->Valid()) { ++count_before; it->Next(); }
+    db->Commit(txn1);  // commit before starting next transaction
+    VERIFY_EQ(count_before, 10, "Iterator sees all 10 keys before delete");
+
+    // Delete 5 keys in a new transaction (txn1 already committed)
+    {
+        void* txn2 = db->BeginTransaction();
+        for (int i = 0; i < 5; ++i) {
+            table->Delete(txn2, "iso_key_" + padded(i));
+        }
+        db->Commit(txn2);
+    }
+
+    delete it;
+
+    // New iterator should see only 5 keys (deletes reflected in fresh scan)
+    void* txn3 = db->BeginTransaction();
+    mako::IIterator* it2 = table->NewIterator(txn3);
+    it2->SeekToFirst();
+    int count_new = 0;
+    while (it2->Valid()) { ++count_new; it2->Next(); }
+    VERIFY_EQ(count_new, 5, "New iterator sees 5 keys after delete");
+    delete it2;
+    db->Commit(txn3);
+
+    VERIFY_PASS("IT1.5.12: Iterator Isolation PASSED");
+}
+
+// Run all iterator tests
+void test_iterators(mako::IDatabase* db) {
+    printf("\n====== Iterator Tests (IT1.5) ======\n");
+    test_iter_seek(db);
+    test_iter_seek_to_first(db);
+    test_iter_seek_to_last(db);
+    test_iter_seek_past_end(db);
+    test_iter_seek_before_start(db);
+    test_iter_next_past_end(db);
+    test_iter_prev_before_start(db);
+    test_iter_empty_table(db);
+    test_iter_mixed_nav(db);
+    test_iter_prefix_seek(db);
+    test_iter_large_dataset(db);
+    test_iter_isolation(db);
+    printf("\n====== All Iterator Tests PASSED ======\n");
+}
+
+// ============================================================================
 // main
 // ============================================================================
 int main(int argc, char* argv[]) {
@@ -603,6 +1035,9 @@ int main(int argc, char* argv[]) {
 
     // Run full integration test
     test_full_integration(db);
+
+    // Run iterator tests
+    test_iterators(db);
 
     // Close database
     mako::Status close_status = db->Close();

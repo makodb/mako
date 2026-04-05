@@ -163,6 +163,22 @@ public:
         return Status::IOError("GetApproximateSize not supported on remote table");
     }
 
+    // @safe - NewIterator not supported on remote tables; returns nullptr
+    IIterator* NewIterator(void* txn) override {
+        (void)txn;
+        return nullptr;
+    }
+
+    // @safe - DeleteRange not supported on remote tables (stub)
+    Status DeleteRange(void* txn,
+                       const std::string& start_key,
+                       const std::string* end_key,
+                       size_t* deleted_count = nullptr) override {
+        (void)txn; (void)start_key; (void)end_key;
+        if (deleted_count) *deleted_count = 0;
+        return Status::IOError("DeleteRange not supported on remote table");
+    }
+
 private:
     RemoteDB* db_;      // Borrowed pointer to parent (not owned)
     std::string name_;

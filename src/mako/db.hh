@@ -28,6 +28,8 @@
 #include "status.hh"
 #include "idb.hh"
 #include "local_table.hh"
+#include "write_batch.hh"
+#include "snapshot.hh"
 #include "benchmarks/abstract_db.h"
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/bench.h"
@@ -38,6 +40,7 @@
 #include <memory>
 #include <unordered_map>
 #include <mutex>
+#include <atomic>
 
 namespace mako {
 
@@ -241,6 +244,27 @@ public:
     std::vector<std::string> ListTables() override;
 
     /**
+     * Create a new WriteBatch for atomic bulk writes.
+     * Caller owns and must delete the returned batch.
+     */
+    IWriteBatch* NewWriteBatch() override {
+        return new WriteBatch(this);
+    }
+
+    /**
+     * Capture a point-in-time snapshot (Option A: per-table lazy buffering).
+     * See src/mako/snapshot.hh and docs/snapshot_design.md for design details.
+     */
+    ISnapshot* GetSnapshot() override;
+
+    /**
+     * Release a snapshot previously returned by GetSnapshot().
+     */
+    void ReleaseSnapshot(ISnapshot* snapshot) override {
+        delete snapshot;
+    }
+
+    /**
      * Connect to the database (no-op for local DB)
      * Implements IDatabase interface - always returns OK
      */
@@ -273,6 +297,9 @@ private:
     std::unordered_map<std::string, std::unique_ptr<LocalTable>> tables_;
     std::mutex tables_mutex_;
 
+    // Monotonically increasing counter for snapshot sequence numbers
+    static std::atomic<uint64_t> snapshot_seq_counter_;
+
     // Thread-local helpers for BeginTransaction
     str_arena& get_arena();
     std::string& get_txn_buf();
@@ -287,6 +314,10 @@ private:
 // in mako.hh that can only be called from the same compilation unit.
 
 #ifdef _MAKO_COMMON_H_
+
+// Static member definition (one per process, defined in the translation unit
+// that includes mako.hh before db.hh — i.e., the example/test binary).
+inline std::atomic<uint64_t> DB::snapshot_seq_counter_{0};
 
 inline Status DB::Open(const Options& options,
                        const std::string& path,
@@ -398,10 +429,31 @@ inline Status DB::Close() {
 }
 
 inline void DB::InitThread() {
-    if (!BenchmarkConfig::getInstance().getLeaderConfig()) {
+    if (!is_open_ || !db_) {
         return;
     }
-    scoped_db_thread_ctx ctx(db_, false); // TODO: be careful about thread_end
+    // Assign a unique TThread ID to this thread (thread-local, so safe to call once per thread).
+    // We bypass mbta_wrapper::thread_init() because that path dereferences
+    // BenchmarkConfig::getConfig() which may be nullptr in simple single-node mode.
+    // Instead we directly initialize the two things worker threads actually need:
+    //   1. A unique TThread::id() for the OCC lock protocol
+    //   2. MassTrans per-thread state (mythreadinfo.ti) for Masstree operations
+    static std::atomic<int> tidcounter{0};
+    thread_local bool thread_initialized = false;
+    if (!thread_initialized) {
+        int tid = tidcounter.fetch_add(1, std::memory_order_relaxed);
+        TThread::set_id(tid);
+        thread_initialized = true;
+        // Thread 0 does global one-time setup: epoch callback + advancer thread.
+        if (tid == 0) {
+            mbta_ordered_index::mbta_type::static_init();
+            pthread_t advancer;
+            pthread_create(&advancer, nullptr, Transaction::epoch_advancer, nullptr);
+            pthread_detach(advancer);
+        }
+        // Initialize Masstree per-thread threadinfo (sets mythreadinfo.ti and RCU callbacks).
+        mbta_ordered_index::mbta_type::thread_init();
+    }
 }
 
 inline str_arena& DB::get_arena() {
@@ -472,6 +524,17 @@ inline ITable* DB::GetTable(const std::string& name) {
     LocalTable* ptr = table.get();
     tables_[name] = std::move(table);
     return ptr;
+}
+
+inline ISnapshot* DB::GetSnapshot() {
+    if (!is_open_ || !db_) {
+        return nullptr;
+    }
+    uint64_t seq = snapshot_seq_counter_.fetch_add(1, std::memory_order_relaxed);
+    // EagerSnapshot is defined in snapshot.hh which is included by consumers
+    // that also include mako.hh. The include below makes the definition available
+    // inside this translation unit.
+    return new EagerSnapshot(this, seq);
 }
 
 #endif  // _MAKO_COMMON_H_

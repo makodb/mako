@@ -8,6 +8,7 @@
  */
 
 #include "idb.hh"
+#include "buffered_iterator.hh"
 #include "status.hh"
 #include "benchmarks/mbta_sharded_ordered_index.hh"
 #include "benchmarks/abstract_db.h"
@@ -178,6 +179,47 @@ public:
         }
         // @unsafe { Calls underlying index which uses raw pointers }
         *size = index_->size();
+        return Status::OK();
+    }
+
+    // @safe - Create a buffered iterator over this table; caller owns result
+    IIterator* NewIterator(void* txn) override {
+        // @unsafe { BufferedIterator calls Scan which uses raw pointers }
+        return new BufferedIterator(this, txn);
+    }
+
+    // @safe - Scan-then-delete strategy; atomicity provided by the enclosing txn
+    Status DeleteRange(void* txn,
+                       const std::string& start_key,
+                       const std::string* end_key,
+                       size_t* deleted_count = nullptr) override {
+        if (!index_) {
+            return Status::InvalidArgument("Invalid table");
+        }
+        if (deleted_count) *deleted_count = 0;
+
+        // Step 1: collect all keys in the range via Scan
+        std::vector<std::string> keys;
+        Status scan_status = Scan(txn, start_key, end_key,
+            [&keys](const std::string& key, const std::string& /*value*/) -> bool {
+                keys.push_back(key);
+                return true;  // continue scanning
+            });
+        if (!scan_status.ok()) {
+            return scan_status;
+        }
+
+        // Step 2: delete each collected key
+        size_t count = 0;
+        for (const std::string& key : keys) {
+            Status s = Delete(txn, key);
+            if (!s.ok()) {
+                if (deleted_count) *deleted_count = count;
+                return s;
+            }
+            ++count;
+        }
+        if (deleted_count) *deleted_count = count;
         return Status::OK();
     }
 
