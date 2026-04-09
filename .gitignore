@@ -74,3 +74,6 @@ prof
 .cache/*
 cmake-build/*
 *.stamp
+
+# Misc build/test artifacts
+/Testing/
