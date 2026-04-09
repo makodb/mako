@@ -7,20 +7,8 @@ build = "build.rs"
 
 [dependencies]
 
-[build-dependencies]
-fragile-driver = { git = "https://github.com/shuaimu/fragile.git", branch = "main", package = "fragile-driver" }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-shell-words = "1"
-
 [workspace]
 resolver = "2"
-members = [
-    "cargo-mako-xtask",
-    "cargo-mako-native-build",
-    "cargo-mako-cmake-bridge",
-    "cargo-mako-test-rpc",
-]
 default-members = [
     ".",
 ]
@@ -33,6 +21,3 @@ exclude = [
     "third-party/makocon/mako/rust-lib",
     "rust-lib",
 ]
-
-[workspace.metadata.mako]
-bridge_targets = ["cmake-dynamic", "test_rpc"]
