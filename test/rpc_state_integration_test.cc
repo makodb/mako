@@ -493,6 +493,47 @@ TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
     EXPECT_LE(final_fd_count, baseline_fd_count + 1);
 }
 
+TEST_F(StateIntegrationTest, StressFastConnectCloseCyclesDoNotIncreaseFdCount) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
+    const int baseline_fd_count = count_open_fds();
+    ASSERT_GE(baseline_fd_count, 0);
+
+    constexpr int kCycles = 1000;
+    for (int cycle = 0; cycle < kCycles; ++cycle) {
+        auto client = Client::create(poll_thread_.as_ref().unwrap());
+        ASSERT_EQ(client->connect(server_addr.c_str()), 0) << "cycle=" << cycle;
+        ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)))
+            << "cycle=" << cycle;
+
+        const int fd = client->fd();
+        ASSERT_GE(fd, 0) << "cycle=" << cycle;
+        ASSERT_NE(::fcntl(fd, F_GETFD), -1) << "cycle=" << cycle;
+
+        client->close();
+        ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(1500)))
+            << "cycle=" << cycle;
+        ASSERT_TRUE(wait_for_fd_close(fd, milliseconds(1500))) << "cycle=" << cycle;
+
+        if ((cycle + 1) % 100 == 0) {
+            const int cycle_fd_count = count_open_fds();
+            ASSERT_GE(cycle_fd_count, 0);
+            EXPECT_LE(cycle_fd_count, baseline_fd_count + 3) << "cycle=" << cycle;
+        }
+    }
+
+    std::this_thread::sleep_for(milliseconds(100));
+    const int final_fd_count = count_open_fds();
+    ASSERT_GE(final_fd_count, 0);
+    EXPECT_LE(final_fd_count, baseline_fd_count + 2);
+
+    delete server;
+}
+
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     // Start server
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));

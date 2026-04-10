@@ -27,12 +27,13 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [x] Add integration test: `handle_error()` path closes socket and does not leak fd.
 - [x] Add integration test: `mark_closing()` keeps state non-terminal until poll-thread close callback runs.
 - [x] Add integration test: closed-fd cleanup branch invokes pollable `close()` before map erase.
-- [ ] Add stress test: 1k fast connect/close cycles under poll thread.
+- [x] Add stress test: 1k fast connect/close cycles under poll thread.
+  - Added `StateIntegrationTest.StressFastConnectCloseCyclesDoNotIncreaseFdCount` on 2026-04-10. It runs 1000 connect/close cycles and checks fd closure + bounded open-fd count.
 - [x] Run existing: `test_rpc_reconnect_integration`, `test_rpc_state_integration`, `test_rpc_stress_crash`.
 
 ### DoD
 - [ ] New leak tests fail before fix and pass after fix.
-- [ ] No fd growth in stress scenario.
+- [x] No fd growth in stress scenario.
 
 ## Workstream B: Fix Buffering Overflow + Future Lifecycle (P1)
 ### Code TODO
