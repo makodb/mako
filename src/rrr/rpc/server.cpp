@@ -328,7 +328,7 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
 
 // @safe - Destroys server and requests close for all connections
 // Arc<RpcServiceContext> ensures services live until all connections are done
-Server::~Server() {
+Server::~Server() noexcept {
     // Request close for server listener and all its connections via poll thread
     if (server_listener_.is_some()) {
         auto& listener = server_listener_.as_ref().unwrap();

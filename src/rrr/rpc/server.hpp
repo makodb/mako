@@ -227,7 +227,7 @@ class ServerListener: public Pollable {
 
 //protected:
   // @safe - AddrInfo RAII wrapper handles freeaddrinfo automatically
-  virtual ~ServerListener() {
+  virtual ~ServerListener() noexcept override {
     // gai_result_ RAII wrapper automatically calls freeaddrinfo
     p_svr_addr_ = nullptr;  // Clear pointer into freed memory
   };
@@ -505,7 +505,7 @@ public:
     Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker = rusty::None);
     // @safe - Destroys server and requests close for all connections
     // SAFETY: Arc<RpcServiceContext> ensures services live until all connections are done
-    virtual ~Server();
+    virtual ~Server() noexcept override;
 
     // @unsafe - Starts server on specified address (raw pointer dereference)
     int start(const char* bind_addr);
