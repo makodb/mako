@@ -22,7 +22,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [x] In poll loop closed-fd cleanup, ensure close callback is invoked before map erase.
 
 ### Tests TODO
-- [ ] Add integration test: repeated connect/error/reconnect cycles do not increase open fd count.
+- [x] Add integration test: repeated connect/error/reconnect cycles do not increase open fd count.
+  - Added `StateIntegrationTest.RepeatedErrorReconnectCyclesDoNotIncreaseFdCount` on 2026-04-10. It verifies FD baseline/closure across repeated connect->error->reconnect cycles.
 - [x] Add integration test: `handle_error()` path closes socket and does not leak fd.
 - [x] Add integration test: `mark_closing()` keeps state non-terminal until poll-thread close callback runs.
 - [x] Add integration test: closed-fd cleanup branch invokes pollable `close()` before map erase.

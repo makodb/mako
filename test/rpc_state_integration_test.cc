@@ -7,6 +7,8 @@
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <thread>
@@ -27,6 +29,38 @@ using namespace std::chrono;
 static std::atomic<int> g_state_test_port{11000};
 
 namespace {
+
+int count_open_fds() {
+    DIR* dir = ::opendir("/proc/self/fd");
+    if (dir == nullptr) {
+        return -1;
+    }
+
+    int count = 0;
+    while (dirent* entry = ::readdir(dir)) {
+        if (std::strcmp(entry->d_name, ".") == 0 ||
+            std::strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        ++count;
+    }
+    ::closedir(dir);
+
+    // /proc/self/fd enumeration includes the directory descriptor itself.
+    return count > 0 ? count - 1 : 0;
+}
+
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    return predicate();
+}
 
 bool wait_for_fd_close(int fd, milliseconds timeout) {
     auto deadline = steady_clock::now() + timeout;
@@ -388,6 +422,75 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
         ::close(sv[0]);
     }
     ::close(sv[1]);
+}
+
+TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
+
+    const int baseline_fd_count = count_open_fds();
+    ASSERT_GE(baseline_fd_count, 0);
+
+    constexpr int kCycles = 20;
+    for (int cycle = 0; cycle < kCycles; ++cycle) {
+        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto service_box = rusty::make_box<StateTestService>();
+        server->reg_service(std::move(service_box));
+        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+        if (cycle == 0) {
+            ASSERT_EQ(client->connect(server_addr.c_str()), 0);
+        } else {
+            std::atomic<bool> reconnect_done{false};
+            std::atomic<bool> reconnect_success{false};
+            ASSERT_EQ(client->reconnect([&](bool success) {
+                reconnect_success = success;
+                reconnect_done = true;
+            }), 0);
+            ASSERT_TRUE(wait_for_condition([&]() { return reconnect_done.load(); }, milliseconds(2000)));
+            ASSERT_TRUE(reconnect_success.load());
+        }
+
+        ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
+        const int cycle_fd = client->fd();
+        ASSERT_GE(cycle_fd, 0);
+        ASSERT_NE(::fcntl(cycle_fd, F_GETFD), -1);
+
+        std::string input = "cycle-" + std::to_string(cycle);
+        auto ok_result = client->request(
+            benchmark::BenchmarkService::FAST_NOP,
+            [&](Marshal& m) { m << input; }
+        );
+        if (ok_result.is_ok()) {
+            ok_result.unwrap()->timed_wait(0.2);
+        }
+
+        // Force disconnection path and handle_error() driven cleanup.
+        delete server;
+        server = nullptr;
+
+        auto fail_result = client->request(
+            benchmark::BenchmarkService::FAST_NOP,
+            [&](Marshal& m) { m << input; }
+        );
+        if (fail_result.is_ok()) {
+            fail_result.unwrap()->timed_wait(0.2);
+        }
+
+        ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
+        EXPECT_TRUE(wait_for_fd_close(cycle_fd, milliseconds(2000)));
+
+        const int cycle_fd_count = count_open_fds();
+        ASSERT_GE(cycle_fd_count, 0);
+        EXPECT_LE(cycle_fd_count, baseline_fd_count + 2);
+    }
+
+    client->close();
+    std::this_thread::sleep_for(milliseconds(100));
+
+    const int final_fd_count = count_open_fds();
+    ASSERT_GE(final_fd_count, 0);
+    EXPECT_LE(final_fd_count, baseline_fd_count + 1);
 }
 
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
