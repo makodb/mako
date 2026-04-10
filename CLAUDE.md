@@ -113,15 +113,15 @@ The system implements multiple distributed transaction protocols:
 **Switching backends:**
 ```bash
 # Use rrr/rpc (default)
-./build/dbtest config/mako_tpcc.yml
+./build/dbtest config/tpcc.yml
 
 # Use eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
+MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
 Both backends implement the same `TransportBackend` interface for transport-agnostic request/response handling.
 
-**See [doc/transport_backends.md](doc/transport_backends.md) for complete documentation.**
+**See [docs/developer/transport-backends.md](docs/developer/transport-backends.md) for complete documentation.**
 
 **Legacy Deptran transports:**
 - Standard Ethernet via `src/rrr/` RPC framework
@@ -134,8 +134,8 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 - **Build configuration**: Controlled via CMake flags or Makefile variables (SHARDS, PAXOS_LIB_ENABLED, etc.)
 
 ### Key Classes and Components
-- `TxnCoordinator`: Coordinates distributed transactions across shards
-- `TxnScheduler`: Handles transaction scheduling and execution
+- `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
+- `SchedulerClassic`: Handles transaction scheduling and execution (protocol-specific subclasses like `SchedulerOcc`)
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)
@@ -258,7 +258,7 @@ void set_replication_type(ReplicationType type) {
 #### Borrow Checking Integration
 The project uses RustyCpp for static analysis:
 - Build runs borrow checking automatically via CMake targets
-- Run `make borrow_check_all_dbtest` to verify all checked files
+- Run `make borrow_check_deptran` or `make borrow_check_raft` to verify checked files
 - Address any violations before committing
 - Files with heavy third-party header usage may be excluded from checking (document why in CMakeLists.txt)
 
@@ -280,10 +280,10 @@ New protocols should be added under `src/deptran/` following the existing patter
 3. Add configuration support in benchmark YAML files
 
 ### Modifying Benchmarks
-Benchmarks are in `src/bench/`. Each benchmark has:
-- Workload generator (`*_workload.cc`)
-- Piece registration (`*_pieces.cc`)
-- Stored procedures (`*_procedures.cc`)
+Benchmarks are in `src/bench/`. Each benchmark directory (e.g., `tpcc/`, `tpca/`, `rw/`) typically has:
+- Workload generator (`workload.cc`, `workload.h`)
+- Stored procedures (`procedure.cc`, `procedure.h`, plus individual transaction files like `new_order.cc`, `payment.cc`)
+- Sharding logic (`sharding.cc`, `sharding.h`)
 
 ### Debugging
 - Use `MODE=debug` for debug builds with symbols

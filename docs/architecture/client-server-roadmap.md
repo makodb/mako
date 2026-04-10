@@ -117,6 +117,6 @@ Phase 4: Remove TCP code
 
 ## References
 
-- Current implementation: [client_server_architecture.md](client_server_architecture.md)
+- Current implementation: [Client-Server Architecture](client-server.md)
 - RRR RPC framework: `src/rrr/rpc/`
 - Example code: `examples/simpleTransactionRep.cc`

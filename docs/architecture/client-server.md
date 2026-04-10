@@ -155,7 +155,7 @@ Unsafe use cases:
 - Multiple clients writing concurrently (lost updates possible)
 - Production workloads requiring ACID guarantees
 
-See [Client-Server Roadmap](client_server_roadmap.md) for planned isolation improvements.
+See [Client-Server Roadmap](client-server-roadmap.md) for planned isolation improvements.
 
 ### Single Shard Only
 

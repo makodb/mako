@@ -82,9 +82,8 @@ The **Transaction Coordinator** orchestrates distributed transactions:
 - Handle conflict resolution
 
 **Key classes** (in `src/mako/` and `src/deptran/`):
-- `TxnCoordinator`: Main coordinator logic
+- `Coordinator`: Main coordinator logic (with protocol-specific subclasses)
 - `Transaction`: Individual transaction state
-- `DependencyTracker`: Track transaction dependencies
 
 ### Shard Server
 
@@ -98,9 +97,8 @@ Each **Shard** manages a partition of data:
 - Handle shard-local concurrency
 
 **Key classes**:
-- `Scheduler`: Schedule transaction execution on shard
-- `TxnRegistry`: Track active transactions
-- `MultiPaxos`: Paxos consensus implementation
+- `SchedulerClassic` / `TxLogServer`: Schedule transaction execution on shard
+- `CoordinatorMultiPaxos`: Paxos consensus implementation
 
 ### RRR Communication Layer
 

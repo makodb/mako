@@ -1,3 +1,6 @@
+# Paxos Benchmarking
+
+> **Note**: Some commands below reference the legacy WAF build system. The project now uses CMake (`make -j32`).
 
 ### For Paxos
 

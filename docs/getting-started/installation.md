@@ -293,8 +293,8 @@ For Ubuntu 20.04 or older systems, see [Build Instructions](build.md) for Linuxb
 ### Docker Installation
 
 For containerized deployments, see:
-- **[Docker Deployment](DOCKER_BUILD.md)** - Building and running in Docker
-- **[Docker Verification](DOCKER_VERIFICATION.md)** - Verifying Docker builds
+- **[Docker Deployment](docker.md)** - Building and running in Docker
+- **[Docker Verification](docker-verification.md)** - Verifying Docker builds
 
 ### Development Installation
 

@@ -1,10 +1,12 @@
 # Raft Persistence Tests
 
+> **Note**: The files referenced below (`raft_persistence.h`, `raft_persistence.cc`, `test_raft_persistence.cc`) were removed from the codebase. This document is kept as a design reference for the persistence layer architecture and test approach.
+
 ## Overview
 
 This document describes the RocksDB-based persistence layer for Raft and its test suite.
 
-## Files
+## Files (historical)
 
 - **`raft_persistence.h`** - RaftPersistence class interface
 - **`raft_persistence.cc`** - Implementation with RocksDB integration
@@ -267,7 +269,7 @@ The persistence layer is complete but not yet integrated. To integrate:
    - `OnAppendEntries()` - when receiving new log entries
    - `Start()` - when adding new client commands
 
-See `/home/users/zyang2/.claude/plans/toasty-prancing-rose.md` for detailed integration plan.
+
 
 ## Performance Considerations
 

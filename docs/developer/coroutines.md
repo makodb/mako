@@ -48,9 +48,9 @@ std::thread worker([]() {
 ### Coroutines (User-level)
 ```cpp
 // RRR coroutine - cheap context switch
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_coroutine([]() {
     auto event = wait_for_database();
-    event->Wait();  // Yields to other coroutines
+    event->wait();  // Yields to other coroutines
     process(event->data);
 });
 ```
@@ -107,12 +107,12 @@ public:
 
 // Two coroutines accessing same account
 BankAccount account;
-auto reactor = Reactor::GetReactor();
-reactor->CreateRunCoroutine([&]() { 
+auto reactor = Reactor::get_reactor();
+reactor->create_run_coroutine([&]() { 
     account.withdraw(100);  // Safe - runs to completion or yields
-    Coroutine::CurrentCoroutine()->Yield();
+    Coroutine::current_fiber()->yield_();
 });
-reactor->CreateRunCoroutine([&]() { 
+reactor->create_run_coroutine([&]() { 
     account.withdraw(200);  // Safe - only runs when first yields
 });
 ```
@@ -143,10 +143,10 @@ RRR uses **stackful coroutines** (via Boost.Coroutine2):
 ```cpp
 // Stackful - can pause anywhere in the call stack
 void deep_function() {
-    Coroutine::CurrentCoroutine()->Yield();  // Can pause here!
+    Coroutine::current_fiber()->yield_();  // Can pause here!
 }
 
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_coroutine([]() {
     deep_function();  // Pause/resume works through function calls
 });
 ```
@@ -163,16 +163,16 @@ The Reactor is the **event loop** that manages all coroutines in a thread. Think
 
 ```cpp
 // 1. Create reactor (one per thread)
-auto reactor = Reactor::GetReactor();
+auto reactor = Reactor::get_reactor();
 
 // 2. Create coroutines
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_coroutine([]() {
     // Your concurrent task
 });
 
 // 3. Run event loop
-reactor->Loop(false);  // Process once
-reactor->Loop(true);   // Run forever
+reactor->loop(false);  // Process once
+reactor->loop(true);   // Run forever
 ```
 
 ### Thread-Local Design
@@ -182,13 +182,13 @@ reactor->Loop(true);   // Run forever
 ```cpp
 // WRONG - Undefined behavior!
 std::thread t([reactor]() {
-    reactor->CreateRunCoroutine([]() { /* ... */ });  // BAD!
+    reactor->create_run_coroutine([]() { /* ... */ });  // BAD!
 });
 
 // RIGHT - Each thread has its own reactor
 std::thread t([]() {
-    auto reactor = Reactor::GetReactor();  // Thread-local reactor
-    reactor->CreateRunCoroutine([]() { /* ... */ });
+    auto reactor = Reactor::get_reactor();  // Thread-local reactor
+    reactor->create_run_coroutine([]() { /* ... */ });
 });
 ```
 
@@ -197,25 +197,25 @@ std::thread t([]() {
 ### Basic Coroutine Creation
 
 ```cpp
-auto reactor = Reactor::GetReactor();
+auto reactor = Reactor::get_reactor();
 
 // Simple coroutine - runs to completion
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_coroutine([]() {
     std::cout << "Hello from coroutine!" << std::endl;
 });
 
 // Coroutine with yielding
-auto coro = reactor->CreateRunCoroutine([]() {
+auto coro = reactor->create_run_coroutine([]() {
     std::cout << "Step 1" << std::endl;
-    Coroutine::CurrentCoroutine()->Yield();  // Pause here
+    Coroutine::current_fiber()->yield_();  // Pause here
     std::cout << "Step 2" << std::endl;
-    Coroutine::CurrentCoroutine()->Yield();  // Pause again
+    Coroutine::current_fiber()->yield_();  // Pause again
     std::cout << "Step 3" << std::endl;
 });
 
 // Continue a paused coroutine
-reactor->ContinueCoro(coro);  // Resumes at Step 2
-reactor->ContinueCoro(coro);  // Resumes at Step 3
+reactor->continue_coro(coro);  // Resumes at Step 2
+reactor->continue_coro(coro);  // Resumes at Step 3
 ```
 
 ### Practical Example: Concurrent I/O
@@ -224,9 +224,9 @@ reactor->ContinueCoro(coro);  // Resumes at Step 3
 // Handle multiple client requests concurrently
 void handle_clients(Reactor* reactor) {
     for (int client_id = 0; client_id < 1000; client_id++) {
-        reactor->CreateRunCoroutine([client_id, reactor]() {
+        reactor->create_run_coroutine([client_id, reactor]() {
             // Each client handled by its own coroutine
-            auto request_event = Reactor::CreateSpEvent<IntEvent>();
+            auto request_event = Reactor::create_sp_event<IntEvent>();
             
             // Simulate waiting for client request
             request_event->Wait(5000000);  // 5 second timeout
@@ -240,14 +240,14 @@ void handle_clients(Reactor* reactor) {
             std::cout << "Processing client " << client_id << std::endl;
             
             // Yield while processing
-            Coroutine::CurrentCoroutine()->Yield();
+            Coroutine::current_fiber()->yield_();
             
             std::cout << "Client " << client_id << " done" << std::endl;
         });
     }
     
     // Run event loop to process all coroutines
-    reactor->Loop(true);
+    reactor->loop(true);
 }
 ```
 
@@ -262,50 +262,50 @@ Events are the synchronization primitives for coroutines. They allow coroutines 
 
 #### IntEvent - Integer-based condition
 ```cpp
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 event->target_ = 42;  // Will be ready when value_ == 42
 
-reactor->CreateRunCoroutine([event]() {
+reactor->create_run_coroutine([event]() {
     // Another coroutine sets the value
-    event->Set(42);
+    event->set(42);
 });
 
-reactor->CreateRunCoroutine([event]() {
-    event->Wait();  // Waits until value_ == target_
+reactor->create_run_coroutine([event]() {
+    event->wait();  // Waits until value_ == target_
     std::cout << "Got value: " << event->value_ << std::endl;
 });
 ```
 
 #### TimeoutEvent - Time-based trigger
 ```cpp
-auto timeout = Reactor::CreateSpEvent<TimeoutEvent>(1000000);  // 1 second
+auto timeout = Reactor::create_sp_event<TimeoutEvent>(1000000);  // 1 second
 
-reactor->CreateRunCoroutine([timeout]() {
-    timeout->Wait();
+reactor->create_run_coroutine([timeout]() {
+    timeout->wait();
     std::cout << "1 second elapsed!" << std::endl;
 });
 ```
 
 #### OrEvent - Any of multiple events
 ```cpp
-auto event1 = Reactor::CreateSpEvent<IntEvent>();
-auto event2 = Reactor::CreateSpEvent<IntEvent>();
-auto or_event = Reactor::CreateSpEvent<OrEvent>(event1, event2);
+auto event1 = Reactor::create_sp_event<IntEvent>();
+auto event2 = Reactor::create_sp_event<IntEvent>();
+auto or_event = Reactor::create_sp_event<OrEvent>(event1, event2);
 
-reactor->CreateRunCoroutine([or_event]() {
-    or_event->Wait();  // Continues when ANY event is ready
+reactor->create_run_coroutine([or_event]() {
+    or_event->wait();  // Continues when ANY event is ready
     std::cout << "One of the events triggered!" << std::endl;
 });
 ```
 
 #### AndEvent - All events must be ready
 ```cpp
-auto event1 = Reactor::CreateSpEvent<IntEvent>();
-auto event2 = Reactor::CreateSpEvent<IntEvent>();
-auto and_event = Reactor::CreateSpEvent<AndEvent>(event1, event2);
+auto event1 = Reactor::create_sp_event<IntEvent>();
+auto event2 = Reactor::create_sp_event<IntEvent>();
+auto and_event = Reactor::create_sp_event<AndEvent>(event1, event2);
 
-reactor->CreateRunCoroutine([and_event]() {
-    and_event->Wait();  // Continues when ALL events are ready
+reactor->create_run_coroutine([and_event]() {
+    and_event->wait();  // Continues when ALL events are ready
     std::cout << "Both events triggered!" << std::endl;
 });
 ```
@@ -313,8 +313,8 @@ reactor->CreateRunCoroutine([and_event]() {
 ### Event with Timeout
 
 ```cpp
-reactor->CreateRunCoroutine([reactor]() {
-    auto event = Reactor::CreateSpEvent<IntEvent>();
+reactor->create_run_coroutine([reactor]() {
+    auto event = Reactor::create_sp_event<IntEvent>();
 
     // Wait with timeout (microseconds)
     event->Wait(1000000);  // 1 second timeout
@@ -345,10 +345,10 @@ One common pattern is to start a dedicated thread that runs the reactor loop for
 ```cpp
 // Create a thread dedicated to running coroutines
 std::thread scheduler_thread([]() {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
 
     // Create some initial coroutines
-    reactor->CreateRunCoroutine([]() {
+    reactor->create_run_coroutine([]() {
         std::cout << "Initial coroutine running" << std::endl;
         // ... do work, launching new coroutines, wait on events, etc.
     });
@@ -360,7 +360,7 @@ std::thread scheduler_thread([]() {
         // the actual api in the rrr reactor is Loop(false), it does the check once
     }
     // the rrr api has Loop(true), equivalent to the above loop. 
-    // reactor->Loop(true);  // true = run forever
+    // reactor->loop(true);  // true = run forever
 });
 ```
 
@@ -381,7 +381,7 @@ class PollThread {
         // This is where the scheduler runs!
         // It processes events and resumes coroutines
         while (running_) {
-            reactor_->Loop(false);  // Process pending events
+            reactor_->loop(false);  // Process pending events
             // ... poll for I/O, handle timeouts ...
         }
     }
@@ -392,7 +392,7 @@ When you use the RPC framework, `PollMgr` creates `PollThread` instances that ha
 
 #### Key Takeaway
 
-Always remember: **a coroutine that yields is dead until something resumes it**. That "something" is the reactor's event loop running in a thread. Whether you call `reactor->Loop()` directly or let `PollThread` handle it, there must be an active scheduler checking events and resuming coroutines.
+Always remember: **a coroutine that yields is dead until something resumes it**. That "something" is the reactor's event loop running in a thread. Whether you call `reactor->loop()` directly or let `PollThread` handle it, there must be an active scheduler checking events and resuming coroutines.
 
 ## Common Patterns and Best Practices
 
@@ -400,29 +400,29 @@ Always remember: **a coroutine that yields is dead until something resumes it**.
 
 ```cpp
 void producer_consumer_example() {
-    auto reactor = Reactor::GetReactor();
-    auto queue_event = Reactor::CreateSpEvent<IntEvent>();
+    auto reactor = Reactor::get_reactor();
+    auto queue_event = Reactor::create_sp_event<IntEvent>();
     
     // Producer coroutine
-    reactor->CreateRunCoroutine([queue_event]() {
+    reactor->create_run_coroutine([queue_event]() {
         for (int i = 0; i < 10; i++) {
             std::cout << "Producing: " << i << std::endl;
-            queue_event->Set(1);  // Signal item available
-            Coroutine::CurrentCoroutine()->Yield();
+            queue_event->set(1);  // Signal item available
+            Coroutine::current_fiber()->yield_();
         }
     });
     
     // Consumer coroutine
-    reactor->CreateRunCoroutine([queue_event]() {
+    reactor->create_run_coroutine([queue_event]() {
         for (int i = 0; i < 10; i++) {
-            queue_event->Wait();  // Wait for item
+            queue_event->wait();  // Wait for item
             std::cout << "Consuming item" << std::endl;
             queue_event->value_ = 0;  // Reset for next wait
             queue_event->status_ = Event::INIT;
         }
     });
     
-    reactor->Loop(false);
+    reactor->loop(false);
 }
 ```
 
@@ -430,35 +430,35 @@ void producer_consumer_example() {
 
 ```cpp
 void operation_chain() {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
-    auto step1_done = Reactor::CreateSpEvent<IntEvent>();
-    auto step2_done = Reactor::CreateSpEvent<IntEvent>();
-    auto step3_done = Reactor::CreateSpEvent<IntEvent>();
+    auto step1_done = Reactor::create_sp_event<IntEvent>();
+    auto step2_done = Reactor::create_sp_event<IntEvent>();
+    auto step3_done = Reactor::create_sp_event<IntEvent>();
     
     // Step 1: Fetch data
-    reactor->CreateRunCoroutine([step1_done]() {
+    reactor->create_run_coroutine([step1_done]() {
         std::cout << "Fetching data..." << std::endl;
         // Simulate async operation
-        step1_done->Set(1);
+        step1_done->set(1);
     });
     
     // Step 2: Process data
-    reactor->CreateRunCoroutine([step1_done, step2_done]() {
-        step1_done->Wait();
+    reactor->create_run_coroutine([step1_done, step2_done]() {
+        step1_done->wait();
         std::cout << "Processing data..." << std::endl;
-        step2_done->Set(1);
+        step2_done->set(1);
     });
     
     // Step 3: Save results
-    reactor->CreateRunCoroutine([step2_done, step3_done]() {
-        step2_done->Wait();
+    reactor->create_run_coroutine([step2_done, step3_done]() {
+        step2_done->wait();
         std::cout << "Saving results..." << std::endl;
-        step3_done->Set(1);
+        step3_done->set(1);
     });
     
     // With our Loop() fix, this processes the entire chain!
-    reactor->Loop(false);
+    reactor->loop(false);
 }
 ```
 
@@ -466,17 +466,17 @@ void operation_chain() {
 
 ```cpp
 void robust_operation() {
-    auto reactor = Reactor::GetReactor();
+    auto reactor = Reactor::get_reactor();
     
-    reactor->CreateRunCoroutine([reactor]() {
-        auto response = Reactor::CreateSpEvent<IntEvent>();
+    reactor->create_run_coroutine([reactor]() {
+        auto response = Reactor::create_sp_event<IntEvent>();
         
         // Start async operation
-        reactor->CreateRunCoroutine([response]() {
+        reactor->create_run_coroutine([response]() {
             // Simulate slow operation
-            Coroutine::CurrentCoroutine()->Yield();
-            Coroutine::CurrentCoroutine()->Yield();
-            response->Set(1);
+            Coroutine::current_fiber()->yield_();
+            Coroutine::current_fiber()->yield_();
+            response->set(1);
         });
         
         // Wait with timeout
@@ -494,7 +494,7 @@ void robust_operation() {
         }
     });
     
-    reactor->Loop(false);
+    reactor->loop(false);
 }
 ```
 
@@ -503,49 +503,49 @@ void robust_operation() {
 ### 1. Cross-Thread Event Access (NEVER DO THIS!)
 ```cpp
 // WRONG - Causes undefined behavior
-auto event = Reactor::CreateSpEvent<IntEvent>();
+auto event = Reactor::create_sp_event<IntEvent>();
 std::thread t([event]() {
-    event->Set(1);  // BAD! Event belongs to different thread's reactor
+    event->set(1);  // BAD! Event belongs to different thread's reactor
 });
 ```
 
 ### 2. Reusing Events After Completion
 ```cpp
 // WRONG - Events can't be reused
-auto event = Reactor::CreateSpEvent<IntEvent>();
-event->Wait();  // Event becomes DONE or TIMEOUT
-event->Wait();  // BAD! Undefined behavior
+auto event = Reactor::create_sp_event<IntEvent>();
+event->wait();  // Event becomes DONE or TIMEOUT
+event->wait();  // BAD! Undefined behavior
 ```
 
 ### 3. Multiple Waiters on Same Event
 ```cpp
 // WRONG - Not supported
-auto event = Reactor::CreateSpEvent<IntEvent>();
-reactor->CreateRunCoroutine([event]() { event->Wait(); });
-reactor->CreateRunCoroutine([event]() { event->Wait(); });  // BAD!
+auto event = Reactor::create_sp_event<IntEvent>();
+reactor->create_run_coroutine([event]() { event->wait(); });
+reactor->create_run_coroutine([event]() { event->wait(); });  // BAD!
 ```
 
 ### 4. Forgetting to Process Events
 ```cpp
 // WRONG - Coroutines created but never run
-reactor->CreateRunCoroutine([]() { /* ... */ });
-// Forgot reactor->Loop() - coroutine never executes!
+reactor->create_run_coroutine([]() { /* ... */ });
+// Forgot reactor->loop() - coroutine never executes!
 ```
 
 ### 5. Infinite Loops Without Yielding
 ```cpp
 // WRONG - Blocks all other coroutines
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_coroutine([]() {
     while (true) {
         // Busy work without yielding
     }  // BAD! Never yields control
 });
 
 // RIGHT - Cooperative multitasking
-reactor->CreateRunCoroutine([]() {
+reactor->create_run_coroutine([]() {
     while (true) {
         // Do work
-        Coroutine::CurrentCoroutine()->Yield();  // Let others run
+        Coroutine::current_fiber()->yield_();  // Let others run
     }
 });
 ```
