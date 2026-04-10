@@ -1,16 +1,29 @@
 # Mako Raft Migration - Current Implementation Status
 
-**Last Updated**: 2025-11-18
-**Document Version**: 4.0
-**Status**: ✅ **FEATURE COMPLETE** - Preferred leader election system fully implemented with Phase 1 + Phase 2
+**Last Updated**: 2026-04-10
+**Document Version**: 5.0
+**Status**: ✅ **FEATURE COMPLETE + BENCHMARKED** - All three backends (Paxos, Multi-Raft, Single-Raft) unified and scalability-tested
 
 ---
 
 ## Executive Summary
 
-**Migration Status: 95% COMPLETE** ✅
+**Migration Status: 100% COMPLETE** ✅
 
-The Raft migration has all core functionality implemented with **preferred leader election system** to ensure stable leadership under load. Phase 1 (Election Timeout Bias) ensures preferred replica wins at startup. Phase 2 (Conditional Election Suppression) prevents election churn from heartbeat delays under load.
+The Raft migration is fully implemented with both single-instance and multi-instance modes unified in a single codebase (`mako-krish-new` branch). Preferred leader election system ensures stable leadership. Scalability benchmarks (April 2026) confirm Single-Raft achieves equivalent throughput to Paxos with 30-48% less CPU and scales to higher thread counts.
+
+### Benchmark Results (2026-04-10, zoo-003, 64 cores)
+
+| Threads | Paxos | Multi-Raft | Single-Raft |
+|---------|-------|------------|-------------|
+| 1 | 40K | 41K | 45K |
+| 8 | 205K | 220K | 224K |
+| 12 | 193K | CRASHED | **291K** |
+
+- All three equivalent at 1-8 threads (Raft is a valid drop-in)
+- Multi-Raft crashes at 12+ threads (FD exhaustion from O(N) groups)
+- Single-Raft reaches highest throughput at 12 threads with O(1) replication overhead
+- Full analysis: `results/benchmarks/scalability_analysis.md`
 
 ### ✅ What Works
 - Full RaftWorker implementation with setup/teardown
