@@ -72,12 +72,14 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-10 in `ClientConnection::request_with_options()` (additional ~35 LOC). Terminal classification now maps disconnected/send-stage failures to `CONNECT_TIMEOUT`/`REQUEST_TIMEOUT`, preserves `RESPONSE_TIMEOUT` from per-attempt wait timeout, and keeps `TOTAL_TIMEOUT` for budget exhaustion.
 - [x] Update metrics for timeouts/retries/failures on terminal outcomes.
   - Implemented on 2026-04-10 in `ConnectionMetrics` + `ClientConnection::request_with_options()` (~35 LOC net). Terminal timeout paths now increment `requests_timed_out`, non-timeout terminal errors increment `requests_failed`, and scheduled retries increment new `retry_attempts`.
-- [ ] Ensure non-idempotent requests are never retried.
+- [x] Ensure non-idempotent requests are never retried.
+  - Implemented on 2026-04-10 in `ClientConnection::request_with_options()` by normalizing runtime options (`max_retries=0` when `idempotent=false`) before the retry loop and future option exposure.
 
 ### Tests TODO
 - [x] Add integration test with transient server fault: idempotent request retries then succeeds.
   - Added `TimeoutRetryIntegrationTest.IdempotentRequestRetriesAfterTimeoutAndThenSucceeds` on 2026-04-10. It simulates dropped first response, verifies retry success, retry count, and single payload serialization.
-- [ ] Add integration test: non-idempotent request fails without retry.
+- [x] Add integration test: non-idempotent request fails without retry.
+  - Added `TimeoutRetryIntegrationTest.NonIdempotentRequestNeverRetriesOnTimeout` on 2026-04-10. It sets `idempotent=false` with `max_retries>0` and verifies one attempt only, timeout terminal state, and `retry_count==0`.
 - [x] Add integration test: total timeout cuts off retries at budget boundary.
   - Added `TimeoutRetryIntegrationTest.TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt` on 2026-04-10. It configures timeout + delay + total budget so only the initial attempt runs, then asserts terminal `TOTAL_TIMEOUT` without launching the next retry attempt.
 - [x] Add assertions on timeout type + retry count for each failure mode.
@@ -88,8 +90,10 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Verified on 2026-04-10 via full RPC suite run: `ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'` (26/26 passed, includes all three listed tests).
 
 ### DoD
-- [ ] Retry behavior is observable and deterministic under configured options.
-- [ ] Timeout type and retry counter reflect actual path taken.
+- [x] Retry behavior is observable and deterministic under configured options.
+  - Verified on 2026-04-10 across `IdempotentRequestRetriesAfterTimeoutAndThenSucceeds`, `NonIdempotentRequestNeverRetriesOnTimeout`, `RetryLoopStopsAtRetryLimitWithPerAttemptTimeout`, and `TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt`.
+- [x] Timeout type and retry counter reflect actual path taken.
+  - Verified on 2026-04-10 via connect/request/response/total timeout assertions plus non-idempotent no-retry assertion (`retry_count==0`).
 
 ## Workstream D: Enforce Reconnect Policy in Runtime (P1)
 ### Code TODO

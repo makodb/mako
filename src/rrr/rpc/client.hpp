@@ -1029,14 +1029,20 @@ public:
             verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
         }
 
+        // Non-idempotent operations must never be retried even if max_retries is set.
+        RequestOptions effective_options = options;
+        if (!effective_options.idempotent) {
+            effective_options.max_retries = 0;
+        }
+
         // Return a coordinator future immediately; internal attempts run async.
         auto final_fu = Future::create(xid_counter_.next(), attr);
-        RequestOptions waiter_options = options;
+        RequestOptions waiter_options = effective_options;
         waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
         final_fu->set_options(waiter_options);
 
         auto weak_conn = weak_self_;
-        std::thread([weak_conn, rpc_id, options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+        std::thread([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
             auto start_time = std::chrono::steady_clock::now();
             uint16_t retry_count = 0;
 
@@ -1086,7 +1092,7 @@ public:
                 auto now = std::chrono::steady_clock::now();
                 uint64_t elapsed_ms = static_cast<uint64_t>(
                     std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
-                if (options.is_total_timeout_exceeded(elapsed_ms)) {
+                if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
                     set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                     return;
                 }
@@ -1110,9 +1116,9 @@ public:
                 }
 
                 auto attempt_fu = attempt_result.unwrap();
-                RequestOptions attempt_options = options;
-                if (options.total_timeout_ms > 0) {
-                    uint64_t remaining_ms = options.remaining_time_ms(elapsed_ms);
+                RequestOptions attempt_options = effective_options;
+                if (effective_options.total_timeout_ms > 0) {
+                    uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_ms);
                     if (remaining_ms == 0) {
                         conn->handle_free(attempt_fu->xid_);
                         set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
@@ -1140,20 +1146,20 @@ public:
                 // Timed-out attempts are no longer useful; release pending map slot.
                 conn->handle_free(attempt_fu->xid_);
 
-                if (!options.can_retry(retry_count)) {
+                if (!effective_options.can_retry(retry_count)) {
                     set_terminal_timeout(attempt_fu->get_timeout_type());
                     return;
                 }
 
                 conn->metrics_.record_retry_attempt();
-                uint64_t backoff_delay_ms = options.calculate_delay_ms(retry_count);
+                uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
                 if (backoff_delay_ms > 0) {
-                    if (options.total_timeout_ms > 0) {
+                    if (effective_options.total_timeout_ms > 0) {
                         auto before_sleep = std::chrono::steady_clock::now();
                         uint64_t elapsed_before_sleep = static_cast<uint64_t>(
                             std::chrono::duration_cast<std::chrono::milliseconds>(
                                 before_sleep - start_time).count());
-                        uint64_t remaining_ms = options.remaining_time_ms(elapsed_before_sleep);
+                        uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
                         if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
                             set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
                             return;

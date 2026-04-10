@@ -474,6 +474,42 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     delete server;
 }
 
+TEST_F(TimeoutRetryIntegrationTest, NonIdempotentRequestNeverRetriesOnTimeout) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    RequestOptions opts;
+    opts.timeout_ms = 40;
+    opts.max_retries = 5;   // Should be ignored because request is non-idempotent.
+    opts.base_delay_ms = 80;
+    opts.max_delay_ms = 80;
+    opts.jitter_factor = 0.0f;
+    opts.idempotent = false;
+
+    auto fu_result = client->request_with_options(
+        TimeoutRetryService::kRpcId, opts,
+        [](Marshal& m) { m << v32(456); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2000)));
+    EXPECT_FALSE(fu->wait_with_options());
+    EXPECT_TRUE(fu->timed_out());
+    EXPECT_EQ(fu->get_error_code(), ETIMEDOUT);
+    EXPECT_EQ(fu->get_timeout_type(), TimeoutType::RESPONSE_TIMEOUT);
+    EXPECT_EQ(fu->get_retry_count(), 0);
+    EXPECT_EQ(service->call_count.load(), 1);  // Initial attempt only.
+
+    client->close();
+    delete server;
+}
+
 TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTimeout) {
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
