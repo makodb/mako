@@ -155,7 +155,8 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
   if (fu_opt.is_some()) {
     auto fu = fu_opt.unwrap();
     fu->error_code_.set(err);
-    fu->notify_ready(fu);
+    // @unsafe - Future::notify_ready uses interior mutability + callback execution.
+    { fu->notify_ready(fu); }
   }
 }
 

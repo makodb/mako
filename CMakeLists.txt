@@ -1433,6 +1433,10 @@ if(BUILD_TESTS)
         ${GTEST_MAIN_LIBRARIES}
     )
     add_test(NAME test_rpc COMMAND test_rpc)
+    if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
+        # Ensure regular test builds also gate on SRPC borrow-check status.
+        add_dependencies(test_rpc borrow_check_rrr)
+    endif()
 
     # Load Balancer Tests
     add_executable(test_load_balancer test/test_load_balancer.cc test/benchmark_service.cc)
@@ -1871,6 +1875,9 @@ if(BUILD_TESTS)
                 rpcbench simpleTransaction simplePaxos shard1ReplicationSimple  # test_alock removed
         COMMENT "Running all tests (RRR + Silo/STO)"
     )
+    if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_rrr)
+        add_dependencies(run_tests borrow_check_rrr)
+    endif()
 
     # Add borrow checking for test files if enabled
     # NOTE: Test borrow checking is currently disabled due to false positives
