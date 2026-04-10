@@ -439,6 +439,9 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     RequestOptions opts;
     opts.timeout_ms = 40;
     opts.max_retries = 2;
+    opts.base_delay_ms = 80;
+    opts.max_delay_ms = 80;
+    opts.jitter_factor = 0.0f;
     opts.idempotent = true;
 
     std::atomic<int> marshal_calls{0};
@@ -459,7 +462,7 @@ TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenS
     EXPECT_EQ(fu->get_error_code(), 0);
     EXPECT_EQ(fu->get_retry_count(), 1);
     EXPECT_EQ(fu->get_timeout_type(), TimeoutType::NONE);
-    EXPECT_GE(elapsed_ms, 30);  // At least one timed-out attempt boundary.
+    EXPECT_GE(elapsed_ms, 100);  // Timeout + configured deterministic backoff.
 
     v32 reply_value;
     fu->get_reply() >> reply_value;
@@ -484,6 +487,9 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     RequestOptions opts;
     opts.timeout_ms = 30;
     opts.max_retries = 2;
+    opts.base_delay_ms = 50;
+    opts.max_delay_ms = 50;
+    opts.jitter_factor = 0.0f;
     opts.idempotent = true;
 
     auto start = steady_clock::now();
@@ -502,7 +508,49 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     EXPECT_EQ(fu->get_timeout_type(), TimeoutType::RESPONSE_TIMEOUT);
     EXPECT_EQ(fu->get_retry_count(), 2);
     EXPECT_EQ(service->call_count.load(), 3);  // Initial + 2 retries.
-    EXPECT_GE(elapsed_ms, 70);  // Roughly 3x30ms attempt windows with scheduler jitter.
+    EXPECT_GE(elapsed_ms, 170);  // 3 attempts + 2 deterministic backoff delays.
+
+    client->close();
+    delete server;
+}
+
+TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    RequestOptions opts;
+    opts.timeout_ms = 80;
+    opts.total_timeout_ms = 130;
+    opts.max_retries = 5;
+    opts.base_delay_ms = 100;
+    opts.max_delay_ms = 100;
+    opts.jitter_factor = 0.0f;
+    opts.idempotent = true;
+
+    auto start = steady_clock::now();
+    auto fu_result = client->request_with_options(
+        TimeoutRetryService::kRpcId, opts,
+        [](Marshal& m) { m << v32(77); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2500)));
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_FALSE(fu->wait_with_options());
+    EXPECT_TRUE(fu->timed_out());
+    EXPECT_EQ(fu->get_error_code(), ETIMEDOUT);
+    EXPECT_EQ(fu->get_timeout_type(), TimeoutType::TOTAL_TIMEOUT);
+    EXPECT_EQ(fu->get_retry_count(), 0);  // No retry attempt started within total budget.
+    EXPECT_EQ(service->call_count.load(), 1);
+    EXPECT_GE(elapsed_ms, 70);
+    EXPECT_LT(elapsed_ms, 220);
 
     client->close();
     delete server;

@@ -1037,11 +1037,33 @@ public:
 
         auto weak_conn = weak_self_;
         std::thread([weak_conn, rpc_id, options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+            auto start_time = std::chrono::steady_clock::now();
             uint16_t retry_count = 0;
+
+            auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+                {
+                    auto state_guard = final_fu->state_.lock().unwrap();
+                    state_guard->timed_out = true;
+                }
+                final_fu->error_code_.set(ETIMEDOUT);
+                final_fu->timeout_type_.set(timeout_type);
+                final_fu->retry_count_.set(retry_count);
+                final_fu->notify_ready(final_fu);
+            };
+
             while (true) {
+                auto now = std::chrono::steady_clock::now();
+                uint64_t elapsed_ms = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
+                if (options.is_total_timeout_exceeded(elapsed_ms)) {
+                    set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                    return;
+                }
+
                 auto conn_opt = weak_conn.upgrade();
                 if (conn_opt.is_none()) {
                     final_fu->error_code_.set(ENOTCONN);
+                    final_fu->retry_count_.set(retry_count);
                     final_fu->notify_ready(final_fu);
                     return;
                 }
@@ -1060,7 +1082,19 @@ public:
                 }
 
                 auto attempt_fu = attempt_result.unwrap();
-                attempt_fu->set_options(options);
+                RequestOptions attempt_options = options;
+                if (options.total_timeout_ms > 0) {
+                    uint64_t remaining_ms = options.remaining_time_ms(elapsed_ms);
+                    if (remaining_ms == 0) {
+                        conn->handle_free(attempt_fu->xid_);
+                        set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                        return;
+                    }
+                    if (attempt_options.timeout_ms == 0 || attempt_options.timeout_ms > remaining_ms) {
+                        attempt_options.timeout_ms = remaining_ms;
+                    }
+                }
+                attempt_fu->set_options(attempt_options);
                 if (attempt_fu->wait_with_options()) {
                     final_fu->error_code_.set(attempt_fu->error_code_.get());
                     final_fu->retry_count_.set(retry_count);
@@ -1079,15 +1113,24 @@ public:
                 conn->handle_free(attempt_fu->xid_);
 
                 if (!options.can_retry(retry_count)) {
-                    {
-                        auto state_guard = final_fu->state_.lock().unwrap();
-                        state_guard->timed_out = true;
-                    }
-                    final_fu->error_code_.set(ETIMEDOUT);
-                    final_fu->timeout_type_.set(attempt_fu->get_timeout_type());
-                    final_fu->retry_count_.set(retry_count);
-                    final_fu->notify_ready(final_fu);
+                    set_terminal_timeout(attempt_fu->get_timeout_type());
                     return;
+                }
+
+                uint64_t backoff_delay_ms = options.calculate_delay_ms(retry_count);
+                if (backoff_delay_ms > 0) {
+                    if (options.total_timeout_ms > 0) {
+                        auto before_sleep = std::chrono::steady_clock::now();
+                        uint64_t elapsed_before_sleep = static_cast<uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                before_sleep - start_time).count());
+                        uint64_t remaining_ms = options.remaining_time_ms(elapsed_before_sleep);
+                        if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
+                            set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                            return;
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_delay_ms));
                 }
 
                 retry_count++;
