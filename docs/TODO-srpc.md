@@ -18,12 +18,13 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 ### Code TODO
 - [x] Update `ClientConnection::close()` to close fd whenever `socket_ >= 0`, not only in `CONNECTED` state.
 - [x] Ensure close path sets `socket_ = -1` consistently after successful close.
-- [ ] Remove/adjust early terminal-state transitions that skip actual fd close.
+- [x] Remove/adjust early terminal-state transitions that skip actual fd close.
 - [ ] In poll loop closed-fd cleanup, ensure close callback is invoked before map erase.
 
 ### Tests TODO
 - [ ] Add integration test: repeated connect/error/reconnect cycles do not increase open fd count.
 - [x] Add integration test: `handle_error()` path closes socket and does not leak fd.
+- [x] Add integration test: `mark_closing()` keeps state non-terminal until poll-thread close callback runs.
 - [ ] Add stress test: 1k fast connect/close cycles under poll thread.
 - [x] Run existing: `test_rpc_reconnect_integration`, `test_rpc_state_integration`, `test_rpc_stress_crash`.
 

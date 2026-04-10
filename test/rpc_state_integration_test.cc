@@ -263,6 +263,45 @@ TEST_F(StateIntegrationTest, ErrorPathClosesSocketFd) {
     client->close();
 }
 
+TEST_F(StateIntegrationTest, MarkClosingStaysNonTerminalUntilPollClose) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+    ASSERT_TRUE(client->connected());
+
+    auto conn_opt = client->connection();
+    ASSERT_TRUE(conn_opt.is_some());
+    auto conn = conn_opt.unwrap();
+    auto& mut_conn = const_cast<ClientConnection&>(*conn);
+    const int fd = conn->fd();
+    ASSERT_GE(fd, 0);
+    ASSERT_NE(::fcntl(fd, F_GETFD), -1);
+
+    mut_conn.mark_closing();
+    EXPECT_EQ(mut_conn.connection_state(), ConnectionState::DISCONNECTING);
+    EXPECT_FALSE(mut_conn.is_closed());
+    ASSERT_NE(::fcntl(fd, F_GETFD), -1);
+
+    // Complete close through the poll-thread close callback.
+    poll_thread_.as_ref().unwrap()->request_close(fd);
+    EXPECT_TRUE(wait_for_fd_close(fd, milliseconds(1000)));
+
+    auto state_deadline = steady_clock::now() + milliseconds(1000);
+    while (conn->connection_state() != ConnectionState::DISCONNECTED &&
+           steady_clock::now() < state_deadline) {
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    EXPECT_EQ(conn->connection_state(), ConnectionState::DISCONNECTED);
+
+    client->close();
+    delete server;
+}
+
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {
     // Start server
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));

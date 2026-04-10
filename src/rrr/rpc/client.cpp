@@ -171,11 +171,9 @@ void ClientConnection::close() {
 // Used by Client::close() to update state before poll thread closes socket
 void ClientConnection::mark_closing() {
   if (state_machine_.is_connected()) {
-    // Just transition state - don't close socket
+    // Mark as in-progress close, but do not enter terminal state yet.
+    // The poll-thread close callback performs the actual fd close and final state transition.
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
-    state_machine_.transition_to(ConnectionState::DISCONNECTED);
-  } else if (!state_machine_.is_terminal()) {
-    state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
   invalidate_pending_futures();
 }
