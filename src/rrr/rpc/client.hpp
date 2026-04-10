@@ -577,6 +577,10 @@ class ClientConnection: public Pollable {
     // SAFETY: Protected by spinlock
     void invalidate_pending_futures();
 
+    // @safe - Fail one pending future by xid if it still exists.
+    // Safe to call repeatedly; only first call for a given xid has effect.
+    void fail_pending_future(i64 xid, int err) const;
+
 public:
     /**
      * Closes the connection and cleans up resources.
@@ -677,6 +681,18 @@ public:
         auto pending_guard = pending_fu_.lock().unwrap();
         return pending_guard->size();
     }
+
+#ifdef RPC_TEST_HOOKS
+    // @unsafe - Test hook: replays queue through non-const internal method.
+    size_t replay_pending_requests_for_test() const {
+        return const_cast<ClientConnection*>(this)->replay_pending_requests();
+    }
+
+    // @safe - Test hook: update queue policy without clearing current queue.
+    void update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
+        pending_queue_.update_config(config);
+    }
+#endif
 
     // @unsafe - Uses RequestQueue which uses std::list
     // Note: const because pending_queue_ is mutable
@@ -954,38 +970,17 @@ private:
         }
 
         // Set callback to notify future on queue failure (e.g., overflow, expiry)
-        auto weak_fu = fu;  // Copy Arc for callback
-        queued.callback = [this, weak_fu](int err) {
+        queued.callback = [this, xid = fu->xid_](int err) {
             if (err != 0) {
-                // Remove from pending map
-                {
-                    auto pending_guard = pending_fu_.lock().unwrap();
-                    auto it = pending_guard->find(weak_fu->xid_);
-                    if (it != pending_guard->end()) {
-                        pending_guard->erase(it);
-                    }
-                }
-                // Notify future with error
-                weak_fu->error_code_.set(err);
-                weak_fu->notify_ready(weak_fu);
+                fail_pending_future(xid, err);
             }
         };
 
         // Try to enqueue
         if (!pending_queue_.enqueue(std::move(queued))) {
-            // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure we do not leak an
-            // internal pending future even if enqueue() did not invoke callback.
-            if (!fu->ready()) {
-                {
-                    auto pending_guard = pending_fu_.lock().unwrap();
-                    auto it = pending_guard->find(fu->xid_);
-                    if (it != pending_guard->end()) {
-                        pending_guard->erase(it);
-                    }
-                }
-                fu->error_code_.set(EAGAIN);
-                fu->notify_ready(fu);
-            }
+            // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure no pending future
+            // remains if queue policy rejects without invoking callback.
+            fail_pending_future(fu->xid_, EAGAIN);
             return FutureResult::Err(EAGAIN);
         }
 

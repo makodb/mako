@@ -8,7 +8,9 @@
 #include <cerrno>
 #include <thread>
 #include <vector>
+#define RPC_TEST_HOOKS
 #include "rpc/client.hpp"
+#undef RPC_TEST_HOOKS
 
 using namespace rrr;
 
@@ -252,6 +254,43 @@ TEST_F(RequestBufferingTest, DropNewestOverflowDoesNotLeakPendingFutures) {
     EXPECT_EQ(conn->pending_future_count(), 3u);
 
     conn->clear_pending_requests();
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
+TEST_F(RequestBufferingTest, ReplayReenqueueRejectDoesNotLeaveFuturePending) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 8;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+        i32 val = 42;
+        m << val;
+    });
+    ASSERT_TRUE(result.is_ok());
+    auto future = result.unwrap();
+
+    ASSERT_EQ(conn->pending_request_count(), 1u);
+    ASSERT_EQ(conn->pending_future_count(), 1u);
+    ASSERT_FALSE(future->ready());
+
+    // Force replay re-enqueue rejection path deterministically:
+    // - stay disconnected (NEW state)
+    // - disable queue policy without clearing queued entry
+    auto disabled_qc = config.to_queue_config();
+    disabled_qc.enabled = false;
+    conn->update_pending_queue_config_for_test(disabled_qc);
+
+    EXPECT_EQ(conn->replay_pending_requests_for_test(), 0u);
+
+    future->timed_wait(0.2);
+    EXPECT_TRUE(future->ready());
+    if (future->ready()) {
+        EXPECT_NE(future->get_error_code(), 0);
+    }
     EXPECT_EQ(conn->pending_request_count(), 0u);
     EXPECT_EQ(conn->pending_future_count(), 0u);
 }

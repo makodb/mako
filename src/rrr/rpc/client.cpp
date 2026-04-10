@@ -140,6 +140,25 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
+// @safe - Fails one pending future if it still exists in the pending map
+void ClientConnection::fail_pending_future(i64 xid, int err) const {
+  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
+  {
+    auto pending_guard = pending_fu_.lock().unwrap();
+    auto it = pending_guard->find(xid);
+    if (it != pending_guard->end()) {
+      fu_opt = rusty::Some(it->second);  // Copy Arc before erase
+      pending_guard->erase(it);
+    }
+  }  // Drop lock before notifying callback/future waiters
+
+  if (fu_opt.is_some()) {
+    auto fu = fu_opt.unwrap();
+    fu->error_code_.set(err);
+    fu->notify_ready(fu);
+  }
+}
+
 // @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
   const bool was_connected = state_machine_.is_connected();
@@ -409,8 +428,18 @@ size_t ClientConnection::replay_pending_requests() {
       // Connection lost during replay, re-queue
       // Note: This could lead to infinite loop if connection keeps failing
       // The TTL will eventually expire stale requests
+      i64 replay_xid = req.xid;
+      req.callback = [this, replay_xid](int err) {
+        if (err != 0) {
+          fail_pending_future(replay_xid, err);
+        }
+      };
       if (!pending_queue_.enqueue(std::move(req))) {
-        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy");
+        // Explicit fallback: even if queue policy rejects without invoking
+        // callback, do not leave the pending future orphaned.
+        fail_pending_future(replay_xid, EAGAIN);
+        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
+                 static_cast<long long>(replay_xid));
       }
       break;
     }
