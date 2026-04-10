@@ -16,16 +16,16 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream A: Fix Client Close/Error FD Leak (P0)
 ### Code TODO
-- [ ] Update `ClientConnection::close()` to close fd whenever `socket_ >= 0`, not only in `CONNECTED` state.
-- [ ] Ensure close path sets `socket_ = -1` consistently after successful close.
+- [x] Update `ClientConnection::close()` to close fd whenever `socket_ >= 0`, not only in `CONNECTED` state.
+- [x] Ensure close path sets `socket_ = -1` consistently after successful close.
 - [ ] Remove/adjust early terminal-state transitions that skip actual fd close.
 - [ ] In poll loop closed-fd cleanup, ensure close callback is invoked before map erase.
 
 ### Tests TODO
 - [ ] Add integration test: repeated connect/error/reconnect cycles do not increase open fd count.
-- [ ] Add integration test: `handle_error()` path closes socket and does not leak fd.
+- [x] Add integration test: `handle_error()` path closes socket and does not leak fd.
 - [ ] Add stress test: 1k fast connect/close cycles under poll thread.
-- [ ] Run existing: `test_rpc_reconnect_integration`, `test_rpc_state_integration`, `test_rpc_stress_crash`.
+- [x] Run existing: `test_rpc_reconnect_integration`, `test_rpc_state_integration`, `test_rpc_stress_crash`.
 
 ### DoD
 - [ ] New leak tests fail before fix and pass after fix.

@@ -5,7 +5,9 @@
 
 #include <gtest/gtest.h>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
+#include <fcntl.h>
 #include <thread>
 #include <rusty/arc.hpp>
 #include "reactor/reactor.h"
@@ -21,6 +23,24 @@ using namespace std::chrono;
 
 // Atomic counter for dynamic port allocation
 static std::atomic<int> g_state_test_port{11000};
+
+namespace {
+
+bool wait_for_fd_close(int fd, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        errno = 0;
+        if (::fcntl(fd, F_GETFD) == -1 && errno == EBADF) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+
+    errno = 0;
+    return (::fcntl(fd, F_GETFD) == -1 && errno == EBADF);
+}
+
+}  // namespace
 
 // Simple test service for integration tests
 class StateTestService : public benchmark::BenchmarkService {
@@ -201,6 +221,44 @@ TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
 
     // Give some time for state to update
     std::this_thread::sleep_for(milliseconds(100));
+
+    client->close();
+}
+
+TEST_F(StateIntegrationTest, ErrorPathClosesSocketFd) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+    ASSERT_TRUE(client->connected());
+
+    const int initial_fd = client->fd();
+    ASSERT_GE(initial_fd, 0);
+    ASSERT_NE(::fcntl(initial_fd, F_GETFD), -1);
+
+    // Force remote close so the poll thread enters handle_error().
+    delete server;
+
+    std::string input = "probe";
+    auto fu_result = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    if (fu_result.is_ok()) {
+        auto fu = fu_result.unwrap();
+        fu->timed_wait(0.2);
+    }
+
+    auto disconnect_deadline = steady_clock::now() + milliseconds(1000);
+    while (client->connected() && steady_clock::now() < disconnect_deadline) {
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    EXPECT_FALSE(client->connected());
+    EXPECT_TRUE(wait_for_fd_close(initial_fd, milliseconds(1000)));
 
     client->close();
 }

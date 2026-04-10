@@ -142,17 +142,26 @@ void ClientConnection::invalidate_pending_futures() {
 
 // @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
-  if (state_machine_.is_connected()) {
-    // Transition to DISCONNECTING state
+  const bool was_connected = state_machine_.is_connected();
+  if (was_connected) {
+    // Transition to DISCONNECTING state while preserving normal lifecycle semantics.
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
+  }
+
+  // Always close the socket when it is valid, regardless of state.
+  if (socket_ >= 0) {
     // @unsafe - system call
     {
       ::close(socket_);
     }
-    // Transition to DISCONNECTED state
+    socket_ = -1;
+  }
+
+  if (was_connected) {
+    // Transition to DISCONNECTED state for clean shutdown.
     state_machine_.transition_to(ConnectionState::DISCONNECTED);
   } else if (!state_machine_.is_terminal()) {
-    // If not connected and not already terminal, force to DISCONNECTED
+    // If not connected and not already terminal, force to DISCONNECTED.
     state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
   invalidate_pending_futures();
