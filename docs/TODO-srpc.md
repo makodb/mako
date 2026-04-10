@@ -40,7 +40,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 ### Code TODO
 - [x] In `queue_request()`, if enqueue fails, remove pending future + set error + notify future.
   - Implemented in `ClientConnection::queue_request()` on 2026-04-10. Rejected enqueue now explicitly cleans pending-future map and marks future ready with `EAGAIN` when callback did not fire.
-- [ ] Make `RequestQueue` rejection semantics consistent across `DROP_NEWEST`, `FAIL_FAST`, and overflow replay paths.
+- [x] Make `RequestQueue` rejection semantics consistent across `DROP_NEWEST`, `FAIL_FAST`, and overflow replay paths.
+  - Implemented on 2026-04-10. `DROP_NEWEST`/`FAIL_FAST`/disabled rejections now all invoke request callback with rejection error, and replay re-enqueue rejection is handled explicitly (no silent drop).
 - [ ] Handle replay re-enqueue failure explicitly (no silent drop/no orphan future).
 - [ ] Standardize overflow/expiry error codes for caller observability.
 

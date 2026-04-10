@@ -145,6 +145,12 @@ public:
     // Returns true if queued, false if rejected
     bool enqueue(QueuedRequest request) {
         if (!config_.enabled) {
+            if (request.callback) {
+                // @unsafe { callback invocation }
+                try {
+                    request.callback(-1);  // Error: queue disabled/rejected
+                } catch (...) {}
+            }
             return false;
         }
 
@@ -170,6 +176,12 @@ public:
                     break;
 
                 case OverflowStrategy::DROP_NEWEST:
+                    if (request.callback) {
+                        // @unsafe { callback invocation }
+                        try {
+                            request.callback(-1);  // Error: queue full/rejected
+                        } catch (...) {}
+                    }
                     return false;  // Reject new request
 
                 case OverflowStrategy::FAIL_FAST:

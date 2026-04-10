@@ -206,6 +206,32 @@ TEST(RequestQueueTest, OverflowDropNewest) {
     }
 }
 
+TEST(RequestQueueTest, OverflowDropNewestCallsCallback) {
+    RequestQueueConfig config;
+    config.max_size = 2;
+    config.overflow_strategy = OverflowStrategy::DROP_NEWEST;
+    RequestQueue queue(config);
+
+    // Fill queue
+    for (int i = 0; i < 2; i++) {
+        QueuedRequest req;
+        queue.enqueue(std::move(req));
+    }
+
+    int callback_count = 0;
+    int callback_error = 0;
+    QueuedRequest req;
+    req.callback = [&callback_count, &callback_error](int err) {
+        callback_count++;
+        callback_error = err;
+    };
+
+    EXPECT_FALSE(queue.enqueue(std::move(req)));
+    EXPECT_EQ(callback_count, 1);
+    EXPECT_EQ(callback_error, -1);
+    EXPECT_EQ(queue.size(), 2u);
+}
+
 TEST(RequestQueueTest, OverflowFailFastCallsCallback) {
     RequestQueueConfig config;
     config.max_size = 2;
@@ -398,6 +424,24 @@ TEST(RequestQueueTest, DisabledQueueRejectsAll) {
     EXPECT_FALSE(queue.enqueue(std::move(req)));
     EXPECT_TRUE(queue.empty());
     EXPECT_FALSE(queue.enabled());
+}
+
+TEST(RequestQueueTest, DisabledQueueRejectCallsCallback) {
+    auto config = RequestQueueConfig::disabled();
+    RequestQueue queue(config);
+
+    int callback_count = 0;
+    int callback_error = 0;
+    QueuedRequest req;
+    req.callback = [&callback_count, &callback_error](int err) {
+        callback_count++;
+        callback_error = err;
+    };
+
+    EXPECT_FALSE(queue.enqueue(std::move(req)));
+    EXPECT_EQ(callback_count, 1);
+    EXPECT_EQ(callback_error, -1);
+    EXPECT_TRUE(queue.empty());
 }
 
 // ============================================================================

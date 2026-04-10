@@ -409,7 +409,9 @@ size_t ClientConnection::replay_pending_requests() {
       // Connection lost during replay, re-queue
       // Note: This could lead to infinite loop if connection keeps failing
       // The TTL will eventually expire stale requests
-      pending_queue_.enqueue(std::move(req));
+      if (!pending_queue_.enqueue(std::move(req))) {
+        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy");
+      }
       break;
     }
 
