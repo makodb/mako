@@ -32,7 +32,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [x] Run existing: `test_rpc_reconnect_integration`, `test_rpc_state_integration`, `test_rpc_stress_crash`.
 
 ### DoD
-- [ ] New leak tests fail before fix and pass after fix.
+- [x] New leak tests fail before fix and pass after fix.
+  - Verified on 2026-04-10 with pre-fix commit `70bdb988` (fails) and post-fix `da64b472` (passes). See `docs/srpc-fd-leak-regression-proof.md`.
 - [x] No fd growth in stress scenario.
 
 ## Workstream B: Fix Buffering Overflow + Future Lifecycle (P1)
