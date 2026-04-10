@@ -1,1 +1,0 @@
-## Mencius protocol implementation

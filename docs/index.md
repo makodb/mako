@@ -19,6 +19,7 @@ Welcome to the Mako documentation.
 | [Development Plans](#development-plans) | Active development plans |
 | [Reference](#reference) | Analysis and reference docs |
 | [Testing](#testing) | CI and code review |
+| [Troubleshooting](#troubleshooting) | Common issues and solutions |
 
 ---
 
@@ -28,6 +29,7 @@ Welcome to the Mako documentation.
 - **[Quick Start](getting-started/quickstart.md)** - Get up and running in 10 minutes
 - **[Installation](getting-started/installation.md)** - Step-by-step installation for Debian/Ubuntu
 - **[Concepts](getting-started/concepts.md)** - Fundamental concepts: shards, replicas, transactions
+- **[Use Cases](getting-started/use-cases.md)** - When and how to use Mako
 - **[Docker Setup](getting-started/docker.md)** - Running Mako in Docker containers
   - [Docker Verification](getting-started/docker-verification.md)
 
@@ -39,6 +41,8 @@ Welcome to the Mako documentation.
 - **[Client-Server Architecture](architecture/client-server.md)** - Client-server design
   - [Client-Server Roadmap](architecture/client-server-roadmap.md)
 - **[Multi-Shard Single Process](architecture/multi-shard.md)** - Running multiple shards in one process
+- **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
+- **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
 - **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
 
 ---
@@ -57,6 +61,7 @@ Welcome to the Mako documentation.
   - [Fiber API Refactoring](developer/fiber-api-refactoring.md)
 - **[Transport Backends](developer/transport-backends.md)** - Switching between rrr/rpc and eRPC
   - [Transport Stop Fix](developer/transport-stop-fix.md)
+- **[C++ Multicore Optimizations](developer/cpp-multicore-optimizations.md)** - CPU optimization techniques
 
 ---
 
@@ -93,10 +98,9 @@ Welcome to the Mako documentation.
 
 ## Performance
 
-- **[Profiling](performance/profiling.md)** - CPU profiling and performance analysis
+- **[Profiling & Plotting](performance/profiling.md)** - CPU profiling, memory analysis, and plotting
 - **[CPU Throttling](performance/cpu_throttling.md)** - CPU throttling for scaling tests
   - [CPU Limiting Plan](performance/cpu_limiting_plan.md)
-- **[Plotting](performance/plot.md)** - Generating graphs from benchmark data
 
 ---
 
@@ -175,6 +179,7 @@ Welcome to the Mako documentation.
 - **[Naming Conventions](reference/naming-conventions.md)** - Codebase naming conventions
 - **[TPC-C Sharding](reference/tpcc-sharding.md)** - TPC-C benchmark sharding behavior
 - **[Event Rename Plan](reference/plan_event_rename.md)** - Event class renaming plan
+- **[Glossary](reference/glossary.md)** - Terms and definitions
 
 ---
 
@@ -182,6 +187,13 @@ Welcome to the Mako documentation.
 
 - **[Judge System](testing/judge.md)** - Judge system documentation
 - **[Commit Reviews](testing/commit_reviews.md)** - Code review guidelines
+- **[Hourly CI Check](testing/hourly_ci_check.md)** - CI check procedure
+
+---
+
+## Troubleshooting
+
+- **[Troubleshooting Guide](troubleshooting/guide.md)** - Common issues and solutions
 
 ---
 
@@ -193,6 +205,17 @@ Legacy documentation kept for reference:
 - [Run (Legacy)](archive/run-legacy.md) - Deprecated run.py scripts
 - [EC2 (Legacy)](archive/ec2-legacy.md) - Deprecated AWS deployment
 - [Docker Build Success](archive/DOCKER_BUILD_SUCCESS.md) - Historical build verification
+- [README Janus](archive/README-janus.md) - Original Janus project quick start
+- [New Config Format](archive/NEW_CONFIG_FORMAT.md) - Configuration format migration guide
+- [RocksDB Guide](archive/RocksDB_Guide.md) - RocksDB API reference and usage patterns
+
+---
+
+## Comprehensive Guides (Books)
+
+- **[Mako Book](mako-book.md)** - Complete developer guide to the Mako transactional datastore
+- **[Raft Book](raft-book.md)** - Detailed guide to Raft consensus implementation in Mako
+- **[SRPC Book](srpc-book.md)** - Technical guide to the RRR/RPC framework
 
 ---
 
@@ -209,4 +232,4 @@ Legacy documentation kept for reference:
 
 ---
 
-*Last updated: February 2026*
+*Last updated: April 2026*

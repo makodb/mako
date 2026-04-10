@@ -130,7 +130,7 @@ Mako has a layered architecture:
 **Transaction Coordinator** (`src/deptran/`, `src/mako/`):
 - Orchestrates distributed transactions across shards
 - Manages speculative execution and dependency tracking
-- Key classes: `TxnCoordinator`, `Transaction`, `DependencyTracker`
+- Key classes: `Coordinator`, `Transaction`
 
 **Shard Server**:
 - Stores and retrieves key-value pairs via Masstree
@@ -385,10 +385,10 @@ Mako supports two RPC backends, switchable at runtime:
 **Switching backends:**
 ```bash
 # Default (rrr/rpc)
-./build/dbtest config/mako_tpcc.yml
+./build/dbtest config/tpcc.yml
 
 # eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
+MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
 Both backends implement the `TransportBackend` interface, making worker threads transport-agnostic:
@@ -741,7 +741,7 @@ void set_replication_type(ReplicationType type) {
 ### Borrow Checking
 
 - Build runs borrow checking automatically via CMake when `ENABLE_BORROW_CHECKING=ON`
-- Run `make borrow_check_all_dbtest` to verify all checked files
+- Run `make borrow_check_deptran` or `make borrow_check_raft` to verify checked files
 - Keep `third-party/rusty-cpp` submodule on `main` branch at latest commit
 - Files with heavy third-party headers may be excluded (document why in CMakeLists.txt)
 

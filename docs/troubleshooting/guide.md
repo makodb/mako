@@ -1,5 +1,7 @@
 # Troubleshooting Guide
 
+> **Warning**: Parts of this document contain inaccurate or aspirational content that does not reflect the current codebase. Specifically: the SSL/TLS section, `MAKO_LOG_LEVEL` environment variable, `COMPOSITE` sharding method, `transaction.timeout_ms`, and `replication.batch_size` config keys do not exist in the current implementation. Use with caution and verify against actual code.
+
 This guide helps you diagnose and resolve common issues when running Mako.
 
 ## Table of Contents

@@ -159,7 +159,7 @@ Iterators allow you to perform a range scan over the database. This is an effici
 rocksdb::Iterator* it = db->NewIterator(rocksdb::ReadOptions());
 
 for (it->SeekToFirst(); it->Valid(); it->Next()) {
-  std_cout << it->key().ToString() << ": " << it->value().ToString() << std::endl;
+  std::cout << it->key().ToString() << ": " << it->value().ToString() << std::endl;
 }
 
 if (!it->status().ok()) {
@@ -196,7 +196,7 @@ For operations that require read-modify-write sequences, you should use transact
 First, you need to open a `TransactionDB`.
 
 ```cpp
-#include <rocksdb/db.hh>
+#include <rocksdb/db.h>
 #include <rocksdb/options.h>
 #include "rocksdb/utilities/transaction_db.h"
 

@@ -177,9 +177,9 @@ The key insight is that we don't need to wait for replication consensus before c
 Ready to try Mako? Here's where to go next:
 
 1. **[Quick Start Tutorial](quickstart.md)** - Get Mako running in 10 minutes
-2. **[Installation Guide](install.md)** - Detailed installation instructions
+2. **[Installation Guide](installation.md)** - Detailed installation instructions
 3. **[Key Concepts](concepts.md)** - Understand fundamental concepts
-4. **[Architecture Overview](architecture.md)** - Deep dive into system design
+4. **[Architecture Overview](../architecture/overview.md)** - Deep dive into system design
 
 ## Research Background
 

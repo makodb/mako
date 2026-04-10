@@ -5,7 +5,7 @@ Loop (run forever until interrupted)
 1. Sync: git pull --rebase
 
 2. Load state
-   - Read docs/judge/commit_reviews.md (create if missing).
+   - Read docs/testing/commit_reviews.md (create if missing).
    - Identify the latest 100 commits on the current branch, newest first.
 
 3. For each commit (newest → oldest)
