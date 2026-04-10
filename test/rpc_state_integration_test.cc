@@ -8,7 +8,9 @@
 #include <cerrno>
 #include <chrono>
 #include <fcntl.h>
+#include <sys/socket.h>
 #include <thread>
+#include <unistd.h>
 #include <rusty/arc.hpp>
 #include "reactor/reactor.h"
 #include "rpc/client.hpp"
@@ -39,6 +41,63 @@ bool wait_for_fd_close(int fd, milliseconds timeout) {
     errno = 0;
     return (::fcntl(fd, F_GETFD) == -1 && errno == EBADF);
 }
+
+class ClosedFlagPollable : public Pollable {
+public:
+    explicit ClosedFlagPollable(int fd)
+        : fd_(fd) {}
+
+    int fd() const override {
+        return fd_.load();
+    }
+
+    int poll_mode() const override {
+        return PollMode::READ;
+    }
+
+    size_t content_size() override {
+        return 0;
+    }
+
+    bool handle_read() override {
+        return true;
+    }
+
+    int handle_write() override {
+        return PollMode::NO_CHANGE;
+    }
+
+    void handle_error() override {}
+
+    void close() override {
+        close_calls_.fetch_add(1);
+        int fd = fd_.exchange(-1);
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+
+    bool check_pending_write_update() const override {
+        return false;
+    }
+
+    bool is_closed() const override {
+        return closed_.load();
+    }
+
+    void set_closed(bool closed) const {
+        closed_.store(closed);
+    }
+
+    int close_calls() const {
+        return close_calls_.load();
+    }
+
+private:
+    std::atomic<int> fd_;
+    mutable std::atomic<bool> closed_{false};
+    std::atomic<int> close_calls_{0};
+};
 
 }  // namespace
 
@@ -300,6 +359,35 @@ TEST_F(StateIntegrationTest, MarkClosingStaysNonTerminalUntilPollClose) {
 
     client->close();
     delete server;
+}
+
+TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
+    int sv[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+
+    auto pollable = rusty::Arc<ClosedFlagPollable>::make(sv[0]);
+    poll_thread_.as_ref().unwrap()->add(pollable);
+    std::this_thread::sleep_for(milliseconds(50));
+
+    ASSERT_EQ(pollable->close_calls(), 0);
+    ASSERT_NE(::fcntl(sv[0], F_GETFD), -1);
+
+    // Mark closed so poll loop takes the closed-fd cleanup branch.
+    pollable->set_closed(true);
+
+    auto close_deadline = steady_clock::now() + milliseconds(1000);
+    while (pollable->close_calls() == 0 && steady_clock::now() < close_deadline) {
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+
+    EXPECT_EQ(pollable->close_calls(), 1);
+    EXPECT_TRUE(wait_for_fd_close(sv[0], milliseconds(1000)));
+
+    // Ensure no descriptor leak if callback was not invoked.
+    if (::fcntl(sv[0], F_GETFD) != -1) {
+        ::close(sv[0]);
+    }
+    ::close(sv[1]);
 }
 
 TEST_F(StateIntegrationTest, MultipleClientsIndependentState) {

@@ -529,10 +529,18 @@ void PollThreadWorker::poll_loop() {
     for (int fd : closed_fds) {
       auto it = fd_to_pollable_.find(fd);
       if (it != fd_to_pollable_.end()) {
+        auto poll = it->second;
         // Remove from epoll if still registered
         if (mode_.find(fd) != mode_.end()) {
-          poll_.Remove(it->second);
+          poll_.Remove(poll);
         }
+
+        // Invoke close callback before erasing map entry so cleanup hooks run.
+        // @unsafe - const_cast needed because Arc provides const access
+        {
+          const_cast<Pollable&>(*poll).close();
+        }
+
         fd_to_pollable_.erase(it);
         mode_.erase(fd);
       }
