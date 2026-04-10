@@ -328,6 +328,67 @@ TEST_F(RequestBufferingTest, ReplayExpiredRequestUsesTimeoutErrorCode) {
     EXPECT_EQ(conn->pending_future_count(), 0u);
 }
 
+TEST_F(RequestBufferingTest, OverflowAndExpiryDoNotLeavePendingFutures) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 8;
+    config.default_ttl_ms = 20;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    std::vector<rusty::Arc<Future>> accepted;
+    accepted.reserve(128);
+
+    int rejected = 0;
+    int unexpected_err = 0;
+    for (int i = 0; i < 128; i++) {
+        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+            m << i;
+        });
+        if (result.is_ok()) {
+            accepted.push_back(result.unwrap());
+        } else {
+            int err = result.unwrap_err();
+            if (err == kRequestQueueRejectedError) {
+                rejected++;
+            } else {
+                unexpected_err++;
+            }
+        }
+    }
+
+    ASSERT_EQ(unexpected_err, 0);
+    ASSERT_EQ(rejected + static_cast<int>(accepted.size()), 128);
+    ASSERT_EQ(conn->pending_request_count(), accepted.size());
+    ASSERT_EQ(conn->pending_future_count(), accepted.size());
+
+    // Let all queued requests expire, then process expiry via replay path.
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    EXPECT_EQ(conn->replay_pending_requests_for_test(), 0u);
+
+    size_t not_ready = 0;
+    for (const auto& fu : accepted) {
+        if (!fu->ready()) {
+            fu->timed_wait(0.2);
+        }
+        if (!fu->ready()) {
+            not_ready++;
+            continue;
+        }
+        EXPECT_EQ(fu->get_error_code(), kRequestQueueExpiredError);
+    }
+
+    // Give callbacks a short window to settle any final map removals.
+    for (int i = 0; i < 50 && conn->pending_future_count() != 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_EQ(not_ready, 0u);
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
 // ============================================================================
 // Client Buffering Tests
 // ============================================================================

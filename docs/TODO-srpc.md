@@ -58,8 +58,9 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Verified on 2026-04-10 during full RPC suite run (`ctest -R '^(test_rpc|rpc_chaos_test$)'`), with all three passing.
 
 ### DoD
-- [ ] No future remains pending indefinitely after queue overflow/expiry.
-- [ ] Pending map size returns to expected steady state.
+- [x] No future remains pending indefinitely after queue overflow/expiry.
+- [x] Pending map size returns to expected steady state.
+  - Verified on 2026-04-10 with `RequestBufferingTest.OverflowAndExpiryDoNotLeavePendingFutures`, which forces mixed overflow + TTL expiry and asserts bounded future readiness plus `pending_request_count()==0` and `pending_future_count()==0` after settlement.
 
 ## Workstream C: Implement Real Timeout/Retry Semantics (P1)
 ### Code TODO
