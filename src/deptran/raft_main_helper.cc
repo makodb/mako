@@ -27,10 +27,12 @@ using janus::raft_workers_g;
 // ============================================================================
 namespace raft_impl {
 
+#ifdef SINGLE_RAFT_INSTANCE
 // SINGLE-RAFT: File-scope storage for stub servers and all site infos
 static std::vector<Config::SiteInfo*> all_site_infos_g;
 static std::vector<rrr::Server*> stub_rpc_servers_g;
 static std::vector<rusty::Arc<PollThread>> stub_poll_threads_g;
+#endif
 
 // leader_replay_cb / follower_replay_cb cache watermark callbacks across role changes.
 std::map<int, std::function<int(const char*&, int, int, int,
@@ -118,6 +120,7 @@ void check_current_path() {
   }
 }
 
+#ifdef SINGLE_RAFT_INSTANCE
 // SINGLE-RAFT: Create stub RPC servers on extra partition ports.
 // Remote replicas' Communicators expect to connect to all partition ports.
 // Stub servers register the same RaftServiceImpl pointing to the single RaftServer.
@@ -174,6 +177,7 @@ void destroy_stub_servers() {
 
   Log_info("[SINGLE-RAFT] Destroyed stub servers");
 }
+#endif  // SINGLE_RAFT_INSTANCE
 
 // server_launch_worker finishes wiring RPC/commo threads and starts batching loops.
 void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
@@ -181,63 +185,95 @@ void server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     return;
   }
 
+#ifdef SINGLE_RAFT_INSTANCE
   Log_info("[SINGLE-RAFT] server_sites.size()=%zu raft_workers_g.size()=%zu",
            server_sites.size(), raft_workers_g.size());
 
-  // SINGLE-RAFT: Only 1 worker to setup
   if (raft_workers_g.empty() || !raft_workers_g[0]) {
     Log_error("[SINGLE-RAFT] No worker to launch!");
     return;
   }
 
   auto& worker = raft_workers_g[0];
-
-  // Setup the single worker's RPC service
   worker->SetupService();
-
-  // Create stub servers AFTER the main worker's service is up
   create_stub_servers();
-
-  // Setup communicator
   worker->SetupCommo();
 
-  // Queue EnsureSetup on the PollThread AFTER SetupCommo()
   if (auto raft_server = worker->GetRaftServer()) {
     auto poll_worker_opt = worker->GetPollThreadWorker();
     if (poll_worker_opt.is_some()) {
       auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([raft_server]() {
         Log_info("[RAFTPOLL] EnsureSetup executing (site=%d par=%d)",
-                 raft_server->site_id_,
-                 raft_server->partition_id_);
+                 raft_server->site_id_, raft_server->partition_id_);
         raft_server->EnsureSetup();
       }));
       Log_info("[RAFTPOLL] Queueing EnsureSetup job for single worker");
       poll_worker_opt.unwrap()->add(rusty::Arc<Job>(arc_job));
     } else {
-      Log_info("[RAFTPOLL] No poll worker; calling EnsureSetup inline");
       raft_server->EnsureSetup();
     }
-  } else {
-    Log_error("[SINGLE-RAFT] GetRaftServer() returned null!");
   }
 
   worker->StartSubmitThread();
-
-  // Setup heartbeat
-  Log_info("[RAFT-HEARTBEAT-SETUP] About to call SetupHeartbeat() for single worker: site_id=%d",
-           worker->site_info_ ? worker->site_info_->id : -1);
   worker->SetupHeartbeat();
-  Log_info("[RAFT-HEARTBEAT-SETUP] SetupHeartbeat() completed for site_id=%d",
-           worker->site_info_ ? worker->site_info_->id : -1);
+#else
+  Log_info("[RAFT-LAUNCH] server_sites.size()=%zu raft_workers_g.size()=%zu",
+           server_sites.size(), raft_workers_g.size());
+
+  for (auto& worker : raft_workers_g) {
+    if (worker) {
+      worker->SetupService();
+    }
+  }
+
+  for (size_t i = 0; i < server_sites.size() && i < raft_workers_g.size(); ++i) {
+    auto& worker = raft_workers_g[i];
+    if (!worker) continue;
+
+    worker->SetupCommo();
+
+    if (auto raft_server = worker->GetRaftServer()) {
+      auto poll_worker_opt = worker->GetPollThreadWorker();
+      if (poll_worker_opt.is_some()) {
+        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob([raft_server]() {
+          Log_info("[RAFTPOLL] EnsureSetup executing (site=%d par=%d)",
+                   raft_server->site_id_, raft_server->partition_id_);
+          raft_server->EnsureSetup();
+        }));
+        poll_worker_opt.unwrap()->add(rusty::Arc<Job>(arc_job));
+      } else {
+        raft_server->EnsureSetup();
+      }
+    }
+
+    worker->StartSubmitThread();
+  }
+
+  for (auto& worker : raft_workers_g) {
+    if (worker) {
+      worker->SetupHeartbeat();
+    }
+  }
+#endif
 }
 
-// SINGLE-RAFT: Always return the single worker (worker 0)
 RaftWorker* find_worker(uint32_t par_id) {
-  (void)par_id;  // All partitions handled by single worker
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Always return the single worker (worker 0)
+  (void)par_id;
   if (!raft_workers_g.empty() && raft_workers_g[0]) {
     return raft_workers_g[0].get();
   }
   return nullptr;
+#else
+  // MULTI-RAFT: Find the worker that owns this partition
+  for (auto& worker : raft_workers_g) {
+    if (worker && worker->IsPartition(par_id)) {
+      return worker.get();
+    }
+  }
+  return nullptr;
+#endif
 }
 
 // enqueue_to_worker increments bookkeeping and drops the payload into the worker queue.
@@ -257,26 +293,37 @@ void enqueue_to_worker(RaftWorker* worker,
   }
 }
 
-// SINGLE-RAFT: Register per-partition callbacks on the single worker
-// RaftWorker::Next() extracts par_id from the committed entry and routes
-// to the correct partition's callback via the per-partition maps.
 void apply_callbacks_for_partition(uint32_t par_id) {
   auto* worker = find_worker(par_id);
   if (!worker) {
     return;
   }
 
-  // Register leader callback for this partition
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Register per-partition callbacks on the single worker
   auto leader_it = leader_replay_cb.find(par_id);
   if (leader_it != leader_replay_cb.end()) {
     worker->register_leader_callback_for_partition(par_id, leader_it->second);
   }
 
-  // Register follower callback for this partition
   auto follower_it = follower_replay_cb.find(par_id);
   if (follower_it != follower_replay_cb.end()) {
     worker->register_follower_callback_for_partition(par_id, follower_it->second);
   }
+#else
+  // MULTI-RAFT: Register global callbacks on this partition's worker
+  if (!worker->site_info_) return;
+
+  auto leader_it = leader_replay_cb.find(par_id);
+  if (leader_it != leader_replay_cb.end()) {
+    worker->register_leader_callback_par_id_return(leader_it->second);
+  }
+
+  auto follower_it = follower_replay_cb.find(par_id);
+  if (follower_it != follower_replay_cb.end()) {
+    worker->register_follower_callback_par_id_return(follower_it->second);
+  }
+#endif
 }
 
 }  // anonymous namespace
@@ -321,6 +368,7 @@ std::vector<std::string> setup(int argc, char* argv[]) {
 
   auto server_infos = Config::GetConfig()->GetMyServers();
 
+#ifdef SINGLE_RAFT_INSTANCE
   // Store ALL site infos for stub server creation
   all_site_infos_g.clear();
   for (int i = static_cast<int>(server_infos.size()) - 1; i >= 0; --i) {
@@ -344,6 +392,23 @@ std::vector<std::string> setup(int argc, char* argv[]) {
   if (!raft_workers_g.empty() && raft_workers_g[0]->site_info_) {
     es->machine_id = raft_workers_g[0]->site_info_->locale_id;
   }
+#else
+  // MULTI-RAFT: Create one worker per partition
+  for (int i = static_cast<int>(server_infos.size()) - 1; i >= 0; --i) {
+    const auto& site = Config::GetConfig()->SiteById(server_infos[i].id);
+    ret_vector.push_back(site.name);
+
+    auto worker = std::make_shared<RaftWorker>();
+    worker->site_info_ = const_cast<Config::SiteInfo*>(&site);
+    worker->SetupBase();
+    raft_workers_g.push_back(std::move(worker));
+  }
+
+  std::reverse(raft_workers_g.begin(), raft_workers_g.end());
+  if (!raft_workers_g.empty() && raft_workers_g.back()->site_info_) {
+    es->machine_id = raft_workers_g.back()->site_info_->locale_id;
+  }
+#endif
 
   return ret_vector;
 }
@@ -377,6 +442,7 @@ int setup2(int action, int shardIndex) {
 
   auto config = Config::GetConfig();
 
+#ifdef SINGLE_RAFT_INSTANCE
   // SINGLE-RAFT: Set preferred leader for the single worker using partition 0's config
   if (!raft_workers_g.empty() && raft_workers_g[0]) {
     auto raft_server = raft_workers_g[0]->GetRaftServer();
@@ -384,31 +450,53 @@ int setup2(int action, int shardIndex) {
       parid_t partition_id = raft_server->partition_id_;
       siteid_t my_site_id = raft_server->site_id_;
 
-      // Get all sites for partition 0
       auto partition_sites = config->SitesByPartitionId(partition_id);
 
-      // Find the site in partition 0 that has locale_id == 0 (localhost)
       siteid_t preferred_site_id = INVALID_SITEID;
       for (const auto& site : partition_sites) {
-        if (site.locale_id == 0) {  // localhost
+        if (site.locale_id == 0) {
           preferred_site_id = site.id;
           break;
         }
       }
 
-      // Set the preferred leader
       if (preferred_site_id != INVALID_SITEID) {
         raft_server->SetPreferredLeader(preferred_site_id);
-        Log_info("[SINGLE-RAFT] Partition %d, Site %d: Set preferred leader to site %d (localhost)",
+        Log_info("[SINGLE-RAFT] Partition %d, Site %d: Set preferred leader to site %d",
                  partition_id, my_site_id, preferred_site_id);
-      } else {
-        Log_info("[SINGLE-RAFT] Partition %d, Site %d: No preferred leader found (using standard Raft)",
-                 partition_id, my_site_id);
       }
     }
   }
-
   Log_info("[SINGLE-RAFT] Preferred replica system configured (localhost preferred)");
+#else
+  // MULTI-RAFT: Set preferred leader for each worker based on its partition
+  for (auto& worker : raft_workers_g) {
+    if (!worker) continue;
+
+    auto raft_server = worker->GetRaftServer();
+    if (!raft_server) continue;
+
+    parid_t partition_id = raft_server->partition_id_;
+    siteid_t my_site_id = raft_server->site_id_;
+
+    auto partition_sites = config->SitesByPartitionId(partition_id);
+
+    siteid_t preferred_site_id = INVALID_SITEID;
+    for (const auto& site : partition_sites) {
+      if (site.locale_id == 0) {
+        preferred_site_id = site.id;
+        break;
+      }
+    }
+
+    if (preferred_site_id != INVALID_SITEID) {
+      raft_server->SetPreferredLeader(preferred_site_id);
+      Log_info("[PREFERRED-REPLICA] Partition %d, Site %d: Set preferred leader to site %d",
+               partition_id, my_site_id, preferred_site_id);
+    }
+  }
+  Log_info("[RAFT-SETUP] Preferred replica system configured for all partitions");
+#endif
 
   // Update election state for Paxos compatibility
   if (es->machine_id == 0) {
@@ -483,8 +571,10 @@ int shutdown_paxos() {
     }
   }
 
+#ifdef SINGLE_RAFT_INSTANCE
   // SINGLE-RAFT: Destroy stub servers before worker shutdown
   destroy_stub_servers();
+#endif
 
   for (auto& worker : raft_workers_g) {
     if (worker) {
@@ -493,7 +583,9 @@ int shutdown_paxos() {
   }
 
   raft_workers_g.clear();
+#ifdef SINGLE_RAFT_INSTANCE
   all_site_infos_g.clear();
+#endif
   RandomGenerator::destroy();
   Config::DestroyConfig();
 

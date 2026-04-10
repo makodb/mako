@@ -10,7 +10,7 @@ BUILD_DIR = build
 
 PARALLEL_JOBS = $(or $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS))),4)
 
-.PHONY: all configure build clean rebuild run mako-raft raft-test help test test-verbose test-parallel
+.PHONY: all configure build clean rebuild run mako-raft mako-raft-single mako-raft-multi raft-test help test test-verbose test-parallel
 
 all: build
 
@@ -21,10 +21,22 @@ build: configure
 	@echo "Building with $(PARALLEL_JOBS) parallel jobs..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
-# Build Mako with the Raft helper enabled
+# Build Mako with the Raft helper enabled (single-instance by default)
 mako-raft:
 	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON
 	@echo "Building Mako with Raft helper using $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
+
+# Build Mako with single-instance Raft (1 Raft group for all partitions)
+mako-raft-single:
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON
+	@echo "Building Mako with single-instance Raft using $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
+
+# Build Mako with multi-instance Raft (1 Raft group per partition)
+mako-raft-multi:
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=OFF
+	@echo "Building Mako with multi-instance Raft using $(PARALLEL_JOBS) parallel jobs..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 # Build with Raft testing coroutines enabled
@@ -90,7 +102,9 @@ help:
 	@echo ""
 	@echo "Usage:"
 	@echo "  make              - Build production (Paxos) ~2-3 mins"
-	@echo "  make mako-raft    - Build Mako with Raft replication layer"
+	@echo "  make mako-raft    - Build Mako with Raft (single-instance, default)"
+	@echo "  make mako-raft-single - Build with single-instance Raft (1 group/shard)"
+	@echo "  make mako-raft-multi  - Build with multi-instance Raft (1 group/partition)"
 	@echo "  make raft-test    - Build with Raft testing coroutines"
 	@echo "  make clean        - Clean all build artifacts"
 	@echo "  make rebuild      - Clean and rebuild"

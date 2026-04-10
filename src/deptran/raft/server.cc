@@ -442,9 +442,8 @@ uint64_t RaftServer::GetElectionTimeout() {
   }
 }
 
+#ifdef SINGLE_RAFT_INSTANCE
 // SINGLE-RAFT: StartApplyFiber - lightweight status monitor on PollThread.
-// Actual entry application is handled by the background apply thread.
-// @safe - Fiber::create_run and Fiber::sleep marked @external [safe]
 void RaftServer::StartApplyFiber() {
   Fiber::create_run([this]() {
     Log_info("[APPLY-FIBER] Site %d: Started apply fiber (monitor only)", site_id_);
@@ -540,15 +539,16 @@ void RaftServer::StartApplyThread() {
                    site_id_, apply_count, executeIndex, queue_size);
         }
 
-        // Cleanup old commands periodically (needs mtx_ for raft_logs_)
-        if (id % 1000 == 0) {
+        // Cleanup old log entries periodically to prevent memory buildup.
+        // Only erase from the map — skip DestroyTx since the apply callback
+        // may still reference transaction state on this thread.
+        if (id % 5000 == 0) {
           std::lock_guard<std::recursive_mutex> lock(mtx_);
-          int i = min_active_slot_;
-          while (i + 60000 < (slotid_t)executeIndex) {
-            removeCmd(i);
-            i++;
+          slotid_t cutoff = (executeIndex > 10000) ? executeIndex - 10000 : 0;
+          while (min_active_slot_ < cutoff) {
+            raft_logs_.erase(min_active_slot_);
+            min_active_slot_++;
           }
-          min_active_slot_ = i;
         }
       } else {
         // Periodic heartbeat when queue is empty
@@ -565,6 +565,7 @@ void RaftServer::StartApplyThread() {
   });
   apply_thread_.detach();
 }
+#endif  // SINGLE_RAFT_INSTANCE
 
 // @safe - Server setup (Time::now, Log_debug, Fiber::create_run marked safe via @external)
 void RaftServer::Setup() {
@@ -601,14 +602,14 @@ void RaftServer::Setup() {
 	}
 #endif
 
-  // SINGLE-RAFT: Start the apply fiber (for status monitoring)
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Start apply infrastructure
   StartApplyFiber();
-  // SINGLE-RAFT: Enqueue any pre-existing committed entries (e.g., from persistence recovery)
   if (commitIndex > executeIndex) {
     EnqueueCommittedEntries(executeIndex, commitIndex);
   }
-  // SINGLE-RAFT: Start background apply thread (handles actual entry application)
   StartApplyThread();
+#endif
 
   // Election timer will be started in Start() method when first command is submitted
 }
@@ -840,12 +841,22 @@ void RaftServer::applyLogs() {
   in_applying_logs_ = false;
 
   // Cleanup old commands to prevent memory buildup
-  int i = min_active_slot_;
-  while (i + 60000 < executeIndex) {
-    removeCmd(i);
-    i++;
+#ifdef SINGLE_RAFT_INSTANCE
+  slotid_t cutoff = (executeIndex > 5000) ? executeIndex - 5000 : 0;
+  while (min_active_slot_ < cutoff) {
+    removeCmd(min_active_slot_);
+    min_active_slot_++;
   }
-  min_active_slot_ = i;
+#else
+  if (executeIndex % 5000 == 0) {
+    std::lock_guard<std::recursive_mutex> lock(mtx_);
+    slotid_t cutoff = (executeIndex > 10000) ? executeIndex - 10000 : 0;
+    while (min_active_slot_ < cutoff) {
+      raft_logs_.erase(min_active_slot_);
+      min_active_slot_++;
+    }
+  }
+#endif
 }
 
 // @safe - external calls marked @external [safe], core replication loop
@@ -944,13 +955,20 @@ void RaftServer::HeartbeatLoop() {
         auto commitInstance = GetRaftInstance(newCommitIndex);
         if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
           Log_debug("newCommitIndex %d", newCommitIndex);
+#ifdef SINGLE_RAFT_INSTANCE
           auto old_commit = commitIndex;
           commitIndex = newCommitIndex;
-          // SINGLE-RAFT: Enqueue for background apply thread instead of inline applyLogs()
-          // to avoid blocking the shared PollThread
           EnqueueCommittedEntries(old_commit, commitIndex);
+#else
+          commitIndex = newCommitIndex;
+#endif
         }
       }
+#ifndef SINGLE_RAFT_INSTANCE
+      // MULTI-RAFT: Apply logs inline on leader
+      if (commitIndex > executeIndex)
+        applyLogs();
+#endif
       term = currentTerm;
 
       // ============================================================================
@@ -1191,10 +1209,15 @@ void RaftServer::HeartbeatLoop() {
           auto commitInstance = GetRaftInstance(newCommitIndex);
           if (commitInstance && newCommitIndex > commitIndex && (commitInstance->term == currentTerm)) {
             Log_debug("Phase5 newCommitIndex %d", newCommitIndex);
+#ifdef SINGLE_RAFT_INSTANCE
             auto old_commit = commitIndex;
             commitIndex = newCommitIndex;
-            // SINGLE-RAFT: Enqueue for background apply thread
             EnqueueCommittedEntries(old_commit, commitIndex);
+#else
+            commitIndex = newCommitIndex;
+            if (commitIndex > executeIndex)
+              applyLogs();
+#endif
           }
         }
       }
@@ -1646,14 +1669,13 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 #endif
       }
 
-      // update commitIndex and enqueue newly committed entries for the apply thread
+#ifdef SINGLE_RAFT_INSTANCE
+      // SINGLE-RAFT: Enqueue for background apply thread
       if (leaderCommitIndex > commitIndex) {
         auto old_commit = commitIndex;
         commitIndex = std::min(leaderCommitIndex, lastLogIndex);
         verify(lastLogIndex >= commitIndex);
-        PersistCommitIndex();  // Persist commitIndex update
-        // SINGLE-RAFT: Enqueue entries for background apply thread instead of inline applyLogs()
-        // to avoid blocking the shared PollThread
+        PersistCommitIndex();
         EnqueueCommittedEntries(old_commit, commitIndex);
       }
 
@@ -1663,10 +1685,30 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
       *followerCurrentTerm = this->currentTerm;
       *followerLastLogIndex = this->lastLogIndex;
       }
+#else
+      // MULTI-RAFT: Apply logs synchronously (release mtx_ to avoid blocking RPCs)
+      bool need_apply = false;
+      if (leaderCommitIndex > commitIndex) {
+        commitIndex = std::min(leaderCommitIndex, lastLogIndex);
+        verify(lastLogIndex >= commitIndex);
+        need_apply = true;
+        PersistCommitIndex();
+      }
 
-      // SINGLE-RAFT: Background apply thread handles entry application.
-      // Don't apply inline — this keeps the PollThread responsive for RPCs
-      // so the follower's commitIndex continues to advance.
+      // @unsafe
+      {
+      *followerAppendOK = 1;
+      *followerCurrentTerm = this->currentTerm;
+      *followerLastLogIndex = this->lastLogIndex;
+      }
+
+      // Release mutex before applying logs to allow concurrent AppendEntries
+      mtx_.unlock();
+      if (need_apply) {
+        applyLogs();
+      }
+      mtx_.lock();
+#endif
 
 #ifndef RAFT_TEST_CORO
       if (cmd != nullptr) {
@@ -1753,7 +1795,10 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 void RaftServer::removeCmd(slotid_t slot) {
   // @unsafe
   {
-  auto cmd = dynamic_pointer_cast<TpcCommitCommand>(raft_logs_[slot]->log_);
+  auto it = raft_logs_.find(slot);
+  if (it == raft_logs_.end() || !it->second || !it->second->log_)
+    return;
+  auto cmd = dynamic_pointer_cast<TpcCommitCommand>(it->second->log_);
   if (!cmd)
     return;
   tx_sched_->DestroyTx(cmd->tx_id_);

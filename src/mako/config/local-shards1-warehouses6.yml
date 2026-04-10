@@ -10,7 +10,7 @@ localhost:
   - name: shard0
     index: 0
     ip:   127.0.0.1
-    port: 31000
+    port: 36000
 p1:
   - name: shard0
     index: 0

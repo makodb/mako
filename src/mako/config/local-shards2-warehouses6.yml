@@ -10,11 +10,11 @@ localhost:
   - name: shard0
     index: 0
     ip:   127.0.0.1
-    port: 31000
+    port: 35000
   - name: shard1
     index: 1
     ip:   127.0.0.1
-    port: 31100
+    port: 35100
 p1:
   - name: shard0
     index: 0

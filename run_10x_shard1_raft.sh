@@ -9,7 +9,7 @@ set -o pipefail
 NUM_RUNS=${1:-10}
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BENCH_ROOT="${SCRIPT_DIR}/results/benchmarks"
+BENCH_ROOT="${SCRIPT_DIR}/results/benchmarks/raft"
 RESULTS_DIR="${BENCH_ROOT}/shard1_raft_${TIMESTAMP}"
 REPORT_FILE="${RESULTS_DIR}/report.txt"
 CSV_FILE="${RESULTS_DIR}/results.csv"

@@ -252,25 +252,18 @@ class RaftServer : public TxLogServer {
   // @safe - shared_ptr/callback operations wrapped in @unsafe blocks in implementation
   void applyLogs();
 
-  // SINGLE-RAFT: Dedicated apply fiber that replaces inline applyLogs() calls.
-  // Yields between entries to let PollThread process heartbeat responses.
-  // @safe - fiber creation and sleep are marked @external [safe]
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Dedicated apply fiber and background apply thread.
   void StartApplyFiber();
 
-  // Background OS thread that applies committed entries without blocking the PollThread.
-  // This decouples entry application (which calls slow treplay on followers) from
-  // RPC processing, keeping the follower responsive to AppendEntries RPCs.
   std::thread apply_thread_;
   std::atomic<bool> apply_thread_running_{false};
-
-  // Lock-free queue: OnAppendEntries pushes committed entries here (under mtx_ already),
-  // and the apply thread drains from here using its own lightweight lock.
-  // This eliminates contention on mtx_ between PollThread and the apply thread.
   std::mutex apply_queue_mtx_;
   std::deque<std::pair<slotid_t, shared_ptr<Marshallable>>> apply_queue_;
 
   void StartApplyThread();
   void EnqueueCommittedEntries(slotid_t old_commit, slotid_t new_commit);
+#endif
 
   // @safe - timer and atomic operations are safe internal operations
   void resetTimerBatch()

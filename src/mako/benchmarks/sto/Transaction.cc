@@ -609,9 +609,18 @@ bool Transaction::try_commit(bool no_paxos) {
             #else
                 int large_batch_num=400;
             #endif
-        
+
             if (TThread::get_is_micro())
                 large_batch_num=3000;
+
+            // Allow runtime override via MAKO_BATCH_SIZE env var (for batch sweep experiments)
+            static int env_batch_override = []() {
+                const char* env = std::getenv("MAKO_BATCH_SIZE");
+                return env ? std::atoi(env) : 0;
+            }();
+            if (env_batch_override > 0)
+                large_batch_num = env_batch_override;
+
             serialize_util(nwriteset, false, MAX_ARRAY_SIZE_IN_BYTES, large_batch_num, tid_unique_);
         }
     }
