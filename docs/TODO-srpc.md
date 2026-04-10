@@ -64,18 +64,21 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream C: Implement Real Timeout/Retry Semantics (P1)
 ### Code TODO
-- [ ] Implement retry loop for `request_with_options()` with per-attempt timeout.
+- [x] Implement retry loop for `request_with_options()` with per-attempt timeout.
+  - Implemented on 2026-04-10 in `ClientConnection::request_with_options()` (roughly ~90 LOC net). The path now returns a coordinator `Future`, serializes request args once, runs async retry attempts with per-attempt timeout via `wait_with_options()`, cleans timed-out pending futures via `handle_free()`, and records timeout/retry metadata on terminal timeout.
 - [ ] Enforce `max_retries`, backoff delay, jitter, and `total_timeout_ms` budget.
 - [ ] Set `TimeoutType` correctly (`CONNECT_TIMEOUT`, `REQUEST_TIMEOUT`, `RESPONSE_TIMEOUT`, `TOTAL_TIMEOUT`).
 - [ ] Update metrics for timeouts/retries/failures on terminal outcomes.
 - [ ] Ensure non-idempotent requests are never retried.
 
 ### Tests TODO
-- [ ] Add integration test with transient server fault: idempotent request retries then succeeds.
+- [x] Add integration test with transient server fault: idempotent request retries then succeeds.
+  - Added `TimeoutRetryIntegrationTest.IdempotentRequestRetriesAfterTimeoutAndThenSucceeds` on 2026-04-10. It simulates dropped first response, verifies retry success, retry count, and single payload serialization.
 - [ ] Add integration test: non-idempotent request fails without retry.
 - [ ] Add integration test: total timeout cuts off retries at budget boundary.
 - [ ] Add assertions on timeout type + retry count for each failure mode.
-- [ ] Run existing: `test_rpc_timeout_retry`, `test_rpc_error_integration`, `test_rpc_metrics`.
+- [x] Run existing: `test_rpc_timeout_retry`, `test_rpc_error_integration`, `test_rpc_metrics`.
+  - Verified on 2026-04-10 via full RPC suite run: `ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'` (26/26 passed, includes all three listed tests).
 
 ### DoD
 - [ ] Retry behavior is observable and deterministic under configured options.

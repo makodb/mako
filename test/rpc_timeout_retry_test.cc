@@ -5,12 +5,96 @@
 
 #include <gtest/gtest.h>
 #include <atomic>
+#include <cerrno>
+#include <chrono>
 #include <thread>
 #include <vector>
 #include <cmath>
+#include <rusty/arc.hpp>
+#include <rusty/cell.hpp>
+#include "reactor/reactor.h"
+#include "rpc/client.hpp"
 #include "rpc/request_options.hpp"
+#include "rpc/server.hpp"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
+using namespace std::chrono;
+
+namespace {
+
+class TimeoutRetryService : public Service {
+public:
+    static constexpr i32 kRpcId = 0x58a31f62;
+
+    explicit TimeoutRetryService(int drops_before_reply)
+        : drops_before_reply_(drops_before_reply) {}
+
+    std::atomic<int> call_count{0};
+
+    int __reg_to__(Server& svr, size_t svc_index) override {
+        return svr.reg_rpc(kRpcId, svc_index);
+    }
+
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+        if (rpc_id != kRpcId) {
+            return;
+        }
+
+        v32 payload;
+        req->m >> payload;
+
+        int call = call_count.fetch_add(1) + 1;
+        if (call <= drops_before_reply_) {
+            return;  // Simulate lost response so client attempt times out.
+        }
+
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_none()) {
+            return;
+        }
+
+        auto sconn = sconn_opt.unwrap();
+        const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](Marshal& m) {
+            m << payload;
+        });
+    }
+
+private:
+    int drops_before_reply_;
+};
+
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    return predicate();
+}
+
+class TimeoutRetryIntegrationTest : public ::testing::Test {
+protected:
+    rusty::Option<rusty::Arc<PollThread>> poll_thread_;
+    int test_port_ = test_ports::get_port();
+
+    void SetUp() override {
+        poll_thread_ = rusty::Some(PollThread::create());
+    }
+
+    void TearDown() override {
+        poll_thread_.as_ref().unwrap()->shutdown();
+    }
+
+    std::string server_addr() const {
+        return "127.0.0.1:" + std::to_string(test_port_);
+    }
+};
+
+}  // namespace
 
 // ============================================================================
 // TimeoutType Tests
@@ -339,10 +423,94 @@ TEST(RequestOptionsTest, MoveConstruct) {
 }
 
 // ============================================================================
-// Integration with rusty::Cell
+// Retry Integration Tests
 // ============================================================================
 
-#include <rusty/cell.hpp>
+TEST_F(TimeoutRetryIntegrationTest, IdempotentRequestRetriesAfterTimeoutAndThenSucceeds) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<TimeoutRetryService>(1);  // Drop first response only.
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    RequestOptions opts;
+    opts.timeout_ms = 40;
+    opts.max_retries = 2;
+    opts.idempotent = true;
+
+    std::atomic<int> marshal_calls{0};
+    auto start = steady_clock::now();
+    auto fu_result = client->request_with_options(
+        TimeoutRetryService::kRpcId, opts,
+        [&](Marshal& m) {
+            marshal_calls.fetch_add(1);
+            m << v32(123);
+        });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2000)));
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_TRUE(fu->wait_with_options());
+    EXPECT_EQ(fu->get_error_code(), 0);
+    EXPECT_EQ(fu->get_retry_count(), 1);
+    EXPECT_EQ(fu->get_timeout_type(), TimeoutType::NONE);
+    EXPECT_GE(elapsed_ms, 30);  // At least one timed-out attempt boundary.
+
+    v32 reply_value;
+    fu->get_reply() >> reply_value;
+    EXPECT_EQ(reply_value.get(), 123);
+    EXPECT_EQ(service->call_count.load(), 2);
+    EXPECT_EQ(marshal_calls.load(), 1);  // Request payload serialized once.
+
+    client->close();
+    delete server;
+}
+
+TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTimeout) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    RequestOptions opts;
+    opts.timeout_ms = 30;
+    opts.max_retries = 2;
+    opts.idempotent = true;
+
+    auto start = steady_clock::now();
+    auto fu_result = client->request_with_options(
+        TimeoutRetryService::kRpcId, opts,
+        [](Marshal& m) { m << v32(9); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2500)));
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_FALSE(fu->wait_with_options());
+    EXPECT_TRUE(fu->timed_out());
+    EXPECT_EQ(fu->get_error_code(), ETIMEDOUT);
+    EXPECT_EQ(fu->get_timeout_type(), TimeoutType::RESPONSE_TIMEOUT);
+    EXPECT_EQ(fu->get_retry_count(), 2);
+    EXPECT_EQ(service->call_count.load(), 3);  // Initial + 2 retries.
+    EXPECT_GE(elapsed_ms, 70);  // Roughly 3x30ms attempt windows with scheduler jitter.
+
+    client->close();
+    delete server;
+}
+
+// ============================================================================
+// Integration with rusty::Cell
+// ============================================================================
 
 TEST(RequestOptionsTest, CellStorage) {
     rusty::Cell<RequestOptions> cell{RequestOptions::defaults()};

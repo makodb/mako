@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <mutex>
+#include <thread>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -406,7 +407,7 @@ public:
     }
 
     // @safe - Set request options
-    void set_options(const RequestOptions& opts) {
+    void set_options(const RequestOptions& opts) const {
         options_.set(opts);
     }
 
@@ -1018,11 +1019,83 @@ public:
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
-        auto result = request(rpc_id, attr, std::forward<F>(write_fn));
-        if (result.is_ok()) {
-            result.ok()->set_options(options);
+        // Serialize args once so retries can replay identical payload safely.
+        Marshal serialized_args;
+        write_fn(serialized_args);
+        std::string args_bytes;
+        size_t args_size = serialized_args.content_size();
+        if (args_size > 0) {
+            args_bytes.resize(args_size);
+            verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
         }
-        return result;
+
+        // Return a coordinator future immediately; internal attempts run async.
+        auto final_fu = Future::create(xid_counter_.next(), attr);
+        RequestOptions waiter_options = options;
+        waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
+        final_fu->set_options(waiter_options);
+
+        auto weak_conn = weak_self_;
+        std::thread([weak_conn, rpc_id, options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+            uint16_t retry_count = 0;
+            while (true) {
+                auto conn_opt = weak_conn.upgrade();
+                if (conn_opt.is_none()) {
+                    final_fu->error_code_.set(ENOTCONN);
+                    final_fu->notify_ready(final_fu);
+                    return;
+                }
+
+                auto conn = conn_opt.unwrap();
+                auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](Marshal& m) {
+                    if (!args_bytes.empty()) {
+                        verify(m.write(args_bytes.data(), args_bytes.size()) == args_bytes.size());
+                    }
+                });
+                if (attempt_result.is_err()) {
+                    final_fu->error_code_.set(attempt_result.unwrap_err());
+                    final_fu->retry_count_.set(retry_count);
+                    final_fu->notify_ready(final_fu);
+                    return;
+                }
+
+                auto attempt_fu = attempt_result.unwrap();
+                attempt_fu->set_options(options);
+                if (attempt_fu->wait_with_options()) {
+                    final_fu->error_code_.set(attempt_fu->error_code_.get());
+                    final_fu->retry_count_.set(retry_count);
+                    if (attempt_fu->error_code_.get() == 0) {
+                        auto attempt_reply = attempt_fu->reply_.borrow_mut();
+                        size_t reply_size = attempt_reply->content_size();
+                        if (reply_size > 0) {
+                            final_fu->reply_.borrow_mut()->read_from_marshal(*attempt_reply, reply_size);
+                        }
+                    }
+                    final_fu->notify_ready(final_fu);
+                    return;
+                }
+
+                // Timed-out attempts are no longer useful; release pending map slot.
+                conn->handle_free(attempt_fu->xid_);
+
+                if (!options.can_retry(retry_count)) {
+                    {
+                        auto state_guard = final_fu->state_.lock().unwrap();
+                        state_guard->timed_out = true;
+                    }
+                    final_fu->error_code_.set(ETIMEDOUT);
+                    final_fu->timeout_type_.set(attempt_fu->get_timeout_type());
+                    final_fu->retry_count_.set(retry_count);
+                    final_fu->notify_ready(final_fu);
+                    return;
+                }
+
+                retry_count++;
+                final_fu->retry_count_.set(retry_count);
+            }
+        }).detach();
+
+        return FutureResult::Ok(final_fu);
     }
 
     // @unsafe - Convenience overload without FutureAttr
