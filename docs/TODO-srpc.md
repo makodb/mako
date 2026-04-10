@@ -115,12 +115,14 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Added `ReconnectIntegrationTest.AutoReconnectTriggeredAfterConnectionFailure` on 2026-04-10. It validates failure detection, automatic policy-driven reconnect, reconnect metric increment, and successful post-recovery request.
 - [x] Add integration test: reconnect callback result matches each reconnect call outcome.
   - Added `ReconnectIntegrationTest.ReconnectCallbackMatchesEachCallResult` on 2026-04-10. It validates overlapping reconnect calls each invoke callback once, and each callback result matches that call's returned reconnect code.
-- [ ] Add integration test: unlimited retry policy continues until server returns.
+- [x] Add integration test: unlimited retry policy continues until server returns.
+  - Added `ReconnectIntegrationTest.UnlimitedReconnectRetriesUntilServerReturns` on 2026-04-10. It verifies reconnect remains in retry-loop while server is unavailable under `max_retries=0`, then succeeds after server recovery without manual intervention.
 - [x] Run existing: `test_rpc_reconnect_policy`, `test_rpc_reconnect_integration`, `test_rpc_callbacks`.
   - Verified on 2026-04-10 as part of full RPC suite run (`ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'`, 26/26 passed).
 
 ### DoD
-- [ ] Configuring reconnect policy changes runtime behavior measurably.
+- [x] Configuring reconnect policy changes runtime behavior measurably.
+  - Verified on 2026-04-10 by reconnect integration coverage: no-retry fails fast, bounded retry incurs policy delays, and unlimited retry continues until server returns.
 
 ## Workstream E: Wire Pending Request Counter into Real Dispatch (P1)
 ### Code TODO
