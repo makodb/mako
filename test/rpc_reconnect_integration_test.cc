@@ -370,6 +370,87 @@ TEST_F(ReconnectIntegrationTest, AutoReconnectTriggeredAfterConnectionFailure) {
     delete server;
 }
 
+TEST_F(ReconnectIntegrationTest, ReconnectCallbackMatchesEachCallResult) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    client->close();
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;
+    server = nullptr;
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 200;
+    policy.initial_delay_ms = 20;
+    policy.max_delay_ms = 20;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    std::atomic<int> cb_count_1{0};
+    std::atomic<int> cb_count_2{0};
+    std::atomic<int> cb_success_1{-1};
+    std::atomic<int> cb_success_2{-1};
+    std::atomic<int> rc_1{123456};
+    std::atomic<int> rc_2{123456};
+
+    std::thread reconnect_1([&]() {
+        int rc = client->reconnect([&](bool success) {
+            cb_count_1.fetch_add(1, std::memory_order_relaxed);
+            cb_success_1.store(success ? 1 : 0, std::memory_order_relaxed);
+        });
+        rc_1.store(rc, std::memory_order_release);
+    });
+
+    // Overlap with an in-flight reconnect so this call piggybacks.
+    std::this_thread::sleep_for(milliseconds(30));
+    std::thread reconnect_2([&]() {
+        int rc = client->reconnect([&](bool success) {
+            cb_count_2.fetch_add(1, std::memory_order_relaxed);
+            cb_success_2.store(success ? 1 : 0, std::memory_order_relaxed);
+        });
+        rc_2.store(rc, std::memory_order_release);
+    });
+
+    std::this_thread::sleep_for(milliseconds(120));
+    server = start_server_with_retry();
+    ASSERT_NE(server, nullptr);
+
+    reconnect_1.join();
+    reconnect_2.join();
+
+    EXPECT_EQ(cb_count_1.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(cb_count_2.load(std::memory_order_acquire), 1);
+
+    int reconnect_rc_1 = rc_1.load(std::memory_order_acquire);
+    int reconnect_rc_2 = rc_2.load(std::memory_order_acquire);
+    EXPECT_EQ(cb_success_1.load(std::memory_order_acquire), reconnect_rc_1 == 0 ? 1 : 0);
+    EXPECT_EQ(cb_success_2.load(std::memory_order_acquire), reconnect_rc_2 == 0 ? 1 : 0);
+    EXPECT_EQ(reconnect_rc_1, 0);
+    EXPECT_EQ(reconnect_rc_2, 0);
+    EXPECT_TRUE(client->connected());
+
+    client->close();
+    delete server;
+}
+
 // ============================================================================
 // Reconnect Calculator Tests
 // ============================================================================

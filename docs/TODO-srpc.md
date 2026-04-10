@@ -103,7 +103,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-10 by routing reconnect retry cadence through `ReconnectCalculator::should_retry()/next_delay_ms()` (honors `max_retries`, exponential backoff, max delay, and jitter settings).
 - [x] Add automatic policy-driven reconnect trigger after connection failure.
   - Implemented on 2026-04-10 in `ClientConnection::handle_error()` with policy-gated auto-trigger, single-flight reconnect coordination, explicit close-time reconnect cancellation, and safe pending-request replay copy path.
-- [ ] Ensure reconnect callbacks reflect each attempt/result.
+- [x] Ensure reconnect callbacks reflect each attempt/result.
+  - Implemented on 2026-04-10 in `ClientConnection::reconnect()`. Callback success/failure is now derived directly from returned reconnect result on every exit path, and reconnect ownership now re-checks state after CAS so concurrent reconnect winners/observers report consistent callback outcomes.
 
 ### Tests TODO
 - [x] Add integration test: reconnect delay progression follows policy bounds.
@@ -112,6 +113,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Added `ReconnectIntegrationTest.ReconnectPolicyWithoutAutoRetryFailsFast` on 2026-04-10 and policy-delay test assertions; together they verify no extra retries when disabled and bounded retry behavior when enabled.
 - [x] Add integration test: automatic reconnect triggers after transport failure and recovers without manual reconnect call.
   - Added `ReconnectIntegrationTest.AutoReconnectTriggeredAfterConnectionFailure` on 2026-04-10. It validates failure detection, automatic policy-driven reconnect, reconnect metric increment, and successful post-recovery request.
+- [x] Add integration test: reconnect callback result matches each reconnect call outcome.
+  - Added `ReconnectIntegrationTest.ReconnectCallbackMatchesEachCallResult` on 2026-04-10. It validates overlapping reconnect calls each invoke callback once, and each callback result matches that call's returned reconnect code.
 - [ ] Add integration test: unlimited retry policy continues until server returns.
 - [x] Run existing: `test_rpc_reconnect_policy`, `test_rpc_reconnect_integration`, `test_rpc_callbacks`.
   - Verified on 2026-04-10 as part of full RPC suite run (`ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'`, 26/26 passed).

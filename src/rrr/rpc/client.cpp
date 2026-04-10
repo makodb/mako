@@ -346,26 +346,27 @@ int ClientConnection::connect(const char* addr) {
 
 // @unsafe - Attempts to reconnect to the last connected address
 int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
+  auto complete_callback = [&](int result) -> int {
+    if (on_complete) on_complete(result == 0);
+    return result;
+  };
+
   if (reconnect_abort_.load(std::memory_order_acquire)) {
-    if (on_complete) on_complete(false);
-    return ECANCELED;
+    return complete_callback(ECANCELED);
   }
 
   auto wait_for_inflight_reconnect = [&]() -> int {
     while (reconnecting_.load(std::memory_order_acquire)) {
       if (reconnect_abort_.load(std::memory_order_acquire)) {
-        if (on_complete) on_complete(false);
         return ECANCELED;
       }
       if (state_machine_.is_connected()) {
-        if (on_complete) on_complete(true);
         return 0;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     if (state_machine_.is_connected()) {
-      if (on_complete) on_complete(true);
       return 0;
     }
     return INT_MIN;
@@ -374,23 +375,21 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   if (reconnecting_.load(std::memory_order_acquire)) {
     int waited = wait_for_inflight_reconnect();
     if (waited != INT_MIN) {
-      return waited;
+      return complete_callback(waited);
     }
   }
 
   // Check if we have an address to reconnect to
   if (reconnect_address_.empty()) {
     Log_error("rrr::ClientConnection: no address to reconnect to");
-    if (on_complete) on_complete(false);
-    return EINVAL;
+    return complete_callback(EINVAL);
   }
 
   // Can only reconnect from FAILED or DISCONNECTED state
   if (!state_machine_.can_connect()) {
     Log_error("rrr::ClientConnection: cannot reconnect from state %s",
               connection_state_to_string(state_machine_.state()));
-    if (on_complete) on_complete(false);
-    return EINVAL;
+    return complete_callback(EINVAL);
   }
 
   while (true) {
@@ -401,7 +400,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
 
     int waited = wait_for_inflight_reconnect();
     if (waited != INT_MIN) {
-      return waited;
+      return complete_callback(waited);
     }
   }
 
@@ -419,8 +418,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
       if (replayed > 0) {
         Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
       }
-
-      if (on_complete) on_complete(true);
+      return complete_callback(0);
     } else {
       if (result == ECANCELED) {
         Log_debug("rrr::ClientConnection: reconnect cancelled for %s",
@@ -429,10 +427,8 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
         Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
                   reconnect_address_.c_str(), result);
       }
-      if (on_complete) on_complete(false);
+      return complete_callback(result);
     }
-
-    return result;
   };
 
   auto reconnect_once = [&]() -> int {
@@ -443,6 +439,21 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
     socket_ = -1;
     return connect(reconnect_address_.c_str());
   };
+
+  if (reconnect_abort_.load(std::memory_order_acquire)) {
+    return complete_reconnect(false, ECANCELED);
+  }
+
+  // Another reconnect attempt can complete between the pre-CAS state check and
+  // this thread acquiring reconnect ownership.
+  if (state_machine_.is_connected()) {
+    reconnecting_.store(false, std::memory_order_release);
+    return complete_callback(0);
+  }
+
+  if (!state_machine_.can_connect()) {
+    return complete_reconnect(false, EINVAL);
+  }
 
   // First attempt happens immediately.
   int result = reconnect_once();
