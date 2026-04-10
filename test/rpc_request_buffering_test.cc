@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 #include <atomic>
 #include <cerrno>
+#include <mutex>
 #include <thread>
 #include <vector>
 #define RPC_TEST_HOOKS
@@ -402,40 +403,94 @@ TEST_F(RequestBufferingTest, ConcurrentQueueing) {
     EXPECT_EQ(conn->pending_request_count(), static_cast<size_t>(num_threads * requests_per_thread));
 }
 
-TEST_F(RequestBufferingTest, ConcurrentQueueAndClear) {
+TEST_F(RequestBufferingTest, ConcurrentQueueAndClearHasNoStuckFutures) {
     auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
 
     BufferingConfig config;
-    config.max_pending = 100;
+    config.max_pending = 16;  // Keep queue small to force contention/overflow
+    config.overflow = OverflowStrategy::DROP_NEWEST;
     conn->set_buffering_config(config);
 
-    std::atomic<bool> stop{false};
+    constexpr int kProducerThreads = 4;
+    constexpr int kRequestsPerProducer = 250;
 
-    // Producer thread
-    std::thread producer([&conn, &stop]() {
-        while (!stop) {
-            conn->request(1, FutureAttr(), [](Marshal&) {});
-        }
-    });
+    std::atomic<bool> stop_clearer{false};
+    std::atomic<int> ok_count{0};
+    std::atomic<int> expected_err_count{0};
+    std::atomic<int> unexpected_err_count{0};
 
-    // Clearer thread
-    std::thread clearer([&conn, &stop]() {
-        while (!stop) {
+    std::mutex futures_mu;
+    std::vector<rusty::Arc<Future>> futures;
+    futures.reserve(kProducerThreads * kRequestsPerProducer);
+
+    // Clearer thread continuously drains pending queue while producers run.
+    std::thread clearer([&conn, &stop_clearer]() {
+        while (!stop_clearer.load()) {
             conn->clear_pending_requests();
             std::this_thread::yield();
         }
     });
 
-    // Run for a short time
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    stop = true;
+    std::vector<std::thread> producers;
+    producers.reserve(kProducerThreads);
+    for (int t = 0; t < kProducerThreads; t++) {
+        producers.emplace_back([&conn, &ok_count, &expected_err_count, &unexpected_err_count,
+                                &futures_mu, &futures, t]() {
+            for (int i = 0; i < kRequestsPerProducer; i++) {
+                auto result = conn->request(t * 10000 + i, FutureAttr(), [](Marshal&) {});
+                if (result.is_ok()) {
+                    ok_count++;
+                    std::lock_guard<std::mutex> lock(futures_mu);
+                    futures.push_back(result.unwrap());
+                } else {
+                    int err = result.unwrap_err();
+                    if (err == kRequestQueueRejectedError) {
+                        expected_err_count++;
+                    } else {
+                        unexpected_err_count++;
+                    }
+                }
+            }
+        });
+    }
 
-    producer.join();
+    for (auto& p : producers) {
+        p.join();
+    }
+    stop_clearer = true;
     clearer.join();
 
-    // Should not crash, final state should be consistent
-    // Pending count should be >= 0
-    EXPECT_GE(conn->pending_request_count(), 0u);
+    // Final sweep to ensure queue is drained and callbacks fired.
+    conn->clear_pending_requests();
+
+    // Wait briefly for pending map to settle to zero under concurrent callbacks.
+    for (int i = 0; i < 50 && conn->pending_future_count() != 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    std::vector<rusty::Arc<Future>> captured;
+    {
+        std::lock_guard<std::mutex> lock(futures_mu);
+        captured = futures;
+    }
+
+    size_t stuck_count = 0;
+    for (const auto& fu : captured) {
+        if (!fu->ready()) {
+            fu->timed_wait(0.2);
+        }
+        if (!fu->ready()) {
+            stuck_count++;
+        }
+    }
+
+    EXPECT_GT(ok_count.load(), 0);
+    EXPECT_EQ(unexpected_err_count.load(), 0);
+    EXPECT_EQ(stuck_count, 0u);
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+    EXPECT_EQ(static_cast<size_t>(ok_count.load() + expected_err_count.load()),
+              static_cast<size_t>(kProducerThreads * kRequestsPerProducer));
 }
 
 // ============================================================================

@@ -52,7 +52,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Added `RequestBufferingTest.DropNewestOverflowDoesNotLeakPendingFutures` on 2026-04-10.
 - [x] Add integration test: replay re-enqueue failure cannot leave `ready()==false` forever.
   - Added `RequestBufferingTest.ReplayReenqueueRejectDoesNotLeaveFuturePending` on 2026-04-10.
-- [ ] Add concurrent test: producer+clearer under small queue has no stuck futures.
+- [x] Add concurrent test: producer+clearer under small queue has no stuck futures.
+  - Added `RequestBufferingTest.ConcurrentQueueAndClearHasNoStuckFutures` on 2026-04-10. It runs concurrent producers with a small queue plus a clearer thread, then asserts all returned futures become ready and pending queue/map counts settle to zero.
 - [x] Run existing: `test_rpc_request_buffering`, `test_rpc_request_queue`, `test_rpc_combined_reliability`.
   - Verified on 2026-04-10 during full RPC suite run (`ctest -R '^(test_rpc|rpc_chaos_test$)'`), with all three passing.
 
