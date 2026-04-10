@@ -2,6 +2,7 @@
 #include <memory>
 #include <chrono>
 #include <mutex>
+#include <climits>
 
 #include <errno.h>
 #include <string.h>
@@ -120,6 +121,8 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
 
 // @safe - Simple destructor
 ClientConnection::~ClientConnection() {
+  reconnect_abort_.store(true, std::memory_order_release);
+  reconnecting_.store(false, std::memory_order_release);
   invalidate_pending_futures();
 }
 
@@ -190,6 +193,7 @@ void ClientConnection::close() {
 // @safe - Mark connection as closing without closing socket
 // Used by Client::close() to update state before poll thread closes socket
 void ClientConnection::mark_closing() {
+  reconnect_abort_.store(true, std::memory_order_release);
   if (state_machine_.is_connected()) {
     // Mark as in-progress close, but do not enter terminal state yet.
     // The poll-thread close callback performs the actual fd close and final state transition.
@@ -342,6 +346,38 @@ int ClientConnection::connect(const char* addr) {
 
 // @unsafe - Attempts to reconnect to the last connected address
 int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
+  if (reconnect_abort_.load(std::memory_order_acquire)) {
+    if (on_complete) on_complete(false);
+    return ECANCELED;
+  }
+
+  auto wait_for_inflight_reconnect = [&]() -> int {
+    while (reconnecting_.load(std::memory_order_acquire)) {
+      if (reconnect_abort_.load(std::memory_order_acquire)) {
+        if (on_complete) on_complete(false);
+        return ECANCELED;
+      }
+      if (state_machine_.is_connected()) {
+        if (on_complete) on_complete(true);
+        return 0;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    if (state_machine_.is_connected()) {
+      if (on_complete) on_complete(true);
+      return 0;
+    }
+    return INT_MIN;
+  };
+
+  if (reconnecting_.load(std::memory_order_acquire)) {
+    int waited = wait_for_inflight_reconnect();
+    if (waited != INT_MIN) {
+      return waited;
+    }
+  }
+
   // Check if we have an address to reconnect to
   if (reconnect_address_.empty()) {
     Log_error("rrr::ClientConnection: no address to reconnect to");
@@ -357,11 +393,20 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
     return EINVAL;
   }
 
-  // Mark as reconnecting
-  reconnecting_.set(true);
+  while (true) {
+    bool expected = false;
+    if (reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+      break;
+    }
+
+    int waited = wait_for_inflight_reconnect();
+    if (waited != INT_MIN) {
+      return waited;
+    }
+  }
 
   auto complete_reconnect = [&](bool success, int result) -> int {
-    reconnecting_.set(false);
+    reconnecting_.store(false, std::memory_order_release);
 
     if (success) {
       Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
@@ -377,8 +422,13 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
 
       if (on_complete) on_complete(true);
     } else {
-      Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
-                reconnect_address_.c_str(), result);
+      if (result == ECANCELED) {
+        Log_debug("rrr::ClientConnection: reconnect cancelled for %s",
+                  reconnect_address_.c_str());
+      } else {
+        Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
+                  reconnect_address_.c_str(), result);
+      }
       if (on_complete) on_complete(false);
     }
 
@@ -386,6 +436,9 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   };
 
   auto reconnect_once = [&]() -> int {
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      return ECANCELED;
+    }
     // Reset socket for each reconnect attempt.
     socket_ = -1;
     return connect(reconnect_address_.c_str());
@@ -400,9 +453,17 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   // Follow configured backoff/retry policy for subsequent attempts.
   ReconnectCalculator calc(reconnect_policy_);
   while (calc.should_retry()) {
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      return complete_reconnect(false, ECANCELED);
+    }
+
     uint32_t delay_ms = calc.next_delay_ms();
     if (delay_ms > 0) {
       std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    if (reconnect_abort_.load(std::memory_order_acquire)) {
+      return complete_reconnect(false, ECANCELED);
     }
 
     // Another path may have re-established connection while sleeping.
@@ -482,8 +543,13 @@ size_t ClientConnection::replay_pending_requests() {
 
     // Copy payload to output buffer
     if (req.payload && req.payload->content_size() > 0) {
+      size_t payload_size = req.payload->content_size();
+      std::string payload_bytes;
+      payload_bytes.resize(payload_size);
+      verify(req.payload->read(payload_bytes.data(), payload_size) == payload_size);
+
       auto guard = out_.lock().unwrap();
-      guard->read_from_marshal(*req.payload, req.payload->content_size());
+      verify(guard->write(payload_bytes.data(), payload_size) == payload_size);
       // Reset write_cnt_ so that subsequent set_bookmark() calls work
       // The replayed payload already contains the packet size
       guard->get_and_reset_write_cnt();
@@ -505,10 +571,51 @@ size_t ClientConnection::replay_pending_requests() {
 
 // @safe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
-  // Force transition to FAILED state (from any state)
-  state_machine_.force_state(ConnectionState::FAILED);
+  ConnectionState prev_state = state_machine_.state();
+  const bool user_initiated_closing =
+      prev_state == ConnectionState::DISCONNECTING ||
+      prev_state == ConnectionState::DISCONNECTED ||
+      reconnect_abort_.load(std::memory_order_acquire);
+
+  if (!user_initiated_closing) {
+    // Force transition to FAILED state (from any state)
+    state_machine_.force_state(ConnectionState::FAILED);
+  }
   // @unsafe - calls close() which does system calls
   { close(); }
+
+  if (user_initiated_closing) {
+    return;
+  }
+
+  // Trigger policy-driven reconnect automatically after transport failures.
+  if (reconnect_policy_.auto_reconnect &&
+      !reconnect_address_.empty() &&
+      !reconnect_abort_.load(std::memory_order_acquire)) {
+    auto weak_conn = weak_self_;
+    std::thread([weak_conn]() {
+      auto conn_opt = weak_conn.upgrade();
+      if (conn_opt.is_none()) {
+        return;
+      }
+
+      auto conn = conn_opt.unwrap();
+      if (!conn->reconnect_policy_.auto_reconnect ||
+          conn->reconnect_abort_.load(std::memory_order_acquire)) {
+        return;
+      }
+
+      auto state = conn->connection_state();
+      if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
+        Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure");
+        // @unsafe - reconnect mutates socket/state and performs network I/O.
+        auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+        if (mut_conn != nullptr) {
+          mut_conn->reconnect();
+        }
+      }
+    }).detach();
+  }
 }
 
 // @safe - Writes buffered data to socket, protected by SpinMutex
@@ -657,14 +764,13 @@ void Client::close() const {
   auto guard = connection_.borrow_mut();
   if (guard->is_some()) {
     auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
-    if (conn.connected()) {
+    const bool was_connected = conn.connected();
+    conn.mark_closing();
+    if (was_connected) {
       // Request poll thread to close the connection
       // The poll thread will call ClientConnection::close() via do_close_pollable()
       // @unsafe - PollThread::request_close
       { poll_thread_worker_->request_close(conn.fd()); }
-      // Just update state machine - don't close socket here
-      // The actual socket close happens in the poll thread
-      conn.mark_closing();
     }
     // Don't clear connection to None - we need it for reconnect()
   }
@@ -744,6 +850,7 @@ int Client::reconnect(std::function<void(bool)> on_complete) const {
 
   // Need to get mutable access to the connection for reconnect
   auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
+  conn.reconnect_abort_.store(false, std::memory_order_release);
 
   // @unsafe - reconnect does socket operations
   {

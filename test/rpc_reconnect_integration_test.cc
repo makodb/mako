@@ -89,6 +89,17 @@ protected:
         return server;
     }
 
+    Server* start_server_with_retry(int attempts = 20, int delay_ms = 50) {
+        for (int i = 0; i < attempts; i++) {
+            auto server = start_server();
+            if (server != nullptr) {
+                return server;
+            }
+            std::this_thread::sleep_for(milliseconds(delay_ms));
+        }
+        return nullptr;
+    }
+
     std::string server_addr() {
         return "127.0.0.1:" + std::to_string(test_port_);
     }
@@ -299,6 +310,61 @@ TEST_F(ReconnectIntegrationTest, ReconnectAfterServerRestart) {
             EXPECT_EQ(fu2->get_error_code(), 0);
         }
     }
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ReconnectIntegrationTest, AutoReconnectTriggeredAfterConnectionFailure) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 50;
+    policy.initial_delay_ms = 20;
+    policy.max_delay_ms = 20;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    std::string input = "auto_reconnect";
+    auto warmup = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(warmup.is_ok());
+    auto warmup_fu = warmup.unwrap();
+    warmup_fu->wait();
+    ASSERT_EQ(warmup_fu->get_error_code(), 0);
+
+    // Simulate failure and ensure a failing request observes disconnection.
+    delete server;
+    std::this_thread::sleep_for(milliseconds(80));
+    auto failing = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    if (failing.is_ok()) {
+        failing.unwrap()->timed_wait(0.5);
+    }
+
+    // Bring server back and wait for automatic reconnect.
+    server = start_server_with_retry();
+    ASSERT_NE(server, nullptr);
+    ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(4000)));
+    EXPECT_GE(client->metrics().reconnect_count(), 1u);
+
+    auto after = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(after.is_ok());
+    auto after_fu = after.unwrap();
+    after_fu->wait();
+    EXPECT_EQ(after_fu->get_error_code(), 0);
 
     client->close();
     delete server;

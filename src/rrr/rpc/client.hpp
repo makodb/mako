@@ -8,6 +8,7 @@
 #include <chrono>
 #include <mutex>
 #include <thread>
+#include <atomic>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -534,7 +535,8 @@ class ClientConnection: public Pollable {
 
     // Reconnection policy and state
     ReconnectPolicy reconnect_policy_;
-    rusty::Cell<bool> reconnecting_{false};
+    std::atomic<bool> reconnecting_{false};
+    std::atomic<bool> reconnect_abort_{false};
     std::string reconnect_address_;  // Address to reconnect to
 
     // Request buffering during disconnection
@@ -644,7 +646,7 @@ public:
 
     // @safe - Check if a reconnection attempt is in progress
     bool is_reconnecting() const {
-        return reconnecting_.get();
+        return reconnecting_.load(std::memory_order_acquire);
     }
 
     /**

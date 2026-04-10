@@ -101,7 +101,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-10 in `ClientConnection::reconnect()`. Reconnect now performs an immediate attempt, then policy-driven retries via `ReconnectCalculator` with bounded delays between attempts.
 - [x] Enforce configured `max_retries`, delay backoff, and jitter.
   - Implemented on 2026-04-10 by routing reconnect retry cadence through `ReconnectCalculator::should_retry()/next_delay_ms()` (honors `max_retries`, exponential backoff, max delay, and jitter settings).
-- [ ] Add automatic policy-driven reconnect trigger after connection failure.
+- [x] Add automatic policy-driven reconnect trigger after connection failure.
+  - Implemented on 2026-04-10 in `ClientConnection::handle_error()` with policy-gated auto-trigger, single-flight reconnect coordination, explicit close-time reconnect cancellation, and safe pending-request replay copy path.
 - [ ] Ensure reconnect callbacks reflect each attempt/result.
 
 ### Tests TODO
@@ -109,6 +110,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Added `ReconnectIntegrationTest.ReconnectPolicyAppliesRetryDelays` on 2026-04-10. It verifies reconnect runtime includes configured retry delays before terminal failure.
 - [x] Add integration test: reconnect stops after max retries.
   - Added `ReconnectIntegrationTest.ReconnectPolicyWithoutAutoRetryFailsFast` on 2026-04-10 and policy-delay test assertions; together they verify no extra retries when disabled and bounded retry behavior when enabled.
+- [x] Add integration test: automatic reconnect triggers after transport failure and recovers without manual reconnect call.
+  - Added `ReconnectIntegrationTest.AutoReconnectTriggeredAfterConnectionFailure` on 2026-04-10. It validates failure detection, automatic policy-driven reconnect, reconnect metric increment, and successful post-recovery request.
 - [ ] Add integration test: unlimited retry policy continues until server returns.
 - [x] Run existing: `test_rpc_reconnect_policy`, `test_rpc_reconnect_integration`, `test_rpc_callbacks`.
   - Verified on 2026-04-10 as part of full RPC suite run (`ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'`, 26/26 passed).
