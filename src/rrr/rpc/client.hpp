@@ -1040,15 +1040,34 @@ public:
             auto start_time = std::chrono::steady_clock::now();
             uint16_t retry_count = 0;
 
-            auto set_terminal_timeout = [&](TimeoutType timeout_type) {
-                {
+            auto classify_request_failure = [](int err) -> TimeoutType {
+                if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
+                    err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
+                    return TimeoutType::CONNECT_TIMEOUT;
+                }
+                if (err == ETIMEDOUT || err == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+                    || err == EWOULDBLOCK
+#endif
+                ) {
+                    return TimeoutType::REQUEST_TIMEOUT;
+                }
+                return TimeoutType::NONE;
+            };
+
+            auto finish_terminal = [&](int err, TimeoutType timeout_type) {
+                if (timeout_type != TimeoutType::NONE) {
                     auto state_guard = final_fu->state_.lock().unwrap();
                     state_guard->timed_out = true;
                 }
-                final_fu->error_code_.set(ETIMEDOUT);
+                final_fu->error_code_.set(err);
                 final_fu->timeout_type_.set(timeout_type);
                 final_fu->retry_count_.set(retry_count);
                 final_fu->notify_ready(final_fu);
+            };
+
+            auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+                finish_terminal(ETIMEDOUT, timeout_type);
             };
 
             while (true) {
@@ -1062,9 +1081,7 @@ public:
 
                 auto conn_opt = weak_conn.upgrade();
                 if (conn_opt.is_none()) {
-                    final_fu->error_code_.set(ENOTCONN);
-                    final_fu->retry_count_.set(retry_count);
-                    final_fu->notify_ready(final_fu);
+                    finish_terminal(ENOTCONN, TimeoutType::CONNECT_TIMEOUT);
                     return;
                 }
 
@@ -1075,9 +1092,8 @@ public:
                     }
                 });
                 if (attempt_result.is_err()) {
-                    final_fu->error_code_.set(attempt_result.unwrap_err());
-                    final_fu->retry_count_.set(retry_count);
-                    final_fu->notify_ready(final_fu);
+                    int err = attempt_result.unwrap_err();
+                    finish_terminal(err, classify_request_failure(err));
                     return;
                 }
 

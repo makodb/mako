@@ -514,6 +514,83 @@ TEST_F(TimeoutRetryIntegrationTest, RetryLoopStopsAtRetryLimitWithPerAttemptTime
     delete server;
 }
 
+TEST_F(TimeoutRetryIntegrationTest, DisconnectedFailFastSetsConnectTimeoutType) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<TimeoutRetryService>(0);
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    BufferingConfig buffering = BufferingConfig::defaults();
+    buffering.behavior = DisconnectBehavior::FAIL_FAST;
+    client->set_buffering_config(buffering);
+    client->close();
+    ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(1000)));
+
+    RequestOptions opts;
+    opts.timeout_ms = 50;
+    opts.max_retries = 0;
+    opts.idempotent = true;
+
+    auto fu_result = client->request_with_options(
+        TimeoutRetryService::kRpcId, opts,
+        [](Marshal& m) { m << v32(3); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(1000)));
+    EXPECT_FALSE(fu->wait_with_options());
+    EXPECT_TRUE(fu->timed_out());
+    EXPECT_EQ(fu->get_error_code(), ENOTCONN);
+    EXPECT_EQ(fu->get_timeout_type(), TimeoutType::CONNECT_TIMEOUT);
+    EXPECT_EQ(fu->get_retry_count(), 0);
+
+    delete server;
+}
+
+TEST_F(TimeoutRetryIntegrationTest, QueueRejectSetsRequestTimeoutType) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<TimeoutRetryService>(0);
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    BufferingConfig buffering = BufferingConfig::defaults();
+    buffering.behavior = DisconnectBehavior::QUEUE;
+    buffering.max_pending = 0;  // Force immediate queue reject when disconnected.
+    buffering.overflow = OverflowStrategy::DROP_NEWEST;
+    client->set_buffering_config(buffering);
+
+    client->close();
+    ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(1000)));
+
+    RequestOptions opts;
+    opts.timeout_ms = 50;
+    opts.max_retries = 0;
+    opts.idempotent = true;
+
+    auto fu_result = client->request_with_options(
+        TimeoutRetryService::kRpcId, opts,
+        [](Marshal& m) { m << v32(5); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(1000)));
+    EXPECT_FALSE(fu->wait_with_options());
+    EXPECT_TRUE(fu->timed_out());
+    EXPECT_EQ(fu->get_error_code(), EAGAIN);
+    EXPECT_EQ(fu->get_timeout_type(), TimeoutType::REQUEST_TIMEOUT);
+    EXPECT_EQ(fu->get_retry_count(), 0);
+    EXPECT_EQ(service->call_count.load(), 0);  // Request never reached server while disconnected.
+
+    delete server;
+}
+
 TEST_F(TimeoutRetryIntegrationTest, TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt) {
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
     auto service_box = rusty::make_box<TimeoutRetryService>(1000);  // Never reply in this test.

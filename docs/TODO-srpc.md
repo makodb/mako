@@ -68,7 +68,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-10 in `ClientConnection::request_with_options()` (roughly ~90 LOC net). The path now returns a coordinator `Future`, serializes request args once, runs async retry attempts with per-attempt timeout via `wait_with_options()`, cleans timed-out pending futures via `handle_free()`, and records timeout/retry metadata on terminal timeout.
 - [x] Enforce `max_retries`, backoff delay, jitter, and `total_timeout_ms` budget.
   - Implemented on 2026-04-10 in `ClientConnection::request_with_options()` (additional ~45 LOC). Retry attempts now use deterministic `calculate_delay_ms()` backoff between attempts, and `total_timeout_ms` is enforced both before attempts and before sleeping for retry delay (terminal `TOTAL_TIMEOUT` when budget is exhausted).
-- [ ] Set `TimeoutType` correctly (`CONNECT_TIMEOUT`, `REQUEST_TIMEOUT`, `RESPONSE_TIMEOUT`, `TOTAL_TIMEOUT`).
+- [x] Set `TimeoutType` correctly (`CONNECT_TIMEOUT`, `REQUEST_TIMEOUT`, `RESPONSE_TIMEOUT`, `TOTAL_TIMEOUT`).
+  - Implemented on 2026-04-10 in `ClientConnection::request_with_options()` (additional ~35 LOC). Terminal classification now maps disconnected/send-stage failures to `CONNECT_TIMEOUT`/`REQUEST_TIMEOUT`, preserves `RESPONSE_TIMEOUT` from per-attempt wait timeout, and keeps `TOTAL_TIMEOUT` for budget exhaustion.
 - [ ] Update metrics for timeouts/retries/failures on terminal outcomes.
 - [ ] Ensure non-idempotent requests are never retried.
 
@@ -78,7 +79,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [ ] Add integration test: non-idempotent request fails without retry.
 - [x] Add integration test: total timeout cuts off retries at budget boundary.
   - Added `TimeoutRetryIntegrationTest.TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt` on 2026-04-10. It configures timeout + delay + total budget so only the initial attempt runs, then asserts terminal `TOTAL_TIMEOUT` without launching the next retry attempt.
-- [ ] Add assertions on timeout type + retry count for each failure mode.
+- [x] Add assertions on timeout type + retry count for each failure mode.
+  - Added/extended tests on 2026-04-10: `DisconnectedFailFastSetsConnectTimeoutType`, `QueueRejectSetsRequestTimeoutType`, `RetryLoopStopsAtRetryLimitWithPerAttemptTimeout`, and `TotalTimeoutBudgetCutsOffRetriesBeforeNextAttempt` now assert timeout type + retry count across connect/request/response/total failure modes.
 - [x] Run existing: `test_rpc_timeout_retry`, `test_rpc_error_integration`, `test_rpc_metrics`.
   - Verified on 2026-04-10 via full RPC suite run: `ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'` (26/26 passed, includes all three listed tests).
 
