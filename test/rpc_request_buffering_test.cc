@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include <atomic>
+#include <cerrno>
 #include <thread>
 #include <vector>
 #include "rpc/client.hpp"
@@ -219,6 +220,40 @@ TEST_F(RequestBufferingTest, QueueOverflowDropsNewest) {
     // Only first 3 should succeed
     EXPECT_EQ(ok_count, 3);
     EXPECT_EQ(conn->pending_request_count(), 3u);
+}
+
+TEST_F(RequestBufferingTest, DropNewestOverflowDoesNotLeakPendingFutures) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 3;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    int ok_count = 0;
+    int err_count = 0;
+    for (int i = 0; i < 5; i++) {
+        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+            m << i;
+        });
+        if (result.is_ok()) {
+            ok_count++;
+            auto future = result.unwrap();
+            EXPECT_FALSE(future->ready());
+        } else {
+            err_count++;
+            EXPECT_EQ(result.unwrap_err(), EAGAIN);
+        }
+    }
+
+    EXPECT_EQ(ok_count, 3);
+    EXPECT_EQ(err_count, 2);
+    EXPECT_EQ(conn->pending_request_count(), 3u);
+    EXPECT_EQ(conn->pending_future_count(), 3u);
+
+    conn->clear_pending_requests();
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
 }
 
 // ============================================================================

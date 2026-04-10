@@ -672,6 +672,12 @@ public:
         return pending_queue_.size();
     }
 
+    // @unsafe - Uses SpinMutex + std::unordered_map access
+    size_t pending_future_count() const {
+        auto pending_guard = pending_fu_.lock().unwrap();
+        return pending_guard->size();
+    }
+
     // @unsafe - Uses RequestQueue which uses std::list
     // Note: const because pending_queue_ is mutable
     void clear_pending_requests(int error_code = ECONNABORTED) const {
@@ -950,7 +956,7 @@ private:
         // Set callback to notify future on queue failure (e.g., overflow, expiry)
         auto weak_fu = fu;  // Copy Arc for callback
         queued.callback = [this, weak_fu](int err) {
-            if (err < 0) {
+            if (err != 0) {
                 // Remove from pending map
                 {
                     auto pending_guard = pending_fu_.lock().unwrap();
@@ -967,8 +973,19 @@ private:
 
         // Try to enqueue
         if (!pending_queue_.enqueue(std::move(queued))) {
-            // Queue rejected (full with FAIL_FAST strategy, etc.)
-            // The callback was already invoked by enqueue()
+            // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure we do not leak an
+            // internal pending future even if enqueue() did not invoke callback.
+            if (!fu->ready()) {
+                {
+                    auto pending_guard = pending_fu_.lock().unwrap();
+                    auto it = pending_guard->find(fu->xid_);
+                    if (it != pending_guard->end()) {
+                        pending_guard->erase(it);
+                    }
+                }
+                fu->error_code_.set(EAGAIN);
+                fu->notify_ready(fu);
+            }
             return FutureResult::Err(EAGAIN);
         }
 

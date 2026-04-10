@@ -38,13 +38,15 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream B: Fix Buffering Overflow + Future Lifecycle (P1)
 ### Code TODO
-- [ ] In `queue_request()`, if enqueue fails, remove pending future + set error + notify future.
+- [x] In `queue_request()`, if enqueue fails, remove pending future + set error + notify future.
+  - Implemented in `ClientConnection::queue_request()` on 2026-04-10. Rejected enqueue now explicitly cleans pending-future map and marks future ready with `EAGAIN` when callback did not fire.
 - [ ] Make `RequestQueue` rejection semantics consistent across `DROP_NEWEST`, `FAIL_FAST`, and overflow replay paths.
 - [ ] Handle replay re-enqueue failure explicitly (no silent drop/no orphan future).
 - [ ] Standardize overflow/expiry error codes for caller observability.
 
 ### Tests TODO
-- [ ] Add unit test: `DROP_NEWEST` rejection notifies future and removes pending map entry.
+- [x] Add unit test: `DROP_NEWEST` rejection notifies future and removes pending map entry.
+  - Added `RequestBufferingTest.DropNewestOverflowDoesNotLeakPendingFutures` on 2026-04-10.
 - [ ] Add integration test: replay re-enqueue failure cannot leave `ready()==false` forever.
 - [ ] Add concurrent test: producer+clearer under small queue has no stuck futures.
 - [ ] Run existing: `test_rpc_request_buffering`, `test_rpc_request_queue`, `test_rpc_combined_reliability`.
