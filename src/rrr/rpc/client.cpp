@@ -359,34 +359,69 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   // Mark as reconnecting
   reconnecting_.set(true);
 
-  // Reset socket for reconnection
-  socket_ = -1;
+  auto complete_reconnect = [&](bool success, int result) -> int {
+    reconnecting_.set(false);
 
-  // Attempt to connect
-  int result = connect(reconnect_address_.c_str());
+    if (success) {
+      Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
 
-  reconnecting_.set(false);
+      // Record reconnection in metrics
+      metrics_.record_reconnect();
 
-  if (result == 0) {
-    Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
+      // Replay any queued requests
+      size_t replayed = replay_pending_requests();
+      if (replayed > 0) {
+        Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
+      }
 
-    // Record reconnection in metrics
-    metrics_.record_reconnect();
-
-    // Replay any queued requests
-    size_t replayed = replay_pending_requests();
-    if (replayed > 0) {
-      Log_info("rrr::ClientConnection: replayed %zu pending requests", replayed);
+      if (on_complete) on_complete(true);
+    } else {
+      Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
+                reconnect_address_.c_str(), result);
+      if (on_complete) on_complete(false);
     }
 
-    if (on_complete) on_complete(true);
-  } else {
-    Log_error("rrr::ClientConnection: reconnection failed to %s: %d",
-              reconnect_address_.c_str(), result);
-    if (on_complete) on_complete(false);
+    return result;
+  };
+
+  auto reconnect_once = [&]() -> int {
+    // Reset socket for each reconnect attempt.
+    socket_ = -1;
+    return connect(reconnect_address_.c_str());
+  };
+
+  // First attempt happens immediately.
+  int result = reconnect_once();
+  if (result == 0) {
+    return complete_reconnect(true, 0);
   }
 
-  return result;
+  // Follow configured backoff/retry policy for subsequent attempts.
+  ReconnectCalculator calc(reconnect_policy_);
+  while (calc.should_retry()) {
+    uint32_t delay_ms = calc.next_delay_ms();
+    if (delay_ms > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+    }
+
+    // Another path may have re-established connection while sleeping.
+    if (state_machine_.is_connected()) {
+      return complete_reconnect(true, 0);
+    }
+
+    if (!state_machine_.can_connect()) {
+      return complete_reconnect(false, EINVAL);
+    }
+
+    Log_debug("rrr::ClientConnection: reconnect retry #%u to %s",
+              calc.retry_count(), reconnect_address_.c_str());
+    result = reconnect_once();
+    if (result == 0) {
+      return complete_reconnect(true, 0);
+    }
+  }
+
+  return complete_reconnect(false, result);
 }
 
 // @unsafe - Uses interior mutability (const method modifying mutable members)

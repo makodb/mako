@@ -20,6 +20,18 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    return predicate();
+}
+
 // Simple test service for integration tests
 class ReconnectTestService : public benchmark::BenchmarkService {
 public:
@@ -99,6 +111,91 @@ TEST_F(ReconnectIntegrationTest, IsReconnectingInitiallyFalse) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     EXPECT_FALSE(client->is_reconnecting());
     client->close();
+}
+
+TEST_F(ReconnectIntegrationTest, ReconnectPolicyWithoutAutoRetryFailsFast) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    client->close();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;  // Ensure reconnect attempts fail.
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = false;
+    policy.max_retries = 5;
+    policy.initial_delay_ms = 200;
+    policy.max_delay_ms = 200;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    auto start = steady_clock::now();
+    int result = client->reconnect();
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_NE(result, 0);
+    EXPECT_FALSE(client->connected());
+    EXPECT_LT(elapsed_ms, 150);  // No policy retries/sleeps when auto_reconnect is disabled.
+}
+
+TEST_F(ReconnectIntegrationTest, ReconnectPolicyAppliesRetryDelays) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    client->close();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto s = client->connection_state();
+        return s == ConnectionState::DISCONNECTED || s == ConnectionState::FAILED;
+    }, milliseconds(1000)));
+
+    delete server;  // Ensure reconnect attempts fail.
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto probe = Client::create(poll_thread_.as_ref().unwrap());
+        int rc = probe->connect(server_addr().c_str());
+        if (rc == 0) {
+            probe->close();
+            return false;
+        }
+        return true;
+    }, milliseconds(1500)));
+
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 2;
+    policy.initial_delay_ms = 80;
+    policy.max_delay_ms = 80;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    auto start = steady_clock::now();
+    int result = client->reconnect();
+    auto elapsed_ms = duration_cast<milliseconds>(steady_clock::now() - start).count();
+
+    EXPECT_NE(result, 0);
+    EXPECT_FALSE(client->connected());
+    EXPECT_GE(elapsed_ms, 130);  // Two retry sleeps (~160ms nominal) must be observed.
+    EXPECT_LT(elapsed_ms, 3000);
 }
 
 TEST_F(ReconnectIntegrationTest, ReconnectAfterDisconnect) {
