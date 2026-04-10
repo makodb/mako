@@ -44,7 +44,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-10. `DROP_NEWEST`/`FAIL_FAST`/disabled rejections now all invoke request callback with rejection error, and replay re-enqueue rejection is handled explicitly (no silent drop).
 - [x] Handle replay re-enqueue failure explicitly (no silent drop/no orphan future).
   - Implemented on 2026-04-10. Replay now uses explicit pending-future fail/cleanup fallback on re-enqueue rejection (`ClientConnection::fail_pending_future`), so rejection cannot silently strand futures even if queue callback behavior changes.
-- [ ] Standardize overflow/expiry error codes for caller observability.
+- [x] Standardize overflow/expiry error codes for caller observability.
+  - Implemented on 2026-04-10. Queue rejection paths now consistently report `EAGAIN` and expiry paths report `ETIMEDOUT` via shared `RequestQueue` error constants, including replay overflow/expiry handling.
 
 ### Tests TODO
 - [x] Add unit test: `DROP_NEWEST` rejection notifies future and removes pending map entry.
@@ -52,7 +53,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [x] Add integration test: replay re-enqueue failure cannot leave `ready()==false` forever.
   - Added `RequestBufferingTest.ReplayReenqueueRejectDoesNotLeaveFuturePending` on 2026-04-10.
 - [ ] Add concurrent test: producer+clearer under small queue has no stuck futures.
-- [ ] Run existing: `test_rpc_request_buffering`, `test_rpc_request_queue`, `test_rpc_combined_reliability`.
+- [x] Run existing: `test_rpc_request_buffering`, `test_rpc_request_queue`, `test_rpc_combined_reliability`.
+  - Verified on 2026-04-10 during full RPC suite run (`ctest -R '^(test_rpc|rpc_chaos_test$)'`), with all three passing.
 
 ### DoD
 - [ ] No future remains pending indefinitely after queue overflow/expiry.

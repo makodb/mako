@@ -419,7 +419,7 @@ size_t ClientConnection::replay_pending_requests() {
 
     // Check if expired
     if (req.is_expired()) {
-      if (req.callback) req.callback(-2);  // Expired error code
+      if (req.callback) req.callback(kRequestQueueExpiredError);
       continue;
     }
 
@@ -437,7 +437,7 @@ size_t ClientConnection::replay_pending_requests() {
       if (!pending_queue_.enqueue(std::move(req))) {
         // Explicit fallback: even if queue policy rejects without invoking
         // callback, do not leave the pending future orphaned.
-        fail_pending_future(replay_xid, EAGAIN);
+        fail_pending_future(replay_xid, kRequestQueueRejectedError);
         Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
                  static_cast<long long>(replay_xid));
       }

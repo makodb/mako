@@ -980,8 +980,8 @@ private:
         if (!pending_queue_.enqueue(std::move(queued))) {
             // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure no pending future
             // remains if queue policy rejects without invoking callback.
-            fail_pending_future(fu->xid_, EAGAIN);
-            return FutureResult::Err(EAGAIN);
+            fail_pending_future(fu->xid_, kRequestQueueRejectedError);
+            return FutureResult::Err(kRequestQueueRejectedError);
         }
 
         return FutureResult::Ok(fu);

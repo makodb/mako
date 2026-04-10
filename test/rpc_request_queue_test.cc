@@ -228,7 +228,7 @@ TEST(RequestQueueTest, OverflowDropNewestCallsCallback) {
 
     EXPECT_FALSE(queue.enqueue(std::move(req)));
     EXPECT_EQ(callback_count, 1);
-    EXPECT_EQ(callback_error, -1);
+    EXPECT_EQ(callback_error, kRequestQueueRejectedError);
     EXPECT_EQ(queue.size(), 2u);
 }
 
@@ -250,7 +250,7 @@ TEST(RequestQueueTest, OverflowFailFastCallsCallback) {
     req.callback = [&callback_error](int err) { callback_error = err; };
 
     EXPECT_FALSE(queue.enqueue(std::move(req)));
-    EXPECT_EQ(callback_error, -1);
+    EXPECT_EQ(callback_error, kRequestQueueRejectedError);
 }
 
 TEST(RequestQueueTest, DropOldestCallsCallback) {
@@ -266,7 +266,7 @@ TEST(RequestQueueTest, DropOldestCallsCallback) {
         QueuedRequest req;
         req.xid = i;
         req.callback = [&dropped_count](int err) {
-            if (err < 0) dropped_count++;
+            if (err == kRequestQueueRejectedError) dropped_count++;
         };
         queue.enqueue(std::move(req));
     }
@@ -332,7 +332,7 @@ TEST(RequestQueueTest, ExpireCallsCallbacks) {
     QueuedRequest req;
     req.ttl_ms = 10;  // Very short TTL - explicitly set
     req.callback = [&expired_count](int err) {
-        if (err == -2) expired_count++;  // -2 is expiration error
+        if (err == kRequestQueueExpiredError) expired_count++;
     };
     queue.enqueue(std::move(req));
 
@@ -440,7 +440,7 @@ TEST(RequestQueueTest, DisabledQueueRejectCallsCallback) {
 
     EXPECT_FALSE(queue.enqueue(std::move(req)));
     EXPECT_EQ(callback_count, 1);
-    EXPECT_EQ(callback_error, -1);
+    EXPECT_EQ(callback_error, kRequestQueueRejectedError);
     EXPECT_TRUE(queue.empty());
 }
 

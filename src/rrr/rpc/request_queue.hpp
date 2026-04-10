@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cerrno>
 #include <list>
 #include <functional>
 #include <mutex>
@@ -18,6 +19,10 @@ enum class OverflowStrategy {
     DROP_NEWEST,   // Reject new request if queue full
     FAIL_FAST      // Immediately fail the request with error callback
 };
+
+// Canonical queue callback errors for caller observability.
+inline constexpr int kRequestQueueRejectedError = EAGAIN;
+inline constexpr int kRequestQueueExpiredError = ETIMEDOUT;
 
 /**
  * A queued RPC request awaiting transmission.
@@ -148,7 +153,7 @@ public:
             if (request.callback) {
                 // @unsafe { callback invocation }
                 try {
-                    request.callback(-1);  // Error: queue disabled/rejected
+                    request.callback(kRequestQueueRejectedError);
                 } catch (...) {}
             }
             return false;
@@ -169,7 +174,7 @@ public:
                         if (oldest.callback) {
                             // @unsafe { callback invocation }
                             try {
-                                oldest.callback(-1);  // Error: dropped
+                                oldest.callback(kRequestQueueRejectedError);
                             } catch (...) {}
                         }
                     }
@@ -179,7 +184,7 @@ public:
                     if (request.callback) {
                         // @unsafe { callback invocation }
                         try {
-                            request.callback(-1);  // Error: queue full/rejected
+                            request.callback(kRequestQueueRejectedError);
                         } catch (...) {}
                     }
                     return false;  // Reject new request
@@ -188,7 +193,7 @@ public:
                     if (request.callback) {
                         // @unsafe { callback invocation }
                         try {
-                            request.callback(-1);  // Error: queue full
+                            request.callback(kRequestQueueRejectedError);
                         } catch (...) {}
                     }
                     return false;
@@ -266,7 +271,7 @@ public:
         for (const auto& cb : callbacks_to_invoke) {
             // @unsafe { callback invocation }
             try {
-                cb(-2);  // Error: expired
+                cb(kRequestQueueExpiredError);
             } catch (...) {}
         }
 

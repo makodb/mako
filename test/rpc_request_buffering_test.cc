@@ -289,7 +289,39 @@ TEST_F(RequestBufferingTest, ReplayReenqueueRejectDoesNotLeaveFuturePending) {
     future->timed_wait(0.2);
     EXPECT_TRUE(future->ready());
     if (future->ready()) {
-        EXPECT_NE(future->get_error_code(), 0);
+        EXPECT_EQ(future->get_error_code(), kRequestQueueRejectedError);
+    }
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
+TEST_F(RequestBufferingTest, ReplayExpiredRequestUsesTimeoutErrorCode) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 8;
+    config.default_ttl_ms = 10;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+        i32 val = 7;
+        m << val;
+    });
+    ASSERT_TRUE(result.is_ok());
+    auto future = result.unwrap();
+
+    ASSERT_EQ(conn->pending_request_count(), 1u);
+    ASSERT_EQ(conn->pending_future_count(), 1u);
+    ASSERT_FALSE(future->ready());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    EXPECT_EQ(conn->replay_pending_requests_for_test(), 0u);
+
+    future->timed_wait(0.2);
+    EXPECT_TRUE(future->ready());
+    if (future->ready()) {
+        EXPECT_EQ(future->get_error_code(), kRequestQueueExpiredError);
     }
     EXPECT_EQ(conn->pending_request_count(), 0u);
     EXPECT_EQ(conn->pending_future_count(), 0u);
