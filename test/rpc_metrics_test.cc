@@ -29,6 +29,18 @@ static uint64_t current_time_ms() {
             now.time_since_epoch()).count());
 }
 
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(10));
+    }
+    return predicate();
+}
+
 // ============================================================================
 // ConnectionMetrics Unit Tests
 // ============================================================================
@@ -39,6 +51,7 @@ TEST(ConnectionMetricsTest, InitialValuesZero) {
     EXPECT_EQ(metrics.requests_completed(), 0u);
     EXPECT_EQ(metrics.requests_failed(), 0u);
     EXPECT_EQ(metrics.requests_timed_out(), 0u);
+    EXPECT_EQ(metrics.retry_attempts(), 0u);
     EXPECT_EQ(metrics.bytes_sent(), 0u);
     EXPECT_EQ(metrics.bytes_received(), 0u);
     EXPECT_EQ(metrics.reconnect_count(), 0u);
@@ -120,6 +133,17 @@ TEST(ConnectionMetricsTest, ReconnectCountIncrement) {
     EXPECT_EQ(metrics.reconnect_count(), 3u);
 }
 
+TEST(ConnectionMetricsTest, RetryAttemptIncrement) {
+    ConnectionMetrics metrics;
+
+    metrics.record_retry_attempt();
+    EXPECT_EQ(metrics.retry_attempts(), 1u);
+
+    metrics.record_retry_attempt();
+    metrics.record_retry_attempt();
+    EXPECT_EQ(metrics.retry_attempts(), 3u);
+}
+
 TEST(ConnectionMetricsTest, SuccessRateCalculation) {
     ConnectionMetrics metrics;
 
@@ -179,6 +203,7 @@ TEST(ConnectionMetricsTest, Reset) {
     metrics.record_bytes_sent(100);
     metrics.record_bytes_received(50);
     metrics.record_reconnect();
+    metrics.record_retry_attempt();
     metrics.record_connect(current_time_ms());
 
     EXPECT_GT(metrics.requests_sent(), 0u);
@@ -190,6 +215,7 @@ TEST(ConnectionMetricsTest, Reset) {
     EXPECT_EQ(metrics.bytes_sent(), 0u);
     EXPECT_EQ(metrics.bytes_received(), 0u);
     EXPECT_EQ(metrics.reconnect_count(), 0u);
+    EXPECT_EQ(metrics.retry_attempts(), 0u);
     EXPECT_EQ(metrics.connect_time_ms(), 0u);
 }
 
@@ -259,6 +285,47 @@ public:
     void sleep(const double& sec) override {
         std::this_thread::sleep_for(std::chrono::duration<double>(sec));
     }
+};
+
+class RetryMetricsRpcService : public Service {
+public:
+    static constexpr i32 kRpcId = 0x47f1b63a;
+
+    explicit RetryMetricsRpcService(int drops_before_reply)
+        : drops_before_reply_(drops_before_reply) {}
+
+    std::atomic<int> call_count{0};
+
+    int __reg_to__(Server& svr, size_t svc_index) override {
+        return svr.reg_rpc(kRpcId, svc_index);
+    }
+
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+        if (rpc_id != kRpcId) {
+            return;
+        }
+
+        v32 payload;
+        req->m >> payload;
+
+        int call = call_count.fetch_add(1) + 1;
+        if (call <= drops_before_reply_) {
+            return;
+        }
+
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_none()) {
+            return;
+        }
+
+        auto sconn = sconn_opt.unwrap();
+        const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](Marshal& m) {
+            m << payload;
+        });
+    }
+
+private:
+    int drops_before_reply_;
 };
 
 class ConnectionMetricsIntegrationTest : public ::testing::Test {
@@ -433,6 +500,83 @@ TEST_F(ConnectionMetricsIntegrationTest, ClientWithoutConnection) {
     // Empty metrics should have all zeros
     EXPECT_EQ(metrics.requests_sent(), 0u);
     EXPECT_EQ(metrics.bytes_sent(), 0u);
+}
+
+TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<RetryMetricsRpcService>(1);
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    const auto& metrics = client->metrics();
+
+    RequestOptions opts;
+    opts.timeout_ms = 30;
+    opts.max_retries = 1;
+    opts.base_delay_ms = 10;
+    opts.max_delay_ms = 10;
+    opts.jitter_factor = 0.0f;
+    opts.idempotent = true;
+
+    auto fu_result = client->request_with_options(
+        RetryMetricsRpcService::kRpcId, opts,
+        [](Marshal& m) { m << v32(11); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2000)));
+    EXPECT_TRUE(fu->wait_with_options());
+    EXPECT_EQ(fu->get_error_code(), 0);
+    EXPECT_EQ(fu->get_retry_count(), 1);
+
+    EXPECT_EQ(service->call_count.load(), 2);
+    EXPECT_EQ(metrics.retry_attempts(), 1u);
+    EXPECT_EQ(metrics.requests_sent(), 2u);
+    EXPECT_EQ(metrics.requests_completed(), 1u);
+    EXPECT_EQ(metrics.requests_timed_out(), 0u);
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdatesTimeoutMetric) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<RetryMetricsRpcService>(1000);  // Never reply in this test.
+    auto* service = service_box.get();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+
+    const auto& metrics = client->metrics();
+
+    RequestOptions opts;
+    opts.timeout_ms = 30;
+    opts.max_retries = 0;
+    opts.idempotent = true;
+
+    auto fu_result = client->request_with_options(
+        RetryMetricsRpcService::kRpcId, opts,
+        [](Marshal& m) { m << v32(29); });
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2000)));
+    EXPECT_FALSE(fu->wait_with_options());
+    EXPECT_TRUE(fu->timed_out());
+
+    EXPECT_EQ(service->call_count.load(), 1);
+    EXPECT_EQ(metrics.requests_sent(), 1u);
+    EXPECT_EQ(metrics.requests_timed_out(), 1u);
+    EXPECT_EQ(metrics.retry_attempts(), 0u);
+
+    client->close();
+    delete server;
 }
 
 int main(int argc, char** argv) {

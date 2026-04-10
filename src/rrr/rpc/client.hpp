@@ -1056,6 +1056,18 @@ public:
             };
 
             auto finish_terminal = [&](int err, TimeoutType timeout_type) {
+                auto conn_opt = weak_conn.upgrade();
+                if (conn_opt.is_some()) {
+                    auto conn = conn_opt.unwrap();
+                    if (timeout_type == TimeoutType::CONNECT_TIMEOUT ||
+                        timeout_type == TimeoutType::REQUEST_TIMEOUT ||
+                        timeout_type == TimeoutType::RESPONSE_TIMEOUT ||
+                        timeout_type == TimeoutType::TOTAL_TIMEOUT) {
+                        conn->metrics_.record_request_timeout();
+                    } else if (err != 0) {
+                        conn->metrics_.record_request_failed();
+                    }
+                }
                 if (timeout_type != TimeoutType::NONE) {
                     auto state_guard = final_fu->state_.lock().unwrap();
                     state_guard->timed_out = true;
@@ -1133,6 +1145,7 @@ public:
                     return;
                 }
 
+                conn->metrics_.record_retry_attempt();
                 uint64_t backoff_delay_ms = options.calculate_delay_ms(retry_count);
                 if (backoff_delay_ms > 0) {
                     if (options.total_timeout_ms > 0) {
