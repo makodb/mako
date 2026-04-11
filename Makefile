@@ -10,7 +10,7 @@ BUILD_DIR = build
 
 PARALLEL_JOBS = $(or $(patsubst -j%,%,$(filter -j%,$(MAKEFLAGS))),4)
 
-.PHONY: all configure build clean rebuild run mako-raft raft-test help test test-verbose test-parallel
+.PHONY: all configure build clean rebuild run mako-raft mako-raft-single mako-raft-multi raft-test help test test-verbose test-parallel
 
 all: build
 
@@ -21,10 +21,22 @@ build: configure
 	@echo "Building with $(PARALLEL_JOBS) parallel jobs..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
-# Build Mako with the Raft helper enabled
+# Build Mako with the Raft helper enabled (single-instance by default)
 mako-raft:
 	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON
 	@echo "Building Mako with Raft helper using $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
+
+# Build Mako with single-instance Raft (1 Raft group for all partitions)
+mako-raft-single:
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=ON
+	@echo "Building Mako with single-instance Raft using $(PARALLEL_JOBS) parallel jobs..."
+	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
+
+# Build Mako with multi-instance Raft (1 Raft group per partition)
+mako-raft-multi:
+	cmake -S . -B $(BUILD_DIR) -DMAKO_USE_RAFT=ON -DSINGLE_RAFT_INSTANCE=OFF
+	@echo "Building Mako with multi-instance Raft using $(PARALLEL_JOBS) parallel jobs..."
 	cmake --build $(BUILD_DIR) --parallel $(PARALLEL_JOBS)
 
 # Build with Raft testing coroutines enabled
@@ -87,16 +99,28 @@ test-parallel: build
 help:
 	@echo "Unified Build System - Mako Paxos + Jetpack Raft"
 	@echo ""
-	@echo "Usage:"
+	@echo "Build Targets:"
 	@echo "  make              - Build production (Paxos) ~2-3 mins"
-	@echo "  make mako-raft    - Build Mako with Raft replication layer"
+	@echo "  make mako-raft    - Build Mako with Raft (single-instance, default)"
+	@echo "  make mako-raft-single - Build with single-instance Raft (1 group/shard)"
+	@echo "  make mako-raft-multi  - Build with multi-instance Raft (1 group/partition)"
 	@echo "  make raft-test    - Build with Raft testing coroutines"
-	@echo "  make clean        - Clean all build artifacts"
+	@echo "  make clean        - Clean all build artifacts (REQUIRED when switching backends)"
 	@echo "  make rebuild      - Clean and rebuild"
 	@echo "  make test         - Run ctest test suite"
 	@echo "  make test-verbose - Run tests with verbose output"
 	@echo "  make test-parallel- Run tests in parallel"
 	@echo ""
-	@echo "Testing:"
-	@echo "  ./ci/ci.sh all                                   - Run all Paxos CI tests"
-	@echo "  ./build/deptran_server -f config/3c1s3r3p.yml    - Run Raft server (requires mako-raft)"
+	@echo "CI Testing:"
+	@echo "  ./ci/ci.sh all              - Run all Paxos CI tests"
+	@echo "  ./ci/ci_mako_raft.sh all    - Run all Raft CI tests"
+	@echo ""
+	@echo "Scalability Benchmarks:"
+	@echo "  bash run_scalability_sweep.sh --backend paxos --threads '1 2 4 6 8 12 16' --runs 3"
+	@echo "  bash run_scalability_sweep.sh --backend raft-single --threads '1 2 4 6 8 12 16' --runs 3"
+	@echo "  bash run_scalability_sweep.sh --backend raft-multi --threads '1 2 4 6 8 12 16' --runs 3"
+	@echo "  python3 scripts/process_scalability_results.py --paxos CSV --raft-multi CSV --raft-single CSV"
+	@echo ""
+	@echo "Config Generation:"
+	@echo "  cd config/1leader_2followers && python3 generator.py       - Generate Paxos configs"
+	@echo "  cd config/1leader_2followers && python3 raft_generator.py  - Generate Raft configs"

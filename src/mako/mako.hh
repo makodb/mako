@@ -247,11 +247,16 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     int status = mako::PaxosStatus::STATUS_INIT;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     abstract_db * db = replicated_db.getDBWrapper(par_id)->getDB () ;
+    // SINGLE-RAFT FIX: getDB() calls TThread::set_id(par_id), changing the
+    // thread ID per partition. But the STO Transaction object caches threadid_
+    // at creation time. In single-Raft, all partitions share one thread, so
+    // the thread ID changes with each par_id. Sync Transaction's threadid_.
+    Sto::update_threadid();
     bool noops = false;
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
-      if (par_id==0){
+      if (par_id==0 && benchConfig.getNshards() > 1){
         std::cout << "we can start a advancer" << std::endl;
         sync_util::sync_logger::start_advancer();
       }
@@ -313,18 +318,18 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         sync_util::sync_logger::disk_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
 #endif
         uint32_t w = sync_util::sync_logger::retrieveW();
-        // Single timestamp safety check
-        // Warning("checking par_id:%d, un_replay_logs_:%d,ours:%u,w:%u", 
-        //     par_id, un_replay_logs_.size(),
-        //     commit_info.timestamp,w);
 
-        if (sync_util::sync_logger::safety_check(commit_info.timestamp, w)) { // pass safety check
+        // SINGLE-RAFT FIX: During loading phase (before noops), bypass safety_check.
+        // Loading entries are deterministic committed data that don't need watermark
+        // ordering protection. In single-Raft, loading tail entries can arrive after
+        // ADVANCER_MARKERs (which set worker_running=true and reset watermark), causing
+        // them to fail safety_check and enter un_replay_logs where drain replay stalls.
+        bool loading_phase = sync_util::sync_logger::noops_cnt.load(memory_order_acquire) == 0;
+        if (loading_phase || sync_util::sync_logger::safety_check(commit_info.timestamp, w)) {
           benchConfig.incrementReplayBatch();
           treplay_in_same_thread_opt_mbta_v2(par_id, (char*)log, len, db, benchConfig.getNthreads());
-          //Warning("replay[YES] par_id:%d,st:%u,slot_id:%d,un_replay_logs_:%d", par_id, commit_info.timestamp, slot_id,un_replay_logs_.size());
           status = mako::PaxosStatus::STATUS_REPLAY_DONE;
         } else {
-          //Warning("replay[NO] par_id:%d,st:%u,slot_id:%d,un_replay_logs_:%d", par_id, commit_info.timestamp, slot_id,un_replay_logs_.size());
           status = mako::PaxosStatus::STATUS_SAFETY_FAIL;
         }
       }
@@ -350,7 +355,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         }
       }
     }
-    auto w = sync_util::sync_logger::retrieveW(); 
+    auto w = sync_util::sync_logger::retrieveW();
 
     while (un_replay_logs_.size() > 0) {
         auto it = un_replay_logs_.front() ;
@@ -783,6 +788,49 @@ static void cleanup_and_shutdown()
   //std::quick_exit( EXIT_SUCCESS ); // don't exit early
 }
 
+// @safe - Scans config files for "ab: raft" to auto-detect replication type.
+// Called before setup() so the dispatcher routes to the correct implementation.
+// Only sets the type if the current type is still the default (PAXOS) and
+// no explicit --replication flag was provided.
+static void detect_replication_type_from_config(const vector<string>& config_files) {
+  // Don't override explicit CLI setting
+  if (janus::is_using_raft()) {
+    return;
+  }
+
+  for (const auto& file_path : config_files) {
+    // @unsafe { file I/O }
+    std::ifstream ifs(file_path);
+    if (!ifs.is_open()) {
+      continue;
+    }
+    std::string line;
+    while (std::getline(ifs, line)) {
+      // Look for "ab:" field in YAML - match patterns like "ab: raft", "ab:raft"
+      auto pos = line.find("ab:");
+      if (pos != std::string::npos) {
+        auto value = line.substr(pos + 3);
+        // Trim leading whitespace
+        auto start = value.find_first_not_of(" \t");
+        if (start != std::string::npos) {
+          value = value.substr(start);
+        }
+        // Trim trailing whitespace and comments
+        auto end = value.find_first_of(" \t#\r\n");
+        if (end != std::string::npos) {
+          value = value.substr(0, end);
+        }
+        if (value == "raft" || value == "fpga_raft") {
+          Notice("Auto-detected replication type '%s' from config file: %s",
+                 value.c_str(), file_path.c_str());
+          janus::set_replication_type(janus::ReplicationType::RAFT);
+          return;
+        }
+      }
+    }
+  }
+}
+
 static char** prepare_paxos_args(const vector<string>& paxos_config_file,
   const string paxos_proc_name, int& argc_out)
 {
@@ -850,6 +898,11 @@ static abstract_db * init_env() {
     setup_transport_callbacks();
     setup_leader_election_callbacks();
 
+
+    // Auto-detect replication type from config files before dispatching setup().
+    // This ensures dbtest uses the Raft code path when config says "ab: raft",
+    // even if --replication raft wasn't explicitly passed on the command line.
+    detect_replication_type_from_config(benchConfig.getPaxosConfigFile());
 
     int argc_paxos = 0;
     char** argv_paxos = prepare_paxos_args(benchConfig.getPaxosConfigFile(), benchConfig.getPaxosProcName(), argc_paxos);

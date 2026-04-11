@@ -167,11 +167,28 @@ namespace sync_util {
         static void start_advancer() {
             // detached thread for advancing vectorized timestamp
             std::cout<<"start the advancer thread..."<<std::endl;
-            for (int i=0; i<nthreads; i++) {
-                local_timestamp_[i].store(0, memory_order_release);
+            // DO NOT reset local_timestamp_ to 0. In single-Raft mode, all partitions
+            // share one log stream, so loading tail entries for other partitions may
+            // still be pending when par_id=0's ADVANCER_MARKER fires. Resetting to 0
+            // makes watermark=0, causing those tail entries to fail safety_check and
+            // enter un_replay_logs where STO replay permanently stalls.
+            // Instead, compute the initial watermark from current loading-phase timestamps.
+            uint32_t min_so_far = numeric_limits<uint32_t>::max();
+            for (int i = 0; i < nthreads; i++) {
+                auto ts = local_timestamp_[i].load(memory_order_acquire);
 #ifndef DISABLE_DISK
-                disk_timestamp_[i].store(0, memory_order_release);
+                auto disk_ts = disk_timestamp_[i].load(memory_order_acquire);
+                auto partition_min = min(ts, disk_ts);
+#else
+                auto partition_min = ts;
 #endif
+                if (partition_min > 0) {
+                    min_so_far = min(min_so_far, partition_min);
+                }
+            }
+            if (min_so_far != numeric_limits<uint32_t>::max()) {
+                single_watermark_.store(min_so_far, memory_order_release);
+                std::cout << "start_advancer: initial watermark=" << min_so_far << std::endl;
             }
             worker_running = true;
             thread advancer_thread(&sync_logger::advancer);
@@ -236,17 +253,14 @@ namespace sync_util {
                 }
                 
                 std::this_thread::sleep_for(std::chrono::microseconds(1 * 1000));
-                /*if (counter % 200 == 0) {
-                     Warning("watermark update: %u, shardIdx: %d, watermark: %llu", 
-                             min_so_far, shardIdx, 
-                             single_watermark_.load(memory_order_acquire));
-                    std::string local_w_msg = "local-w: ";
+                if (counter % 1000 == 1) {
+                    std::string local_w_msg = "ADVANCER_DEBUG[" + std::to_string(counter) + "] wm=" +
+                        std::to_string(single_watermark_.load(memory_order_acquire)) + " ts:";
                     for (int i = 0; i < nthreads; i++) {
-                        local_w_msg += std::to_string(local_timestamp_[i].load(memory_order_relaxed));
-                        if (i < nthreads - 1) local_w_msg += ", ";
+                        local_w_msg += " p" + std::to_string(i) + "=" + std::to_string(local_timestamp_[i].load(memory_order_relaxed));
                     }
-                    Warning("%s", local_w_msg.c_str());
-                }*/
+                    std::cerr << local_w_msg << std::endl;
+                }
             }
             std::cout << "END of advancer" << std::endl;
         }

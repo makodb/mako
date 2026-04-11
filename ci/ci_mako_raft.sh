@@ -31,15 +31,15 @@ check_for_hanging_processes() {
     # Wait a bit for processes to exit naturally
     sleep 3
 
-    # Count hanging dbtest/simpleRaft processes
-    local hanging_count=$(ps aux | grep -E "[d]btest|[s]impleRaft" | wc -l)
+    # Count hanging dbtest/simpleRaft binary processes (exclude shell scripts)
+    local hanging_count=$(ps aux | grep -E "[./]build/(dbtest|simpleRaft|simpleTransactionRepRaft)" | grep -v grep | grep -v "ci_mako_raft" | wc -l)
 
     if [ "$hanging_count" -gt 0 ]; then
         echo "=========================================
 ERROR: Test '$test_name' left $hanging_count hanging process(es)!
 =========================================
 Hanging processes:"
-        ps aux | grep -E "[d]btest|[s]impleRaft"
+        ps aux | grep -E "[./]build/(dbtest|simpleRaft|simpleTransactionRepRaft)" | grep -v grep | grep -v "ci_mako_raft"
         echo ""
         echo "These processes did not exit cleanly after the test completed."
         echo "This indicates a process cleanup issue that needs to be fixed."
@@ -87,13 +87,16 @@ cleanup_processes() {
 
     sleep 3  # Give OS time to fully terminate processes and release ports
 
-    # Wait for ports to be released (check common test ports)
+    # Wait for ports to be released (check all port ranges used by tests)
+    # Mako data ports: 31000-31100 (old), 35000-36100 (new), 32000-34100 (p1/p2/learner)
+    # Raft replication ports: 27001-27400
+    # Heartbeat ports: 37001-37400
     echo "Waiting for ports to be released..."
-    for i in {1..10}; do
-        if ! lsof -i :7001-8006 >/dev/null 2>&1 && ! lsof -i :31000-31100 >/dev/null 2>&1; then
+    for i in {1..15}; do
+        if ! ss -tlnp 2>/dev/null | grep -qE ':(2700[0-9]|3[1-7][0-9]{3})'; then
             break
         fi
-        echo "  Ports still in use, waiting... ($i/10)"
+        echo "  Ports still in use, waiting... ($i/15)"
         sleep 1
     done
 

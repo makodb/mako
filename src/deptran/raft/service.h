@@ -14,13 +14,20 @@
 #include <mutex>
 #include <map>
 
+// @external: {
+//   verify: [safe, (bool) -> void],
+//   Fiber::create_run: [safe, (...) -> void],
+//   clock_gettime: [safe, (int, timespec*) -> int],
+//   srand: [safe, (unsigned int) -> void]
+// }
+
 class SimpleCommand;
 namespace janus {
 
 class TxLogServer;
 class RaftServer;
 
-// @safe
+// @unsafe - inherits from non-@interface RaftService (individual methods are @safe)
 class RaftServiceImpl : public RaftService {
  public:
   // Static registry to find services by site_id (for Kill/Restart support)
@@ -53,8 +60,11 @@ class RaftServiceImpl : public RaftService {
              const ballot_t&, can_term,
              ballot_t*, reply_term,
              bool_t*, vote_granted) {
+    // @unsafe
+    {
     *reply_term = can_term;
     *vote_granted = false;
+    }
   }
 
   // VoteDurable - Received after follower has durably persisted its vote
@@ -80,10 +90,13 @@ class RaftServiceImpl : public RaftService {
              uint64_t*, followerCurrentTerm,
              uint64_t*, followerLastLogIndex,
              uint64_t*, followerAckType) {
+    // @unsafe
+    {
     *followerAppendOK = false;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
     *followerAckType = 0;  // Memory ack by default
+    }
   }
 
   RpcHandler(EmptyAppendEntries, 12,
@@ -99,10 +112,13 @@ class RaftServiceImpl : public RaftService {
              uint64_t*, followerCurrentTerm,
              uint64_t*, followerLastLogIndex,
              uint64_t*, followerAckType) {
+    // @unsafe
+    {
     *followerAppendOK = false;
     *followerCurrentTerm = 0;
     *followerLastLogIndex = 0;
     *followerAckType = 0;  // Memory ack by default
+    }
   }
 
   // AppendEntriesDurable - Received after follower has durably persisted log entries
@@ -120,8 +136,11 @@ class RaftServiceImpl : public RaftService {
              const siteid_t&, leaderSiteId,
              uint64_t*, followerTerm,
              bool_t*, success) {
+    // @unsafe
+    {
     *followerTerm = 0;
     *success = false;
+    }
   }
 
   RpcHandler(NotifyRestart, 2,

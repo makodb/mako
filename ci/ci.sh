@@ -75,7 +75,7 @@ cleanup_processes() {
     rm -rf /tmp/${user_name}_mako_rocksdb_shard*
     echo "Cleaning up any lingering test processes..."
 
-    for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction; do
+    for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction simpleRaft; do
         while read -r pid; do
             if [ -z "$pid" ] || [ "$pid" = "1" ]; then
                 continue

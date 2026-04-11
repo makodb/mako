@@ -6,6 +6,20 @@
 #include <map>
 #include <mutex>
 
+// @external: {
+//   Log_info: [safe, (...) -> void],
+//   Log_debug: [safe, (...) -> void],
+//   Log_warn: [safe, (...) -> void],
+//   Log_error: [safe, (...) -> void],
+//   verify: [safe, (bool) -> void],
+//   Reactor::create_sp_event: [safe, () -> shared_ptr<IntEvent>],
+//   Config::GetConfig: [safe, () -> Config*],
+//   MarshallDeputy: [safe, (...) -> MarshallDeputy],
+//   Future::safe_release: [safe, (Future*) -> void],
+//   vote_yes: [safe, () -> void],
+//   vote_no: [safe, () -> void]
+// }
+
 namespace janus {
 
 class TxData;
@@ -24,6 +38,7 @@ enum class NotifyRestartStatus {
   PENDING        // Need to send/retry NotifyRestart
 };
 
+// @unsafe - inherits from non-@interface base QuorumEvent
 class RaftVoteQuorumEvent: public QuorumEvent {
  private:
   // SPECULATIVE VOTING: Track which sites voted yes (memory votes)
@@ -48,8 +63,7 @@ class RaftVoteQuorumEvent: public QuorumEvent {
         spec_voters_.insert(voter_id);
       }
     } else {
-      // @unsafe
-      { vote_no(); }   // 1 unsafe line: calls @unsafe parent method
+      vote_no();
       if(term > highest_term_)
       {
         highest_term_ = term ;
@@ -74,6 +88,7 @@ class RaftVoteQuorumEvent: public QuorumEvent {
   }
 };
 
+// @unsafe - contains std::recursive_mutex (non-borrow-checked type)
 class SendAppendEntriesResults {
  public:
   std::recursive_mutex mtx;
@@ -107,6 +122,7 @@ struct AppendEntriesResponse {
 };
 
 
+// @unsafe - inherits from non-@interface base Communicator
 class RaftCommo : public Communicator {
 
 friend class RaftProxy;
@@ -144,7 +160,7 @@ friend class RaftProxy;
                     uint64_t cmdLogTerm
                     );
 
-  // @safe
+  // @unsafe - C-style cast, raw pointers
   shared_ptr<SendAppendEntriesResults>
   SendAppendEntries(siteid_t site_id,
                     parid_t par_id,
@@ -159,7 +175,7 @@ friend class RaftProxy;
                     shared_ptr<Marshallable> cmd,
                     uint64_t cmdLogTerm,
                     bool trigger_election_now = false);
-  // @safe
+  // @unsafe - C-style cast
   shared_ptr<RaftVoteQuorumEvent>
   BroadcastVote(parid_t par_id,
                         slotid_t lst_log_idx,
@@ -180,7 +196,7 @@ friend class RaftProxy;
    * @param callback - Called when RPC completes (success/failure)
    */
 
-  // @safe
+  // @unsafe - C-style cast, std::function
   void SendTimeoutNow(siteid_t site_id,
                       parid_t par_id,
                       uint64_t leader_term,

@@ -15,6 +15,644 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
 -->
 
 - [ ] Mako, build a high-performance, reliable, transactional, datastore; GA release
+  - [x] *high* Root-Cause Analysis: Multi-Raft Instance Throughput Variance vs Single-Raft Consistency [DONE 2026-03-10, 18:45]
+    - **Problem**: In commit `4f99ffb6` (multi-Raft instances — 6 independent Raft groups), the `shard1ReplicationRaft` benchmark over 10 runs showed highly inconsistent throughput: mean 137,952 ops/sec, CV 34.6%, bimodal distribution with runs ranging from 88K to 200K ops/sec. When replaced by a single Raft instance (commit `bba1a5d4`), throughput became consistent: mean 209,183 ops/sec, CV 1.9%, tight range 204K–216K. The single-raft version is also **faster on average** (~52% higher mean throughput), which is counterintuitive because multi-raft should enable parallelism.
+    - **Benchmark Data**: See `docs/dev/multi_raft_benchmark_results.md` and `docs/dev/single_raft_benchmark_results.md` for full 10-run results with summary statistics.
+    - **Key Questions to Investigate**:
+      1. **Why the bimodal distribution?** Multi-raft runs cluster around ~88K or ~200K — what causes some runs to hit half the peak? Is it Raft election timing variance, split elections, or leader contention across the 6 groups?
+      2. **Why is multi-raft slower on average?** With 6 parallel Raft groups one would expect higher throughput through parallelism, not lower. Is there resource contention (CPU, threads, locks, network ports)? Are the Raft groups competing for shared resources?
+      3. **Is the test environment correct?** Verify that `shard1ReplicationRaft` is actually testing the right thing for single-shard replication with Raft — check the config files, CI scripts (`./ci/ci_mako_raft.sh` or `./ci/ci.sh`), process topology, and that both benchmarks used equivalent and correct configurations.
+      4. **Election timeout and heartbeat configuration**: Check if the election timeout randomization window is too narrow for 6 concurrent Raft groups, causing election storms or cascading re-elections.
+      5. **Thread/CPU contention**: With 6 Raft groups in the same process, are threads competing for CPU time? Check thread pool sizing, coroutine scheduling, and whether the benchmark machine has enough cores.
+      6. **Log replication contention**: Are 6 Raft groups competing for the same I/O or network resources during log replication, causing some groups to stall?
+    - **Approach — Iterative Root-Cause Analysis**:
+      1. **Read the raft source code**: Thoroughly examine `src/deptran/raft/` — especially `server.cc`, `raft_worker.cc`, `commo.cc` — to understand how multiple Raft instances are created and managed.
+      2. **Examine config and CI**: Read the config files and CI scripts for `shard1ReplicationRaft` to understand the exact topology (how many shards, replicas, Raft groups).
+      3. **Compare the two commits**: `git diff bba1a5d4..4f99ffb6` (or parent commits) to understand exactly what changed between single-raft and multi-raft implementations.
+      4. **Analyze election timing**: Check `ELECTION_TIMEOUT`, `HEARTBEAT_INTERVAL`, and randomization logic. Calculate probability of election collisions with 6 groups.
+      5. **Check resource contention**: Look for shared mutexes, thread pools, network sockets, or other resources that 6 Raft groups would contend on.
+      6. **Reproduce if needed**: Run `shard1ReplicationRaft` multiple times with both configurations to confirm the variance pattern. Add logging/instrumentation if needed to identify the bottleneck.
+      7. **Document findings**: Write a detailed root-cause analysis in `docs/dev/multi_raft_variance_root_cause.md` with evidence, data, and recommendations.
+    - **NON-NEGOTIABLE: Do NOT run `git push` or `git pull` at all — any push/pull will discard work. You may `git commit` locally but do NOT push or pull.**
+    - **Success Criteria**:
+      1. Root cause of the bimodal throughput distribution in multi-raft is identified with evidence
+      2. Root cause of why multi-raft is slower than single-raft on average is explained
+      3. Verification that the test environment and configuration are correct for `shard1ReplicationRaft`
+      4. Detailed root-cause analysis document in `docs/dev/multi_raft_variance_root_cause.md`
+      5. If a code fix is identified, implement it and verify with 10 benchmark runs showing consistent throughput
+      6. No `git push` or `git pull` operations were executed
+    - **Findings Summary**: Three interacting root causes identified: (1) Election timing interference — 6 concurrent elections in 150-300ms window give ~50-74% probability of at least one stall; (2) 500ms blocking RPC wait in HeartbeatLoop is 100x the 5ms heartbeat interval, amplifying any network jitter into cascading delays; (3) Thread resource contention — 30+ OS threads in multi-Raft vs ~12 in single-Raft causes context switching and cache thrashing. No code fix needed since single-Raft consolidation already addresses all three issues. See `docs/dev/multi_raft_variance_root_cause.md` for full analysis.
+  - [x] *high* Fix Raft CI: Make `./ci/ci_mako_raft.sh` pass all test cases reliably [DONE 2026-02-16, 23:42]
+    - **Problem**: The Raft CI test suite (`./ci/ci_mako_raft.sh`) is currently failing. The Raft replication integration is broken and needs to be debugged and fixed so that all test cases pass consistently.
+    - **Goal**: All test cases in `./ci/ci_mako_raft.sh` must pass reliably — not just once, but multiple consecutive runs to rule out flaky/accidental passes.
+    - **Approach — Iterative Debug Cycle**:
+      1. **Run the failing CI**: Execute `./ci/ci_mako_raft.sh` and capture the full output/logs.
+      2. **Analyse logs**: Read the test output carefully. Identify which specific test cases fail, what the error messages are, and what the root cause is (crash, timeout, assertion failure, incorrect output, etc.).
+      3. **Investigate the Raft source code**: Based on the log analysis, trace the failure back to the relevant source files in `src/deptran/raft/` (and any other files involved). Understand the bug before attempting a fix.
+      4. **Fix the code**: Make the minimal, targeted fix required. Do not refactor or make unrelated changes. Do not change test expectations to make tests pass — fix the actual Raft code.
+      5. **Rebuild**: Run `make clean && make -j32` to rebuild with the fix.
+      6. **Re-run the CI**: Execute `./ci/ci_mako_raft.sh` again. If tests still fail, go back to step 2.
+      7. **Verify reliability**: Once all tests pass, run `./ci/ci_mako_raft.sh` at least **3 more times** to confirm the fix is stable and not an accidental/flaky pass. If any run fails, go back to step 2.
+      8. **Also run the full CI**: Run `./ci/ci.sh all` to make sure no regressions were introduced in non-Raft tests.
+    - **NON-NEGOTIABLE: Do NOT commit anything. Do NOT run `git commit`, `git push`, or any git write operations. The author will review all changes and commit manually.**
+    - **Success Criteria**:
+      1. `./ci/ci_mako_raft.sh` passes ALL test cases
+      2. The test suite passes on at least 3 consecutive runs (to confirm it's not a flaky pass)
+      3. `./ci/ci.sh all` still passes (no regressions)
+      4. Fixes are minimal and targeted — no unrelated changes
+      5. No git commits or pushes were made
+  - [x] *high* Fact-Check `doc/thesis/complete_thesis.md` Against Actual Codebase [DONE 2026-02-16]
+    - **Findings Summary**:
+      - **Corrected**: Test duration claim — thesis said "Paxos runs 40s, Raft runs 60s" but both use 30s internal runtime (`BenchmarkConfig::runtime_ = 30`). Replaced "Test duration difference" section with "Test harness differences (negligible impact)".
+      - **Corrected**: Pipelining gap estimate from "15-20%" to "20-25%" (pipelining is a larger contributor than batch size).
+      - **Corrected**: Batch size gap estimate from "5-10%" to "10-15%".
+      - **Corrected**: Threats to validity "Duration mismatch" section updated to reflect both protocols use identical 30s runtime.
+      - **Corrected**: Conclusion finding #2 removed reference to "measurement conditions".
+      - **Corrected**: Lessons Learned updated to attribute gap to "fundamental architectural differences" not "measurement conditions".
+      - **Confirmed accurate**: RustyCpp 77% safety coverage (163 safe / 48 unsafe at function level).
+      - **Confirmed accurate**: TPC-C workload mix (45% NewOrder, 43% Payment, 4% each for 3 others).
+      - **Confirmed accurate**: HEARTBEAT_INTERVAL values (5ms production, 100ms test).
+      - **Confirmed accurate**: Election timeout ranges, log replication flow, commit rules.
+      - **Confirmed accurate**: All file paths, function names, class names referenced in thesis.
+      - **Confirmed accurate**: Process counts (3 for Raft, 4 for Paxos from config files).
+      - **Confirmed accurate**: Snapshot format (magic numbers, CRC32, version headers).
+    - **Problem**: The thesis document (`doc/thesis/complete_thesis.md`) contains claims, descriptions, and conclusions about the Mako/Raft/Paxos implementation. Some of these claims may be inaccurate, outdated, or inconsistent with what the code actually does. We already found one example: the thesis claimed Paxos tests run for 40 seconds and Raft for 60 seconds, but both actually use a 30-second internal benchmark runtime. There may be more inaccuracies.
+    - **Goal**: Systematically fact-check every claim in the thesis against the actual source code. Fix any inaccuracies directly in `complete_thesis.md`. Do NOT trust other documentation or comments — only trust the code itself.
+    - **Approach — Exhaustive Verification**:
+      1. **Read the entire thesis**: Read `doc/thesis/complete_thesis.md` from start to finish. For every factual claim, note it for verification.
+      2. **Verify against code, not docs**: For each claim, find the relevant source code and confirm whether the claim is accurate. Do NOT rely on comments, READMEs, or other docs — read the actual implementation. Examples of things to verify:
+         - Numerical claims (throughput numbers, batch sizes, percentages, process counts, timing values)
+         - Architectural claims ("Raft does X", "Paxos does Y") — check if the code actually works that way
+         - Configuration claims (default values, config file paths, command-line flags)
+         - Protocol behaviour descriptions (election flow, log replication, commit rules, recovery steps)
+         - Test descriptions (what each CI test does, how many tests exist, what they validate)
+         - Safety/RustyCpp coverage percentages — count the actual `@safe` vs `@unsafe` annotations
+         - Benchmark descriptions (TPC-C transaction types, workload mix percentages)
+         - Performance analysis claims (pipelining behaviour, batch sizes, why throughput converges)
+      3. **Pay special attention to conclusions and claims**: The "Analysis" sections, "Conclusion" chapter, and "Lessons Learned" make strong claims. Every one of these must be traceable to evidence in the code or test results.
+      4. **Cross-check numbers**: If the thesis says "~8,500 ops/sec per shard" or "28% advantage" or "77% safe coverage", verify these numbers are still accurate. If they've changed due to code changes, update the thesis.
+      5. **Check code references**: If the thesis references specific files, functions, classes, or config paths, verify they exist and are named correctly.
+      6. **Fix anomalies in the thesis**: When you find an inaccuracy, fix it directly in `complete_thesis.md` with the correct information from the code. Add a brief comment or note in the TODO item about what was wrong and what you fixed.
+      7. **Document findings**: After completing the fact-check, add a summary of all corrections made (and things confirmed accurate) as notes under this TODO item.
+    - **Key Areas to Scrutinise** (known risk areas):
+      - Performance numbers and throughput claims — do they match actual CI output?
+      - Raft vs Paxos architectural comparisons — is the pipelining description accurate?
+      - Batch size claims (~26 for Raft, ~200 for Paxos) — where do these numbers come from?
+      - Process count claims (3 for Raft, 4 for Paxos) — verify from config files and test scripts
+      - RustyCpp safety percentages — count actual annotations in `src/deptran/raft/`
+      - Snapshot format description — does the code actually use magic numbers, CRC32, etc.?
+      - Recovery steps — does the code actually follow the described 5-step recovery process?
+      - Config defaults (runtime, timeouts, etc.) — verify from `benchmark_config.h` and YAML files
+      - Preferred leader mechanism — does the 3-phase design match the implementation?
+      - Test suite description — are there really 11 standalone tests? What do they actually test?
+    - **NON-NEGOTIABLE: Do NOT commit anything. Do NOT run `git commit`, `git push`, or any git write operations. The author will review all changes and commit manually.**
+    - **Success Criteria**:
+      1. Every factual claim in the thesis has been verified against actual source code
+      2. All inaccuracies have been corrected in `complete_thesis.md`
+      3. A summary of corrections (and confirmations) is documented under this TODO item
+      4. No claims remain that are unsupported by the code
+      5. No git commits or pushes were made
+  - [x] *high* Fix RustyCpp Safety: Convert @unsafe Back to @safe in Raft Module (`src/deptran/raft/`) [DONE 2026-02-13, 02:50]
+    - **Problem**: The previous agent tasked with the RustyCpp safety migration marked the majority of functions in the Raft module as `@unsafe` instead of writing genuinely safe code. This defeats the entire purpose of the migration — we want the **majority** of functions to be `@safe`, with `@unsafe` used only where truly unavoidable.
+    - **Goal**: Rewrite the Raft module so that the majority of functions are `@safe`. Functions should only be `@unsafe` if they genuinely cannot be made safe. Use `@external` annotations to mark external/third-party/legacy functions as unsafe at the declaration site, so that `@safe` code can call them without needing an `@unsafe` block at every call site.
+    - **Scope**: All production `.h` and `.cc` files in `src/deptran/raft/`: `server.h`, `server.cc`, `coordinator.h`, `coordinator.cc`, `commo.h`, `commo.cc`, `frame.h`, `frame.cc`, `service.h`, `service.cc`, `raft_worker.h`, `raft_worker.cc`, `exec.h`, `exec.cc`, `macros.h`
+    - **Out of Scope**: Test files (`test.h`, `test.cc`, `testconf.h`, `testconf.cc`) — do NOT modify these.
+    - **MANDATORY First Step — Read and Understand RustyCpp**:
+      1. Read `third-party/rusty-cpp/README.md` thoroughly
+      2. Read `third-party/rusty-cpp/CLAUDE.md` thoroughly
+      3. Read any other docs under `third-party/rusty-cpp/docs/` if they exist
+      4. Understand how `@safe`, `@unsafe`, `@external` annotations work
+      5. Understand how the borrow checker validates safety
+      6. Understand what types are available (`rusty::Box`, `rusty::Arc`, `rusty::Rc`, `rusty::Cell`, `rusty::RefCell`, `rusty::Option`, `rusty::Vec`, `rusty::Function`, etc.)
+      7. Only after fully understanding the system should you begin modifying code
+    - **Key Technique — `@external` Annotation**:
+      - Mark external/legacy/third-party functions with `@external` at their declaration site so `@safe` functions can call them without wrapping every call in `@unsafe { }`
+      - Example: if `Log_info(...)` is a legacy logging macro, mark it `@external` so safe code can use it freely
+      - This is the key to making most functions `@safe` — isolate the unsafety at the boundary rather than spreading `@unsafe` throughout the codebase
+    - **Strategy**:
+      1. Read the RustyCpp docs first (non-negotiable)
+      2. Audit each file: identify which functions are currently `@unsafe` but could be `@safe` if external calls were marked `@external`
+      3. Add `@external` annotations to external/legacy function declarations as needed
+      4. Convert `@unsafe` functions to `@safe`, using `@unsafe { }` blocks only for genuinely unsafe operations (raw pointer arithmetic, manual memory management, etc.)
+      5. Replace remaining STL types with RustyCpp equivalents where not already done
+      6. Run the borrow checker per-file: `./third-party/rusty-cpp/target/release/rusty-cpp-checker --compile-commands build/compile_commands.json src/deptran/raft/<filename>.cc`
+      7. Iterate until clean
+    - **NON-NEGOTIABLE: Do NOT commit anything. Do NOT run git commit or git push. The author will review all changes and commit manually.**
+    - **Success Criteria**:
+      1. Majority (>70%) of functions in the Raft module are annotated `@safe`
+      2. `@unsafe` is only used where genuinely unavoidable, with a comment explaining why
+      3. `@external` is used to mark external function boundaries
+      4. No logical or behavioral changes to the code
+      5. `make clean && make -j32` compiles without errors
+      6. All CI tests pass: `./ci/ci.sh all`
+      7. Borrow checker passes on all annotated files
+  - [x] *high* RustyCpp Safety Migration for the Raft Module (`src/deptran/raft/`)
+    - **Goal**: Make the entire Raft module memory-safe by migrating all production files under `src/deptran/raft/` to use RustyCpp safety annotations and data structures. Every function should be annotated `@safe` or `@unsafe`, and all STL types that have RustyCpp equivalents should be replaced. No logical or behavioral changes — only safety conversions.
+    - **Scope**: All production `.h` and `.cc` files in `src/deptran/raft/`: `server.h`, `server.cc`, `coordinator.h`, `coordinator.cc`, `commo.h`, `commo.cc`, `frame.h`, `frame.cc`, `service.h`, `service.cc`, `raft_worker.h`, `raft_worker.cc`, `exec.h`, `exec.cc`, `macros.h`
+    - **Out of Scope**: Test files are **excluded** — do NOT annotate or modify `test.h`, `test.cc`, `testconf.h`, or `testconf.cc`. These are test infrastructure files and do not need safety migration.
+    - **RustyCpp Reference**: Read `third-party/rusty-cpp/README.md` and `third-party/rusty-cpp/CLAUDE.md` to understand how the borrow checker, safety annotations (`@safe`, `@unsafe`, `@external`), and safe types work before starting any conversions.
+    - **Key Rules — READ CAREFULLY**:
+      1. **DO NOT change any logic, algorithms, or behavior**. This is purely a safety annotation and type migration task. The code must do exactly what it did before.
+      2. **Annotate every function** with `// @safe` or `// @unsafe`. Default to `@safe` and only use `@unsafe` when the function genuinely cannot be made safe (e.g., it uses raw pointers, calls legacy STL I/O, or interacts with non-borrow-checked third-party code).
+      3. **Replace STL types with RustyCpp equivalents** where drop-in replacements exist:
+         - `std::unique_ptr<T>` → `rusty::Box<T>`
+         - `std::shared_ptr<T>` → `rusty::Arc<T>` (for thread-shared) or `rusty::Rc<T>` (for single-thread)
+         - `std::weak_ptr<T>` → custom `Weak<T>` wrapper
+         - `std::optional<T>` → `rusty::Option<T>`
+         - `std::vector<T>` → `rusty::Vec<T>` (or the `Vec<T>` alias)
+         - `std::function<Sig>` → `rusty::Function<Sig>` (if available, otherwise wrap in `@unsafe` block)
+         - `std::make_unique<T>(...)` → `rusty::Box<T>::make(...)`
+         - `std::make_shared<T>(...)` → `rusty::Arc<T>::make(...)` or `rusty::Rc<T>::make(...)`
+      4. **Keep STL types that have NO RustyCpp equivalent** (e.g., `std::mutex`, `std::recursive_mutex`, `std::atomic`, `std::thread`, `std::lock_guard`, `std::condition_variable`, `std::map`, `std::queue`, `std::deque`). Wrap their usage in `// @unsafe { ... }` blocks when inside `@safe` functions.
+      5. **Use `@unsafe` blocks** inside `@safe` functions for: STL I/O (`std::cerr`, `std::cout`), `std::dynamic_pointer_cast`, mutex lock/unlock, third-party library calls, and any code the borrow checker cannot verify.
+      6. **Use `@external` annotations** for external/third-party functions that you have audited and want to call from `@safe` code without an `@unsafe` block.
+      7. **Do NOT commit anything**. The author will review and commit manually.
+    - **Strategy — Iterative Per-File Approach**:
+      1. Start with the **easiest files first** and work toward the hardest. Recommended order:
+         - **Phase 1 (Easy)**: `exec.h`, `exec.cc` (already has @safe annotations, ~30 lines each), `service.h` (84 lines, thin wrapper), `frame.h` (50 lines)
+         - **Phase 2 (Medium)**: `coordinator.h` (83 lines), `coordinator.cc` (200 lines), `service.cc` (113 lines), `frame.cc` (206 lines), `commo.h` (128 lines)
+         - **Phase 3 (Medium-Hard)**: `commo.cc` (287 lines), `raft_worker.h` (168 lines), `raft_worker.cc` (615 lines), `macros.h` (77 lines)
+         - **Phase 4 (Hard)**: `server.h` (638 lines), `server.cc` (1,829 lines — the largest and most complex file)
+      2. For each file:
+         a. Read the file completely to understand every function.
+         b. Mark all functions `// @safe` initially.
+         c. **Run the borrow checker manually on the file** (see "Borrow Checker Commands" below). **`make clean && make -j32` does NOT run the checker automatically** — you must invoke it yourself per-file.
+         d. Fix borrow checker violations: replace STL types with RustyCpp equivalents, wrap unavoidable unsafe operations in `// @unsafe { }` blocks.
+         e. If after multiple iterations a function is genuinely too hard to make safe (e.g., heavy use of `std::dynamic_pointer_cast`, raw pointer arithmetic, complex mutex patterns), mark it `// @unsafe` and leave a comment explaining why: `// @unsafe - [reason: e.g., "uses std::dynamic_pointer_cast which is not borrow-checked"]`
+         f. Repeat steps c-e until the checker passes clean on the file.
+         g. After all files are done, build with `make clean && make -j32` to verify compilation, then run CI tests: `./ci/ci.sh all`
+      3. For `.h` files: annotate all method declarations in headers. Safety annotations propagate from headers to implementations automatically.
+      4. **Goal is maximum safe coverage**. Ideally 100% `@safe`, but realistically some functions will need `@unsafe` — that is acceptable. Leave clear comments on every `@unsafe` function/block explaining what prevents it from being safe.
+    - **Handling RustyCpp False Positives and Errors from External Files**:
+      - **RustyCpp is still under active development** and may produce false positives or errors originating from files **outside** the raft module (e.g., headers in `src/rrr/`, `src/deptran/`, `src/mako/`, or third-party includes).
+      - If the borrow checker reports errors in files **outside** `src/deptran/raft/` that are blocking your progress, you are allowed to go into those external files and mark the offending code `// @unsafe` to suppress the false positive. Add a comment like: `// @unsafe - marked unsafe to suppress rusty-cpp false positive (rusty-cpp is under development)`
+      - Do NOT try to fully migrate external files — just apply the minimal `@unsafe` annotation needed to unblock the raft file you are working on.
+      - If an error seems like a genuine rusty-cpp bug (not a real safety issue), note it in a comment near the `@unsafe` annotation so it can be revisited later.
+    - **Files Already Partially Migrated** (use as reference examples):
+      - `exec.h` / `exec.cc`: All 4 functions already annotated `@safe`
+      - `frame.h`: Uses `rusty::Arc<rusty::Cell<slotid_t>>` for `slot_hint_`
+      - `frame.cc`: Uses `rusty::Box<>`, `rusty::Option<>`, `rusty::Arc<>`
+      - `coordinator.h`: Uses `rusty::Option<rusty::Arc<>>`, `rusty::Function<>`, `rusty::Arc<rusty::Cell<>>`
+      - `server.h`: Uses `rusty::Box<Timer>` for `timer_`
+      - `server.cc`: Uses `rusty::Function<void()>` for callbacks
+    - **Key STL Types to Replace (by frequency across all raft files)**:
+      - `std::shared_ptr<>` — ~50+ instances across server.h/cc, coordinator, commo, raft_worker
+      - `std::vector<>` — ~8+ instances (timer_threads_, batch_buffer_, matchedIndices, etc.)
+      - `std::function<>` — ~8+ instances (callbacks in raft_worker.h, commo.h, server.h)
+      - `std::unique_ptr<>` — ~4 instances (commo_, svr_ in frame.h, RaftServer/RaftCommo creation)
+      - `std::map<>` — ~10+ instances (match_index_, next_index_, raft_logs_, etc.) — NO rusty equivalent, keep and wrap in @unsafe
+      - `std::make_shared<>` / `std::make_unique<>` — ~15 instances — replace with `rusty::Arc::make()` / `rusty::Box::make()`
+      - `std::dynamic_pointer_cast<>` — ~10+ instances — wrap in @unsafe blocks
+    - **Files Without Any Safety Annotations Yet** (need full annotation from scratch):
+      - `raft_worker.h`, `raft_worker.cc`
+      - `macros.h`
+    - **Borrow Checker Commands** (CRITICAL — must run manually per-file):
+      - The borrow checker is a standalone binary. It does NOT run automatically during `make`. You must invoke it yourself after annotating each file.
+      - **Check a single file**:
+        ```
+        ./third-party/rusty-cpp/target/release/rusty-cpp-checker --compile-commands build/compile_commands.json src/deptran/raft/<filename>.cc
+        ```
+      - **Check all raft files at once** (via CMake target):
+        ```
+        cmake --build build --target borrow_check_raft
+        ```
+      - **If the checker binary doesn't exist yet**, build it first:
+        ```
+        cd third-party/rusty-cpp && cargo build --release && cd ../..
+        ```
+      - **Before running the checker**, you need `compile_commands.json` in the build directory. If it doesn't exist, run `make clean && make -j32` once first to generate it.
+      - **Workflow per file**: Edit file → Run checker on that file → Fix violations → Re-run checker → Repeat until clean.
+    - **Build & Test Commands** (run after all files pass the checker):
+      - Build: `make clean && make -j32`
+      - Build timeout: At least 30 minutes (large C++ project)
+      - CI tests: `./ci/ci.sh all`
+      - Specific Raft tests: `./ci/ci.sh shard1ReplicationRaft`, `./ci/ci.sh shard2ReplicationRaft`, `./ci/ci.sh shard1ReplicationSimpleRaft`, `./ci/ci.sh shard2ReplicationSimpleRaft`
+    - **Success Criteria**:
+      1. Every function in every production `.h` and `.cc` file under `src/deptran/raft/` has a `// @safe` or `// @unsafe` annotation (excludes test.h, test.cc, testconf.h, testconf.cc)
+      2. All STL types that have RustyCpp equivalents are replaced (`unique_ptr` → `Box`, `shared_ptr` → `Arc`, `vector` → `Vec`, `optional` → `Option`, etc.)
+      3. All `@unsafe` functions/blocks have a comment explaining why they cannot be safe
+      4. No logical or behavioral changes to the code
+      5. `make clean && make -j32` compiles without errors
+      6. All CI tests pass: `./ci/ci.sh all`
+      7. Borrow checker passes on all annotated files (or files are documented as excluded with reasons in CMakeLists.txt)
+    - **Leaf Tasks** (work through in order):
+      - [x] Phase 1a: Annotate and migrate `exec.h` and `exec.cc` (already partially done, ~30 lines each)
+      - [x] Phase 1b: Annotate and migrate `service.h` (84 lines, thin RPC wrapper)
+      - [x] Phase 1c: Annotate and migrate `frame.h` (50 lines, already uses some rusty types)
+      - [x] Phase 2a: Annotate and migrate `coordinator.h` (83 lines) and `coordinator.cc` (200 lines)
+      - [x] Phase 2b: Annotate and migrate `service.cc` (113 lines)
+      - [x] Phase 2c: Annotate and migrate `frame.cc` (206 lines, already partially migrated)
+      - [x] Phase 2d: Annotate and migrate `commo.h` (128 lines)
+      - [x] Phase 3a: Annotate and migrate `commo.cc` (287 lines)
+      - [x] Phase 3b: Annotate and migrate `raft_worker.h` (168 lines) and `raft_worker.cc` (615 lines)
+      - [x] Phase 3c: Annotate and migrate `macros.h` (77 lines)
+      - [x] Phase 4a: Annotate and migrate `server.h` (638 lines)
+      - [x] Phase 4b: Annotate and migrate `server.cc` (1,829 lines — largest file)
+      - [x] Final: Build (`make clean && make -j32`), run borrow checker on all files, run CI tests (`./ci/ci.sh all`)
+  - [x] *high* Comprehensive Raft-Mako Documentation for Thesis Report
+    - **Goal**: Write extremely detailed, thesis-grade documentation covering the entire Raft module, its integration with Mako, testing infrastructure, and performance comparison with Paxos. The documentation should be thorough enough that a reader with basic distributed-systems knowledge can fully understand the system from these docs alone — no hand-holding, but nothing left unexplained. This is NOT a thesis itself but the detailed technical content that feeds into one.
+    - **Audience**: Thesis committee members and future developers. Assume familiarity with basic distributed systems concepts (consensus, replication, 2PC) but NOT with this codebase.
+    - **Writing style**: Technical, precise, with code snippets and diagrams where helpful. Every claim should be traceable to source files. Use file paths (e.g., `src/deptran/raft/server.h:42`) so readers can cross-reference. Include architecture diagrams in ASCII or Mermaid format.
+    - **Output location**: `doc/thesis/` — organized into subfolders by topic. Do NOT put everything in a single file. Each document should be self-contained but cross-reference others.
+    - **Important context**: The author (Krish) implemented the Raft module, wrote standalone tests (`test.cc`, `testconf.cc`), integrated Raft with Mako via `raft_worker`, `raft_main_helper`, `replication_helper`, and `simpleRaft` examples, implemented preferred leader election, and wrote the CI test suite (`ci_mako_raft.sh`). Mako itself was NOT written by the author — the author's contribution is bringing Raft into Mako and making it work alongside the existing Paxos path. The documentation should clearly distinguish what was authored vs what was pre-existing infrastructure.
+    - **Key source files to study in depth**:
+      - Core Raft: `src/deptran/raft/server.h`, `server.cc`, `coordinator.h`, `coordinator.cc`, `frame.h`, `frame.cc`, `commo.h`, `commo.cc`, `service.h`, `service.cc`, `exec.h`, `exec.cc`, `macros.h`
+      - Raft-Mako bridge: `src/deptran/raft/raft_worker.h`, `raft_worker.cc`, `src/deptran/raft_main_helper.cc`
+      - Runtime switching: `src/deptran/replication_helper.h`, `replication_helper.cc`
+      - Standalone tests: `src/deptran/raft/test.h`, `test.cc`, `testconf.h`, `testconf.cc`
+      - Mako integration: `src/mako/mako.hh` (setup_leader_election_callbacks, detect_replication_type_from_config)
+      - Examples: `examples/mako-raft-tests/simpleRaft.sh`, `simpleRaft.cc`, all test shell scripts under `examples/mako-raft-tests/`
+      - CI: `ci/ci_mako_raft.sh`
+      - Configs: `config/occ_raft.yml`, `config/raft6_shardidx*.yml`, `config/raft_lab_test.yml`
+      - Shard launcher: `bash/shard_raft.sh`
+      - Paxos (for comparison): `src/deptran/paxos/server.h`, `server.cc`, `coordinator.h`, `commo.h`, `frame.h`
+      - Existing comparison: `doc/paxos_vs_raft_comparison.md`
+    - **Document structure** (each is a separate .md file under `doc/thesis/`):
+    - [x] *high* Task 1: `doc/thesis/README.md` — Table of contents and reading guide [DONE 2026-02-08]
+      - List all documents in reading order with one-line descriptions
+      - Suggested reading paths (quick overview vs deep dive)
+      - Glossary of terms used throughout (term, slot, commitIndex, quorum, partition, shard, etc.)
+      - **Result**: Created `doc/thesis/README.md` with complete document map (9 chapters, 28 documents), 4 reading paths (quick overview, implementation deep dive, integration story, testing & validation), key source file reference table, and comprehensive glossary (40+ terms across Raft, Mako, and system categories).
+    - [x] *high* Task 2: `doc/thesis/01-mako-overview/` — Mako System Overview [DONE 2026-02-08]
+      - [x] `doc/thesis/01-mako-overview/system_architecture.md` — High-level Mako architecture
+        - What Mako is: speculative distributed transaction system with geo-replication (OSDI'25)
+        - Core components: Masstree storage engine, OCC concurrency control, atomic broadcast layer, sharding
+        - How transactions flow: client → coordinator → scheduler → storage → replication → commit
+        - The role of the atomic broadcast layer (where Raft/Paxos plug in)
+        - Shard architecture: how data is partitioned, what a "partition group" is, replica topology
+        - Existing Paxos path: how Multi-Paxos was already integrated before Raft
+        - Diagrams: transaction flow, shard topology, replication group structure
+        - Key classes: `TxnCoordinator`, `TxnScheduler`, `Communicator`, `Frame`, `TxLogServer`
+        - **Result**: Created `doc/thesis/01-mako-overview/system_architecture.md` with ASCII architecture diagram, 7-step transaction flow pipeline, key class documentation (Frame factory, TxnCoordinator, TxLogServer with app_next_ callback, Communicator, Tx), shard topology with Paxos/Raft comparison, and replication_helper.h dispatch architecture.
+      - [x] `doc/thesis/01-mako-overview/build_system.md` — Build and configuration
+        - CMake build system, key flags (`MAKO_USE_RAFT`, `PAXOS_LIB_ENABLED`)
+        - How both Paxos and Raft are compiled into the same binaries
+        - Runtime switching via `--replication raft|paxos` flag and `replication_helper.h` dispatcher
+        - YAML configuration format: mode config (`occ_raft.yml` vs `occ_paxos.yml`), host configs, replication group definitions
+        - Port allocation scheme: Paxos uses 17xxx, Raft uses 27xxx, control plane uses 31xxx
+        - **Result**: Created `doc/thesis/01-mako-overview/build_system.md` with CMake options table, build targets (core + Raft-only), compile definitions, third-party dependencies, transport layer configuration, YAML config format (mode/shard/replication group with side-by-side Paxos vs Raft examples), port allocation tables, runtime dispatch mechanism diagram, CI test infrastructure, and quick-reference switching guide.
+    - [x] *high* Task 3: `doc/thesis/02-raft-core/` — Raft Protocol Implementation (the heart of the contribution) [DONE 2026-02-08]
+      - [x] `doc/thesis/02-raft-core/protocol_overview.md` — Raft consensus protocol as implemented [DONE 2026-02-08]
+        - Brief recap of Raft fundamentals (leader election, log replication, safety) with references to the Raft paper
+        - How this implementation maps to the paper: `RaftServer` = state machine, `RaftCommo` = RPC layer, `RaftServiceImpl` = RPC handlers
+        - Key deviations or extensions from the paper (preferred leader, integration with 2PC)
+        - State machine diagram: Follower → Candidate → Leader transitions with code references
+        - **Result**: Created `doc/thesis/02-raft-core/protocol_overview.md` with ASCII state machine diagram, implementation-to-paper mapping table, core state variables (persistent/volatile/leader-only), 4 RPC definitions with wire formats, algorithm summaries for election/replication/safety, 6 documented deviations from the Raft paper (preferred leader, 2PC integration, batched replication, optimized reconciliation, persistence, Jetpack recovery), component interaction sequence diagram, and complete file map.
+      - [x] `doc/thesis/02-raft-core/server_implementation.md` — `RaftServer` deep dive [DONE 2026-02-08]
+        - Class hierarchy: `RaftServer` extends `TxLogServer` extends `Scheduler`
+        - All member variables with explanations: `currentTerm`, `commitIndex`, `executeIndex`, `lastLogIndex`, `vote_for_`, `is_leader_`, `match_index_`, `next_index_`, `raft_logs_`, timer, preferred leader fields
+        - `OnRequestVote()`: Full algorithm walkthrough with code snippets — term comparison, log up-to-date check, vote granting, persistence
+        - `OnAppendEntries()`: Full algorithm walkthrough — term check, log consistency check, entry appending, commit index advancement, `applyLogs()` callback
+        - `Start()`: How leader appends new commands — log entry creation, broadcasting to followers
+        - `applyLogs()`: How committed entries are applied to the state machine via `app_next_` callback
+        - Election timer: `randDuration()` (0.4-0.7s), `GetElectionTimeout()` dynamic timeout based on preferred leader role, `resetTimer()`
+        - Log persistence integration: `PersistTermAndVote()`, `PersistLogEntry()`, `RecoverFromStorage()`
+        - RustyCpp safety: which methods are `@safe` vs `@unsafe` and why
+        - **Result**: Created `doc/thesis/02-raft-core/server_implementation.md` with class hierarchy diagram, 30+ member variables organized into 8 categories (persistent state, volatile state, leader-only, preferred leader, log application, persistence/snapshot, timer, RaftData struct), full algorithm walkthroughs for OnRequestVote (5-step flowchart), OnAppendEntries (6-step with batch optimization), Start/SetLocalAppend, applyLogs (do-while concurrency pattern), HeartbeatLoop (commit index calculation, 3-tier log reconciliation), election timer with dynamic timeout table, persistence/recovery/compaction, setIsLeader state transitions, destructor shutdown sequence, and @safe/@unsafe annotation tables.
+      - [x] `doc/thesis/02-raft-core/leader_election.md` — Election mechanism [DONE 2026-02-08]
+        - Election trigger: timer expiry → increment term → vote for self → `BroadcastVote()`
+        - `RaftVoteQuorumEvent`: How votes are collected, quorum detection
+        - `doVote()`: Vote granting logic, persistence of vote
+        - Split vote handling: random timeout prevents repeated splits
+        - Term advancement: how stale leaders step down on higher term
+        - Code walkthrough of a complete election cycle with sequence diagram
+        - **Result**: Created `doc/thesis/02-raft-core/leader_election.md` with election timer loop pseudocode, dynamic timeout table, 5-step RequestVote walkthrough, BroadcastVote flow (quorum event creation, async RPC callbacks), RaftVoteQuorumEvent class hierarchy (Event→QuorumEvent→RaftVoteQuorumEvent) with quorum logic formulas, 4-step OnRequestVote decision tree, doVote helper (term advancement, vote persistence, timer reset), split vote handling via randomized timeouts, term advancement table (5 locations), complete 3-node election sequence diagram with timing breakdown, leader change notification via RaftWorker callback, and edge cases (no pre-vote, stale election guard, shutdown safety).
+      - [x] `doc/thesis/02-raft-core/log_replication.md` — Log replication mechanism [DONE 2026-02-08]
+        - Leader's `SendAppendEntries2()`: how entries are sent to each follower
+        - Follower's `OnAppendEntries()`: consistency check, appending, reply
+        - `match_index_` / `next_index_` tracking: how leader tracks follower progress
+        - Commit advancement: when leader updates `commitIndex` (majority replicated)
+        - Backtracking: when `next_index_` is decremented on rejection
+        - Heartbeats: empty AppendEntries as keep-alive (`HEARTBEAT_INTERVAL`)
+        - Batching behavior: how multiple entries are sent in a single RPC
+        - **Result**: Created `doc/thesis/02-raft-core/log_replication.md` with end-to-end replication flow diagram, HeartbeatLoop wake mechanism, batch vs non-batch entry preparation (TpcBatchCommand), SendAppendEntries2 RPC with 500ms bounded wait, OnAppendEntries 3-check acceptance (term/index/prev_term), mutex release during apply, 4 response cases (lost RPC, higher term stepdown, log conflict backtrack, success), 3-tier log reconciliation (fast O(1)/exponential O(log n)/linear), commit advancement via sorted match_index median with term safety rule, heartbeat interval table, applyLogs with app_next_ callback, complete 3-node replication sequence diagram with timing, and log conflict resolution example.
+      - [x] `doc/thesis/02-raft-core/coordinator.md` — `CoordinatorRaft` transaction submission [DONE 2026-02-08]
+        - How `Submit()` works: slot allocation via `Arc<Cell<slotid_t>>`, calling `RaftServer::Start()`
+        - `WRONG_LEADER` handling: retry logic when submitting to a non-leader
+        - Quorum calculation: `GetQuorum()` = n/2 + 1
+        - Integration with Mako's transaction coordinator chain
+        - **Result**: Created `doc/thesis/02-raft-core/coordinator.md` covering class hierarchy (Coordinator → CoordinatorRaft), key members (svr_, cmd_, slot_hint_, n_replica_), phase enum (INIT_END/PREPARE/ACCEPT/COMMIT/FORWARD), Submit() entry point with IsLeader() check, GotoNextPhase() state machine flow (INIT_END → AppendEntries → COMMIT → LeaderLearn), AppendEntries() blocking wait with 1ms polling and term change detection, WRONG_LEADER handling with ViewData propagation and leader=-1 fallback, slot allocation via Arc<Cell<slotid_t>> shared counter in RaftFrame, GetQuorum() = n/2+1, CreateCoordinator() factory method with pointer borrowing, LeaderLearn() post-commit callback, and complete end-to-end submission flow diagram from SchedulerClassic::OnCommit through Raft commit to callback.
+      - [x] `doc/thesis/02-raft-core/rpc_layer.md` — Communication infrastructure [DONE 2026-02-08]
+        - `RaftCommo`: `SendAppendEntries2()`, `BroadcastVote()`, `SendTimeoutNow()`
+        - `RaftServiceImpl`: `HandleVote()`, `HandleAppendEntries()`, `HandleTimeoutNow()` — RPC handler registration
+        - `RaftFrame`: factory pattern — `CreateScheduler()`, `CreateCommo()`, `CreateCoordinator()`, `CreateRpcServices()`
+        - RPC macros in `macros.h`: `RpcHandler`, `Call_Async`, disconnection handling
+        - Wire format: how commands are serialized via Marshal
+        - **Result**: Created `doc/thesis/02-raft-core/rpc_layer.md` with 4-layer architecture diagram (RaftCommo → RaftProxy → RaftService → RaftServiceImpl), all 4 RPC definitions with hex IDs and wire formats, RpcHandler macro expansion showing generated override/handler/disconnection methods, Call_Async macro with Future::safe_release pattern, RaftCommo sending methods (SendAppendEntries2 with IntEvent, SendAppendEntries with results struct, BroadcastVote with quorum event, SendTimeoutNow with callback), RaftServiceImpl handler delegation with Fiber::create_run for AppendEntries, DeferredReply RAII pattern with marshal_reply/cleanup lambdas, RaftService generated base class (__reg_to__/__dispatch__/__wrapper__ methods), RaftProxy serialization via Marshal << operator, RaftFrame factory pattern with ownership model (unique_ptr for commo_/svr_, Arc for slot_hint_, raw pointer borrows), proxy map population via Communicator::ConnectToPeers, disconnection simulation system with default responses, WAN_WAIT compile-time switch, RAFT_TEST_CORO infrastructure, and complete end-to-end AppendEntries RPC flow diagram from HeartbeatLoop through TCP to OnAppendEntries and back.
+    - [x] *high* Task 4: `doc/thesis/03-preferred-leader/` — Preferred Leader Election (novel contribution) [DONE 2026-02-08]
+      - [x] `doc/thesis/03-preferred-leader/design.md` — Design and motivation [DONE 2026-02-08]
+        - Why preferred leader: deterministic placement for data locality, reduced cross-shard latency, operational control
+        - How it differs from standard Raft: standard Raft has no leader preference, any node can become leader
+        - Design overview: `SetPreferredLeader()` → monitoring thread → `TimeoutNow` RPC → leadership transfer
+        - Safety argument: all Raft safety properties are preserved (leader completeness, election safety)
+        - **Result**: Created `doc/thesis/03-preferred-leader/design.md` covering motivation (data locality, cross-shard coordination, operational control), comparison table (standard Raft vs preferred leader), three-phase design (startup election bias via asymmetric timeouts, monitoring thread with ShouldTransferLeadership checks, piggybacked transfer via trigger_election_now in EmptyAppendEntries), detailed transfer sequence diagram with timing analysis (~40ms on LAN), GetElectionTimeout() asymmetric timeout table (preferred 150-300ms / non-preferred grace 1-2s / non-preferred normal 500ms-1s), 5-second startup grace period, OnTimeoutNow edge cases, SetPreferredLeader configuration, comprehensive safety argument proving all 5 Raft properties preserved, failure mode analysis.
+      - [x] `doc/thesis/03-preferred-leader/implementation.md` — Implementation details [DONE 2026-02-08]
+        - `preferred_leader_site_id_`: configuration storage
+        - `AmIPreferredLeader()`: self-check
+        - `HaveCaughtUp()`: comparing follower's commit to leader's commit
+        - `ShouldTransferLeadership()`: conditions for triggering transfer
+        - `InitiateLeadershipTransfer()`: sending `TimeoutNow` RPC
+        - `OnTimeoutNow()`: receiver immediately starts election
+        - `StartLeadershipTransferMonitoring()`: background thread that periodically checks
+        - Dynamic election timeout (`GetElectionTimeout()`): preferred gets 150-300ms, others get 500ms-1s during normal operation, 1-2s during startup grace period
+        - Full sequence diagram of a leadership transfer
+        - **Result**: Created `doc/thesis/03-preferred-leader/implementation.md` with method-by-method walkthrough of all 12+ functions: 7 member variables table with design rationale, AmIPreferredLeader/HaveCaughtUp inline helpers, SetPreferredLeader entry point with startup and runtime call sites, GetElectionTimeout with 3-row timeout decision table, setIsLeader integration showing transfer flag clearing and monitor start, StartLeadershipTransferMonitoring OS thread with lock-then-release pattern and 5 exit conditions, ShouldTransferLeadership 6-check decision flowchart with safety-critical match_index check, InitiateLeadershipTransfer 4-step piggybacked protocol with per-peer heartbeat loop, OnTimeoutNow 6 edge cases (shutdown/stale/ahead/already-leader/candidate/transferring), StopLeadershipTransferMonitoring detach-vs-join deadlock rationale, destructor sequence, HeartbeatLoop delegation comment, integration points table, full call graph, complete 10-event sequence diagram with timing, and 11-row constants/tuning table.
+      - [x] `doc/thesis/03-preferred-leader/testing.md` — How preferred leader was tested [DONE 2026-02-08]
+        - `testPreferredReplicaStartup` binary: what it tests and how
+        - `testPreferredReplicaLogReplication` binary: log replication with preferred leader
+        - `testNoOps` binary: no-op log entries for watermark synchronization
+        - Test results and correctness guarantees
+        - **Result**: Created `doc/thesis/03-preferred-leader/testing.md` covering multi-process test architecture (5 processes per test, real TCP connections), Mako replication API table (setup/setup2/register_leader_election_callback/add_log_to_nc), CMake build targets. Test 1 (testPreferredReplicaStartup): 5-node 32s test verifying localhost becomes preferred leader with success criteria table (all exit 0, localhost leader >= 1, p1-p4 leader == 0). Test 2 (testPreferredReplicaLogReplication): 25 logs with TpcCommitCommand wrapping and BATCH_SIZE=5, create_log_command helper, serialization format, early-exit polling, per-replica verification. Test 3 (testNoOps): 5-epoch NO-OPS watermark sync with "no-ops:X" format, isNoopsLocal() detection function, individual epoch tracking, then 10 regular logs, BATCH_SIZE=1 non-batching. Test runner scripts with common pattern (setup/launch/monitor/analyze/report). CI integration via ci_mako_raft.sh cleanup. Config files (none_raft.yml, 3-node and 5-node cluster YAMLs). Standard Raft tests comparison table (11 tests). 10-row correctness guarantees table.
+    - [x] *high* Task 5: `doc/thesis/04-mako-integration/` — Patching Raft into Mako (core thesis contribution) [DONE 2026-02-08]
+      - [x] `doc/thesis/04-mako-integration/architecture.md` — Integration architecture [DONE 2026-02-08]
+        - The challenge: Mako was built with Multi-Paxos, need to add Raft as alternative without breaking Paxos
+        - Solution: `replication_helper.h` dispatcher pattern with `DISPATCH_RAFT_OR_PAXOS` macro
+        - `rusty::Cell<ReplicationType>` global state for runtime switching
+        - Unified API: `setup()`, `register_for_follower()`, `register_for_leader()`, `submit()`, `add_log()`, etc.
+        - How `detect_replication_type_from_config()` auto-detects from YAML `ab: raft`
+        - Diagram: Mako → replication_helper → raft_impl / paxos_impl dispatch
+        - **Result**: Created `doc/thesis/04-mako-integration/architecture.md` covering the integration challenge (API parity, runtime switching, zero Mako-side changes), 3-layer dispatcher architecture diagram (Mako → replication_helper → paxos_impl/raft_impl), rusty::Cell<ReplicationType> global state with safety rationale, DISPATCH_RAFT_OR_PAXOS and DISPATCH_VOID_RAFT_OR_PAXOS macro definitions and usage, Raft-only set_preferred_leader function, dual detection mechanism (CLI --replication flag with priority over YAML auto-detection via detect_replication_type_from_config), YAML ab field parsing through Frame::Name2Mode to MODE_RAFT (0x400), complete detection flow diagram, unified API table covering 30+ functions in 5 categories (lifecycle, log submission, callback registration, epoch/election, network client), namespace symmetry with structural differences table (paxos_impl vs raft_impl), callback handling difference (dual leader/follower maps with re-application on leader change), full initialization sequence from dbtest.cc through setup/setup2 to running workers, Mako call sites (add_log_to_nc hot path, callback registration, shutdown), legacy naming conventions rationale, and safety annotations.
+      - [x] `doc/thesis/04-mako-integration/raft_worker.md` — `RaftWorker` bridge class [DONE 2026-02-08]
+        - Purpose: connects Mako's watermark/callback system to Raft's replication
+        - Setup chain: `SetupBase()` → `SetupService()` → `SetupCommo()` → `SetupHeartbeat()`
+        - Leader/follower callbacks: `register_leader_callback_par_id_return()`, `register_follower_callback_par_id_return()`
+        - Log submission: `Submit()` → `EnqueueLog()` → `SubmitThread` loop → `RaftServer::Start()`
+        - `Next()` callback: how Raft's committed entries flow back to Mako
+        - `PendingLog` queue: buffering between Mako's write path and Raft's consensus
+        - **Result**: Created `doc/thesis/04-mako-integration/raft_worker.md` covering class layout with 26-member variable table, comparison with PaxosWorker (8-row table highlighting dual callback model and leadership query differences), 4-phase setup chain (SetupBase → SetupService → SetupCommo → SetupHeartbeat) with pseudocode for each, complete log submission flow diagram from add_log_to_nc through PendingLog queue to SubmitLoop to RaftServer::Start, CreateRaftLogCommand TpcCommitCommand wrapping structure (VecPieceData → SimpleCommand → Value::STR), SubmitLoop background thread with batch dequeuing, Next() callback path with dynamic leader/follower selection and encoded return value decoding (timestamp*10+status), STATUS_SAFETY_FAIL unreplayed log handling, 5 callback registration methods hierarchy, 2-phase shutdown sequence with critical poll thread ordering, GetRaftServer/GetPollThreadWorker/IncSubmit helpers, global raft_workers_g vector, and end-to-end data flow diagram.
+      - [x] `doc/thesis/04-mako-integration/raft_main_helper.md` — `raft_main_helper.cc` glue code [DONE 2026-02-08]
+        - Namespace `raft_impl`: all functions that the dispatcher calls
+        - `setup()` / `setup2()`: initialization sequence — creating RaftWorker, starting RPC, registering callbacks
+        - `raft_handle_leader_change()`: how leadership changes propagate to Mako
+        - `send_no_ops_for_mark()`: NO-OP log entries for epoch/watermark synchronization across partitions
+        - `wait_for_local_leadership()`: blocking wait used during multi-shard startup
+        - Separate leader/follower callback maps: why different watermark handling is needed
+        - **Result**: Created `doc/thesis/04-mako-integration/raft_main_helper.md` covering 3-level scoping (janus globals, raft_impl public, anonymous internal), global state tables (raft_workers_g, leader_callback_, dual callback maps, ElectionState singleton), setup() with reverse-then-reverse worker creation and Jetpack disabling, setup2() with per-partition preferred leader configuration and ElectionState compatibility, server_launch_worker() 3-pass boot sequence (SetupService → SetupCommo+EnsureSetup+StartSubmitThread → SetupHeartbeat) with EnsureSetup poll-thread affinity, shutdown_paxos() 2-phase teardown, pre_shutdown_step() graceful disconnect, leader change propagation chain (RaftServer → RaftWorker → NotifyRaftLeaderChange → raft_handle_leader_change → apply_callbacks_for_partition + leader_wait_cv + external callback), wait_for_local_leadership() with 5s timeout, add_log_to_nc() hot path with immediate drop on non-leader, watermark callback registration with cache-then-apply pattern, NO-OP entry system ("no-ops:<epoch>" format), epoch/ElectionState functions, set_preferred_leader() runtime API, 10 stub functions for nc_* compatibility, complete 35-function reference table with lines/scope/category, and paxos_main_helper comparison table.
+      - [x] `doc/thesis/04-mako-integration/mako_hooks.md` — Mako-side integration points [DONE 2026-02-08]
+        - `mako.hh: setup_leader_election_callbacks()`: how Mako registers for leader change notifications
+        - `mako.hh: detect_replication_type_from_config()`: auto-detection of replication type from config files
+        - `FAIL_NEW_VERSION` code path: the fix that added `is_using_raft()` checks to prevent cross-shard RPC failures during Raft leader elections
+        - `shard_raft.sh` vs `shard.sh`: differences in shard launching for Raft vs Paxos
+        - **Result**: Created `doc/thesis/04-mako-integration/mako_hooks.md` covering init_env() initialization sequence with critical ordering (detect before setup, callbacks after setup but before setup2), detect_replication_type_from_config() implementation with YAML scanning and priority rules table (CLI > auto-detect > default), setup_leader_election_callbacks() with control value table (0=lost leadership, 2=gained, 3=commit, 4=datacenter failure) and per-case is_using_raft() guards, the FAIL_NEW_VERSION bug explanation (cross-shard RPC timeouts during Raft elections in 2-shard mode), compile-time vs runtime guard analysis, leader/follower callback setup functions showing protocol agnosticism, setup_sync_util_callbacks and setup_transport_callbacks, cleanup_and_shutdown, occ_raft.yml config with ab:raft field, shard.sh vs shard_raft.sh comparison table (7 differences), port separation scheme (Paxos 17xxx/Raft 27xxx/heartbeat +10000), functions that need no Raft changes table (6 functions), and complete summary of ~105 lines total Mako-side changes.
+      - [x] `doc/thesis/04-mako-integration/challenges.md` — Integration challenges and bugs fixed [DONE 2026-02-08]
+        - Bug: `simpleRaft.cc` was not calling `set_replication_type(RAFT)` before `setup()` — dispatcher routed to Paxos code path
+        - Bug: `dbtest` used Paxos code path even when config had `ab: raft` — fix: `detect_replication_type_from_config()`
+        - Bug: `FAIL_NEW_VERSION` in `mako.hh` called `client_control()` during Raft leader elections without checking `is_using_raft()` — caused cross-shard RPC failures in 2-shard mode
+        - Bug: Race condition in `GetOrCreateClient()` — iterator used after mutex unlock (general fix, affected Raft tests too)
+        - Process cleanup: Raft processes sometimes hung during shutdown — required careful SIGKILL handling in CI scripts
+        - Port conflicts: Paxos uses 17xxx, Raft uses 27xxx — needed separate port ranges to avoid collision when both are tested
+        - **Result**: Created `doc/thesis/04-mako-integration/challenges.md` covering 8 integration challenges with root cause analysis, exact fix locations, and verification results. Bug 1: simpleRaft.cc missing set_replication_type(RAFT) before setup() (fix at simpleRaft.cc:92). Bug 2: dbtest auto-detection failure - YAML parsed inside dispatch target (fix: detect_replication_type_from_config in mako.hh:779-816 with priority chain table). Bug 3: FAIL_NEW_VERSION cross-shard RPC timeouts during Raft elections (fix: 4 is_using_raft() guards at mako.hh:650,662,700,722). Bug 4: GetOrCreateClient() TOCTOU race condition - iterator used after mutex unlock (fix at rrr_rpc_backend.cc:206-211, commit c84909cc). Challenge 5: process cleanup with 3-layer SIGKILL + port polling in ci_mako_raft.sh. Challenge 6: port conflict separation (Paxos 17xxx / Raft 27xxx / tests 38xxx). Challenge 7: Jetpack recovery incompatibility with forced MAKO_DISABLE_JETPACK=1. Challenge 8: transport layer shutdown races with 5 coordinated atomic/locking fixes. Summary table with 8 bugs, key architectural lesson about dispatcher critical point.
+    - [x] *high* Task 6: `doc/thesis/05-standalone-testing/` — Standalone Raft Testing
+      - [x] `doc/thesis/05-standalone-testing/test_framework.md` — Test infrastructure
+        - `RaftLabTest` class: coroutine-based test harness in `test.h`/`test.cc`
+        - `RaftTestConfig` class: test utilities in `testconf.h`/`testconf.cc`
+        - Test configuration: 5 servers, election timeout 5s, network simulation (latency, disconnection)
+        - Helper methods: `OneLeader()`, `NoLeader()`, `OneTerm()`, `NCommitted()`, `Wait()`, `DoAgreement()`, `Disconnect()`, `Reconnect()`
+        - How tests simulate network partitions and node failures
+        - **Result**: Created `doc/thesis/05-standalone-testing/test_framework.md` covering the full standalone test framework. Documented compile-time activation (RAFT_TEST_CORO flag, CMakeLists.txt:227-229), raft_lab_test.yml 5-server config (cc:none, ab:raft, all localhost). Test constants: NSERVERS=5, ELECTIONTIMEOUT=5s, MAXSLOW=27ms, DOWNRATE=1/10, ELECTIONRPCS=15, COMMITRPCS formula. Bootstrap sequence in frame.cc:141-186 (coroutine yield, n_commo_created_ barrier, ContinueCoro). RaftLabTest/RaftTestConfig class hierarchy with static maps. Commit tracking via SetLearnerAction → RegLearnerAction → committed_cmds. Network simulation: Disconnect/Reconnect via RPC proxy map swap (server.cc:409-441), netctlLoop background thread with 4-state cv_m_ machine, slow() latency injection. 7 key utilities documented (OneLeader, Start, DoAgreement, Wait, NCommitted, RpcCount, server ID helpers). 12 test macros (Init2, Passed2, Assert/Assert2, AssertOneLeader, etc.). Run() short-circuit OR chain, state carried between tests (index_, init_rpcs_, committed_cmds). Summary table of all 11 test cases. 4 design decisions: coroutine-based execution, static state, TpcCommitCommand payload, proxy-swap disconnect.
+      - [x] `doc/thesis/05-standalone-testing/test_cases.md` — Individual test case documentation
+        - `testInitialElection()`: Verifies a leader is elected after startup
+        - `testReElection()`: Verifies leader re-election after leader failure
+        - `testBasicAgree()`: Verifies all replicas agree on committed log entries
+        - `testFailAgree()`: Agreement works despite minority failures
+        - `testFailNoAgree()`: No false agreement when majority fails
+        - `testRejoin()`: Old followers can rejoin and catch up
+        - `testConcurrentStarts()`: Multiple concurrent submissions
+        - `testBackup()`: Backup log entry correctness
+        - `testCount()`: All replicas applied exactly the same entries
+        - `testUnreliableAgree()`: Works with unreliable (lossy) network
+        - `testFigure8()`: The Figure 8 scenario from the Raft paper — the hardest correctness test
+        - For each test: what it tests, how it works, expected outcome, what bugs it would catch
+        - **Result**: Created `doc/thesis/05-standalone-testing/test_cases.md` with detailed documentation for all 11 test cases. Each test documented with source location, what it tests, step-by-step procedure, expected outcome, and what bugs it catches. Test 1 (initial election): leader elected, term agreed, stable leadership (test.cc:91-139). Test 2 (re-election): leader disconnect → new election, quorum break → no leader, quorum restore (test.cc:141-237). Test 3 (basic agree): 3 sequential agreements at expected indices (test.cc:239-267). Test 4 (fail agree): 4 agreements with 2/5 disconnected, then catch-up after reconnect (test.cc:269-293). Test 5 (fail no agree): Start() accepted but not committed without quorum (test.cc:295-319). Test 6 (rejoin): old leader's uncommitted entries 602-604 overwritten, survives 2 leader changes (test.cc:321-356). Test 7 (concurrent starts): 5 pthread threads, all values committed correctly (test.cc:382-446). Test 8 (backup): 50 uncommitted entries on minority replaced by 50 correct entries (test.cc:448-492). Test 9 (count): RPC bounds — init≤30, 10 agreements≤55, 1s idle≤60 (test.cc:494-572). Test 10 (unreliable agree): 50 iterations × 4 concurrent threads under netctlLoop (test.cc:593-631). Test 11 (Figure 8): leader completeness property — 5-phase partition scenario verifying previous-term entries not committed by replica count alone (test.cc:633-731). Includes test progression summary table, index tracking table across all 11 tests.
+      - [x] `doc/thesis/05-standalone-testing/config_files.md` — Test configuration YAML
+        - `config/raft_lab_test.yml`: structure and meaning of each field
+        - How test configs differ from production configs (5 servers vs 3, different timeouts)
+        - **Result**: Created `doc/thesis/05-standalone-testing/config_files.md` documenting all test and production YAML configs. Field-by-field explanation of raft_lab_test.yml (cc:none, ab:raft, 5 servers on ports 9000-9004, all localhost, single partition). CI test cluster configs: 1c1s3r1p_cluster_test.yml (3 replicas, ports 38100-38102), 1c1s5r1p_cluster_test.yml (5 replicas, ports 38101-38105). Production Raft config raft6_shardidx0.yml (3 replicas × 6 partitions, ports 27xxx, no learner). Paxos comparison paxos6_shardidx0.yml (4 sites including learner, ports 17xxx). Mode configs: occ_raft.yml (cc:occ, ab:raft) vs occ_paxos.yml (cc:occ, ab:multi_paxos). Test vs production comparison table (5 vs 3 replicas, cc:none vs cc:occ, port ranges). Port range allocation summary: standalone 9xxx, Paxos 17xxx, Raft 27xxx, CI tests 38xxx. Config naming convention documentation.
+    - [x] *high* Task 7: `doc/thesis/06-ci-testing/` — CI Integration Testing
+      - [x] `doc/thesis/06-ci-testing/ci_script.md` — `ci_mako_raft.sh` documentation
+        - Script structure: cleanup, compile, test functions, main dispatch
+        - Process management: `cleanup_processes()`, `check_for_hanging_processes()`
+        - Port management and collision avoidance
+        - How it mirrors `ci.sh` (Paxos) but for Raft
+        - **Result**: Created `doc/thesis/06-ci-testing/ci_script.md` documenting ci_mako_raft.sh (252 lines) and its relationship to ci.sh (553 lines). Script structure: env setup, check_for_hanging_processes(), cleanup_processes(), 5 test functions, cleanup(), case dispatch. 7 available commands (compile, cleanup, simpleRaft, shard1/2ReplicationRaft, shard1/2ReplicationSimpleRaft, all). Process management: 3-phase cleanup (SIGKILL to 6 binaries + 5 scripts, port release polling lsof :7001-8006/:31000-31100 up to 10s, log archival). Post-test audit: 3s wait → count [d]btest|[s]impleRaft → SIGKILL if hanging → return 0 (pass). Test function 5-step pattern documented. Comparison table: ci_mako_raft.sh vs ci.sh (color output, BUILD_DIR, memory limits, update_config.sh, RocksDB cleanup, PID filtering). Raft tests also in ci.sh lines 265-331,489-500 for unified `all` runs. Shard launch scripts: shard_raft.sh (39 lines, Raft-specific with port 27xxx, occ_raft.yml) vs shard.sh (62 lines, unified with 7th arg for replication_type). Argument table for both. Result archival to ~/results/ci_raft_results_*.
+      - [x] `doc/thesis/06-ci-testing/test_scenarios.md` — Each CI test scenario in detail
+        - **simpleRaft**: 3 replicas × 3 partitions, 100 logs each, 3KB entries, 5ms interval. Pass: ≥300 follower callbacks. Tests basic Raft replication without Mako transactions.
+        - **shard1ReplicationRaft**: 1 shard, 3 Raft replicas, TPC-C benchmark (dbtest), 6 threads, 60s. Pass: `agg_persist_throughput` found, `NewOrder_remote_abort_ratio < 20%`, `replay_batch > 500`. Tests Raft under real transactional workload.
+        - **shard2ReplicationRaft**: 2 shards, 3 Raft replicas each, TPC-C benchmark, 6 threads. Pass: both shards report throughput, abort ratio < 40%. Tests cross-shard transactions with Raft replication.
+        - **shard1ReplicationSimpleRaft**: 1 shard, 3 replicas, `simpleTransactionRepRaft` binary, 40s. Pass: `replay_batch > 0`, `ALL VERIFICATIONS PASSED` on followers. Tests data integrity with simple key-value operations.
+        - **shard2ReplicationSimpleRaft**: 2 shards, 3 replicas each, `simpleTransactionRepRaft`, 60s. Pass: both shard followers have `replay_batch > 0` and `ALL VERIFICATIONS PASSED`. Tests multi-shard data integrity.
+        - For each: underlying shell script path, binaries involved, config files used, log files produced, exact pass/fail criteria
+        - **Result**: Created `doc/thesis/06-ci-testing/test_scenarios.md` with detailed documentation for all 5 CI test scenarios. Scenario 1 (simpleRaft): simpleRaft.sh 120 lines, 3 replicas × 3 partitions, 100 logs × 3KB × 5ms interval, 40s duration, pass: follower_callbacks≥300 from RESULTS line. Scenario 2 (shard1ReplicationRaft): test_1shard_replication_raft.sh 153 lines, dbtest via shard_raft.sh, 1 shard/3 replicas/6 threads/60s, pass: agg_persist_throughput + abort_ratio<20% + replay_batch>500. Scenario 3 (shard2ReplicationRaft): test_2shard_replication_raft.sh 208 lines, 2 shards with completion polling (max 120s), multi-phase shutdown (SIGTERM→3s→SIGKILL), pass: both shards report throughput + abort_ratio<40%. Scenario 4 (shard1ReplicationSimpleRaft): test_1shard_replication_simple_raft.sh 149 lines, simpleTransactionRepRaft/1 shard/3 replicas/40s, pass: replay_batch>0 + ALL VERIFICATIONS PASSED on both followers. Scenario 5 (shard2ReplicationSimpleRaft): test_2shard_replication_simple_raft.sh 171 lines, 2 shards/6 processes/60s, pass: 4 followers verified. Known issues: leader shutdown hang, port conflicts (5s delay between shards), RocksDB cleanup. Raft vs Paxos comparison table.
+      - [x] `doc/thesis/06-ci-testing/example_scripts.md` — Shell scripts walkthrough
+        - `examples/mako-raft-tests/simpleRaft.sh`: step-by-step what happens
+        - `examples/mako-raft-tests/test_1shard_replication_raft.sh`: shard launch, benchmark run, result collection
+        - `examples/mako-raft-tests/test_2shard_replication_raft.sh`: multi-shard orchestration
+        - `examples/mako-raft-tests/test_1shard_replication_simple_raft.sh`: simple transaction test
+        - `examples/mako-raft-tests/test_2shard_replication_simple_raft.sh`: multi-shard simple test
+        - `bash/shard_raft.sh`: how individual Raft shards are launched, config selection, environment setup
+        - **Result**: Created `doc/thesis/06-ci-testing/example_scripts.md` with detailed walkthrough of all 8 test scripts plus shard launcher. Overview table of all scripts (5 CI-invoked + 3 non-CI). simpleRaft.sh: 14-step walkthrough, followers-first start order, 40s sleep, log parsing functions get_follower_callbacks/get_leader_callbacks. test_1shard_replication_raft.sh: step-by-step shard_raft.sh invocation, configurable thread count, 3-check result parsing. test_2shard_replication_raft.sh: completion polling (120s max) vs fixed sleep, multi-phase shutdown (kill wrappers before binaries), 5s inter-shard delay. test_1shard_replication_simple_raft.sh: leader hang tolerance pattern (warning not failure for localhost). test_2shard_replication_simple_raft.sh: 6-process orchestration, 4-follower verification threshold. shard_raft.sh: 6-step walkthrough, config file selection by trd/shard, --replication raft flag. Non-CI scripts: run_test1_preferred_startup.sh (361 lines, TimeoutNow protocol, 5-node, 35s), run_test_log_replication.sh (159 lines, 25 logs to 5 replicas), run_test_noops.sh (256 lines, NO-OPS watermark sync). Common patterns table. Full script dependency graph (CI → test script → shard launcher → binary).
+    - [x] *high* Task 8: `doc/thesis/07-performance/` — Performance Analysis and Paxos Comparison
+      - [x] `doc/thesis/07-performance/methodology.md` — Benchmark methodology
+        - Test environment: single localhost machine, all replicas co-located
+        - Transport: rrr (TCP/IP RPC), not eRPC
+        - Workload: TPC-C (NewOrder, Payment, Delivery, OrderStatus, StockLevel)
+        - Configuration: 6 worker threads per replica, 6 warehouses per shard
+        - Metrics collected: `agg_persist_throughput`, commit counts, latencies, abort ratios, `replay_batch`
+        - Caveats: single-node testing, resource contention, test duration differences
+        - **Result**: Created `doc/thesis/07-performance/methodology.md` documenting benchmark methodology. Test environment: single localhost machine, rrr TCP/IP transport (10-50us latency), release mode with jemalloc. TPC-C workload: NewOrder 45%, Payment 43%, Delivery/OrderStatus/StockLevel 4% each. 4 test configurations detailed with comparison tables: 1-shard TPC-C (Paxos 4 processes vs Raft 3, 40s vs 60s duration), 2-shard TPC-C (8 vs 6 processes, 120s polling), 1-shard simple tx, 2-shard simple tx. Primary metrics: agg_persist_throughput, replay_batch, NewOrder_remote_abort_ratio. Per-transaction metrics: attempts/commits/avg/p50/p99 latency/abort ratio. 6 caveats: single-node deployment (CPU contention), test duration difference (40s vs 60s), process count difference (4 vs 3), Multi-Paxos pipelining vs Raft sequential log, warmup period (~5s), resource contention (18-48 threads).
+      - [x] `doc/thesis/07-performance/results.md` — Detailed benchmark results
+        - Table: 1-shard TPC-C — Paxos (133,931 ops/sec) vs Raft (96,463 ops/sec)
+        - Table: 2-shard TPC-C — Paxos (~8,500/shard) vs Raft (~8,560/shard)
+        - Table: Simple transaction — identical replay_batch and data integrity
+        - Per-transaction-type latency breakdown (NewOrder, Payment, Delivery, OrderStatus, StockLevel)
+        - Per-partition commit distribution
+        - Follower replay_batch comparison (Paxos 669 vs Raft 3,674 in 1-shard)
+        - Abort ratio comparison (local and remote)
+        - **Result**: Created `doc/thesis/07-performance/results.md` with detailed benchmark data extracted from actual CI log files. 6 sections: (1) Overview, (2) 1-Shard TPC-C — aggregate throughput (Paxos 133,931 vs Raft 96,463 ops/sec, Raft 28% lower), per-transaction latency table (NewOrder/Delivery faster under Raft, Payment faster under Paxos), follower replication (Raft 5.5x more replay batches: 3,674 vs 669), (3) 2-Shard TPC-C — per-shard throughput essentially equal (~8,500 ops/sec), Raft 2.1x higher remote abort ratio (2.64% vs 1.28%), 25% fewer processes, (4) throughput drop 1→2 shard (Paxos 15.8x vs Raft 11.3x), (5) Simple transaction results (simpleRaft: 303 follower_callbacks, both simple tx: replay_batch=12, ALL VERIFICATIONS PASSED), (6) Replication correctness (identical data integrity), (7) Summary table across all 5 configurations.
+      - [x] `doc/thesis/07-performance/analysis.md` — Performance analysis and discussion
+        - Why Paxos is ~39% faster in single-shard: Multi-Paxos pipelining, test duration difference (40s vs 60s), batching behavior
+        - Why 2-shard throughput is equal: cross-shard coordination latency (~10ms) dominates, replication layer is no longer the bottleneck
+        - Throughput drop factor: Paxos 15.8x vs Raft 11.3x from 1-shard to 2-shard
+        - Replica topology difference: Paxos 4 replicas (3 voters + 1 learner) vs Raft 3 replicas (all voters) — 33% more processes for Paxos
+        - Raft's higher replay_batch (3,674 vs 669): more aggressive batching but with overhead
+        - Replication correctness: both achieve identical data integrity
+        - What these results mean for production deployment decisions
+        - **Result**: Created `doc/thesis/07-performance/analysis.md` with 7 sections of performance analysis. (1) Overview, (2) Single-shard throughput gap analysis: 3 factors — Multi-Paxos pipelining (concurrent proposals across independent instances vs Raft sequential commit), test duration difference (40s vs 60s, minor 2-5% factor), process count paradox (4 Paxos processes with more CPU contention yet still faster). Per-transaction latency analysis: Raft faster for 3/5 tx types (NewOrder 13%, Delivery 16%, OrderStatus 19%) but Payment 60% slower under Raft (43% of TPC-C mix). (3) 2-shard convergence: cross-shard coordination latency (~10ms) 200x larger than intra-shard replication (~0.05ms), replication protocol no longer bottleneck. Abort ratio 2x higher under Raft. Drop factor: Paxos 15.8x vs Raft 11.3x, both converge to ~8,500 ops/sec. (4) Batching analysis: Paxos avg 6,058 entries/batch vs Raft avg 794 entries/batch (7.6x difference). (5) Replica topology: 25% fewer processes for same fault tolerance. (6) Correctness: identical data integrity verified. (7) Production implications: Paxos better for single-shard max throughput; Raft better for resource efficiency, multi-shard workloads, built-in leader election, operational simplicity. Per-process throughput within 4% (33,483 vs 32,154 ops/sec/process).
+      - [x] `doc/thesis/07-performance/figures.md` — Throughput charts and comparison tables (ASCII/Mermaid format)
+        - Bar chart: 1-shard throughput comparison
+        - Bar chart: 2-shard per-shard throughput comparison
+        - Line chart: throughput scaling from 1-shard to 2-shard
+        - Table: architectural differences (replicas, processes, quorum size)
+        - **Result**: Created `doc/thesis/07-performance/figures.md` with 9 figures. ASCII bar charts: (1) 1-shard throughput (Paxos 133,931 vs Raft 96,463), (2) 2-shard per-shard throughput (all four ~8,500, within 1.4%), (3) throughput scaling 1→2 shard with convergence visualization, (4) per-transaction commit latency (5 tx types, P vs R), (5) follower replay batch comparison (669 vs 3,674), (6) architectural comparison table (topology, protocol, 1-shard perf, 2-shard perf, correctness — 20+ metrics), (7) remote abort ratio comparison, (8) per-process throughput efficiency (33,483 vs 32,154, within 4%). Mermaid charts: (9.1) throughput bar chart, (9.2) replay batch bar chart, (9.3) per-transaction latency grouped bars.
+    - [x] *medium* Task 9: `doc/thesis/08-persistence/` — Log Persistence and Recovery
+      - [x] `doc/thesis/08-persistence/log_storage.md` — Persistent log storage
+        - `LogStorage` interface: `append()`, `read()`, `truncate()`, `get_metadata()`, `set_metadata()`
+        - `InMemoryLogStorage`: for testing
+        - `RocksDBLogStorage`: production backend with batch writes
+        - How Raft integrates: `SetLogStorage()`, `RecoverFromStorage()`, `PersistTermAndVote()`, `PersistLogEntry()`
+        - Metadata persistence: `currentTerm`, `vote_for`, `commitIndex`
+        - **Result**: Created `doc/thesis/08-persistence/log_storage.md` documenting the persistence layer. LogEntry struct (6 fields: slot_id, term, max_ballot_seen/accepted, command, committed, is_no_op) with to_marshal/from_marshal serialization. LogStorage abstract interface: 15 virtual methods across 5 categories (single ops: get/put/remove, batch: get_range/put_batch/remove_range, index: first/last/term/size/empty, metadata: set/get, lifecycle: sync/close/is_open/clear). InMemoryLogStorage: rusty::Mutex-protected std::map, all @safe annotations, no-op sync, reopen()/get_all() test utilities. RocksDBLogStorage: 480 lines, key prefixes LOG_PREFIX="log:" META_PREFIX="meta:", 20-digit zero-padded keys for lexicographic ordering. Config: 64MB write_buffer, LZ4 compression, sync=true for durability, verify_checksums=true. WriteBatch for atomic multi-entry writes. Raft integration: 3 metadata keys (currentTerm, vote_for, commitIndex), 5 persistence methods (PersistTermAndVote, PersistVote, PersistCommitIndex, PersistLogEntry, PersistLogEntries). Paxos integration: 3 metadata keys (cur_epoch, max_committed_slot, max_executed_slot). Storage paths: /tmp/{USER}_mako_log_shard{pid}_replica{lid}. 531-line test suite with 9 test categories.
+      - [x] `doc/thesis/08-persistence/recovery.md` — Crash recovery process
+        - Recovery sequence: detect fresh vs recovery start, load metadata, replay committed entries, resume consensus
+        - `RecoveryManager`: `RecoveryMode` enum, `RecoveryConfig`, `RecoveryResult`
+        - `ReplayCommittedEntries()`: replaying from `executeIndex` to `commitIndex`
+        - How uncommitted entries are resolved via consensus after recovery
+        - Storage paths: `/tmp/<username>_mako_log_shard<N>_replica<M>`
+        - **Result**: Created `doc/thesis/08-persistence/recovery.md` documenting crash recovery. RecoveryMode enum: FRESH_START/NORMAL_RECOVERY/FORCED_FRESH. RecoveryConfig: storage_path, force_fresh_start, 30s timeout, verify_on_recovery, clear_on_forced_fresh. for_replica() factory: /tmp/{USER}_mako_log_shard{pid}_replica{lid}. RecoveryResult: mode, success, error, recovered_entries/term/epoch, recovery_time_ms. RecoveryManager: detect_mode() checks filesystem (CURRENT file = valid RocksDB), create_storage() handles forced fresh deletion, recover() template with 3 lambda params (set_storage, recover_fn, get_stats). Full server_worker.cc integration sequence diagram. Raft recovery: loads currentTerm/vote_for/commitIndex metadata + all log entries, rebuilds in-memory state. Paxos recovery: loads cur_epoch/max_committed_slot/max_executed_slot + ReplayCommittedEntries. Uncommitted entry resolution: Raft uses leader AppendEntries or no-op commit; Paxos re-proposes. CI cleanup: rm -rf /tmp/${USER}_mako_rocksdb_shard* ensures FRESH_START per test.
+      - [x] `doc/thesis/08-persistence/snapshots.md` — Snapshot support
+        - `SnapshotManager` interface, `FileSnapshotManager` implementation
+        - Snapshot format: 52-byte binary header, CRC32 checksums
+        - `CompactLog()`: removing log entries covered by snapshot
+        - When snapshots are taken, retention policy
+        - **Result**: Created `doc/thesis/08-persistence/snapshots.md` documenting snapshot support. SnapshotMetadata: 5 fields (last_included_index/term, timestamp, size_bytes, checksum). SnapshotManager: 10 virtual methods (BeginSnapshot/TakeSnapshot, BeginLoad/LoadLatestSnapshot, GetLatestSnapshot/ListSnapshots/HasSnapshotAtOrAfter, PruneSnapshots/DeleteAllSnapshots, GetStoragePath). SnapshotReader/Writer streaming interfaces. FileSnapshotManager: 531 lines, file naming snapshot_{index}_{term}.snap, atomic write via temp+fsync+rename, ApplyRetentionPolicy max_snapshots=3. SnapshotConfig: interval=10000 entries, max=3, chunk_size=64KB. Binary format: 52-byte header (magic 0x504E4153 "SNAP", version, data_size, compression, checksum_type, last_index, last_term, timestamp, header_crc, padding) + data + data_crc32. CRC32: IEEE 802.3 polynomial table-driven implementation. Compression: NONE only (SNAPPY/ZSTD reserved). Crash safety: write-to-temp-then-rename pattern, dual CRC verification, 3-snapshot retention as fallback.
+    - [x] *medium* Task 10: `doc/thesis/09-appendix/` — Appendix and Reference Material
+      - [x] `doc/thesis/09-appendix/file_reference.md` — Complete file listing
+        - Every file in `src/deptran/raft/` with one-line description
+        - Every file in `src/deptran/paxos/` with one-line description (for comparison)
+        - Integration files: `replication_helper.*`, `raft_main_helper.cc`, `mako.hh`
+        - Config files: all Raft YAML configs with description
+        - Test scripts: all shell scripts under `examples/mako-raft-tests/`
+        - CI scripts: `ci_mako_raft.sh`, `ci.sh` (Paxos equivalent)
+        - **Result**: Created `doc/thesis/09-appendix/file_reference.md` with 8 sections. Raft implementation: 19 files, ~6,081 lines (server.cc 1829, test.cc 740, raft_worker.cc 615, testconf.cc 585, commo.cc 287, frame.cc 206, coordinator.cc 199). Paxos implementation: 13 files, ~2,957 lines (server.cc 1025, commo.cc 514, coordinator.cc 432). Integration files: raft_main_helper.cc, replication_helper.h/cc, mako.hh, bench.cc, server_worker.cc. Persistence layer: 7 files (file_snapshot_manager.hpp 531, rocksdb_log_storage.hpp 480, snapshot_format.hpp 373, log_storage.hpp 302). Test files: 5 C++ binaries, 8 shell scripts (5 CI, 3 non-CI), 1 unit test (531 lines). CI scripts: ci_mako_raft.sh 252, ci.sh 553. Shard launchers: shard_raft.sh 39, shard.sh 62. Config files: 4 mode configs, 3 topology configs, 2 shard configs, 2 test cluster configs.
+      - [x] `doc/thesis/09-appendix/configuration_reference.md` — YAML configuration reference
+        - Mode config fields: `cc`, `ab`, `read_only`, `batch`, `retry`, `ongoing`
+        - Replication group structure: host, port, partition assignments
+        - How to switch between Paxos and Raft configurations
+        - Port allocation scheme
+        - **Result**: Created `doc/thesis/09-appendix/configuration_reference.md` with 7 sections. Mode config: 6 fields (cc, ab, read_only, batch, retry, ongoing) with occ_raft.yml, occ_paxos.yml, and 4 variant configs. Replication group: site array with host/port/partition, partition naming s{R}{PP}. Port allocation: Raft 27xxx, Paxos 17xxx, standalone 9xxx, with formula base+shard+replica*100+partition. Shard config: shard_id and warehouses fields. Standalone test: raft_lab_test.yml with cc:none/ab:raft. Switching: via shard_raft.sh (dedicated), shard.sh 7th arg, mode config ab field, or --replication CLI flag. Config selection by shard_raft.sh: raft${trd}_shardidx${shard}.yml.
+      - [x] `doc/thesis/09-appendix/glossary.md` — Terms and definitions
+        - Raft-specific: term, log index, commit index, match index, next index, election timeout, heartbeat
+        - Mako-specific: shard, partition, partition group, watermark, epoch, NO-OP
+        - System-specific: RPC, rrr framework, eRPC, DPDK, Masstree, OCC, 2PC
+        - **Result**: Created `doc/thesis/09-appendix/glossary.md` with 5 sections, 50+ terms defined. Raft terms: term, log index, commit index, match index, next index, election timeout, heartbeat, leader/follower/candidate, RequestVote, AppendEntries, TimeoutNow, preferred leader, NO-OP, log compaction. Mako terms: shard, partition, partition group, watermark, epoch, speculative execution, agg_persist_throughput, replay_batch, learner, preferred replica. Transaction terms: TPC-C and 5 transaction types, OCC, 2PC, abort ratio, commit latency. System terms: rrr, eRPC, DPDK, Masstree, RocksDB, jemalloc, RustyCpp, Marshal, dbtest, simpleRaft, simpleTransactionRepRaft, GDB, coroutine, fiber. Persistence terms: WAL, fsync, WriteBatch, snapshot, CURRENT file.
+      - [x] `doc/thesis/09-appendix/rustycpp_safety.md` — RustyCpp safety annotations in Raft code
+        - Which Raft methods are `@safe` and why
+        - Which Raft methods are `@unsafe` and why (persistence I/O, state mutation, RPC calls)
+        - RustyCpp types used: `rusty::Arc<Cell<slotid_t>>`, `rusty::Box<Timer>`, `rusty::Option<Arc<PollThread>>`
+        - Borrow checking status of Raft files
+        - **Result**: Created `doc/thesis/09-appendix/rustycpp_safety.md` with 8 sections. 122 total annotations across 12 files. Summary table per file. @safe methods (52, 68%): all service layer (5/5), all executor (4/4), all frame (7/7), all commo (5/5), plus read-only accessors. @unsafe methods (24, 32%): persistence I/O (8 methods via LogStorage), state mutation (16 methods: doVote, OnRequestVote/AppendEntries/TimeoutNow, resetTimer, removeCmd), RPC/connection management (Disconnect/Reconnect/commo/GetState), random number generation. RustyCpp types: Arc<T> (18 occurrences: Arc<Cell<slotid_t>>, Arc<PollThread>, Arc<Future>, Arc<ServerStatus>), Box<T> (3: Box<Timer>, Box<RaftServiceImpl>), Cell<T> (6: slot_hint_), Option<T> (16: optional threads/status), Function (2: callbacks), Mutex (in persistence layer). Borrow checking: all raft/*.cc checked except testconf.cc, test.cc (test infrastructure), raft_main_helper.cc (third-party headers). Build: make borrow_check_raft. Key patterns: Arc<Cell<T>> for shared mutable state, Box<T> for owned resources, lambda over std::bind, inline @unsafe blocks.
+    - **Execution notes for the agent**:
+      - This is a documentation-only task. Do NOT modify any source code.
+      - Read each source file thoroughly before writing about it. Use exact line numbers and code snippets.
+      - Cross-reference between documents using relative markdown links (e.g., `[see RaftServer](../02-raft-core/server_implementation.md)`).
+      - Include ASCII sequence diagrams for: election flow, log replication flow, leadership transfer flow, Mako→Raft submission flow.
+      - Include Mermaid diagrams for: class hierarchy, state machines, architecture overview.
+      - Pull actual benchmark numbers from `doc/paxos_vs_raft_comparison.md` and CI logs in `logs/`.
+      - Each document should start with a brief "What this document covers" and end with "Related documents" links.
+      - Total expected output: ~30-40 pages worth of markdown across all documents.
+  - [x] *high* Merge All Thesis Documents into a Single Unified Markdown File [DONE 2026-02-09]
+    - **Goal**: Go to `doc/thesis/` and merge every document across all subdirectories (`01-mako-overview/` through `09-appendix/`, including `README.md`) into a single, self-contained Markdown file. The merged file should present all thesis content in a logical, readable order — essentially a complete thesis document in one file.
+    - **Output file**: `doc/thesis/complete_thesis.md` — a new file inside the thesis folder. **Do NOT delete or modify any existing files.** The original directory structure and individual documents must remain untouched.
+    - **Result**: Created `doc/thesis/merge_thesis.py` (441 lines) that merges all 34 source documents into `doc/thesis/complete_thesis.md` (14,557 lines). Features: hierarchical TOC with 994 clickable anchor links (all verified), heading level adjustment for consistent hierarchy (# for chapters, ## for sections, ### for subsections), HTML `<a id="">` anchor injection for duplicate headings (103 duplicates resolved), cross-reference conversion from file paths to internal anchors, Related Documents section stripping, code block integrity preservation (794 markers, all paired). Zero content loss verified (13,426 source lines → 14,557 merged lines, 8.4% overhead from TOC/separators/anchors). No existing files modified.
+    - **Requirements**:
+      - **Zero content loss**: Every piece of information, every code snippet, every diagram, every table, every cross-reference from every document must appear in the merged file. Nothing may be omitted, summarized, or shortened.
+      - **Table of Contents**: The file must begin with a comprehensive, hierarchical Table of Contents with clickable anchor links. The TOC should include both top-level chapters and all sub-sections within each chapter.
+      - **Logical ordering**: Arrange content in a sensible thesis-like order. Follow the existing chapter numbering (`01` through `09`) as the primary structure, and within each chapter arrange sub-documents in a logical reading order.
+      - **Heading hierarchy**: Adjust heading levels as needed so the merged document has a consistent, non-conflicting heading hierarchy (e.g., chapter titles as `#`, document titles as `##`, sections within documents as `###`, etc.).
+      - **Cross-references**: Update internal cross-reference links (e.g., `[see RaftServer](../02-raft-core/server_implementation.md)`) to use anchor links within the single file instead.
+      - **Preserve formatting**: All Mermaid diagrams, ASCII art, code blocks, tables, and lists must be preserved exactly as they appear in the source documents.
+    - **Source documents to merge** (in order):
+      - `doc/thesis/README.md` — Use as the basis for the introductory section and reading guide
+      - `doc/thesis/01-mako-overview/system_architecture.md`, `build_system.md`
+      - `doc/thesis/02-raft-core/protocol_overview.md`, `server_implementation.md`, `leader_election.md`, `log_replication.md`, `coordinator.md`, `rpc_layer.md`
+      - `doc/thesis/03-preferred-leader/design.md`, `implementation.md`, `testing.md`
+      - `doc/thesis/04-mako-integration/architecture.md`, `raft_worker.md`, `raft_main_helper.md`, `mako_hooks.md`, `challenges.md`
+      - `doc/thesis/05-standalone-testing/test_framework.md`, `test_cases.md`, `config_files.md`
+      - `doc/thesis/06-ci-testing/ci_script.md`, `test_scenarios.md`, `example_scripts.md`
+      - `doc/thesis/07-performance/methodology.md`, `results.md`, `analysis.md`, `figures.md`
+      - `doc/thesis/08-persistence/log_storage.md`, `recovery.md`, `snapshots.md`
+      - `doc/thesis/09-appendix/file_reference.md`, `configuration_reference.md`, `glossary.md`, `rustycpp_safety.md`
+    - **This is a documentation-only task. Do NOT modify any source code or existing documentation files.**
+  - [x] *high* Rewrite `doc/thesis/complete_thesis.md` to Be Conceptual, Thesis-Grade Documentation [DONE 2026-02-13, 03:15]
+    - **Goal**: Edit `doc/thesis/complete_thesis.md` in-place to transform it from a code-reference dictionary into a conceptual, thesis-quality document. The current document (~15,000 lines) reads like a code encyclopedia — listing variable names, line numbers, and build commands. It needs to be rewritten so it reads like a published paper or thesis chapter: explaining *what was built*, *why design decisions were made*, *how the system works behind the scenes*, and *what the contributions are* — not how to run commands or what a variable is called.
+    - **What to change**:
+      1. **Make it conceptual**: Explain the system's design, architecture, and behavior at a conceptual level. Instead of "variable `match_index_` at line 42 stores follower progress", write about *how the leader tracks replication progress across the cluster and why this is necessary for commit safety*. A reader should understand the ideas and design rationale, not memorize variable names.
+      2. **Write it like a thesis/paper**: The document should flow like academic writing — with motivation, design, implementation insights, evaluation, and conclusions. Each section should tell a story: what problem was being solved, what approach was taken, what challenges arose, and what the outcome was. It should be something a human can sit down and read front-to-back and understand the system deeply.
+      3. **Remove unnecessary noise**: Strip out content that serves no purpose in a thesis report — raw build commands, step-by-step "how to run" instructions, exhaustive variable listings, line-number references to source code, CI script walkthroughs, shell script argument tables, port number tables, etc. These belong in a developer guide, not a thesis. Keep only what helps explain the system conceptually.
+      4. **Be detailed and descriptive, not shallow**: This is NOT about making the document shorter for the sake of brevity. Be thorough and detailed in explaining concepts, design decisions, tradeoffs, and system behavior. Explain *why* things work the way they do. But the detail should be conceptual depth, not code-level minutiae.
+      5. **Preserve important technical content**: Keep architecture diagrams, protocol descriptions, performance analysis, correctness arguments, and design tradeoffs. These are the meat of a thesis. Just present them conceptually rather than as code walkthroughs.
+    - **What NOT to do**:
+      - Do NOT just summarize or shrink the document to 1000 lines. The goal is conceptual quality, not compression.
+      - Do NOT delete the file and start from scratch. Edit the existing `doc/thesis/complete_thesis.md`.
+      - Do NOT commit anything or git push. The author will handle version control.
+      - Do NOT modify any source code files or other documentation files. Only edit `complete_thesis.md`.
+    - **How to approach this**:
+      1. Read the existing `doc/thesis/complete_thesis.md` thoroughly to understand its current structure and content.
+      2. Read the individual thesis documents under `doc/thesis/` subdirectories (`01-mako-overview/` through `09-appendix/`) to understand the source material.
+      3. Read the actual source code (especially `src/deptran/raft/`, `src/deptran/paxos/`, `src/mako/`, `src/deptran/replication_helper.h`) to understand what the system actually does behind the scenes.
+      4. Rewrite each section of `complete_thesis.md` conceptually: explain the architecture, the protocol mechanics, the design decisions, the integration challenges, the testing philosophy, and the performance characteristics — all at a level that a thesis committee member can read and understand without looking at source code.
+      5. Keep the overall chapter structure (Mako Overview, Raft Core, Preferred Leader, Mako Integration, Testing, Performance, Persistence, Appendix) but rewrite the content within each chapter.
+    - **Context**: The author (Krish) implemented the Raft consensus module and integrated it into the Mako distributed transaction system alongside the existing Paxos path. This is for a thesis report — the document needs to clearly communicate what was built, why it matters, how it works, and what was learned. The audience is thesis committee members who understand distributed systems concepts but have never seen this codebase.
+    - **Output**: An edited `doc/thesis/complete_thesis.md` that reads like a thesis chapter — detailed, conceptual, well-structured, and human-readable.
+    - **This is a documentation-only task. Do NOT modify any source code. Do NOT commit or push.**
+  - [x] *high* Mako-Raft CI Test Suite: Fix all ci_mako_raft.sh tests so they pass [DONE 2026-02-07]
+    - **Goal**: The Raft CI tests are currently failing. The job here is to fix them one by one. Do NOT run `./ci/ci_mako_raft.sh all` upfront — that wastes time running every test when the first one already fails. Instead, pick one test at a time, run just that test, analyse the logs, figure out WHY it fails, fix the underlying bug in the C++ source or test infrastructure, rebuild, re-run that single test to confirm the fix, and only then move on to the next test. After all individual tests pass, run `./ci/ci_mako_raft.sh all` as a final confirmation. This is NOT about re-running tests until they happen to pass — you must find and fix the actual bugs.
+    - **Script**: `ci/ci_mako_raft.sh` — runs Raft-specific tests (simpleRaft, shard replication with Raft, etc.). Run individual tests with e.g. `./ci/ci_mako_raft.sh simpleRaft`.
+    - **Note — Build**: `make -j32` builds everything (both Paxos and Raft code paths, including all Raft test binaries). `MAKO_USE_RAFT=ON` is already set in CMakeCache. There is no need to use `make mako-raft` — a plain `make -j32` is sufficient. The core Raft/Paxos logic is compiled into the same binaries and switched at runtime via `replication_helper.cc` dispatcher.
+    - **Note — Goal**: `./ci/ci_mako_raft.sh all` must pass at the end. These are the Raft CI tests and we need them green.
+    - **Test execution order**: compile → simpleRaft → shard1ReplicationRaft → shard2ReplicationRaft → shard1ReplicationSimpleRaft → shard2ReplicationSimpleRaft → (finally) all
+    - **How to investigate failures**: After each test, examine the log files produced (e.g., `raft_a1.log`, `*_shard0-localhost-*.log`, `shard0-localhost.log`, `simple-raft-shard0-*.log`). Look for segfaults, assertion failures, timeouts, missing keywords (`agg_persist_throughput`, `replay_batch`, `ALL VERIFICATIONS PASSED`), abort ratios exceeding thresholds, and hanging processes. Check the test script's pass/fail criteria to understand what exactly failed.
+    - **Fixing approach**: For each failure, investigate root cause in the C++ source (not just the shell scripts). Fixes should be minimal and targeted. Do not weaken test assertions or thresholds. After any code changes, rebuild with `make -j32` (use `make clean && make -j32` if headers changed) before re-running the failing test. The cycle is: run single test → examine logs → find root cause → fix code → rebuild → re-run that test → confirm it passes → move to next test.
+    - **Note**: Each sub-task below should be done sequentially — do not skip ahead. After each sub-task, save logs to `logs/` folder with datetime prefix as proof.
+    - [x] *high* Task 1: Compile and verify Raft test binaries exist [DONE 2026-02-06, 23:36]
+      - Run: `make -j32`
+      - **Pass criteria**: Build completes with exit code 0, no compilation errors, and Raft test binaries exist in `build/` (`simpleRaft`, `simpleTransactionRepRaft`, `deptran_server`)
+      - If build fails, examine compiler errors, fix the source, and retry
+      - **Result**: Build completed successfully. All 6 Raft binaries built: simpleRaft, simpleTransactionRepRaft, deptran_server, testPreferredReplicaStartup, testPreferredReplicaLogReplication, testNoOps.
+    - [x] *high* Task 2: Run and fix simpleRaft test [DONE 2026-02-06, 23:38]
+      - Run: `./ci/ci_mako_raft.sh simpleRaft`
+      - **What it does**: Starts 3 Raft replicas (localhost as preferred leader, p1 and p2 as followers) across 3 partitions. Each partition submits 100 logs (3KB each, 5ms interval). Tests basic Raft replication.
+      - **Underlying script**: `examples/mako-raft-tests/simpleRaft.sh`
+      - **Log files to examine**: `raft_a1.log` (localhost/leader), `raft_a2.log` (p1/follower), `raft_a3.log` (p2/follower)
+      - **Pass criteria**: Both followers (p1, p2) have `follower_callbacks >= 300` (100 logs x 3 partitions)
+      - **Common failure modes**: Leader election timeout, replication not reaching followers, processes hanging during shutdown
+      - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
+      - **Result**: Test PASSED. Key fix: added `janus::set_replication_type(janus::ReplicationType::RAFT)` call before `setup()` in simpleRaft.cc so the dispatcher routes to raft_impl::setup(). All 3 replicas received 303 callbacks (>=300 required). p1=303, p2=303, leader=303.
+    - [x] *high* Task 3: Run and fix shard1ReplicationRaft test [DONE 2026-02-07, 00:03]
+      - Run: `./ci/ci_mako_raft.sh shard1ReplicationRaft`
+      - **What it does**: Starts 1 shard with 3 Raft replicas (localhost, p1, p2) running TPC-C benchmark (dbtest) with 6 threads for 60 seconds.
+      - **Underlying script**: `examples/mako-raft-tests/test_1shard_replication_raft.sh`
+      - **Log files to examine**: `test_1shard_replication_raft.sh_shard0-localhost-6.log` (leader), `test_1shard_replication_raft.sh_shard0-p1-6.log` (follower), `test_1shard_replication_raft.sh_shard0-p2-6.log` (follower)
+      - **Pass criteria**: (1) `agg_persist_throughput` keyword found in leader log, (2) `NewOrder_remote_abort_ratio < 20%`, (3) follower p1 has `replay_batch > 500`
+      - **Common failure modes**: Low throughput, high abort ratio, follower not replicating (replay_batch too low), missing keywords in output
+      - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
+      - **Result**: Test PASSED. Root cause: dbtest was using Paxos code path even when config had `ab: raft`. Fix: Added `detect_replication_type_from_config()` in mako.hh that scans config files for `ab: raft` and auto-sets replication type before setup() dispatches. Also added `--replication raft` to shard_raft.sh as safety measure. Throughput: 69784.6 ops/sec, replay_batch: 796.
+    - [x] *high* Task 4: Run and fix shard2ReplicationRaft test [DONE 2026-02-07, 00:40]
+      - Run: `./ci/ci_mako_raft.sh shard2ReplicationRaft`
+      - **What it does**: Starts 2 shards, each with 3 Raft replicas (localhost, p1, p2) running TPC-C benchmark with 6 threads. Polls for completion up to 120 seconds.
+      - **Underlying script**: `examples/mako-raft-tests/test_2shard_replication_raft.sh`
+      - **Log files to examine**: `shard0-localhost.log`, `shard0-p1.log`, `shard0-p2.log`, `shard1-localhost.log`, `shard1-p1.log`, `shard1-p2.log`
+      - **Pass criteria**: For both shards: (1) `agg_persist_throughput` keyword found in leader logs, (2) `NewOrder_remote_abort_ratio < 40%`
+      - **Common failure modes**: Port conflicts between shards, cross-shard RPC failures during Raft leader election, high abort ratios, benchmark timeout (not completing within 120s), race conditions during shutdown
+      - Note: This is historically the flakiest test. If it fails intermittently, run it 3-5 times to confirm reproducibility before fixing.
+      - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
+      - **Result**: Test PASSED 3/3 runs. No new code changes needed — the auto-detection fix from Task 3 (detect_replication_type_from_config + --replication raft in shard_raft.sh) resolved the issue. Throughput ~8400-8540 ops/sec per shard, abort ratio ~1.3-1.6%, replay_batch 800-1220.
+    - [x] *high* Task 5: Run and fix shard1ReplicationSimpleRaft test [DONE 2026-02-07, 00:50]
+      - Run: `./ci/ci_mako_raft.sh shard1ReplicationSimpleRaft`
+      - **What it does**: Starts 1 shard with 3 Raft replicas using `simpleTransactionRepRaft` binary (simpler transaction test, not TPC-C) for 40 seconds.
+      - **Underlying script**: `examples/mako-raft-tests/test_1shard_replication_simple_raft.sh`
+      - **Log files to examine**: `simple-raft-shard0-localhost.log` (leader), `simple-raft-shard0-p1.log` (follower), `simple-raft-shard0-p2.log` (follower)
+      - **Pass criteria**: (1) follower p1 has `replay_batch > 0`, (2) both followers (p1, p2) have `ALL VERIFICATIONS PASSED` in their logs (leader may hang during shutdown — that is a known issue and acceptable)
+      - **Common failure modes**: Data integrity verification failure on followers, replay_batch=0 (replication not working), leader hanging during shutdown (acceptable if followers pass)
+      - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
+      - **Result**: Test PASSED. No new code changes needed — auto-detection fix from Task 3 works for simpleTransactionRepRaft too. replay_batch: 6, all 3 nodes verified data integrity, all processes exited cleanly.
+    - [x] *high* Task 6: Run and fix shard2ReplicationSimpleRaft test [DONE 2026-02-07, 00:55]
+      - Run: `./ci/ci_mako_raft.sh shard2ReplicationSimpleRaft`
+      - **What it does**: Starts 2 shards, each with 3 Raft replicas using `simpleTransactionRepRaft` binary for 60 seconds.
+      - **Underlying script**: `examples/mako-raft-tests/test_2shard_replication_simple_raft.sh`
+      - **Log files to examine**: `simple-raft-shard0-localhost.log`, `simple-raft-shard0-p1.log`, `simple-raft-shard0-p2.log`, `simple-raft-shard1-localhost.log`, `simple-raft-shard1-p1.log`, `simple-raft-shard1-p2.log`
+      - **Pass criteria**: (1) both shard followers have `replay_batch > 0`, (2) all 4 followers (2 per shard) have `ALL VERIFICATIONS PASSED` (leaders may hang — acceptable)
+      - **Common failure modes**: Similar to shard2ReplicationRaft — port conflicts, cross-shard issues, data integrity failures on followers, insufficient replication
+      - If it fails: read the logs, find the root cause, fix the bug in source code, rebuild with `make -j32`, re-run. Repeat until it passes.
+      - **Result**: Test PASSED. No new code changes needed. replay_batch: 12 for both shards, all 6 nodes verified data integrity, all processes exited cleanly.
+    - [x] *high* Task 7: Run full suite and confirm all tests pass [DONE 2026-02-07]
+      - Run: `./ci/ci_mako_raft.sh all`
+      - This runs all tests in sequence: compile → simpleRaft → shard1ReplicationRaft → shard2ReplicationRaft → shard1ReplicationSimpleRaft → shard2ReplicationSimpleRaft
+      - **Pass criteria**: Script exits 0 and prints "All Raft CI steps completed successfully!"
+      - If any test fails in the full run but passed individually, investigate interactions between tests (e.g., hanging processes from a prior test interfering with the next one, port conflicts, leaked state)
+      - Run the full suite 3 times to confirm stability. Save all logs to `logs/` folder.
+      - If flaky, investigate and fix the flakiness (timing issues, process cleanup, port conflicts, etc.)
+      - **Result**: All 3 runs passed. Logs saved to `logs/raft_ci_run3.log` (and previous runs in `logs/raft_a1.log`, `logs/raft_a2.log`). Full `ci.sh all` regression check also passed (exit code 0) — no regressions in Paxos or other tests.
   - repeated task
     - [ ] for every hour, check https://github.com/makodb/mako/actions/workflows/ci.yml, see if the most recent done ci test is a failure. If it fails, add a fix task to TODO.md (attach the git commit hash so we do not add duplicated TODO items). Please don't commit this as a standalone change—it clutters the commit history. Instead, include this hourly update in your next commit along with other changes. Plan: docs/dev/hourly_ci_check_plan.md. Docs: docs/testing/hourly_ci_check.md. CI logs: logs/20260210-035554_7a75d1af_build.log, logs/20260210-035554_7a75d1af_ci.log. [last checked: 2026-03-20, 11:00 - GitHub API: 0 runners registered. 69+ queued runs (...4dacd9f0 most recent), no runner. Last completed run: 2026-03-11 CANCELLED. No new failures.]
     - [ ] for every day, check if rusty-cpp checks all source files, if not, fix. Make sure rusty-cpp is not disabled. Plan: docs/dev/daily_rusty_cpp_check_plan.md. Logs: logs/20260209_210751_96ff9cf9_build.log, logs/20260209_211353_96ff9cf9_ci_all.log. [last done: 2026-03-19, 08:00 - ENABLE_BORROW_CHECKING=ON. rusty-cpp submodule at f94b1db. No new C++ changes since clean rebuild at ff697dd0. All borrow-check targets pass. New: nativePerformanceBench.cc added (examples/), borrow-check not required for examples/.]
@@ -1543,3 +2181,44 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Files Changed**: ~50 files across src/rrr/, src/deptran/, test/
     - **Plan**: docs/dev/legacy_api_removal_plan.md
     - **Test Log**: logs/20260117_005921_f9ee09c5_legacy_api_removal_ci.log
+
+  - [x] *high* Single Raft Instance vs Multiple Raft Instances: Benchmarking & Thesis Chapter [DONE 2026-02-27, 19:31]
+    - **CRITICAL CONSTRAINT: NO `git push` and NO `git pull` allowed. This will be heavily penalised. Use only local git operations (checkout, stash, log, diff, show).**
+    - **Task 1: Understand Single Raft vs Multiple Raft Instances**
+      1. Study the current HEAD implementation of the **single Raft instance** approach. Read the relevant source files under `src/deptran/raft/` and any related config/test changes.
+      2. Compare it against the **multiple Raft instances** implementation at commit `4f99ffb6f9d728bb12377f362779248b2d16031b`. Use `git diff`, `git log`, and `git show` to understand what changed between the two approaches.
+      3. Document the key architectural differences:
+         - How the single instance consolidates what was previously multiple Raft groups
+         - Changes to leader election, log replication, and state machine application
+         - Impact on configuration and shard topology
+         - Any simplifications or added complexity
+    - **Task 2: Benchmark Both Implementations (10 runs each)**
+      1. **Single Raft instance (current HEAD):**
+         - Run `./ci/ci_mako_raft.sh all` 10 times.
+         - Record the throughput from each run.
+         - Compute average, min, max, and standard deviation.
+      2. **Multiple Raft instances (commit `4f99ffb6`):**
+         - `git stash` any local changes if needed, then `git checkout 4f99ffb6`.
+         - Build the project (`make clean && make mako-raft -j128`).
+         - Run `./ci/ci_mako_raft.sh all` 10 times.
+         - Record the throughput from each run.
+         - Compute average, min, max, and standard deviation.
+         - Switch back to the original branch when done (`git checkout -`).
+      3. Compare the results side by side: throughput differences, variance, and any anomalies.
+    - **Task 3: Write a New Chapter in `doc/thesis/complete_thesis.md`**
+      - Introduce a new chapter covering:
+        1. **Motivation**: Why move from multiple Raft instances to a single Raft instance.
+        2. **Design**: Architectural overview of the single Raft instance approach, with comparison to the multiple-instance design.
+        3. **Implementation Differences**: Key code-level changes, configuration changes, and protocol adjustments.
+        4. **Evaluation / Benchmarks**: Present the throughput data collected in Task 2 in a table format. Include per-test throughput for single vs multiple Raft (all 10 runs), summary statistics (average, min, max, stddev), and analysis of performance differences.
+        5. **Discussion**: Trade-offs, when each approach is preferable, and implications for geo-replication.
+      - Update the table of contents and any cross-references in the thesis document accordingly.
+    - **Leaf Tasks** (work through in order):
+      - [x] Leaf 1: Understand & document architectural differences between single vs multiple Raft instances. Study the diff between HEAD and commit 4f99ffb6. Output: `docs/dev/single_vs_multi_raft_analysis.md` [DONE 2026-02-27]
+      - [x] Leaf 2: Benchmark single Raft instance (current HEAD) — 10 runs of shard1ReplicationRaft. Mean: 209,183 ops/sec (CV 1.9%). Output: `docs/dev/single_raft_benchmark_results.md` [DONE 2026-02-27]
+      - [x] Leaf 3: Benchmark multiple Raft instances (commit 4f99ffb6) — 10 runs of shard1ReplicationRaft. Mean: 137,952 ops/sec (CV 34.6%). Output: `docs/dev/multi_raft_benchmark_results.md` [DONE 2026-02-27]
+      - [x] Leaf 4: Write thesis chapter (Chapter 8) in `doc/thesis/complete_thesis.md` — covers motivation, design, implementation, benchmarks (51.6% improvement), and discussion. [DONE 2026-02-27]
+    - **Reminders**:
+      - Use long timeouts for builds (at least 600000ms for incremental, 1800000ms for full builds).
+      - Build command: `make mako-raft -j128`
+      - CI test command: `./ci/ci_mako_raft.sh all`

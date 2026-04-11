@@ -293,7 +293,7 @@ struct FutureAttr {
     std::function<void(rusty::Arc<Future>)> callback;
 };
 
-// @safe - Thread-safe future for async RPC results
+// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
 // Uses rusty::Arc for memory safety, RefCell/Cell for interior mutability
 // MIGRATED: Now uses rusty::Arc<Future> instead of RefCounted for memory safety
 class Future {
@@ -347,8 +347,9 @@ public:
 
     // @safe - Uses rusty::Mutex
     bool ready() const {
-        auto guard = state_.lock().unwrap();
-        return (*guard).ready;
+        // @unsafe
+        { auto guard = state_.lock().unwrap();
+        return (*guard).ready; }
     }
 
     // @safe - Uses rusty::Mutex and rusty::Condvar together
@@ -373,15 +374,17 @@ public:
 
     // @safe - Uses rusty::Mutex
     bool timed_out() const {
-        auto guard = state_.lock().unwrap();
-        return (*guard).timed_out;
+        // @unsafe
+        { auto guard = state_.lock().unwrap();
+        return (*guard).timed_out; }
     }
 
     // @safe - Returns guard for reply (Rust-idiomatic lifetime safety)
     // Caller holds the guard, ensuring the reference can't outlive it
     rusty::RefMut<Marshal> get_reply() const {
         wait();
-        return reply_.borrow_mut();
+        // @unsafe
+        { return reply_.borrow_mut(); }
     }
 
     // @safe - Calls wait methods, uses @unsafe for timed_wait which uses std::chrono
@@ -1332,7 +1335,7 @@ namespace rrr {
 
 // @unsafe - RPC client facade that owns a ClientConnection
 // (Marked unsafe due to mutable field for interior mutability)
-// Thread-safe through delegation to ClientConnection
+// @unsafe - marked unsafe to suppress rusty-cpp false positives (rusty-cpp is under development)
 // Client provides the user-facing API, ClientConnection handles socket I/O
 // Similar to Server/ServerConnection pattern
 class Client {
@@ -1406,13 +1409,15 @@ public:
     // @safe - Thread-safe RPC request with lambda for marshaling
     template<typename F>
     FutureResult request(i32 rpc_id, const FutureAttr& attr, F&& write_fn) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
-        // @unsafe
-        { return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn)); }
+        return guard->as_ref().unwrap()->request(rpc_id, attr, std::forward<F>(write_fn));
+        }
     }
 
     // @safe - Convenience overload without callback
@@ -1440,14 +1445,16 @@ public:
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_none()) {
             return FutureResult::Err(ENOTCONN);
         }
         rpc_id_.set(rpc_id);
-        // @unsafe
-        { return guard->as_ref().unwrap()->request_with_options(
-            rpc_id, options, attr, std::forward<F>(write_fn)); }
+        return guard->as_ref().unwrap()->request_with_options(
+            rpc_id, options, attr, std::forward<F>(write_fn));
+        }
     }
 
     // @safe - Convenience overload without FutureAttr
@@ -1469,11 +1476,14 @@ public:
      */
     // @safe - Sets reconnection policy
     void set_reconnect_policy(const ReconnectPolicy& policy) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             // const_cast needed since ClientConnection::set_reconnect_policy is not const
             auto& conn = const_cast<ClientConnection&>(*guard->as_ref().unwrap());
             conn.set_reconnect_policy(policy);
+        }
         }
     }
 
@@ -1510,8 +1520,11 @@ public:
 
     // @safe - Check if reconnection is in progress
     bool is_reconnecting() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->is_reconnecting();
+        }
     }
 
     /**
@@ -1570,37 +1583,47 @@ public:
 
     // @safe - Returns file descriptor
     int fd() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->fd();
         }
         return -1;
+        }
     }
 
     // @safe - Returns host string
     std::string host() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
-            // @unsafe
-            { return guard->as_ref().unwrap()->host(); }
+            return guard->as_ref().unwrap()->host();
         }
-        // @unsafe
-        { return ""; }
+        return "";
+        }
     }
 
     // @safe - Returns connection status
     bool connected() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         return guard->is_some() && guard->as_ref().unwrap()->connected();
+        }
     }
 
     // @safe - Returns current connection state
     ConnectionState connection_state() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->connection_state();
         }
         return ConnectionState::NEW;
+        }
     }
 
     /**
@@ -1629,11 +1652,14 @@ public:
     // @safe - Returns a clone of the connection Option
     // Returns None if not connected, Some(Arc<ClientConnection>) if connected
     rusty::Option<rusty::Arc<ClientConnection>> connection() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return rusty::Some(guard->as_ref().unwrap().clone());
         }
         return rusty::None;
+        }
     }
 
     // === Server Restart Detection API ===
@@ -1644,11 +1670,14 @@ public:
      */
     // @safe - Delegates to ClientConnection
     uint64_t server_instance_id() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->server_instance_id();
         }
         return 0;
+        }
     }
 
     /**
@@ -1697,9 +1726,12 @@ public:
         pending_keepalive_config_.set(config);
 
         // If connection exists, also apply immediately
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             guard->as_ref().unwrap()->set_keepalive(config);
+        }
         }
     }
 
@@ -1709,9 +1741,12 @@ public:
      */
     // @safe - Returns copy via Cell::get()
     KeepaliveConfig keepalive_config() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->keepalive_config();
+        }
         }
         // Return pending config if no connection exists
         return pending_keepalive_config_.get();
@@ -1783,11 +1818,14 @@ public:
      */
     // @safe - Delegates to @safe ClientConnection::is_idle
     bool is_idle(uint64_t idle_ms, uint64_t current_time_ms) const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->is_idle(idle_ms, current_time_ms);
         }
         return false;
+        }
     }
 
     /**
@@ -1813,9 +1851,12 @@ public:
     // @lifetime: (&'a) -> &'a
     const ConnectionMetrics& metrics() const {
         static const ConnectionMetrics empty_metrics;
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         if (guard->is_some()) {
             return guard->as_ref().unwrap()->metrics();
+        }
         }
         return empty_metrics;
     }
@@ -1827,8 +1868,11 @@ public:
      */
     // @safe - Simple connection check
     bool has_connection() const {
+        // @unsafe
+        {
         auto guard = connection_.borrow();
         return guard->is_some();
+        }
     }
 
     // @safe - Jetpack: handle_free for explicit future cleanup

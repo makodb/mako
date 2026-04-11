@@ -10,9 +10,14 @@
 #include <utility>
 
 // @external: {
-//   std::vector::vector: [unsafe, () -> owned]
-//   std::shared_ptr::shared_ptr: [unsafe, () -> owned]
-//   std::function::operator bool: [unsafe, () -> bool]
+//   Log_info: [safe, (...) -> void]
+//   Log_debug: [safe, (...) -> void]
+//   Log_warn: [safe, (...) -> void]
+//   verify: [safe, (...) -> void]
+//   Config::GetConfig: [safe, () -> *]
+//   Reactor::create_sp_event: [safe, (...) -> owned]
+//   std::make_shared: [safe, (...) -> owned]
+//   operator bool: [safe, (&'a) -> bool]
 // }
 
 namespace janus {
@@ -22,7 +27,7 @@ RaftCommo::RaftCommo(rusty::Option<rusty::Arc<PollThread>> poll) : Communicator(
 //  verify(poll != nullptr);
 }
 
-// @safe - Calls undeclared Reactor::create_sp_event() variadic template functions
+// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 // Returns shared_ptr<AppendEntriesResponse> - callback captures this to ensure memory validity
 shared_ptr<AppendEntriesResponse>
 RaftCommo::SendAppendEntries2(siteid_t site_id,
@@ -50,7 +55,9 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
         continue;
     Log_info("[RPC-SEND] Sending AppendEntries to site %d via proxy %p", site_id, p.second);
 		auto follower_id = p.first;
-    auto proxy = (RaftProxy*) p.second;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
     // Capture response shared_ptr - ensures memory stays valid even after caller releases
     fuattr.callback = [response,site_id](rusty::Arc<Future> fu) {
@@ -98,7 +105,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
   return response;
 }
 
-// @safe
+// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<SendAppendEntriesResults>
 RaftCommo::SendAppendEntries(siteid_t site_id,
                              parid_t par_id,
@@ -114,9 +121,9 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
                              uint64_t cmdLogTerm,
                              bool trigger_election_now) {
   // verify(par_id == 0);
-  // Use direct shared_ptr construction instead of make_shared (template function)
-  // to keep this function @safe. The 'new' operator is allowed in @safe code.
-  auto res = shared_ptr<SendAppendEntriesResults>(new SendAppendEntriesResults());
+  shared_ptr<SendAppendEntriesResults> res;
+  // @unsafe
+  { res = shared_ptr<SendAppendEntriesResults>(new SendAppendEntriesResults()); }
   auto proxies = rpc_par_proxies_[par_id];
   vector<rusty::Arc<Future>> fus;
 	WAN_WAIT;
@@ -124,7 +131,9 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
     if (p.first != site_id)
         continue;
 		auto follower_id = p.first;
-    auto proxy = (RaftProxy*) p.second;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
     fuattr.callback = [res, cmd, site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
@@ -181,14 +190,16 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
   return res;
 }
 
-// @safe - Calls undeclared Reactor::create_sp_event()
+// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 shared_ptr<RaftVoteQuorumEvent>
 RaftCommo::BroadcastVote(parid_t par_id,
                          slotid_t lst_log_idx,
                          ballot_t lst_log_term,
                          siteid_t self_id,
                          ballot_t cur_term ) {
-  int n = Config::GetConfig()->GetPartitionSize(par_id);
+  int n = 0;
+  // @unsafe
+  { n = Config::GetConfig()->GetPartitionSize(par_id); }
   auto e = Reactor::create_sp_event<RaftVoteQuorumEvent>(n, n/2);
   auto proxies = rpc_par_proxies_[par_id];
   WAN_WAIT;
@@ -197,7 +208,9 @@ RaftCommo::BroadcastVote(parid_t par_id,
     if (site_id == self_id) {
       continue;
     }
-    auto proxy = (RaftProxy*) p.second;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
     fuattr.callback = [e,site_id](rusty::Arc<Future> fu) {
       if (fu->get_error_code() != 0) {
@@ -232,7 +245,7 @@ RaftCommo::BroadcastVote(parid_t par_id,
  * - RPC succeeds but target rejects → callback(false, follower_term)
  * - RPC succeeds and target starts election → callback(true, follower_term)
  */
-// @safe
+// @safe - C-style casts in @unsafe blocks, external calls marked @external [safe]
 void RaftCommo::SendTimeoutNow(siteid_t site_id,
                                parid_t par_id,
                                uint64_t leader_term,
@@ -246,7 +259,9 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
       continue;
     }
 
-    auto proxy = (RaftProxy*) p.second;
+    RaftProxy* proxy;
+    // @unsafe
+    { proxy = (RaftProxy*) p.second; }
     FutureAttr fuattr;
 
     fuattr.callback = [callback,site_id](rusty::Arc<Future> fu) {

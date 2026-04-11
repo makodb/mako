@@ -546,12 +546,10 @@ public:
     auto e = item.key<versioned_value*>();
     auto read_version = item.template read_value<Version>();
     bool valid = validityCheck(item, e);
-    //if (!valid) Warning("fail to check validity");
-    if (!valid)
+    if (!valid) {
       return false;
-    auto ret = TransactionTid::check_version(e->version(), read_version);
-    //if (!ret) Warning("fail to check version");
-    return ret;
+    }
+    return TransactionTid::check_version(e->version(), read_version);
   }
 
   #define RESET_NODE_BY_E(e) \

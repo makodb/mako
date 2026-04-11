@@ -14,14 +14,43 @@
 #include <deque>
 #include <thread>
 
+// @external: {
+//   Log_info: [safe, (...) -> void],
+//   Log_debug: [safe, (...) -> void],
+//   Log_warn: [safe, (...) -> void],
+//   Log_error: [safe, (...) -> void],
+//   Log_fatal: [safe, (...) -> void],
+//   verify: [safe, (bool) -> void],
+//   Config::GetConfig: [safe, () -> Config*],
+//   Frame::GetFrame: [safe, (int) -> Frame*],
+//   std::make_shared: [safe, (...) -> shared_ptr<T>],
+//   dynamic_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>],
+//   static_pointer_cast: [safe, (shared_ptr<T>) -> shared_ptr<U>],
+//   dynamic_cast: [safe, (T*) -> U*],
+//   rrr::PollThread::create: [safe, () -> Arc<PollThread>],
+//   rusty::make_box: [safe, (...) -> Box<T>],
+//   std::this_thread::sleep_for: [safe, (duration) -> void],
+//   std::max: [safe, (T, T) -> T],
+//   malloc: [unsafe, (size_t) -> void*],
+//   memcpy: [unsafe, (void*, const void*, size_t) -> void*]
+// }
+
 namespace janus {
 
 // Runtime replication switching - always declare raft functions
 extern std::function<void(int)> leader_callback_;
+// @unsafe - uses raw global std::function, unbounded callback invocation
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
+// @unsafe - uses raw global std::function, unbounded callback invocation
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
 
-// RaftWorker bridges raw RaftServer slots to the callback shape Mako expects.
+#ifdef SINGLE_RAFT_INSTANCE
+// Watermark callback type used for per-partition leader/follower routing
+using watermark_callback_t = std::function<int(const char*&, int, int, int,
+    std::queue<std::tuple<int, int, int, int, const char*>>&)>;
+#endif
+
+// @unsafe - class contains raw pointers and manual memory management
 class RaftWorker {
 private:
   // Callbacks for log application
@@ -34,6 +63,15 @@ private:
     leader_callback_par_id_return_ = nullptr;
   std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char*>>&)>
     follower_callback_par_id_return_ = nullptr;
+
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Per-partition callback maps for routing apply callbacks
+  // When a single RaftWorker handles all partitions, Next() extracts par_id
+  // from the committed entry and routes to the correct partition's callback.
+  std::map<uint32_t, watermark_callback_t> leader_callbacks_by_partition_;
+  std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
+  std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
+#endif
 
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
@@ -92,73 +130,116 @@ public:
   static const uint32_t CtrlPortDelta = 10000;
 
   // Constructor & Destructor
+  // @safe
   RaftWorker();
+  // @safe - cleanup operations are bounded
   ~RaftWorker();
 
   // Setup methods
+  // @unsafe - uses raw pointers, dynamic_cast
   void SetupBase();
+  // @unsafe - uses new, raw pointers
   void SetupService();
+  // @unsafe - uses raw pointers
   void SetupCommo();
+  // @unsafe - uses new, raw pointers
   void SetupHeartbeat();
 
   // Shutdown
+  // @unsafe - uses delete on raw pointers (manual memory management)
   void ShutDown();
+  // @safe - bounded pointer dereferences
   void WaitForShutdown();
+  // @safe - std::thread creation is bounded
   void StartSubmitThread();
+  // @safe - mutex/condvar operations are bounded
   void StopSubmitThread();
+  // @safe - raw pointer parameter is bounded (length-delimited)
   void EnqueueLog(const char* log, int len, uint32_t par_id, int batch_size);
+  // @safe
   bool HasSubmitThread() const { return submit_thread_started_; }
 
   // Leadership & Partition queries
+  // @unsafe - uses raw pointers, dynamic_cast
   bool IsLeader(uint32_t par_id);
+  // @unsafe - uses raw pointers
   bool IsPartition(uint32_t par_id);
 
   // Log submission (called from Mako)
+  // @unsafe - uses raw pointers, shared_ptr, dynamic_cast
   void Submit(const char* log, int len, uint32_t par_id);
+  // @safe
   void IncSubmit();
+  // @safe - mutex/condvar operations are bounded
   void WaitForSubmit();
 
   // Callback registration (Mako watermark integration)
+  // @safe - stores callback for later invocation
   void register_apply_callback(std::function<void(const char*, int)> cb);
+  // @safe - stores callback for later invocation
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)> cb);
 
   // RAFT CHANGE: Separate registration for leader and follower callbacks
+  // @safe - stores callback for later invocation
   void register_leader_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
   );
+  // @safe - stores callback for later invocation
   void register_follower_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
   );
 
+#ifdef SINGLE_RAFT_INSTANCE
+  // SINGLE-RAFT: Per-partition callback registration
+  // Used when a single RaftWorker handles all partitions
+  // @safe - stores callback in per-partition map for later invocation
+  void register_leader_callback_for_partition(uint32_t par_id, watermark_callback_t cb);
+  // @safe - stores callback in per-partition map for later invocation
+  void register_follower_callback_for_partition(uint32_t par_id, watermark_callback_t cb);
+#endif
+
   // Legacy method for compatibility (deprecated - use leader/follower specific methods)
+  // @safe - delegates to register_follower_callback_par_id_return
   void register_apply_callback_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)> cb
   );
 
   // Application callback (called from RaftServer::applyLogs)
+  // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
   int Next(int slot, shared_ptr<Marshallable> cmd);
 
-  // Helper methods - returns a clone of the poll thread worker
+  // @safe
   rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {
-    return svr_poll_thread_worker_.clone();
+    // @unsafe
+    { // Option::clone on Arc<PollThread>
+      return svr_poll_thread_worker_.clone();
+    }
   }
 
+  // @unsafe - uses dynamic_cast, returns raw pointer
   RaftServer* GetRaftServer() {
     return dynamic_cast<RaftServer*>(rep_sched_);
   }
 
-  // Helper to create TpcCommitCommand wrapper for raw byte payloads
-  // Used by both Mako production (raw serialized transactions) and tests
-  // Wraps raw bytes in VecPieceData structure required by RAFT_BATCH_OPTIMIZATION
+  // @unsafe - uses std::make_shared, raw pointers
+#ifdef SINGLE_RAFT_INSTANCE
+  std::shared_ptr<TpcCommitCommand> CreateRaftLogCommand(
+      const char* log_entry,
+      int length,
+      txnid_t tx_id,
+      uint32_t par_id);
+#else
   std::shared_ptr<TpcCommitCommand> CreateRaftLogCommand(
       const char* log_entry,
       int length,
       txnid_t tx_id);
+#endif
 
 private:
+  // @safe - mutex/condvar operations are bounded
   void SubmitLoop();
 };
 
