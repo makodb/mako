@@ -7,7 +7,8 @@ Source: `docs/dev/srpc-issues.md`
 Close correctness gaps between SRPC documented behavior and production behavior, then align documentation and tests so regressions are caught automatically.
 
 ## Release Criteria (must all pass)
-- [ ] No client fd/socket leaks during reconnect/error churn.
+- [x] No client fd/socket leaks during reconnect/error churn.
+  - Re-verified on 2026-04-11 with focused leak coverage in `test_rpc_state_integration` (`ErrorPathClosesSocketFd`, `MarkClosingStaysNonTerminalUntilPollClose`, `ClosedFdCleanupInvokesCloseCallbackBeforeErase`, `RepeatedErrorReconnectCyclesDoNotIncreaseFdCount`, `StressFastConnectCloseCyclesDoNotIncreaseFdCount`) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 32/32 passed).
 - [ ] No orphan/stuck futures when request buffering overflows or replay fails.
 - [ ] Retry/reconnect policies are actually enforced (not just stored configs).
 - [ ] Graceful drain blocks on real in-flight request count.
