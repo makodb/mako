@@ -17,6 +17,10 @@ def extract_tagged_cpp_snippets(book_text: str):
             tags = set(line.split()[1:])
             if "srpc-compile-client" in tags:
                 profile = "client"
+            elif "srpc-compile-server" in tags:
+                profile = "server"
+            elif "srpc-compile-codegen" in tags:
+                profile = "codegen"
             elif "srpc-compile" in tags:
                 profile = "reliability"
             else:
@@ -91,6 +95,86 @@ void snippet_{idx}() {{
     (void)client;
     (void)arg1;
     (void)arg2;
+}}
+
+int main() {{
+    snippet_{idx}();
+    return 0;
+}}
+"""
+    if profile == "server":
+        return f"""#include <time.h>
+#include "src/rrr/rpc/server.hpp"
+
+using namespace rrr;
+
+inline int compute(int v) {{ return v; }}
+
+class MyService : public Service {{
+public:
+    int __reg_to__(Server& svr, size_t svc_index) override {{
+        (void)svr;
+        (void)svc_index;
+        return 0;
+    }}
+
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {{
+        (void)rpc_id;
+        (void)req;
+        (void)weak_sconn;
+    }}
+}};
+
+void snippet_{idx}() {{
+{snippet}
+}}
+
+int main() {{
+    snippet_{idx}();
+    return 0;
+}}
+"""
+    if profile == "codegen":
+        return f"""#include <time.h>
+#include "src/rrr/rpc/client.hpp"
+
+using namespace rrr;
+
+struct UserInfo {{
+    int id = 0;
+    std::string name;
+    double balance = 0.0;
+}};
+
+inline Marshal& operator>>(Marshal& m, UserInfo& user) {{
+    m >> user.id >> user.name >> user.balance;
+    return m;
+}}
+
+class MyServiceProxy {{
+public:
+    explicit MyServiceProxy(const Client* client) : client_(client) {{}}
+
+    i32 get_user(i32 id, UserInfo* user) {{
+        (void)id;
+        (void)user;
+        return 0;
+    }}
+
+    FutureResult async_get_user(i32 id) {{
+        (void)id;
+        return client_->request(0x1001, [](Marshal&) {{}});
+    }}
+
+private:
+    const Client* client_;
+}};
+
+void snippet_{idx}() {{
+    auto poll_thread = PollThread::create();
+    auto client = Client::create(poll_thread.clone());
+
+{snippet}
 }}
 
 int main() {{

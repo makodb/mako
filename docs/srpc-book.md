@@ -657,7 +657,7 @@ KeepaliveConfig::disabled();    // No keepalive
 
 Implement the `Service` interface to handle RPCs:
 
-```cpp
+```cpp srpc-compile-server
 class MyService : public Service {
 public:
     enum : i32 { RPC_DO_WORK = 0x1001 };
@@ -687,7 +687,7 @@ public:
 
 ### Server Lifecycle
 
-```cpp
+```cpp srpc-compile-server
 auto poll_thread = PollThread::create();
 Server server(rusty::Some(poll_thread.clone()));
 server.reg_service(rusty::make_box<MyService>());
@@ -719,7 +719,7 @@ RUNNING -> STOP_ACCEPTING -> DRAINING -> CLOSING -> STOPPED
 
 The `RpcServiceContext` maps RPC IDs to service implementations:
 
-```cpp
+```cpp srpc-no-compile
 class RpcServiceContext {
     // Map rpc_id -> Service implementation
     // Uses rusty::Arc for thread-safe sharing
@@ -976,7 +976,7 @@ This produces:
 
 ### Generated Client Usage
 
-```cpp
+```cpp srpc-compile-codegen
 MyServiceProxy proxy(client.get());
 
 // Synchronous call
