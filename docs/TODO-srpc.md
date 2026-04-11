@@ -176,15 +176,20 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream G: Metrics and Load Balancer Accuracy (P2)
 ### Code TODO
-- [ ] Add explicit in-flight counter to `ConnectionMetrics`.
-- [ ] Update in-flight on send and all terminal completions (success/fail/timeout/drop).
-- [ ] Switch `LEAST_CONNECTIONS` strategy to explicit in-flight count.
+- [x] Add explicit in-flight counter to `ConnectionMetrics`.
+  - Implemented on 2026-04-11 with explicit `in_flight_requests` tracking and saturating decrement hooks for completed/failed/timed-out/dropped requests.
+- [x] Update in-flight on send and all terminal completions (success/fail/timeout/drop).
+  - `record_request_sent()` now increments in-flight; completed/failed/timed-out paths and pending-future drop paths now decrement with saturation.
+- [x] Switch `LEAST_CONNECTIONS` strategy to explicit in-flight count.
+  - `LoadBalancer::select_least_connections()` now uses `ConnectionMetrics::in_flight_requests()` instead of derived sent-completed math.
 - [ ] Export retry/queue-drop/circuit-state counters for troubleshooting.
 
 ### Tests TODO
-- [ ] Add unit test: in-flight counter never negative and returns to zero.
+- [x] Add unit test: in-flight counter never negative and returns to zero.
+  - Added `ConnectionMetricsTest.InFlightNeverNegativeAndReturnsToZero` in `test/rpc_metrics_test.cc`.
 - [ ] Add integration test: `LEAST_CONNECTIONS` chooses lower in-flight client under skewed load.
-- [ ] Run existing: `test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`.
+- [x] Run existing: `test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`.
+  - Verified on 2026-04-11 (`test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`) and full RPC-focused suite (27/27 passed).
 
 ### DoD
 - [ ] Load-balancer decisions align with real request pressure.

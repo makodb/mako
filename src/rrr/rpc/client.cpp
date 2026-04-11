@@ -141,6 +141,7 @@ void ClientConnection::invalidate_pending_futures() {
   // Guard dropped here, releasing lock
 
   for (auto& fu: futures) {
+    metrics_.record_request_dropped();
     fu->error_code_.set(ENOTCONN);
     fu->notify_ready(fu);  // Pass Arc to self for callback safety
     // Arc auto-released when list destroyed
@@ -161,6 +162,7 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
 
   if (fu_opt.is_some()) {
     auto fu = fu_opt.unwrap();
+    metrics_.record_request_dropped();
     fu->error_code_.set(err);
     // @unsafe - Future::notify_ready uses interior mutability + callback execution.
     { fu->notify_ready(fu); }
@@ -219,6 +221,7 @@ void ClientConnection::handle_free(i64 xid) const {
   auto it = guard->find(xid);
   if (it != guard->end()) {
     guard->erase(it);
+    metrics_.record_request_dropped();
     // Arc auto-released when removed from map
   }
   // Guard dropped here, releasing lock

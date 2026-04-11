@@ -46,6 +46,11 @@ public:
         return requests_timed_out_.get();
     }
 
+    // @safe - Get number of currently in-flight requests.
+    uint64_t in_flight_requests() const {
+        return in_flight_requests_.get();
+    }
+
     // === Data Transfer Counters ===
 
     // @safe - Get total bytes sent
@@ -119,11 +124,13 @@ public:
     // @safe - Record that a request was sent
     void record_request_sent() const {
         requests_sent_.set(requests_sent_.get() + 1);
+        in_flight_requests_.set(in_flight_requests_.get() + 1);
     }
 
     // @safe - Record that a request completed successfully with latency
     void record_request_completed(uint64_t latency_us) const {
         requests_completed_.set(requests_completed_.get() + 1);
+        decrement_in_flight();
         total_latency_us_.set(total_latency_us_.get() + latency_us);
 
         // Update min/max
@@ -141,16 +148,24 @@ public:
     // @safe - Record that a request completed (without latency tracking)
     void record_request_completed() const {
         requests_completed_.set(requests_completed_.get() + 1);
+        decrement_in_flight();
     }
 
     // @safe - Record that a request failed
     void record_request_failed() const {
         requests_failed_.set(requests_failed_.get() + 1);
+        decrement_in_flight();
     }
 
     // @safe - Record that a request timed out
     void record_request_timeout() const {
         requests_timed_out_.set(requests_timed_out_.get() + 1);
+        decrement_in_flight();
+    }
+
+    // @safe - Record that an in-flight request was dropped/cancelled.
+    void record_request_dropped() const {
+        decrement_in_flight();
     }
 
     // @safe - Record bytes sent
@@ -185,6 +200,7 @@ public:
         requests_completed_.set(0);
         requests_failed_.set(0);
         requests_timed_out_.set(0);
+        in_flight_requests_.set(0);
         bytes_sent_.set(0);
         bytes_received_.set(0);
         reconnect_count_.set(0);
@@ -201,6 +217,7 @@ private:
     mutable rusty::Cell<uint64_t> requests_completed_{0};
     mutable rusty::Cell<uint64_t> requests_failed_{0};
     mutable rusty::Cell<uint64_t> requests_timed_out_{0};
+    mutable rusty::Cell<uint64_t> in_flight_requests_{0};
 
     // Data transfer counters
     mutable rusty::Cell<uint64_t> bytes_sent_{0};
@@ -215,6 +232,15 @@ private:
     mutable rusty::Cell<uint64_t> total_latency_us_{0};
     mutable rusty::Cell<uint64_t> min_latency_us_{std::numeric_limits<uint64_t>::max()};
     mutable rusty::Cell<uint64_t> max_latency_us_{0};
+
+    // @safe - Saturating decrement for in-flight counter.
+    void decrement_in_flight() const {
+        auto in_flight = in_flight_requests_.get();
+        if (in_flight == 0) {
+            return;
+        }
+        in_flight_requests_.set(in_flight - 1);
+    }
 };
 
 }  // namespace rrr

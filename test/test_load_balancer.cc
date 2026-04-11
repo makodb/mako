@@ -115,6 +115,13 @@ public:
         }
     }
 
+    void add_failed_requests(uint64_t count) {
+        for (uint64_t i = 0; i < count; i++) {
+            metrics_.record_request_sent();
+            metrics_.record_request_failed();
+        }
+    }
+
     // Set latency (average)
     void set_latency(uint64_t latency_us) {
         // Record a request with this latency
@@ -230,6 +237,22 @@ TEST_F(LoadBalancerTest, LeastConnectionsSelectsFirstWhenEqual) {
     );
 
     EXPECT_EQ(idx, 0);  // First client when all equal
+}
+
+TEST_F(LoadBalancerTest, LeastConnectionsUsesExplicitInFlightCounter) {
+    // Client 0 has history but no active requests.
+    clients_[0]->add_failed_requests(50);
+    // Client 1 has one active in-flight request.
+    clients_[1]->set_pending(1);
+
+    size_t idx = LoadBalancer::select(
+        LoadBalancingStrategy::LEAST_CONNECTIONS,
+        clients_,
+        state_,
+        0
+    );
+
+    EXPECT_EQ(idx, 0);
 }
 
 TEST_F(LoadBalancerTest, LeastLatencySelectsClientWithLowestLatency) {

@@ -51,6 +51,7 @@ TEST(ConnectionMetricsTest, InitialValuesZero) {
     EXPECT_EQ(metrics.requests_completed(), 0u);
     EXPECT_EQ(metrics.requests_failed(), 0u);
     EXPECT_EQ(metrics.requests_timed_out(), 0u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_EQ(metrics.retry_attempts(), 0u);
     EXPECT_EQ(metrics.bytes_sent(), 0u);
     EXPECT_EQ(metrics.bytes_received(), 0u);
@@ -64,10 +65,12 @@ TEST(ConnectionMetricsTest, RequestSentIncrement) {
 
     metrics.record_request_sent();
     EXPECT_EQ(metrics.requests_sent(), 1u);
+    EXPECT_EQ(metrics.in_flight_requests(), 1u);
 
     metrics.record_request_sent();
     metrics.record_request_sent();
     EXPECT_EQ(metrics.requests_sent(), 3u);
+    EXPECT_EQ(metrics.in_flight_requests(), 3u);
 }
 
 TEST(ConnectionMetricsTest, RequestCompletedWithLatency) {
@@ -77,6 +80,7 @@ TEST(ConnectionMetricsTest, RequestCompletedWithLatency) {
     metrics.record_request_completed(1000);  // 1000 microseconds
 
     EXPECT_EQ(metrics.requests_completed(), 1u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_EQ(metrics.avg_latency_us(), 1000u);
     EXPECT_EQ(metrics.min_latency_us(), 1000u);
     EXPECT_EQ(metrics.max_latency_us(), 1000u);
@@ -89,6 +93,7 @@ TEST(ConnectionMetricsTest, RequestCompletedWithoutLatency) {
     metrics.record_request_completed();
 
     EXPECT_EQ(metrics.requests_completed(), 1u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_EQ(metrics.avg_latency_us(), 0u);  // No latency recorded
 }
 
@@ -99,6 +104,7 @@ TEST(ConnectionMetricsTest, RequestFailedIncrement) {
     metrics.record_request_failed();
 
     EXPECT_EQ(metrics.requests_failed(), 1u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
 }
 
 TEST(ConnectionMetricsTest, RequestTimeoutIncrement) {
@@ -108,6 +114,7 @@ TEST(ConnectionMetricsTest, RequestTimeoutIncrement) {
     metrics.record_request_timeout();
 
     EXPECT_EQ(metrics.requests_timed_out(), 1u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
 }
 
 TEST(ConnectionMetricsTest, ByteCountersAccumulate) {
@@ -212,6 +219,7 @@ TEST(ConnectionMetricsTest, Reset) {
 
     EXPECT_EQ(metrics.requests_sent(), 0u);
     EXPECT_EQ(metrics.requests_completed(), 0u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_EQ(metrics.bytes_sent(), 0u);
     EXPECT_EQ(metrics.bytes_received(), 0u);
     EXPECT_EQ(metrics.reconnect_count(), 0u);
@@ -254,8 +262,30 @@ TEST(ConnectionMetricsTest, ThreadSafety) {
 
     EXPECT_EQ(metrics.requests_sent(), num_threads * ops_per_thread);
     EXPECT_EQ(metrics.requests_completed(), num_threads * ops_per_thread);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_EQ(metrics.bytes_sent(), num_threads * ops_per_thread * 10);
     EXPECT_EQ(metrics.bytes_received(), num_threads * ops_per_thread * 10);
+}
+
+TEST(ConnectionMetricsTest, InFlightNeverNegativeAndReturnsToZero) {
+    ConnectionMetrics metrics;
+
+    // Terminal events without a prior send should saturate at zero.
+    metrics.record_request_failed();
+    metrics.record_request_timeout();
+    metrics.record_request_dropped();
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
+
+    // Mixed terminal outcomes should return the counter to zero.
+    metrics.record_request_sent();
+    metrics.record_request_sent();
+    metrics.record_request_sent();
+    EXPECT_EQ(metrics.in_flight_requests(), 3u);
+
+    metrics.record_request_completed();
+    metrics.record_request_failed();
+    metrics.record_request_timeout();
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
 }
 
 // ============================================================================
@@ -392,6 +422,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     EXPECT_EQ(metrics.requests_sent(), 5u);
     EXPECT_EQ(metrics.requests_completed(), 5u);
     EXPECT_EQ(metrics.requests_failed(), 0u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_GT(metrics.bytes_sent(), 0u);
     EXPECT_GT(metrics.bytes_received(), 0u);
     EXPECT_EQ(metrics.success_rate_percent(), 100u);
@@ -538,6 +569,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
     EXPECT_EQ(metrics.requests_sent(), 2u);
     EXPECT_EQ(metrics.requests_completed(), 1u);
     EXPECT_EQ(metrics.requests_timed_out(), 0u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
 
     client->close();
     delete server;
@@ -574,6 +606,7 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdate
     EXPECT_EQ(metrics.requests_sent(), 1u);
     EXPECT_EQ(metrics.requests_timed_out(), 1u);
     EXPECT_EQ(metrics.retry_attempts(), 0u);
+    EXPECT_EQ(metrics.in_flight_requests(), 0u);
 
     client->close();
     delete server;

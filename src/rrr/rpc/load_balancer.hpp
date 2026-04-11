@@ -121,7 +121,7 @@ private:
         return state.next_round_robin_index(pool_size);
     }
 
-    // @unsafe - Uses subtraction operator which is not borrow-checked
+    // @safe - Select client with smallest explicit in-flight request count.
     template<typename ClientVec>
     static size_t select_least_connections(const ClientVec& clients) {
         size_t best_idx = 0;
@@ -129,10 +129,8 @@ private:
 
         for (size_t i = 0; i < clients.size(); i++) {
             const auto& client = clients[i];
-            // Use requests_sent - requests_completed as pending count
             const auto& metrics = client->metrics();
-            // @unsafe { subtraction operator not borrow-checked }
-            uint64_t pending = metrics.requests_sent() - metrics.requests_completed();
+            uint64_t pending = metrics.in_flight_requests();
             if (pending < min_pending) {
                 min_pending = pending;
                 best_idx = i;
