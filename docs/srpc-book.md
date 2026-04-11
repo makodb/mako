@@ -520,11 +520,24 @@ REQUEST:
   Note: <size> does NOT include itself
 
 RESPONSE:
-  +--------+------+------------+-----------------------------+
-  | size   | xid  | error_code | ret1 | ret2 | ... | retN   |
-  | 4 bytes| 8 B  | 4 bytes    | (marshalled return values)  |
-  +--------+------+------------+-----------------------------+
+  +---------+------+------------+-------------------------------+-----------------------------+
+  | size*   | xid  | error_code | [server_instance_id (optional)] | ret1 | ret2 | ... | retN |
+  | 4 bytes | 8 B  | 4 bytes    | present when size high-bit set | (marshalled return values) |
+  +---------+------+------------+-------------------------------+-----------------------------+
 ```
+
+`size*` uses the high bit (`kResponseHeaderExtFlag`) as an extension flag.
+- Flag clear: legacy response header (`xid`, `error_code`).
+- Flag set: extended response header includes `server_instance_id` for restart detection.
+
+### Wire Compatibility Note
+
+SRPC now emits extended response headers with `server_instance_id`.
+
+- New clients are backward compatible with old/new servers.
+- Old clients that do not mask the size high-bit are not guaranteed to interoperate with new servers.
+- Recommended rollout order: upgrade clients first, then servers.
+- Recommended rollback order: rollback servers first, then clients.
 
 ### Request/Response Flow
 
@@ -556,6 +569,7 @@ Client                           Network                          Server
 | ENOENT | RPC method not found |
 | EINVAL | Bad packet format |
 | ETIMEDOUT | Request timed out |
+| EAGAIN | Request rejected by queue policy (overflow/fail-fast) |
 
 ---
 
@@ -622,6 +636,8 @@ if (client_opt.is_some()) {
 
 // Strategies: RANDOM, ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY
 ```
+
+`LEAST_CONNECTIONS` is based on explicit per-connection in-flight counts (`ConnectionMetrics::in_flight_requests()`), not derived sent-minus-completed math.
 
 ### Request Options
 
@@ -714,6 +730,15 @@ RUNNING -> STOP_ACCEPTING -> DRAINING -> CLOSING -> STOPPED
 2. **DRAINING**: Wait for pending requests to complete (with timeout)
 3. **CLOSING**: Close all connections, execute shutdown hooks
 4. **STOPPED**: All resources released
+
+### Server API Compatibility Behavior
+
+Recent reliability hardening removed crash-style server stubs:
+
+- `ServerConnection::run_async()` executes callback inline; empty callbacks return error instead of aborting.
+- `DeferredReply::run_async()` follows the same inline/explicit-error behavior.
+- `ServerConnection::content_size()` returns currently buffered bytes.
+- `ServerConnection::handle_free()` is an explicit no-op compatibility path (no abort).
 
 ### Dispatch Context
 
@@ -822,6 +847,7 @@ The table below reflects the current shipping headers under `src/rrr/rpc`:
 | Request buffering during disconnects | Implemented | `BufferingConfig`, `DisconnectBehavior`, `OverflowStrategy` |
 | Circuit breaker fail-fast | Implemented | `CircuitBreakerConfig`, `CircuitBreaker` |
 | Heartbeat timeout detection | Implemented | `HeartbeatConfig`, `HeartbeatManager` |
+| Server restart auto-detection | Implemented | Response header extension + `client.set_on_server_restart(...)` |
 | Lifecycle callbacks | Implemented | `client.add_on_connected` / `add_on_disconnected` / `add_on_error` / `add_on_reconnecting` / `add_on_reconnected` |
 | Connection reliability metrics | Implemented | `ConnectionMetrics` (`in_flight_requests`, retries/timeouts/reconnects) |
 | Planned-only reliability APIs in this chapter | Planned | None currently; new entries will be marked `Planned` until headers and tests land |
@@ -897,6 +923,12 @@ auto timed_out = metrics.requests_timed_out();
 auto in_flight = metrics.in_flight_requests();
 auto avg_latency_us = metrics.avg_latency_us();
 auto reconnects = metrics.reconnect_count();
+auto retries = metrics.retry_attempts();
+auto queue_drops = metrics.queue_dropped_requests();
+auto circuit_rejects = metrics.circuit_open_rejections();
+auto circuit_open = metrics.circuit_open_transitions();
+auto circuit_half_open = metrics.circuit_half_open_transitions();
+auto circuit_closed = metrics.circuit_closed_transitions();
 ```
 
 ### Connection Callbacks
@@ -1197,8 +1229,8 @@ class Event {
     enum Status { INIT, WAIT, READY, DONE, TIMEOUT };
     Status status_;
     virtual bool Test() = 0;
-    void Wait();
-    void Wait(uint64_t timeout_us);
+    void wait();
+    void wait(uint64_t timeout_us);
 };
 ```
 
@@ -1220,11 +1252,12 @@ class Marshal {
 ```cpp srpc-no-compile
 class Future {
     static Arc<Future> create();
-    void Wait();                    // Block fiber
-    void Wait(uint64_t timeout_us); // With timeout
+    void wait();                    // Block fiber
+    void timed_wait(double sec);    // With timeout
     Marshal& get_reply();           // Access reply data
     int get_error_code();           // 0 = success
     bool timed_out();               // Did it timeout?
+    static void safe_release(...);  // Compatibility no-op (Arc handles lifetime)
 };
 ```
 
