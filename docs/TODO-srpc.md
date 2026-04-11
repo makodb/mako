@@ -303,6 +303,8 @@ Run all RPC-focused tests in Docker build output target set:
   - Focused validation: `ctest --test-dir build_rpc --output-on-failure -R '^test_rpc_reconnect_integration$'` -> 1/1 passed; repeated flaky leaf 20x via gtest repeat -> pass.
 - [x] No regression in existing RPC tests.
   - Re-verified on 2026-04-11 with full RPC-focused suite: `ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'` -> 33/33 passed.
-- [ ] Docs updated to match current API.
+- [x] Docs updated to match current API.
+  - Re-verified on 2026-04-11 by strengthening `test_rpc_docs_symbols` with metrics API symbol guards (`client.metrics()`, `in_flight_requests`, `reconnect_count`) plus stale-name rejects.
+  - Validation evidence: `ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc_docs_symbols|test_rpc_docs_snippet_compile)$'` and full RPC-focused suite run passed.
 - [ ] Backward compatibility (or migration notes) documented for any wire/API changes.
 - [ ] Changes reviewed with failures reproduced before fix and verified after fix.
