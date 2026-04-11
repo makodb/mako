@@ -53,6 +53,11 @@ TEST(ConnectionMetricsTest, InitialValuesZero) {
     EXPECT_EQ(metrics.requests_timed_out(), 0u);
     EXPECT_EQ(metrics.in_flight_requests(), 0u);
     EXPECT_EQ(metrics.retry_attempts(), 0u);
+    EXPECT_EQ(metrics.queue_dropped_requests(), 0u);
+    EXPECT_EQ(metrics.circuit_open_rejections(), 0u);
+    EXPECT_EQ(metrics.circuit_open_transitions(), 0u);
+    EXPECT_EQ(metrics.circuit_half_open_transitions(), 0u);
+    EXPECT_EQ(metrics.circuit_closed_transitions(), 0u);
     EXPECT_EQ(metrics.bytes_sent(), 0u);
     EXPECT_EQ(metrics.bytes_received(), 0u);
     EXPECT_EQ(metrics.reconnect_count(), 0u);
@@ -151,6 +156,25 @@ TEST(ConnectionMetricsTest, RetryAttemptIncrement) {
     EXPECT_EQ(metrics.retry_attempts(), 3u);
 }
 
+TEST(ConnectionMetricsTest, CircuitAndQueueCountersIncrement) {
+    ConnectionMetrics metrics;
+
+    metrics.record_queue_drop();
+    metrics.record_queue_drop();
+    EXPECT_EQ(metrics.queue_dropped_requests(), 2u);
+
+    metrics.record_circuit_open_rejection();
+    metrics.record_circuit_open_rejection();
+    EXPECT_EQ(metrics.circuit_open_rejections(), 2u);
+
+    metrics.record_circuit_open_transition();
+    metrics.record_circuit_half_open_transition();
+    metrics.record_circuit_closed_transition();
+    EXPECT_EQ(metrics.circuit_open_transitions(), 1u);
+    EXPECT_EQ(metrics.circuit_half_open_transitions(), 1u);
+    EXPECT_EQ(metrics.circuit_closed_transitions(), 1u);
+}
+
 TEST(ConnectionMetricsTest, SuccessRateCalculation) {
     ConnectionMetrics metrics;
 
@@ -211,6 +235,11 @@ TEST(ConnectionMetricsTest, Reset) {
     metrics.record_bytes_received(50);
     metrics.record_reconnect();
     metrics.record_retry_attempt();
+    metrics.record_queue_drop();
+    metrics.record_circuit_open_rejection();
+    metrics.record_circuit_open_transition();
+    metrics.record_circuit_half_open_transition();
+    metrics.record_circuit_closed_transition();
     metrics.record_connect(current_time_ms());
 
     EXPECT_GT(metrics.requests_sent(), 0u);
@@ -224,6 +253,11 @@ TEST(ConnectionMetricsTest, Reset) {
     EXPECT_EQ(metrics.bytes_received(), 0u);
     EXPECT_EQ(metrics.reconnect_count(), 0u);
     EXPECT_EQ(metrics.retry_attempts(), 0u);
+    EXPECT_EQ(metrics.queue_dropped_requests(), 0u);
+    EXPECT_EQ(metrics.circuit_open_rejections(), 0u);
+    EXPECT_EQ(metrics.circuit_open_transitions(), 0u);
+    EXPECT_EQ(metrics.circuit_half_open_transitions(), 0u);
+    EXPECT_EQ(metrics.circuit_closed_transitions(), 0u);
     EXPECT_EQ(metrics.connect_time_ms(), 0u);
 }
 
@@ -607,6 +641,104 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTerminalTimeoutUpdate
     EXPECT_EQ(metrics.requests_timed_out(), 1u);
     EXPECT_EQ(metrics.retry_attempts(), 0u);
     EXPECT_EQ(metrics.in_flight_requests(), 0u);
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpiredRequests) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+
+    BufferingConfig buffering;
+    buffering.enabled = true;
+    buffering.behavior = DisconnectBehavior::QUEUE;
+    buffering.max_pending = 1;
+    buffering.default_ttl_ms = 10;
+    buffering.overflow = OverflowStrategy::DROP_NEWEST;
+    client->set_buffering_config(buffering);
+
+    const auto& metrics = client->metrics();
+
+    client->close();
+    ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
+
+    auto queued_ok = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [](Marshal& m) { m << std::string("queued_ok"); }
+    );
+    ASSERT_TRUE(queued_ok.is_ok());
+    auto queued_future = queued_ok.unwrap();
+
+    auto queued_rejected = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [](Marshal& m) { m << std::string("queued_reject"); }
+    );
+    ASSERT_TRUE(queued_rejected.is_err());
+    EXPECT_EQ(queued_rejected.unwrap_err(), kRequestQueueRejectedError);
+    EXPECT_EQ(metrics.queue_dropped_requests(), 1u);
+
+    std::this_thread::sleep_for(milliseconds(30));
+
+    std::atomic<bool> reconnect_done{false};
+    ASSERT_EQ(client->reconnect([&](bool) { reconnect_done.store(true); }), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return reconnect_done.load(); }, milliseconds(2000)));
+    ASSERT_TRUE(wait_for_condition([&]() { return queued_future->ready(); }, milliseconds(2000)));
+
+    int queued_err = queued_future->get_error_code();
+    EXPECT_TRUE(queued_err == kRequestQueueExpiredError || queued_err == ENOTCONN);
+    EXPECT_GE(metrics.queue_dropped_requests(), 2u);
+
+    client->close();
+    delete server;
+}
+
+TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejections) {
+    auto server = start_server();
+    ASSERT_NE(server, nullptr);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(server_addr().c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+
+    client->set_buffering_config(BufferingConfig::disabled());
+    client->set_circuit_breaker(CircuitBreakerConfig(1, 1, 10, true));
+
+    const auto& metrics = client->metrics();
+
+    client->close();
+    ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
+
+    auto first = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [](Marshal& m) { m << std::string("first"); }
+    );
+    ASSERT_TRUE(first.is_err());
+    EXPECT_EQ(first.unwrap_err(), ENOTCONN);
+    EXPECT_EQ(metrics.circuit_open_transitions(), 1u);
+
+    auto second = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [](Marshal& m) { m << std::string("second"); }
+    );
+    ASSERT_TRUE(second.is_err());
+    EXPECT_EQ(second.unwrap_err(), EBUSY);
+    EXPECT_EQ(metrics.circuit_open_rejections(), 1u);
+
+    std::this_thread::sleep_for(milliseconds(20));
+
+    auto third = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [](Marshal& m) { m << std::string("third"); }
+    );
+    ASSERT_TRUE(third.is_err());
+    EXPECT_EQ(third.unwrap_err(), ENOTCONN);
+    EXPECT_GE(metrics.circuit_half_open_transitions(), 1u);
+    EXPECT_GE(metrics.circuit_open_transitions(), 2u);
 
     client->close();
     delete server;

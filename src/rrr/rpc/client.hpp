@@ -871,8 +871,12 @@ private:
     void apply_keepalive_options();
     // @safe - Enqueue one internal heartbeat probe packet.
     void enqueue_heartbeat_probe() const;
+    // @safe - Evaluate circuit breaker gate and update metrics.
+    bool allow_request_with_circuit_metrics() const;
     // @safe - Whether an error should be counted as a circuit failure.
     static bool should_trip_circuit_for_error(i32 err);
+    // @safe - Record circuit state transitions in metrics.
+    void record_circuit_state_transition(CircuitState before, CircuitState after) const;
     // @safe - Record one request result in the circuit breaker.
     void record_circuit_result(i32 err) const;
     // @safe - Map system errno-style code into structured RPC error.
@@ -927,7 +931,7 @@ public:
                 // Queue the request for later replay
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
-            if (!circuit_breaker_.allow_request()) {
+            if (!allow_request_with_circuit_metrics()) {
                 return FutureResult::Err(EBUSY);
             }
             record_circuit_result(ENOTCONN);
@@ -943,14 +947,14 @@ public:
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
-            if (!circuit_breaker_.allow_request()) {
+            if (!allow_request_with_circuit_metrics()) {
                 return FutureResult::Err(EBUSY);
             }
             record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
         }
 
-        if (!circuit_breaker_.allow_request()) {
+        if (!allow_request_with_circuit_metrics()) {
             return FutureResult::Err(EBUSY);
         }
 
@@ -1052,6 +1056,7 @@ private:
         if (!pending_queue_.enqueue(std::move(queued))) {
             // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure no pending future
             // remains if queue policy rejects without invoking callback.
+            metrics_.record_queue_drop();
             fail_pending_future(fu->xid_, kRequestQueueRejectedError);
             return FutureResult::Err(kRequestQueueRejectedError);
         }

@@ -585,6 +585,7 @@ size_t ClientConnection::replay_pending_requests() {
 
     // Check if expired
     if (req.is_expired()) {
+      metrics_.record_queue_drop();
       if (req.callback) req.callback(kRequestQueueExpiredError);
       continue;
     }
@@ -603,6 +604,7 @@ size_t ClientConnection::replay_pending_requests() {
       if (!pending_queue_.enqueue(std::move(req))) {
         // Explicit fallback: even if queue policy rejects without invoking
         // callback, do not leave the pending future orphaned.
+        metrics_.record_queue_drop();
         fail_pending_future(replay_xid, kRequestQueueRejectedError);
         Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
                  static_cast<long long>(replay_xid));
@@ -648,6 +650,18 @@ void ClientConnection::enqueue_heartbeat_probe() const {
   guard->write_bookmark(bmark, packet_size);
 }
 
+// @safe - Route allow_request through metrics (rejections + state transitions).
+bool ClientConnection::allow_request_with_circuit_metrics() const {
+  CircuitState before = circuit_breaker_.state();
+  bool allowed = circuit_breaker_.allow_request();
+  CircuitState after = circuit_breaker_.state();
+  record_circuit_state_transition(before, after);
+  if (!allowed) {
+    metrics_.record_circuit_open_rejection();
+  }
+  return allowed;
+}
+
 // @safe - Checks whether an error should contribute to circuit tripping.
 bool ClientConnection::should_trip_circuit_for_error(i32 err) {
   switch (err) {
@@ -667,15 +681,39 @@ bool ClientConnection::should_trip_circuit_for_error(i32 err) {
   }
 }
 
-// @safe - Records success/failure in circuit breaker.
-void ClientConnection::record_circuit_result(i32 err) const {
-  if (err == 0) {
-    circuit_breaker_.record_success();
+// @safe - Track circuit breaker state transitions in metrics.
+void ClientConnection::record_circuit_state_transition(
+    CircuitState before,
+    CircuitState after) const {
+  if (before == after) {
     return;
   }
-  if (should_trip_circuit_for_error(err)) {
+
+  switch (after) {
+    case CircuitState::OPEN:
+      metrics_.record_circuit_open_transition();
+      break;
+    case CircuitState::HALF_OPEN:
+      metrics_.record_circuit_half_open_transition();
+      break;
+    case CircuitState::CLOSED:
+      metrics_.record_circuit_closed_transition();
+      break;
+    default:
+      break;
+  }
+}
+
+// @safe - Records success/failure in circuit breaker.
+void ClientConnection::record_circuit_result(i32 err) const {
+  CircuitState before = circuit_breaker_.state();
+  if (err == 0) {
+    circuit_breaker_.record_success();
+  } else if (should_trip_circuit_for_error(err)) {
     circuit_breaker_.record_failure();
   }
+  CircuitState after = circuit_breaker_.state();
+  record_circuit_state_transition(before, after);
 }
 
 // @safe - Maps errno-style errors into structured RpcError categories.

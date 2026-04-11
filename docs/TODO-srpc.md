@@ -182,14 +182,15 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - `record_request_sent()` now increments in-flight; completed/failed/timed-out paths and pending-future drop paths now decrement with saturation.
 - [x] Switch `LEAST_CONNECTIONS` strategy to explicit in-flight count.
   - `LoadBalancer::select_least_connections()` now uses `ConnectionMetrics::in_flight_requests()` instead of derived sent-completed math.
-- [ ] Export retry/queue-drop/circuit-state counters for troubleshooting.
+- [x] Export retry/queue-drop/circuit-state counters for troubleshooting.
+  - Added exported counters in `ConnectionMetrics` for queue drops, circuit fail-fast rejections, and circuit state transitions (open/half-open/closed), wired to real request/queue/circuit paths.
 
 ### Tests TODO
 - [x] Add unit test: in-flight counter never negative and returns to zero.
   - Added `ConnectionMetricsTest.InFlightNeverNegativeAndReturnsToZero` in `test/rpc_metrics_test.cc`.
 - [ ] Add integration test: `LEAST_CONNECTIONS` chooses lower in-flight client under skewed load.
 - [x] Run existing: `test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`.
-  - Verified on 2026-04-11 (`test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`) and full RPC-focused suite (27/27 passed).
+  - Verified on 2026-04-11 (`test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`) and full RPC-focused suite (28/28 passed including `rpcbench`).
 
 ### DoD
 - [ ] Load-balancer decisions align with real request pressure.

@@ -75,6 +75,31 @@ public:
         return retry_attempts_.get();
     }
 
+    // @safe - Get number of requests dropped by queue policy or expiry.
+    uint64_t queue_dropped_requests() const {
+        return queue_dropped_requests_.get();
+    }
+
+    // @safe - Get number of requests rejected due to open circuit.
+    uint64_t circuit_open_rejections() const {
+        return circuit_open_rejections_.get();
+    }
+
+    // @safe - Get number of transitions into OPEN state.
+    uint64_t circuit_open_transitions() const {
+        return circuit_open_transitions_.get();
+    }
+
+    // @safe - Get number of transitions into HALF_OPEN state.
+    uint64_t circuit_half_open_transitions() const {
+        return circuit_half_open_transitions_.get();
+    }
+
+    // @safe - Get number of transitions into CLOSED state.
+    uint64_t circuit_closed_transitions() const {
+        return circuit_closed_transitions_.get();
+    }
+
     // @safe - Get timestamp when connection was established (ms since epoch)
     uint64_t connect_time_ms() const {
         return connect_time_ms_.get();
@@ -188,6 +213,31 @@ public:
         retry_attempts_.set(retry_attempts_.get() + 1);
     }
 
+    // @safe - Record request drop from queue overflow/expiry policy.
+    void record_queue_drop() const {
+        queue_dropped_requests_.set(queue_dropped_requests_.get() + 1);
+    }
+
+    // @safe - Record circuit fail-fast rejection.
+    void record_circuit_open_rejection() const {
+        circuit_open_rejections_.set(circuit_open_rejections_.get() + 1);
+    }
+
+    // @safe - Record transition into OPEN state.
+    void record_circuit_open_transition() const {
+        circuit_open_transitions_.set(circuit_open_transitions_.get() + 1);
+    }
+
+    // @safe - Record transition into HALF_OPEN state.
+    void record_circuit_half_open_transition() const {
+        circuit_half_open_transitions_.set(circuit_half_open_transitions_.get() + 1);
+    }
+
+    // @safe - Record transition into CLOSED state.
+    void record_circuit_closed_transition() const {
+        circuit_closed_transitions_.set(circuit_closed_transitions_.get() + 1);
+    }
+
     // @safe - Record connection established
     // @param current_time_ms Current time in milliseconds since epoch
     void record_connect(uint64_t current_time_ms) const {
@@ -205,6 +255,11 @@ public:
         bytes_received_.set(0);
         reconnect_count_.set(0);
         retry_attempts_.set(0);
+        queue_dropped_requests_.set(0);
+        circuit_open_rejections_.set(0);
+        circuit_open_transitions_.set(0);
+        circuit_half_open_transitions_.set(0);
+        circuit_closed_transitions_.set(0);
         connect_time_ms_.set(0);
         total_latency_us_.set(0);
         min_latency_us_.set(std::numeric_limits<uint64_t>::max());
@@ -226,6 +281,11 @@ private:
     // Connection lifecycle
     mutable rusty::Cell<uint64_t> reconnect_count_{0};
     mutable rusty::Cell<uint64_t> retry_attempts_{0};
+    mutable rusty::Cell<uint64_t> queue_dropped_requests_{0};
+    mutable rusty::Cell<uint64_t> circuit_open_rejections_{0};
+    mutable rusty::Cell<uint64_t> circuit_open_transitions_{0};
+    mutable rusty::Cell<uint64_t> circuit_half_open_transitions_{0};
+    mutable rusty::Cell<uint64_t> circuit_closed_transitions_{0};
     mutable rusty::Cell<uint64_t> connect_time_ms_{0};
 
     // Latency tracking (microseconds)
