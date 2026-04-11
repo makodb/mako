@@ -255,7 +255,9 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 ## Mandatory Test Matrix (Docker)
 Run after each major workstream and once for final sign-off.
 
-- [ ] `./docker_build.sh ci-quick shardNoReplication`
+- [x] `./docker_build.sh ci-quick shardNoReplication`
+  - Verified on 2026-04-11 in temp worktree after Docker build-script/CMake fixes; shard benchmark and result checks passed (`CI test 'shardNoReplication' completed`).
+  - Scope check: completed within small-change budget (~21 LOC in `docker_build.sh` plus 1 include-path line in `CMakeLists.txt`).
 - [ ] `./docker_build.sh ci-quick simpleTransaction`
 - [ ] `./docker_build.sh ci-quick rocksdbTests`
 - [ ] `./docker_build.sh ci-quick shard1Replication`
@@ -278,6 +280,7 @@ Run all RPC-focused tests in Docker build output target set:
 - [ ] `test_rpc_restart_detection`
 - [ ] `test_rpc_graceful_shutdown`
 - [ ] `test_rpc_combined_reliability`
+  - Host RPC suite re-run on 2026-04-11 after the same code changes: `ctest --test-dir build --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'` -> 32/32 passed.
 
 ## Final Sign-off Checklist
 - [ ] All new tests added and passing.

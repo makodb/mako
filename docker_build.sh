@@ -56,6 +56,16 @@ if [ "${DOCKER_SCRIPT_USER}" != "root" ]; then
     DOCKER_SCRIPT_USER_OPTS=(--user "${DOCKER_SCRIPT_USER}")
 fi
 
+# Docker CI/build surfaces should prioritize reproducible runtime binaries.
+# Borrow checking is configurable, but defaults OFF to avoid unrelated static
+# analysis failures blocking Docker test matrix execution.
+DOCKER_ENABLE_BORROW_CHECKING="${MAKO_DOCKER_ENABLE_BORROW_CHECKING:-OFF}"
+if [ "${DOCKER_ENABLE_BORROW_CHECKING}" != "ON" ] && [ "${DOCKER_ENABLE_BORROW_CHECKING}" != "OFF" ]; then
+    echo -e "${RED}Error: MAKO_DOCKER_ENABLE_BORROW_CHECKING must be ON or OFF (got '${DOCKER_ENABLE_BORROW_CHECKING}').${NC}"
+    exit 1
+fi
+DOCKER_CMAKE_BORROW_ARG="-DENABLE_BORROW_CHECKING=${DOCKER_ENABLE_BORROW_CHECKING}"
+
 # Disable core dumps in script-driven Docker runs by default to avoid polluting
 # the workspace with large core.* artifacts after transient test crashes.
 DOCKER_CORE_ULIMIT_CMD="ulimit -c 0"
@@ -492,6 +502,7 @@ case "$ACTION" in
             exit 1
         fi
         echo -e "${YELLOW}Building Mako in container...${NC}"
+        echo -e "${YELLOW}Docker CMake arg: ${DOCKER_CMAKE_BORROW_ARG}${NC}"
         ensure_image
         normalize_script_build_ownership
         docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
@@ -527,6 +538,13 @@ case "$ACTION" in
                                      CACHE_REASON=\"missing cached CXX compiler '\$CXX_COMPILER'\"; \
                                  fi; \
                              fi; \
+                             if [ \"\$CACHE_INCOMPATIBLE\" -eq 0 ]; then \
+                                 CACHE_BORROW_CHECKING=\$(grep -E '^ENABLE_BORROW_CHECKING:BOOL=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
+                                 if [ -n \"\$CACHE_BORROW_CHECKING\" ] && [ \"\$CACHE_BORROW_CHECKING\" != \"${DOCKER_ENABLE_BORROW_CHECKING}\" ]; then \
+                                     CACHE_INCOMPATIBLE=1; \
+                                     CACHE_REASON=\"ENABLE_BORROW_CHECKING mismatch (cache=\$CACHE_BORROW_CHECKING expected=${DOCKER_ENABLE_BORROW_CHECKING})\"; \
+                                 fi; \
+                             fi; \
                          fi; \
                          if [ \"\$CACHE_INCOMPATIBLE\" -eq 1 ]; then \
                              echo \"Cleaning incompatible build_docker cache (\${CACHE_REASON})\"; \
@@ -535,7 +553,7 @@ case "$ACTION" in
                      fi && \
                      if [ ! -f build_docker/CMakeCache.txt ]; then \
                          echo 'Configuring build_docker'; \
-                         cmake -S . -B build_docker; \
+                         cmake -S . -B build_docker ${DOCKER_CMAKE_BORROW_ARG}; \
                      else \
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \

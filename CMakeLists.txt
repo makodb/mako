@@ -992,6 +992,7 @@ target_include_directories(mako PUBLIC
     "${W}/masstree"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
     "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lz4"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/rrr"
     "${HOME}"
