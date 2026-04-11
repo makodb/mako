@@ -17,7 +17,9 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Re-verified on 2026-04-11 with focused drain coverage (`test_rpc_state_integration`, `test_rpc_graceful_shutdown`; 2/2 passed) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`; 32/32 passed).
 - [x] SRPC docs match shipping API names and semantics.
   - Re-verified on 2026-04-11 with focused docs/API guards (`test_rpc_docs_symbols`, `test_rpc_docs_snippet_compile`; 2/2 passed) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`; 32/32 passed).
-- [ ] All required tests (below) pass in Docker CI.
+- [x] All required tests (below) pass in Docker CI.
+  - Re-verified on 2026-04-11 in a fresh temp worktree by rerunning all required `ci-quick` suites in Docker (`shardNoReplication`, `simpleTransaction`, `rocksdbTests`, `shard1Replication`, `shard2Replication`), all passing.
+  - Required RPC-focused Docker suite remains green at this task stage per the mandatory matrix evidence below (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'` -> 33/33 passed on 2026-04-11), with no additional SRPC production-code deltas introduced in this leaf.
 
 ## Workstream A: Fix Client Close/Error FD Leak (P0)
 ### Code TODO
