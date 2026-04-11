@@ -1781,7 +1781,7 @@ if(BUILD_TESTS)
                 --book ${CMAKE_SOURCE_DIR}/docs/srpc-book.md
                 --repo ${CMAKE_SOURCE_DIR}
                 --cxx ${CMAKE_CXX_COMPILER}
-                --min-snippets 3
+                --min-snippets 6
     )
 
     # Callback System Tests (Phase 6.2)

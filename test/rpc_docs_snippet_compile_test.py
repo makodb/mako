@@ -13,7 +13,15 @@ def extract_tagged_cpp_snippets(book_text: str):
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-        if line.startswith("```cpp") and "srpc-compile" in line:
+        if line.startswith("```cpp"):
+            tags = set(line.split()[1:])
+            if "srpc-compile-client" in tags:
+                profile = "client"
+            elif "srpc-compile" in tags:
+                profile = "reliability"
+            else:
+                i += 1
+                continue
             start = i + 1
             j = start
             while j < len(lines) and lines[j].strip() != "```":
@@ -21,16 +29,16 @@ def extract_tagged_cpp_snippets(book_text: str):
             if j >= len(lines):
                 raise RuntimeError(f"unterminated cpp fence starting near line {i + 1}")
             snippet = "\n".join(lines[start:j]).strip()
-            snippets.append((i + 1, snippet))
+            snippets.append((i + 1, profile, snippet))
             i = j + 1
             continue
         i += 1
     return snippets
 
 
-def compile_snippet(cxx: str, repo_root: Path, idx: int, line_no: int, snippet: str):
-    unit = f"""#include <time.h>
-
+def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
+    if profile == "reliability":
+        return f"""#include <time.h>
 #include "src/rrr/rpc/reconnect_policy.hpp"
 #include "src/rrr/rpc/circuit_breaker.hpp"
 #include "src/rrr/rpc/heartbeat.hpp"
@@ -46,6 +54,55 @@ int main() {{
     return 0;
 }}
 """
+    if profile == "client":
+        return f"""#include <time.h>
+#include <utility>
+#include "src/rrr/rpc/client.hpp"
+
+using namespace rrr;
+
+struct ClientHarness {{
+    rusty::Arc<Client> arc;
+
+    const Client* operator->() const {{ return arc.get(); }}
+    const ConnectionMetrics& metrics() const {{ return arc->metrics(); }}
+
+    template <typename F>
+    void add_on_connected(F&& cb) const {{ arc->add_on_connected(std::forward<F>(cb)); }}
+    template <typename F>
+    void add_on_disconnected(F&& cb) const {{ arc->add_on_disconnected(std::forward<F>(cb)); }}
+    template <typename F>
+    void add_on_error(F&& cb) const {{ arc->add_on_error(std::forward<F>(cb)); }}
+    template <typename F>
+    void add_on_reconnecting(F&& cb) const {{ arc->add_on_reconnecting(std::forward<F>(cb)); }}
+    template <typename F>
+    void add_on_reconnected(F&& cb) const {{ arc->add_on_reconnected(std::forward<F>(cb)); }}
+}};
+
+void snippet_{idx}() {{
+    auto __poll_thread = PollThread::create();
+    ClientHarness client{{Client::create(__poll_thread.clone())}};
+    constexpr i32 RPC_METHOD_ID = 0x1001;
+    int arg1 = 7;
+    int arg2 = 11;
+
+{snippet}
+
+    (void)client;
+    (void)arg1;
+    (void)arg2;
+}}
+
+int main() {{
+    snippet_{idx}();
+    return 0;
+}}
+"""
+    raise ValueError(f"unknown snippet compile profile: {profile}")
+
+
+def compile_snippet(cxx: str, repo_root: Path, idx: int, line_no: int, profile: str, snippet: str):
+    unit = build_compile_unit(profile, idx, snippet)
 
     with tempfile.NamedTemporaryFile("w", suffix=".cc", delete=False) as f:
         path = Path(f.name)
@@ -58,6 +115,8 @@ int main() {{
         "-I",
         str(repo_root),
         "-I",
+        str(repo_root / "src/rrr"),
+        "-I",
         str(repo_root / "third-party/rusty-cpp/include"),
         str(path),
     ]
@@ -67,6 +126,7 @@ int main() {{
         return (
             False,
             f"snippet tagged at line {line_no} failed to compile\n"
+            f"profile: {profile}\n"
             f"command: {' '.join(cmd)}\n"
             f"{proc.stdout}{proc.stderr}",
         )
@@ -105,8 +165,8 @@ def main():
         return 2
 
     failures = []
-    for idx, (line_no, snippet) in enumerate(snippets, start=1):
-        ok, message = compile_snippet(args.cxx, repo_root, idx, line_no, snippet)
+    for idx, (line_no, profile, snippet) in enumerate(snippets, start=1):
+        ok, message = compile_snippet(args.cxx, repo_root, idx, line_no, profile, snippet)
         if not ok:
             failures.append(message)
 

@@ -227,13 +227,14 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Decomposed on 2026-04-11 due scope (53 `cpp` fences in `docs/srpc-book.md`) to keep each leaf below ~500 LOC:
     - [x] Leaf 1: add tagged compile-lint infrastructure and enable it for reliability config snippets (`ReconnectPolicy`, `CircuitBreakerConfig`, `HeartbeatConfig`).
       - Implemented on 2026-04-11 via `test/rpc_docs_snippet_compile_test.py`, CTest wiring (`test_rpc_docs_snippet_compile`), and `srpc-compile` tags in section 11 examples.
-    - [ ] Leaf 2: extend tagged compile coverage to request/client examples that require lightweight harness context.
+    - [x] Leaf 2: extend tagged compile coverage to request/client examples that require lightweight harness context.
+      - Implemented on 2026-04-11 by adding a client-profile harness in `test/rpc_docs_snippet_compile_test.py` and tagging request/client snippets (`Async RPC`, `Connection Metrics`, `Connection Callbacks`) with `srpc-compile-client`. Minimum tagged snippets increased to 6 in CTest wiring.
     - [ ] Leaf 3: extend coverage to service/codegen snippets and convert non-compilable pseudocode fences to explicit non-compile examples.
     - [ ] Leaf 4: require all `cpp` fences to be either compile-tagged or explicitly marked non-compilable, then close DoD.
 
 ### Tests TODO
 - [ ] Add doc-snippet compile test (or CI lint) for all C++ snippets in `docs/srpc-book.md`.
-  - Initial leaf delivered on 2026-04-11: `test_rpc_docs_snippet_compile` compiles all `srpc-compile` tagged snippets (currently reliability config subset, minimum 3 snippets enforced).
+  - Initial leaves delivered on 2026-04-11: `test_rpc_docs_snippet_compile` compiles all tagged snippets across reliability (`srpc-compile`) and request/client harnessed snippets (`srpc-compile-client`), with minimum 6 snippets enforced.
 - [x] Add CI guard that fails on stale API symbols in docs.
   - Added on 2026-04-11: `test_rpc_docs_symbols` (`test/rpc_docs_symbols_test.cc`) with CMake wiring to assert required shipping symbols and reject stale names in `docs/srpc-book.md`.
   - Extended on 2026-04-11 to cover additional stale examples (`begin_request`/`end_request`, `server.add_service`, `server.stop`, legacy service signatures, and legacy proxy usage).

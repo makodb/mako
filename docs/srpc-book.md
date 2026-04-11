@@ -590,7 +590,7 @@ if (fu_result.is_ok()) {
 
 ### Async RPC
 
-```cpp
+```cpp srpc-compile-client
 auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
     m << arg1;
 });
@@ -889,7 +889,7 @@ heartbeat.timeout_ms = 15000;   // Dead after 15 seconds of silence
 
 Track per-connection performance:
 
-```cpp
+```cpp srpc-compile-client
 const ConnectionMetrics& metrics = client.metrics();
 auto sent = metrics.requests_sent();
 auto completed = metrics.requests_completed();
@@ -903,7 +903,7 @@ auto reconnects = metrics.reconnect_count();
 
 Hook into connection lifecycle events:
 
-```cpp
+```cpp srpc-compile-client
 client.add_on_connected([]() { /* ... */ });
 client.add_on_disconnected([]() { /* ... */ });
 client.add_on_error([](RpcError err, const std::string& msg) { /* ... */ });
