@@ -262,7 +262,9 @@ Run after each major workstream and once for final sign-off.
   - Verified on 2026-04-11 in temp worktree: `CI test 'simpleTransaction' completed` with all scenario checks passing.
   - Scope check: completed within small-change budget (<500 LOC). Required code fix was limited to example linkage cleanup (~4 line updates + 1 obsolete helper removal) to unblock Docker build path.
   - Key finding: Docker build uncovered duplicate global `get_epoch()` symbols in example binaries (`test_rocksdb_persistence`, `test_callback_demo`, `test_partitioned_queues`, `test_stress_partitioned_queues`), causing linker failures; resolved by removing unused mock and making example-local mocks internal (`static`).
-- [ ] `./docker_build.sh ci-quick rocksdbTests`
+- [x] `./docker_build.sh ci-quick rocksdbTests`
+  - Verified on 2026-04-11 in temp worktree: `CI test 'rocksdbTests' completed` (all RocksDB persistence/callback/partitioned queue/stress checks passed).
+  - Scope check: completed within small-change budget (<500 LOC). No additional code changes were required beyond previously landed Docker/example fixes; this leaf execution was test/build verification only.
 - [ ] `./docker_build.sh ci-quick shard1Replication`
 - [ ] `./docker_build.sh ci-quick shard2Replication`
 
@@ -284,6 +286,7 @@ Run all RPC-focused tests in Docker build output target set:
 - [ ] `test_rpc_graceful_shutdown`
 - [ ] `test_rpc_combined_reliability`
   - Host RPC suite re-run on 2026-04-11 after the same code changes: `ctest --test-dir build --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'` -> 32/32 passed.
+  - Re-verified on 2026-04-11 during `rocksdbTests` leaf completion with the same RPC-focused command (32/32 passed).
 
 ## Final Sign-off Checklist
 - [ ] All new tests added and passing.
