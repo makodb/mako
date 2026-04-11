@@ -393,6 +393,70 @@ TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
     delete server;
 }
 
+TEST_F(StateIntegrationTest, HeartbeatTimeoutTriggersReconnectRecovery) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ReconnectPolicy policy;
+    policy.auto_reconnect = true;
+    policy.max_retries = 200;
+    policy.initial_delay_ms = 20;
+    policy.max_delay_ms = 20;
+    policy.backoff_multiplier = 1.0;
+    policy.jitter_enabled = false;
+    client->set_reconnect_policy(policy);
+
+    HeartbeatConfig heartbeat;
+    heartbeat.enabled = true;
+    heartbeat.interval_ms = 20;
+    heartbeat.timeout_ms = 20;
+    heartbeat.max_missed = 1;
+    client->set_heartbeat(heartbeat);
+
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+    ASSERT_TRUE(client->connected());
+    ASSERT_EQ(client->metrics().reconnect_count(), 0u);
+
+    std::string input = "heartbeat_warmup";
+    auto warmup = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(warmup.is_ok());
+    auto warmup_fu = warmup.unwrap();
+    warmup_fu->wait();
+    ASSERT_EQ(warmup_fu->get_error_code(), 0);
+
+    // Simulate an unresponsive peer without dropping transport: heartbeat probes
+    // are accepted but replies are suppressed.
+    server->set_drop_heartbeat_replies(true);
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return client->metrics().reconnect_count() >= 1u;
+    }, milliseconds(4000)));
+
+    // Restore heartbeat replies and verify the connection recovers.
+    server->set_drop_heartbeat_replies(false);
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return client->connected();
+    }, milliseconds(4000)));
+
+    auto after = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(after.is_ok());
+    auto after_fu = after.unwrap();
+    after_fu->wait();
+    EXPECT_EQ(after_fu->get_error_code(), 0);
+
+    client->close();
+    delete server;
+}
+
 TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Start server
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
@@ -538,6 +602,7 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
 TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
     auto client = Client::create(poll_thread_.as_ref().unwrap());
     const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
+    client->set_heartbeat(HeartbeatConfig(true, 30, 60, 1));
 
     const int baseline_fd_count = count_open_fds();
     ASSERT_GE(baseline_fd_count, 0);
@@ -588,7 +653,20 @@ TEST_F(StateIntegrationTest, RepeatedErrorReconnectCyclesDoNotIncreaseFdCount) {
             fail_result.unwrap()->timed_wait(0.2);
         }
 
-        ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
+        // Drive transport error detection until state flips to disconnected.
+        auto disconnect_deadline = steady_clock::now() + milliseconds(4000);
+        while (client->connected() && steady_clock::now() < disconnect_deadline) {
+            auto probe_result = client->request(
+                benchmark::BenchmarkService::FAST_NOP,
+                [&](Marshal& m) { m << input; }
+            );
+            if (probe_result.is_ok()) {
+                probe_result.unwrap()->timed_wait(0.05);
+            }
+            std::this_thread::sleep_for(milliseconds(20));
+        }
+
+        ASSERT_FALSE(client->connected());
         EXPECT_TRUE(wait_for_fd_close(cycle_fd, milliseconds(2000)));
 
         const int cycle_fd_count = count_open_fds();

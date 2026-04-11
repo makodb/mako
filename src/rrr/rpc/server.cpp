@@ -14,6 +14,7 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "server.hpp"
+#include "internal_protocol.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -207,6 +208,13 @@ bool ServerConnection::handle_read() {
         } else {
             i32 rpc_id;
             req->m >> rpc_id;
+            if (rpc_id == static_cast<i32>(kInternalHeartbeatRpcId)) {
+                // Internal liveness probe from client heartbeat loop.
+                if (!ctx_->drop_heartbeat_replies->load(std::memory_order_acquire)) {
+                    reply(*req, 0);
+                }
+                continue;
+            }
 
 #ifdef RPC_STATISTICS
             stat_server_rpc_counting(rpc_id);
@@ -542,7 +550,8 @@ int Server::start(const char* bind_addr) {
       std::move(pending_rpc_to_service_),
       std::move(wrapped_services),
       addr_str,
-      pending_requests_));
+      pending_requests_,
+      drop_heartbeat_replies_));
 
   server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
       ctx_.as_ref().unwrap().clone(), addr_str));

@@ -15,6 +15,7 @@
 #include "reactor/coroutine.h"
 #include "reactor/reactor.h"
 #include "client.hpp"
+#include "internal_protocol.hpp"
 #include "utils.hpp"
 
 // Note: External safety annotations for STL now in std_annotation.hpp (via rusty-cpp).
@@ -116,6 +117,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
     : poll_thread_worker_(poll_thread_worker),
       socket_(-1),
       state_machine_(),
+      heartbeat_manager_(HeartbeatConfig::disabled()),
       pending_queue_(buffering_config_.to_queue_config()) {
 }
 
@@ -187,6 +189,7 @@ void ClientConnection::close() {
     // If not connected and not already terminal, force to DISCONNECTED.
     state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
+  heartbeat_manager_.reset();
   invalidate_pending_futures();
 }
 
@@ -326,6 +329,7 @@ int ClientConnection::connect(const char* addr) {
 
   // Transition to CONNECTED state
   state_machine_.transition_to(ConnectionState::CONNECTED);
+  heartbeat_manager_.reset();
 
   // Register with poll thread using weak_self_
   // @unsafe { - Weak::upgrade and PollThread::add
@@ -515,6 +519,32 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
   }
 }
 
+// @safe - Configure heartbeat manager and timeout callback.
+void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
+  heartbeat_manager_.set_config(config);
+  auto weak_conn = weak_self_;
+  heartbeat_manager_.set_on_timeout([weak_conn]() {
+    auto conn_opt = weak_conn.upgrade();
+    if (conn_opt.is_none()) {
+      return;
+    }
+    auto conn = conn_opt.unwrap();
+    if (!conn->connected()) {
+      return;
+    }
+    Log_warn("rrr::ClientConnection: heartbeat timeout for %s", conn->host().c_str());
+    auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+    if (mut_conn != nullptr) {
+      mut_conn->handle_error();
+    }
+  });
+}
+
+// @safe - Returns heartbeat config snapshot.
+HeartbeatConfig ClientConnection::heartbeat_config() const {
+  return heartbeat_manager_.config();
+}
+
 // @unsafe - Uses RequestQueue methods (not borrow-checked)
 size_t ClientConnection::replay_pending_requests() {
   size_t replayed = 0;
@@ -580,6 +610,16 @@ size_t ClientConnection::replay_pending_requests() {
   return replayed;
 }
 
+// @safe - Enqueue one internal heartbeat probe into the output buffer.
+void ClientConnection::enqueue_heartbeat_probe() const {
+  auto guard = out_.lock().unwrap();
+  Marshal::bookmark bmark = guard->set_bookmark(sizeof(i32));
+  *guard << v64(xid_counter_.next());
+  *guard << static_cast<i32>(kInternalHeartbeatRpcId);
+  i32 packet_size = guard->get_and_reset_write_cnt();
+  guard->write_bookmark(bmark, packet_size);
+}
+
 // @safe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
   ConnectionState prev_state = state_machine_.state();
@@ -627,6 +667,27 @@ void ClientConnection::handle_error() {
       }
     }).detach();
   }
+}
+
+// @unsafe - Poll-loop heartbeat tick and pending write-update handling.
+bool ClientConnection::check_pending_write_update() const {
+  if (state_machine_.is_connected() && !paused_.get()) {
+    if (heartbeat_manager_.check_timeout()) {
+      // Timeout callback already transitioned connection through error handling.
+      return false;
+    }
+    if (heartbeat_manager_.should_send_heartbeat()) {
+      enqueue_heartbeat_probe();
+      heartbeat_manager_.on_heartbeat_sent();
+      return true;
+    }
+  }
+
+  if (pending_write_update_.get()) {
+    pending_write_update_.set(false);
+    return true;
+  }
+  return false;
 }
 
 // @safe - Writes buffered data to socket, protected by SpinMutex
@@ -689,6 +750,7 @@ bool ClientConnection::handle_read() {
       v32 v_error_code;
 
       in_ >> v_reply_xid >> v_error_code;
+      heartbeat_manager_.on_pong_received();
 
       rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
       {
@@ -833,6 +895,8 @@ int Client::connect(const char* addr, bool client) const {
 
   // Apply pending keepalive config before connecting
   mut_conn.set_keepalive(pending_keepalive_config_.get());
+  // Apply pending heartbeat config before connecting
+  mut_conn.set_heartbeat_config(pending_heartbeat_config_.get());
 
   // Call connect through mutable reference
   int result = 0;

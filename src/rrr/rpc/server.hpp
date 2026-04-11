@@ -207,16 +207,20 @@ struct RpcServiceContext {
     const std::string addr;
     // Shared in-flight request counter for dispatch-lifetime tracking.
     const std::shared_ptr<std::atomic<int>> pending_requests;
+    // Test/runtime toggle to intentionally drop heartbeat probe replies.
+    const std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies;
 
     // Constructor taking ownership of all data
     RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
                       rusty::Vec<rusty::RefCell<rusty::Box<Service>>> svcs,
                       std::string address,
-                      std::shared_ptr<std::atomic<int>> pending_counter)
+                      std::shared_ptr<std::atomic<int>> pending_counter,
+                      std::shared_ptr<std::atomic<bool>> drop_heartbeats)
         : rpc_to_service(std::move(rpc_map))
         , services(std::move(svcs))
         , addr(std::move(address))
-        , pending_requests(std::move(pending_counter)) {}
+        , pending_requests(std::move(pending_counter))
+        , drop_heartbeat_replies(std::move(drop_heartbeats)) {}
 };
 
 // @unsafe - Server listener handling incoming connections
@@ -530,6 +534,8 @@ class Server: public NoCopy {
     rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
     SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
     std::shared_ptr<std::atomic<int>> pending_requests_{std::make_shared<std::atomic<int>>(0)};
+    std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies_{
+        std::make_shared<std::atomic<bool>>(false)};
 
     // Server restart detection: unique instance ID generated on startup
     // Used by clients to detect server restarts (ID changes after restart)
@@ -666,6 +672,16 @@ public:
     // @unsafe - Uses std::atomic::fetch_sub
     void decrement_pending() {
         pending_requests_->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+    }
+
+    // @safe - Toggle dropping of internal heartbeat probe replies.
+    void set_drop_heartbeat_replies(bool drop) {
+        drop_heartbeat_replies_->store(drop, std::memory_order_release);
+    }
+
+    // @safe - Read drop-heartbeat toggle.
+    bool drop_heartbeat_replies() const {
+        return drop_heartbeat_replies_->load(std::memory_order_acquire);
     }
 
     /**

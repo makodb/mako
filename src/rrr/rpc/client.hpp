@@ -19,6 +19,7 @@
 #include "connection_metrics.hpp"
 #include "request_options.hpp"
 #include "load_balancer.hpp"
+#include "heartbeat.hpp"
 
 namespace rrr {
 
@@ -553,6 +554,8 @@ class ClientConnection: public Pollable {
 
     // TCP Keepalive configuration for connection health monitoring (Cell for interior mutability)
     rusty::Cell<KeepaliveConfig> keepalive_config_;
+    // Heartbeat manager integrated into poll loop write/read lifecycle.
+    mutable HeartbeatManager heartbeat_manager_;
 
     // Last activity timestamp for idle detection (milliseconds since epoch)
     // Updated on send/receive operations
@@ -775,6 +778,16 @@ public:
     }
 
     /**
+     * Configure connection-level heartbeat behavior.
+     * Heartbeat probes are emitted by the poll loop when enabled.
+     */
+    // @safe - Replaces heartbeat manager state/config
+    void set_heartbeat_config(const HeartbeatConfig& config) const;
+
+    // @safe - Get current heartbeat configuration
+    HeartbeatConfig heartbeat_config() const;
+
+    /**
      * Update the last activity timestamp.
      * Called on send/receive operations to track connection activity.
      *
@@ -838,6 +851,8 @@ private:
     // @unsafe - Apply keepalive options to socket
     // Called after socket creation in connect()
     void apply_keepalive_options();
+    // @safe - Enqueue one internal heartbeat probe packet.
+    void enqueue_heartbeat_probe() const;
 
 public:
 
@@ -1220,15 +1235,8 @@ public:
     // @safe - Error handler
     void handle_error() override;
 
-    // @safe - Check and clear pending write update flag
-    // Called by poll loop after processing events
-    bool check_pending_write_update() const override {
-        if (pending_write_update_.get()) {
-            pending_write_update_.set(false);
-            return true;
-        }
-        return false;
-    }
+    // @unsafe - Check heartbeat tick and pending write update flag.
+    bool check_pending_write_update() const override;
 
     // @safe - Check if connection was closed
     // Called by poll loop to detect and remove closed connections
@@ -1284,6 +1292,8 @@ class Client {
 
     // Pending keepalive config (applied when connection is created) - Cell for interior mutability
     rusty::Cell<KeepaliveConfig> pending_keepalive_config_;
+    // Pending heartbeat config (applied when connection is created)
+    rusty::Cell<HeartbeatConfig> pending_heartbeat_config_{HeartbeatConfig::disabled()};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -1612,6 +1622,30 @@ public:
         }
         // Return pending config if no connection exists
         return pending_keepalive_config_.get();
+    }
+
+    /**
+     * Configure heartbeat behavior.
+     * If called before connect(), the config is stored and applied at connect time.
+     * If called after connect(), the config is applied immediately.
+     */
+    // @safe - Uses Cell for interior mutability
+    void set_heartbeat(const HeartbeatConfig& config) const {
+        pending_heartbeat_config_.set(config);
+
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            guard->as_ref().unwrap()->set_heartbeat_config(config);
+        }
+    }
+
+    // @safe - Get current heartbeat configuration
+    HeartbeatConfig heartbeat_config() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->heartbeat_config();
+        }
+        return pending_heartbeat_config_.get();
     }
 
     /**

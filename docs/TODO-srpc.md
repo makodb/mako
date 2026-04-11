@@ -149,17 +149,20 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream F: Integrate Reliability Primitives into Main Pipeline (P2)
 ### Code TODO
-- [ ] Add `HeartbeatManager` lifecycle wiring to connection read/write loop.
+- [x] Add `HeartbeatManager` lifecycle wiring to connection read/write loop.
+  - Implemented on 2026-04-10 in client/server connection loops: heartbeat probe enqueue in poll-write updates, pong observation in read path, timeout-triggered error handling, and internal heartbeat RPC handling on server.
 - [ ] Add `CircuitBreaker` checks before request send and update on result.
 - [ ] Add `CallbackManager` hooks on connected/disconnected/reconnecting/reconnected/error transitions.
 - [ ] Integrate restart detection into wire response path (version-gated header extension).
 
 ### Tests TODO
-- [ ] Add integration test: heartbeat timeout transitions connection to recover/reconnect path.
+- [x] Add integration test: heartbeat timeout transitions connection to recover/reconnect path.
+  - Added `StateIntegrationTest.HeartbeatTimeoutTriggersReconnectRecovery` on 2026-04-10 in `test_rpc_state_integration_test.cc`.
 - [ ] Add integration test: circuit open causes fail-fast and later half-open recovery.
 - [ ] Add integration test: lifecycle callbacks fire in expected order.
 - [ ] Add integration test: server instance ID change is auto-detected from real responses.
-- [ ] Run existing: `test_rpc_heartbeat`, `test_rpc_circuit_breaker`, `test_rpc_circuit_breaker_integration`, `test_rpc_callbacks`, `test_rpc_restart_detection`.
+- [x] Run existing: `test_rpc_heartbeat`, `test_rpc_circuit_breaker`, `test_rpc_circuit_breaker_integration`, `test_rpc_callbacks`, `test_rpc_restart_detection`.
+  - Verified on 2026-04-10 as part of full RPC-focused suite run: `ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'` (26/26 passed).
 
 ### DoD
 - [ ] Reliability modules are exercised by normal client/server traffic, not only standalone tests.

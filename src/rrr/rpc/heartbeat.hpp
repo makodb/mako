@@ -134,6 +134,12 @@ public:
         : config_(config)
     {}
 
+    // @safe - Replace runtime config and reset heartbeat state.
+    void set_config(const HeartbeatConfig& config) {
+        config_ = config;
+        reset();
+    }
+
     // @safe - Set timeout callback
     void set_on_timeout(std::function<void()> callback) {
         on_timeout_ = std::move(callback);
