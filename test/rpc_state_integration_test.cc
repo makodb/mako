@@ -282,6 +282,117 @@ TEST_F(StateIntegrationTest, StateDuringActiveRequest) {
     delete server;
 }
 
+TEST_F(StateIntegrationTest, PendingRequestCountTracksInFlightSleepRequest) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+    ASSERT_TRUE(client->connected());
+    ASSERT_EQ(server->pending_request_count(), 0);
+
+    constexpr double kSleepSeconds = 0.3;
+    auto fu_result = client->request(
+        benchmark::BenchmarkService::SLEEP,
+        [&](Marshal& m) { m << kSleepSeconds; }
+    );
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return server->pending_request_count() > 0;
+    }, milliseconds(600)));
+    EXPECT_GT(server->pending_request_count(), 0);
+
+    fu->wait();
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return server->pending_request_count() == 0;
+    }, milliseconds(1000)));
+
+    client->close();
+    delete server;
+}
+
+TEST_F(StateIntegrationTest, DrainTimeoutReflectsRealInFlightRequest) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+    ASSERT_TRUE(client->connected());
+
+    constexpr double kSleepSeconds = 0.4;
+    auto fu_result = client->request(
+        benchmark::BenchmarkService::SLEEP,
+        [&](Marshal& m) { m << kSleepSeconds; }
+    );
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return server->pending_request_count() > 0;
+    }, milliseconds(600)));
+
+    server->stop_accepting();
+    auto start = steady_clock::now();
+    bool drained = server->drain(50);
+    auto elapsed = steady_clock::now() - start;
+
+    EXPECT_FALSE(drained);
+    EXPECT_GE(elapsed, milliseconds(40));
+    EXPECT_GT(server->pending_request_count(), 0);
+
+    fu->wait();
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return server->pending_request_count() == 0;
+    }, milliseconds(1000)));
+
+    client->close();
+    delete server;
+}
+
+TEST_F(StateIntegrationTest, GracefulShutdownWaitsForInFlightRequest) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    std::this_thread::sleep_for(milliseconds(50));
+    ASSERT_TRUE(client->connected());
+
+    constexpr double kSleepSeconds = 0.5;
+    auto fu_result = client->request(
+        benchmark::BenchmarkService::SLEEP,
+        [&](Marshal& m) { m << kSleepSeconds; }
+    );
+    ASSERT_TRUE(fu_result.is_ok());
+    auto fu = fu_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return server->pending_request_count() > 0;
+    }, milliseconds(600)));
+
+    auto start = steady_clock::now();
+    server->graceful_shutdown(1000);
+    auto elapsed = steady_clock::now() - start;
+
+    EXPECT_GE(elapsed, milliseconds(200));
+    EXPECT_EQ(server->phase(), ShutdownPhase::STOPPED);
+    EXPECT_EQ(server->pending_request_count(), 0);
+
+    fu->wait();
+    client->close();
+    delete server;
+}
+
 TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Start server
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));

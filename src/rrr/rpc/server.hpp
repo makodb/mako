@@ -13,6 +13,7 @@
 #include <unordered_set>
 #include <pthread.h>
 #include <memory>
+#include <atomic>
 #include <chrono>
 
 #include <sys/socket.h>
@@ -124,10 +125,41 @@ using ShutdownHook = std::function<void()>;
  * For the request object, the marshal only contains <arg1>..<argN>,
  * other fields are already consumed.
  */
+// @safe - RAII guard for one in-flight request.
+struct PendingRequestGuard {
+    std::shared_ptr<std::atomic<int>> pending_counter;
+
+    explicit PendingRequestGuard(std::shared_ptr<std::atomic<int>> counter)
+        : pending_counter(std::move(counter)) {
+        if (pending_counter) {
+            pending_counter->fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    ~PendingRequestGuard() {
+        if (pending_counter) {
+            pending_counter->fetch_sub(1, std::memory_order_relaxed);
+        }
+    }
+
+    PendingRequestGuard(PendingRequestGuard&&) = default;
+    PendingRequestGuard& operator=(PendingRequestGuard&&) = default;
+    PendingRequestGuard(const PendingRequestGuard&) = delete;
+    PendingRequestGuard& operator=(const PendingRequestGuard&) = delete;
+};
+
 // @safe - Simple request container
 struct Request {
     Marshal m;
     i64 xid;
+    std::unique_ptr<PendingRequestGuard> pending_guard;
+
+    // @safe - Attach request-lifetime pending counter guard once.
+    void attach_pending_guard(const std::shared_ptr<std::atomic<int>>& counter) {
+        if (!pending_guard && counter) {
+            pending_guard = std::make_unique<PendingRequestGuard>(counter);
+        }
+    }
 };
 
 // Forward declaration for WeakServerConnection
@@ -173,14 +205,18 @@ struct RpcServiceContext {
 
     // Server address for logging (immutable after setup)
     const std::string addr;
+    // Shared in-flight request counter for dispatch-lifetime tracking.
+    const std::shared_ptr<std::atomic<int>> pending_requests;
 
     // Constructor taking ownership of all data
     RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
                       rusty::Vec<rusty::RefCell<rusty::Box<Service>>> svcs,
-                      std::string address)
+                      std::string address,
+                      std::shared_ptr<std::atomic<int>> pending_counter)
         : rpc_to_service(std::move(rpc_map))
         , services(std::move(svcs))
-        , addr(std::move(address)) {}
+        , addr(std::move(address))
+        , pending_requests(std::move(pending_counter)) {}
 };
 
 // @unsafe - Server listener handling incoming connections
@@ -493,7 +529,7 @@ class Server: public NoCopy {
     // Graceful shutdown support
     rusty::Cell<ShutdownPhase> shutdown_phase_{ShutdownPhase::RUNNING};
     SpinMutex<std::vector<ShutdownHook>> shutdown_hooks_;
-    std::atomic<int> pending_requests_{0};
+    std::shared_ptr<std::atomic<int>> pending_requests_{std::make_shared<std::atomic<int>>(0)};
 
     // Server restart detection: unique instance ID generated on startup
     // Used by clients to detect server restarts (ID changes after restart)
@@ -613,7 +649,7 @@ public:
      */
     // @unsafe - Uses std::atomic::load
     int pending_request_count() const {
-        return pending_requests_.load(std::memory_order_relaxed);  // @unsafe
+        return pending_requests_->load(std::memory_order_relaxed);  // @unsafe
     }
 
     /**
@@ -621,7 +657,7 @@ public:
      */
     // @unsafe - Uses std::atomic::fetch_add
     void increment_pending() {
-        pending_requests_.fetch_add(1, std::memory_order_relaxed);  // @unsafe
+        pending_requests_->fetch_add(1, std::memory_order_relaxed);  // @unsafe
     }
 
     /**
@@ -629,7 +665,7 @@ public:
      */
     // @unsafe - Uses std::atomic::fetch_sub
     void decrement_pending() {
-        pending_requests_.fetch_sub(1, std::memory_order_relaxed);  // @unsafe
+        pending_requests_->fetch_sub(1, std::memory_order_relaxed);  // @unsafe
     }
 
     /**

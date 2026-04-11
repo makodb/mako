@@ -126,18 +126,26 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream E: Wire Pending Request Counter into Real Dispatch (P1)
 ### Code TODO
-- [ ] Add RAII pending-counter guard around each dispatched request.
-- [ ] Ensure decrement happens for normal reply, error reply, and deferred reply paths.
-- [ ] Validate `drain()` observes true in-flight count, not just synthetic counter tests.
+- [x] Add RAII pending-counter guard around each dispatched request.
+  - Implemented `PendingRequestGuard` and attached it in `ServerConnection::handle_read()` before dispatch.
+- [x] Ensure decrement happens for normal reply, error reply, and deferred reply paths.
+  - Guard is request-lifetime owned (`Request::pending_guard`), so decrement occurs when request ownership exits any path.
+- [x] Validate `drain()` observes true in-flight count, not just synthetic counter tests.
+  - Wired `Server::drain()` and `RpcServiceContext` to the shared dispatch counter used by live requests.
 
 ### Tests TODO
-- [ ] Add integration test: long-running RPC keeps `pending_request_count() > 0` during execution.
-- [ ] Add integration test: `graceful_shutdown(drain_timeout)` waits for in-flight completion.
-- [ ] Add integration test: timeout path in `drain()` logs and returns false when requests still in flight.
-- [ ] Run existing: `test_rpc_graceful_shutdown`.
+- [x] Add integration test: long-running RPC keeps `pending_request_count() > 0` during execution.
+  - Added `PendingRequestCountTracksInFlightSleepRequest` in `test_rpc_state_integration_test.cc`.
+- [x] Add integration test: `graceful_shutdown(drain_timeout)` waits for in-flight completion.
+  - Added `GracefulShutdownWaitsForInFlightRequest` in `test_rpc_state_integration_test.cc`.
+- [x] Add integration test: timeout path in `drain()` logs and returns false when requests still in flight.
+  - Added `DrainTimeoutReflectsRealInFlightRequest` in `test_rpc_state_integration_test.cc`.
+- [x] Run existing: `test_rpc_graceful_shutdown`.
+  - Verified on 2026-04-10 via targeted run and full RPC suite run.
 
 ### DoD
-- [ ] Drain behavior correlates with real request execution, not manual counter ops.
+- [x] Drain behavior correlates with real request execution, not manual counter ops.
+  - Covered by the new real-traffic integration tests above.
 
 ## Workstream F: Integrate Reliability Primitives into Main Pipeline (P2)
 ### Code TODO

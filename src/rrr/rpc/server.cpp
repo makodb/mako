@@ -200,6 +200,7 @@ bool ServerConnection::handle_read() {
             complete_requests.pop_front();
             return r;
         }();
+        req->attach_pending_guard(ctx_->pending_requests);
 
         if (req->m.content_size() < sizeof(i32)) {
             reply(*req, EINVAL);
@@ -540,7 +541,8 @@ int Server::start(const char* bind_addr) {
   ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::make(
       std::move(pending_rpc_to_service_),
       std::move(wrapped_services),
-      addr_str));
+      addr_str,
+      pending_requests_));
 
   server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
       ctx_.as_ref().unwrap().clone(), addr_str));
@@ -615,11 +617,11 @@ bool Server::drain(uint64_t timeout_ms) {
         current_phase != ShutdownPhase::STOP_ACCEPTING) {
         Log_debug("Server::drain: already in phase %s",
                   shutdown_phase_to_string(current_phase));
-        return pending_requests_.load(std::memory_order_relaxed) == 0;
+        return pending_requests_->load(std::memory_order_relaxed) == 0;
     }
 
     Log_info("Server::drain: transitioning to DRAINING, pending=%d",
-             pending_requests_.load(std::memory_order_relaxed));
+             pending_requests_->load(std::memory_order_relaxed));
     shutdown_phase_.set(ShutdownPhase::DRAINING);
 
     // Wait for pending requests with timeout
@@ -628,11 +630,11 @@ bool Server::drain(uint64_t timeout_ms) {
         auto start = std::chrono::steady_clock::now();
         auto timeout = std::chrono::milliseconds(timeout_ms);
 
-        while (pending_requests_.load(std::memory_order_relaxed) > 0) {
+        while (pending_requests_->load(std::memory_order_relaxed) > 0) {
             auto elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed >= timeout) {
                 Log_warn("Server::drain: timeout after %lu ms, pending=%d",
-                         timeout_ms, pending_requests_.load(std::memory_order_relaxed));
+                         timeout_ms, pending_requests_->load(std::memory_order_relaxed));
                 return false;
             }
 
