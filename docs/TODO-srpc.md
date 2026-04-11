@@ -188,12 +188,13 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 ### Tests TODO
 - [x] Add unit test: in-flight counter never negative and returns to zero.
   - Added `ConnectionMetricsTest.InFlightNeverNegativeAndReturnsToZero` in `test/rpc_metrics_test.cc`.
-- [ ] Add integration test: `LEAST_CONNECTIONS` chooses lower in-flight client under skewed load.
+- [x] Add integration test: `LEAST_CONNECTIONS` chooses lower in-flight client under skewed load.
+  - Added `ClientPoolLoadBalancerTest.LeastConnectionsPrefersClientWithLowerInFlightLoad` on 2026-04-11 in `test/test_load_balancer.cc`. The test holds one in-flight sleep request on one pooled client and verifies next `LEAST_CONNECTIONS` selection chooses a different (lower in-flight) client.
 - [x] Run existing: `test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`.
   - Verified on 2026-04-11 (`test_rpc_metrics`, `test_load_balancer`, `test_rpc_client_pool`) and full RPC-focused suite (28/28 passed including `rpcbench`).
 
 ### DoD
-- [ ] Load-balancer decisions align with real request pressure.
+- [x] Load-balancer decisions align with real request pressure.
 
 ## Workstream H: Remove Abort/No-op Stubs (P2)
 ### Code TODO

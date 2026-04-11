@@ -40,6 +40,18 @@ using namespace rrr;
 using namespace benchmark;
 using namespace std::chrono;
 
+template <typename Predicate>
+bool wait_for_condition(Predicate&& predicate, milliseconds timeout) {
+    auto deadline = steady_clock::now() + timeout;
+    while (steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(milliseconds(5));
+    }
+    return predicate();
+}
+
 // ===========================================================================
 // LoadBalancerState Unit Tests
 // ===========================================================================
@@ -449,6 +461,43 @@ TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastConnections) {
 
     EXPECT_EQ(fu->get_error_code(), 0);
     EXPECT_EQ(service_->call_count, 1);
+}
+
+TEST_F(ClientPoolLoadBalancerTest, LeastConnectionsPrefersClientWithLowerInFlightLoad) {
+    PoolConfig config;
+    config.load_balancing = LoadBalancingStrategy::LEAST_CONNECTIONS;
+    config.min_connections = 2;
+    config.max_connections = 2;
+
+    ClientPool pool(poll_thread_.clone(), config);
+
+    auto busy_client_opt = pool.get_client(addr_);
+    ASSERT_TRUE(busy_client_opt.is_some());
+    auto busy_client = busy_client_opt.unwrap();
+
+    // Keep one request in-flight on the selected client.
+    auto sleep_result = busy_client->request(
+        benchmark::BenchmarkService::SLEEP,
+        [&](Marshal& m) { m << 0.30; }
+    );
+    ASSERT_TRUE(sleep_result.is_ok());
+    auto sleep_future = sleep_result.unwrap();
+
+    ASSERT_TRUE(wait_for_condition(
+        [&]() { return busy_client->metrics().in_flight_requests() > 0; },
+        milliseconds(500)));
+
+    // With one in-flight on busy_client and zero on peer, least-connections
+    // should route to the other connection.
+    auto selected_opt = pool.get_client(addr_);
+    ASSERT_TRUE(selected_opt.is_some());
+    auto selected = selected_opt.unwrap();
+
+    EXPECT_NE(selected->fd(), busy_client->fd());
+    EXPECT_EQ(selected->metrics().in_flight_requests(), 0u);
+
+    sleep_future->wait();
+    EXPECT_EQ(sleep_future->get_error_code(), 0);
 }
 
 TEST_F(ClientPoolLoadBalancerTest, PoolConfigCanBeSetToLeastLatency) {
