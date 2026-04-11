@@ -347,9 +347,17 @@ void ServerWorker::ShutDown() {
   // Modern C++ - smart pointer auto-cleanup
   // svr_poll_thread_worker_ automatically released by shared_ptr
 
-  // Jetpack: Clean up replication scheduler (raw pointer needs manual deletion)
+  // In lab test mode, RaftTestConfig::Kill/Restart can replace/delete server
+  // objects independently of ServerWorker, so rep_sched_ may be stale here.
+  // Skip manual deletion to avoid double-free/use-after-free on shutdown.
+#ifdef RAFT_TEST_CORO
+  Log_info("Skipping replication scheduler delete in RAFT_TEST_CORO shutdown");
+  rep_sched_ = nullptr;
+#else
+  // Production mode keeps ownership here.
   Log_info("Deleting replication scheduler...");
   if (rep_sched_) delete rep_sched_;
+#endif
   Log_info("ServerWorker shutdown complete.");
 }
 
@@ -450,4 +458,3 @@ void ServerWorker::InitializeRecovery(uint32_t partition_id, uint32_t locale_id)
 }
 
 } // namespace janus
-

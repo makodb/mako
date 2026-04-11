@@ -499,14 +499,26 @@ void RaftTestConfig::netctlLoop(void) {
 
 bool RaftTestConfig::isDisconnected(siteid_t svr) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
-  return RaftTestConfig::replicas[svr]->svr_->IsDisconnected();
+  auto it = RaftTestConfig::replicas.find(svr);
+  if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
+    // Missing replica is effectively disconnected for test-control purposes.
+    return true;
+  }
+  return it->second->svr_->IsDisconnected();
 }
 
 void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
-  if (!isDisconnected(svr)) {
+  auto it = RaftTestConfig::replicas.find(svr);
+  if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
+    if (!ignore) {
+      Log_warn("[RAFT-TEST] disconnect(%d): replica not present", svr);
+    }
+    return;
+  }
+  if (!it->second->svr_->IsDisconnected()) {
     // simulate disconnected server
-    RaftTestConfig::replicas[svr]->svr_->Disconnect();
+    it->second->svr_->Disconnect();
   } else if (!ignore) {
     verify(0);
   }
@@ -514,9 +526,16 @@ void RaftTestConfig::disconnect(siteid_t svr, bool ignore) {
 
 void RaftTestConfig::reconnect(siteid_t svr, bool ignore) {
   std::lock_guard<std::recursive_mutex> lk(connection_m_);
-  if (isDisconnected(svr)) {
+  auto it = RaftTestConfig::replicas.find(svr);
+  if (it == RaftTestConfig::replicas.end() || it->second == nullptr || !it->second->svr_) {
+    if (!ignore) {
+      Log_warn("[RAFT-TEST] reconnect(%d): replica not present", svr);
+    }
+    return;
+  }
+  if (it->second->svr_->IsDisconnected()) {
     // simulate reconnected server
-    RaftTestConfig::replicas[svr]->svr_->Reconnect();
+    it->second->svr_->Reconnect();
   } else if (!ignore) {
     verify(0);
   }
