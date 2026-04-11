@@ -840,7 +840,7 @@ States tracked via `rusty::Cell<ConnectionState>` for thread-safe interior mutab
 
 ### Automatic Reconnection
 
-```cpp
+```cpp srpc-compile
 ReconnectPolicy policy;
 policy.max_retries = 10;            // 0 for unlimited
 policy.initial_delay_ms = 100;      // Initial delay
@@ -853,7 +853,7 @@ policy.jitter_enabled = true;       // Randomize delay to avoid herd effects
 
 Prevents cascade failures using the CLOSED/OPEN/HALF_OPEN pattern:
 
-```cpp
+```cpp srpc-compile
 CircuitBreakerConfig cb;
 cb.failure_threshold = 5;       // Open after 5 consecutive failures
 cb.success_threshold = 2;       // Close after 2 successes in half-open
@@ -879,7 +879,7 @@ Queued requests are automatically replayed when the connection is restored.
 
 Detect stale connections:
 
-```cpp
+```cpp srpc-compile
 HeartbeatConfig heartbeat;
 heartbeat.interval_ms = 5000;   // Ping every 5 seconds
 heartbeat.timeout_ms = 15000;   // Dead after 15 seconds of silence

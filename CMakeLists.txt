@@ -1773,6 +1773,17 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_docs_symbols ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_docs_symbols COMMAND test_rpc_docs_symbols)
 
+    find_program(PYTHON3_EXECUTABLE python3 REQUIRED)
+    add_test(
+        NAME test_rpc_docs_snippet_compile
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rpc_docs_snippet_compile_test.py
+                --book ${CMAKE_SOURCE_DIR}/docs/srpc-book.md
+                --repo ${CMAKE_SOURCE_DIR}
+                --cxx ${CMAKE_CXX_COMPILER}
+                --min-snippets 3
+    )
+
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
     target_include_directories(test_rpc_callbacks PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
