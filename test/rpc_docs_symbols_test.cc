@@ -36,6 +36,7 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "keepalive.interval_sec",
         "policy.initial_delay_ms",
         "policy.jitter_enabled",
+        "cb.timeout_ms",
         "buffering.max_pending",
         "buffering.default_ttl_ms",
         "client.add_on_connected",
@@ -50,6 +51,9 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "server.reg_service(",
         "server.graceful_shutdown(",
         "proxy.get_user(1001, &user)",
+        "### Implemented vs Planned (Shipping Status)",
+        "| Connection state machine | Implemented |",
+        "| Planned-only reliability APIs in this chapter | Planned |",
     };
 
     const std::vector<std::string> forbidden = {
@@ -59,6 +63,7 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "keepalive.interval =",
         "policy.base_delay_ms",
         "policy.jitter_factor",
+        "cb.half_open_timeout_ms",
         "buffering.max_queue_size",
         "buffering.ttl_ms",
         "callbacks.on_connected",

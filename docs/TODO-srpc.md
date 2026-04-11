@@ -221,7 +221,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Updated on 2026-04-11 in `docs/srpc-book.md`: corrected keepalive fields (`idle_sec`/`interval_sec`), reconnect policy fields (`initial_delay_ms`/`jitter_enabled`), buffering fields (`max_pending`/`default_ttl_ms`), callback usage (`client.add_on_*` API), and `RpcError` symbol list to match `src/rrr/rpc` headers.
 - [x] Remove non-existent API examples (`client.set_load_balancing`, `future.h`, etc.).
   - Updated on 2026-04-11 in `docs/srpc-book.md`: replaced stale request flow (`begin_request`/`end_request`/`Future*`), stale server lifecycle (`add_service`/`stop`), stale service interface signatures, and stale generated proxy sync-return example with shipping APIs (`Client::create` + `request`, `Server::reg_service` + `graceful_shutdown`, current `Service`/proxy method patterns).
-- [ ] Add a “Implemented vs Planned” reliability table.
+- [x] Add a “Implemented vs Planned” reliability table.
+  - Added on 2026-04-11 in `docs/srpc-book.md` section 11 with explicit shipping-status rows and a planned-only marker row; also corrected circuit-breaker field name to `cb.timeout_ms` and extended `test_rpc_docs_symbols` to guard the table and symbol.
 - [ ] Ensure sample code compiles against current headers.
 
 ### Tests TODO

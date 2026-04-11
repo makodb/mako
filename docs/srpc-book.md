@@ -811,6 +811,21 @@ m.write_bookmark(bookmark, &payload_size);  // Fill in size
 
 RRR includes comprehensive fault tolerance for production deployments.
 
+### Implemented vs Planned (Shipping Status)
+
+The table below reflects the current shipping headers under `src/rrr/rpc`:
+
+| Capability | Status | Shipping API |
+| --- | --- | --- |
+| Connection state machine | Implemented | `ConnectionState` transitions in `ClientConnection` |
+| Auto reconnect with backoff/jitter | Implemented | `ReconnectPolicy` (`max_retries`, `initial_delay_ms`, `jitter_enabled`) |
+| Request buffering during disconnects | Implemented | `BufferingConfig`, `DisconnectBehavior`, `OverflowStrategy` |
+| Circuit breaker fail-fast | Implemented | `CircuitBreakerConfig`, `CircuitBreaker` |
+| Heartbeat timeout detection | Implemented | `HeartbeatConfig`, `HeartbeatManager` |
+| Lifecycle callbacks | Implemented | `client.add_on_connected` / `add_on_disconnected` / `add_on_error` / `add_on_reconnecting` / `add_on_reconnected` |
+| Connection reliability metrics | Implemented | `ConnectionMetrics` (`in_flight_requests`, retries/timeouts/reconnects) |
+| Planned-only reliability APIs in this chapter | Planned | None currently; new entries will be marked `Planned` until headers and tests land |
+
 ### Connection State Machine
 
 ```
@@ -842,7 +857,7 @@ Prevents cascade failures using the CLOSED/OPEN/HALF_OPEN pattern:
 CircuitBreakerConfig cb;
 cb.failure_threshold = 5;       // Open after 5 consecutive failures
 cb.success_threshold = 2;       // Close after 2 successes in half-open
-cb.half_open_timeout_ms = 5000; // Try again after 5 seconds
+cb.timeout_ms = 5000;           // Try again after 5 seconds
 ```
 
 ### Request Buffering
