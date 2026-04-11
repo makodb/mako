@@ -714,22 +714,24 @@ file(GLOB MEMDB_SRC
     "src/memdb/*.cc"
 )
 
-# Collect deptran and bench source files (matching WAF's ant_glob patterns)
-file(GLOB_RECURSE DEPTRAN_SRC
+# Collect deptran core source files
+file(GLOB_RECURSE DEPTRAN_CORE_SRC
     "src/deptran/*.cc"
     "src/deptran/*/*.cc"
+)
+# Exclude specific deptran files (standalone binaries / optional backends)
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/paxos_main_helper.cc")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
+
+# Collect benchmark source files (compiled separately from deptran core)
+file(GLOB_RECURSE TXLOG_BENCH_SRC
     "src/bench/*/*.cc"
 )
-# Exclude specific files as per WAF configuration
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/s_main.cc")
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/paxos_main_helper.cc")
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
-# Exclude MongoDB backend (requires mongocxx library)
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
-# Exclude standalone executables with main() functions
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
-list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
+list(FILTER TXLOG_BENCH_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -739,18 +741,19 @@ set(TXLOG_HELPER_SRC
     src/deptran/raft_main_helper.cc
 )
 
-# Build libtxlog as a shared library
-add_library(txlog SHARED
+# Build txlog in layers:
+#   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
+#   - txlog_bench: benchmark implementations from src/bench/*
+#   - txlog: compatibility shared library combining both layers
+add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
-    ${DEPTRAN_SRC}
+    ${DEPTRAN_CORE_SRC}
     ${RRR_SRC}
     ${MEMDB_SRC}
 )
-
-# Add dependency to ensure rcc_rpc.h is generated before txlog is built
-add_dependencies(txlog rcc_rpc_gen)
-
-target_include_directories(txlog PRIVATE
+add_dependencies(txlog_core_obj rcc_rpc_gen)
+set_target_properties(txlog_core_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(txlog_core_obj PRIVATE
     src
     src/rrr
     src/memdb
@@ -762,11 +765,56 @@ target_include_directories(txlog PRIVATE
     third-party/yaml-cpp/include
     ${Python3_INCLUDE_DIRS}
 )
+target_compile_options(txlog_core_obj PRIVATE ${BENCH_CXXFLAGS})
+target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
-target_compile_options(txlog PRIVATE ${BENCH_CXXFLAGS})
-target_compile_definitions(txlog PRIVATE CONFIG_H=\"${CONFIG_H}\")
+add_library(txlog_bench_obj OBJECT ${TXLOG_BENCH_SRC})
+add_dependencies(txlog_bench_obj rcc_rpc_gen)
+set_target_properties(txlog_bench_obj PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(txlog_bench_obj PRIVATE
+    src
+    src/rrr
+    src/memdb
+    src/deptran
+    src/bench
+    src/mako
+    src/mako/benchmarks
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
+    third-party/yaml-cpp/include
+    ${Python3_INCLUDE_DIRS}
+)
+target_compile_options(txlog_bench_obj PRIVATE ${BENCH_CXXFLAGS})
+target_compile_definitions(txlog_bench_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
+add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
+target_link_libraries(txlog_core
+    PUBLIC
+    yaml-cpp
+    pthread
+    ${CMAKE_DL_LIBS}
+    Python3::Python
+)
+target_include_directories(txlog_core PUBLIC
+    src
+    src/rrr
+    src/memdb
+    src/deptran
+)
+
+add_library(txlog_bench STATIC $<TARGET_OBJECTS:txlog_bench_obj>)
+target_link_libraries(txlog_bench PUBLIC txlog_core)
+target_include_directories(txlog_bench PUBLIC
+    src
+    src/bench
+)
+
+# Compatibility target used by existing app/test links
+add_library(txlog SHARED
+    $<TARGET_OBJECTS:txlog_core_obj>
+    $<TARGET_OBJECTS:txlog_bench_obj>
+)
 target_link_libraries(txlog
+    PRIVATE
     yaml-cpp
     pthread
     ${CMAKE_DL_LIBS}
