@@ -1765,6 +1765,14 @@ if(BUILD_TESTS)
     target_link_libraries(test_rpc_errors ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_errors COMMAND test_rpc_errors)
 
+    # SRPC Book API Symbol Drift Guard
+    add_executable(test_rpc_docs_symbols test/rpc_docs_symbols_test.cc)
+    target_include_directories(test_rpc_docs_symbols PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_rpc_docs_symbols PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_compile_definitions(test_rpc_docs_symbols PRIVATE SRPC_BOOK_PATH="${CMAKE_SOURCE_DIR}/docs/srpc-book.md")
+    target_link_libraries(test_rpc_docs_symbols ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_rpc_docs_symbols COMMAND test_rpc_docs_symbols)
+
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
     target_include_directories(test_rpc_callbacks PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})

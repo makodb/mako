@@ -108,18 +108,18 @@ RRR is organized in layers:
 ```
 src/rrr/
   rpc/                # RPC client/server implementation
-    client.hpp          # Client connection + pooling (1660 lines)
+    client.hpp          # Client, Future, and connection APIs
     server.hpp          # Server, listener, dispatch (684 lines)
     callbacks.hpp       # Connection lifecycle callbacks
     circuit_breaker.hpp # Fail-fast fault tolerance
     connection_state.hpp# Connection state machine
     connection_metrics.hpp # Performance metrics
     heartbeat.hpp       # Keep-alive probes
+    load_balancer.hpp   # Pool load-balancing strategies
     reconnect_policy.hpp# Reconnection strategies
     request_queue.hpp   # Pending request buffering
     request_options.hpp # Per-request configuration
     errors.hpp          # Error code definitions
-    future.h            # Async result container
     utils.hpp/cpp       # RPC utilities
 
   reactor/            # Event loop and coroutine system
@@ -589,18 +589,26 @@ fu->end_request();
 fu->Wait();  // Block only when result needed
 ```
 
-### Client (Connection Pool)
+### ClientPool (Connection Pool)
 
-The `Client` class manages a pool of connections:
+`Client` represents a single connection. `ClientPool` manages multiple connections
+per address and applies pool-wide load-balancing policy:
 
 ```cpp
-Client client;
-client.connect("10.0.1.100:8100");
-client.connect("10.0.1.101:8100");
+ClientPool pool;
 
-// Load balancing strategies
-client.set_load_balancing(LoadBalancing::ROUND_ROBIN);
-// Options: RANDOM, ROUND_ROBIN, LEAST_CONN
+PoolConfig cfg = PoolConfig::defaults();
+cfg.load_balancing = LoadBalancingStrategy::ROUND_ROBIN;
+cfg.max_connections = 8;
+pool.set_pool_config(cfg);
+
+auto client_opt = pool.get_client("10.0.1.100:8100");
+if (client_opt.is_some()) {
+    auto client = client_opt.unwrap();
+    // Use selected client
+}
+
+// Strategies: RANDOM, ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY
 ```
 
 ### Request Options
@@ -619,8 +627,8 @@ opts.total_timeout_ms = 15000; // Total time budget
 
 ```cpp
 KeepaliveConfig keepalive;
-keepalive.idle_time = 60;      // Seconds before first probe
-keepalive.interval = 10;       // Seconds between probes
+keepalive.idle_sec = 60;       // Seconds before first probe
+keepalive.interval_sec = 10;   // Seconds between probes
 keepalive.count = 3;           // Probes before declaring dead
 
 // Presets available:
@@ -809,11 +817,11 @@ States tracked via `rusty::Cell<ConnectionState>` for thread-safe interior mutab
 
 ```cpp
 ReconnectPolicy policy;
-policy.max_retries = 10;            // -1 for unlimited
-policy.base_delay_ms = 100;         // Initial delay
+policy.max_retries = 10;            // 0 for unlimited
+policy.initial_delay_ms = 100;      // Initial delay
 policy.max_delay_ms = 30000;        // Max delay (30s)
 policy.backoff_multiplier = 2.0;    // Exponential backoff
-policy.jitter_factor = 0.1;         // 10% random jitter
+policy.jitter_enabled = true;       // Randomize delay to avoid herd effects
 ```
 
 ### Circuit Breaker
@@ -834,8 +842,8 @@ Queue requests during temporary disconnections:
 ```cpp
 BufferingConfig buffering;
 buffering.behavior = DisconnectBehavior::QUEUE;  // or FAIL_FAST
-buffering.max_queue_size = 1000;
-buffering.ttl_ms = 5000;  // Expire after 5 seconds
+buffering.max_pending = 1000;
+buffering.default_ttl_ms = 5000;  // Expire after 5 seconds
 buffering.overflow = OverflowStrategy::DROP_OLDEST;
 // Options: DROP_OLDEST, DROP_NEWEST, FAIL_FAST
 ```
@@ -857,16 +865,13 @@ heartbeat.timeout_ms = 15000;   // Dead after 15 seconds of silence
 Track per-connection performance:
 
 ```cpp
-struct ConnectionMetrics {
-    uint64_t requests_sent;
-    uint64_t requests_completed;
-    uint64_t requests_failed;
-    uint64_t requests_timed_out;
-    uint64_t bytes_sent;
-    uint64_t bytes_received;
-    double avg_latency_ms;
-    uint64_t reconnect_count;
-};
+const ConnectionMetrics& metrics = client.metrics();
+auto sent = metrics.requests_sent();
+auto completed = metrics.requests_completed();
+auto timed_out = metrics.requests_timed_out();
+auto in_flight = metrics.in_flight_requests();
+auto avg_latency_us = metrics.avg_latency_us();
+auto reconnects = metrics.reconnect_count();
 ```
 
 ### Connection Callbacks
@@ -874,12 +879,11 @@ struct ConnectionMetrics {
 Hook into connection lifecycle events:
 
 ```cpp
-CallbackManager callbacks;
-callbacks.on_connected = [](auto& conn) { /* ... */ };
-callbacks.on_disconnected = [](auto& conn, auto reason) { /* ... */ };
-callbacks.on_error = [](auto& conn, auto err) { /* ... */ };
-callbacks.on_reconnecting = [](auto& conn, int attempt) { /* ... */ };
-callbacks.on_reconnected = [](auto& conn) { /* ... */ };
+client.add_on_connected([]() { /* ... */ });
+client.add_on_disconnected([]() { /* ... */ });
+client.add_on_error([](RpcError err, const std::string& msg) { /* ... */ });
+client.add_on_reconnecting([]() { /* ... */ });
+client.add_on_reconnected([](bool success) { /* ... */ });
 ```
 
 ### Error Types
@@ -889,17 +893,19 @@ Structured error categories:
 ```cpp
 enum class RpcError {
     // Connection errors
-    CONNECTION_REFUSED, CONNECTION_TIMEOUT, CONNECTION_LOST,
+    NOT_CONNECTED, CONNECTION_REFUSED, CONNECTION_RESET,
     // Protocol errors
-    INVALID_MESSAGE, UNKNOWN_METHOD, MARSHAL_ERROR,
+    INVALID_MESSAGE, UNKNOWN_RPC_ID, MARSHALLING_ERROR,
     // Application errors
-    SERVICE_ERROR, HANDLER_EXCEPTION,
+    RPC_FAILED, SERVICE_UNAVAILABLE, INVALID_ARGUMENT,
     // Timeout errors
-    REQUEST_TIMEOUT, TOTAL_TIMEOUT,
+    CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT, HEARTBEAT_TIMEOUT,
     // Internal errors
-    QUEUE_FULL, CIRCUIT_OPEN
+    INTERNAL_ERROR, CIRCUIT_OPEN
 };
 ```
+
+`TOTAL_TIMEOUT` is represented by `TimeoutType::TOTAL_TIMEOUT` in `request_options.hpp`.
 
 ---
 
