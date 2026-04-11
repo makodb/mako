@@ -1,5 +1,23 @@
 #pragma once
 
+// ============================================================================
+// RAFT DISK PERSISTENCE - Runtime-configurable async vs sync modes
+// ============================================================================
+// Controlled by environment variables at runtime:
+//
+// MAKO_RAFT_PERSISTENCE=1           → Enable disk persistence (sync by default)
+// MAKO_RAFT_ASYNC_PERSISTENCE=1     → Switch to async disk persistence
+//
+// Sync mode (default): Traditional Raft
+//   - Vote requests: persist first, then respond (no VoteDurable RPC)
+//   - AppendEntries: persist first, then ack (no AppendEntriesDurable RPC)
+//
+// Async mode: Speculative Raft
+//   - Vote requests: respond immediately, persist async, send VoteDurable after fsync
+//   - AppendEntries: ack immediately, persist async, send AppendEntriesDurable after fsync
+//   - Tracks specVoters/durableVoters, specCommitIndex/securedLogIndex separately
+// ============================================================================
+
 #define _PARAMS0(...)
 #define _PARAMS1(first, second, ...) second
 #define _PARAMS2(first, second, ...) second, _PARAMS1(__VA_ARGS__)
@@ -49,8 +67,8 @@
 
 #define RpcHandler(name, ...) \
   void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) override { \
-    verify(svr_ != nullptr); \
-    if (svr_->IsDisconnected()) { \
+    RaftServer* _svr = GetServer(); \
+    if (_svr == nullptr || _svr->IsDisconnected()) { \
       OnDisconnected##name(_PARAMS(__VA_ARGS__)); \
       defer.reply(); \
     }  else { \

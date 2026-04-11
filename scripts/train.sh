@@ -1,5 +1,10 @@
 #!/bin/bash
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+START_EXP="${SCRIPT_DIR}/legacy/start-exp.sh"
+cd "${REPO_ROOT}"
+
 for i in {1..10..1}; do
   if [ -f "janus-gray/config/concurrent_$i.yml" ]; then
     echo "concurrent_$i.yml exists"
@@ -10,7 +15,7 @@ for i in {1..10..1}; do
     fi
   fi
 	trial="$1"_"$i"
-	./start-exp.sh $trial $i 150 0 3 follower
+	"${START_EXP}" $trial $i 150 0 3 follower
 	tar xvzf janus-gray/archive/$trial-tpca_2pl_ww-fpga_raft_1_1_-1.tgz
 	cd janus-gray
 	python3 avg_latency.py $1
@@ -27,7 +32,7 @@ for i in {20..100..10}; do
     fi
   fi
 	trial="$1"_"$i"
-	./start-exp.sh $trial $i 150 0 3 follower
+	"${START_EXP}" $trial $i 150 0 3 follower
 	tar xvzf janus-gray/archive/$trial-tpca_2pl_ww-fpga_raft_1_1_-1.tgz
 	cd janus-gray
 	python3 avg_latency.py $1
@@ -44,7 +49,7 @@ for i in {200..2000..100}; do
     fi
   fi
 	trial="$1"_"$i"
-	./start-exp.sh $trial $i 150 0 3 follower
+	"${START_EXP}" $trial $i 150 0 3 follower
 	tar xvzf janus-gray/archive/$trial-tpca_2pl_ww-fpga_raft_1_1_-1.tgz
 	cd janus-gray
 	python3 avg_latency.py $1

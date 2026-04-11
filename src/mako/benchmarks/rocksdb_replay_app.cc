@@ -11,10 +11,9 @@
 #include <map>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <cstring>
 
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
-#include <rocksdb/iterator.h>
+#include <rocksdb/c.h>
 
 #include "sto/ReplayDB.h"
 #include "mako.hh"
@@ -25,6 +24,27 @@
 using namespace mako;
 
 std::atomic<size_t> g_total_txns{0};
+
+namespace {
+
+std::string take_rocksdb_error(char** errptr) {
+    if (errptr == nullptr || *errptr == nullptr) {
+        return "";
+    }
+    std::string err(*errptr);
+    rocksdb_free(*errptr);
+    *errptr = nullptr;
+    return err;
+}
+
+std::string copy_db_value(const char* data, size_t len) {
+    if (data == nullptr || len == 0) {
+        return "";
+    }
+    return std::string(data, len);
+}
+
+}  // namespace
 
 static abstract_db* initWithDB_replay() {
     auto& benchConfig = BenchmarkConfig::getInstance();
@@ -101,26 +121,63 @@ bool loadAllData(const std::string& db_path, size_t num_partitions,
     size_t total = 0;
 
     for (size_t p = 0; p < num_partitions; ++p) {
-        rocksdb::DB* db;
-        rocksdb::Options options;
-        options.create_if_missing = false;
-
-        if (!rocksdb::DB::Open(options, db_path + "_partition" + std::to_string(p), &db).ok())
+        rocksdb_options_t* options = rocksdb_options_create();
+        rocksdb_readoptions_t* read_options = rocksdb_readoptions_create();
+        if (options == nullptr || read_options == nullptr) {
+            if (read_options != nullptr) {
+                rocksdb_readoptions_destroy(read_options);
+            }
+            if (options != nullptr) {
+                rocksdb_options_destroy(options);
+            }
             continue;
+        }
+        rocksdb_options_set_create_if_missing(options, 0);
 
-        rocksdb::Iterator* iter = db->NewIterator(rocksdb::ReadOptions());
-        for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
-            if (iter->key().ToString() == "meta") continue;
+        char* err = nullptr;
+        std::string partition_path = db_path + "_partition" + std::to_string(p);
+        rocksdb_t* db = rocksdb_open(options, partition_path.c_str(), &err);
+        if (err != nullptr || db == nullptr) {
+            take_rocksdb_error(&err);
+            rocksdb_readoptions_destroy(read_options);
+            rocksdb_options_destroy(options);
+            continue;
+        }
+
+        rocksdb_iterator_t* iter = rocksdb_create_iterator(db, read_options);
+        if (iter == nullptr) {
+            rocksdb_close(db);
+            rocksdb_readoptions_destroy(read_options);
+            rocksdb_options_destroy(options);
+            continue;
+        }
+
+        rocksdb_iter_seek_to_first(iter);
+        for (; rocksdb_iter_valid(iter); rocksdb_iter_next(iter)) {
+            size_t key_len = 0;
+            size_t value_len = 0;
+            const char* key_ptr = rocksdb_iter_key(iter, &key_len);
+            const char* value_ptr = rocksdb_iter_value(iter, &value_len);
+
+            std::string key = copy_db_value(key_ptr, key_len);
+            if (key == "meta") continue;
 
             LoadedLog log;
-            log.value = iter->value().ToString();
+            log.value = copy_db_value(value_ptr, value_len);
             log.partition_id = p;
             thread_logs[total % thread_logs.size()].push_back(std::move(log));
             total++;
         }
 
-        delete iter;
-        delete db;
+        char* iter_err = nullptr;
+        rocksdb_iter_get_error(iter, &iter_err);
+        if (iter_err != nullptr) {
+            take_rocksdb_error(&iter_err);
+        }
+        rocksdb_iter_destroy(iter);
+        rocksdb_close(db);
+        rocksdb_readoptions_destroy(read_options);
+        rocksdb_options_destroy(options);
     }
 
     printf("Loaded %zu records from %zu partitions\n", total, num_partitions);

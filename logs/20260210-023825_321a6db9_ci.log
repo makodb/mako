@@ -1,0 +1,1874 @@
+=========================================
+Running: ./ci/ci.sh compile
+=========================================
+cmake -S . -B build
+-- RustyCpp parallel jobs: 64
+-- Rusty C++ Checker submodule found at: /home/users/wshen24/mako/third-party/rusty-cpp
+-- Checker will be built on demand at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- C++ Borrow Checking enabled
+-- Checker will be built at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+-- Build type: release
+-- Checking RustyCpp dependencies...
+-- Found cargo: /home/users/wshen24/.local-rust/bin/cargo
+-- Found libclang: /usr/lib/llvm-16/lib/libclang.so
+-- Found libclang headers: /usr/lib/llvm-16/include
+-- Found llvm-config: /usr/lib/llvm-16/bin/llvm-config
+-- Found Z3: /usr/lib/x86_64-linux-gnu/libz3.so
+-- Found Z3 headers: /usr/include
+-- Checker already exists at: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker - skipping build target
+-- I: /home/users/wshen24/mako/third-party/erpc
+-- environment: eth
+CMake Deprecation Warning at third-party/erpc/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 2.8.12 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value or use a ...<max> suffix to tell
+  CMake that the project does not need compatibility with older versions.
+
+
+-- Compilation optimized for performance.
+-- Debugging is disabled.
+-- Profile-guided optimization is disabled.
+-- Logging level = none.
+-- Testing is disabled, so tests may fail.
+-- Selected transport = fake.
+-- Compiling app = latency
+-- DPDK not needed to build eRPC
+STATUS,server compiles
+-- Reuse coroutine enabled
+-- --- Configuring Mako Root & STO Borrow Checks ---
+-- Found 0 files to check in src/mako/ and benchmarks/sto/
+-- --- End Mako Borrow Checks Configuration ---
+-- GoogleTest found via find_package
+-- Test targets configured:
+--   RRR Framework Tests:
+--     - test_marshal: Marshal/Unmarshal tests
+--     - test_rpc: RPC client/server tests
+--     - test_rpc_extended: Extended RPC tests (timeouts, reconnection, load)
+--     - test_future: Future/async operation tests
+--     - test_masstree: Core Masstree b-tree regression tests
+--     - test_reactor: Reactor/event system tests
+--     - test_reactor_extended: Extended reactor tests (events, coroutines, load)
+--     - rpcbench: RPC performance benchmark test
+--   Silo/STO Tests:
+--     - test_silo_varint: Varint encoding/decoding (22 tests)
+--     - test_silo_rcu_thread: RCU memory management (9 tests)
+--     - test_silo_allocator_tuple: Allocator + Tuple integration (18 tests)
+--     - test_sto_transaction: STO Transaction RCU (13 tests)
+--     - test_sto_transaction_real: STO Transaction integration tests
+-- Additional perf binaries:
+--   - masstree_perf: On-demand Masstree throughput benchmark (JSON output)
+-- 
+-- Run all tests with: make run_tests
+-- Run Silo/STO tests: make run_silo_sto_tests
+-- Or individually: make test && ctest
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /home/users/wshen24/mako/build
+Building with 32 parallel jobs...
+cmake --build build --parallel 32
+gmake[1]: warning: -j32 forced in submake: resetting jobserver mode.
+gmake[1]: Entering directory '/home/users/wshen24/mako/build'
+gmake[2]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gtest
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[  1%] Built target rust_build
+[  1%] Checker already exists, skipping build
+Consolidate compiler generated dependencies of target gflags_nothreads_static
+[  1%] Built target rcc_rpc_gen
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gflags_nothreads_shared
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hdr_histogram
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hdr_histogram_static
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Checker already built: /home/users/wshen24/mako/third-party/rusty-cpp/target/release/rusty-cpp-checker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  1%] Built target gtest
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  1%] Built target build_rusty_cpp_checker
+[  1%] Built target gflags_nothreads_static
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  2%] Built target gflags_nothreads_shared
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  3%] Built target hdr_histogram
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  4%] Built target hdr_histogram_static
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rrr
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gtest_main
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gmock
+[  4%] Borrow checking src/mako/masstree/kvthread.cc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  5%] Borrow checking src/mako/masstree/query_masstree.cc
+[  5%] Borrow checking src/deptran/communicator.cc (from deptran_borrow)
+[  7%] Borrow checking src/deptran/workload.cc (from deptran_borrow)
+[  7%] Borrow checking src/deptran/stats_registry.cc (from deptran_borrow)
+[  7%] Borrow checking src/deptran/paxos_worker.cc (from deptran_borrow)
+[  7%] Borrow checking src/mako/masstree/value_versioned_array.cc
+[  7%] Borrow checking src/deptran/executor.cc (from deptran_borrow)
+[  7%] Borrow checking src/deptran/empty.cc (from deptran_borrow)
+[  7%] Borrow checking src/mako/masstree/masstree_context.cc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[  7%] Linking CXX shared library ../../../../../lib/libgtest_main.so
+[  7%] Linking CXX shared library ../../../../../lib/libgmock.so
+[ 11%] Built target rrr
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/kvthread.cc
+Rusty C++ Checker
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/masstree_context.cc
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/query_masstree.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/mako/masstree/value_versioned_array.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/stats_registry.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/workload.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/communicator.cc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Rusty C++ Checker
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/paxos_worker.cc
+Analyzing: /home/users/wshen24/mako/src/deptran/empty.cc
+Rusty C++ Checker
+Analyzing: /home/users/wshen24/mako/src/deptran/executor.cc
+Consolidate compiler generated dependencies of target erpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target memdb
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Auto-detected 7 C++ include path(s)
+Consolidate compiler generated dependencies of target latency
+[ 14%] Built target memdb
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 14%] Built target gtest_main
+Consolidate compiler generated dependencies of target mako
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 20%] Built target borrow_check_deptran_borrow_empty
+Consolidate compiler generated dependencies of target test_fiber
+[ 21%] Built target erpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_client_service
+Consolidate compiler generated dependencies of target test_marshal
+Consolidate compiler generated dependencies of target test_sharding_policy
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rpcbench
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_schema
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_completion_tracker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_idempotency
+Consolidate compiler generated dependencies of target test_load_balancer
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 21%] Built target test_fiber
+Consolidate compiler generated dependencies of target test_reactor
+Consolidate compiler generated dependencies of target test_reactor_extended
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 21%] Linking CXX executable test_marshal
+Consolidate compiler generated dependencies of target test_rpc
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 22%] Linking CXX executable test_client_service
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target bench_future
+Consolidate compiler generated dependencies of target test_coroutine
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 23%] Linking CXX executable test_sharding_policy
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target rpc_chaos_test
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_future
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_extended
+Consolidate compiler generated dependencies of target test_arc_mutex_thread
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 28%] Built target rpcbench
+Consolidate compiler generated dependencies of target test_timeout_race
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 31%] Linking CXX executable test_idempotency
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 34%] Linking CXX executable test_config_schema
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 36%] Linking CXX executable test_completion_tracker
+[ 35%] Built target gmock
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 36%] Linking CXX executable test_reactor
+[ 38%] Linking CXX executable test_load_balancer
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_and_event
+[ 41%] Built target latency
+[ 41%] Linking CXX executable test_reactor_extended
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 42%] Built target mako
+[ 42%] Linking CXX executable test_rpc
+[ 42%] Linking CXX executable bench_future
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 43%] Linking CXX executable test_timeout_race
+[ 43%] Linking CXX executable test_arc_mutex_thread
+[ 43%] Linking CXX executable test_coroutine
+[ 43%] Linking CXX executable test_future
+[ 43%] Linking CXX executable test_rpc_extended
+[ 43%] Linking CXX executable rpc_chaos_test
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_transport_backend
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 43%] Linking CXX executable test_and_event
+Consolidate compiler generated dependencies of target stress_transport_backend
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 43%] Linking CXX executable stress_transport_backend
+[ 43%] Linking CXX executable test_transport_backend
+Consolidate compiler generated dependencies of target test_transport_integration
+Consolidate compiler generated dependencies of target test_erpc_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 43%] Linking CXX executable test_transport_integration
+[ 43%] Linking CXX executable test_erpc_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 44%] Built target test_erpc_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_connection_state
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 44%] Linking CXX executable test_rpc_connection_state
+Consolidate compiler generated dependencies of target txlog
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 75%] Built target txlog
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_reconnect_policy
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 75%] Linking CXX executable test_rpc_reconnect_policy
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 75%] Built target test_reactor
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_circuit_breaker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 75%] Linking CXX executable test_rpc_circuit_breaker
+[ 75%] Built target test_coroutine
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 75%] Built target test_timeout_race
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_heartbeat
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_errors
+[ 75%] Linking CXX executable test_rpc_heartbeat
+[ 75%] Built target test_rpc
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 75%] Built target test_and_event
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 76%] Built target test_future
+[ 76%] Linking CXX executable test_rpc_errors
+[ 76%] Built target test_load_balancer
+[ 76%] Built target rpc_chaos_test
+Consolidate compiler generated dependencies of target test_rpc_callbacks
+Consolidate compiler generated dependencies of target test_rpc_request_queue
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 77%] Linking CXX executable test_rpc_request_queue
+[ 77%] Linking CXX executable test_rpc_callbacks
+[ 77%] Built target test_transport_integration
+Consolidate compiler generated dependencies of target test_rpc_timeout_retry
+Consolidate compiler generated dependencies of target test_rpc_request_buffering
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_state_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 77%] Built target test_rpc_extended
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 77%] Linking CXX executable test_rpc_timeout_retry
+[ 77%] Linking CXX executable test_rpc_request_buffering
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 77%] Built target test_reactor_extended
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_reconnect_integration
+Consolidate compiler generated dependencies of target test_rpc_circuit_breaker_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 77%] Built target bench_future
+Consolidate compiler generated dependencies of target test_rpc_error_integration
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 77%] Linking CXX executable test_rpc_state_integration
+[ 78%] Linking CXX executable test_rpc_reconnect_integration
+[ 78%] Linking CXX executable test_rpc_circuit_breaker_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_combined_reliability
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_error_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_combined_reliability
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc_request_buffering
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_graceful_shutdown
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_graceful_shutdown
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc_combined_reliability
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_restart_detection
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_restart_detection
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc_circuit_breaker_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_validation
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc_state_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_validation
+Consolidate compiler generated dependencies of target test_rpc_metrics
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_metrics
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc_reconnect_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_client_pool
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_client_pool
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_completion_tracker
+[ 78%] Built target test_rpc_error_integration
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_marshal
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_rocksdb_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_rpc_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_sharding_policy
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_rocksdb_log_storage
+Consolidate compiler generated dependencies of target test_txn_timeout
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_log_storage
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_txn_timeout
+Consolidate compiler generated dependencies of target test_rpc_stress_crash
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 78%] Linking CXX executable test_rpc_stress_crash
+[ 78%] Built target test_client_service
+[ 78%] Built target test_config_schema
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_rpc_graceful_shutdown
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Built target stress_transport_backend
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_varint
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_rcu_thread
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 78%] Built target test_arc_mutex_thread
+[ 78%] Built target test_idempotency
+Consolidate compiler generated dependencies of target test_rpc_partition
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_silo_varint
+[ 80%] Linking CXX executable test_silo_rcu_thread
+Consolidate compiler generated dependencies of target test_silo_allocator_tuple
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_rpc_partition
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_silo_allocator_tuple
+Consolidate compiler generated dependencies of target test_sto_transaction_real
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sto_transaction
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Built target borrow_check_kvthread
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 80%] Linking CXX executable test_sto_transaction_real
+[ 80%] Linking CXX executable test_sto_transaction
+[ 81%] Built target test_rpc_connection_state
+[ 81%] Built target test_transport_backend
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target hello_server
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target gmock_main
+Consolidate compiler generated dependencies of target hello_client
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 81%] Built target hello_server
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 81%] Linking CXX shared library ../../../../../lib/libgmock_main.so
+[ 82%] Built target test_silo_varint
+[ 82%] Built target hello_client
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target continuousTransactions
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target simpleTransaction
+[ 82%] Built target continuousTransactions
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target simpleTransactionRep
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 82%] Built target test_silo_rcu_thread
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 82%] Built target simpleTransaction
+Consolidate compiler generated dependencies of target test_rocksdb_persistence
+Consolidate compiler generated dependencies of target simplePaxos
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 83%] Built target simpleTransactionRep
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 83%] Built target test_rocksdb_persistence
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 83%] Built target test_sto_transaction
+Consolidate compiler generated dependencies of target rocksdb_replay_app
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 83%] Built target simplePaxos
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_callback_demo
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 84%] Built target test_rpc_restart_detection
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 84%] Built target rocksdb_replay_app
+[ 84%] Built target test_callback_demo
+Consolidate compiler generated dependencies of target test_ordered_callbacks
+[ 84%] Built target gmock_main
+Consolidate compiler generated dependencies of target test_partitioned_queues
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_stress_partitioned_queues
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target makoCon
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 86%] Built target test_ordered_callbacks
+[ 86%] Built target test_partitioned_queues
+[ 86%] Built target test_stress_partitioned_queues
+Consolidate compiler generated dependencies of target paxos_async_commit_test
+Consolidate compiler generated dependencies of target makoConMultiTrd
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 86%] Built target makoCon
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target makoConDBBench
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 86%] Built target paxos_async_commit_test
+Consolidate compiler generated dependencies of target basic
+[ 87%] Built target makoConMultiTrd
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target erpc_server
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target erpc_client
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 87%] Built target basic
+[ 87%] Built target test_silo_allocator_tuple
+[ 87%] Built target makoConDBBench
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 87%] Built target erpc_server
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_sharding_policy_cache
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 87%] Built target erpc_client
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_tpcc_sharding
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_store
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_shard_router
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_service
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 87%] Linking CXX executable test_sharding_policy_cache
+[ 87%] Linking CXX executable test_config_store
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_client
+Consolidate compiler generated dependencies of target test_sharding_startup
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 87%] Linking CXX executable test_tpcc_sharding
+[ 87%] Linking CXX executable test_shard_router
+[ 87%] Linking CXX executable test_config_service
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_config_failure
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 87%] Linking CXX executable test_sharding_startup
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 87%] Linking CXX executable test_config_client
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 87%] Linking CXX executable test_config_failure
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target test_rpc_reconnect_policy
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_masstree
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_masstree
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target test_rpc_client_pool
+[ 88%] Built target test_rpc_metrics
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_masstree_internals
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 88%] Linking CXX executable test_masstree_internals
+Consolidate compiler generated dependencies of target test_masstree_multi_instance
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 88%] Built target test_sto_transaction_real
+[ 88%] Linking CXX executable test_masstree_multi_instance
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 90%] Built target test_tpcc_sharding
+[ 90%] Built target test_masstree
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 92%] Built target test_config_store
+[ 92%] Built target test_rpc_validation
+[ 92%] Built target test_shard_router
+[ 92%] Built target test_sharding_policy_cache
+[ 92%] Built target test_config_failure
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 93%] Built target test_rpc_callbacks
+Consolidate compiler generated dependencies of target test_silo_runtime
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target masstree_perf
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target test_silo_multi_site_stress
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[ 94%] Built target test_sharding_startup
+[ 94%] Built target test_rpc_rocksdb_log_storage
+[ 94%] Built target test_config_client
+[ 95%] Built target test_config_service
+[ 96%] Built target test_rpc_heartbeat
+[ 96%] Linking CXX executable test_silo_runtime
+[ 96%] Built target masstree_perf
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 97%] Linking CXX executable test_silo_multi_site_stress
+[ 97%] Built target test_rpc_circuit_breaker
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 97%] Built target test_masstree_multi_instance
+[ 97%] Built target borrow_check_masstree_context
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target test_rpc_partition
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[ 98%] Built target test_rpc_request_queue
+[100%] Built target test_rpc_stress_crash
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_silo_multi_site_stress
+[100%] Built target test_silo_runtime
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_timeout_retry
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_errors
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_rpc_log_storage
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_txn_timeout
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target test_masstree_internals
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_value_versioned_array
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_query_masstree
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_executor
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_stats_registry
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_paxos_worker
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_communicator
+✓ rusty-cpp: no violations found!
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran_borrow_workload
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_all_deptran_borrow
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+[100%] Running borrow checker on Deptran worker sources
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target borrow_check_deptran
+gmake[3]: Entering directory '/home/users/wshen24/mako/build'
+Consolidate compiler generated dependencies of target dbtest
+gmake[3]: Leaving directory '/home/users/wshen24/mako/build'
+[100%] Built target dbtest
+gmake[2]: Leaving directory '/home/users/wshen24/mako/build'
+gmake[1]: Leaving directory '/home/users/wshen24/mako/build'
+using partitions:  10
+using partitions:  10
+using partitions:  10
+[{'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}]
+work on template:  template_local-shards1-warehouses1.yml
+work on template:  template_local-shards2-warehouses1.yml
+work on template:  template_local-shards3-warehouses1.yml
+work on template:  template_local-shards4-warehouses1.yml
+work on template:  template_local-shards5-warehouses1.yml
+work on template:  template_local-shards6-warehouses1.yml
+work on template:  template_local-shards7-warehouses1.yml
+work on template:  template_local-shards8-warehouses1.yml
+work on template:  template_local-shards9-warehouses1.yml
+work on template:  template_local-shards10-warehouses1.yml
+using partitions:  10
+=========================================
+Running: ./ci/ci.sh rrrTests
+=========================================
+rrrTests simpleTransaction base port: 30242
+Test project /home/users/wshen24/mako/build
+      Start  1: test_marshal
+ 1/66 Test  #1: test_marshal ...........................   Passed    0.11 sec
+      Start  2: test_client_service
+ 2/66 Test  #2: test_client_service ....................   Passed    0.04 sec
+      Start  3: test_config_schema
+ 3/66 Test  #3: test_config_schema .....................   Passed    0.03 sec
+      Start  4: test_sharding_policy
+ 4/66 Test  #4: test_sharding_policy ...................   Passed    0.01 sec
+      Start  5: test_sharding_policy_cache
+ 5/66 Test  #5: test_sharding_policy_cache .............   Passed    0.26 sec
+      Start  6: test_shard_router
+ 6/66 Test  #6: test_shard_router ......................   Passed    0.02 sec
+      Start  7: test_tpcc_sharding
+ 7/66 Test  #7: test_tpcc_sharding .....................   Passed    0.02 sec
+      Start  8: test_fiber
+ 8/66 Test  #8: test_fiber .............................   Passed    0.04 sec
+      Start  9: test_config_store
+ 9/66 Test  #9: test_config_store ......................   Passed    0.20 sec
+      Start 10: test_config_service
+10/66 Test #10: test_config_service ....................   Passed    0.13 sec
+      Start 11: test_config_client
+11/66 Test #11: test_config_client .....................   Passed    2.11 sec
+      Start 12: test_config_failure
+12/66 Test #12: test_config_failure ....................   Passed    0.83 sec
+      Start 13: test_sharding_startup
+13/66 Test #13: test_sharding_startup ..................   Passed    0.64 sec
+      Start 14: test_rpc
+14/66 Test #14: test_rpc ...............................   Passed    3.62 sec
+      Start 15: test_load_balancer
+15/66 Test #15: test_load_balancer .....................   Passed    0.54 sec
+      Start 16: test_idempotency
+16/66 Test #16: test_idempotency .......................   Passed    0.04 sec
+      Start 17: test_completion_tracker
+17/66 Test #17: test_completion_tracker ................   Passed    0.07 sec
+      Start 18: rpc_chaos_test
+18/66 Test #18: rpc_chaos_test .........................   Passed    6.45 sec
+      Start 19: test_future
+19/66 Test #19: test_future ............................   Passed    2.30 sec
+      Start 20: test_masstree
+20/66 Test #20: test_masstree ..........................   Passed    0.06 sec
+      Start 21: test_masstree_internals
+21/66 Test #21: test_masstree_internals ................   Passed    0.03 sec
+      Start 22: test_masstree_multi_instance
+22/66 Test #22: test_masstree_multi_instance ...........   Passed    0.03 sec
+      Start 23: test_silo_runtime
+23/66 Test #23: test_silo_runtime ......................   Passed    0.01 sec
+      Start 24: test_silo_multi_site_stress
+24/66 Test #24: test_silo_multi_site_stress ............   Passed    0.88 sec
+      Start 25: test_reactor
+25/66 Test #25: test_reactor ...........................   Passed    1.88 sec
+      Start 26: test_coroutine
+26/66 Test #26: test_coroutine .........................   Passed    1.01 sec
+      Start 27: test_rpc_extended
+27/66 Test #27: test_rpc_extended ......................   Passed    5.87 sec
+      Start 28: test_reactor_extended
+28/66 Test #28: test_reactor_extended ..................   Passed    0.27 sec
+      Start 29: test_arc_mutex_thread
+29/66 Test #29: test_arc_mutex_thread ..................   Passed    0.02 sec
+      Start 30: test_timeout_race
+30/66 Test #30: test_timeout_race ......................   Passed    0.41 sec
+      Start 31: test_and_event
+31/66 Test #31: test_and_event .........................   Passed    0.26 sec
+      Start 32: test_transport_backend
+32/66 Test #32: test_transport_backend .................   Passed    0.08 sec
+      Start 33: stress_transport_backend
+33/66 Test #33: stress_transport_backend ...............   Passed    5.73 sec
+      Start 34: test_transport_integration
+34/66 Test #34: test_transport_integration .............   Passed   14.04 sec
+      Start 35: test_erpc_integration
+35/66 Test #35: test_erpc_integration ..................   Passed    1.31 sec
+      Start 36: test_rpc_connection_state
+36/66 Test #36: test_rpc_connection_state ..............   Passed    0.05 sec
+      Start 37: test_rpc_reconnect_policy
+37/66 Test #37: test_rpc_reconnect_policy ..............   Passed    0.02 sec
+      Start 38: test_rpc_circuit_breaker
+38/66 Test #38: test_rpc_circuit_breaker ...............   Passed    0.31 sec
+      Start 39: test_rpc_heartbeat
+39/66 Test #39: test_rpc_heartbeat .....................   Passed    0.16 sec
+      Start 40: test_rpc_errors
+40/66 Test #40: test_rpc_errors ........................   Passed    0.04 sec
+      Start 41: test_rpc_callbacks
+41/66 Test #41: test_rpc_callbacks .....................   Passed    0.02 sec
+      Start 42: test_rpc_request_queue
+42/66 Test #42: test_rpc_request_queue .................   Passed    0.25 sec
+      Start 43: test_rpc_request_buffering
+43/66 Test #43: test_rpc_request_buffering .............   Passed    0.40 sec
+      Start 44: test_rpc_timeout_retry
+44/66 Test #44: test_rpc_timeout_retry .................   Passed    0.04 sec
+      Start 45: test_rpc_state_integration
+45/66 Test #45: test_rpc_state_integration .............   Passed    1.46 sec
+      Start 46: test_rpc_reconnect_integration
+46/66 Test #46: test_rpc_reconnect_integration .........   Passed    0.91 sec
+      Start 47: test_rpc_circuit_breaker_integration
+47/66 Test #47: test_rpc_circuit_breaker_integration ...   Passed    0.48 sec
+      Start 48: test_rpc_error_integration
+48/66 Test #48: test_rpc_error_integration .............   Passed    0.19 sec
+      Start 49: test_rpc_combined_reliability
+49/66 Test #49: test_rpc_combined_reliability ..........   Passed    1.01 sec
+      Start 50: test_rpc_graceful_shutdown
+50/66 Test #50: test_rpc_graceful_shutdown .............   Passed    0.30 sec
+      Start 51: test_rpc_restart_detection
+51/66 Test #51: test_rpc_restart_detection .............   Passed    0.10 sec
+      Start 52: test_rpc_validation
+52/66 Test #52: test_rpc_validation ....................   Passed    1.17 sec
+      Start 53: test_rpc_metrics
+53/66 Test #53: test_rpc_metrics .......................   Passed    0.29 sec
+      Start 54: test_rpc_client_pool
+54/66 Test #54: test_rpc_client_pool ...................   Passed    0.33 sec
+      Start 55: test_rpc_log_storage
+55/66 Test #55: test_rpc_log_storage ...................   Passed    0.02 sec
+      Start 56: test_rpc_rocksdb_log_storage
+56/66 Test #56: test_rpc_rocksdb_log_storage ...........   Passed    0.29 sec
+      Start 57: test_txn_timeout
+57/66 Test #57: test_txn_timeout .......................   Passed    0.04 sec
+      Start 58: test_rpc_stress_crash
+58/66 Test #58: test_rpc_stress_crash ..................   Passed    3.55 sec
+      Start 59: test_rpc_partition
+59/66 Test #59: test_rpc_partition .....................   Passed    7.90 sec
+      Start 60: simpleTransaction
+60/66 Test #60: simpleTransaction ......................   Passed    1.14 sec
+      Start 61: rpcbench
+61/66 Test #61: rpcbench ...............................   Passed    4.06 sec
+      Start 62: SiloVarintTests
+62/66 Test #62: SiloVarintTests ........................   Passed    0.06 sec
+      Start 63: SiloRCUThreadTests
+63/66 Test #63: SiloRCUThreadTests .....................   Passed    0.03 sec
+      Start 64: SiloAllocatorTupleTests
+64/66 Test #64: SiloAllocatorTupleTests ................   Passed    0.06 sec
+      Start 65: STOTransactionTests
+65/66 Test #65: STOTransactionTests ....................   Passed    0.01 sec
+      Start 66: STOTransactionRealTests
+66/66 Test #66: STOTransactionRealTests ................   Passed    0.07 sec
+
+100% tests passed, 0 tests failed out of 66
+
+Label Time Summary:
+chaos     =   6.45 sec*proc (1 test)
+stress    =  11.45 sec*proc (2 tests)
+
+Total Test time (real) =  74.33 sec
+=========================================
+Running: ./ci/ci.sh simpleTransaction
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+simpleTransaction base port: 28131
+20260110-02:48.29-372696(us) 2824821 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20260110-02:48.29-373186(us) 2824821 * thread_init     (mbta_wrapper.hh:1048): thread_init: thread_id=0, shard_index=0, getShardIndex=0, loader=0
+20260110-02:48.29-373464(us) 2824821 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+20260110-02:48.29-373781(us) 2824821 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+=== Mako Transaction Tests  ===
+[TRANSPORT] Using default: rrr
+20260110-02:48.29-374033(us) 2824821 * Initialize      (rrr_rpc_backend.cc:65): RrrRpcBackend::Initialize: poll_thread_worker_ created, is_some=1
+20260110-02:48.29-374163(us) 2824821 * Initialize      (rrr_rpc_backend.cc:95): RrrRpcBackend initialized on 127.0.0.1:28131 (listening on 0.0.0.0:28131)
+20260110-02:48.29-374182(us) 2824821 * FastTransport   (fasttransport.cc:127): FastTransport initialized with rrr/rpc backend on 127.0.0.1:28131
+20260110-02:48.29-374464(us) 2824821 * ParseOldFormat  (configuration.cc:66): Using old configuration format
+
+--- Testing Basic Transactions ---
+new table is createded with name: customer_0, table-id: 1, on shard-server id:0
+existing table is createded with name: customer_0, table-id: 1, on shard-server id:0
+[[32mPASS[0m] Write 5 records
+[[32mPASS[0m] Read and verify 5 records
+[[32mPASS[0m] Table scan verification
+
+--- Testing OverwrittenOperations ---
+new table is createded with name: overwritten_table, table-id: 2, on shard-server id:0
+[[32mPASS[0m] value check
+
+[32mAll tests completed successfully![0m
+=========================================
+Running: ./ci/ci.sh clientServer
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Client-Server Integration Test
+=========================================
+
+Cleaning up...
+
+--- Test 1: Usage Help Verification ---
+Testing that usage help displays all three modes...
+[32mPASS: Client mode documented in usage[0m
+[32mPASS: Server-only mode documented in usage[0m
+[32mPASS: Server + tests mode documented in usage[0m
+
+--- Test 2: Server-Only Mode Help Verification ---
+Testing that --server mode is recognized...
+[32mPASS: Server-only mode help works[0m
+
+--- Test 3: Client Connection Without Server ---
+Testing client gracefully handles missing server...
+[32mPASS: Client reports connection failure gracefully[0m
+
+=========================================
+[32mAll client-server integration tests passed![0m
+=========================================
+
+Summary:
+  - Test 1: Usage help - PASS (All three modes documented)
+  - Test 2: Server-only mode - PASS (--server flag recognized)
+  - Test 3: Client error handling - PASS (Graceful failure when no server)
+
+Note: simpleTransactionRep now supports three modes:
+      - Default: Server + transaction tests
+      - --server: Standalone server (wait for clients/shutdown)
+      - --client: Client mode (connect to remote server)
+
+      End-to-end client-server tests require multi-shard mode.
+      Use 'ci/ci.sh shard2Replication' or 'ci/ci.sh multiShardSingleProcess'
+      for multi-shard testing.
+
+Cleaning up...
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh simplePaxos
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+using partitions:  10
+using partitions:  10
+using partitions:  10
+[{'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}, {'localhost': '127.0.0.1', 'p1': '127.0.0.1', 'p2': '127.0.0.1', 'learner': '127.0.0.1'}]
+work on template:  template_local-shards1-warehouses1.yml
+work on template:  template_local-shards2-warehouses1.yml
+work on template:  template_local-shards3-warehouses1.yml
+work on template:  template_local-shards4-warehouses1.yml
+work on template:  template_local-shards5-warehouses1.yml
+work on template:  template_local-shards6-warehouses1.yml
+work on template:  template_local-shards7-warehouses1.yml
+work on template:  template_local-shards8-warehouses1.yml
+work on template:  template_local-shards9-warehouses1.yml
+work on template:  template_local-shards10-warehouses1.yml
+using partitions:  10
+Starting p1 (follower)...
+Starting p2 (follower)...
+Starting learner...
+Starting localhost (leader)...
+Waiting for completion...
+==> a1.log <==
+[[32mPASS[0m] committed logs count verify
+
+==> a2.log <==
+[[32mPASS[0m] committed logs count verify
+
+==> a3.log <==
+[[32mPASS[0m] committed logs count verify
+
+==> a4.log <==
+[[32mPASS[0m] committed logs count verify
+
+Checking test results...
+a1.log: PASS found ✓
+a2.log: PASS found ✓
+a3.log: PASS found ✓
+a4.log: PASS found ✓
+All checks passed!
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shardNoReplication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup without replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_8ise.yml
+Starting shard 0...
+Starting shard 1...
+Running experiments for 30 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_no_replication.sh_rrr_shard0-6.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770691798826)
+  ✗ 'agg_persist_throughput' keyword not found
+  ✗ NewOrder_remote_abort_ratio not found
+
+Checking test_2shard_no_replication.sh_rrr_shard1-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8135.53 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.36342 (< 20%)
+
+=========================================
+Some checks failed!
+=========================================
+
+Debug information:
+Check test_2shard_no_replication.sh_rrr_shard*-6 for details
+==> test_2shard_no_replication.sh_rrr_shard0-6.log <==
+20260110-02:50.38-994733(us) 2825706 ! SendToAll       (rrr_rpc_backend.cc:342): RrrRpcBackend::SendToAll: stop requested, not sending (req_type=8)
+20260110-02:50.38-994773(us) 2825706 ! SendToAll       (rrr_rpc_backend.cc:342): RrrRpcBackend::SendToAll: stop requested, not sending (req_type=3)
+20260110-02:50.38-994803(us) 2825706 ! SendToAll       (rrr_rpc_backend.cc:342): RrrRpcBackend::SendToAll: stop requested, not sending (req_type=4)
+jump out the while loop
+20260110-02:50.38-994836(us) 2825706 ! SendToShard     (rrr_rpc_backend.cc:303): RrrRpcBackend::SendToShard: stop requested after wait, aborting
+20260110-02:50.38-994904(us) 2825706 * Stop            (rrr_rpc_backend.cc:661): RrrRpcBackend::Stop: Closed 1 client connections
+20260110-02:50.38-994935(us) 2825706 * Stop            (rrr_rpc_backend.cc:673): RrrRpcBackend stats: msg_size_resp_sent: 0 bytes, counter: 0, avg: -nan
+20260110-02:50.38-994969(us) 2825706 * Stop            (rrr_rpc_backend.cc:676): RrrRpcBackend::Stop: END
+20260110-02:50.38-994999(us) 2825706 * PrintStats      (rrr_rpc_backend.cc:682): RrrRpcBackend request stats: msg_size_req_sent: 682252 bytes, counter: 13113, avg: 52.028674
+bash/shard.sh: line 65: 2825706 Segmentation fault      (core dumped) $GDB_PREFIX $CMD
+
+==> test_2shard_no_replication.sh_rrr_shard1-6.log <==
+---------------------------------------
+--- system counters for n_comits ---
+[STOP_SERVER] Stopping 2 server transports
+[STOP_SERVER] Stopping server transport 0
+20260110-02:50.41-310563(us) 2825739 * Stop            (rrr_rpc_backend.cc:588): RrrRpcBackend::Stop: Already stopped, returning
+[STOP_SERVER] Server transport 0 stopped
+[STOP_SERVER] Stopping server transport 1
+20260110-02:50.41-310613(us) 2825739 * Stop            (rrr_rpc_backend.cc:588): RrrRpcBackend::Stop: Already stopped, returning
+[STOP_SERVER] Server transport 1 stopped
+[STOP_SERVER] All server transports stopped
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+Retrying shardNoReplication (attempt 2/2)...
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup without replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_1ove.yml
+Starting shard 0...
+Starting shard 1...
+Running experiments for 30 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_no_replication.sh_rrr_shard0-6.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770691864185)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8750.72 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.40642 (< 20%)
+
+Checking test_2shard_no_replication.sh_rrr_shard1-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8775.32 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.64448 (< 20%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shardNoReplicationErpc
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup without replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_PFxE.yml
+Starting shard 0...
+Starting shard 1...
+Running experiments for 30 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_no_replication.sh_erpc_shard0-6.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770691929908)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 149674 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 9.43806 (< 20%)
+
+Checking test_2shard_no_replication.sh_erpc_shard1-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 152901 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 11.012 (< 20%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1Replication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_DPyP.yml
+Starting shard 0...
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+  ... waiting (40s elapsed)
+Benchmark completed after 40s
+Stopping shards (graceful)...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_1shard_replication.sh_shard0-localhost-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 196543 ops/sec
+  ✓ NewOrder_remote_abort_ratio: -nan (< 20%)
+
+Checking test_1shard_replication.sh_shard0-p1-6.log:
+-----------------
+  ✓ replay_batch: 14144 (> 500)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2Replication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_ttOq.yml
+Starting shard 0...
+Starting shard 1...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+  ... waiting (40s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 41s
+Stopping shards (graceful)...
+Force killing remaining processes...
+WARNING: 2 dbtest processes still present after kill attempt
+zyang2   2831049  119  0.7 2142912 733096 ?      Sl   02:55   0:10 ./build/dbtest --num-threads 6 --shard-index 0 --shard-config /home/users/zyang2/janus/src/mako/config/local-shards2-warehouses6.yml -P localhost
+zyang2   2831092  199  0.6 2046664 666336 ?      Sl   02:55   0:07 ./build/dbtest --num-threads 6 --shard-index 1 --shard-config /home/users/zyang2/janus/src/mako/config/local-shards2-warehouses6.yml -P localhost
+Force killing PID 2831049
+Force killing PID 2831092
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication.sh_rrr_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770692060912)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 9060.56 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.70516 (< 40%)
+
+Checking test_2shard_replication.sh_rrr_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 9125.5 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.67851 (< 40%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationErpc
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_i79J.yml
+Starting shard 0...
+Starting shard 1...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+  ... waiting (40s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 42s
+Stopping shards (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication.sh_erpc_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770692129484)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 81665.1 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 11.2523 (< 40%)
+
+Checking test_2shard_replication.sh_erpc_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 98779.3 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 5.96753 (< 40%)
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1ReplicationSimple
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with replication using simpleTransactionRep
+=========================================
+simpleTransactionRep config: /tmp/mako_simple_txn_rep_jHF6.yml
+Starting shard 0...
+Running experiments
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 6 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationSimple
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with replication using simpleTransactionRep
+=========================================
+simpleTransactionRep config: /tmp/mako_simple_txn_rep_BZg9.yml
+Starting shard 0 and shard 1 simultaneously...
+Running experiments for 90 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking simple-shard1-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+  ✓ simple-shard1-learner.log: Data integrity verified
+  ✓ simple-shard1-p2.log: Data integrity verified
+  ✓ simple-shard1-p1.log: Data integrity verified
+
+=========================================
+All checks passed!
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1ReplicationRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with RAFT replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_xcZR.yml
+Starting shard 0 with Raft...
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+Benchmark completed after 38s
+Stopping shards (graceful)...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_1shard_replication_raft.sh_shard0-localhost-6.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 184728 ops/sec
+  ✓ NewOrder_remote_abort_ratio: -nan (< 20%)
+
+Checking test_1shard_replication_raft.sh_shard0-p1-6.log:
+-----------------
+  ✓ replay_batch: 7966 (> 500)
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with RAFT replication
+=========================================
+dbtest config: /tmp/mako_simple_txn_rep_RRym.yml
+Starting shard 0 with Raft...
+Starting shard 1 with Raft...
+Waiting for benchmarks to complete...
+  ... waiting (10s elapsed, shard0=0, shard1=0)
+  ... waiting (20s elapsed, shard0=0, shard1=0)
+  ... waiting (30s elapsed, shard0=0, shard1=0)
+  ... waiting (40s elapsed, shard0=0, shard1=0)
+Both benchmarks completed after 40s
+Stopping shards (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_replication_raft.sh_rrr_shard0-localhost.log:
+-----------------
+  ✓ TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770692414805)
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8921.41 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.73174 (< 40%)
+
+Checking test_2shard_replication_raft.sh_rrr_shard1-localhost.log:
+-----------------
+  ✓ Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 8885.49 ops/sec
+  ✓ NewOrder_remote_abort_ratio: 1.62968 (< 40%)
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard1ReplicationSimpleRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 1-shard setup with RAFT replication using simpleTransactionRep
+=========================================
+simpleTransactionRep config: /tmp/mako_simple_txn_rep_dkOE.yml
+Starting shard 0 with Raft...
+Running experiments
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 6 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2ReplicationSimpleRaft
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard setup with RAFT replication using simpleTransactionRep
+=========================================
+simpleTransactionRep config: /tmp/mako_simple_txn_rep_xI7S.yml
+Starting shard 0 and shard 1 simultaneously with Raft...
+Running experiments for 90 seconds...
+Stopping shards...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking simple-shard0-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking simple-shard1-p1.log:
+-----------------
+  ✓ replay_batch: 12 (> 0)
+
+Checking data integrity verification in follower logs:
+-----------------
+  ✓ simple-shard0-learner.log: Data integrity verified
+  ✓ simple-shard0-p2.log: Data integrity verified
+  ✓ simple-shard0-p1.log: Data integrity verified
+  ✓ simple-shard1-learner.log: Data integrity verified
+  ✓ simple-shard1-p2.log: Data integrity verified
+  ✓ simple-shard1-p1.log: Data integrity verified
+
+=========================================
+All checks passed! (Raft replication)
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh rocksdbTests
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=== RocksDB Persistence Test Script ===
+
+1. Cleaning test RocksDB directories...
+2. Running RocksDB persistence tests...
+   ✓ Basic persistence tests passed
+
+Test output summary:
+=====================================
+=== Test 1: Basic Persistence ===
+=== Test 2: Concurrent Writes ===
+=== Test 3: Large Data Persistence ===
+=== Test 4: Key Generation ===
+=== All Tests Complete ===
+
+Time taken: 19 ms
+Throughput: 21052.6 writes/sec
+Time taken: 12607 microseconds
+
+3. Running callback demonstration test...
+   ✓ Callback demo passed
+
+Callback demo output:
+=== RocksDB Callback Demonstration ===
+  ✓ Callback 0: Write successful! (Total successes: 1)
+  ✓ Callback 1: Write successful! (Total successes: 2)
+  ✓ Callback 2: Write successful! (Total successes: 3)
+  ✓ Callback 3: Write successful! (Total successes: 4)
+  ✓ Callback 4: Write successful! (Total successes: 5)
+  ✓ Callback 5: Write successful! (Total successes: 6)
+  ✓ Callback 6: Write successful! (Total successes: 7)
+  ✓ Callback 7: Write successful! (Total successes: 8)
+  ✓ Callback 8: Write successful! (Total successes: 9)
+  ✓ Callback 9: Write successful! (Total successes: 10)
+=== Final Statistics ===
+Total callbacks executed: 10/10
+=== Simulating Transaction.hh Usage ===
+  Persisted: 5 transaction logs
+  Failed: 0 transaction logs
+=== Demo Complete ===
+
+4. Running ordered callbacks test...
+   ✓ Ordered callbacks test passed
+
+Ordered callbacks output:
+=== RocksDB Ordered Callbacks Test ===
+=== Testing Ordered Callbacks ===
+✓ All callbacks executed in correct order!
+=== Testing Unordered Callbacks (for comparison) ===
+=== Testing Multiple Partitions (Independence) ===
+✓ All partitions processed independently and correctly!
+=== Test Complete ===
+
+5. Running partitioned queues test...
+   ✓ Partitioned queues test passed
+
+Partitioned queues output:
+=== RocksDB Partitioned Queues Test Suite ===
+=== Test: Partitioned Request Queues ===
+=== Per-Partition Statistics ===
+=== Overall Statistics ===
+✓ SUCCESS: All partitions processed their requests independently!
+✓ Partitioned queues are working correctly!
+=== Queue Isolation Verification ===
+  Worker 0 handles partitions: 0 4 
+  Worker 1 handles partitions: 1 5 
+  Worker 2 handles partitions: 2 6 
+  Worker 3 handles partitions: 3 7 
+✓ No contention between partitions - each has its own queue!
+=== Test: Contention Comparison (Before vs After) ===
+  - Workers may block each other even for different partitions
+  - Workers can process different partitions in parallel
+=== Concurrent Write Test ===
+Throughput: 4000 writes/sec
+✓ All writes completed successfully with partitioned queues!
+=== All Partitioned Queue Tests Complete ===
+
+6. Running complex stress test (20 threads, 10 partitions, mixed load)...
+   ✓ Stress test passed
+
+Stress test summary:
+=== RocksDB Partitioned Queues Stress Test ===
+=== Complex Stress Test: 20 Threads, 10 Partitions ===
+=== Per-Partition Statistics ===
+Partition | Received | Completed | Failed | Large Msgs | Small Msgs | Total Bytes
+=== Overall Performance Statistics ===
+Total submission time: 407 ms
+Total execution time: 808 ms
+Total messages: 2000 (expected: 2000)
+Total data persisted: 955.582 MB
+Throughput: 2475.25 messages/sec
+Throughput: 1182.65 MB/sec
+=== Test Results ===
+✓ SUCCESS: All 2000/2000 messages persisted successfully!
+✓ SUCCESS: Correct message distribution (Large: 1000, Small: 1000)
+=== Worker Load Distribution ===
+  Worker 0 handles partitions: 0 8 (msgs: 400, data: 191.12 MB)
+  Worker 1 handles partitions: 1 9 (msgs: 400, data: 191.12 MB)
+  Worker 2 handles partitions: 2 (msgs: 200, data: 95.56 MB)
+  Worker 3 handles partitions: 3 (msgs: 200, data: 95.56 MB)
+  Worker 4 handles partitions: 4 (msgs: 200, data: 95.56 MB)
+  Worker 5 handles partitions: 5 (msgs: 200, data: 95.56 MB)
+  Worker 6 handles partitions: 6 (msgs: 200, data: 95.56 MB)
+  Worker 7 handles partitions: 7 (msgs: 200, data: 95.56 MB)
+=== Stress Test Complete ===
+
+7. Verifying RocksDB persistence files...
+   ✓ RocksDB database files created successfully
+   Database locations:
+     - /tmp/wshen24_test_rocksdb_concurrent_partition0 (156K)
+     - /tmp/wshen24_test_rocksdb_concurrent_partition1 (156K)
+     - /tmp/wshen24_test_rocksdb_concurrent_partition2 (156K)
+     - /tmp/wshen24_test_rocksdb_concurrent_partition3 (156K)
+     - /tmp/wshen24_test_rocksdb_large_partition0 (1.2M)
+     - /tmp/wshen24_test_rocksdb_large_partition1 (152K)
+     - /tmp/wshen24_test_rocksdb_large_partition2 (152K)
+     - /tmp/wshen24_test_rocksdb_large_partition3 (152K)
+     - /tmp/wshen24_test_rocksdb_partition0 (152K)
+     - /tmp/wshen24_test_rocksdb_partition1 (156K)
+     - /tmp/wshen24_rocksdb_ordered_test_2841803_partition0 (164K)
+     - /tmp/wshen24_rocksdb_ordered_test_2841803_partition1 (164K)
+     - /tmp/wshen24_rocksdb_ordered_test_2841803_partition2 (156K)
+     - /tmp/wshen24_rocksdb_ordered_test_2841803_partition3 (152K)
+     - /tmp/wshen24_test_stress_partitioned_partition0 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition1 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition2 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition3 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition4 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition5 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition6 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition7 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition8 (96M)
+     - /tmp/wshen24_test_stress_partitioned_partition9 (96M)
+
+=== All tests completed successfully! ===
+
+Tests executed:
+  ✓ Basic RocksDB persistence test (test_rocksdb_persistence)
+  ✓ Callback demonstration test (test_callback_demo)
+  ✓ Ordered callbacks test (test_ordered_callbacks)
+  ✓ Partitioned queues test (test_partitioned_queues)
+  ✓ Complex stress test (test_stress_partitioned_queues)
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh multiShardSingleProcess
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing multi-shard single process mode
+=========================================
+
+Configuration:
+-----------------
+  Number of threads: 6
+  Local shards:      0,1 (multi-shard mode)
+  Config file:       /home/users/wshen24/mako/src/mako/config/local-shards2-warehouses6.yml
+  Log file:          test_multi_shard_single_process.sh_rrr_multi_shard-6.log
+
+Command: ./build/dbtest --num-threads 6 --shard-config /home/users/wshen24/mako/src/mako/config/local-shards2-warehouses6.yml -P localhost -L 0,1
+
+Starting multi-shard single process...
+Running experiments for 30 seconds...
+Stopping process...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_multi_shard_single_process.sh_rrr_multi_shard-6.log:
+-----------------
+  ✓ Multi-shard mode initialization detected (2 shards)
+  ✓ SiloRuntime assigned to shard 0
+    20260110-03:04.12-743797(us) 2842845 * main            (dbtest.cc:394):    Assigned shared SiloRuntime 0 to shard 0
+  ✓ SiloRuntime assigned to shard 1
+    20260110-03:04.12-744984(us) 2842845 * main            (dbtest.cc:394):    Assigned shared SiloRuntime 0 to shard 1
+  ✓ ShardContext initialized for shard 0
+  ✓ ShardContext initialized for shard 1
+  ✓ Shard 0 listed in multi-shard output
+  ✓ Shard 1 listed in multi-shard output
+  ✓ Workers running in parallel thread for shard 0
+  ✓ Workers running in parallel thread for shard 1
+  ✓ Benchmark started (2 shard(s))
+  ✓ Found 'agg_persist_throughput' keyword (system running)
+    agg_persist_throughput:   NewOrder_local_abort_latency: 0.0494164 ms
+
+=========================================
+All checks passed!
+Multi-shard single process mode is working correctly.
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2SingleProcess
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+=========================================
+Testing 2-shard single process mode (no replication)
+=========================================
+
+Configuration:
+-----------------
+  Number of threads: 6
+  Local shards:      0,1 (single process mode)
+  Replication:       disabled
+  Config file:       /home/users/wshen24/mako/src/mako/config/local-shards2-warehouses6.yml
+  Log file:          test_2shard_single_process.sh_rrr_2shard_single-6.log
+
+Command: ./build/dbtest --num-threads 6 --shard-config /home/users/wshen24/mako/src/mako/config/local-shards2-warehouses6.yml -P localhost -L 0,1
+
+Starting 2-shard single process...
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+Benchmark completed after 35s
+Stopping process...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_single_process.sh_rrr_2shard_single-6.log:
+-----------------
+  OK TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770692717162)
+  OK Multi-shard mode initialization detected (2 shards)
+  OK Shared SiloRuntime created for multi-shard mode
+    20260110-03:05.17-154433(us) 2844363 * main            (dbtest.cc:385):    Created shared SiloRuntime 0 for multi-shard mode
+  OK ShardContext initialized for shard 0
+  OK ShardContext initialized for shard 1
+  OK Workers running in parallel thread for shard 0
+  OK Workers running in parallel thread for shard 1
+  OK Found 'agg_persist_throughput' keyword
+    agg_persist_throughput: 392708 ops/sec
+
+=========================================
+All checks passed!
+2-shard single process mode (no replication) working correctly.
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+=========================================
+Running: ./ci/ci.sh shard2SingleProcessReplication
+=========================================
+Cleaning up any lingering test processes...
+Cleanup complete.
+[Memory limit] Setting virtual memory limit to 30GB (31457280KB)
+=========================================
+Testing 2-shard single process mode WITH replication
+=========================================
+
+Configuration:
+-----------------
+  Number of threads: 6
+  Local shards:      0,1 (single leader process)
+  Replication:       enabled (Paxos)
+  Processes:         7 total (1 combined leader + 6 followers)
+
+Starting follower processes...
+Starting combined leader process for shards 0 and 1...
+Command: ./build/dbtest --num-threads 6 --shard-config /home/users/wshen24/mako/src/mako/config/local-shards2-warehouses6.yml -F config/1leader_2followers/paxos6_shardidx0.yml -F config/1leader_2followers/paxos6_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated
+
+Waiting for benchmark to complete...
+  ... waiting (10s elapsed)
+  ... waiting (20s elapsed)
+  ... waiting (30s elapsed)
+  ... waiting (40s elapsed)
+  ... waiting (50s elapsed)
+  ... waiting (60s elapsed)
+  ... waiting (70s elapsed)
+  ... waiting (80s elapsed)
+  ... waiting (90s elapsed)
+  ... waiting (100s elapsed)
+  ... waiting (110s elapsed)
+  ... waiting (120s elapsed)
+Warning: Benchmark did not complete within 120s timeout
+Stopping processes (graceful)...
+Force killing remaining processes...
+
+=========================================
+Checking test results...
+=========================================
+
+Checking test_2shard_single_process_replication.sh_rrr_leader.log (combined leader):
+-----------------
+  OK TPC-C sharding policy initialized
+    TPC-C Sharding: Initialized policy with 12 warehouses across 2 shards (version 1770692775296)
+  OK Multi-shard mode initialization detected (2 shards)
+  OK Shared SiloRuntime created for multi-shard mode
+  OK ShardContext initialized for shard 0
+  OK ShardContext initialized for shard 1
+  OK Workers running for shard 0
+  OK Workers running for shard 1
+  WARN 'agg_persist_throughput' keyword not found (may need more time)
+  OK No transaction abort panics
+
+=========================================
+All checks passed!
+2-shard single process mode WITH replication working correctly.
+=========================================
+Checking if all test processes exited cleanly...
+✓ All processes exited cleanly
+All CI steps completed successfully!

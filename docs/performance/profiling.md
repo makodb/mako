@@ -46,3 +46,15 @@ Differentiate heap allocation
 ```
 
 Note: memory leak profiling could be very slow.
+
+# Plotting benchmark results
+
+Aggregate run output:
+```
+$janus/scripts/aggregate_run_output.py --prefix multi_dc_tpcc_6 *yml
+```
+
+Replace `multi_dc_tpcc_6` with the correct prefix, then generate graphs:
+```
+$janus/scripts/make_graphs '*csv' . $janus
+```

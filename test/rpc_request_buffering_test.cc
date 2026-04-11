@@ -5,9 +5,13 @@
 
 #include <gtest/gtest.h>
 #include <atomic>
+#include <cerrno>
+#include <mutex>
 #include <thread>
 #include <vector>
+#define RPC_TEST_HOOKS
 #include "rpc/client.hpp"
+#undef RPC_TEST_HOOKS
 
 using namespace rrr;
 
@@ -221,6 +225,170 @@ TEST_F(RequestBufferingTest, QueueOverflowDropsNewest) {
     EXPECT_EQ(conn->pending_request_count(), 3u);
 }
 
+TEST_F(RequestBufferingTest, DropNewestOverflowDoesNotLeakPendingFutures) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 3;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    int ok_count = 0;
+    int err_count = 0;
+    for (int i = 0; i < 5; i++) {
+        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+            m << i;
+        });
+        if (result.is_ok()) {
+            ok_count++;
+            auto future = result.unwrap();
+            EXPECT_FALSE(future->ready());
+        } else {
+            err_count++;
+            EXPECT_EQ(result.unwrap_err(), EAGAIN);
+        }
+    }
+
+    EXPECT_EQ(ok_count, 3);
+    EXPECT_EQ(err_count, 2);
+    EXPECT_EQ(conn->pending_request_count(), 3u);
+    EXPECT_EQ(conn->pending_future_count(), 3u);
+
+    conn->clear_pending_requests();
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
+TEST_F(RequestBufferingTest, ReplayReenqueueRejectDoesNotLeaveFuturePending) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 8;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+        i32 val = 42;
+        m << val;
+    });
+    ASSERT_TRUE(result.is_ok());
+    auto future = result.unwrap();
+
+    ASSERT_EQ(conn->pending_request_count(), 1u);
+    ASSERT_EQ(conn->pending_future_count(), 1u);
+    ASSERT_FALSE(future->ready());
+
+    // Force replay re-enqueue rejection path deterministically:
+    // - stay disconnected (NEW state)
+    // - disable queue policy without clearing queued entry
+    auto disabled_qc = config.to_queue_config();
+    disabled_qc.enabled = false;
+    conn->update_pending_queue_config_for_test(disabled_qc);
+
+    EXPECT_EQ(conn->replay_pending_requests_for_test(), 0u);
+
+    future->timed_wait(0.2);
+    EXPECT_TRUE(future->ready());
+    if (future->ready()) {
+        EXPECT_EQ(future->get_error_code(), kRequestQueueRejectedError);
+    }
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
+TEST_F(RequestBufferingTest, ReplayExpiredRequestUsesTimeoutErrorCode) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 8;
+    config.default_ttl_ms = 10;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    auto result = conn->request(1, FutureAttr(), [](Marshal& m) {
+        i32 val = 7;
+        m << val;
+    });
+    ASSERT_TRUE(result.is_ok());
+    auto future = result.unwrap();
+
+    ASSERT_EQ(conn->pending_request_count(), 1u);
+    ASSERT_EQ(conn->pending_future_count(), 1u);
+    ASSERT_FALSE(future->ready());
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    EXPECT_EQ(conn->replay_pending_requests_for_test(), 0u);
+
+    future->timed_wait(0.2);
+    EXPECT_TRUE(future->ready());
+    if (future->ready()) {
+        EXPECT_EQ(future->get_error_code(), kRequestQueueExpiredError);
+    }
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
+TEST_F(RequestBufferingTest, OverflowAndExpiryDoNotLeavePendingFutures) {
+    auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
+
+    BufferingConfig config;
+    config.max_pending = 8;
+    config.default_ttl_ms = 20;
+    config.overflow = OverflowStrategy::DROP_NEWEST;
+    conn->set_buffering_config(config);
+
+    std::vector<rusty::Arc<Future>> accepted;
+    accepted.reserve(128);
+
+    int rejected = 0;
+    int unexpected_err = 0;
+    for (int i = 0; i < 128; i++) {
+        auto result = conn->request(i, FutureAttr(), [i](Marshal& m) {
+            m << i;
+        });
+        if (result.is_ok()) {
+            accepted.push_back(result.unwrap());
+        } else {
+            int err = result.unwrap_err();
+            if (err == kRequestQueueRejectedError) {
+                rejected++;
+            } else {
+                unexpected_err++;
+            }
+        }
+    }
+
+    ASSERT_EQ(unexpected_err, 0);
+    ASSERT_EQ(rejected + static_cast<int>(accepted.size()), 128);
+    ASSERT_EQ(conn->pending_request_count(), accepted.size());
+    ASSERT_EQ(conn->pending_future_count(), accepted.size());
+
+    // Let all queued requests expire, then process expiry via replay path.
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    EXPECT_EQ(conn->replay_pending_requests_for_test(), 0u);
+
+    size_t not_ready = 0;
+    for (const auto& fu : accepted) {
+        if (!fu->ready()) {
+            fu->timed_wait(0.2);
+        }
+        if (!fu->ready()) {
+            not_ready++;
+            continue;
+        }
+        EXPECT_EQ(fu->get_error_code(), kRequestQueueExpiredError);
+    }
+
+    // Give callbacks a short window to settle any final map removals.
+    for (int i = 0; i < 50 && conn->pending_future_count() != 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    EXPECT_EQ(not_ready, 0u);
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+}
+
 // ============================================================================
 // Client Buffering Tests
 // ============================================================================
@@ -296,40 +464,94 @@ TEST_F(RequestBufferingTest, ConcurrentQueueing) {
     EXPECT_EQ(conn->pending_request_count(), static_cast<size_t>(num_threads * requests_per_thread));
 }
 
-TEST_F(RequestBufferingTest, ConcurrentQueueAndClear) {
+TEST_F(RequestBufferingTest, ConcurrentQueueAndClearHasNoStuckFutures) {
     auto conn = rusty::Arc<ClientConnection>::make(get_poll_thread());
 
     BufferingConfig config;
-    config.max_pending = 100;
+    config.max_pending = 16;  // Keep queue small to force contention/overflow
+    config.overflow = OverflowStrategy::DROP_NEWEST;
     conn->set_buffering_config(config);
 
-    std::atomic<bool> stop{false};
+    constexpr int kProducerThreads = 4;
+    constexpr int kRequestsPerProducer = 250;
 
-    // Producer thread
-    std::thread producer([&conn, &stop]() {
-        while (!stop) {
-            conn->request(1, FutureAttr(), [](Marshal&) {});
-        }
-    });
+    std::atomic<bool> stop_clearer{false};
+    std::atomic<int> ok_count{0};
+    std::atomic<int> expected_err_count{0};
+    std::atomic<int> unexpected_err_count{0};
 
-    // Clearer thread
-    std::thread clearer([&conn, &stop]() {
-        while (!stop) {
+    std::mutex futures_mu;
+    std::vector<rusty::Arc<Future>> futures;
+    futures.reserve(kProducerThreads * kRequestsPerProducer);
+
+    // Clearer thread continuously drains pending queue while producers run.
+    std::thread clearer([&conn, &stop_clearer]() {
+        while (!stop_clearer.load()) {
             conn->clear_pending_requests();
             std::this_thread::yield();
         }
     });
 
-    // Run for a short time
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    stop = true;
+    std::vector<std::thread> producers;
+    producers.reserve(kProducerThreads);
+    for (int t = 0; t < kProducerThreads; t++) {
+        producers.emplace_back([&conn, &ok_count, &expected_err_count, &unexpected_err_count,
+                                &futures_mu, &futures, t]() {
+            for (int i = 0; i < kRequestsPerProducer; i++) {
+                auto result = conn->request(t * 10000 + i, FutureAttr(), [](Marshal&) {});
+                if (result.is_ok()) {
+                    ok_count++;
+                    std::lock_guard<std::mutex> lock(futures_mu);
+                    futures.push_back(result.unwrap());
+                } else {
+                    int err = result.unwrap_err();
+                    if (err == kRequestQueueRejectedError) {
+                        expected_err_count++;
+                    } else {
+                        unexpected_err_count++;
+                    }
+                }
+            }
+        });
+    }
 
-    producer.join();
+    for (auto& p : producers) {
+        p.join();
+    }
+    stop_clearer = true;
     clearer.join();
 
-    // Should not crash, final state should be consistent
-    // Pending count should be >= 0
-    EXPECT_GE(conn->pending_request_count(), 0u);
+    // Final sweep to ensure queue is drained and callbacks fired.
+    conn->clear_pending_requests();
+
+    // Wait briefly for pending map to settle to zero under concurrent callbacks.
+    for (int i = 0; i < 50 && conn->pending_future_count() != 0; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    std::vector<rusty::Arc<Future>> captured;
+    {
+        std::lock_guard<std::mutex> lock(futures_mu);
+        captured = futures;
+    }
+
+    size_t stuck_count = 0;
+    for (const auto& fu : captured) {
+        if (!fu->ready()) {
+            fu->timed_wait(0.2);
+        }
+        if (!fu->ready()) {
+            stuck_count++;
+        }
+    }
+
+    EXPECT_GT(ok_count.load(), 0);
+    EXPECT_EQ(unexpected_err_count.load(), 0);
+    EXPECT_EQ(stuck_count, 0u);
+    EXPECT_EQ(conn->pending_request_count(), 0u);
+    EXPECT_EQ(conn->pending_future_count(), 0u);
+    EXPECT_EQ(static_cast<size_t>(ok_count.load() + expected_err_count.load()),
+              static_cast<size_t>(kProducerThreads * kRequestsPerProducer));
 }
 
 // ============================================================================

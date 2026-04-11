@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
 
 using namespace std;
 // using the following will trigger errors in CLion (<= 2017.3)
@@ -43,17 +44,6 @@ using namespace std;
 #include <signal.h>
 #include <sys/resource.h>
 #include <errno.h>
-
-
-// boost library
-#include <boost/any.hpp>
-#include <boost/foreach.hpp>
-#include <boost/filesystem.hpp>
-#include <boost/algorithm/string.hpp>
-//#include <boost/property_tree/ptree.hpp>
-//#include <boost/property_tree/xml_parser.hpp>
-//#include <boost/random/mersenne_twister.hpp>
-//#include <boost/random/uniform_int_distribution.hpp>
 
 // yaml-cpp
 #include <yaml-cpp/yaml.h>

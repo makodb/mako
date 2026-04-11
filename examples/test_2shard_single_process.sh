@@ -28,13 +28,46 @@ rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+binary_path="./${BUILD_DIR:-build}/dbtest"
+PROCESS_PID=""
+CLEANUP_DONE=0
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
+
+cleanup_process() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    if [ -n "${PROCESS_PID:-}" ]; then
+        kill "$PROCESS_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PROCESS_PID" 2>/dev/null || true
+        wait "$PROCESS_PID" 2>/dev/null || true
+    fi
+}
+
+handle_interrupt() {
+    cleanup_process
+    exit 130
+}
+
+trap cleanup_process EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 log_file="${log_prefix}_2shard_single-$trd.log"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 
 path=$(pwd)/src/mako
@@ -63,15 +96,38 @@ sleep 2
 
 # Wait for benchmark to complete (check for throughput output)
 echo "Waiting for benchmark to complete..."
-max_wait=90
+max_wait="${MAKO_MAX_WAIT_SECONDS:-90}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 90s"
+    max_wait=90
+fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
         echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2
         break
     fi
+
+    if ! kill -0 "$PROCESS_PID" 2>/dev/null; then
+        # Process may exit immediately after writing final metrics.
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (process exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Process exited unexpectedly after ${wait_count}s"
+        process_exited_early=1
+        break
+    fi
+
     sleep 1
     wait_count=$((wait_count + 1))
     if [ $((wait_count % 10)) -eq 0 ]; then
@@ -79,10 +135,15 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
+if [ "$benchmark_completed" -eq 0 ] && [ "$wait_count" -ge "$max_wait" ]; then
+    echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
+fi
+
 # Kill the process
 echo "Stopping process..."
-kill $PROCESS_PID 2>/dev/null
-wait $PROCESS_PID 2>/dev/null
+kill "$PROCESS_PID" 2>/dev/null
+wait "$PROCESS_PID" 2>/dev/null
 
 echo ""
 echo "========================================="
@@ -90,6 +151,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  X Process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  X Benchmark timed out before throughput was observed"
+    failed=1
+fi
 
 echo ""
 echo "Checking $log_file:"
@@ -159,18 +230,13 @@ else
     failed=1
 fi
 
-# Check 7: Throughput output (system is running) - warning only, not a hard failure
-# The core multi-shard functionality is verified by checks 1-6
+# Check 7: Throughput output (required for success)
 if grep -q "agg_persist_throughput" "$log_file"; then
     echo "  OK Found 'agg_persist_throughput' keyword"
     grep "agg_persist_throughput" "$log_file" | tail -1 | sed 's/^/    /'
 else
-    # Also accept "starting benchmark" as proof the system is running correctly
-    if grep -q "starting benchmark" "$log_file"; then
-        echo "  OK Benchmark started (throughput not yet output)"
-    else
-        echo "  WARN 'agg_persist_throughput' keyword not found (may need more time)"
-    fi
+    echo "  X 'agg_persist_throughput' keyword not found"
+    failed=1
 fi
 
 echo ""

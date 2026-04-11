@@ -96,7 +96,7 @@ protected:
         }
 
         // Clean up test database
-        boost::filesystem::remove_all(test_db_path_);
+        std::filesystem::remove_all(test_db_path_);
     }
 };
 

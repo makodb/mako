@@ -61,10 +61,13 @@ uint64_t Communicator::global_id = 0;
 Communicator::Communicator(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker) {
   Log_info("setup paxos communicator");
   vector<string> addrs;
-  if (poll_thread_worker.is_none())
+  if (poll_thread_worker.is_none()) {
     rpc_poll_ = rusty::Some(PollThread::create());
-  else
+    owns_poll_thread_ = true;  // We created this poll thread, we own it
+  } else {
     rpc_poll_ = rusty::Some(poll_thread_worker.as_ref().unwrap().clone());
+    owns_poll_thread_ = false;  // Passed in, don't shutdown on destruction
+  }
   auto config = Config::GetConfig();
   // create more client per server
   int proxy_batch_size = 1 ;
@@ -143,9 +146,14 @@ Communicator::~Communicator() {
   }
   rpc_clients_.clear();
 
-  // Shutdown PollThread if we own it
-  if (rpc_poll_.is_some()) {
+  // Only shutdown PollThread if we created it (owns_poll_thread_ == true)
+  // If it was passed in (shared with RPC server), we must NOT shutdown it
+  // or the server will stop accepting new connections
+  if (rpc_poll_.is_some() && owns_poll_thread_) {
+    Log_info("[COMMUNICATOR] Shutting down owned poll thread");
     rpc_poll_.as_ref().unwrap()->shutdown();
+  } else if (rpc_poll_.is_some()) {
+    Log_info("[COMMUNICATOR] Not shutting down shared poll thread (owns_poll_thread_=false)");
   }
 }
 
@@ -370,6 +378,72 @@ Communicator::ConnectToSite(Config::SiteInfo& site,
   rpc_cli->close();
   // Arc handles cleanup automatically
   return std::make_pair(FAILURE, nullptr);
+}
+
+bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
+  Log_info("[RECONNECT] Attempting to reconnect to site %d for partition %d", site_id, par_id);
+
+  auto config = Config::GetConfig();
+  Config::SiteInfo* site_info = nullptr;
+
+  // Find the site info
+  for (auto& site : config->sites_) {
+    if (site.id == site_id) {
+      site_info = &site;
+      break;
+    }
+  }
+
+  if (!site_info) {
+    Log_error("[RECONNECT] Could not find site info for site %d", site_id);
+    return false;
+  }
+
+  // Close old connection if exists
+  auto old_client_it = rpc_clients_.find(site_id);
+  if (old_client_it != rpc_clients_.end()) {
+    Log_info("[RECONNECT] Closing old connection to site %d", site_id);
+    old_client_it->second->close();
+    rpc_clients_.erase(old_client_it);
+  }
+
+  // Delete old proxy if exists
+  auto old_proxy_it = rpc_proxies_.find(site_id);
+  ClassicProxy* old_proxy = nullptr;
+  if (old_proxy_it != rpc_proxies_.end()) {
+    old_proxy = old_proxy_it->second;
+    rpc_proxies_.erase(old_proxy_it);
+  }
+
+  // Create new connection
+  auto result = ConnectToSite(*site_info, std::chrono::milliseconds(CONNECT_TIMEOUT_MS));
+  if (result.first != SUCCESS) {
+    Log_error("[RECONNECT] Failed to reconnect to site %d", site_id);
+    return false;
+  }
+
+  ClassicProxy* new_proxy = result.second;
+  Log_info("[RECONNECT] Successfully reconnected to site %d, new proxy=%p", site_id, new_proxy);
+
+  // Update rpc_par_proxies_ with new proxy
+  auto par_it = rpc_par_proxies_.find(par_id);
+  if (par_it != rpc_par_proxies_.end()) {
+    for (auto& pair : par_it->second) {
+      if (pair.first == site_id) {
+        Log_info("[RECONNECT] Updating proxy in rpc_par_proxies_ for site %d: old=%p new=%p",
+                 site_id, pair.second, new_proxy);
+        pair.second = new_proxy;
+        break;
+      }
+    }
+  }
+
+  // Clean up old proxy after updating references
+  if (old_proxy) {
+    delete old_proxy;
+  }
+
+  return true;
 }
 
 std::pair<siteid_t, ClassicProxy*>
@@ -1359,7 +1433,7 @@ void Communicator::SetNewLeaderProxy(parid_t par_id, locid_t loc_id) {
         });
      verify (proxy_it != partition_proxies.end()) ;
      leader_cache_[par_id] = *proxy_it;*/
-  Log_debug("set leader porxy for parition %d is %d", par_id, loc_id);
+  Log_debug("set leader proxy for partition %d is %d", par_id, loc_id);
 }
 
 void Communicator::SendSimpleCmd(groupid_t gid, SimpleCommand& cmd,

@@ -16,7 +16,7 @@ ReplicationType get_replication_type() {
     return g_replication_type.get();
 }
 
-// @safe - Mutation through Cell::set()
+// @unsafe - Mutation through Cell::set(), plus std::cerr output
 void set_replication_type(ReplicationType type) {
     g_replication_type.set(type);
     // @unsafe { std::cerr output is not borrow-checked }

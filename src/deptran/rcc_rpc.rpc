@@ -133,6 +133,12 @@ abstract service Raft {
                 ballot_t max_ballot,
                 bool_t vote_granted );
 
+  // VoteDurable - Sent by follower AFTER vote is persisted to disk
+  // Enables speculative voting: leader knows when vote is durable
+  defer VoteDurable(ballot_t term,
+                    siteid_t voter_id |
+                    bool_t acknowledged );
+
   defer AppendEntries(uint64_t slot,
                       ballot_t ballot,
                       uint64_t leaderCurrentTerm,
@@ -144,7 +150,8 @@ abstract service Raft {
                       uint64_t leaderNextLogTerm |
                       uint64_t followerAppendOK,
                       uint64_t followerCurrentTerm,
-                      uint64_t followerLastLogIndex);
+                      uint64_t followerLastLogIndex,
+                      uint64_t followerAckType);
 
   defer EmptyAppendEntries(uint64_t slot,
                            ballot_t ballot,
@@ -156,12 +163,25 @@ abstract service Raft {
                            bool_t trigger_election_now |
                            uint64_t followerAppendOK,
                            uint64_t followerCurrentTerm,
-                           uint64_t followerLastLogIndex);
+                           uint64_t followerLastLogIndex,
+                           uint64_t followerAckType);
+
+  // AppendEntriesDurable - Sent by follower AFTER log entries are persisted to disk
+  // Enables speculative commits: leader tracks memory vs durable acknowledgments
+  defer AppendEntriesDurable(ballot_t term,
+                             siteid_t follower_id,
+                             uint64_t lastLogIndex |
+                             bool_t acknowledged);
 
   defer TimeoutNow(uint64_t leaderTerm,
                    siteid_t leaderSiteId |
                    uint64_t followerTerm,
                    bool_t success);
+
+  // NotifyRestart - Sent by a server after it restarts to tell other servers
+  // to reconnect their client connections to it
+  defer NotifyRestart(siteid_t restartedSiteId |
+                      bool_t acknowledged);
 
 }
 

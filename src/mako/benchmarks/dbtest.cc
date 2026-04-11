@@ -1,5 +1,9 @@
 #include <iostream>
 #include <thread>
+#include <atomic>
+#include <chrono>
+#include <csignal>
+#include <unistd.h>
 #include <mako.hh>
 
 using namespace std;
@@ -10,6 +14,8 @@ static void parse_command_line_args(int argc,
                                     char **argv,
                                     int &is_micro,
                                     int &is_replicated,
+                                    int &startup_timeout_sec,
+                                    bool &startup_timeout_explicit,
                                     string& site_name,
                                     vector<string>& paxos_config_file,
                                     string& local_shards_str,
@@ -33,12 +39,13 @@ static void parse_command_line_args(int argc,
       {"config-node-addr"           , required_argument , 0                          , 'A'} ,
       {"config-db-path"             , required_argument , 0                          , 'D'} ,
       {"config-port"                , required_argument , 0                          , 'O'} ,
+      {"startup-timeout-sec"        , required_argument , 0                          , 'T'} ,
       {"is-micro"                   , no_argument       , &is_micro                  ,   1} ,
       {"is-replicated"              , no_argument       , &is_replicated             ,   1} ,
       {0, 0, 0, 0}
     };
     int option_index = 0;
-    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:XA:D:O:", long_options, &option_index);
+    int c = getopt_long(argc, argv, "t:g:q:F:P:N:L:C:Y:S:R:XA:D:O:T:", long_options, &option_index);
     if (c == -1)
       break;
 
@@ -138,6 +145,16 @@ static void parse_command_line_args(int argc,
       }
       break;
 
+    case 'T': {
+      char* endptr = nullptr;
+      long parsed = strtol(optarg, &endptr, 10);
+      ALWAYS_ASSERT(endptr != optarg && *endptr == '\0');
+      ALWAYS_ASSERT(parsed >= 0 && parsed <= 86400);
+      startup_timeout_sec = static_cast<int>(parsed);
+      startup_timeout_explicit = true;
+      }
+      break;
+
     case '?':
       exit(1);
 
@@ -162,6 +179,99 @@ static vector<int> parse_local_shards(const string& local_shards_str) {
   }
 
   return shard_indices;
+}
+
+static void warn_if_replicated_role_may_block() {
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  if (!benchConfig.getIsReplicated()) {
+    return;
+  }
+
+  if (benchConfig.getPaxosProcName() != mako::LOCALHOST_CENTER) {
+    return;
+  }
+
+  Warning("Replicated dbtest started with --paxos-proc-name=%s. "
+          "If peer role groups (p1, p2, learner) are not running, startup can wait indefinitely. "
+          "Use --startup-timeout-sec=<seconds> or MAKO_STARTUP_TIMEOUT_SEC to fail fast in non-interactive runs. "
+          "For local end-to-end runs use examples/test_1shard_replication.sh or "
+          "examples/test_2shard_replication.sh.",
+          benchConfig.getPaxosProcName().c_str());
+}
+
+static bool should_enable_replicated_startup_watchdog()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  return benchConfig.getIsReplicated() &&
+         benchConfig.getPaxosProcName() == mako::LOCALHOST_CENTER;
+}
+
+static int resolve_startup_timeout_sec(int startup_timeout_sec, bool startup_timeout_explicit)
+{
+  int resolved_timeout_sec = startup_timeout_sec;
+  bool timeout_configured = startup_timeout_explicit;
+
+  if (!timeout_configured) {
+    if (const char* env = getenv("MAKO_STARTUP_TIMEOUT_SEC")) {
+      char* endptr = nullptr;
+      long parsed = strtol(env, &endptr, 10);
+      if (endptr != env && *endptr == '\0' && parsed >= 0 && parsed <= 86400) {
+        resolved_timeout_sec = static_cast<int>(parsed);
+        timeout_configured = true;
+      } else {
+        Warning("Invalid MAKO_STARTUP_TIMEOUT_SEC='%s'; ignoring", env);
+      }
+    }
+  }
+
+  if (!timeout_configured &&
+      should_enable_replicated_startup_watchdog() &&
+      !isatty(STDIN_FILENO)) {
+    // In non-interactive/headless runs, avoid indefinite hangs by default.
+    resolved_timeout_sec = 120;
+    Notice("Non-interactive startup detected; applying default startup timeout (%ds). "
+           "Override with --startup-timeout-sec or MAKO_STARTUP_TIMEOUT_SEC.",
+           resolved_timeout_sec);
+  }
+
+  return resolved_timeout_sec;
+}
+
+static void start_replicated_startup_watchdog(int startup_timeout_sec, std::atomic<bool>* startup_complete)
+{
+  if (startup_timeout_sec <= 0 ||
+      startup_complete == nullptr ||
+      !should_enable_replicated_startup_watchdog()) {
+    return;
+  }
+
+  Notice("Enabling replicated startup watchdog (timeout=%ds)", startup_timeout_sec);
+  std::thread([startup_timeout_sec, startup_complete]() {
+    for (int i = 0; i < startup_timeout_sec; ++i) {
+      if (startup_complete->load(std::memory_order_acquire)) {
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    if (!startup_complete->load(std::memory_order_acquire)) {
+      fprintf(stderr,
+              "[ERROR] dbtest startup timed out after %d seconds in replicated localhost mode.\n"
+              "        Start peer roles (p1, p2, learner) or use examples/test_1shard_replication.sh / examples/test_2shard_replication.sh.\n",
+              startup_timeout_sec);
+      std::fflush(stderr);
+      std::_Exit(2);
+    }
+  }).detach();
+}
+
+static void restore_default_termination_signals()
+{
+  // FastTransport/libevent installs process-wide SIGTERM/SIGINT handlers.
+  // For dbtest CLI usage we want standard process semantics for timeout/docker stop:
+  // SIGTERM/SIGINT should terminate the process unless explicitly handled here.
+  std::signal(SIGTERM, SIG_DFL);
+  std::signal(SIGINT, SIG_DFL);
 }
 
 static void handle_new_config_format(const string& site_name)
@@ -328,6 +438,8 @@ main(int argc, char **argv)
   // Parameters prepared
   int is_micro = 0;  // Flag for micro benchmark mode
   int is_replicated = 0;  // if use Paxos to replicate
+  int startup_timeout_sec = 0;  // Optional startup watchdog timeout for replicated localhost mode
+  bool startup_timeout_explicit = false;
   vector<string> paxos_config_file{};
   string site_name = "";  // For new config format
   string local_shards_str = "";  // For multi-shard mode: comma-separated list
@@ -335,7 +447,12 @@ main(int argc, char **argv)
 
   auto& benchConfig = BenchmarkConfig::getInstance();
   // Parse command line arguments
-  parse_command_line_args(argc, argv, is_micro, is_replicated, site_name, paxos_config_file, local_shards_str, replication_type);
+  parse_command_line_args(argc, argv, is_micro, is_replicated, startup_timeout_sec, startup_timeout_explicit,
+                          site_name, paxos_config_file, local_shards_str, replication_type);
+
+  // Keep dbtest CLI responsive to process-level termination signals (SIGTERM/SIGINT),
+  // which are commonly used by timeout/docker stop/script cleanup flows.
+  set_fasttransport_signal_handlers_enabled(false);
 
   // Set replication type before any initialization (default is paxos)
   if (!replication_type.empty()) {
@@ -351,6 +468,10 @@ main(int argc, char **argv)
   benchConfig.setIsMicro(is_micro);
   benchConfig.setIsReplicated(is_replicated);
   benchConfig.setPaxosConfigFile(paxos_config_file);
+  warn_if_replicated_role_may_block();
+  startup_timeout_sec = resolve_startup_timeout_sec(startup_timeout_sec, startup_timeout_explicit);
+  std::atomic<bool> startup_complete(false);
+  start_replicated_startup_watchdog(startup_timeout_sec, &startup_complete);
 
   // Parse local shards if specified
   if (!local_shards_str.empty() && benchConfig.getConfig() != nullptr) {
@@ -416,6 +537,8 @@ main(int argc, char **argv)
       cerr << "[ERROR] Failed to initialize multi-shard transports" << endl;
       return 1;
     }
+    restore_default_termination_signals();
+    startup_complete.store(true, std::memory_order_release);
 
     // Run workers on all local shards
     if (benchConfig.getLeaderConfig()) {
@@ -426,6 +549,8 @@ main(int argc, char **argv)
   } else {
     // Single-shard mode: keep existing behavior
     abstract_db * db = initWithDB(); // Some init is required for followers/learners
+    restore_default_termination_signals();
+    startup_complete.store(true, std::memory_order_release);
     // Run worker threads on the leader
     if (benchConfig.getLeaderConfig()) {
       run_workers(db);

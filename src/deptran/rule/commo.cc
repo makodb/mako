@@ -69,7 +69,7 @@ CommunicatorRule::LeaderProxyForPartition(parid_t par_id, int idx) const {
         Log_fatal("could not find leader for partition %d", par_id);
       } else {
         cache.push_back(*proxy_it);
-        Log_debug("leader site for parition %d is %d", par_id, proxy_it->first);
+        Log_debug("leader site for partition %d is %d", par_id, proxy_it->first);
       }
       verify(proxy_it->second != nullptr);
     }

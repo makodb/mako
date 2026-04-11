@@ -140,19 +140,47 @@ void ClientConnection::invalidate_pending_futures() {
   }
 }
 
+// @safe - Fails one pending future if it still exists in the pending map
+void ClientConnection::fail_pending_future(i64 xid, int err) const {
+  rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
+  {
+    auto pending_guard = pending_fu_.lock().unwrap();
+    auto it = pending_guard->find(xid);
+    if (it != pending_guard->end()) {
+      fu_opt = rusty::Some(it->second);  // Copy Arc before erase
+      pending_guard->erase(it);
+    }
+  }  // Drop lock before notifying callback/future waiters
+
+  if (fu_opt.is_some()) {
+    auto fu = fu_opt.unwrap();
+    fu->error_code_.set(err);
+    fu->notify_ready(fu);
+  }
+}
+
 // @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
-  if (state_machine_.is_connected()) {
-    // Transition to DISCONNECTING state
+  const bool was_connected = state_machine_.is_connected();
+  if (was_connected) {
+    // Transition to DISCONNECTING state while preserving normal lifecycle semantics.
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
+  }
+
+  // Always close the socket when it is valid, regardless of state.
+  if (socket_ >= 0) {
     // @unsafe - system call
     {
       ::close(socket_);
     }
-    // Transition to DISCONNECTED state
+    socket_ = -1;
+  }
+
+  if (was_connected) {
+    // Transition to DISCONNECTED state for clean shutdown.
     state_machine_.transition_to(ConnectionState::DISCONNECTED);
   } else if (!state_machine_.is_terminal()) {
-    // If not connected and not already terminal, force to DISCONNECTED
+    // If not connected and not already terminal, force to DISCONNECTED.
     state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
   invalidate_pending_futures();
@@ -162,11 +190,9 @@ void ClientConnection::close() {
 // Used by Client::close() to update state before poll thread closes socket
 void ClientConnection::mark_closing() {
   if (state_machine_.is_connected()) {
-    // Just transition state - don't close socket
+    // Mark as in-progress close, but do not enter terminal state yet.
+    // The poll-thread close callback performs the actual fd close and final state transition.
     state_machine_.transition_to(ConnectionState::DISCONNECTING);
-    state_machine_.transition_to(ConnectionState::DISCONNECTED);
-  } else if (!state_machine_.is_terminal()) {
-    state_machine_.force_state(ConnectionState::DISCONNECTED);
   }
   invalidate_pending_futures();
 }
@@ -393,7 +419,7 @@ size_t ClientConnection::replay_pending_requests() {
 
     // Check if expired
     if (req.is_expired()) {
-      if (req.callback) req.callback(-2);  // Expired error code
+      if (req.callback) req.callback(kRequestQueueExpiredError);
       continue;
     }
 
@@ -402,7 +428,19 @@ size_t ClientConnection::replay_pending_requests() {
       // Connection lost during replay, re-queue
       // Note: This could lead to infinite loop if connection keeps failing
       // The TTL will eventually expire stale requests
-      pending_queue_.enqueue(std::move(req));
+      i64 replay_xid = req.xid;
+      req.callback = [this, replay_xid](int err) {
+        if (err != 0) {
+          fail_pending_future(replay_xid, err);
+        }
+      };
+      if (!pending_queue_.enqueue(std::move(req))) {
+        // Explicit fallback: even if queue policy rejects without invoking
+        // callback, do not leave the pending future orphaned.
+        fail_pending_future(replay_xid, kRequestQueueRejectedError);
+        Log_warn("rrr::ClientConnection: replay re-queue rejected by queue policy (xid=%lld)",
+                 static_cast<long long>(replay_xid));
+      }
       break;
     }
 

@@ -96,17 +96,30 @@ protected:
         auto poll_arc = PollThread::create();
         poll_thread_worker_ = rusty::Some(std::move(poll_arc));
 
-        // Server now takes Option<Arc<PollThread>> - use as_ref() to borrow and clone
-        auto& poll_ref = poll_thread_worker_.as_ref().unwrap();
-        auto poll_clone = poll_ref.clone();
-        auto server_poll = rusty::Some(std::move(poll_clone));
-        server = new Server(std::move(server_poll));
+        bool started = false;
+        for (int attempt = 0; attempt < 20; ++attempt) {
+            test_port_ = test_ports::get_port();
 
-        // Create service, store raw pointer for test access, server takes ownership via Box
-        auto service_box = rusty::make_box<TestService>();
-        service_ = service_box.get();  // Store raw pointer before transferring ownership
-        server->reg_service(std::move(service_box));
-        ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+            auto& poll_ref = poll_thread_worker_.as_ref().unwrap();
+            auto poll_clone = poll_ref.clone();
+            auto server_poll = rusty::Some(std::move(poll_clone));
+            server = new Server(std::move(server_poll));
+
+            auto service_box = rusty::make_box<TestService>();
+            service_ = service_box.get();
+            server->reg_service(std::move(service_box));
+
+            if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) == 0) {
+                started = true;
+                break;
+            }
+
+            delete server;
+            server = nullptr;
+            service_ = nullptr;
+        }
+
+        ASSERT_TRUE(started);
 
         // Client must be created with factory method to initialize weak_self_
         client = rusty::Some(Client::create(poll_thread_worker_.as_ref().unwrap()));

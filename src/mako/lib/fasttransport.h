@@ -16,7 +16,6 @@
 #include "lib/message.h"
 #include "lib/transport_backend.h"
 
-#include <gflags/gflags.h>
 #include <event2/event.h>
 
 #include <map>
@@ -32,6 +31,7 @@
 
 void register_fasttransport_for_bench(std::function<int(int,int)>);
 void register_fasttransport_for_dbtest(std::function<int(int,int)>);
+void set_fasttransport_signal_handlers_enabled(bool enabled);
 
 /*
  * Class FastTransport implements a multi-threaded transport layer

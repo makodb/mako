@@ -508,16 +508,18 @@ public:
 
   // non-transaction put/get. These just wrap a transaction get/put
   bool put(Str key, const value_type& value, threadinfo_type& ti = mythreadinfo) {
-    Transaction t;
-    auto ret = transPut(t, key, value, ti);
-    t.commit();
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transPut(key, value, ti);
+    Sto::commit();
     return ret;
   }
 
   bool get(Str key, value_type& value, threadinfo_type& ti = mythreadinfo) {
-    Transaction t;
-    auto ret = transGet(t, key, value, ti);
-    t.commit();
+    // @unsafe: Sto uses thread-local global transaction state.
+    Sto::start_transaction();
+    auto ret = transGet(key, value, ti);
+    Sto::commit();
     return ret;
   }
 
@@ -720,18 +722,28 @@ protected:
       }
       return false;
     }
+#endif
+    if (SET) {
+      reallyHandlePutFound(item, e, key, value);
+    }
+    // Observe version AFTER reallyHandlePutFound. If a resize occurred,
+    // `item` now points to the new location (via Sto::new_item in
+    // reallyHandlePutFound line 697). Observing here ensures we record
+    // the correct location's version. The old TransItem (keyed by the
+    // invalidated original location) has no read observation, so the
+    // commit validation (Transaction.cc:538) skips it.
+    // FIX: Previously, observe was called BEFORE reallyHandlePutFound,
+    // which recorded the OLD location's version. After resize, the old
+    // location was marked invalid, causing a spurious OCC abort.
+#if READ_MY_WRITES
     // make sure this item doesn't get deleted (we don't care about other updates to it though)
     if (!item.has_read() && !has_insert(item))
 #endif
     {
-      // XXX: I'm pretty sure there's a race here-- we should grab this
-      // version before we check if the node is valid
-      Version v = e->version();
+      auto current_e = item.item().template key<versioned_value*>();
+      Version v = current_e->version();
       fence();
       item.observe(tversion_type(v));
-    }
-    if (SET) {
-      reallyHandlePutFound(item, e, key, value);
     }
     return true;
   }
@@ -888,4 +900,3 @@ __thread typename MassTrans<V, Box, Opacity>::threadinfo_type MassTrans<V, Box, 
 
 template <typename V, typename Box, bool Opacity>
 constexpr typename MassTrans<V, Box, Opacity>::Version MassTrans<V, Box, Opacity>::invalid_bit;
-

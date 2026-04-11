@@ -13,7 +13,7 @@ following conventions established by Boost.Fiber. Key features:
 - **Time API**: Uses `rrr::Time` internally (NOT `std::chrono`)
 - **Future/Promise**: Async value delivery with fiber-aware blocking
 
-For conceptual background on coroutines vs fibers and the reactor pattern, see [coroutines_guide.md](coroutines_guide.md).
+For conceptual background on coroutines vs fibers and the reactor pattern, see [coroutines.md](coroutines.md).
 
 ## Quick Start
 
@@ -418,5 +418,5 @@ Use `Fiber` and `this_fiber::` for new code.
 
 ## See Also
 
-- [coroutines_guide.md](coroutines_guide.md) - Conceptual guide to coroutines and the reactor pattern
-- [fiber_api_refactoring_plan.md](fiber_api_refactoring_plan.md) - Migration plan for the Fiber API
+- [coroutines.md](coroutines.md) - Conceptual guide to coroutines and the reactor pattern
+- [fiber-api-refactoring.md](fiber-api-refactoring.md) - Migration plan for the Fiber API

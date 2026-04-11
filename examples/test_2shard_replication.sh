@@ -5,6 +5,9 @@
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 40%
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
+
 echo "========================================="
 echo "Testing 2-shard setup with replication"
 echo "========================================="
@@ -17,14 +20,80 @@ rm -f simple-shard0*.log simple-shard1*.log
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-trd=6
+trd=${1:-6}
 script_name="$(basename "$0")"
+binary_path="./${BUILD_DIR:-build}/dbtest"
+SHARD0_LOCALHOST_PID=""
+SHARD0_LEARNER_PID=""
+SHARD0_P2_PID=""
+SHARD0_P1_PID=""
+SHARD1_LOCALHOST_PID=""
+SHARD1_LEARNER_PID=""
+SHARD1_P2_PID=""
+SHARD1_P1_PID=""
+CLEANUP_DONE=0
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
+
+TEMP_CONFIG=$(make_simple_txn_rep_config 2 $trd)
+if [ -z "$TEMP_CONFIG" ]; then
+    exit 1
+fi
+export MAKO_CONFIG="$TEMP_CONFIG"
+echo "dbtest config: $MAKO_CONFIG"
+
+cleanup_temp_config() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    # Stop any started shard wrappers.
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Best-effort cleanup for dbtest workers tied to this run's unique temp config.
+    # This prevents leaked workers when the script exits early (timeout/Ctrl-C).
+    if [ -n "${TEMP_CONFIG:-}" ]; then
+        pkill -TERM -f "$TEMP_CONFIG" 2>/dev/null || true
+        sleep 1
+        pkill -9 -f "$TEMP_CONFIG" 2>/dev/null || true
+    fi
+
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+        if [ -n "$pid" ]; then
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+
+    rm -f "$TEMP_CONFIG"
+    unset MAKO_CONFIG
+}
+
+handle_interrupt() {
+    cleanup_temp_config
+    exit 130
+}
+
+trap cleanup_temp_config EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 # Start shard 0 in background
 echo "Starting shard 0..."
@@ -56,10 +125,17 @@ SHARD1_P1_PID=$!
 echo "Waiting for benchmarks to complete..."
 log_file0="${log_prefix}_shard0-localhost.log"
 log_file1="${log_prefix}_shard1-localhost.log"
-max_wait=120  # Maximum wait time in seconds
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
 wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
 
-while [ $wait_count -lt $max_wait ]; do
+while [ "$wait_count" -lt "$max_wait" ]; do
     shard0_done=0
     shard1_done=0
 
@@ -71,9 +147,40 @@ while [ $wait_count -lt $max_wait ]; do
         shard1_done=1
     fi
 
-    if [ $shard0_done -eq 1 ] && [ $shard1_done -eq 1 ]; then
+    if [ "$shard0_done" -eq 1 ] && [ "$shard1_done" -eq 1 ]; then
         echo "Both benchmarks completed after ${wait_count}s"
+        benchmark_completed=1
         sleep 2  # Give a moment for final output
+        break
+    fi
+
+    shard0_alive=1
+    shard1_alive=1
+    if ! kill -0 "$SHARD0_LOCALHOST_PID" 2>/dev/null; then
+        shard0_alive=0
+    fi
+    if ! kill -0 "$SHARD1_LOCALHOST_PID" 2>/dev/null; then
+        shard1_alive=0
+    fi
+
+    if { [ "$shard0_alive" -eq 0 ] && [ "$shard0_done" -eq 0 ]; } || \
+       { [ "$shard1_alive" -eq 0 ] && [ "$shard1_done" -eq 0 ]; }; then
+        # Give logs a brief moment to flush before classifying as failure.
+        sleep 1
+        if [ -f "$log_file0" ] && grep -q "agg_persist_throughput" "$log_file0" 2>/dev/null; then
+            shard0_done=1
+        fi
+        if [ -f "$log_file1" ] && grep -q "agg_persist_throughput" "$log_file1" 2>/dev/null; then
+            shard1_done=1
+        fi
+        if [ "$shard0_done" -eq 1 ] && [ "$shard1_done" -eq 1 ]; then
+            echo "Both benchmarks completed after ${wait_count}s (processes exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Shard process exited unexpectedly before benchmark completion (shard0_alive=$shard0_alive, shard1_alive=$shard1_alive)"
+        process_exited_early=1
         break
     fi
 
@@ -84,8 +191,9 @@ while [ $wait_count -lt $max_wait ]; do
     fi
 done
 
-if [ $wait_count -ge $max_wait ]; then
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
     echo "Warning: Benchmarks did not complete within ${max_wait}s timeout"
+    timed_out=1
 fi
 
 # Graceful shutdown: SIGTERM first
@@ -98,23 +206,27 @@ pkill -TERM -f "bash/shard.sh" 2>/dev/null || true
 pkill -TERM dbtest 2>/dev/null || true
 sleep 3
 
-# Force kill any remaining processes
-echo "Force killing remaining processes..."
-pkill -9 -f "bash/shard.sh" 2>/dev/null || true
-pkill -9 dbtest 2>/dev/null || true
-killall -9 dbtest 2>/dev/null || true
+# Force kill only if processes remain after graceful shutdown.
+if pgrep -f "bash/shard.sh" >/dev/null 2>&1 || pgrep -x dbtest >/dev/null 2>&1; then
+    echo "Force killing remaining processes..."
+    pkill -9 -f "bash/shard.sh" 2>/dev/null || true
+    pkill -9 dbtest 2>/dev/null || true
+    killall -9 dbtest 2>/dev/null || true
+fi
 
 # Wait for OS to clean up
 sleep 2
 
-# Check for and kill any remaining processes including zombies
-remaining=$(ps aux | grep "dbtest" | grep -v grep | wc -l)
-if [ "$remaining" -gt 0 ]; then
-    echo "WARNING: $remaining dbtest processes still present after kill attempt"
-    ps aux | grep "dbtest" | grep -v grep
+# Check for and kill any remaining non-zombie dbtest processes.
+# Ignore zombie entries here: they cannot be killed and are often unrelated stale entries.
+remaining_live=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 !~ /^Z/ {c++} END {print c+0}')
 
-    # Get PIDs and kill individually
-    pids=$(ps aux | grep "dbtest" | grep -v grep | awk '{print $2}')
+if [ "$remaining_live" -gt 0 ]; then
+    echo "WARNING: $remaining_live live dbtest process(es) still present after kill attempt"
+    ps -eo stat,pid,ppid,args | awk '$4 ~ /dbtest/ && $1 !~ /^Z/'
+
+    # Get PIDs and kill live processes individually
+    pids=$(ps -eo stat=,pid=,comm= | awk '$3=="dbtest" && $1 !~ /^Z/ {print $2}')
     for pid in $pids; do
         echo "Force killing PID $pid"
         kill -9 $pid 2>/dev/null || true
@@ -136,6 +248,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Shard process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmarks timed out before throughput was observed"
+    failed=1
+fi
 
 # Check each shard's output
 for i in 0 1; do
@@ -214,5 +336,3 @@ else
     tail -10 ${log_prefix}_shard1-localhost.log
     exit 1
 fi
-
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null

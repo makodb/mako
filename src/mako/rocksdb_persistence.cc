@@ -9,7 +9,7 @@
 #include <chrono>
 #include <algorithm>
 #include <ctime>
-#include <rocksdb/write_batch.h>
+#include <cstring>
 #include "../deptran/s_main.h"
 
 #include <unordered_map>  
@@ -31,12 +31,43 @@ class lock_guard;
 
 namespace mako {
 
+namespace {
+
+// @unsafe - Uses RocksDB C API allocation semantics
+std::string take_rocksdb_error(char** errptr) {
+    if (errptr == nullptr || *errptr == nullptr) {
+        return "";
+    }
+    std::string err(*errptr);
+    rocksdb_free(*errptr);
+    *errptr = nullptr;
+    return err;
+}
+
+// @safe - std::string copy from byte buffer
+std::string copy_db_value(const char* data, size_t len) {
+    if (data == nullptr || len == 0) {
+        return "";
+    }
+    return std::string(data, len);
+}
+
+}  // namespace
+
 // @safe
 RocksDBPersistence::RocksDBPersistence() {}
 
 // @safe
 RocksDBPersistence::~RocksDBPersistence() {
     shutdown();
+    if (write_options_ != nullptr) {
+        rocksdb_writeoptions_destroy(write_options_);
+        write_options_ = nullptr;
+    }
+    if (options_ != nullptr) {
+        rocksdb_options_destroy(options_);
+        options_ = nullptr;
+    }
 }
 
 // @unsafe
@@ -62,52 +93,64 @@ bool RocksDBPersistence::initialize(const std::string& db_path, size_t num_parti
         partition_queues_[i] = std::make_unique<PartitionQueue>();
     }
 
-    options_.create_if_missing = true;
-    options_.max_open_files = 1024;  // Good for concurrency
-    options_.write_buffer_size = 256 * 1024 * 1024;  // 256MB per buffer for large logs
-    options_.max_write_buffer_number = 6;  // More buffers to prevent stalls
-    options_.min_write_buffer_number_to_merge = 2;
-    options_.target_file_size_base = 256 * 1024 * 1024;  // 256MB files
-    options_.compression = rocksdb::kNoCompression;
-    options_.max_background_jobs = 8;  // More background threads
-    options_.max_background_compactions = 6;
-    options_.max_background_flushes = 4;
+    if (options_ == nullptr) {
+        options_ = rocksdb_options_create();
+    }
+    if (write_options_ == nullptr) {
+        write_options_ = rocksdb_writeoptions_create();
+    }
+    if (options_ == nullptr || write_options_ == nullptr) {
+        fprintf(stderr, "Failed to allocate RocksDB C API options\n");
+        return false;
+    }
+
+    rocksdb_options_set_create_if_missing(options_, 1);
+    rocksdb_options_set_max_open_files(options_, 1024);  // Good for concurrency
+    rocksdb_options_set_write_buffer_size(options_, 256 * 1024 * 1024);  // 256MB per buffer for large logs
+    rocksdb_options_set_max_write_buffer_number(options_, 6);  // More buffers to prevent stalls
+    rocksdb_options_set_min_write_buffer_number_to_merge(options_, 2);
+    rocksdb_options_set_target_file_size_base(options_, 256 * 1024 * 1024);  // 256MB files
+    rocksdb_options_set_compression(options_, rocksdb_no_compression);
+    rocksdb_options_set_max_background_jobs(options_, 8);  // More background threads
+    rocksdb_options_set_max_background_compactions(options_, 6);
+    rocksdb_options_set_max_background_flushes(options_, 4);
 
     // Optimize for large values
-    options_.max_bytes_for_level_base = 1024 * 1024 * 1024;  // 1GB
-    options_.level0_slowdown_writes_trigger = 30;
-    options_.level0_stop_writes_trigger = 40;
+    rocksdb_options_set_max_bytes_for_level_base(options_, 1024ULL * 1024ULL * 1024ULL);  // 1GB
+    rocksdb_options_set_level0_slowdown_writes_trigger(options_, 30);
+    rocksdb_options_set_level0_stop_writes_trigger(options_, 40);
 
     // Better parallelism
-    options_.allow_concurrent_memtable_write = true;
-    options_.enable_write_thread_adaptive_yield = true;
-    options_.enable_pipelined_write = true;  // Pipeline writes for better performance
-    options_.use_direct_io_for_flush_and_compaction = false;  // Normal I/O
+    rocksdb_options_set_allow_concurrent_memtable_write(options_, 1);
+    rocksdb_options_set_enable_write_thread_adaptive_yield(options_, 1);
+    rocksdb_options_set_enable_pipelined_write(options_, 1);  // Pipeline writes for better performance
+    rocksdb_options_set_use_direct_io_for_flush_and_compaction(options_, 0);  // Normal I/O
 
     // Memory optimization
-    options_.memtable_huge_page_size = 2 * 1024 * 1024;  // 2MB huge pages
-    options_.max_successive_merges = 0;
+    rocksdb_options_set_memtable_huge_page_size(options_, 2 * 1024 * 1024);  // 2MB huge pages
+    rocksdb_options_set_max_successive_merges(options_, 0);
 
     // Sync periodically to avoid large bursts
-    options_.bytes_per_sync = 2 * 1024 * 1024;  // 2MB
-    options_.wal_bytes_per_sync = 2 * 1024 * 1024;  // 2MB
+    rocksdb_options_set_bytes_per_sync(options_, 2 * 1024 * 1024);  // 2MB
+    rocksdb_options_set_wal_bytes_per_sync(options_, 2 * 1024 * 1024);  // 2MB
 
-    write_options_.sync = false;
-    write_options_.disableWAL = false;
-    write_options_.no_slowdown = true;  // Don't slow down writes
+    rocksdb_writeoptions_set_sync(write_options_, 0);
+    rocksdb_writeoptions_disable_WAL(write_options_, 0);
+    rocksdb_writeoptions_set_no_slowdown(write_options_, 1);  // Don't slow down writes
 
     // Create separate database file for each partition
-    partition_dbs_.resize(num_partitions_);
+    partition_dbs_.resize(num_partitions_, nullptr);
     for (size_t partition_id = 0; partition_id < num_partitions_; ++partition_id) {
         std::string partition_db_path = db_path + "_partition" + std::to_string(partition_id);
-        rocksdb::DB* db_raw;
-        rocksdb::Status status = rocksdb::DB::Open(options_, partition_db_path, &db_raw);
-        if (!status.ok()) {
+        char* err = nullptr;
+        rocksdb_t* db_raw = rocksdb_open(options_, partition_db_path.c_str(), &err);
+        if (err != nullptr || db_raw == nullptr) {
+            std::string err_str = take_rocksdb_error(&err);
             fprintf(stderr, "Failed to open RocksDB for partition %zu: %s\n",
-                    partition_id, status.ToString().c_str());
+                    partition_id, err_str.empty() ? "null handle" : err_str.c_str());
             return false;
         }
-        partition_dbs_[partition_id].reset(db_raw);
+        partition_dbs_[partition_id] = db_raw;
         fprintf(stderr, "[RocksDB] Partition %zu: opened database at %s\n",
                 partition_id, partition_db_path.c_str());
     }
@@ -165,12 +208,28 @@ void RocksDBPersistence::shutdown() {
         }
     }
 
-    // Close all partition databases
+    // Flush and close all partition databases
+    rocksdb_flushoptions_t* shutdown_flush_opts = rocksdb_flushoptions_create();
+    if (shutdown_flush_opts != nullptr) {
+        rocksdb_flushoptions_set_wait(shutdown_flush_opts, 1);
+    }
     for (size_t i = 0; i < partition_dbs_.size(); ++i) {
-        if (partition_dbs_[i]) {
-            partition_dbs_[i]->FlushWAL(true);
-            partition_dbs_[i].reset();
+        if (partition_dbs_[i] != nullptr) {
+            if (shutdown_flush_opts != nullptr) {
+                char* err = nullptr;
+                rocksdb_flush(partition_dbs_[i], shutdown_flush_opts, &err);
+                if (err != nullptr) {
+                    std::string err_str = take_rocksdb_error(&err);
+                    fprintf(stderr, "[RocksDB] Flush failed for partition %zu during shutdown: %s\n",
+                            i, err_str.c_str());
+                }
+            }
+            rocksdb_close(partition_dbs_[i]);
+            partition_dbs_[i] = nullptr;
         }
+    }
+    if (shutdown_flush_opts != nullptr) {
+        rocksdb_flushoptions_destroy(shutdown_flush_opts);
     }
 
     // Debug logging: indicate shutdown complete
@@ -232,13 +291,17 @@ bool RocksDBPersistence::writeMetadata(uint32_t shard_id, uint32_t num_shards) {
     std::string meta_value = meta_ss.str();
 
     // Write to partition 0's database with key "meta"
-    rocksdb::Status status = partition_dbs_[0]->Put(write_options_, "meta", meta_value);
+    char* err = nullptr;
+    rocksdb_put(partition_dbs_[0], write_options_,
+                "meta", std::strlen("meta"),
+                meta_value.data(), meta_value.size(), &err);
 
-    if (status.ok()) {
+    if (err == nullptr) {
         fprintf(stderr, "[RocksDB] Metadata written: %s\n", meta_value.c_str());
         return true;
     } else {
-        fprintf(stderr, "[RocksDB] Failed to write metadata: %s\n", status.ToString().c_str());
+        std::string err_str = take_rocksdb_error(&err);
+        fprintf(stderr, "[RocksDB] Failed to write metadata: %s\n", err_str.c_str());
         return false;
     }
 }
@@ -408,11 +471,14 @@ void RocksDBPersistence::workerThread(size_t worker_id, size_t total_workers) {
 
             // Write to partition-specific database
             uint32_t partition_id = req->partition_id;
-            rocksdb::Status status = partition_dbs_[partition_id]->Put(write_options_, req->key, req->value);
+            char* err = nullptr;
+            rocksdb_put(partition_dbs_[partition_id], write_options_,
+                        req->key.data(), req->key.size(),
+                        req->value.data(), req->value.size(), &err);
             auto end_time = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
 
-            bool success = status.ok();
+            bool success = (err == nullptr);
             req->disk_complete_time = end_time;
 
             if (req->require_ordering) {
@@ -425,8 +491,9 @@ void RocksDBPersistence::workerThread(size_t worker_id, size_t total_workers) {
             pending_writes_.fetch_sub(1);
 
             if (!success) {
+                std::string err_str = take_rocksdb_error(&err);
                 fprintf(stderr, "[RocksDB] Write failed (partition=%u, %zu bytes, duration=%ldus): %s\n",
-                       req->partition_id, req->value.size(), duration.count(), status.ToString().c_str());
+                       req->partition_id, req->value.size(), duration.count(), err_str.c_str());
             }
         }
     }
@@ -441,16 +508,21 @@ bool RocksDBPersistence::flushAll() {
         return false;
     }
 
-    rocksdb::FlushOptions flush_options;
-    flush_options.wait = true;
+    rocksdb_flushoptions_t* flush_options = rocksdb_flushoptions_create();
+    if (flush_options == nullptr) {
+        return false;
+    }
+    rocksdb_flushoptions_set_wait(flush_options, 1);
 
     // Flush all partition databases
     bool all_success = true;
     for (size_t i = 0; i < partition_dbs_.size(); ++i) {
-        if (partition_dbs_[i]) {
-            rocksdb::Status status = partition_dbs_[i]->Flush(flush_options);
-            if (!status.ok()) {
-                fprintf(stderr, "RocksDB flush failed for partition %zu: %s\n", i, status.ToString().c_str());
+        if (partition_dbs_[i] != nullptr) {
+            char* err = nullptr;
+            rocksdb_flush(partition_dbs_[i], flush_options, &err);
+            if (err != nullptr) {
+                std::string err_str = take_rocksdb_error(&err);
+                fprintf(stderr, "RocksDB flush failed for partition %zu: %s\n", i, err_str.c_str());
                 all_success = false;
             }
         }
@@ -458,20 +530,11 @@ bool RocksDBPersistence::flushAll() {
 
     if (!all_success) {
         fprintf(stderr, "RocksDB flush failed for some partitions\n");
+        rocksdb_flushoptions_destroy(flush_options);
         return false;
     }
 
-    // Flush WAL for all partition databases
-    for (size_t i = 0; i < partition_dbs_.size(); ++i) {
-        if (partition_dbs_[i]) {
-            rocksdb::Status status = partition_dbs_[i]->FlushWAL(true);
-            if (!status.ok()) {
-                fprintf(stderr, "RocksDB WAL flush failed for partition %zu: %s\n", i, status.ToString().c_str());
-                all_success = false;
-            }
-        }
-    }
-
+    rocksdb_flushoptions_destroy(flush_options);
     return all_success;
 }
 
@@ -607,27 +670,51 @@ bool RocksDBPersistence::parseMetadata(const std::string& db_path, uint32_t& epo
                                        int64_t& timestamp) {
     // Open partition 0 database
     std::string partition0_path = db_path + "_partition0";
-    rocksdb::Options options;
-    options.create_if_missing = false;
-    rocksdb::DB* meta_db;
-    rocksdb::Status status = rocksdb::DB::Open(options, partition0_path, &meta_db);
+    rocksdb_options_t* options = rocksdb_options_create();
+    rocksdb_readoptions_t* read_options = rocksdb_readoptions_create();
+    if (options == nullptr || read_options == nullptr) {
+        if (read_options != nullptr) {
+            rocksdb_readoptions_destroy(read_options);
+        }
+        if (options != nullptr) {
+            rocksdb_options_destroy(options);
+        }
+        fprintf(stderr, "Failed to allocate RocksDB options for metadata parsing\n");
+        return false;
+    }
+    rocksdb_options_set_create_if_missing(options, 0);
 
-    if (!status.ok()) {
-        fprintf(stderr, "Failed to open partition 0 for metadata: %s\n", status.ToString().c_str());
+    char* err = nullptr;
+    rocksdb_t* meta_db = rocksdb_open(options, partition0_path.c_str(), &err);
+    if (err != nullptr || meta_db == nullptr) {
+        std::string err_str = take_rocksdb_error(&err);
+        rocksdb_readoptions_destroy(read_options);
+        rocksdb_options_destroy(options);
+        fprintf(stderr, "Failed to open partition 0 for metadata: %s\n",
+                err_str.empty() ? "null handle" : err_str.c_str());
         return false;
     }
 
     // Read metadata
-    std::string meta_value;
-    status = meta_db->Get(rocksdb::ReadOptions(), "meta", &meta_value);
-
-    if (!status.ok()) {
-        fprintf(stderr, "Failed to read metadata: %s\n", status.ToString().c_str());
-        delete meta_db;
+    size_t meta_value_len = 0;
+    char* meta_value_ptr = rocksdb_get(meta_db, read_options,
+                                       "meta", std::strlen("meta"),
+                                       &meta_value_len, &err);
+    if (err != nullptr || meta_value_ptr == nullptr) {
+        std::string err_str = take_rocksdb_error(&err);
+        rocksdb_close(meta_db);
+        rocksdb_readoptions_destroy(read_options);
+        rocksdb_options_destroy(options);
+        fprintf(stderr, "Failed to read metadata: %s\n",
+                err_str.empty() ? "not found" : err_str.c_str());
         return false;
     }
+    std::string meta_value = copy_db_value(meta_value_ptr, meta_value_len);
+    rocksdb_free(meta_value_ptr);
 
-    delete meta_db;
+    rocksdb_close(meta_db);
+    rocksdb_readoptions_destroy(read_options);
+    rocksdb_options_destroy(options);
 
     // Parse format: "epoch:X,shard_id:Y,num_shards:Z,num_partitions:P,num_workers:W,timestamp:T"
     std::map<std::string, std::string> kv_pairs;

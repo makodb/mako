@@ -125,6 +125,7 @@ Reactor::get_or_create_coroutine(rusty::Function<void()> func, const char* file,
       const_cast<Fiber&>(coro_ref).id = Fiber::global_id++;  // id is not Cell yet
       *coro_ref.func_.borrow_mut() = std::move(func);
       *coro_ref.boost_coro_task_.borrow_mut() = rusty::None;
+      coro_ref.boost_coro_yield_.set(nullptr);
       coro_ref.status_.set(Fiber::INIT);
       return coro;
     } else {
@@ -426,8 +427,9 @@ void Reactor::continue_coro(rusty::Rc<Fiber> coro) const {
   if (coro->status_.get() == Fiber::INIT) {
     coro->run();
   } else {
-    auto guard = sp_running_coro_th_.borrow();
-    (*guard).as_ref().unwrap()->continue_();
+    // Don't hold borrow during continue_() as coroutine may call create_run()
+    // This fixes RefCell double-borrow crash during server restart
+    coro->continue_();
   }
 
   // @unsafe - Fiber::finished() is not marked @safe
@@ -527,10 +529,18 @@ void PollThreadWorker::poll_loop() {
     for (int fd : closed_fds) {
       auto it = fd_to_pollable_.find(fd);
       if (it != fd_to_pollable_.end()) {
+        auto poll = it->second;
         // Remove from epoll if still registered
         if (mode_.find(fd) != mode_.end()) {
-          poll_.Remove(it->second);
+          poll_.Remove(poll);
         }
+
+        // Invoke close callback before erasing map entry so cleanup hooks run.
+        // @unsafe - const_cast needed because Arc provides const access
+        {
+          const_cast<Pollable&>(*poll).close();
+        }
+
         fd_to_pollable_.erase(it);
         mode_.erase(fd);
       }

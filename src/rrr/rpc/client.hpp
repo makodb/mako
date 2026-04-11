@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <mutex>
+#include <thread>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -409,7 +410,7 @@ public:
     }
 
     // @safe - Set request options
-    void set_options(const RequestOptions& opts) {
+    void set_options(const RequestOptions& opts) const {
         options_.set(opts);
     }
 
@@ -580,6 +581,10 @@ class ClientConnection: public Pollable {
     // SAFETY: Protected by spinlock
     void invalidate_pending_futures();
 
+    // @safe - Fail one pending future by xid if it still exists.
+    // Safe to call repeatedly; only first call for a given xid has effect.
+    void fail_pending_future(i64 xid, int err) const;
+
 public:
     /**
      * Closes the connection and cleans up resources.
@@ -674,6 +679,24 @@ public:
         // @unsafe { RequestQueue::size }
         return pending_queue_.size();
     }
+
+    // @unsafe - Uses SpinMutex + std::unordered_map access
+    size_t pending_future_count() const {
+        auto pending_guard = pending_fu_.lock().unwrap();
+        return pending_guard->size();
+    }
+
+#ifdef RPC_TEST_HOOKS
+    // @unsafe - Test hook: replays queue through non-const internal method.
+    size_t replay_pending_requests_for_test() const {
+        return const_cast<ClientConnection*>(this)->replay_pending_requests();
+    }
+
+    // @safe - Test hook: update queue policy without clearing current queue.
+    void update_pending_queue_config_for_test(const RequestQueueConfig& config) const {
+        pending_queue_.update_config(config);
+    }
+#endif
 
     // @unsafe - Uses RequestQueue which uses std::list
     // Note: const because pending_queue_ is mutable
@@ -951,28 +974,18 @@ private:
         }
 
         // Set callback to notify future on queue failure (e.g., overflow, expiry)
-        auto weak_fu = fu;  // Copy Arc for callback
-        queued.callback = [this, weak_fu](int err) {
-            if (err < 0) {
-                // Remove from pending map
-                {
-                    auto pending_guard = pending_fu_.lock().unwrap();
-                    auto it = pending_guard->find(weak_fu->xid_);
-                    if (it != pending_guard->end()) {
-                        pending_guard->erase(it);
-                    }
-                }
-                // Notify future with error
-                weak_fu->error_code_.set(err);
-                weak_fu->notify_ready(weak_fu);
+        queued.callback = [this, xid = fu->xid_](int err) {
+            if (err != 0) {
+                fail_pending_future(xid, err);
             }
         };
 
         // Try to enqueue
         if (!pending_queue_.enqueue(std::move(queued))) {
-            // Queue rejected (full with FAIL_FAST strategy, etc.)
-            // The callback was already invoked by enqueue()
-            return FutureResult::Err(EAGAIN);
+            // Queue rejected (e.g. DROP_NEWEST/FULL). Ensure no pending future
+            // remains if queue policy rejects without invoking callback.
+            fail_pending_future(fu->xid_, kRequestQueueRejectedError);
+            return FutureResult::Err(kRequestQueueRejectedError);
         }
 
         return FutureResult::Ok(fu);
@@ -1009,11 +1022,161 @@ public:
     template<typename F>
     FutureResult request_with_options(i32 rpc_id, const RequestOptions& options,
                                       const FutureAttr& attr, F&& write_fn) const {
-        auto result = request(rpc_id, attr, std::forward<F>(write_fn));
-        if (result.is_ok()) {
-            result.ok()->set_options(options);
+        // Serialize args once so retries can replay identical payload safely.
+        Marshal serialized_args;
+        write_fn(serialized_args);
+        std::string args_bytes;
+        size_t args_size = serialized_args.content_size();
+        if (args_size > 0) {
+            args_bytes.resize(args_size);
+            verify(serialized_args.read(args_bytes.data(), args_size) == args_size);
         }
-        return result;
+
+        // Non-idempotent operations must never be retried even if max_retries is set.
+        RequestOptions effective_options = options;
+        if (!effective_options.idempotent) {
+            effective_options.max_retries = 0;
+        }
+
+        // Return a coordinator future immediately; internal attempts run async.
+        auto final_fu = Future::create(xid_counter_.next(), attr);
+        RequestOptions waiter_options = effective_options;
+        waiter_options.timeout_ms = 0;  // Internal attempts own timeout behavior.
+        final_fu->set_options(waiter_options);
+
+        auto weak_conn = weak_self_;
+        std::thread([weak_conn, rpc_id, effective_options, final_fu, args_bytes = std::move(args_bytes)]() mutable {
+            auto start_time = std::chrono::steady_clock::now();
+            uint16_t retry_count = 0;
+
+            auto classify_request_failure = [](int err) -> TimeoutType {
+                if (err == ENOTCONN || err == ECONNREFUSED || err == ECONNRESET ||
+                    err == ECONNABORTED || err == EHOSTUNREACH || err == ENETUNREACH) {
+                    return TimeoutType::CONNECT_TIMEOUT;
+                }
+                if (err == ETIMEDOUT || err == EAGAIN
+#if EWOULDBLOCK != EAGAIN
+                    || err == EWOULDBLOCK
+#endif
+                ) {
+                    return TimeoutType::REQUEST_TIMEOUT;
+                }
+                return TimeoutType::NONE;
+            };
+
+            auto finish_terminal = [&](int err, TimeoutType timeout_type) {
+                auto conn_opt = weak_conn.upgrade();
+                if (conn_opt.is_some()) {
+                    auto conn = conn_opt.unwrap();
+                    if (timeout_type == TimeoutType::CONNECT_TIMEOUT ||
+                        timeout_type == TimeoutType::REQUEST_TIMEOUT ||
+                        timeout_type == TimeoutType::RESPONSE_TIMEOUT ||
+                        timeout_type == TimeoutType::TOTAL_TIMEOUT) {
+                        conn->metrics_.record_request_timeout();
+                    } else if (err != 0) {
+                        conn->metrics_.record_request_failed();
+                    }
+                }
+                if (timeout_type != TimeoutType::NONE) {
+                    auto state_guard = final_fu->state_.lock().unwrap();
+                    state_guard->timed_out = true;
+                }
+                final_fu->error_code_.set(err);
+                final_fu->timeout_type_.set(timeout_type);
+                final_fu->retry_count_.set(retry_count);
+                final_fu->notify_ready(final_fu);
+            };
+
+            auto set_terminal_timeout = [&](TimeoutType timeout_type) {
+                finish_terminal(ETIMEDOUT, timeout_type);
+            };
+
+            while (true) {
+                auto now = std::chrono::steady_clock::now();
+                uint64_t elapsed_ms = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count());
+                if (effective_options.is_total_timeout_exceeded(elapsed_ms)) {
+                    set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                    return;
+                }
+
+                auto conn_opt = weak_conn.upgrade();
+                if (conn_opt.is_none()) {
+                    finish_terminal(ENOTCONN, TimeoutType::CONNECT_TIMEOUT);
+                    return;
+                }
+
+                auto conn = conn_opt.unwrap();
+                auto attempt_result = conn->request(rpc_id, FutureAttr(), [&](Marshal& m) {
+                    if (!args_bytes.empty()) {
+                        verify(m.write(args_bytes.data(), args_bytes.size()) == args_bytes.size());
+                    }
+                });
+                if (attempt_result.is_err()) {
+                    int err = attempt_result.unwrap_err();
+                    finish_terminal(err, classify_request_failure(err));
+                    return;
+                }
+
+                auto attempt_fu = attempt_result.unwrap();
+                RequestOptions attempt_options = effective_options;
+                if (effective_options.total_timeout_ms > 0) {
+                    uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_ms);
+                    if (remaining_ms == 0) {
+                        conn->handle_free(attempt_fu->xid_);
+                        set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                        return;
+                    }
+                    if (attempt_options.timeout_ms == 0 || attempt_options.timeout_ms > remaining_ms) {
+                        attempt_options.timeout_ms = remaining_ms;
+                    }
+                }
+                attempt_fu->set_options(attempt_options);
+                if (attempt_fu->wait_with_options()) {
+                    final_fu->error_code_.set(attempt_fu->error_code_.get());
+                    final_fu->retry_count_.set(retry_count);
+                    if (attempt_fu->error_code_.get() == 0) {
+                        auto attempt_reply = attempt_fu->reply_.borrow_mut();
+                        size_t reply_size = attempt_reply->content_size();
+                        if (reply_size > 0) {
+                            final_fu->reply_.borrow_mut()->read_from_marshal(*attempt_reply, reply_size);
+                        }
+                    }
+                    final_fu->notify_ready(final_fu);
+                    return;
+                }
+
+                // Timed-out attempts are no longer useful; release pending map slot.
+                conn->handle_free(attempt_fu->xid_);
+
+                if (!effective_options.can_retry(retry_count)) {
+                    set_terminal_timeout(attempt_fu->get_timeout_type());
+                    return;
+                }
+
+                conn->metrics_.record_retry_attempt();
+                uint64_t backoff_delay_ms = effective_options.calculate_delay_ms(retry_count);
+                if (backoff_delay_ms > 0) {
+                    if (effective_options.total_timeout_ms > 0) {
+                        auto before_sleep = std::chrono::steady_clock::now();
+                        uint64_t elapsed_before_sleep = static_cast<uint64_t>(
+                            std::chrono::duration_cast<std::chrono::milliseconds>(
+                                before_sleep - start_time).count());
+                        uint64_t remaining_ms = effective_options.remaining_time_ms(elapsed_before_sleep);
+                        if (remaining_ms == 0 || backoff_delay_ms >= remaining_ms) {
+                            set_terminal_timeout(TimeoutType::TOTAL_TIMEOUT);
+                            return;
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(backoff_delay_ms));
+                }
+
+                retry_count++;
+                final_fu->retry_count_.set(retry_count);
+            }
+        }).detach();
+
+        return FutureResult::Ok(final_fu);
     }
 
     // @unsafe - Convenience overload without FutureAttr

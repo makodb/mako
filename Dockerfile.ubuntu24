@@ -21,13 +21,29 @@ RUN apt-get update && apt-get install -y \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
+# Suppress "dubious ownership" warnings for bind-mounted workspace repos.
+RUN git config --global --add safe.directory /workspace
+
 # Copy and run apt_packages.sh to install all dependencies
 COPY apt_packages.sh /tmp/apt_packages.sh
 RUN bash /tmp/apt_packages.sh && rm /tmp/apt_packages.sh
 
-# Install Rust via rustup (get latest stable)
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-ENV PATH="/root/.cargo/bin:${PATH}"
+# Install Rust toolchain from official static tarballs.
+# This avoids rustup runtime issues seen in some restricted Docker environments.
+ARG RUST_VERSION=1.91.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+      amd64) rust_target="x86_64-unknown-linux-gnu" ;; \
+      arm64) rust_target="aarch64-unknown-linux-gnu" ;; \
+      *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    rust_tarball="rust-${RUST_VERSION}-${rust_target}.tar.gz"; \
+    curl -LO "https://static.rust-lang.org/dist/${rust_tarball}"; \
+    tar xzf "${rust_tarball}"; \
+    "./rust-${RUST_VERSION}-${rust_target}/install.sh" --prefix=/opt/rust; \
+    rm -rf "rust-${RUST_VERSION}-${rust_target}" "${rust_tarball}"
+ENV PATH="/opt/rust/bin:${PATH}"
 
 # Pre-create build directory
 RUN mkdir -p /workspace/build

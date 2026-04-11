@@ -84,9 +84,9 @@ struct RecoveryResult {
   uint64_t recovered_epoch{0};     // For Paxos: cur_epoch
   uint64_t recovery_time_ms{0};
 
-  // @safe - Create success result
+  // @unsafe - constructs RecoveryResult with std::string member
   static RecoveryResult success_fresh() {
-    RecoveryResult result;
+    RecoveryResult result; // @unsafe { std::string default construction }
     result.mode = RecoveryMode::FRESH_START;
     result.success = true;
     return result;

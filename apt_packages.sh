@@ -20,12 +20,6 @@ sudo apt-get update
 # Build tools
 sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf
 
-# Boost libraries
-sudo apt-get --assume-yes install libboost-all-dev
-
-# YAML
-sudo apt-get --assume-yes install libyaml-cpp-dev
-
 # Memory allocators and profiling
 sudo apt-get --assume-yes install libjemalloc-dev libgoogle-perftools-dev
 

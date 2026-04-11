@@ -63,10 +63,11 @@ bash apt_packages.sh
 
 This script installs:
 - Build tools: `git`, `pkg-config`, `build-essential`, `clang`, `cmake`
-- Libraries: `libapr1-dev`, `libaprutil1-dev`, `libboost-all-dev`, `libyaml-cpp-dev`
+- Libraries: `libapr1-dev`, `libaprutil1-dev`, `libboost-all-dev`
 - Python: `python3-dev`, `python3-pip`
 - Performance tools: `libgoogle-perftools-dev`
 - Other dependencies as needed
+- `yaml-cpp` is built from the vendored submodule at `third-party/yaml-cpp`
 
 **Manual Installation** (if the script doesn't work):
 ```bash
@@ -80,7 +81,6 @@ sudo apt-get install -y \
     libapr1-dev \
     libaprutil1-dev \
     libboost-all-dev \
-    libyaml-cpp-dev \
     python3-dev \
     python3-pip \
     libgoogle-perftools-dev \
@@ -293,8 +293,8 @@ For Ubuntu 20.04 or older systems, see [Build Instructions](build.md) for Linuxb
 ### Docker Installation
 
 For containerized deployments, see:
-- **[Docker Deployment](DOCKER_BUILD.md)** - Building and running in Docker
-- **[Docker Verification](DOCKER_VERIFICATION.md)** - Verifying Docker builds
+- **[Docker Deployment](docker.md)** - Building and running in Docker
+- **[Docker Verification](docker-verification.md)** - Verifying Docker builds
 
 ### Development Installation
 

@@ -260,7 +260,7 @@ void server_shutdown() {
 }
 
 void check_current_path() {
-  auto path = boost::filesystem::current_path();
+  auto path = std::filesystem::current_path();
   Log_info("PWD : ", path.string().c_str());
 }
 

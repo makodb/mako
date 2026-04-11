@@ -294,7 +294,7 @@ void BulkCoordinatorMultiPaxos::Prepare() {
   //std::vector<pair<ballot_t, shared_ptr<Marshallable>>> vec_md;
   auto ess_cc = es_cc;
   if(es_cc->machine_id == 0)
-	Log_debug("Sending paxos prepare request for slot %d and parition %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
+	Log_debug("Sending paxos prepare request for slot %d and partition %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
   auto sp_quorum = commo()->BroadcastPrepare2(par_id_, prep_cmd_marshallable, [this, ess_cc](MarshallDeputy md, ballot_t bt, int valid){
     if(!this->in_prepare_)
 	     return;
@@ -372,7 +372,7 @@ void BulkCoordinatorMultiPaxos::Accept() {
     sp_quorum->wait();
     if (sp_quorum->yes()) {
 	      if(ess_cc->machine_id == 0)
-			Log_debug("Accept: slot %d  is committed, parition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
+			Log_debug("Accept: slot %d  is committed, partition id %d", cmd_temp1->slots[0], frame_->site_info_->partition_id_);
         committed_ = true;
     } else if (sp_quorum->no()) {
         in_submission_ = false;

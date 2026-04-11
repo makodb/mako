@@ -26,13 +26,46 @@ rm -f nfs_sync_*
 
 trd=${1:-6}
 script_name="$(basename "$0")"
+binary_path="./${BUILD_DIR:-build}/dbtest"
+PROCESS_PID=""
+CLEANUP_DONE=0
+
+if [ ! -x "$binary_path" ]; then
+    echo "Error: dbtest binary not found or not executable at '$binary_path'"
+    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+    exit 1
+fi
+
+cleanup_process() {
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+
+    if [ -n "${PROCESS_PID:-}" ]; then
+        kill "$PROCESS_PID" 2>/dev/null || true
+        sleep 1
+        kill -9 "$PROCESS_PID" 2>/dev/null || true
+        wait "$PROCESS_PID" 2>/dev/null || true
+    fi
+}
+
+handle_interrupt() {
+    cleanup_process
+    exit 130
+}
+
+trap cleanup_process EXIT
+trap handle_interrupt INT TERM
 
 # Determine transport type and create unique log prefix
 transport="${MAKO_TRANSPORT:-rrr}"
 log_prefix="${script_name}_${transport}"
 log_file="${log_prefix}_multi_shard-$trd.log"
 
-ps aux | grep -i dbtest | awk "{print \$2}" | xargs kill -9 2>/dev/null
+# Kill only dbtest worker processes by executable name.
+# Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
+pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
 
 path=$(pwd)/src/mako
@@ -58,14 +91,59 @@ nohup $GDB_PREFIX $CMD > "$log_file" 2>&1 &
 PROCESS_PID=$!
 sleep 2
 
-# Wait for experiments to run
-echo "Running experiments for 30 seconds..."
-sleep 50
+# Wait for benchmark completion (poll for completion marker)
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
+wait_count=0
+benchmark_completed=0
+timed_out=0
+process_exited_early=0
+echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
+while [ "$wait_count" -lt "$max_wait" ]; do
+    if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+        echo "Benchmark completed after ${wait_count}s"
+        benchmark_completed=1
+        sleep 2
+        break
+    fi
 
-# Kill the process
+    if ! kill -0 "$PROCESS_PID" 2>/dev/null; then
+        # Process may exit immediately after writing final metrics.
+        sleep 1
+        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+            echo "Benchmark completed after ${wait_count}s (process exited after writing results)"
+            benchmark_completed=1
+            sleep 1
+            break
+        fi
+        echo "Process exited unexpectedly after ${wait_count}s"
+        process_exited_early=1
+        break
+    fi
+
+    sleep 1
+    wait_count=$((wait_count + 1))
+    if [ $((wait_count % 10)) -eq 0 ]; then
+        echo "  ... waiting (${wait_count}s elapsed)"
+    fi
+done
+
+if [ "$wait_count" -ge "$max_wait" ] && [ "$benchmark_completed" -eq 0 ]; then
+    echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
+    timed_out=1
+fi
+
+# Stop process (graceful first, force if still alive)
 echo "Stopping process..."
-kill $PROCESS_PID 2>/dev/null
-wait $PROCESS_PID 2>/dev/null
+kill "$PROCESS_PID" 2>/dev/null || true
+sleep 2
+if kill -0 "$PROCESS_PID" 2>/dev/null; then
+    kill -9 "$PROCESS_PID" 2>/dev/null || true
+fi
+wait "$PROCESS_PID" 2>/dev/null
 
 echo ""
 echo "========================================="
@@ -73,6 +151,16 @@ echo "Checking test results..."
 echo "========================================="
 
 failed=0
+
+if [ "$process_exited_early" -eq 1 ]; then
+    echo "  ✗ Process exited before benchmark completion"
+    failed=1
+fi
+
+if [ "$timed_out" -eq 1 ]; then
+    echo "  ✗ Benchmark timed out before throughput was observed"
+    failed=1
+fi
 
 echo ""
 echo "Checking $log_file:"
@@ -151,19 +239,22 @@ else
 fi
 
 # Check 9: Benchmark started (at least one shard)
-benchmark_count=$(grep -c "starting benchmark" "$log_file" || echo "0")
+benchmark_count=$(grep -c "starting benchmark" "$log_file" 2>/dev/null || true)
 if [ "$benchmark_count" -ge 1 ]; then
     echo "  ✓ Benchmark started ($benchmark_count shard(s))"
 else
-    echo "  ⚠ Benchmark not started (may still be loading)"
+    echo "  ✗ Benchmark not started"
+    failed=1
 fi
 
 # Check 10: Look for throughput output (system is running)
-if grep -q "agg_persist_throughput" "$log_file"; then
+throughput_line=$(grep -oE "agg_persist_throughput:[[:space:]]*[0-9.]+[[:space:]]*ops/sec" "$log_file" | tail -1 || true)
+if [ -n "$throughput_line" ]; then
     echo "  ✓ Found 'agg_persist_throughput' keyword (system running)"
-    grep "agg_persist_throughput" "$log_file" | tail -1 | sed 's/^/    /'
+    echo "    $throughput_line"
 else
-    echo "  ⚠ 'agg_persist_throughput' keyword not found (may still be initializing)"
+    echo "  ✗ 'agg_persist_throughput' keyword not found"
+    failed=1
 fi
 
 echo ""

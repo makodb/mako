@@ -1,0 +1,913 @@
+# The Mako Book
+
+A comprehensive developer guide for the Mako distributed transactional datastore.
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)
+2. [Architecture Overview](#2-architecture-overview)
+3. [Core Protocol: Speculative Two-Phase Commit](#3-core-protocol-speculative-two-phase-commit)
+4. [Replication and Consensus](#4-replication-and-consensus)
+5. [Storage Engines](#5-storage-engines)
+6. [Networking and RPC](#6-networking-and-rpc)
+7. [Concurrency Model: Coroutines and the Reactor Pattern](#7-concurrency-model-coroutines-and-the-reactor-pattern)
+8. [Configuration Reference](#8-configuration-reference)
+9. [Build System](#9-build-system)
+10. [Testing](#10-testing)
+11. [Memory Safety: RustyCpp](#11-memory-safety-rustycpp)
+12. [Performance Optimization Techniques](#12-performance-optimization-techniques)
+13. [Design Principles](#13-design-principles)
+14. [Anti-Patterns to Avoid](#14-anti-patterns-to-avoid)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Glossary](#16-glossary)
+
+---
+
+## 1. Introduction
+
+**Mako** is a high-performance distributed transactional key-value store with geo-replication support. Published at OSDI'25, it introduces a novel **speculative two-phase commit (S2PC) protocol** that decouples transaction execution from replication, achieving unprecedented performance while maintaining ACID guarantees.
+
+### Key Performance Numbers
+
+- **3.66M TPC-C transactions/second** with 10 geo-replicated shards
+- **8.6x higher throughput** than state-of-the-art geo-replicated systems
+- **960K TPS** on a single shard (22.5x faster than Calvin)
+- **Median latency of 121ms** for geo-replicated transactions
+- **~2ms client-visible latency** for speculative commits (vs ~150ms traditional)
+
+### Research Background
+
+**Paper**: *Mako: Speculative Distributed Transactions with Geo-Replication* (OSDI'25)
+
+**Authors**: Weihai Shen, Yang Cui, Siddhartha Sen, Sebastian Angel, Shuai Mu
+
+The codebase also contains **Janus**, a related protocol from OSDI'16 (*Consolidating Concurrency Control and Consensus for Commits under Conflicts*).
+
+### When to Use Mako
+
+**Ideal for:**
+- Key-value workloads requiring ACID transactions
+- Geo-replicated deployments needing low latency (<10ms)
+- High-throughput scenarios (100K+ TPS)
+- Data that fits in memory (<1TB per shard)
+
+**Not recommended for:**
+- Complex SQL queries, joins, or aggregations
+- Datasets that exceed available RAM
+- High-contention workloads (e.g., global counters)
+- Eventual consistency is sufficient (simpler systems may be better)
+
+### System Requirements
+
+| | Minimum | Recommended |
+|---|---------|-------------|
+| **OS** | Debian 12 / Ubuntu 22.04 | Debian 12 / Ubuntu 22.04 |
+| **CPU** | 4 cores | 16+ cores (24 optimal) |
+| **RAM** | 8 GB | 64+ GB |
+| **Disk** | 20 GB | SSD, 100+ GB |
+| **Network** | 1 Gbps | 10 Gbps or InfiniBand/RDMA |
+
+---
+
+## 2. Architecture Overview
+
+Mako has a layered architecture:
+
+```
++--------------------------------------------------------------+
+|                    Client Applications                        |
+|           (Native C++ API / Benchmark Harness)                |
++------------------------------+-------------------------------+
+                               |
++------------------------------v-------------------------------+
+|                 Transaction Coordinators                       |
+|  +----------+----------+--------------+-----------+          |
+|  | Mako 2PC | Paxos Mgr| Dependency   | Watermark |          |
+|  | Protocol |          | Tracker      | Manager   |          |
+|  +----------+----------+--------------+-----------+          |
++------------------------------+-------------------------------+
+                               |
++------------------------------v-------------------------------+
+|           Replication Layer (Pluggable)                        |
+|         +----------------+----------------+                   |
+|         |    Paxos        |     Raft       |                   |
+|         +----------------+----------------+                   |
++------------------------------+-------------------------------+
+                               |
++------------------------------v-------------------------------+
+|            RPC Communication Layer (RRR)                       |
+|  +----------+----------+----------+----------+               |
+|  | TCP/IP   | Coroutines| Reactor  | Event    |               |
+|  | Sockets  |           | Pattern  | Loop     |               |
+|  +----------+----------+----------+----------+               |
+|         (Optional: DPDK / RDMA / eRPC)                        |
++------------------------------+-------------------------------+
+                               |
++------------------------------v-------------------------------+
+|              Sharded Data Partitions                           |
+|  +------------------+------------------+------------------+  |
+|  |    Shard 0       |     Shard 1      |     Shard N      |  |
+|  |  Leader + N      |  Leader + N      |  Leader + N      |  |
+|  |  Followers       |  Followers       |  Followers       |  |
+|  +------------------+------------------+------------------+  |
++------------------------------+-------------------------------+
+                               |
++------------------------------v-------------------------------+
+|                   Storage Engines                              |
+|  +-------------------------+------------------------------+  |
+|  |  Masstree (In-Memory)   |    RocksDB (Persistent)      |  |
+|  |  - Concurrent B+tree    |    - LSM-tree on disk         |  |
+|  |  - Lock-free reads      |    - Write-ahead log (WAL)    |  |
+|  |  - Cache-friendly       |    - Async writes             |  |
+|  +-------------------------+------------------------------+  |
++--------------------------------------------------------------+
+```
+
+### Key Components
+
+**Transaction Coordinator** (`src/deptran/`, `src/mako/`):
+- Orchestrates distributed transactions across shards
+- Manages speculative execution and dependency tracking
+- Key classes: `Coordinator`, `Transaction`
+
+**Shard Server**:
+- Stores and retrieves key-value pairs via Masstree
+- Participates in consensus (Paxos or Raft)
+- Key classes: `Scheduler`, `TxnRegistry`, `MultiPaxos`
+
+**RRR Communication Layer** (`src/rrr/`):
+- Custom RPC framework with asynchronous, coroutine-based I/O
+- Reactor pattern for event-driven networking
+- Supports TCP/IP, DPDK, RDMA, eRPC
+
+**Storage Engines** (`src/mako/masstree/`):
+- Masstree: in-memory concurrent B+tree for primary storage
+- RocksDB: optional background persistence for durability
+
+### Directory Structure
+
+```
+mako/
+  src/
+    deptran/          # Transaction protocol implementations
+      paxos/          # Paxos consensus
+      raft/           # Raft consensus
+      janus/          # Janus protocol (OSDI'16)
+      2pl/            # Two-phase locking
+      occ/            # Optimistic concurrency control
+      rcc/            # Rococo protocol
+    mako/             # Mako core
+      masstree/       # Masstree storage engine
+      lib/            # Transport backends, configuration
+      benchmarks/     # Benchmark harness (TPC-C, TPC-A, RW)
+    rrr/              # RPC framework and coroutines
+    bench/            # Benchmark workload implementations
+    memdb/            # In-memory datastore
+  config/             # YAML configuration files
+  ci/                 # CI test scripts
+  examples/           # Example scripts and tests
+  tests/              # Unit and integration tests
+  third-party/        # Dependencies (rusty-cpp, eRPC, etc.)
+  rust-lib/           # Rust components
+```
+
+---
+
+## 3. Core Protocol: Speculative Two-Phase Commit
+
+### The Problem
+
+Traditional 2PC in geo-replicated settings suffers from high latency because each phase must wait for cross-datacenter round trips:
+
+```
+Traditional 2PC:
+  Execute -> Wait Paxos (50ms RTT) -> Wait Disk (10ms) -> Return
+  Total: ~150-200ms per transaction
+```
+
+### Mako's Key Insight
+
+> In most workloads, 99%+ of transactions commit successfully. Why penalize every transaction with replication latency for a rare failure case?
+
+### Speculative 2PC Protocol
+
+Mako executes transactions speculatively, returning success to clients before replication completes:
+
+```
+Mako Speculative 2PC:
+  Execute -> Return to Client (~2ms)
+             |
+             +-> (background) Paxos Replication -> Disk Persistence
+```
+
+The protocol operates in three phases:
+
+**Phase 1: Speculative Execution (immediate)**
+1. Client sends COMMIT to coordinator
+2. Coordinator assigns a logical timestamp
+3. Transaction executes on the leader shard (writes applied to Masstree)
+4. Client receives SUCCESS response (~2ms)
+
+**Phase 2: Background Replication (asynchronous)**
+1. Transaction is serialized to a binary log
+2. Log entry submitted to Paxos for consensus
+3. Paxos replicates to follower replicas
+4. No client blocking
+
+**Phase 3: Watermark Advancement (background)**
+1. Each shard tracks its replication progress as a `local_timestamp`
+2. Global watermark = minimum of all `local_timestamp` values
+3. Transactions become visible to readers when their timestamp <= watermark
+4. Watermark is monotonically increasing and bounded in lag
+
+### Watermark Mechanism
+
+The watermark is the central safety mechanism that ensures consistency:
+
+```
+Timeline:
+  T=90   T=95   T=100   T=105   T=110
+   |       |       |       |       |
+   +-------+-------+-------+-------+
+   | VISIBLE       | SPECULATIVE
+   | (replicated)  | (not yet replicated)
+                   |
+             Watermark=100
+```
+
+**Properties:**
+- Monotonically increasing (never goes backwards)
+- Bounded lag (at most replication time behind latest transaction)
+- All replicas see consistent ordering below watermark
+- Transactions below watermark are durable
+
+**Implementation:**
+```cpp
+// Per-partition replication progress
+static vector<std::atomic<uint32_t>> local_timestamp_;
+
+// Global watermark = min across all partitions
+uint32_t computeGlobalWatermark() {
+    uint32_t min_ts = UINT32_MAX;
+    for (int i = 0; i < num_partitions; i++) {
+        uint32_t local_ts = local_timestamp_[i].load(memory_order_acquire);
+        min_ts = min(min_ts, local_ts);
+    }
+    single_watermark_.store(min_ts, memory_order_release);
+    return min_ts;
+}
+```
+
+### Failure Handling
+
+**Leader failure before replication:**
+- Transaction was never replicated, so it is lost
+- Watermark never advances past the lost transaction
+- Client received "success" but the transaction is speculative
+- In practice, extremely rare (~0.01%)
+- Mitigation: clients can wait for watermark to consider a transaction "final"
+
+**Follower failure:**
+- Paxos only requires majority; transaction commits normally
+- Failed follower catches up asynchronously when it recovers
+
+**Network partition:**
+- Majority partition continues operating
+- Minority partition blocks (cannot reach quorum)
+- Automatic reconciliation when partition heals
+
+**Cascading abort prevention:**
+- Dependency tracking records conflicts between concurrent transactions
+- Bounded speculation window limits how far ahead speculation can go
+- Watermark acts as a barrier: transactions above watermark don't affect below-watermark reads
+
+### Comparison with Other Protocols
+
+| | Mako S2PC | Traditional 2PC | Calvin | Spanner |
+|---|-----------|-----------------|--------|---------|
+| Client Latency | ~2ms (speculative) | ~150ms | 1 RTT + sequencer | ~10ms (TrueTime) |
+| Consistency | Serializable (watermarks) | Strong | Deterministic | External |
+| Speculation | Yes | No | No | No |
+| Hardware Req. | None | None | None | GPS/atomic clocks |
+
+---
+
+## 4. Replication and Consensus
+
+Mako supports two pluggable replication backends:
+
+| Replication | Build Command | Binary | Use Case |
+|-------------|---------------|--------|----------|
+| **Paxos** (default) | `make -j32` | `dbtest` | Production with Paxos consensus |
+| **Raft** | `make mako-raft -j64` | `dbtest` | Mako with Raft replication |
+
+### Multi-Paxos
+
+Mako uses Multi-Paxos for efficient replication:
+- Stable leader proposes all values (skips PREPARE after first proposal)
+- Majority agreement (N/2 + 1) before commit
+- Each shard has its own independent Paxos group
+
+**Replication flow:**
+1. Leader receives transaction commit
+2. Leader proposes to followers
+3. Majority responds with ACCEPT
+4. Leader commits locally
+5. Followers apply committed value
+
+### Raft
+
+Raft provides an alternative consensus mechanism with clearer leader election semantics. Build and test with:
+
+```bash
+make mako-raft -j64
+./ci/ci_mako_raft.sh all
+```
+
+### Fault Tolerance
+
+With N replicas, Mako tolerates floor(N/2) failures:
+- 3 replicas: tolerates 1 failure
+- 5 replicas: tolerates 2 failures
+
+---
+
+## 5. Storage Engines
+
+### Masstree (Primary - In-Memory)
+
+A high-performance concurrent B+tree from MIT, optimized for multi-core CPUs:
+- **Lock-free reads**: no locks for read operations
+- **Multi-version**: supports concurrent readers/writers
+- **Cache-friendly**: optimized memory layout for modern CPUs
+- **Sub-microsecond** read latency, millions of ops/sec per core
+
+### RocksDB (Optional - Persistent)
+
+LSM-tree based persistent storage for durability:
+- **Write-ahead log (WAL)** for crash recovery
+- **Asynchronous writes** (don't block transactions)
+- **Background compaction** maintains read performance
+
+**Data flow:**
+```
+READ PATH:  Client -> Masstree (in-memory) -> Response  [no disk I/O]
+WRITE PATH: Client -> Masstree -> [async] -> Paxos -> [async] -> RocksDB
+```
+
+**Persistence callback mechanism:**
+```cpp
+persistence.persistAsync(log_data, size, shard_id, partition_id,
+    [](bool success) {
+        // Called asynchronously when persistence completes
+    });
+```
+
+RocksDB databases are created at `/tmp/mako_rocksdb_{shard_id}`.
+
+---
+
+## 6. Networking and RPC
+
+### Transport Backends
+
+Mako supports two RPC backends, switchable at runtime:
+
+| Feature | rrr/rpc (default) | eRPC |
+|---------|-------------------|------|
+| Latency | ~10-50 us (TCP/IP) | ~1-2 us (RDMA) |
+| Hardware | Standard Ethernet | RDMA-capable NICs |
+| Portability | Any platform | Linux + RDMA drivers |
+| Use case | Dev, testing, cloud | Production clusters |
+
+**Switching backends:**
+```bash
+# Default (rrr/rpc)
+./build/dbtest config/tpcc.yml
+
+# eRPC
+MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
+```
+
+Both backends implement the `TransportBackend` interface, making worker threads transport-agnostic:
+
+```cpp
+class TransportRequestHandle {
+    virtual uint8_t GetRequestType() const = 0;
+    virtual char* GetRequestBuffer() = 0;
+    virtual char* GetResponseBuffer() = 0;
+    virtual void EnqueueResponse(size_t msg_size) = 0;
+};
+```
+
+### rrr/rpc Reliability Features
+
+The rrr/rpc backend includes production-grade reliability:
+- **Connection state machine**: NEW -> CONNECTING -> CONNECTED -> DISCONNECTING -> DISCONNECTED -> FAILED
+- **Automatic reconnection** with exponential backoff and jitter
+- **Circuit breaker** for fail-fast cascade prevention
+- **Request buffering** during disconnection, replayed after reconnection
+- **Heartbeat/keep-alive** for liveness detection
+- **Graceful shutdown** with request draining
+
+---
+
+## 7. Concurrency Model: Coroutines and the Reactor Pattern
+
+### Why Coroutines?
+
+| | Threads | Coroutines |
+|---|---------|------------|
+| Stack size | 1-8 MB | 4-64 KB |
+| Context switch | ~1-10 us (kernel) | ~10-100 ns (user) |
+| Synchronization | Mutexes, atomics | None needed |
+| Practical limit | ~10,000 | 100,000+ |
+| Parallelism | True (multi-core) | Concurrent (single thread) |
+
+Mako uses **stackful coroutines** via Boost.Coroutine2 and a **reactor pattern** for event-driven I/O.
+
+### Key Concepts
+
+**Reactor**: The event loop that manages all coroutines in a thread. One reactor per thread; never share across threads.
+
+```cpp
+auto reactor = Reactor::GetReactor();  // Thread-local
+reactor->CreateRunCoroutine([]() {
+    // Your concurrent task
+});
+reactor->Loop(true);  // Run event loop
+```
+
+**Events**: Synchronization primitives for coroutines.
+
+| Type | Purpose |
+|------|---------|
+| `IntEvent` | Wait for an integer condition |
+| `TimeoutEvent` | Wait for a time duration |
+| `OrEvent` / `WaitAny` | Wait for ANY of multiple events |
+| `AndEvent` / `WaitAll` | Wait for ALL events |
+
+**Fiber API** (preferred for new code): Uses `Fiber` terminology with `this_fiber::yield()`, `this_fiber::sleep_ms()`, etc. `Coroutine` is aliased to `Fiber` for backward compatibility.
+
+### Thread Safety Advantage
+
+Coroutines within the same reactor never run simultaneously. This means shared data access is safe without locks:
+
+```cpp
+// SAFE - no locks needed within a reactor
+class BankAccount {
+    int balance = 1000;
+public:
+    void withdraw(int amount) {
+        if (balance >= amount)
+            balance -= amount;  // No race condition
+    }
+};
+```
+
+### Thread Model
+
+```
+Main Thread
+  +-- Reactor Thread 1
+  |     +-- Shard 0 (thousands of coroutines)
+  |     +-- Event Loop (poll sockets, timers, wake coroutines)
+  +-- Reactor Thread 2
+  |     +-- Shard 1 (thousands of coroutines)
+  |     +-- Event Loop
+  +-- Background Threads
+        +-- RocksDB Compaction
+        +-- Metrics, GC
+```
+
+**Design principle:** One reactor per shard, shared-nothing, lock-free where possible.
+
+### Pitfalls
+
+1. **Never access events/coroutines across threads**
+2. **Events are single-use** (don't Wait() twice on the same event)
+3. **One waiter per event** (no multiple coroutines waiting on same event)
+4. **Always yield in long-running loops** (cooperative scheduling)
+5. **Always run the event loop** (coroutines that yield are dead until resumed)
+
+---
+
+## 8. Configuration Reference
+
+Mako uses YAML configuration files in `config/`. The configuration defines cluster topology, workload, and runtime settings.
+
+### Cluster Topology
+
+```yaml
+# Sites: servers (shards) and clients
+site:
+  server:
+    - ["s101:8100"]                            # Shard 0, no replication
+    - ["s102:8100", "s202:8101", "s302:8102"]  # Shard 1, 3 replicas
+  client:
+    - ["c101"]
+
+# Map site names to process names
+process:
+  s101: localhost
+  s102: localhost
+  s202: server1
+  s302: server2
+  c101: localhost
+
+# Map process names to IP addresses
+host:
+  localhost: 127.0.0.1
+  server1: 10.0.1.100
+  server2: 10.0.2.100
+```
+
+**Key rules:**
+- Each server line = one shard
+- First server in a list = leader (primary)
+- Additional servers = followers (replicas)
+- Multiple sites can share an OS process (different threads)
+
+### Configuration Hierarchy
+
+```
+Host (Physical Machine, IP address)
+  +-- Process (OS Process)
+        +-- Site/Partition (Thread)
+              +-- Shard (Data Partition)
+              +-- Reactor (Event Loop)
+```
+
+### Benchmark Configuration
+
+```yaml
+bench:
+  workload: tpcc    # Options: tpcc, tpca, rw, micro
+  scale: 1          # Scaling factor
+
+  weight:           # TPC-C transaction mix (must sum to 100)
+    new_order: 44
+    payment: 44
+    delivery: 4
+    order_status: 4
+    stock_level: 4
+
+n_concurrent: 100   # Concurrent transactions
+```
+
+### Common Configurations
+
+| Config | Shards | Replicas | Use Case |
+|--------|--------|----------|----------|
+| `1c1s1p.yml` | 1 | 1 | Development/debugging |
+| `1c2s2p.yml` | 2 | 1 | Multi-shard testing |
+| `1c2s3r.yml` | 2 | 3 | HA with Paxos |
+| Geo-replicated | N | 3 (across DCs) | Production |
+
+### Multi-Shard Single-Process Mode
+
+Run multiple shards in one process for development/testing:
+
+```bash
+./build/dbtest \
+    --local-shards=0,1,2 \
+    --shard-config src/mako/config/local-shards3-warehouses7.yml \
+    --num-threads 7
+```
+
+Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
+
+---
+
+## 9. Build System
+
+### Build Targets
+
+| Target | Command | Description |
+|--------|---------|-------------|
+| Mako + Paxos | `make -j32` | Default build (~2-3 min) |
+| Mako + Raft | `make mako-raft -j64` | Raft replication |
+| Raft Lab Tests | `make raft-test -j32` | Only for `raft_lab_test.yml` |
+| Clean | `make clean` | Remove build artifacts |
+
+**Build time expectations** (important!):
+- Initial full build: 10-30 minutes
+- Incremental builds: 2-10 minutes
+- Docker image build: 10-30 minutes
+
+### CMake Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `MAKO_USE_RAFT` | OFF | Build with Raft replication |
+| `RAFT_TEST` | OFF | Enable Raft lab test coroutines |
+| `ENABLE_BORROW_CHECKING` | OFF | Enable RustyCpp borrow checking |
+| `DEBUG` | OFF | Debug mode with `-DDEBUG` |
+
+### Output Binaries
+
+| Binary | Description |
+|--------|-------------|
+| `build/dbtest` | Main Mako binary (Paxos or Raft) |
+| `build/deptran_server` | Standalone Raft server |
+| `build/simpleRaft` | Simple Raft replication test |
+| `build/test_rocksdb_persistence` | RocksDB persistence test |
+
+### Quick Start
+
+```bash
+git clone --recursive https://github.com/makodb/mako.git
+cd mako
+bash apt_packages.sh
+source install_rustc.sh
+make -j$(nproc)
+./ci/ci.sh simpleTransaction   # Verify installation
+```
+
+---
+
+## 10. Testing
+
+**All CI tests must be run via Docker:**
+
+```bash
+./docker_build.sh ci all          # Run all 19 tests
+./docker_build.sh ci <testname>   # Run specific test
+```
+
+### Test Suite
+
+| Test | Description |
+|------|-------------|
+| `rrrTests` | RRR framework unit tests |
+| `simpleTransaction` | Basic transaction execution |
+| `simplePaxos` | Paxos replication |
+| `shardNoReplication` | 2 shards, no replication |
+| `shard1Replication` | 1 shard with Paxos replication |
+| `shard2Replication` | 2 shards with Paxos replication |
+| `shard1ReplicationSimple` | 1 shard, simple transaction + Paxos |
+| `shard2ReplicationSimple` | 2 shards, simple transaction + Paxos |
+| `shard1ReplicationRaft` | 1 shard with Raft |
+| `shard2ReplicationRaft` | 2 shards with Raft |
+| `shard1ReplicationSimpleRaft` | 1 shard, simple transaction + Raft |
+| `shard2ReplicationSimpleRaft` | 2 shards, simple transaction + Raft |
+| `rocksdbTests` | RocksDB persistence |
+| `shardFaultTolerance` | Shard crash/reboot resilience |
+| `multiShardSingleProcess` | Multi-shard in one process |
+| `cpuThrottlingScaling` | CPU throttle scaling test |
+| `eRPCshardNoReplication` | eRPC transport test |
+| `eRPCshard1Replication` | eRPC with replication |
+| `eRPCshard2Replication` | eRPC with 2 shards + replication |
+
+### Optional Quick Build Path
+
+```bash
+./docker_build.sh build                      # Build once
+./docker_build.sh ci-quick shardNoReplication # Run without rebuild
+```
+
+### Debugging
+
+- Debug build: `MODE=debug make`
+- GDB: `gdb --args ./build/dbtest ...`
+- Performance profiling: `MODE=perf make`, then use `perf record` / `perf report`
+
+---
+
+## 11. Memory Safety: RustyCpp
+
+All new C++ code **must** be written to be rusty-safe. This is mandatory.
+
+### Required Types
+
+| Use This | NOT This | Purpose |
+|----------|----------|---------|
+| `rusty::Box<T>` | `std::unique_ptr<T>` | Single ownership |
+| `rusty::Arc<T>` | `std::shared_ptr<T>` | Thread-safe shared ownership |
+| `rusty::Rc<T>` | `std::shared_ptr<T>` | Single-thread shared ownership |
+| `rusty::Cell<T>` | mutable field | Interior mutability (Copy types) |
+| `rusty::RefCell<T>` | mutable field | Interior mutability (complex types) |
+| `rusty::Option<T>` | `std::optional<T>` | Optional values |
+
+### Safety Annotations
+
+Every function must have a safety annotation:
+
+```cpp
+// @safe - Pure function, no side effects
+const char* status_to_string(Status s) { ... }
+
+// @safe - Read-only access through Cell::get()
+ReplicationType get_replication_type() {
+    return g_replication_type.get();
+}
+
+// @unsafe - Calls non-borrow-checked legacy code
+void dispatch_to_legacy(int arg) {
+    legacy_function(arg);  // @unsafe
+}
+```
+
+### Global State Pattern
+
+Use `rusty::Cell<T>` for global mutable state:
+
+```cpp
+#include <rusty/cell.hpp>
+
+static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::PAXOS};
+
+// @safe
+ReplicationType get_replication_type() {
+    return g_replication_type.get();
+}
+
+// @safe
+void set_replication_type(ReplicationType type) {
+    g_replication_type.set(type);
+}
+```
+
+### Memory Safety Rules
+
+1. **Ownership**: Every object has a single owner at any given time
+2. **Borrowing**: Use references (`&`) for read-only access; avoid raw pointers
+3. **Lifetime**: Ensure references don't outlive the objects they refer to
+4. **Move semantics**: Prefer `std::move` for ownership transfer; avoid use-after-move
+5. **No mutable aliasing**: Don't have multiple mutable references to the same object
+
+### Borrow Checking
+
+- Build runs borrow checking automatically via CMake when `ENABLE_BORROW_CHECKING=ON`
+- Run `make borrow_check_deptran` or `make borrow_check_raft` to verify checked files
+- Keep `third-party/rusty-cpp` submodule on `main` branch at latest commit
+- Files with heavy third-party headers may be excluded (document why in CMakeLists.txt)
+
+---
+
+## 12. Performance Optimization Techniques
+
+Mako employs several multi-core optimization techniques:
+
+### Per-Core Data Partitioning
+Each CPU core gets its own private copy of frequently-written data, eliminating cache-line bouncing:
+
+```cpp
+template <typename T>
+class percore {
+    T& my() { return (*this)[coreid::core_id()]; }  // Fast path
+};
+```
+
+### Cache-Line Alignment
+Data structures are padded to 64-byte cache line boundaries to prevent false sharing between cores.
+
+### Lock-Free Data Structures
+Masstree uses lock-free reads and optimistic concurrency control with version validation.
+
+### Memory Ordering
+Careful use of `memory_order_acquire`, `memory_order_release`, and `memory_order_relaxed` atomics throughout the codebase to minimize synchronization overhead.
+
+### Thread-Local Storage
+Per-thread state avoids contention on shared data structures.
+
+### CPU Prefetch and Branch Hints
+Strategic use of `__builtin_prefetch()` and `__builtin_expect()` for hot paths.
+
+### Custom Memory Allocation
+jemalloc for optimized allocation; per-CPU memory allocators for reduced contention.
+
+---
+
+## 13. Design Principles
+
+### The Seven Principles of Mako
+
+1. **Speculation with Safety Nets**: Execute optimistically, validate with watermarks. Fast path is truly fast; rare failures handled correctly.
+
+2. **Parallelism Over Sequentiality**: Multiple Paxos streams per partition run in parallel. Shards operate independently. Never wait when you can parallelize.
+
+3. **Shared-Nothing Architecture**: Each shard has its own Masstree, Paxos group, and watermark tracking. Only multi-shard transactions require coordination.
+
+4. **Memory-First Storage**: Keep hot data in memory. Disk is for durability, not reads. Read path never touches disk.
+
+5. **Cooperative Concurrency**: Coroutines, not threads. Thousands of concurrent operations per thread with no synchronization overhead.
+
+6. **Strong Types, Safe Memory**: RustyCpp smart pointers and borrow checking catch bugs at compile time.
+
+7. **Simplicity at the Interface**: Common use cases are trivial; advanced tuning is possible but not required.
+
+### Key Trade-offs
+
+| Trade-off | Choice | Pro | Con |
+|-----------|--------|-----|-----|
+| Latency vs. Durability | Speculative execution | ~30x lower latency | Tiny loss window on leader failure |
+| Memory vs. Disk I/O | In-memory primary | Sub-us reads | Dataset must fit in RAM |
+| Consistency vs. Availability | Strong (serializable) | No anomalies | Unavailable during minority partition |
+
+---
+
+## 14. Anti-Patterns to Avoid
+
+### Hot Shard
+**Problem:** All transactions touch the same shard.
+**Fix:** Shard counters or use hash-based key distribution.
+
+### Cross-Shard Transaction Storm
+**Problem:** Most transactions span multiple shards.
+**Fix:** Co-locate related data on the same shard (e.g., shard by `user_id`).
+
+### Ignoring Watermarks
+**Problem:** Assuming speculative commits are immediately visible.
+**Fix:** Use same-transaction reads, or wait for watermark advancement for read-after-write.
+
+### Long-Running Transactions
+**Problem:** Holding locks for extended periods.
+**Fix:** Minimize transaction scope; do computation outside the transaction.
+
+---
+
+## 15. Troubleshooting
+
+### Quick Diagnostic Checklist
+
+- Ports available? `lsof -i :8100`
+- Build successful? `make -j$(nproc)` completed without errors
+- YAML config valid? Hosts reachable?
+- Sufficient memory? (8GB+ RAM)
+- Processes running? `pgrep dbtest`
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| "Address already in use" | `pkill -9 dbtest; sleep 2` then retry |
+| Submodule not found | `git submodule update --init --recursive` |
+| Out of memory during build | `make -j2` (reduce parallelism) |
+| Borrow checker parse errors | Ensure LIBCLANG_PATH matches system clang version |
+| Raft leader churn | Increase heartbeat interval in `config/none_raft.yml` |
+| Hanging test processes | `./ci/ci_mako_raft.sh cleanup` |
+| eRPC "Failed to create Nexus" | Check RDMA drivers (`ibstat`), configure hugepages |
+
+### Debugging
+
+```bash
+# Debug build
+MODE=debug make -j$(nproc)
+
+# Run under GDB
+gdb --args ./build/dbtest --verbose --bench tpcc ...
+
+# Verbose logging
+export MAKO_LOG_LEVEL=debug
+
+# Performance profiling
+MODE=perf make -j$(nproc)
+perf record ./build/dbtest ...
+perf report
+```
+
+---
+
+## 16. Glossary
+
+| Term | Definition |
+|------|------------|
+| **2PC** | Two-Phase Commit - protocol for coordinating distributed transactions |
+| **ACID** | Atomicity, Consistency, Isolation, Durability |
+| **Ballot** | Unique proposal identifier in Paxos, ordered for precedence |
+| **Coroutine** | Lightweight cooperative thread (also called Fiber in Mako) |
+| **Epoch** | Time period for garbage collection and failure recovery |
+| **eRPC** | High-performance RDMA-based RPC library |
+| **Fiber** | Preferred name for stackful coroutines in Mako (alias for Coroutine) |
+| **Follower** | Replica that accepts proposals from the leader |
+| **Frame** | Protocol-specific transaction processing module |
+| **Janus** | OSDI'16 distributed transaction protocol in this codebase |
+| **Leader** | Replica that proposes values and coordinates consensus |
+| **Local Timestamp** | Per-partition timestamp of most recently committed transaction |
+| **Mako** | Speculative distributed transaction system (named for the fast mako shark) |
+| **Masstree** | In-memory concurrent B+tree storage engine |
+| **Multi-Paxos** | Optimized Paxos with stable leader skipping prepare phase |
+| **NO-OP** | Heartbeat/sync log entry in Paxos that triggers watermark computation |
+| **OCC** | Optimistic Concurrency Control |
+| **Partition** | Logical data subdivision within a shard, each with its own Paxos group |
+| **Quorum** | Minimum replicas for progress: floor(N/2) + 1 |
+| **Reactor** | Event loop managing coroutines in a thread |
+| **RocksDB** | LSM-tree persistent storage backend |
+| **RRR** | "Repeatable Research Runtime" - Mako's custom RPC/coroutine framework |
+| **RustyCpp** | Library providing Rust-like smart pointers and borrow checking for C++ |
+| **Safety Check** | Validation comparing transaction timestamp to watermark for follower replay |
+| **Scheduler** | Component managing transaction execution on a shard |
+| **Serializability** | Strongest isolation level; concurrent transactions appear to execute serially |
+| **Shard** | Horizontal partition of data for scalability |
+| **Site** | Logical server or client entity in configuration, mapped to processes and hosts |
+| **Slot** | Position in the Paxos replicated log |
+| **Speculation** | Executing before full consensus, optimistically assuming success |
+| **TPC-C** | E-commerce benchmark for evaluating transaction throughput |
+| **Watermark** | Timestamp guaranteeing all transactions at or below are durably replicated |
+
+---
+
+*This document consolidates Mako's design, architecture, and developer guidelines from across the project documentation. For detailed implementation plans and migration guides, see the `docs/` and `doc/` directories.*

@@ -19,6 +19,10 @@ Each commit may have multiple issues tracked with severity levels:
 
 | Issue ID | Severity | Commit | Addressed By |
 |----------|----------|--------|--------------|
+| ISSUE-db176a90-1 | S2 | db176a90 | (next commit) |
+| ISSUE-db176a90-2 | S2 | db176a90 | (next commit) |
+| ISSUE-232ba3b0-1 | S3 | 232ba3b0 | db176a90 |
+| ISSUE-232ba3b0-2 | S3 | 232ba3b0 | db176a90 |
 | ISSUE-1886cab7-1 | S3 | 1886cab7 | 7a6a5847 |
 | ISSUE-1886cab7-2 | S3 | 1886cab7 | 844e6c99 |
 | ISSUE-1886cab7-3 | S2 | 1886cab7 | fb6d9d92 |
@@ -29,7 +33,207 @@ Each commit may have multiple issues tracked with severity levels:
 
 ---
 
-*Last updated: 2026-02-03 (a6bed72c reviewed)*
+*Last updated: 2026-02-20 (25c87ef5 reviewed)*
+
+---
+
+## Commit 25c87ef5 - "Expand borrow checking coverage, fix 3 safety annotations"
+**Date**: 2026-02-20
+**Author**: Shuai Mu
+
+**Changes**: CMakeLists.txt (+2 files to borrow checking, +6 documented exclusions), server.h (AtomicFlag @safe→@unsafe), replication_helper.cc (set_replication_type @safe→@unsafe), recovery_manager.hpp (success_fresh @safe→@unsafe)
+
+**Verdict**: No issues found (correct safety annotation fixes expanding borrow check coverage)
+
+Good changes:
+- All 3 annotation fixes are correct: `mutable std::atomic` (interior mutability), `std::cerr` (unchecked I/O), `std::string` construction (unchecked STL)
+- 6 excluded files properly documented with violation counts from header code (not the source files themselves)
+- Brings borrow-checked file count to 12
+
+---
+
+## Commit dae2bc06 - "commit TODO.md"
+**Date**: 2026-02-20
+
+**Verdict**: No issues found (TODO.md timestamp update only)
+
+---
+
+## Commit 754cc0b2 - "Fix CI test infrastructure: shebang, python3, borrow check"
+**Date**: 2026-02-20
+**Author**: Shuai Mu
+
+**Changes**: ci/ci.sh (shebang fix + python3), simple_transaction_rep_port_utils.sh (python3), masstree_key.hh (@safe→@unsafe annotation fix)
+
+**Verdict**: No issues found (correct infrastructure fixes)
+
+Good changes:
+- Shebang fix: removed leading newline before `#!/bin/bash` in ci.sh that caused fallback to `sh` (which lacks process substitution)
+- `python` → `python3` in 4 call sites across 2 files (necessary since `python` binary not available)
+- `unparse_ikey()` correctly re-annotated from `@safe` to `@unsafe` since it calls `unparse()` which writes to raw buffer via `memcpy`
+
+---
+
+## Commit c253cc36 - "docs: add code-verified user manual"
+**Date**: 2026-02-20
+**Author**: Shuai Mu
+
+**Changes**: docs/user-manual.md (430 lines, new file)
+
+**Verdict**: No issues found (documentation only — user manual with no code changes)
+
+---
+
+## Commit db176a90 - "Fix 2 Raft async persistence bugs from commit 232ba3b0"
+**Date**: 2026-02-10
+
+**Changes**: server.cc (59 insertions, 22 deletions), server.h (29 insertions, 13 deletions)
+
+**Verdict**: Two medium-severity issues found
+
+### ISSUE-db176a90-1 (S2 medium): Mutex held during thread join in destructor
+- Destructor holds `async_threads_mtx_` while calling `join()` on all threads
+- If an in-flight RPC handler (past `stop_` check) tries to `emplace_back`, it deadlocks
+- **Fix**: Swap vector out under lock, join without lock
+
+### ISSUE-db176a90-2 (S2 medium): Unbounded thread handle accumulation
+- `async_threads_` vector is append-only; completed thread handles never pruned
+- Over thousands of operations, accumulates finished `std::thread` objects (minor resource leak)
+- **Fix**: Prune completed threads (via atomic done flag) at each insertion
+
+---
+
+## Commit 7a75d1af - "Hourly CI check"
+**Date**: 2026-02-10
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 55ea7d19 - "Stabilize CI ports and cleanup checks"
+**Date**: 2026-02-10
+
+**Verdict**: No issues found (CI infrastructure hardening - user-scoped cleanup, random port allocation, retry logic)
+
+---
+
+## Commit 321a6db9 - "Hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit e923a180 - "Hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 096018bc - "Hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 6e4625c6 - "Harden simpleTransaction ports"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (dynamic port allocation for simpleTransaction via MAKO_CONFIG env var)
+
+---
+
+## Commit 4e847f89 - "Fix RPC test port collisions"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (test infrastructure - migration to test_ports::get_port())
+
+---
+
+## Commit 1000c96c - "Record hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 934dc023 - "Fix rpc_metrics test port collisions"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (test infrastructure - migration to test_ports::get_port())
+
+---
+
+## Commit b3ac71cf - "Update hourly and daily CI check notes"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 96ff9cf9 - "Update hourly CI check"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit aefdc2fa - "Update daily recurring task timestamps"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (timestamp update only)
+
+---
+
+## Commit 232ba3b0 - "Zeyu raft disk (#53)"
+**Date**: 2026-02-09
+**Author**: Zeyu
+
+Large commit adding Raft disk persistence with sync/async modes, speculative replication protocol, parallel heartbeat dispatch, atomic service pointer for kill/restart, and 21 new tests.
+
+### ISSUE-232ba3b0-1 [S3 - high]
+**Category**: Memory safety / use-after-free
+**Evidence**: `src/deptran/raft/server.h` (doVote async path) and `src/deptran/raft/server.cc` (OnAppendEntries async path)
+**Problem**: In the async persistence path, `std::thread(...).detach()` captures `this` (the `RaftServer*`). If the server is destroyed (e.g., during Kill/Restart in tests or shutdown) while the thread is running, the detached thread will access a dangling `this` pointer causing use-after-free. Example:
+```cpp
+std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
+    PersistState(term_copy, can_id_copy, "doVote: async vote persist");
+    auto c = commo();
+    if (c != nullptr) {
+        c->SendVoteDurable(can_id_copy, par_id_copy, term_copy, voter_copy);
+    }
+}).detach();
+```
+**Action**: Use `shared_from_this()` / weak references, or track spawned threads and join them in the destructor.
+
+### ISSUE-232ba3b0-2 [S3 - high]
+**Category**: Correctness / quorum logic
+**Evidence**: `src/deptran/raft/server.cc` - `OnPeerRestart()` method
+**Problem**: `durableVoters_` already contains `site_id_` (inserted during `ResetSpeculativeState()` and election win), but `OnPeerRestart()` computes `durable_vote_count = durableVoters_.size() + 1` adding another `+1` "for self". This double-counts self, making quorum checks off-by-one in the leader's favor. With 5 nodes (quorum=3), the leader could think it has 3 durable votes when it only has 2. Same issue for `specVoters_.size() + 1`.
+**Action**: Remove the `+1` since self is already in the set, or verify the set doesn't contain self before adding.
+
+---
+
+## Commit 36e4f8ee - "Fix rpc_chaos_test CI flakiness and update daily checks"
+**Date**: 2026-02-09
+
+**Verdict**: No issues found (test infrastructure - increased timing margins for CI CPU contention)
+
+---
+
+## Commit c84909cc - "Fix race condition in GetOrCreateClient causing intermittent segfault"
+**Date**: 2026-02-03
+
+**Verdict**: No issues found (correct fix - clone Arc while holding lock before unlocking)
+
+---
+
+## Commit 31eda945 - "Update daily checks and add CI failure investigation"
+**Date**: 2026-02-03
+
+**Verdict**: No issues found (timestamp update + investigation notes)
 
 ---
 

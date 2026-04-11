@@ -34,48 +34,57 @@ make -j32
 
 ## Testing Commands
 
+**MANDATORY: Run all tests via Docker. Do not run `./ci/ci.sh ...` directly on the host.**
+
 ```bash
-# run all experiments
-./ci/ci.sh all
+# run all experiments (Docker)
+./docker_build.sh ci all
 
-# simple transactions
-./ci/ci.sh simpleTransaction
+# simple transactions (Docker)
+./docker_build.sh ci simpleTransaction
 
-# simple replication
-./ci/ci.sh simplePaxos
+# simple replication (Docker)
+./docker_build.sh ci simplePaxos
 
-# two shards without replication
-./ci/ci.sh shardNoReplication
+# two shards without replication (Docker)
+./docker_build.sh ci shardNoReplication
 
-# 1 shard with replication on dbtest
-./ci/ci.sh shard1Replication
+# 1 shard with replication on dbtest (Docker)
+./docker_build.sh ci shard1Replication
 
-# 2 shards with replication on dbtest
-./ci/ci.sh shard2Replication
+# 2 shards with replication on dbtest (Docker)
+./docker_build.sh ci shard2Replication
 
-# 1 shard with replication on simple transaction
-./ci/ci.sh shard1ReplicationSimple
+# 1 shard with replication on simple transaction (Docker)
+./docker_build.sh ci shard1ReplicationSimple
 
-# 2 shards with replication on simple transaction
-./ci/ci.sh shard2ReplicationSimple
+# 2 shards with replication on simple transaction (Docker)
+./docker_build.sh ci shard2ReplicationSimple
 
 # Raft replication tests (same as above but with Raft instead of Paxos)
-./ci/ci.sh shard1ReplicationRaft
-./ci/ci.sh shard2ReplicationRaft
-./ci/ci.sh shard1ReplicationSimpleRaft
-./ci/ci.sh shard2ReplicationSimpleRaft
+./docker_build.sh ci shard1ReplicationRaft
+./docker_build.sh ci shard2ReplicationRaft
+./docker_build.sh ci shard1ReplicationSimpleRaft
+./docker_build.sh ci shard2ReplicationSimpleRaft
 
-# RocksDB persistence and partitioned queues tests
-./ci/ci.sh rocksdbTests
+# RocksDB persistence and partitioned queues tests (Docker)
+./docker_build.sh ci rocksdbTests
 
-# Shard fault tolerance test (reboots shards to test independent operation)
-./ci/ci.sh shardFaultTolerance
+# Shard fault tolerance test (Docker container fallback)
+# 1) enter Docker dev environment
+./docker_build.sh enter
+# 2) inside container, run:
+BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 
-# Multi-shard single-process mode (runs multiple shards in one process)
-./ci/ci.sh multiShardSingleProcess
+# Multi-shard single-process mode (runs multiple shards in one process) (Docker)
+./docker_build.sh ci multiShardSingleProcess
 
-# CPU throttling scaling test (verifies throughput doubles when CPU cap doubles)
-./ci/ci.sh cpuThrottlingScaling
+# CPU throttling scaling test (verifies throughput doubles when CPU cap doubles) (Docker)
+./docker_build.sh ci cpuThrottlingScaling
+
+# Optional quick path (no rebuild): build once, then run a suite
+./docker_build.sh build
+./docker_build.sh ci-quick shardNoReplication
 ```
 
 ## Code Architecture
@@ -104,15 +113,15 @@ The system implements multiple distributed transaction protocols:
 **Switching backends:**
 ```bash
 # Use rrr/rpc (default)
-./build/dbtest config/mako_tpcc.yml
+./build/dbtest config/tpcc.yml
 
 # Use eRPC
-MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
+MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
 Both backends implement the same `TransportBackend` interface for transport-agnostic request/response handling.
 
-**See [doc/transport_backends.md](doc/transport_backends.md) for complete documentation.**
+**See [docs/developer/transport-backends.md](docs/developer/transport-backends.md) for complete documentation.**
 
 **Legacy Deptran transports:**
 - Standard Ethernet via `src/rrr/` RPC framework
@@ -125,8 +134,8 @@ Both backends implement the same `TransportBackend` interface for transport-agno
 - **Build configuration**: Controlled via CMake flags or Makefile variables (SHARDS, PAXOS_LIB_ENABLED, etc.)
 
 ### Key Classes and Components
-- `TxnCoordinator`: Coordinates distributed transactions across shards
-- `TxnScheduler`: Handles transaction scheduling and execution
+- `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
+- `SchedulerClassic`: Handles transaction scheduling and execution (protocol-specific subclasses like `SchedulerOcc`)
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)
@@ -249,7 +258,7 @@ void set_replication_type(ReplicationType type) {
 #### Borrow Checking Integration
 The project uses RustyCpp for static analysis:
 - Build runs borrow checking automatically via CMake targets
-- Run `make borrow_check_all_dbtest` to verify all checked files
+- Run `make borrow_check_deptran` or `make borrow_check_raft` to verify checked files
 - Address any violations before committing
 - Files with heavy third-party header usage may be excluded from checking (document why in CMakeLists.txt)
 
@@ -271,10 +280,10 @@ New protocols should be added under `src/deptran/` following the existing patter
 3. Add configuration support in benchmark YAML files
 
 ### Modifying Benchmarks
-Benchmarks are in `src/bench/`. Each benchmark has:
-- Workload generator (`*_workload.cc`)
-- Piece registration (`*_pieces.cc`)
-- Stored procedures (`*_procedures.cc`)
+Benchmarks are in `src/bench/`. Each benchmark directory (e.g., `tpcc/`, `tpca/`, `rw/`) typically has:
+- Workload generator (`workload.cc`, `workload.h`)
+- Stored procedures (`procedure.cc`, `procedure.h`, plus individual transaction files like `new_order.cc`, `payment.cc`)
+- Sharding logic (`sharding.cc`, `sharding.h`)
 
 ### Debugging
 - Use `MODE=debug` for debug builds with symbols

@@ -78,5 +78,4 @@ class ServerWorker {
   void WaitForShutdown();
 };
 
-
 } // namespace janus

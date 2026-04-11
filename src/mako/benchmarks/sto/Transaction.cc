@@ -439,9 +439,20 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 
-    int ret = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
-    if (ret > 0) {
-        goto abort;
+    if (!remote_table_id_batch.empty()) {
+        if (TThread::sclient == nullptr) {
+            if (!no_paxos) {
+                Warning("Missing ShardClient for remoteBatchLock in paxos path; aborting transaction");
+                goto abort;
+            }
+            // Replay/no-paxos path may not have an initialized ShardClient.
+            // Skip remote lock RPCs and continue applying local effects.
+        } else {
+            int ret = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
+            if (ret > 0) {
+                goto abort;
+            }
+        }
     }
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
@@ -535,15 +546,22 @@ bool Transaction::try_commit(bool no_paxos) {
     }
 
     if (TThread::readset_shard_bits > 0) {
-        // Single timestamp system: pass and receive single watermark
-        int ret=TThread::sclient->remoteValidate(watermarkTimestamp);
-        uint32_t currentWatermark = sync_util::sync_logger::single_watermark_.load(memory_order_acquire);
-        if(watermarkTimestamp > currentWatermark) {
-            // Update single watermark
-            sync_util::sync_logger::single_watermark_.store(watermarkTimestamp, memory_order_release);
-        }
-        if (ret > 0) {
-            goto abort;
+        if (TThread::sclient == nullptr) {
+            if (!no_paxos) {
+                Warning("Missing ShardClient for remoteValidate in paxos path; aborting transaction");
+                goto abort;
+            }
+        } else {
+            // Single timestamp system: pass and receive single watermark
+            int ret=TThread::sclient->remoteValidate(watermarkTimestamp);
+            uint32_t currentWatermark = sync_util::sync_logger::single_watermark_.load(memory_order_acquire);
+            if(watermarkTimestamp > currentWatermark) {
+                // Update single watermark
+                sync_util::sync_logger::single_watermark_.store(watermarkTimestamp, memory_order_release);
+            }
+            if (ret > 0) {
+                goto abort;
+            }
         }
     }
 
@@ -576,6 +594,12 @@ bool Transaction::try_commit(bool no_paxos) {
             it->owner()->install(*it, *this);
         }
         if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
+            if (TThread::sclient == nullptr) {
+                if (!no_paxos) {
+                    Warning("Missing ShardClient for remoteInstall in paxos path; aborting transaction");
+                    goto abort;
+                }
+            } else {
 #if defined(FAIL_NEW_VERSION)
             int retry_c = 0;
             while (1) {
@@ -598,6 +622,7 @@ bool Transaction::try_commit(bool no_paxos) {
 #else
             TThread::sclient->remoteInstall(tid_unique_);
 #endif
+            }
         }
     }
 #endif
@@ -634,7 +659,7 @@ bool Transaction::try_commit(bool no_paxos) {
 abort:
     TXP_INCREMENT(txp_commit_time_aborts);
     stop(false, nullptr, 0);
-    if (TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) {
+    if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
         TThread::sclient->remoteAbort();
     }
     return false;

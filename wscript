@@ -8,15 +8,14 @@ import glob
 from waflib import Logs
 from waflib import Options
 
-pargs = ['--cflags', '--libs']
 #BOOST_LIBS = 'BOOST_SYSTEM BOOST_FILESYSTEM BOOST_THREAD BOOST_COROUTINE'
 
-#g++ -Wall -Wextra -std=c++17 -ggdb -Iinclude -Ilib -I/usr/local/include/mongocxx/v_noabi -I/usr/local/include/bsoncxx/v_noabi -Llib main.cpp -o bin/main -lboost_system -lpthread -lcrypto -lssl -lmongocxx -lbsoncxx
+#g++ -Wall -Wextra -std=c++17 -ggdb -Iinclude -Ilib -I/usr/local/include/mongocxx/v_noabi -I/usr/local/include/bsoncxx/v_noabi -Llib main.cpp -o bin/main -lpthread -lcrypto -lssl -lmongocxx -lbsoncxx
 
 def options(opt):
     opt.load("compiler_c")
     opt.load("compiler_cxx")
-    opt.load(['boost', 'unittest_gtest'],
+    opt.load(['unittest_gtest'],
              tooldir=['.waf-tools'])
     opt.add_option('-g', '--use-gxx', dest='cxx',
                    default=False, action='store_true')
@@ -67,7 +66,6 @@ def configure(conf):
     _enable_pic(conf)
     conf.load("compiler_c")
     conf.load("compiler_cxx unittest_gtest")
-    conf.load("boost")
 
     _enable_tcmalloc(conf)
     _enable_jemalloc(conf)
@@ -93,8 +91,6 @@ def configure(conf):
     conf.env.append_value("CXXFLAGS", "-Wno-unused-function")
     conf.env.append_value("CXXFLAGS", "-Wno-unused-variable")
     conf.env.append_value("CXXFLAGS", "-Wno-sign-compare")
-    conf.check_boost(lib='system filesystem context thread coroutine')
-
     conf.env.append_value("CXXFLAGS", "-Wno-sign-compare")
     conf.env.append_value('INCLUDES', ['/usr/local/include'])
 #    conf.check_cxx(lib='boost_system', use='BOOST_SYSTEM')
@@ -105,8 +101,6 @@ def configure(conf):
 #    conf.env.append_value('INCLUDES', [os.path.expanduser('~') + '/.linuxbrew/include'])
 #    conf.env.append_value('LIBPATH', [os.path.expanduser('~') + '/.linuxbrew/lib'])
     conf.env.LIB_PTHREAD = 'pthread'
-    conf.check_cfg(package='yaml-cpp', uselib_store='YAML-CPP', args=pargs)
-
     if sys.platform != 'darwin':
         conf.env.LIB_RT = 'rt'
 
@@ -131,8 +125,8 @@ def configure(conf):
     # conf.env.append_value('CXXFLAGS', ['-std=c++17', '-ggdb'])
     # conf.env.append_value('INCLUDES', ['lib', 'include'])
     conf.env.append_value('INCLUDES', ['/usr/local/include/mongocxx/v_noabi', '/usr/local/include/bsoncxx/v_noabi'])
-    # conf.env.append_value("LINKFLAGS", ['-lboost_system', '-lpthread', '-lcrypto', '-lssl', '-lmongocxx', '-lbsoncxx'])
-    # conf.env.append_value("LDFLAGS", ['-lboost_system', '-lpthread', '-lcrypto', '-lssl', '-lmongocxx', '-lbsoncxx'])
+    # conf.env.append_value("LINKFLAGS", ['-lpthread', '-lcrypto', '-lssl', '-lmongocxx', '-lbsoncxx'])
+    # conf.env.append_value("LDFLAGS", ['-lpthread', '-lcrypto', '-lssl', '-lmongocxx', '-lbsoncxx'])
     conf.env.append_value("LDFLAGS", ["-lmongocxx", "-lbsoncxx"])
 
 def build(bld):
@@ -163,7 +157,6 @@ def build(bld):
                                        "src/rrr/reactor/*.cc"),
               target="rrr",
               includes="src src/rrr third-party/rusty-cpp/include",
-              uselib="BOOST",
               use="PTHREAD")
 
 #    bld.stlib(source=bld.path.ant_glob("rpc/*.cc"), target="simplerpc",
@@ -174,11 +167,16 @@ def build(bld):
               includes="src src/rrr src/deptran src/base third-party/rusty-cpp/include",
               use="rrr PTHREAD")
 
+    # Build yaml-cpp from vendored source instead of system package.
+    bld.stlib(source=bld.path.ant_glob("third-party/yaml-cpp/src/*.cpp"),
+              target="yamlcpp",
+              includes="third-party/yaml-cpp/include third-party/yaml-cpp/src",
+              use="")
+
     bld.shlib(features="pyext",
               source=bld.path.ant_glob("src/rrr/pylib/simplerpc/*.cpp"),
               target="_pyrpc",
               includes="src src/rrr src/rrr/rpc third-party/rusty-cpp/include",
-              uselib="BOOST",
               use="rrr simplerpc PYTHON")
 
     bld.objects(source=bld.path.ant_glob("src/deptran/*.cc "
@@ -186,28 +184,24 @@ def build(bld):
                                        "src/bench/*/*.cc",
                                        excl=['src/deptran/s_main.cc', 'src/deptran/paxos_main_helper.cc','src/deptran/lab_solution_raft/*.cc', 'src/bench/paxos_lib/network_bench.cc']),
               target="deptran_objects",
-              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
-              uselib="YAML-CPP BOOST",
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include third-party/yaml-cpp/include",
               use="externc rrr memdb PTHREAD PROFILER RT")
 
     bld.shlib(source=bld.path.ant_glob("src/deptran/paxos_main_helper.cc "),
               target="txlog",
-              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
-              uselib="YAML-CPP BOOST",
-              use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include third-party/yaml-cpp/include",
+              use="externc rrr memdb deptran_objects yamlcpp PTHREAD PROFILER RT")
 
     bld.program(source=bld.path.ant_glob("src/deptran/s_main.cc"),
               target="deptran_server",
-              includes="src src/rrr src/deptran third-party/rusty-cpp/include",
-              uselib="YAML-CPP BOOST",
-              use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+              includes="src src/rrr src/deptran third-party/rusty-cpp/include third-party/yaml-cpp/include",
+              use="externc rrr memdb deptran_objects yamlcpp PTHREAD PROFILER RT")
 
     #bld.program(source=bld.path.ant_glob("src/run.cc "
     #                                     "src/deptran/paxos_main_helper.cc"),
     #            target="microbench",
     #            includes="src src/rrr src/deptran ",
-    #            uselib="YAML-CPP BOOST",
-    #            use="externc rrr memdb deptran_objects PTHREAD PROFILER RT")
+    #            use="externc rrr memdb deptran_objects yamlcpp PTHREAD PROFILER RT")
 
     bld.add_post_fun(post)
 

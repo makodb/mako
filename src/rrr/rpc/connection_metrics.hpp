@@ -65,6 +65,11 @@ public:
         return reconnect_count_.get();
     }
 
+    // @safe - Get number of retry attempts executed
+    uint64_t retry_attempts() const {
+        return retry_attempts_.get();
+    }
+
     // @safe - Get timestamp when connection was established (ms since epoch)
     uint64_t connect_time_ms() const {
         return connect_time_ms_.get();
@@ -163,6 +168,11 @@ public:
         reconnect_count_.set(reconnect_count_.get() + 1);
     }
 
+    // @safe - Record a retry attempt
+    void record_retry_attempt() const {
+        retry_attempts_.set(retry_attempts_.get() + 1);
+    }
+
     // @safe - Record connection established
     // @param current_time_ms Current time in milliseconds since epoch
     void record_connect(uint64_t current_time_ms) const {
@@ -178,6 +188,7 @@ public:
         bytes_sent_.set(0);
         bytes_received_.set(0);
         reconnect_count_.set(0);
+        retry_attempts_.set(0);
         connect_time_ms_.set(0);
         total_latency_us_.set(0);
         min_latency_us_.set(std::numeric_limits<uint64_t>::max());
@@ -197,6 +208,7 @@ private:
 
     // Connection lifecycle
     mutable rusty::Cell<uint64_t> reconnect_count_{0};
+    mutable rusty::Cell<uint64_t> retry_attempts_{0};
     mutable rusty::Cell<uint64_t> connect_time_ms_{0};
 
     // Latency tracking (microseconds)

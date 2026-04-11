@@ -57,7 +57,7 @@ clean:
 	# Clean Masstree configuration
 	@echo "Cleaning Masstree configuration..."
 	@cd src/mako/masstree && make distclean 2>/dev/null || true
-	@rm -f src/mako/masstree/config.h src/mako/masstree/config.h.in
+	@rm -f src/mako/masstree/config.h
 	@rm -f src/mako/masstree/configure src/mako/masstree/config.status
 	@rm -f src/mako/masstree/config.log src/mako/masstree/GNUmakefile
 	@rm -f src/mako/masstree/autom4te.cache -rf
@@ -68,9 +68,8 @@ clean:
 	# Clean Rust library
 	@echo "Cleaning Rust library..."
 	@cd rust-lib && cargo clean 2>/dev/null || true
-	# Clean rusty-cpp (both host and docker builds)
+	# Clean rusty-cpp
 	@rm -rf third-party/rusty-cpp/target || true
-	@rm -rf target-docker || true
 	# rebuild rpc
 	bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
 

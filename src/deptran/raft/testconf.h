@@ -124,6 +124,12 @@ class RaftTestConfig {
   // Reconnects disconnected server
   void Reconnect(siteid_t svr);
 
+  // Kills server (destroys it completely, clearing all in-memory state)
+  void Kill(siteid_t svr);
+
+  // Restarts server (creates new instance, loads state from disk)
+  void Restart(siteid_t svr);
+
   // Returns number of disconnected servers
   int NDisconnected(void);
 
@@ -154,6 +160,11 @@ class RaftTestConfig {
   // Returns true if svr committed a log entry at index with value cmd
   bool ServerCommitted(siteid_t svr, uint64_t index, int cmd);
 
+  // Starts a command with a callback for commit status notification
+  // Returns same values as Start()
+  bool StartWithCallback(siteid_t svr, int cmd, uint64_t *index, uint64_t *term,
+                         std::function<void(CommitStatus)> callback);
+
  private:
   // vars & subroutine for unreliable network setting
   std::thread th_;
@@ -175,6 +186,69 @@ class RaftTestConfig {
 
  public:
   RaftServer *GetServer(siteid_t svr);
+
+  // ============================================================================
+  // SPECULATIVE RAFT STATE QUERIES (Phase 7)
+  // ============================================================================
+  // Query speculative state from servers for testing
+
+  /**
+   * Check if a server is a secured leader (has durable vote quorum).
+   * @param svr Server ID
+   * @return true if server is leader and has secured status
+   */
+  bool IsSecuredLeader(siteid_t svr);
+
+  /**
+   * Get the speculative commit index for a server.
+   * @param svr Server ID
+   * @return specCommitIndex value, or 0 if server is not leader
+   */
+  uint64_t GetSpecCommitIndex(siteid_t svr);
+
+  /**
+   * Get the secured log index for a server.
+   * @param svr Server ID
+   * @return securedLogIndex value, or 0 if server is not leader
+   */
+  uint64_t GetSecuredLogIndex(siteid_t svr);
+
+  /**
+   * Get the count of speculative voters for a server.
+   * @param svr Server ID
+   * @return Number of servers in specVoters, or 0 if not leader
+   */
+  size_t GetSpecVotersCount(siteid_t svr);
+
+  /**
+   * Get the count of durable voters for a server.
+   * @param svr Server ID
+   * @return Number of servers in durableVoters, or 0 if not leader
+   */
+  size_t GetDurableVotersCount(siteid_t svr);
+
+  /**
+   * Verify speculative invariants hold for a server.
+   * @param svr Server ID
+   * @return true if securedLogIndex <= specCommitIndex <= lastLogIndex
+   */
+  bool VerifySpecInvariants(siteid_t svr);
+
+  /**
+   * Get the memory ack count for a specific log index.
+   * @param svr Server ID
+   * @param index Log index to query
+   * @return Number of memory acks for that index, or 0 if not available
+   */
+  size_t GetMemoryAckCount(siteid_t svr, uint64_t index);
+
+  /**
+   * Get the durable ack count for a specific log index.
+   * @param svr Server ID
+   * @param index Log index to query
+   * @return Number of durable acks for that index, or 0 if not available
+   */
+  size_t GetDurableAckCount(siteid_t svr, uint64_t index);
 
 };
 

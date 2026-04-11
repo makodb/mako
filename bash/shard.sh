@@ -23,7 +23,11 @@ mkdir -p results
 path=$(pwd)/src/mako
 
 # Build the base command
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $path/config/local-shards$nshard-warehouses$trd.yml -P $cluster"
+config_path="$path/config/local-shards${nshard}-warehouses${trd}.yml"
+if [ -n "$MAKO_CONFIG" ]; then
+    config_path="$MAKO_CONFIG"
+fi
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-index $shard --shard-config $config_path -P $cluster"
 
 # Add --is-micro flag if enabled (value is 1)
 if [ "$is_micro" == "1" ]; then

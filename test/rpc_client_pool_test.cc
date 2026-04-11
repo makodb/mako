@@ -13,6 +13,7 @@
 #include "rpc/server.hpp"
 #include "misc/marshal.hpp"
 #include "benchmark_service.h"
+#include "rpc_test_ports.h"
 
 using namespace rrr;
 using namespace benchmark;
@@ -25,9 +26,6 @@ static uint64_t current_time_ms() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             now.time_since_epoch()).count());
 }
-
-// Atomic counter for dynamic port allocation
-static std::atomic<int> g_pool_test_port{18000};
 
 // ============================================================================
 // PoolConfig Tests
@@ -104,12 +102,35 @@ public:
     }
 };
 
+// @safe - Start a server with retries to avoid port collisions.
+static Server* start_server_with_retry(const rusty::Arc<PollThread>& poll_thread, int* port_out) {
+    const int kMaxAttempts = 10;
+    for (int attempt = 0; attempt < kMaxAttempts; attempt++) {
+        int port = (port_out != nullptr && *port_out > 0) ? *port_out : test_ports::get_port();
+        auto server = new Server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<PoolTestService>();
+        server->reg_service(std::move(service_box));
+        if (server->start(("0.0.0.0:" + std::to_string(port)).c_str()) == 0) {
+            if (port_out != nullptr) {
+                *port_out = port;
+            }
+            return server;
+        }
+        delete server;
+        if (port_out != nullptr) {
+            *port_out = -1;
+        }
+        std::this_thread::sleep_for(milliseconds(5));
+    }
+    return nullptr;
+}
+
 class ClientPoolTest : public ::testing::Test {
 protected:
     rusty::Option<rusty::Arc<PollThread>> poll_thread_;
     int test_port_;
 
-    ClientPoolTest() : test_port_(g_pool_test_port.fetch_add(1)) {}
+    ClientPoolTest() : test_port_(test_ports::get_port()) {}
 
     void SetUp() override {
         poll_thread_ = rusty::Some(PollThread::create());
@@ -120,14 +141,7 @@ protected:
     }
 
     Server* start_server() {
-        auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
-        auto service_box = rusty::make_box<PoolTestService>();
-        server->reg_service(std::move(service_box));
-        if (server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()) != 0) {
-            delete server;
-            return nullptr;
-        }
-        return server;
+        return start_server_with_retry(poll_thread_.as_ref().unwrap().clone(), &test_port_);
     }
 
     std::string server_addr() {
@@ -235,12 +249,10 @@ TEST_F(ClientPoolTest, AddressCount) {
     ASSERT_NE(server1, nullptr);
 
     // Create second server on different port
-    int port2 = g_pool_test_port.fetch_add(1);
+    int port2 = test_ports::get_port();
     auto poll2 = PollThread::create();
-    auto server2 = new Server(rusty::Some(poll2.clone()));
-    auto service_box2 = rusty::make_box<PoolTestService>();
-    server2->reg_service(std::move(service_box2));
-    ASSERT_EQ(server2->start(("0.0.0.0:" + std::to_string(port2)).c_str()), 0);
+    auto server2 = start_server_with_retry(poll2, &port2);
+    ASSERT_NE(server2, nullptr);
 
     ClientPool pool(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
 

@@ -609,17 +609,23 @@ void ErpcBackend::RunNoQueue() {
 void ErpcBackend::Stop() {
     stop_ = true;
     break_timeout_ = true;
+    double resp_avg = context_->msg_counter_resp_sent > 0
+                          ? static_cast<double>(context_->msg_size_resp_sent) /
+                                static_cast<double>(context_->msg_counter_resp_sent)
+                          : 0.0;
 
     Notice("ErpcBackend stats: msg_size_resp_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
-           context_->msg_size_resp_sent, context_->msg_counter_resp_sent,
-           context_->msg_size_resp_sent / (context_->msg_counter_resp_sent + 0.0));
+           context_->msg_size_resp_sent, context_->msg_counter_resp_sent, resp_avg);
 }
 
 // Print statistics
 void ErpcBackend::PrintStats() {
+    double req_avg = context_->msg_counter_req_sent > 0
+                         ? static_cast<double>(context_->msg_size_req_sent) /
+                               static_cast<double>(context_->msg_counter_req_sent)
+                         : 0.0;
     Notice("ErpcBackend request stats: msg_size_req_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
-           context_->msg_size_req_sent, context_->msg_counter_req_sent,
-           context_->msg_size_req_sent / (context_->msg_counter_req_sent + 0.0));
+           context_->msg_size_req_sent, context_->msg_counter_req_sent, req_avg);
 }
 
 // ErpcRequestHandle::EnqueueResponse - enqueues response to response queue

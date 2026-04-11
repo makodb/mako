@@ -31,23 +31,31 @@ else()
     message(WARNING "You are not using GCC. Current compiler: ${CMAKE_CXX_COMPILER_ID}")
 endif()
 
-# Configure and enable rusy-cpp-checker
+# Auto-detect the latest available libclang for rusty-cpp-checker.
+# The checker uses libclang to parse C++ headers; if the system installs newer
+# clang headers (e.g., clang 19 with __builtin_nondeterministic_value in AVX
+# intrinsics), the checker must be linked against the matching libclang version
+# to avoid "Fatal parsing errors" from unknown builtins.
+if(NOT DEFINED ENV{LIBCLANG_PATH})
+    # Search for the newest libclang, preferring higher versions
+    foreach(_CLANG_VER 19 18 17 16 15 14)
+        set(_CLANG_LIB_DIR "/usr/lib/llvm-${_CLANG_VER}/lib")
+        if(EXISTS "${_CLANG_LIB_DIR}/libclang-${_CLANG_VER}.so" OR
+           EXISTS "${_CLANG_LIB_DIR}/libclang.so")
+            set(ENV{LIBCLANG_PATH} "${_CLANG_LIB_DIR}")
+            message(STATUS "Auto-detected LIBCLANG_PATH=${_CLANG_LIB_DIR} (clang ${_CLANG_VER})")
+            break()
+        endif()
+    endforeach()
+endif()
+
+# Configure and enable rusty-cpp-checker
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodule.cmake)
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 
-# Build the rusty-cpp-checker binary first before enabling borrow checking
-set(RUSTYCPP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp")
-set(CPP_BORROW_CHECKER "${RUSTYCPP_DIR}/target/${RUSTYCPP_BUILD_TYPE}/rusty-cpp-checker")
-
-# Create a custom command to build the checker if it doesn't exist
-if(NOT EXISTS ${CPP_BORROW_CHECKER})
-    message(STATUS "Building rusty-cpp-checker binary...")
-    execute_process(
-        COMMAND cargo build --${RUSTYCPP_BUILD_TYPE}
-        WORKING_DIRECTORY ${RUSTYCPP_DIR}
-        RESULT_VARIABLE BUILD_RESULT
-    )
-endif()
+# NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
+# build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
+# support is bypassed.
 
 # Enable borrow checking (can be disabled with -DENABLE_BORROW_CHECKING=OFF)
 # Don't use FORCE so command-line option takes precedence
@@ -62,12 +70,6 @@ pkg_check_modules(DPDK REQUIRED libdpdk)
 # Find Python for txlog library
 find_package(Python3 COMPONENTS Development REQUIRED)
 
-# Find Boost libraries for txlog library (use shared libs for linking into shared txlog)
-set(Boost_USE_STATIC_LIBS OFF)
-set(Boost_USE_STATIC_RUNTIME OFF)
-set(Boost_USE_MULTITHREADED ON)
-find_package(Boost REQUIRED COMPONENTS system filesystem thread coroutine context)
-
 # Define paths
 set(mkfile_path "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
 set(HOME "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -76,6 +78,12 @@ set(ERPC_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc")
 message(STATUS "I: ${ERPC_PATH}")
 set(W "src/mako")
 set(TOP "${CMAKE_SOURCE_DIR}")
+
+# Build yaml-cpp from vendored source to avoid system ABI/version drift.
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "Disable yaml-cpp tests" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "Disable yaml-cpp tools" FORCE)
+set(YAML_CPP_INSTALL OFF CACHE BOOL "Disable yaml-cpp install targets" FORCE)
+add_subdirectory(third-party/yaml-cpp)
 
 # RUST
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
@@ -144,7 +152,30 @@ else()
 endif()
 
 add_subdirectory(third-party/erpc)
-set_target_properties(erpc PROPERTIES ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/third-party/erpc")
+
+# eRPC's latency target enables -flto at compile time when PERF=ON. With Clang,
+# object files become LLVM bitcode and require matching link-time -flto.
+if(TARGET latency AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  target_link_options(latency PRIVATE -flto)
+endif()
+
+# Keep all eRPC artifacts inside the active build tree.
+# The eRPC submodule sets output dirs to ${CMAKE_SOURCE_DIR}/build, which
+# pollutes host builds when compiling in Docker.
+set(ERPC_BINARY_DIR "${CMAKE_BINARY_DIR}/third-party/erpc")
+get_property(ERPC_TARGETS DIRECTORY "${ERPC_BINARY_DIR}" PROPERTY BUILDSYSTEM_TARGETS)
+foreach(ERPC_TARGET IN LISTS ERPC_TARGETS)
+  if(TARGET "${ERPC_TARGET}")
+    get_target_property(ERPC_TARGET_TYPE "${ERPC_TARGET}" TYPE)
+    if(NOT ERPC_TARGET_TYPE STREQUAL "INTERFACE_LIBRARY")
+      set_target_properties("${ERPC_TARGET}" PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY "${ERPC_BINARY_DIR}"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${ERPC_BINARY_DIR}"
+      )
+    endif()
+  endif()
+endforeach()
 
 # eRPC flags
 set(ERPC_CFLAGS_DPDK
@@ -504,10 +535,6 @@ endif()
 list(APPEND LDFLAGS
   -levent_pthreads
   -pthread
-  -lboost_fiber
-  -lboost_context
-  -lboost_system
-  -lboost_thread
 )
 
 pkg_check_modules(LIBEVENT REQUIRED libevent)
@@ -584,6 +611,19 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/client_proxy.cc"
 )
+
+set(MAKO_USING_FRAGILEC OFF)
+if(CMAKE_CXX_COMPILER MATCHES "fragilec")
+  set(MAKO_USING_FRAGILEC ON)
+endif()
+
+if(MAKO_USING_FRAGILEC)
+  # Strict fragilec benchmark runs only need the core Masstree/library paths.
+  # Exclude heavyweight benchmark modules that currently pull in unresolved
+  # benchmark-config API surfaces and block `masstree_perf` builds.
+  list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/benchmarks/(encstress|bid|queue|tpcc|rpc_setup|sync_util_init)\\.cc$")
+  list(FILTER MAKO_SRCFILES EXCLUDE REGEX "/benchmarks/sto/.*\\.cc$")
+endif()
 
 # Benchmark flags
 set(BENCH_CXXFLAGS ${CXXFLAGS})
@@ -695,6 +735,9 @@ list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
 list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
 # Exclude MongoDB backend (requires mongocxx library)
 list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
+# Exclude standalone executables with main() functions
+list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
+list(FILTER DEPTRAN_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -724,8 +767,7 @@ target_include_directories(txlog PRIVATE
     src/mako
     src/mako/benchmarks
     ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-    dependencies/yaml-cpp/include
-    ${Boost_INCLUDE_DIRS}
+    third-party/yaml-cpp/include
     ${Python3_INCLUDE_DIRS}
 )
 
@@ -734,11 +776,6 @@ target_compile_definitions(txlog PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
 target_link_libraries(txlog
     yaml-cpp
-    Boost::system
-    Boost::filesystem
-    Boost::thread
-    Boost::coroutine
-    Boost::context
     pthread
     ${CMAKE_DL_LIBS}
     Python3::Python
@@ -843,6 +880,15 @@ set(DEPTRAN_BORROW_SRC
     src/deptran/stats_registry.cc
     src/deptran/executor.cc
     src/deptran/empty.cc
+    src/deptran/replication_helper.cc
+    src/deptran/scheduler.cc
+    # Files below excluded due to violations from included headers (not the .cc files themselves):
+    # src/deptran/config_client.cc          # 6 violations from RPC proxy headers
+    # src/deptran/config_service.cc         # 7 violations from sharding_policy.h, RPC base class
+    # src/deptran/config_store.cc           # 12 violations from RocksDB/Marshal headers
+    # src/deptran/shard_router.cc           # 51 violations from masstree/sharding headers
+    # src/deptran/sharding_policy_cache.cc  # 14 violations from sharding/Mutex headers
+    # src/deptran/tpcc_sharding.cc          # 23 violations from sharding_policy_builder.h headers
 )
 
 if(DEPTRAN_BORROW_SRC)
@@ -856,8 +902,7 @@ if(DEPTRAN_BORROW_SRC)
         src/deptran
         src/bench
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
-        dependencies/yaml-cpp/include
-        ${Boost_INCLUDE_DIRS}
+        third-party/yaml-cpp/include
     )
     target_compile_options(deptran_borrow PUBLIC ${BENCH_CXXFLAGS})
     target_compile_definitions(deptran_borrow PUBLIC CONFIG_H="${CONFIG_H}")
@@ -1039,6 +1084,7 @@ if(MAKO_USE_RAFT)
   add_apps(testPreferredReplicaStartup examples/mako-raft-tests/testPreferredReplicaStartup.cc)
   add_apps(testPreferredReplicaLogReplication examples/mako-raft-tests/testPreferredReplicaLogReplication.cc)
   add_apps(testNoOps examples/mako-raft-tests/testNoOps.cc)
+  add_apps(read_raft_disk src/deptran/raft/read_raft_disk.cc)
 endif()
 
 # Borrow checking for dbtest DISABLED - uses STO (Software Transactional Objects)
@@ -1063,7 +1109,13 @@ add_apps(erpc_client src/mako/benchmarks/ut/erpc_client.cc)
 add_apps(erpc_server src/mako/benchmarks/ut/erpc_server.cc)
 
 # RPC benchmark binary
-add_executable(rpcbench test/rpcbench.cc test/benchmark_service.cc)
+get_filename_component(MAKO_CXX_COMPILER_BASENAME "${CMAKE_CXX_COMPILER}" NAME)
+set(RPCBENCH_SRC test/rpcbench.cc)
+if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
+    # Use a fragile-friendly source variant to keep benchmark logic transpilable.
+    set(RPCBENCH_SRC test/rpcbench_fragile.cc)
+endif()
+add_executable(rpcbench ${RPCBENCH_SRC} test/benchmark_service.cc)
 target_include_directories(rpcbench PRIVATE
     src
     src/rrr
@@ -1095,7 +1147,7 @@ if(NOT TARGET rrr)
         ${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include
     )
     target_compile_options(rrr PUBLIC ${BENCH_CXXFLAGS})
-    target_link_libraries(rrr pthread ${Boost_LIBRARIES})
+    target_link_libraries(rrr pthread)
 
     # RRR files for borrow checking (explicit list to control what gets checked)
     # NOTE: Many RRR files are currently excluded from borrow checking due to
@@ -1187,49 +1239,75 @@ endif()
 # Enable testing
 enable_testing()
 
-# Find GoogleTest - try multiple methods
+# Use vendored GoogleTest only (no system gtest dependency).
 set(BUILD_TESTS OFF)
+set(FRAGILE_GTEST_FROM_SOURCE OFF)
+set(MAKO_GTEST_ROOT "")
+set(MAKO_GTEST_MAIN_SRC ${CMAKE_CURRENT_SOURCE_DIR}/test/fragile_gtest_main.cc)
 
-# Method 1: Try find_package
-find_package(GTest QUIET)
-if(GTest_FOUND)
-    set(BUILD_TESTS ON)
-    message(STATUS "GoogleTest found via find_package")
-endif()
-
-# Method 2: Check for installed libraries directly
-if(NOT BUILD_TESTS)
-    find_library(GTEST_LIB gtest PATHS /usr/lib /usr/local/lib)
-    find_library(GTEST_MAIN_LIB gtest_main PATHS /usr/lib /usr/local/lib)
-    find_path(GTEST_INCLUDE_DIR gtest/gtest.h PATHS /usr/include /usr/local/include)
-
-    if(GTEST_LIB AND GTEST_MAIN_LIB AND GTEST_INCLUDE_DIR)
-        set(BUILD_TESTS ON)
-        set(GTEST_LIBRARIES ${GTEST_LIB})
-        set(GTEST_MAIN_LIBRARIES ${GTEST_MAIN_LIB})
-        set(GTEST_INCLUDE_DIRS ${GTEST_INCLUDE_DIR})
-        message(STATUS "GoogleTest found via direct library search")
-        message(STATUS "  GTEST_LIB: ${GTEST_LIB}")
-        message(STATUS "  GTEST_MAIN_LIB: ${GTEST_MAIN_LIB}")
-        message(STATUS "  GTEST_INCLUDE_DIR: ${GTEST_INCLUDE_DIR}")
+# Prefer root-level third-party layout. Keep erpc-nested path as fallback.
+foreach(_gtest_candidate
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/googletest/googletest
+    ${CMAKE_CURRENT_SOURCE_DIR}/third-party/erpc/third_party/googletest/googletest
+)
+    if(EXISTS ${_gtest_candidate}/src/gtest-all.cc AND EXISTS ${_gtest_candidate}/include/gtest/gtest.h)
+        set(MAKO_GTEST_ROOT ${_gtest_candidate})
+        break()
     endif()
-endif()
+endforeach()
 
-# Method 3: Try pkg-config as last resort
-if(NOT BUILD_TESTS)
-    find_package(PkgConfig)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(GTEST gtest)
-        pkg_check_modules(GTEST_MAIN gtest_main)
-        if(GTEST_FOUND)
-            set(BUILD_TESTS ON)
-            message(STATUS "GoogleTest found via pkg-config")
+if(NOT EXISTS ${MAKO_GTEST_MAIN_SRC})
+    message(WARNING "GoogleTest main stub missing at ${MAKO_GTEST_MAIN_SRC}. Tests will be disabled.")
+elseif(MAKO_GTEST_ROOT STREQUAL "")
+    message(WARNING "Vendored GoogleTest not found under third-party/googletest or erpc fallback. Tests will be disabled.")
+else()
+    set(MAKO_GTEST_SRC ${MAKO_GTEST_ROOT}/src/gtest-all.cc)
+    if(CMAKE_CXX_COMPILER MATCHES "(/|^)fragilec$")
+        set(FRAGILE_GTEST_FROM_SOURCE ON)
+        set(MAKO_GTEST_LIB_TARGET fragile_transpiled_gtest)
+        set(MAKO_GTEST_MAIN_TARGET fragile_transpiled_gtest_main)
+    else()
+        set(MAKO_GTEST_LIB_TARGET mako_gtest)
+        set(MAKO_GTEST_MAIN_TARGET mako_gtest_main)
+    endif()
+
+    if(NOT TARGET ${MAKO_GTEST_LIB_TARGET})
+        add_library(${MAKO_GTEST_LIB_TARGET} STATIC ${MAKO_GTEST_SRC})
+        target_include_directories(${MAKO_GTEST_LIB_TARGET} PUBLIC
+            ${MAKO_GTEST_ROOT}/include
+            ${MAKO_GTEST_ROOT}
+        )
+        if(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+            target_include_directories(${MAKO_GTEST_LIB_TARGET} PRIVATE
+                ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
+            )
         endif()
+        target_compile_options(${MAKO_GTEST_LIB_TARGET} PRIVATE ${BENCH_CXXFLAGS})
+        target_compile_definitions(${MAKO_GTEST_LIB_TARGET} PUBLIC GTEST_HAS_PTHREAD=1)
+        target_link_libraries(${MAKO_GTEST_LIB_TARGET} PUBLIC pthread)
     endif()
-endif()
 
-if(NOT BUILD_TESTS)
-    message(WARNING "GoogleTest not found. Tests will be disabled. Install with: sudo apt-get install libgtest-dev")
+    if(NOT TARGET ${MAKO_GTEST_MAIN_TARGET})
+        add_library(${MAKO_GTEST_MAIN_TARGET} STATIC ${MAKO_GTEST_MAIN_SRC})
+        target_include_directories(${MAKO_GTEST_MAIN_TARGET} PUBLIC
+            ${MAKO_GTEST_ROOT}/include
+            ${MAKO_GTEST_ROOT}
+        )
+        if(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+            target_include_directories(${MAKO_GTEST_MAIN_TARGET} PRIVATE
+                ${CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES}
+            )
+        endif()
+        target_compile_options(${MAKO_GTEST_MAIN_TARGET} PRIVATE ${BENCH_CXXFLAGS})
+        target_compile_definitions(${MAKO_GTEST_MAIN_TARGET} PUBLIC GTEST_HAS_PTHREAD=1)
+        target_link_libraries(${MAKO_GTEST_MAIN_TARGET} PUBLIC ${MAKO_GTEST_LIB_TARGET} pthread)
+    endif()
+
+    set(GTEST_LIBRARIES ${MAKO_GTEST_LIB_TARGET})
+    set(GTEST_MAIN_LIBRARIES ${MAKO_GTEST_MAIN_TARGET})
+    set(GTEST_INCLUDE_DIRS ${MAKO_GTEST_ROOT}/include ${MAKO_GTEST_ROOT})
+    set(BUILD_TESTS ON)
+    message(STATUS "GoogleTest configured from vendored source: ${MAKO_GTEST_ROOT}")
 endif()
 
 if(BUILD_TESTS)
@@ -1352,7 +1430,16 @@ if(BUILD_TESTS)
     add_executable(test_rpc test/test_rpc.cc test/benchmark_service.cc)
     target_include_directories(test_rpc PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    # test_rpc only exercises RRR RPC paths and does not require memdb.
+    # Keep linkage minimal to avoid pulling unrelated memdb compile surfaces.
+    target_link_libraries(test_rpc
+        rrr
+        pthread
+        ${BENCH_LDFLAGS}
+        ${LIBEVENT_LDFLAGS}
+        ${GTEST_LIBRARIES}
+        ${GTEST_MAIN_LIBRARIES}
+    )
     add_test(NAME test_rpc COMMAND test_rpc)
 
     # Load Balancer Tests
@@ -1448,11 +1535,23 @@ if(BUILD_TESTS)
     #     add_borrow_check_target(test_silo_multi_site_stress)
     # endif()
 
-    # Masstree performance benchmark (on-demand JSON output)
-    add_executable(masstree_perf test/masstree_perf.cc)
+    # Masstree performance benchmark (on-demand throughput output)
+    set(MASSTREE_PERF_SRC test/masstree_perf.cc)
+    if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
+        # Use a fragile-friendly source variant to keep benchmark logic transpilable.
+        set(MASSTREE_PERF_SRC test/masstree_perf_fragile.cc)
+    endif()
+    add_executable(masstree_perf ${MASSTREE_PERF_SRC})
     target_include_directories(masstree_perf PRIVATE ${TEST_INCLUDE_DIRS})
     target_compile_options(masstree_perf PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(masstree_perf mako ${TEST_LINK_LIBS})
+    if(MAKO_CXX_COMPILER_BASENAME STREQUAL "fragilec")
+        # Keep strict fragile benchmark builds focused on Masstree-only code paths.
+        # Linking the full `mako` library pulls in unrelated RPC translation units
+        # that are not required for this benchmark and currently block compilation.
+        target_link_libraries(masstree_perf pthread)
+    else()
+        target_link_libraries(masstree_perf mako ${TEST_LINK_LIBS})
+    endif()
 
     # Reactor/Event System Tests
     add_executable(test_reactor test/test_reactor.cc)

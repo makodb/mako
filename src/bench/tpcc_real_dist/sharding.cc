@@ -158,18 +158,18 @@ bool TpccdSharding::GenerateRowData(tb_info_t *tb_info,
       size_t fc_size = col.foreign->name.size();
       std::string last4 = col.foreign->name.substr(fc_size - 4, 4);
       verify(col.foreign_col_name == col.foreign->name);
-      if (boost::algorithm::ends_with(col.foreign_col_name, "i_id")) {
+      if (col.foreign_col_name.ends_with("i_id")) {
         n = tb_infos_[std::string(TPCC_TB_ITEM)].num_records;
-      } else if (boost::algorithm::ends_with(col.foreign_col_name, "w_id")) {
+      } else if (col.foreign_col_name.ends_with("w_id")) {
         n = tb_infos_[std::string(TPCC_TB_WAREHOUSE)].num_records;
-      } else if (boost::algorithm::ends_with(col.foreign_col_name, "c_id")) {
+      } else if (col.foreign_col_name.ends_with("c_id")) {
         if (col.name == "o_c_id") {
           use_key_value = true;
         } else {
           n = tb_infos_[std::string(TPCC_TB_CUSTOMER)].num_records /
               tb_infos_[std::string(TPCC_TB_DISTRICT)].num_records;
         }
-      } else if (boost::algorithm::ends_with(col.foreign_col_name, "d_id")) {
+      } else if (col.foreign_col_name.ends_with("d_id")) {
         n = Config::GetConfig()->GetNumPartition() *
             tb_infos_[std::string(TPCC_TB_DISTRICT)].num_records /
             tb_infos_[std::string(TPCC_TB_WAREHOUSE)].num_records;
@@ -295,8 +295,8 @@ void TpccdSharding::PreparePrimaryColumn(tb_info_t *tb_info,
       }
       verify(foreign_column->values);
       tmp_index_base = foreign_column->values->size();
-      if (boost::algorithm::ends_with(foreign_column->name, "w_id") ||
-          boost::algorithm::ends_with(foreign_column->name, "d_id")) {
+      if (foreign_column->name.ends_with("w_id") ||
+          foreign_column->name.ends_with("d_id")) {
         if (!bound_foreign_index.empty()) {
           auto xxx = prim_foreign_index[bound_foreign_index[0]].second;
           verify(tmp_index_base == xxx);

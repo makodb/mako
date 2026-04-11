@@ -14,9 +14,7 @@
 #include <unordered_map>
 #include <map>
 #include <set>
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
-#include <rocksdb/write_batch.h>
+#include <rocksdb/c.h>
 
 namespace mako {
 
@@ -116,9 +114,9 @@ private:
                               std::chrono::high_resolution_clock::time_point disk_complete_time = {});
 
     // Per-partition database instances to eliminate shared lock bottleneck
-    std::vector<std::unique_ptr<rocksdb::DB>> partition_dbs_;
-    rocksdb::Options options_;
-    rocksdb::WriteOptions write_options_;
+    std::vector<rocksdb_t*> partition_dbs_;
+    rocksdb_options_t* options_{nullptr};
+    rocksdb_writeoptions_t* write_options_{nullptr};
 
     // Per-partition request queues to reduce contention
     struct PartitionQueue {

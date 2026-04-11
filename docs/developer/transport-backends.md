@@ -29,14 +29,14 @@ Set the `MAKO_TRANSPORT` environment variable before running:
 
 ```bash
 # Use rrr/rpc backend (default)
-./build/dbtest config/mako_tpcc.yml
+./build/dbtest config/tpcc.yml
 
 # Use eRPC backend
 export MAKO_TRANSPORT=erpc
-./build/dbtest config/mako_tpcc.yml
+./build/dbtest config/tpcc.yml
 
 # Or inline
-MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
+MAKO_TRANSPORT=erpc ./build/dbtest config/tpcc.yml
 ```
 
 ### Method 2: Configuration File
@@ -44,7 +44,7 @@ MAKO_TRANSPORT=erpc ./build/dbtest config/mako_tpcc.yml
 Add the transport type to your YAML configuration file:
 
 ```yaml
-# config/mako_tpcc.yml
+# config/tpcc.yml
 transport:
   type: erpc  # Options: rrr (default), erpc
   # ... other transport settings
@@ -250,7 +250,7 @@ Enable verbose logging:
 export MAKO_LOG_LEVEL=debug
 
 # Run with logging
-MAKO_TRANSPORT=rrr ./build/dbtest config/mako_tpcc.yml 2>&1 | tee test.log
+MAKO_TRANSPORT=rrr ./build/dbtest config/tpcc.yml 2>&1 | tee test.log
 ```
 
 Check statistics:
