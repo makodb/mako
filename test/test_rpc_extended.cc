@@ -108,6 +108,69 @@ protected:
 
 std::atomic<int> ExtendedRPCTest::port_offset{0};
 
+namespace {
+
+rusty::Arc<RpcServiceContext> make_test_rpc_context() {
+    std::unordered_map<i32, size_t> rpc_to_service;
+    rusty::Vec<rusty::RefCell<rusty::Box<Service>>> services;
+    return rusty::Arc<RpcServiceContext>::make(
+        std::move(rpc_to_service),
+        std::move(services),
+        "127.0.0.1:0",
+        std::make_shared<std::atomic<int>>(0),
+        std::make_shared<std::atomic<bool>>(false),
+        1);
+}
+
+}  // namespace
+
+TEST(ServerApiSafetyTest, ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback) {
+    ServerConnection sconn(make_test_rpc_context(), -1);
+    std::atomic<int> callback_count{0};
+
+    EXPECT_EQ(sconn.run_async([&]() { callback_count.fetch_add(1); }), 0);
+    EXPECT_EQ(callback_count.load(), 1);
+
+    std::function<void()> empty_callback;
+    EXPECT_NE(sconn.run_async(empty_callback), 0);
+    EXPECT_EQ(callback_count.load(), 1);
+}
+
+TEST(ServerApiSafetyTest, ServerConnectionContentSizeAndHandleFreeAreSafe) {
+    ServerConnection sconn(make_test_rpc_context(), -1);
+
+    EXPECT_EQ(sconn.content_size(), 0u);
+    sconn.handle_free();  // Explicit no-op for server side.
+    EXPECT_EQ(sconn.content_size(), 0u);
+}
+
+TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback) {
+    auto req = rusty::make_box<Request>();
+    req->xid = 1;
+
+    auto sconn = rusty::Arc<ServerConnection>::make(make_test_rpc_context(), -1);
+    auto weak_sconn = rusty::downgrade(sconn);
+
+    bool cleanup_called = false;
+    std::atomic<int> callback_count{0};
+    {
+        DeferredReply defer(
+            std::move(req),
+            weak_sconn,
+            [](Marshal&) {},
+            [&]() { cleanup_called = true; });
+
+        EXPECT_EQ(defer.run_async([&]() { callback_count.fetch_add(1); }), 0);
+        EXPECT_EQ(callback_count.load(), 1);
+
+        std::function<void()> empty_callback;
+        EXPECT_NE(defer.run_async(empty_callback), 0);
+        EXPECT_EQ(callback_count.load(), 1);
+    }
+
+    EXPECT_TRUE(cleanup_called);
+}
+
 // Test 1: Multiple clients connecting to the same server
 TEST_F(ExtendedRPCTest, MultipleClients) {
     const int num_clients = 10;

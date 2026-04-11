@@ -404,12 +404,8 @@ public:
     // Uses const_cast for interior mutability (SpinLock marked as external)
     int poll_mode() const override;
 
-    // @safe - Not implemented, will abort if called
-    // Jetpack: content_size not used for connection
-    size_t content_size() override {
-        verify(0);
-        return 0;
-    }
+    // @safe - Returns buffered input/output bytes for diagnostics.
+    size_t content_size() override;
 
     // @safe - Writes buffered data to socket
     // SAFETY: Protected by output spinlock (SpinLock marked as external)
@@ -440,9 +436,8 @@ public:
         return status_ == CLOSED;
     }
 
-    // @safe - Not implemented, will abort if called
-    // Jetpack: handle_free stub
-    void handle_free() {verify(0);}
+    // @safe - Explicit server-side no-op (kept for API compatibility).
+    void handle_free();
 
 };
 
@@ -483,11 +478,8 @@ public:
         // req_ automatically cleaned up by rusty::Box destructor
     }
 
-    // @safe - Currently a no-op stub
-    int run_async(const std::function<void()>& f) {
-      // TODO disable threadpool run in RPCs.
-      return 0;
-    }
+    // @safe - Executes callback inline; returns error on empty callback.
+    int run_async(const std::function<void()>& f);
 
     // @safe - Sends reply using callback-based API
     // Can only be called once (checked by replied_ flag)

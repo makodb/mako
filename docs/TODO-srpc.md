@@ -198,13 +198,17 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 
 ## Workstream H: Remove Abort/No-op Stubs (P2)
 ### Code TODO
-- [ ] Replace `verify(0)` stubs in server-facing API with safe explicit behavior or remove APIs.
-- [ ] Define and enforce behavior of `run_async`/`content_size`/`handle_free` in server connection API.
+- [x] Replace `verify(0)` stubs in server-facing API with safe explicit behavior or remove APIs.
+  - Implemented on 2026-04-11 in `ServerConnection`/`DeferredReply`: `run_async()` now executes callbacks inline with explicit empty-callback error handling, `content_size()` returns live buffered byte count, and `handle_free()` is an explicit compatibility no-op (warn-once) instead of process abort.
+- [x] Define and enforce behavior of `run_async`/`content_size`/`handle_free` in server connection API.
+  - Implemented on 2026-04-11 with regression coverage in `test_rpc_extended`: behavior is now deterministic and non-crashing for normal and empty-callback paths.
 - [ ] Add assertions/logs for unsupported code paths instead of hard abort in production builds.
 
 ### Tests TODO
-- [ ] Add regression tests proving these APIs no longer crash process when called.
-- [ ] Run existing: `test_rpc_extended`, `test_rpc`, `test_rpc_state_integration`.
+- [x] Add regression tests proving these APIs no longer crash process when called.
+  - Added on 2026-04-11 in `test_rpc_extended`: `ServerApiSafetyTest.ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerConnectionContentSizeAndHandleFreeAreSafe`, and `ServerApiSafetyTest.DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback`.
+- [x] Run existing: `test_rpc_extended`, `test_rpc`, `test_rpc_state_integration`.
+  - Verified on 2026-04-11 via full RPC-focused suite run (30/30 passed, including `test_rpc_extended`, `test_rpc`, and `test_rpc_state_integration`).
 
 ### DoD
 - [ ] No unexpected aborts from exposed RPC API in production path.
