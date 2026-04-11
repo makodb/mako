@@ -726,12 +726,21 @@ list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
+# Benchmark-coupled deptran units are compiled in txlog_bench to keep txlog core lean.
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/frame.cc$")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/workload.cc$")
+list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/client_worker.cc$")
 
 # Collect benchmark source files (compiled separately from deptran core)
 file(GLOB_RECURSE TXLOG_BENCH_SRC
     "src/bench/*/*.cc"
 )
 list(FILTER TXLOG_BENCH_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
+list(APPEND TXLOG_BENCH_SRC
+    src/deptran/frame.cc
+    src/deptran/workload.cc
+    src/deptran/client_worker.cc
+)
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -808,7 +817,7 @@ target_include_directories(txlog_bench PUBLIC
     src/bench
 )
 
-# Compatibility target used by existing app/test links
+# Compatibility target used by existing app/test links.
 add_library(txlog SHARED
     $<TARGET_OBJECTS:txlog_core_obj>
     $<TARGET_OBJECTS:txlog_bench_obj>
@@ -1078,7 +1087,7 @@ function(add_apps exec_name exec_path)
       mako
       erpc
       rust_lib
-      txlog  # Link to the CMake txlog target instead of the .so file
+      txlog
       ${BENCH_LDFLAGS}
       yaml-cpp
       pthread
