@@ -8,11 +8,10 @@
 #include "procedure.h"
 #include "rcc_rpc.h"
 #include "frame.h"
-#include "bench/tpcc/workload.h"
+#include "benchmark_registry.h"
 #include "executor.h"
 #include "coordinator.h"
 #include "classic/coordinator.h"
-#include "../bench/rw/workload.h"
 #include "raft/server.h"
 #include "config.h"
 
@@ -298,9 +297,11 @@ void TxLogServer::Execute(Tx &txn_box,
 
 void TxLogServer::reg_table(const std::string &name,
                             mdb::Table *tbl) {
+  EnsureBenchmarkRegistryInitialized();
+  auto table_names = BenchmarkRegistry::Instance().GetTableNames();
   verify(mdb_txn_mgr_ != NULL);
   mdb_txn_mgr_->reg_table(name, tbl);
-  if (name == TPCC_TB_ORDER) {
+  if (name == table_names.tpcc_order) {
     mdb::Schema *schema = new mdb::Schema();
     const mdb::Schema *o_schema = tbl->schema();
     mdb::Schema::iterator it = o_schema->begin();
@@ -310,7 +311,7 @@ void TxLogServer::reg_table(const std::string &name,
           schema->add_column(it->name.c_str(), it->type, true);
     schema->add_column("o_c_id", Value::I32, true);
     schema->add_column("o_id", Value::I32, false);
-    mdb_txn_mgr_->reg_table(TPCC_TB_ORDER_C_ID_SECONDARY,
+    mdb_txn_mgr_->reg_table(table_names.tpcc_order_c_id_secondary,
                             new mdb::SortedTable(name, schema));
   }
 }

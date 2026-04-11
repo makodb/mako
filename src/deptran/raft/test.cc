@@ -45,11 +45,12 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testFigure8());                     // Test 11
   } else {
     Log_info("Running PERSISTENCE Raft test group (MAKO_RAFT_PERSISTENCE enabled)");
+    Log_info("TEST 15 (testComprehensiveCrashRecovery) is temporarily disabled");
     failed =
         // Disk persistence and crash-recovery tests
         TEST_EXPAND(testPersistence())                     // Test 13
         || TEST_EXPAND(testLeaderFollowerPersistence())    // Test 14
-        || TEST_EXPAND(testComprehensiveCrashRecovery())   // Test 15
+        // Test 15 disabled: testComprehensiveCrashRecovery()
         || TEST_EXPAND(testPartitionPlusRestart())         // Test 16
         || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
         || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18

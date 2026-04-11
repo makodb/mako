@@ -20,6 +20,10 @@ namespace janus {
 
 REG_FRAME(MODE_RAFT, vector<string>({"raft"}), RaftFrame);
 
+Frame* CreateRaftFrameBuiltin(int mode) {
+  return new RaftFrame(mode);
+}
+
 // @safe
 RaftFrame::RaftFrame(int mode) : Frame(mode) {
 

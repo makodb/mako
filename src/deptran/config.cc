@@ -10,32 +10,10 @@
 #include "sharding.h"
 #include "frame.h"
 #include "sharding.h"
+#include "benchmark_registry.h"
 #include "rcc/dep_graph.h"
 #include "rcc/graph_marshaler.h"
 #include "workload.h"
-
-// for tpca benchmark
-#include "bench/tpca/workload.h"
-#include "bench/tpca/payment.h"
-
-// tpcc benchmark
-#include "bench/tpcc/workload.h"
-#include "bench/tpcc/procedure.h"
-
-// tpcc dist partition benchmark
-#include "bench/tpcc_dist/procedure.h"
-
-// tpcc real dist partition benchmark
-#include "bench/tpcc_real_dist/workload.h"
-#include "bench/tpcc_real_dist/procedure.h"
-
-// rw benchmark
-#include "bench/rw/workload.h"
-#include "bench/rw/procedure.h"
-
-// micro bench
-#include "bench/micro/workload.h"
-#include "bench/micro/procedure.h"
 
 
 namespace janus {
@@ -772,13 +750,18 @@ void Config::LoadFailoverYML(YAML::Node config) {
 
 void Config::InitTPCCD() {
   // TODO particular configuration for certain workloads.
+  EnsureBenchmarkRegistryInitialized();
+  auto table_names = BenchmarkRegistry::Instance().GetTableNames();
+  verify(!table_names.tpcc_warehouse.empty());
+  verify(!table_names.tpcc_district.empty());
+  verify(!table_names.tpcc_item.empty());
   auto &tb_infos = sharding_->tb_infos_;
   if (benchmark_ == TPCC_REAL_DIST_PART) {
     i32 n_w_id =
-        (i32)(tb_infos[std::string(TPCC_TB_WAREHOUSE)].num_records);
+        (i32)(tb_infos[table_names.tpcc_warehouse].num_records);
     verify(n_w_id > 0);
     i32 n_d_id = (i32)(GetNumPartition() *
-        tb_infos[std::string(TPCC_TB_DISTRICT)].num_records / n_w_id);
+        tb_infos[table_names.tpcc_district].num_records / n_w_id);
     i32 d_id = 0, w_id = 0;
 
     for (d_id = 0; d_id < n_d_id; d_id++)
@@ -788,7 +771,7 @@ void Config::InitTPCCD() {
         sharding_->insert_dist_mapping(mv);
       }
     i32 n_i_id =
-        (i32)(tb_infos[std::string(TPCC_TB_ITEM)].num_records);
+        (i32)(tb_infos[table_names.tpcc_item].num_records);
     i32 i_id = 0;
 
     for (i_id = 0; i_id < n_i_id; i_id++)

@@ -15,7 +15,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 project(mako)
 
-# Prefer shared libraries when available (needed for txlog.so linking)
+# Prefer shared libraries when available for third-party dependencies.
 set(BUILD_SHARED_LIBS ON)
 
 # Set C++ standard
@@ -67,7 +67,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(DPDK REQUIRED libdpdk)
 
-# Find Python for txlog library
+# Find Python for txlog_core/txlog_bench build surfaces.
 find_package(Python3 COMPONENTS Development REQUIRED)
 
 # Define paths
@@ -726,21 +726,12 @@ list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft_main_helper.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/mongodb/.*")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/read_raft_disk.cc")
 list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/raft/test_raft_persistence.cc")
-# Benchmark-coupled deptran units are compiled in txlog_bench to keep txlog core lean.
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/frame.cc$")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/workload.cc$")
-list(FILTER DEPTRAN_CORE_SRC EXCLUDE REGEX "src/deptran/client_worker.cc$")
 
 # Collect benchmark source files (compiled separately from deptran core)
 file(GLOB_RECURSE TXLOG_BENCH_SRC
     "src/bench/*/*.cc"
 )
 list(FILTER TXLOG_BENCH_SRC EXCLUDE REGEX "src/bench/paxos_lib/.*")
-list(APPEND TXLOG_BENCH_SRC
-    src/deptran/frame.cc
-    src/deptran/workload.cc
-    src/deptran/client_worker.cc
-)
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -753,7 +744,6 @@ set(TXLOG_HELPER_SRC
 # Build txlog in layers:
 #   - txlog_core: deptran/rrr/memdb core (no src/bench/* compilation unit)
 #   - txlog_bench: benchmark implementations from src/bench/*
-#   - txlog: compatibility shared library combining both layers
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
     ${DEPTRAN_CORE_SRC}
@@ -817,23 +807,24 @@ target_include_directories(txlog_bench PUBLIC
     src/bench
 )
 
-# Compatibility target used by existing app/test links.
-add_library(txlog SHARED
-    $<TARGET_OBJECTS:txlog_core_obj>
-    $<TARGET_OBJECTS:txlog_bench_obj>
+# Canonical link set for targets that previously linked the monolithic txlog.
+# Keep txlog_core before/after txlog_bench to satisfy cross-archive refs on ld.
+add_library(txlog_full INTERFACE)
+target_link_libraries(txlog_full INTERFACE
+    txlog_core
+    txlog_bench
+    txlog_core
 )
-target_link_libraries(txlog
-    PRIVATE
-    yaml-cpp
-    pthread
-    ${CMAKE_DL_LIBS}
-    Python3::Python
+# Ensure bench registry object is linked from static txlog_bench.
+target_link_options(txlog_full INTERFACE
+    "LINKER:-u,janus_register_bench_factories"
 )
-
-# Set output location to match expected path
-set_target_properties(txlog PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-    OUTPUT_NAME "txlog"
+set(TXLOG_LINK_LIBS
+    txlog_full
+)
+set(TXLOG_BUILD_DEPS
+    txlog_core
+    txlog_bench
 )
 
 # Temporary Raft-only target for borrow checking
@@ -1065,6 +1056,23 @@ endif()
 
 
 function(add_apps exec_name exec_path)
+  set(options)
+  set(oneValueArgs)
+  set(multiValueArgs TXLOG_LIBS TXLOG_DEPS)
+  cmake_parse_arguments(APP "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  if(APP_TXLOG_LIBS)
+    set(APP_TXLOG_LINK_LIBS ${APP_TXLOG_LIBS})
+  else()
+    set(APP_TXLOG_LINK_LIBS ${TXLOG_LINK_LIBS})
+  endif()
+
+  if(APP_TXLOG_DEPS)
+    set(APP_TXLOG_BUILD_DEPS ${APP_TXLOG_DEPS})
+  else()
+    set(APP_TXLOG_BUILD_DEPS ${TXLOG_BUILD_DEPS})
+  endif()
+
   # Add executable
   add_executable(${exec_name} ${exec_path})
 
@@ -1087,7 +1095,7 @@ function(add_apps exec_name exec_path)
       mako
       erpc
       rust_lib
-      txlog
+      ${APP_TXLOG_LINK_LIBS}
       ${BENCH_LDFLAGS}
       yaml-cpp
       pthread
@@ -1102,14 +1110,17 @@ function(add_apps exec_name exec_path)
 
   # Add dependencies
   if(ENABLE_BORROW_CHECKING)
-    add_dependencies(${exec_name} mako erpc rust_lib txlog build_rusty_cpp_checker)
+    add_dependencies(${exec_name} mako erpc rust_lib ${APP_TXLOG_BUILD_DEPS} build_rusty_cpp_checker)
   else()
-    add_dependencies(${exec_name} mako erpc rust_lib txlog)
+    add_dependencies(${exec_name} mako erpc rust_lib ${APP_TXLOG_BUILD_DEPS})
   endif()
 endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
-add_apps(simpleTransaction examples/simpleTransaction.cc)
+add_apps(simpleTransaction examples/simpleTransaction.cc
+    TXLOG_LIBS txlog_core
+    TXLOG_DEPS txlog_core
+)
 add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
 add_apps(continuousTransactions examples/continuousTransactions.cc)
 add_apps(simplePaxos examples/simplePaxos.cc)
@@ -1415,25 +1426,25 @@ if(BUILD_TESTS)
     target_link_libraries(test_sharding_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
 
-    # Sharding Policy Cache Tests (requires txlog for ConfigClient)
+    # Sharding Policy Cache Tests (requires txlog bench/core for ConfigClient)
     add_executable(test_sharding_policy_cache test/sharding_policy_cache_test.cc)
     target_include_directories(test_sharding_policy_cache PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_sharding_policy_cache PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy_cache txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_sharding_policy_cache ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_sharding_policy_cache COMMAND test_sharding_policy_cache)
 
-    # Shard Router Integration Tests (requires txlog for ShardingPolicyCache)
+    # Shard Router Integration Tests (requires txlog bench/core for ShardingPolicyCache)
     add_executable(test_shard_router test/shard_router_test.cc)
     target_include_directories(test_shard_router PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
     target_compile_options(test_shard_router PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_shard_router txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_shard_router ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_shard_router COMMAND test_shard_router)
 
-    # TPC-C Sharding Integration Tests (requires txlog for ShardingPolicyCache)
+    # TPC-C Sharding Integration Tests (requires txlog bench/core for ShardingPolicyCache)
     add_executable(test_tpcc_sharding test/tpcc_sharding_test.cc)
     target_include_directories(test_tpcc_sharding PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
     target_compile_options(test_tpcc_sharding PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_tpcc_sharding txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_tpcc_sharding ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_tpcc_sharding COMMAND test_tpcc_sharding)
 
     # Fiber API Tests
@@ -1447,7 +1458,7 @@ if(BUILD_TESTS)
     add_executable(test_config_store test/config_store_test.cc)
     target_include_directories(test_config_store PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_config_store PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_store txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_config_store ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_store COMMAND test_config_store)
 
     # ConfigService RPC Tests
@@ -1455,7 +1466,7 @@ if(BUILD_TESTS)
     add_executable(test_config_service test/config_service_test.cc)
     target_include_directories(test_config_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_service PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_service txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_config_service ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_service COMMAND test_config_service)
 
     # ConfigClient Tests
@@ -1463,21 +1474,21 @@ if(BUILD_TESTS)
     add_executable(test_config_client test/config_client_test.cc)
     target_include_directories(test_config_client PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_client PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_client txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_config_client ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_client COMMAND test_config_client)
 
     # Config Node Failure Scenario Tests
     add_executable(test_config_failure test/config_failure_test.cc)
     target_include_directories(test_config_failure PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
     target_compile_options(test_config_failure PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_config_failure txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_config_failure ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_config_failure COMMAND test_config_failure)
 
     # Sharding Policy Startup Tests
     add_executable(test_sharding_startup test/sharding_startup_test.cc)
     target_include_directories(test_sharding_startup PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako/benchmarks)
     target_compile_options(test_sharding_startup PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_startup txlog ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_sharding_startup ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_sharding_startup COMMAND test_sharding_startup)
 
     # RPC Tests
@@ -1970,7 +1981,7 @@ if(BUILD_TESTS)
         mako
         rrr
         erpc
-        txlog
+        ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
         pthread
@@ -1993,7 +2004,7 @@ if(BUILD_TESTS)
         mako
         rrr
         erpc
-        txlog
+        ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
         pthread
@@ -2016,7 +2027,7 @@ if(BUILD_TESTS)
         mako
         rrr
         erpc
-        txlog
+        ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
         pthread
@@ -2039,7 +2050,7 @@ if(BUILD_TESTS)
         mako
         rrr
         erpc
-        txlog
+        ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
         pthread
@@ -2062,7 +2073,7 @@ if(BUILD_TESTS)
         mako
         rrr
         erpc
-        txlog
+        ${TXLOG_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
         pthread

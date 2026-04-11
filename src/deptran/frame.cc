@@ -10,7 +10,9 @@
 #include "scheduler.h"
 #include "none/coordinator.h"
 #include "none/scheduler.h"
+#include "2pl/tx.h"
 #include "rcc/coord.h"
+#include "snow/ro6.h"
 #include "snow/ro6_coord.h"
 #include "2pl/coordinator.h"
 #include "occ/tx.h"
@@ -20,37 +22,7 @@
 
 #include "rule/commo.h"
 #include "rule/coordinator.h"
-
-#include "bench/tpcc_real_dist/sharding.h"
-#include "bench/tpcc/workload.h"
-
-
-// for tpca benchmark
-#include "bench/tpca/workload.h"
-#include "bench/tpca/payment.h"
-#include "bench/tpca/sharding.h"
-#include "bench/tpca/workload.h"
-
-// tpcc benchmark
-#include "bench/tpcc/workload.h"
-#include "bench/tpcc/procedure.h"
-#include "bench/tpcc/sharding.h"
-
-// tpcc dist partition benchmark
-#include "bench/tpcc_dist/procedure.h"
-
-// tpcc real dist partition benchmark
-#include "bench/tpcc_real_dist/workload.h"
-#include "bench/tpcc_real_dist/procedure.h"
-
-// rw benchmark
-#include "bench/rw/workload.h"
-#include "bench/rw/procedure.h"
-#include "bench/rw/sharding.h"
-
-// micro bench
-#include "bench/micro/workload.h"
-#include "bench/micro/procedure.h"
+#include "benchmark_registry.h"
 
 #include "deptran/2pl/scheduler.h"
 #include "occ/scheduler.h"
@@ -59,8 +31,10 @@
 
 #include "extern_c/frame.h"
 
-
 namespace janus {
+
+Frame* CreateRaftFrameBuiltin(int mode);
+Frame* CreateFpgaRaftFrameBuiltin(int mode);
 
 Frame* Frame::RegFrame(int mode,
                        function<Frame*()> frame_init) {
@@ -90,6 +64,12 @@ Frame* Frame::GetFrame(int mode, int replica_mode) {
       break;
     case MODE_MULTI_PAXOS:
       frame = new MultiPaxosFrame(mode);
+      break;
+    case MODE_RAFT:
+      frame = CreateRaftFrameBuiltin(mode);
+      break;
+    case MODE_FPGA_RAFT:
+      frame = CreateFpgaRaftFrameBuiltin(mode);
       break;
     case MODE_EXTERNC:
       frame = new ExternCFrame();
@@ -127,24 +107,12 @@ Frame* Frame::RegFrame(int mode,
 }
 
 Sharding* Frame::CreateSharding() {
-  Sharding* ret;
+  EnsureBenchmarkRegistryInitialized();
+  auto& registry = BenchmarkRegistry::Instance();
+  Sharding* ret = nullptr;
   auto bench = Config::config_s->benchmark_;
-  switch (bench) {
-    case TPCC_REAL_DIST_PART:
-      ret = new TpccdSharding();
-      break;
-    case TPCC:
-      ret = new TpccSharding();
-      break;
-    case RW_BENCHMARK:
-      ret = new RWBenchmarkSharding();
-      break;
-    case TPCA:
-      ret = new TpcaSharding();
-      break;
-    default:
-      verify(0);
-  }
+  ret = registry.CreateSharding(bench);
+  verify(ret != nullptr);
   return ret;
 }
 
@@ -250,60 +218,17 @@ Coordinator* Frame::CreateBulkCoordinator(Config *config, int benchmark) {
 }
 
 void Frame::GetTxTypes(std::map<int32_t, std::string>& txn_types) {
+  EnsureBenchmarkRegistryInitialized();
   auto benchmark_ = Config::config_s->benchmark_;
-  switch (benchmark_) {
-    case TPCA:
-      txn_types[TPCA_PAYMENT] = std::string(TPCA_PAYMENT_NAME);
-      break;
-    case TPCC:
-    case TPCC_DIST_PART:
-    case TPCC_REAL_DIST_PART:
-      txn_types[TPCC_NEW_ORDER] = std::string(TPCC_NEW_ORDER_NAME);
-      txn_types[TPCC_PAYMENT] = std::string(TPCC_PAYMENT_NAME);
-      txn_types[TPCC_STOCK_LEVEL] = std::string(TPCC_STOCK_LEVEL_NAME);
-      txn_types[TPCC_DELIVERY] = std::string(TPCC_DELIVERY_NAME);
-      txn_types[TPCC_ORDER_STATUS] = std::string(TPCC_ORDER_STATUS_NAME);
-      break;
-    case RW_BENCHMARK:
-      txn_types[RW_BENCHMARK_W_TXN] = std::string(RW_BENCHMARK_W_TXN_NAME);
-      txn_types[RW_BENCHMARK_R_TXN] = std::string(RW_BENCHMARK_R_TXN_NAME);
-      break;
-    case MICRO_BENCH:
-      txn_types[MICRO_BENCH_R] = std::string(MICRO_BENCH_R_NAME);
-      txn_types[MICRO_BENCH_W] = std::string(MICRO_BENCH_W_NAME);
-      break;
-    default:
-      Log_fatal("benchmark not implemented");
-      verify(0);
-  }
+  txn_types = BenchmarkRegistry::Instance().GetTxnTypes(benchmark_);
+  verify(!txn_types.empty());
 }
 
 TxData* Frame::CreateTxnCommand(TxRequest& req, shared_ptr<TxnRegistry> reg) {
+  EnsureBenchmarkRegistryInitialized();
+  auto& registry = BenchmarkRegistry::Instance();
   auto benchmark = Config::config_s->benchmark_;
-  TxData *cmd = NULL;
-  switch (benchmark) {
-    case TPCA:
-      verify(req.tx_type_ == TPCA_PAYMENT);
-      cmd = new TpcaPaymentChopper();
-      break;
-    case TPCC:
-      cmd = new TpccProcedure();
-      break;
-    case TPCC_DIST_PART:
-      cmd = new TpccDistChopper();
-      break;
-    case TPCC_REAL_DIST_PART:
-      cmd = new TpccRdProcedure();
-      break;
-    case RW_BENCHMARK:
-      cmd = new RWChopper();
-      break;
-    case MICRO_BENCH:
-      cmd = new MicroProcedure();
-      break;
-    default:
-      verify(0);
-  }
+  TxData *cmd = registry.CreateTxn(benchmark);
   verify(cmd != NULL);
   cmd->txn_reg_ = reg;
   cmd->sss_ = Config::GetConfig()->sharding_;
@@ -419,26 +344,11 @@ TxLogServer* Frame::CreateScheduler() {
 }
 
 Workload * Frame::CreateTxGenerator() {
+  EnsureBenchmarkRegistryInitialized();
+  auto& registry = BenchmarkRegistry::Instance();
   auto benchmark = Config::config_s->benchmark_;
-  Workload * gen = nullptr;
-  switch (benchmark) {
-    case TPCC:
-      gen = new TpccWorkload(Config::GetConfig());
-      break;
-    case TPCC_DIST_PART:
-    case TPCC_REAL_DIST_PART:
-      gen = new TpccRdWorkload(Config::GetConfig());
-      break;
-    case TPCA:
-      gen = new TpcaWorkload(Config::GetConfig());
-      break;
-    case RW_BENCHMARK:
-      gen = new RwWorkload(Config::GetConfig());
-      break;
-    case MICRO_BENCH:
-    default:
-      verify(0);
-  }
+  Workload * gen = registry.CreateTxGenerator(benchmark, Config::GetConfig());
+  verify(gen != nullptr);
   return gen;
 }
 

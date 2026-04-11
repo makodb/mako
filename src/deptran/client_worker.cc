@@ -2,8 +2,8 @@
 #include "client_worker.h"
 #include "frame.h"
 #include "procedure.h"
+#include "workload.h"
 #include "coordinator.h"
-#include "../bench/rw/workload.h"
 #include "benchmark_control_rpc.h"
 
 namespace janus {
