@@ -5,6 +5,53 @@
 PORT_UTILS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_DIR="${PORT_UTILS_DIR}/.."
 
+ensure_paxos_replication_configs() {
+    local nthreads="$1"
+    local nshards="${2:-1}"
+
+    if ! [[ "$nthreads" =~ ^[0-9]+$ ]] || [ "$nthreads" -le 0 ]; then
+        echo "ERROR: ensure_paxos_replication_configs requires positive thread count (got '$nthreads')" >&2
+        return 1
+    fi
+    if ! [[ "$nshards" =~ ^[0-9]+$ ]] || [ "$nshards" -le 0 ]; then
+        echo "ERROR: ensure_paxos_replication_configs requires positive shard count (got '$nshards')" >&2
+        return 1
+    fi
+
+    local cfg_dir="${BASE_DIR}/config/1leader_2followers"
+    local generator="${cfg_dir}/generator.py"
+    if [ ! -f "$generator" ]; then
+        echo "ERROR: Paxos config generator not found at '$generator'" >&2
+        return 1
+    fi
+
+    local shard
+    local missing=0
+    for ((shard = 0; shard < nshards; shard++)); do
+        local cfg_file="${cfg_dir}/paxos${nthreads}_shardidx${shard}.yml"
+        if [ ! -s "$cfg_file" ]; then
+            missing=1
+            break
+        fi
+    done
+
+    if [ "$missing" -eq 1 ]; then
+        echo "Generating missing Paxos configs (threads=$nthreads, shards=$nshards)..."
+        if ! (cd "$cfg_dir" && python3 generator.py); then
+            echo "ERROR: Failed to generate Paxos configs via '$generator'" >&2
+            return 1
+        fi
+    fi
+
+    for ((shard = 0; shard < nshards; shard++)); do
+        local cfg_file="${cfg_dir}/paxos${nthreads}_shardidx${shard}.yml"
+        if [ ! -s "$cfg_file" ]; then
+            echo "ERROR: Missing required Paxos config '$cfg_file' after generation" >&2
+            return 1
+        fi
+    done
+}
+
 pick_simple_transaction_port_base() {
     local transport="${MAKO_TRANSPORT:-rrr}"
     local base_min=20000

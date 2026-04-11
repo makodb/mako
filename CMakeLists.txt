@@ -1934,6 +1934,11 @@ if(BUILD_TESTS)
 
     # Integration tests from CI
     add_test(NAME simpleTransaction COMMAND simpleTransaction)
+    add_test(NAME test_rpc_replication_config_generation
+        COMMAND bash -c "bash ./test/rpc_replication_config_generation_test.sh"
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+    set_tests_properties(test_rpc_replication_config_generation PROPERTIES TIMEOUT 30)
 
     # RPC benchmark test - starts server, runs client, verifies it works
     add_test(NAME rpcbench

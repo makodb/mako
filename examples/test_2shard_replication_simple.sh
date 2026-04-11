@@ -43,6 +43,10 @@ if [ ! -x "$binary_path" ]; then
     exit 1
 fi
 
+if ! ensure_paxos_replication_configs "$trd" 2; then
+    exit 1
+fi
+
 # Clean up old log files
 rm -f nfs_sync_*
 rm -f "$log_s0_localhost" "$log_s0_learner" "$log_s0_p2" "$log_s0_p1" \

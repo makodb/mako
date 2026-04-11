@@ -265,28 +265,32 @@ Run after each major workstream and once for final sign-off.
 - [x] `./docker_build.sh ci-quick rocksdbTests`
   - Verified on 2026-04-11 in temp worktree: `CI test 'rocksdbTests' completed` (all RocksDB persistence/callback/partitioned queue/stress checks passed).
   - Scope check: completed within small-change budget (<500 LOC). No additional code changes were required beyond previously landed Docker/example fixes; this leaf execution was test/build verification only.
-- [ ] `./docker_build.sh ci-quick shard1Replication`
+- [x] `./docker_build.sh ci-quick shard1Replication`
+  - Verified on 2026-04-11 in temp worktree after adding replication-config preflight in example scripts; `CI test 'shard1Replication' completed` with throughput/replay checks passing.
+  - Root cause and fix: clean Docker worktrees were missing generated `config/1leader_2followers/paxos*_shardidx*.yml` files; added `ensure_paxos_replication_configs()` in `examples/simple_transaction_rep_port_utils.sh`, wired into replication runners (`test_1shard_replication`, `test_2shard_replication`, simple variants, and 2-shard single-process replication), and added regression guard `test_rpc_replication_config_generation`.
+  - Scope check: completed within small-change budget (<500 LOC), including a deterministic test portability fix in `test_rpc_state_integration_test.cc` (`socketpair` -> loopback TCP pair) required for Docker `ctest` stability.
 - [ ] `./docker_build.sh ci-quick shard2Replication`
 
 Run all RPC-focused tests in Docker build output target set:
-- [ ] `test_rpc`
-- [ ] `test_rpc_extended`
-- [ ] `test_rpc_state_integration`
-- [ ] `test_rpc_reconnect_policy`
-- [ ] `test_rpc_reconnect_integration`
-- [ ] `test_rpc_request_queue`
-- [ ] `test_rpc_request_buffering`
-- [ ] `test_rpc_timeout_retry`
-- [ ] `test_rpc_metrics`
-- [ ] `test_rpc_heartbeat`
-- [ ] `test_rpc_circuit_breaker`
-- [ ] `test_rpc_circuit_breaker_integration`
-- [ ] `test_rpc_callbacks`
-- [ ] `test_rpc_restart_detection`
-- [ ] `test_rpc_graceful_shutdown`
-- [ ] `test_rpc_combined_reliability`
-  - Host RPC suite re-run on 2026-04-11 after the same code changes: `ctest --test-dir build --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'` -> 32/32 passed.
-  - Re-verified on 2026-04-11 during `rocksdbTests` leaf completion with the same RPC-focused command (32/32 passed).
+- [x] `test_rpc`
+- [x] `test_rpc_extended`
+- [x] `test_rpc_state_integration`
+- [x] `test_rpc_reconnect_policy`
+- [x] `test_rpc_reconnect_integration`
+- [x] `test_rpc_request_queue`
+- [x] `test_rpc_request_buffering`
+- [x] `test_rpc_timeout_retry`
+- [x] `test_rpc_metrics`
+- [x] `test_rpc_heartbeat`
+- [x] `test_rpc_circuit_breaker`
+- [x] `test_rpc_circuit_breaker_integration`
+- [x] `test_rpc_callbacks`
+- [x] `test_rpc_restart_detection`
+- [x] `test_rpc_graceful_shutdown`
+- [x] `test_rpc_combined_reliability`
+  - Re-verified on 2026-04-11 in Docker with:
+    - build of RPC test binaries: `cmake --build build_docker --target test_rpc ... test_rpc_partition`
+    - full RPC-focused suite: `ctest --test-dir build_docker --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'` -> 33/33 passed (includes new `test_rpc_replication_config_generation`).
 
 ## Final Sign-off Checklist
 - [ ] All new tests added and passing.

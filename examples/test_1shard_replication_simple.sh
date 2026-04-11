@@ -35,6 +35,10 @@ if [ ! -x "$binary_path" ]; then
     exit 1
 fi
 
+if ! ensure_paxos_replication_configs "$trd" 1; then
+    exit 1
+fi
+
 # Kill only target worker processes by executable name.
 # Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
 pkill -9 -f "$PROC_MATCH" 2>/dev/null || true

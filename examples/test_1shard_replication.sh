@@ -28,6 +28,10 @@ if [ ! -x "$binary_path" ]; then
     exit 1
 fi
 
+if ! ensure_paxos_replication_configs "$trd" 1; then
+    exit 1
+fi
+
 TEMP_CONFIG=$(make_simple_txn_rep_config 1 $trd)
 if [ -z "$TEMP_CONFIG" ]; then
     exit 1

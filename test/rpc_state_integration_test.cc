@@ -12,6 +12,8 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
@@ -77,6 +79,62 @@ bool wait_for_fd_close(int fd, milliseconds timeout) {
 
     errno = 0;
     return (::fcntl(fd, F_GETFD) == -1 && errno == EBADF);
+}
+
+bool create_connected_tcp_pair(int sv[2]) {
+    sv[0] = -1;
+    sv[1] = -1;
+
+    int listener_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (listener_fd < 0) {
+        return false;
+    }
+
+    int reuse = 1;
+    (void)::setsockopt(listener_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
+    sockaddr_in bind_addr{};
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    bind_addr.sin_port = 0;
+    if (::bind(listener_fd, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0) {
+        ::close(listener_fd);
+        return false;
+    }
+
+    if (::listen(listener_fd, 1) != 0) {
+        ::close(listener_fd);
+        return false;
+    }
+
+    socklen_t bind_len = sizeof(bind_addr);
+    if (::getsockname(listener_fd, reinterpret_cast<sockaddr*>(&bind_addr), &bind_len) != 0) {
+        ::close(listener_fd);
+        return false;
+    }
+
+    int client_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (client_fd < 0) {
+        ::close(listener_fd);
+        return false;
+    }
+
+    if (::connect(client_fd, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0) {
+        ::close(client_fd);
+        ::close(listener_fd);
+        return false;
+    }
+
+    int server_fd = ::accept(listener_fd, nullptr, nullptr);
+    ::close(listener_fd);
+    if (server_fd < 0) {
+        ::close(client_fd);
+        return false;
+    }
+
+    sv[0] = client_fd;
+    sv[1] = server_fd;
+    return true;
 }
 
 class ClosedFlagPollable : public Pollable {
@@ -909,7 +967,7 @@ TEST_F(StateIntegrationTest, MarkClosingStaysNonTerminalUntilPollClose) {
 
 TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
     int sv[2];
-    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sv), 0);
+    ASSERT_TRUE(create_connected_tcp_pair(sv));
 
     auto pollable = rusty::Arc<ClosedFlagPollable>::make(sv[0]);
     poll_thread_.as_ref().unwrap()->add(pollable);
@@ -920,6 +978,8 @@ TEST_F(StateIntegrationTest, ClosedFdCleanupInvokesCloseCallbackBeforeErase) {
 
     // Mark closed so poll loop takes the closed-fd cleanup branch.
     pollable->set_closed(true);
+    // Wake the poll loop immediately so closed-fd cleanup runs without timeout flakiness.
+    ASSERT_EQ(::send(sv[1], "x", 1, 0), 1);
 
     auto close_deadline = steady_clock::now() + milliseconds(1000);
     while (pollable->close_calls() == 0 && steady_clock::now() < close_deadline) {
