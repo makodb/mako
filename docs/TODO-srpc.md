@@ -11,7 +11,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Re-verified on 2026-04-11 with focused leak coverage in `test_rpc_state_integration` (`ErrorPathClosesSocketFd`, `MarkClosingStaysNonTerminalUntilPollClose`, `ClosedFdCleanupInvokesCloseCallbackBeforeErase`, `RepeatedErrorReconnectCyclesDoNotIncreaseFdCount`, `StressFastConnectCloseCyclesDoNotIncreaseFdCount`) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 32/32 passed).
 - [x] No orphan/stuck futures when request buffering overflows or replay fails.
   - Re-verified on 2026-04-11 with focused `test_rpc_request_buffering` coverage (`DropNewestOverflowDoesNotLeakPendingFutures`, `ReplayReenqueueRejectDoesNotLeaveFuturePending`, `ReplayExpiredRequestUsesTimeoutErrorCode`, `OverflowAndExpiryDoNotLeavePendingFutures`, `ConcurrentQueueAndClearHasNoStuckFutures`) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 32/32 passed).
-- [ ] Retry/reconnect policies are actually enforced (not just stored configs).
+- [x] Retry/reconnect policies are actually enforced (not just stored configs).
+  - Re-verified on 2026-04-11 with focused policy coverage (`test_rpc_timeout_retry`, `test_rpc_reconnect_policy`, `test_rpc_reconnect_integration`, `test_rpc_callbacks`, `test_rpc_metrics`; 5/5 passed) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`; 32/32 passed).
 - [ ] Graceful drain blocks on real in-flight request count.
 - [ ] SRPC docs match shipping API names and semantics.
 - [ ] All required tests (below) pass in Docker CI.
