@@ -813,31 +813,36 @@ void ClientConnection::handle_error() {
 
   // Trigger policy-driven reconnect automatically after transport failures.
   if (reconnect_policy_.auto_reconnect &&
-      !reconnect_address_.empty() &&
       !reconnect_abort_.load(std::memory_order_acquire)) {
-    auto weak_conn = weak_self_;
-    std::thread([weak_conn]() {
-      auto conn_opt = weak_conn.upgrade();
-      if (conn_opt.is_none()) {
+    // @unsafe - std::string::empty and Weak copy are currently treated as non-safe.
+    {
+      if (reconnect_address_.empty()) {
         return;
       }
-
-      auto conn = conn_opt.unwrap();
-      if (!conn->reconnect_policy_.auto_reconnect ||
-          conn->reconnect_abort_.load(std::memory_order_acquire)) {
-        return;
-      }
-
-      auto state = conn->connection_state();
-      if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
-        Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure");
-        // @unsafe - reconnect mutates socket/state and performs network I/O.
-        auto* mut_conn = const_cast<ClientConnection*>(conn.get());
-        if (mut_conn != nullptr) {
-          mut_conn->reconnect();
+      auto weak_conn = weak_self_;
+      std::thread([weak_conn]() {
+        auto conn_opt = weak_conn.upgrade();
+        if (conn_opt.is_none()) {
+          return;
         }
-      }
-    }).detach();
+
+        auto conn = conn_opt.unwrap();
+        if (!conn->reconnect_policy_.auto_reconnect ||
+            conn->reconnect_abort_.load(std::memory_order_acquire)) {
+          return;
+        }
+
+        auto state = conn->connection_state();
+        if (state == ConnectionState::FAILED || state == ConnectionState::DISCONNECTED) {
+          Log_info("rrr::ClientConnection: auto-reconnect triggered after connection failure");
+          // @unsafe - reconnect mutates socket/state and performs network I/O.
+          auto* mut_conn = const_cast<ClientConnection*>(conn.get());
+          if (mut_conn != nullptr) {
+            mut_conn->reconnect();
+          }
+        }
+      }).detach();
+    }
   }
 }
 

@@ -1116,13 +1116,12 @@ target_include_directories(rpcbench PRIVATE
 target_compile_options(rpcbench PRIVATE ${BENCH_CXXFLAGS})
 target_link_libraries(rpcbench
     rrr
-    memdb
     pthread
     ${BENCH_LDFLAGS}
     ${LIBEVENT_LDFLAGS}
 )
 
-# Build the necessary RRR and memdb libraries for rpcbench
+# Build the necessary RRR library sources for rpcbench
 file(GLOB RRR_BENCH_SRC
     "src/rrr/base/*.cpp"
     "src/rrr/misc/*.cpp"
@@ -1324,6 +1323,12 @@ if(BUILD_TESTS)
         ${BENCH_LDFLAGS}
         ${LIBEVENT_LDFLAGS}
     )
+    set(RPC_TEST_LINK_LIBS
+        rrr
+        pthread
+        ${BENCH_LDFLAGS}
+        ${LIBEVENT_LDFLAGS}
+    )
 
     # Marshal/Unmarshal Tests
     add_executable(test_marshal test/test_marshal.cc)
@@ -1463,7 +1468,7 @@ if(BUILD_TESTS)
     add_executable(rpc_chaos_test test/rpc_chaos_test.cc test/benchmark_service.cc)
     target_include_directories(rpc_chaos_test PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(rpc_chaos_test PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(rpc_chaos_test ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(rpc_chaos_test ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME rpc_chaos_test COMMAND rpc_chaos_test)
     set_tests_properties(rpc_chaos_test PROPERTIES LABELS "chaos")
 
@@ -1569,7 +1574,7 @@ if(BUILD_TESTS)
     add_executable(test_rpc_extended test/test_rpc_extended.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_extended PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_extended PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_extended ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_extended ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_extended COMMAND test_rpc_extended)
 
     # Extended Reactor Tests
@@ -1626,8 +1631,7 @@ if(BUILD_TESTS)
     )
     target_compile_options(test_transport_integration PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_transport_integration
-        rrr
-        ${TEST_LINK_LIBS}
+        ${RPC_TEST_LINK_LIBS}
         ${GTEST_LIBRARIES}
         ${GTEST_MAIN_LIBRARIES}
         pthread
@@ -1662,62 +1666,62 @@ if(BUILD_TESTS)
     add_executable(test_rpc_connection_state test/rpc_connection_state_test.cc)
     target_include_directories(test_rpc_connection_state PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_connection_state PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_connection_state ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_connection_state ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_connection_state COMMAND test_rpc_connection_state)
 
     # Reconnection Policy Tests
     add_executable(test_rpc_reconnect_policy test/rpc_reconnect_policy_test.cc)
     target_include_directories(test_rpc_reconnect_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_reconnect_policy PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_reconnect_policy ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_reconnect_policy ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_reconnect_policy COMMAND test_rpc_reconnect_policy)
 
     # Circuit Breaker Tests
     add_executable(test_rpc_circuit_breaker test/rpc_circuit_breaker_test.cc)
     target_include_directories(test_rpc_circuit_breaker PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_circuit_breaker PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_circuit_breaker ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_circuit_breaker ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_circuit_breaker COMMAND test_rpc_circuit_breaker)
 
     # Heartbeat Tests
     add_executable(test_rpc_heartbeat test/rpc_heartbeat_test.cc)
     target_include_directories(test_rpc_heartbeat PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_heartbeat PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_heartbeat ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_heartbeat ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_heartbeat COMMAND test_rpc_heartbeat)
 
     # Error Handling Tests
     add_executable(test_rpc_errors test/rpc_errors_test.cc)
     target_include_directories(test_rpc_errors PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_errors PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_errors ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_errors ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_errors COMMAND test_rpc_errors)
 
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
     target_include_directories(test_rpc_callbacks PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_callbacks PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_callbacks ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_callbacks ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_callbacks COMMAND test_rpc_callbacks)
 
     # Request Queue Tests (Phase 2.1)
     add_executable(test_rpc_request_queue test/rpc_request_queue_test.cc)
     target_include_directories(test_rpc_request_queue PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_request_queue PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_request_queue ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_request_queue ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_request_queue COMMAND test_rpc_request_queue)
 
     add_executable(test_rpc_request_buffering test/rpc_request_buffering_test.cc)
     target_include_directories(test_rpc_request_buffering PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_request_buffering PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_request_buffering ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_request_buffering ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_request_buffering COMMAND test_rpc_request_buffering)
 
     # Timeout and Retry Tests (Phase 2.4)
     add_executable(test_rpc_timeout_retry test/rpc_timeout_retry_test.cc)
     target_include_directories(test_rpc_timeout_retry PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_timeout_retry PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_timeout_retry ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_timeout_retry ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_timeout_retry COMMAND test_rpc_timeout_retry)
 
     # ============================================================================
@@ -1728,84 +1732,84 @@ if(BUILD_TESTS)
     add_executable(test_rpc_state_integration test/rpc_state_integration_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_state_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_state_integration PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_state_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_state_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_state_integration COMMAND test_rpc_state_integration)
 
     # Reconnection Integration Tests
     add_executable(test_rpc_reconnect_integration test/rpc_reconnect_integration_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_reconnect_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_reconnect_integration PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_reconnect_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_reconnect_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_reconnect_integration COMMAND test_rpc_reconnect_integration)
 
     # Circuit Breaker Integration Tests
     add_executable(test_rpc_circuit_breaker_integration test/rpc_circuit_breaker_integration_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_circuit_breaker_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_circuit_breaker_integration PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_circuit_breaker_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_circuit_breaker_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_circuit_breaker_integration COMMAND test_rpc_circuit_breaker_integration)
 
     # Error Integration Tests
     add_executable(test_rpc_error_integration test/rpc_error_integration_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_error_integration PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_error_integration PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_error_integration ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_error_integration ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_error_integration COMMAND test_rpc_error_integration)
 
     # Combined Reliability Tests
     add_executable(test_rpc_combined_reliability test/rpc_combined_reliability_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_combined_reliability PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_combined_reliability PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_combined_reliability ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_combined_reliability ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_combined_reliability COMMAND test_rpc_combined_reliability)
 
     # Graceful Shutdown Tests (Phase 4.1)
     add_executable(test_rpc_graceful_shutdown test/rpc_graceful_shutdown_test.cc)
     target_include_directories(test_rpc_graceful_shutdown PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_graceful_shutdown PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_graceful_shutdown ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_graceful_shutdown ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_graceful_shutdown COMMAND test_rpc_graceful_shutdown)
 
     # Server Restart Detection Tests (Phase 4.2)
     add_executable(test_rpc_restart_detection test/rpc_restart_detection_test.cc)
     target_include_directories(test_rpc_restart_detection PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_restart_detection PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_restart_detection ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_restart_detection ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_restart_detection COMMAND test_rpc_restart_detection)
 
     # Connection Validation Tests (Phase 3.3)
     add_executable(test_rpc_validation test/rpc_validation_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_validation PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_validation PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_validation ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_validation ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_validation COMMAND test_rpc_validation)
 
     # Connection Health Metrics Tests (Phase 3.2)
     add_executable(test_rpc_metrics test/rpc_metrics_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_metrics PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_metrics PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_metrics ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_metrics ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_metrics COMMAND test_rpc_metrics)
 
     # ClientPool Health-Aware Tests (Phase 5.1)
     add_executable(test_rpc_client_pool test/rpc_client_pool_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_client_pool PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_client_pool PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_client_pool ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_client_pool ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_client_pool COMMAND test_rpc_client_pool)
 
     # Log Storage Tests (Phase 1.1)
     add_executable(test_rpc_log_storage test/rpc_log_storage_test.cc)
     target_include_directories(test_rpc_log_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_log_storage ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_log_storage ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_log_storage COMMAND test_rpc_log_storage)
 
     # RocksDB Log Storage Tests (Phase 1.2)
     add_executable(test_rpc_rocksdb_log_storage test/rpc_rocksdb_log_storage_test.cc)
     target_include_directories(test_rpc_rocksdb_log_storage PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_rocksdb_log_storage PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_rocksdb_log_storage ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
+    target_link_libraries(test_rpc_rocksdb_log_storage ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_rpc_rocksdb_log_storage COMMAND test_rpc_rocksdb_log_storage)
 
     # Transaction Timeout Tests
@@ -1819,7 +1823,7 @@ if(BUILD_TESTS)
     add_executable(test_rpc_stress_crash test/rpc_stress_crash_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_stress_crash PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_stress_crash PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_stress_crash ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_stress_crash ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     # NOTE: Stress tests take too long for regular CI (10+ minutes each).
     # They are labeled "stress" and excluded from ctest by default.
     # Run manually with: ctest -L stress --timeout 1800
@@ -1833,7 +1837,7 @@ if(BUILD_TESTS)
     add_executable(test_rpc_partition test/rpc_partition_test.cc test/benchmark_service.cc)
     target_include_directories(test_rpc_partition PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_partition PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_rpc_partition ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_rpc_partition ${RPC_TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_partition COMMAND test_rpc_partition)
     set_tests_properties(test_rpc_partition PROPERTIES
         TIMEOUT 600
