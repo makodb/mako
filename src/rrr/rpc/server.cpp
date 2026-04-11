@@ -329,7 +329,11 @@ Server::Server(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker /* =... 
         uint64_t pid_component = static_cast<uint64_t>(getpid()) << 48;
 
         // Mix components with XOR for final ID
-        instance_id_ = time_component ^ random_component ^ pid_component;
+        instance_id_ = (time_component ^ random_component ^ pid_component)
+            & static_cast<uint64_t>(std::numeric_limits<int64_t>::max());
+        if (instance_id_ == 0) {
+            instance_id_ = 1;
+        }
 
         Log_debug("Server: generated instance_id=%lu", instance_id_);
     }
@@ -551,7 +555,8 @@ int Server::start(const char* bind_addr) {
       std::move(wrapped_services),
       addr_str,
       pending_requests_,
-      drop_heartbeat_replies_));
+      drop_heartbeat_replies_,
+      instance_id_));
 
   server_listener_ = rusty::Some(rusty::Arc<ServerListener>::make(
       ctx_.as_ref().unwrap().clone(), addr_str));

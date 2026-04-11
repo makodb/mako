@@ -869,18 +869,40 @@ bool ClientConnection::handle_read() {
 
   // Process all available packets
   while (state_machine_.is_connected()) {
-    i32 packet_size;
-    int n_peek = in_.peek(packet_size);
+    i32 encoded_packet_size = 0;
+    int n_peek = in_.peek(encoded_packet_size);
+    if (n_peek != sizeof(i32)) {
+      break;
+    }
+    i32 packet_size = response_payload_size(encoded_packet_size);
+    if (in_.content_size() >= static_cast<size_t>(packet_size) + sizeof(i32)) {
 
-    if (n_peek == sizeof(i32)
-        && in_.content_size() >= packet_size + sizeof(i32)) {
+      verify(in_.read(&encoded_packet_size, sizeof(i32)) == sizeof(i32));
 
-      verify(in_.read(&packet_size, sizeof(i32)) == sizeof(i32));
+      const bool has_extended_header = response_has_extended_header(encoded_packet_size);
+      packet_size = response_payload_size(encoded_packet_size);
 
       v64 v_reply_xid;
       v32 v_error_code;
+      size_t parsed_header_size = 0;
 
       in_ >> v_reply_xid >> v_error_code;
+      parsed_header_size += v_reply_xid.val_size() + v_error_code.val_size();
+
+      if (has_extended_header) {
+        v64 v_server_instance_id;
+        in_ >> v_server_instance_id;
+        parsed_header_size += v_server_instance_id.val_size();
+        check_server_instance(static_cast<uint64_t>(v_server_instance_id.get()));
+      }
+
+      if (packet_size < static_cast<i32>(parsed_header_size)) {
+        invoke_error_callback(EPROTO, "response header larger than packet payload");
+        handle_error();
+        return false;
+      }
+
+      size_t response_payload_size_bytes = static_cast<size_t>(packet_size) - parsed_header_size;
       heartbeat_manager_.on_pong_received();
 
       rusty::Option<rusty::Arc<Future>> fu_opt = rusty::None;
@@ -898,9 +920,7 @@ bool ClientConnection::handle_read() {
         verify(fu->xid_ == v_reply_xid.get());
 
         fu->error_code_.set(v_error_code.get());
-        fu->reply_.borrow_mut()->read_from_marshal(in_,
-                                            packet_size - v_reply_xid.val_size()
-                                                - v_error_code.val_size());
+        fu->reply_.borrow_mut()->read_from_marshal(in_, response_payload_size_bytes);
 
         // Record request completion in metrics
         if (v_error_code.get() == 0) {
@@ -916,9 +936,7 @@ bool ClientConnection::handle_read() {
       } else {
         // the future might have timed out - consume data anyway
         Marshal reply;
-        reply.read_from_marshal(in_,
-                                packet_size - v_reply_xid.val_size()
-                                - v_error_code.val_size());
+        reply.read_from_marshal(in_, response_payload_size_bytes);
       }
     } else {
       // No complete packet available

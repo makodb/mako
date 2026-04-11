@@ -20,6 +20,7 @@
 #include <netdb.h>
 
 #include "misc/marshal.hpp"
+#include "internal_protocol.hpp"
 #include "reactor/epoll_wrapper.h"
 #include "reactor/reactor.h"
 #include "utils.hpp"
@@ -209,18 +210,22 @@ struct RpcServiceContext {
     const std::shared_ptr<std::atomic<int>> pending_requests;
     // Test/runtime toggle to intentionally drop heartbeat probe replies.
     const std::shared_ptr<std::atomic<bool>> drop_heartbeat_replies;
+    // Stable server instance ID for restart detection in response headers.
+    const uint64_t server_instance_id;
 
     // Constructor taking ownership of all data
     RpcServiceContext(std::unordered_map<i32, size_t> rpc_map,
                       rusty::Vec<rusty::RefCell<rusty::Box<Service>>> svcs,
                       std::string address,
                       std::shared_ptr<std::atomic<int>> pending_counter,
-                      std::shared_ptr<std::atomic<bool>> drop_heartbeats)
+                      std::shared_ptr<std::atomic<bool>> drop_heartbeats,
+                      uint64_t instance_id)
         : rpc_to_service(std::move(rpc_map))
         , services(std::move(svcs))
         , addr(std::move(address))
         , pending_requests(std::move(pending_counter))
-        , drop_heartbeat_replies(std::move(drop_heartbeats)) {}
+        , drop_heartbeat_replies(std::move(drop_heartbeats))
+        , server_instance_id(instance_id) {}
 };
 
 // @unsafe - Server listener handling incoming connections
@@ -339,8 +344,9 @@ public:
      * Send a reply message with callback-based marshaling.
      *
      * Reply message format:
-     * <size> <xid> <error_code> <ret1> <ret2> ... <retN>
+     * <size> <xid> <error_code> [<server_instance_id>] <ret1> <ret2> ... <retN>
      * NOTE: size does not include size itself (<xid>..<retN>).
+     * If the size high-bit flag is set, <server_instance_id> is present.
      *
      * The write_fn callback receives a Marshal& to write <ret1>..<retN>.
      *
@@ -359,18 +365,22 @@ public:
         auto guard = out_.lock().unwrap();
         v32 v_error_code = error_code;
         v64 v_reply_xid = req.xid;
+        const bool include_instance_id = true;
 
         Marshal::bookmark bm = guard->set_bookmark(sizeof(i32));
         // @unsafe
         {
             *guard << v_reply_xid;
             *guard << v_error_code;
+            if (include_instance_id) {
+                *guard << v64(static_cast<i64>(ctx_->server_instance_id));
+            }
         }
 
         write_fn(*guard);
 
         i32 reply_size = guard->get_and_reset_write_cnt();
-        guard->write_bookmark(bm, reply_size);
+        guard->write_bookmark(bm, encode_response_size(reply_size, include_instance_id));
 
         if (status_ == CONNECTED) {
             pending_write_update_.set(true);

@@ -700,6 +700,100 @@ TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
     delete server;
 }
 
+TEST_F(StateIntegrationTest, ServerRestartAutoDetectedFromRealResponses) {
+    const std::string bind_addr = "0.0.0.0:" + std::to_string(test_port_);
+    const std::string server_addr = "127.0.0.1:" + std::to_string(test_port_);
+
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(bind_addr.c_str()), 0);
+    const uint64_t first_server_id = server->instance_id();
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+    std::atomic<int> restart_callback_count{0};
+    std::atomic<uint64_t> observed_old_id{0};
+    std::atomic<uint64_t> observed_new_id{0};
+
+    ASSERT_EQ(client->connect(server_addr.c_str()), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
+
+    client->set_on_server_restart([&](uint64_t old_id, uint64_t new_id) {
+        restart_callback_count.fetch_add(1, std::memory_order_acq_rel);
+        observed_old_id.store(old_id, std::memory_order_release);
+        observed_new_id.store(new_id, std::memory_order_release);
+    });
+
+    std::string input = "restart-detect";
+    auto first = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(first.is_ok());
+    auto first_fu = first.unwrap();
+    first_fu->wait();
+    ASSERT_EQ(first_fu->get_error_code(), 0);
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return client->server_instance_id() != 0;
+    }, milliseconds(1000)));
+    EXPECT_EQ(client->server_instance_id(), first_server_id);
+    EXPECT_EQ(restart_callback_count.load(std::memory_order_acquire), 0);
+
+    delete server;
+    server = nullptr;
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return !client->connected();
+    }, milliseconds(5000)));
+
+    uint64_t second_server_id = 0;
+    for (int attempt = 0; attempt < 20 && server == nullptr; ++attempt) {
+        auto candidate = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+        auto candidate_service = rusty::make_box<StateTestService>();
+        candidate->reg_service(std::move(candidate_service));
+        if (candidate->start(bind_addr.c_str()) == 0) {
+            server = candidate;
+            second_server_id = server->instance_id();
+            break;
+        }
+        delete candidate;
+        std::this_thread::sleep_for(milliseconds(50));
+    }
+    ASSERT_NE(server, nullptr);
+    ASSERT_NE(second_server_id, first_server_id);
+
+    std::atomic<bool> reconnect_done{false};
+    std::atomic<bool> reconnect_success{false};
+    ASSERT_EQ(client->reconnect([&](bool success) {
+        reconnect_success.store(success, std::memory_order_release);
+        reconnect_done.store(true, std::memory_order_release);
+    }), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return reconnect_done.load(std::memory_order_acquire); }, milliseconds(4000)));
+    ASSERT_TRUE(reconnect_success.load(std::memory_order_acquire));
+
+    auto second = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(second.is_ok());
+    auto second_fu = second.unwrap();
+    second_fu->wait();
+    ASSERT_EQ(second_fu->get_error_code(), 0);
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return restart_callback_count.load(std::memory_order_acquire) >= 1;
+    }, milliseconds(1000)));
+
+    EXPECT_EQ(restart_callback_count.load(std::memory_order_acquire), 1);
+    EXPECT_EQ(observed_old_id.load(std::memory_order_acquire), first_server_id);
+    EXPECT_EQ(observed_new_id.load(std::memory_order_acquire), second_server_id);
+    EXPECT_EQ(client->server_instance_id(), second_server_id);
+
+    client->close();
+    delete server;
+}
+
 TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Start server
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));

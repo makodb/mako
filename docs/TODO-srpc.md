@@ -155,7 +155,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-10 in `ClientConnection::request(...)` and response handling. Requests now fail fast with `EBUSY` when circuit is open, transport failures are recorded on disconnected/send-race paths, and decoded response results update breaker success/failure state.
 - [x] Add `CallbackManager` hooks on connected/disconnected/reconnecting/reconnected/error transitions.
   - Implemented on 2026-04-10 by wiring a shared `CallbackManager` into `Client`/`ClientConnection` and invoking lifecycle hooks in `connect()`, `close()`, `handle_error()`, and `reconnect()` paths (including reconnect start/completion and structured error mapping).
-- [ ] Integrate restart detection into wire response path (version-gated header extension).
+- [x] Integrate restart detection into wire response path (version-gated header extension).
+  - Implemented on 2026-04-11 by adding a flagged response-header extension carrying `server_instance_id`, decoding it in `ClientConnection::handle_read()`, and invoking `check_server_instance()` automatically on real responses.
 
 ### Tests TODO
 - [x] Add integration test: heartbeat timeout transitions connection to recover/reconnect path.
@@ -164,12 +165,14 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Added `StateIntegrationTest.CircuitOpenFailFastThenHalfOpenRecovery` on 2026-04-10 in `test/rpc_state_integration_test.cc` (open-state fail-fast with `EBUSY`, timeout-gated half-open probe, and close-on-success recovery).
 - [x] Add integration test: lifecycle callbacks fire in expected order.
   - Added `StateIntegrationTest.LifecycleCallbacksFireInExpectedOrder` on 2026-04-10 in `test/rpc_state_integration_test.cc`, validating callback sequence across connect -> error/disconnect -> reconnect/recovered flow.
-- [ ] Add integration test: server instance ID change is auto-detected from real responses.
+- [x] Add integration test: server instance ID change is auto-detected from real responses.
+  - Added `StateIntegrationTest.ServerRestartAutoDetectedFromRealResponses` on 2026-04-11 in `test/rpc_state_integration_test.cc`.
 - [x] Run existing: `test_rpc_heartbeat`, `test_rpc_circuit_breaker`, `test_rpc_circuit_breaker_integration`, `test_rpc_callbacks`, `test_rpc_restart_detection`.
   - Verified on 2026-04-10 as part of full RPC-focused suite run: `ctest --test-dir build --output-on-failure -R '^(test_rpc|rpc_chaos_test$)'` (26/26 passed).
 
 ### DoD
-- [ ] Reliability modules are exercised by normal client/server traffic, not only standalone tests.
+- [x] Reliability modules are exercised by normal client/server traffic, not only standalone tests.
+  - Heartbeat, circuit breaker, lifecycle callbacks, and restart detection are now all validated in end-to-end state integration tests with live client/server traffic.
 
 ## Workstream G: Metrics and Load Balancer Accuracy (P2)
 ### Code TODO
