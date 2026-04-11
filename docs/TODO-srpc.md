@@ -223,7 +223,7 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Updated on 2026-04-11 in `docs/srpc-book.md`: replaced stale request flow (`begin_request`/`end_request`/`Future*`), stale server lifecycle (`add_service`/`stop`), stale service interface signatures, and stale generated proxy sync-return example with shipping APIs (`Client::create` + `request`, `Server::reg_service` + `graceful_shutdown`, current `Service`/proxy method patterns).
 - [x] Add a “Implemented vs Planned” reliability table.
   - Added on 2026-04-11 in `docs/srpc-book.md` section 11 with explicit shipping-status rows and a planned-only marker row; also corrected circuit-breaker field name to `cb.timeout_ms` and extended `test_rpc_docs_symbols` to guard the table and symbol.
-- [ ] Ensure sample code compiles against current headers.
+- [x] Ensure sample code compiles against current headers.
   - Decomposed on 2026-04-11 due scope (53 `cpp` fences in `docs/srpc-book.md`) to keep each leaf below ~500 LOC:
     - [x] Leaf 1: add tagged compile-lint infrastructure and enable it for reliability config snippets (`ReconnectPolicy`, `CircuitBreakerConfig`, `HeartbeatConfig`).
       - Implemented on 2026-04-11 via `test/rpc_docs_snippet_compile_test.py`, CTest wiring (`test_rpc_docs_snippet_compile`), and `srpc-compile` tags in section 11 examples.
@@ -231,18 +231,21 @@ Close correctness gaps between SRPC documented behavior and production behavior,
       - Implemented on 2026-04-11 by adding a client-profile harness in `test/rpc_docs_snippet_compile_test.py` and tagging request/client snippets (`Async RPC`, `Connection Metrics`, `Connection Callbacks`) with `srpc-compile-client`. Minimum tagged snippets increased to 6 in CTest wiring.
     - [x] Leaf 3: extend coverage to service/codegen snippets and convert non-compilable pseudocode fences to explicit non-compile examples.
       - Implemented on 2026-04-11 by adding `srpc-compile-server` (service implementation + lifecycle) and `srpc-compile-codegen` (generated client usage) profiles in `test/rpc_docs_snippet_compile_test.py`, tagging corresponding snippets in `docs/srpc-book.md`, and explicitly marking conceptual dispatch-context pseudocode as `srpc-no-compile`.
-    - [ ] Leaf 4: require all `cpp` fences to be either compile-tagged or explicitly marked non-compilable, then close DoD.
+    - [x] Leaf 4: require all `cpp` fences to be either compile-tagged or explicitly marked non-compilable, then close DoD.
+      - Implemented on 2026-04-11 by tagging every remaining untagged `cpp` fence in `docs/srpc-book.md` as `srpc-no-compile` and adding strict fence-tag lint in `test/rpc_docs_snippet_compile_test.py` (fails on missing/unknown/mixed tags).
 
 ### Tests TODO
-- [ ] Add doc-snippet compile test (or CI lint) for all C++ snippets in `docs/srpc-book.md`.
+- [x] Add doc-snippet compile test (or CI lint) for all C++ snippets in `docs/srpc-book.md`.
   - Initial leaves delivered on 2026-04-11: `test_rpc_docs_snippet_compile` compiles tagged snippets across reliability (`srpc-compile`), client/request (`srpc-compile-client`), server (`srpc-compile-server`), and codegen usage (`srpc-compile-codegen`), with minimum 9 snippets enforced. Non-literal conceptual snippet fences now use `srpc-no-compile`.
+  - Completed on 2026-04-11: the same test now lints every `cpp` fence for explicit allowed tags (`srpc-compile*` or `srpc-no-compile`), so untagged/invalid fence annotations fail CI.
 - [x] Add CI guard that fails on stale API symbols in docs.
   - Added on 2026-04-11: `test_rpc_docs_symbols` (`test/rpc_docs_symbols_test.cc`) with CMake wiring to assert required shipping symbols and reject stale names in `docs/srpc-book.md`.
   - Extended on 2026-04-11 to cover additional stale examples (`begin_request`/`end_request`, `server.add_service`, `server.stop`, legacy service signatures, and legacy proxy usage).
   - Verified on 2026-04-11 via full RPC-focused suite run (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`), 31/31 passed.
 
 ### DoD
-- [ ] No broken sample code in SRPC book.
+- [x] No broken sample code in SRPC book.
+  - Closed on 2026-04-11: compile-eligible snippets are syntax-checked in CI and all non-compilable conceptual snippets are explicitly marked `srpc-no-compile` so they are not misrepresented as buildable examples.
 
 ## Mandatory Test Matrix (Docker)
 Run after each major workstream and once for final sign-off.

@@ -7,37 +7,65 @@ import tempfile
 from pathlib import Path
 
 
-def extract_tagged_cpp_snippets(book_text: str):
+COMPILE_TAG_TO_PROFILE = {
+    "srpc-compile": "reliability",
+    "srpc-compile-client": "client",
+    "srpc-compile-server": "server",
+    "srpc-compile-codegen": "codegen",
+}
+NON_COMPILE_TAG = "srpc-no-compile"
+ALLOWED_CPP_TAGS = set(COMPILE_TAG_TO_PROFILE) | {NON_COMPILE_TAG}
+
+
+def extract_and_validate_cpp_snippets(book_text: str):
     snippets = []
+    violations = []
+    compile_tag_set = set(COMPILE_TAG_TO_PROFILE)
     lines = book_text.splitlines()
     i = 0
+    total_cpp_fences = 0
     while i < len(lines):
         line = lines[i].strip()
         if line.startswith("```cpp"):
+            total_cpp_fences += 1
             tags = set(line.split()[1:])
-            if "srpc-compile-client" in tags:
-                profile = "client"
-            elif "srpc-compile-server" in tags:
-                profile = "server"
-            elif "srpc-compile-codegen" in tags:
-                profile = "codegen"
-            elif "srpc-compile" in tags:
-                profile = "reliability"
-            else:
-                i += 1
-                continue
+            compile_tags = sorted(tags & compile_tag_set)
+            unknown_tags = sorted(tags - ALLOWED_CPP_TAGS)
+
+            if not tags:
+                violations.append(
+                    f"line {i + 1}: missing cpp fence tag; "
+                    f"use one of {{{', '.join(sorted(ALLOWED_CPP_TAGS))}}}"
+                )
+            if unknown_tags:
+                violations.append(
+                    f"line {i + 1}: unknown cpp fence tags: {', '.join(unknown_tags)}"
+                )
+            if len(compile_tags) > 1:
+                violations.append(
+                    f"line {i + 1}: multiple compile tags are not allowed: "
+                    f"{', '.join(compile_tags)}"
+                )
+            if NON_COMPILE_TAG in tags and compile_tags:
+                violations.append(
+                    f"line {i + 1}: cannot mix {NON_COMPILE_TAG} with compile tags"
+                )
+
             start = i + 1
             j = start
             while j < len(lines) and lines[j].strip() != "```":
                 j += 1
             if j >= len(lines):
                 raise RuntimeError(f"unterminated cpp fence starting near line {i + 1}")
-            snippet = "\n".join(lines[start:j]).strip()
-            snippets.append((i + 1, profile, snippet))
+
+            if len(compile_tags) == 1 and NON_COMPILE_TAG not in tags and not unknown_tags:
+                snippet = "\n".join(lines[start:j]).strip()
+                profile = COMPILE_TAG_TO_PROFILE[compile_tags[0]]
+                snippets.append((i + 1, profile, snippet))
             i = j + 1
             continue
         i += 1
-    return snippets
+    return snippets, violations, total_cpp_fences
 
 
 def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
@@ -218,7 +246,7 @@ def compile_snippet(cxx: str, repo_root: Path, idx: int, line_no: int, profile: 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compile srpc-book tagged cpp snippets.")
+    parser = argparse.ArgumentParser(description="Compile/lint srpc-book cpp snippets.")
     parser.add_argument("--book", required=True, help="Path to docs/srpc-book.md")
     parser.add_argument("--repo", required=True, help="Repository root path")
     parser.add_argument("--cxx", default="g++", help="C++ compiler executable")
@@ -240,7 +268,22 @@ def main():
         )
         return 2
 
-    snippets = extract_tagged_cpp_snippets(book_path.read_text(encoding="utf-8"))
+    book_text = book_path.read_text(encoding="utf-8")
+    try:
+        snippets, violations, total_cpp_fences = extract_and_validate_cpp_snippets(book_text)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    if total_cpp_fences == 0:
+        print("expected at least one cpp fence in srpc-book", file=sys.stderr)
+        return 2
+
+    if violations:
+        print("cpp fence tagging violations:", file=sys.stderr)
+        print("\n".join(f"- {violation}" for violation in violations), file=sys.stderr)
+        return 2
+
     if len(snippets) < args.min_snippets:
         print(
             f"expected at least {args.min_snippets} tagged snippets, found {len(snippets)}",

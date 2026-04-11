@@ -171,7 +171,7 @@ Fibers are the fundamental concurrency primitive in RRR. They are **stackful cor
 
 Fibers within the same reactor thread **never run simultaneously**. This eliminates race conditions, deadlocks, and the need for synchronization:
 
-```cpp
+```cpp srpc-no-compile
 // SAFE - no locks needed within a reactor
 class Counter {
     int value = 0;
@@ -185,7 +185,7 @@ public:
 
 The modern API uses `Fiber` class and `this_fiber` namespace:
 
-```cpp
+```cpp srpc-no-compile
 #include "reactor/fiber.h"
 using namespace rrr;
 
@@ -230,7 +230,7 @@ Recycled (if REUSE_CORO enabled) or Destroyed
 
 Fibers use custom x86_64 assembly for context switching:
 
-```cpp
+```cpp srpc-no-compile
 // CPU context saved/restored per fiber
 struct FiberContext {
     void* rsp, *rip;                    // Stack and instruction pointers
@@ -259,7 +259,7 @@ The **Reactor** is the event loop that manages all fibers and I/O within a threa
 
 ### Basic Usage
 
-```cpp
+```cpp srpc-no-compile
 // Get the thread-local reactor
 auto reactor = Reactor::GetReactor();
 
@@ -289,7 +289,7 @@ Each iteration of `Reactor::Loop()`:
 
 ### Thread-Local Design (Critical)
 
-```cpp
+```cpp srpc-no-compile
 // WRONG - undefined behavior!
 std::thread t([reactor]() {
     reactor->CreateRunCoroutine([]() { /* ... */ });  // BAD!
@@ -312,7 +312,7 @@ Fibers that yield are dead until the reactor resumes them. The reactor's event l
 
 In the actual codebase, `PollThread` owns a reactor and runs the event loop in a dedicated thread:
 
-```cpp
+```cpp srpc-no-compile
 class PollThread {
     Reactor* reactor_;
     void Run() {
@@ -333,7 +333,7 @@ Events are the synchronization primitives for fibers. They allow fibers to wait 
 
 ### Event Base Class
 
-```cpp
+```cpp srpc-no-compile
 class Event {
     enum Status { INIT, WAIT, READY, DONE, TIMEOUT };
 
@@ -347,7 +347,7 @@ class Event {
 
 #### IntEvent — Integer-based condition
 
-```cpp
+```cpp srpc-no-compile
 auto event = Reactor::CreateSpEvent<IntEvent>();
 event->target_ = 42;  // Ready when value_ == 42
 
@@ -360,7 +360,7 @@ event->Wait();  // Resumes when value_ == target_
 
 #### TimeoutEvent — Time-based trigger
 
-```cpp
+```cpp srpc-no-compile
 auto timeout = Reactor::CreateSpEvent<TimeoutEvent>(1000000);  // 1 second
 timeout->Wait();
 std::cout << "1 second elapsed!" << std::endl;
@@ -368,7 +368,7 @@ std::cout << "1 second elapsed!" << std::endl;
 
 #### WaitAny (OrEvent) — Any of multiple events
 
-```cpp
+```cpp srpc-no-compile
 auto e1 = Reactor::CreateSpEvent<IntEvent>();
 auto e2 = Reactor::CreateSpEvent<IntEvent>();
 auto any = Reactor::CreateSpEvent<WaitAny>(e1, e2);
@@ -377,7 +377,7 @@ any->Wait();  // Continues when EITHER event triggers
 
 #### WaitAll (AndEvent) — All events must be ready
 
-```cpp
+```cpp srpc-no-compile
 auto e1 = Reactor::CreateSpEvent<IntEvent>();
 auto e2 = Reactor::CreateSpEvent<IntEvent>();
 auto all = Reactor::CreateSpEvent<WaitAll>(e1, e2);
@@ -386,7 +386,7 @@ all->Wait();  // Continues when BOTH events trigger
 
 #### WaitN (NEvent) — N of M events
 
-```cpp
+```cpp srpc-no-compile
 auto events = {e1, e2, e3, e4, e5};
 auto quorum = Reactor::CreateSpEvent<WaitN>(events, 3);
 quorum->Wait();  // Continues when 3 of 5 events trigger
@@ -394,7 +394,7 @@ quorum->Wait();  // Continues when 3 of 5 events trigger
 
 ### Wait with Timeout
 
-```cpp
+```cpp srpc-no-compile
 auto event = Reactor::CreateSpEvent<IntEvent>();
 event->Wait(1000000);  // 1 second timeout
 
@@ -419,7 +419,7 @@ if (event->status_ == Event::TIMEOUT) {
 
 Any object that needs I/O multiplexing implements `Pollable`:
 
-```cpp
+```cpp srpc-no-compile
 class Pollable {
     virtual int fd() const = 0;             // File descriptor
     virtual int poll_mode() const = 0;      // READ, WRITE, or both
@@ -434,7 +434,7 @@ class Pollable {
 
 RRR wraps Linux epoll and macOS kqueue behind a unified `Epoll` class:
 
-```cpp
+```cpp srpc-no-compile
 class Epoll {
     void add(Pollable* p);        // Register FD for monitoring
     void remove(Pollable* p);     // Unregister FD
@@ -447,7 +447,7 @@ class Epoll {
 
 **PollThread** (client-facing handle): Send commands from any thread.
 
-```cpp
+```cpp srpc-no-compile
 Arc<PollThread> pt = PollThread::create();
 pt->add(Arc<Pollable>(connection));     // Register for I/O
 pt->remove(*connection);                // Unregister
@@ -457,7 +457,7 @@ pt->shutdown();                         // Stop poll loop
 
 **PollThreadWorker** (internal, runs in dedicated thread): Owns the epoll and all Pollable objects.
 
-```cpp
+```cpp srpc-no-compile
 class PollThreadWorker {
     Epoll poll_;
     unordered_map<int, Arc<Pollable>> fd_to_pollable_;
@@ -494,7 +494,7 @@ This design avoids locks: the poll thread is the sole consumer of its command ch
 
 For periodic tasks within the poll loop:
 
-```cpp
+```cpp srpc-no-compile
 class Job {
     virtual bool Ready() = 0;   // Should this job run now?
     virtual void Work() = 0;    // Execute the job
@@ -566,7 +566,7 @@ Client                           Network                          Server
 `Client` is the public single-connection API (`ClientConnection` is an internal
 pollable implementation detail):
 
-```cpp
+```cpp srpc-no-compile
 auto poll_thread = PollThread::create();
 auto client = Client::create(poll_thread.clone());
 
@@ -606,7 +606,7 @@ if (fu_result.is_ok()) {
 `Client` represents a single connection. `ClientPool` manages multiple connections
 per address and applies pool-wide load-balancing policy:
 
-```cpp
+```cpp srpc-no-compile
 ClientPool pool;
 
 PoolConfig cfg = PoolConfig::defaults();
@@ -627,7 +627,7 @@ if (client_opt.is_some()) {
 
 Per-request configuration:
 
-```cpp
+```cpp srpc-no-compile
 RequestOptions opts;
 opts.timeout_ms = 5000;       // 5 second timeout
 opts.max_retries = 3;         // Retry up to 3 times
@@ -637,7 +637,7 @@ opts.total_timeout_ms = 15000; // Total time budget
 
 ### Keepalive Configuration
 
-```cpp
+```cpp srpc-no-compile
 KeepaliveConfig keepalive;
 keepalive.idle_sec = 60;       // Seconds before first probe
 keepalive.interval_sec = 10;   // Seconds between probes
@@ -735,7 +735,7 @@ The `Marshal` class provides binary serialization/deserialization:
 
 ### Basic Usage
 
-```cpp
+```cpp srpc-no-compile
 Marshal m;
 
 // Serialize
@@ -767,7 +767,7 @@ m >> x >> y >> s >> d;
 
 For compactness, `v32` and `v64` use variable-length encoding — small values use fewer bytes:
 
-```cpp
+```cpp srpc-no-compile
 v32 small_val(5);    // Encoded in 1 byte
 v32 large_val(1000); // Encoded in 2 bytes
 ```
@@ -776,7 +776,7 @@ v32 large_val(1000); // Encoded in 2 bytes
 
 To serialize custom types, implement `Marshallable`:
 
-```cpp
+```cpp srpc-no-compile
 struct MyData : public Marshallable {
     i32 id;
     std::string name;
@@ -797,7 +797,7 @@ struct MyData : public Marshallable {
 
 For recording sizes without seeking:
 
-```cpp
+```cpp srpc-no-compile
 Marshal m;
 auto bookmark = m.set_bookmark(sizeof(i32));  // Reserve space
 m << data1 << data2 << data3;
@@ -864,7 +864,7 @@ cb.timeout_ms = 5000;           // Try again after 5 seconds
 
 Queue requests during temporary disconnections:
 
-```cpp
+```cpp srpc-no-compile
 BufferingConfig buffering;
 buffering.behavior = DisconnectBehavior::QUEUE;  // or FAIL_FAST
 buffering.max_pending = 1000;
@@ -915,7 +915,7 @@ client.add_on_reconnected([](bool success) { /* ... */ });
 
 Structured error categories:
 
-```cpp
+```cpp srpc-no-compile
 enum class RpcError {
     // Connection errors
     NOT_CONNECTED, CONNECTION_REFUSED, CONNECTION_RESET,
@@ -1004,7 +1004,7 @@ if (fu_result.is_ok()) {
 
 For low-latency critical sections:
 
-```cpp
+```cpp srpc-no-compile
 // SpinLock - raw lock
 SpinLock lock;
 lock.lock();    // Busy-wait until acquired
@@ -1056,7 +1056,7 @@ All new RRR code must use RustyCpp types and annotations.
 
 ### Annotations
 
-```cpp
+```cpp srpc-no-compile
 // @safe - No side effects, borrow-checked
 bool is_connected() const { return state_.get() == CONNECTED; }
 
@@ -1068,7 +1068,7 @@ void write_to_socket() {
 
 ### Interior Mutability Patterns
 
-```cpp
+```cpp srpc-no-compile
 class ServerConnection {
     // Trivially copyable -> Cell
     rusty::Cell<ConnectionState> state_{ConnectionState::NEW};
@@ -1085,7 +1085,7 @@ class ServerConnection {
 
 Events hold weak references to fibers to avoid reference cycles:
 
-```cpp
+```cpp srpc-no-compile
 // Event -> Weak<Fiber> (not Rc<Fiber>)
 // If the fiber is destroyed, the weak ref expires gracefully
 ```
@@ -1128,7 +1128,7 @@ In service definitions:
 
 ### Connection Pooling
 
-```cpp
+```cpp srpc-no-compile
 PoolConfig pool;
 pool.min_connections = 2;     // Pre-warm connections
 pool.max_connections = 10;    // Cap per address
@@ -1142,7 +1142,7 @@ pool.health_check_interval_ms = 10000;  // Check health every 10s
 
 ### Reactor
 
-```cpp
+```cpp srpc-no-compile
 class Reactor {
     static Reactor* GetReactor();        // Thread-local main reactor
     static Reactor* GetDiskReactor();    // Thread-local disk reactor
@@ -1162,7 +1162,7 @@ class Reactor {
 
 ### Fiber
 
-```cpp
+```cpp srpc-no-compile
 class Fiber {
     static Rc<Fiber> create_run(Func&& func);
     static Option<Rc<Fiber>> current_fiber();
@@ -1177,7 +1177,7 @@ using Coroutine = Fiber;
 
 ### this_fiber Namespace
 
-```cpp
+```cpp srpc-no-compile
 namespace this_fiber {
     uint64_t get_id();
     Option<Rc<Fiber>> current();
@@ -1192,7 +1192,7 @@ namespace this_fiber {
 
 ### Event
 
-```cpp
+```cpp srpc-no-compile
 class Event {
     enum Status { INIT, WAIT, READY, DONE, TIMEOUT };
     Status status_;
@@ -1204,7 +1204,7 @@ class Event {
 
 ### Marshal
 
-```cpp
+```cpp srpc-no-compile
 class Marshal {
     Marshal& operator<<(const T& val);   // Serialize
     Marshal& operator>>(T& val);          // Deserialize
@@ -1217,7 +1217,7 @@ class Marshal {
 
 ### Future
 
-```cpp
+```cpp srpc-no-compile
 class Future {
     static Arc<Future> create();
     void Wait();                    // Block fiber
@@ -1230,7 +1230,7 @@ class Future {
 
 ### PollThread
 
-```cpp
+```cpp srpc-no-compile
 class PollThread {
     static Arc<PollThread> create();
     void add(Arc<Pollable> p);
@@ -1268,7 +1268,7 @@ class PollThread {
 ### Common Mistakes
 
 **Fiber starvation:**
-```cpp
+```cpp srpc-no-compile
 // BAD - blocks all other fibers
 reactor->CreateRunCoroutine([]() {
     while (true) {
@@ -1286,7 +1286,7 @@ reactor->CreateRunCoroutine([]() {
 ```
 
 **Cross-thread event access:**
-```cpp
+```cpp srpc-no-compile
 // BAD
 auto event = Reactor::CreateSpEvent<IntEvent>();
 std::thread t([event]() {
@@ -1297,7 +1297,7 @@ std::thread t([event]() {
 ```
 
 **Forgetting the event loop:**
-```cpp
+```cpp srpc-no-compile
 // BAD - fiber never executes
 reactor->CreateRunCoroutine([]() { /* ... */ });
 // No loop() call!
