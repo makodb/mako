@@ -433,10 +433,8 @@ std::shared_ptr<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
 void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id=%d length=%d", par_id, length);
 
-  if (!IsLeader(par_id)) {
-    // Log_debug("[RAFT-SUBMIT] Not leader for partition %d, ignoring submit", par_id);
-    return;
-  }
+  // Do not pre-check leadership here. RaftServer::Start() performs the
+  // authoritative leadership check under server lock; pre-checking can race.
 
   // @unsafe
   {

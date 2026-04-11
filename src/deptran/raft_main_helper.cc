@@ -671,10 +671,8 @@ void submit(const char* log, int len, uint32_t par_id) {
     Log_warn("submit(): unknown partition %u", par_id);
     return;
   }
-  if (!worker->IsLeader(par_id)) {
-    Log_debug("submit(): partition %u not on leader, dropping", par_id);
-    return;
-  }
+  // Do not pre-check leadership here. RaftServer::Start() performs the
+  // authoritative leadership check under server lock; pre-checking can race.
   enqueue_to_worker(worker, log, len, par_id, 1);
 }
 
@@ -697,16 +695,8 @@ void add_log_to_nc(const char* log, int len, uint32_t par_id,
     Log_warn("[RAFT-ADD-LOG] no worker found for par_id=%u", par_id);
     return;
   }
-  bool leader_for_partition = worker->IsLeader(par_id);
-  // Log_debug("[RAFT-ADD-LOG] worker leader=%s n_submit=%d n_tot=%d",
-  //          leader_for_partition ? "true" : "false",
-  //          worker->n_submit.load(),
-  //          worker->n_tot.load());
-  if (!leader_for_partition) {
-    // Match Paxos behavior: immediately drop if not leader (no waiting)
-    // Log_debug("[RAFT-ADD-LOG] partition %u not led here, dropping", par_id);
-    return;
-  }
+  // Do not pre-check leadership here. RaftServer::Start() performs the
+  // authoritative leadership check under server lock; pre-checking can race.
   enqueue_to_worker(worker, log, len, par_id, std::max(1, batch_size));
   // Log_debug("[RAFT-ADD-LOG] enqueued par_id=%u len=%d batch=%d", par_id, len, batch_size);
 }

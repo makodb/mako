@@ -4,6 +4,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
+#include <limits>
 
 // @external: {
 //   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
@@ -70,6 +71,80 @@
 // }
 
 namespace janus {
+
+namespace {
+
+uint64_t ParseEnvUint64OrDefault(const char* env_name, uint64_t default_value) {
+  const char* env = std::getenv(env_name);
+  if (env == nullptr || *env == '\0') {
+    return default_value;
+  }
+
+  char* endptr = nullptr;
+  unsigned long long parsed = std::strtoull(env, &endptr, 10);
+  if (endptr != env && *endptr == '\0' && parsed > 0) {
+    Log_info("[LEADER-ELECTION] Using %s=%llu", env_name, parsed);
+    return static_cast<uint64_t>(parsed);
+  }
+
+  Log_warn("[LEADER-ELECTION] Invalid %s='%s'; using default %lu",
+           env_name, env, static_cast<unsigned long>(default_value));
+  return default_value;
+}
+
+uint64_t GetPreferredLeaderGracePeriodUs() {
+  constexpr uint64_t kDefaultGracePeriodUs = 5000000ULL;  // 5s
+  static uint64_t grace_period_us =
+      ParseEnvUint64OrDefault("MAKO_RAFT_PREFERRED_GRACE_US", kDefaultGracePeriodUs);
+  return grace_period_us;
+}
+
+uint64_t GetNonPreferredGraceElectionMinUs() {
+  constexpr uint64_t kDefaultMinUs = 1000000ULL;  // 1s
+  static uint64_t min_us = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US", kDefaultMinUs);
+  return min_us;
+}
+
+uint64_t GetNonPreferredGraceElectionMaxUs() {
+  constexpr uint64_t kDefaultMaxUs = 2000000ULL;  // 2s
+  static uint64_t max_us = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US", kDefaultMaxUs);
+  return max_us;
+}
+
+uint64_t RandomInRangeUs(uint64_t min_us, uint64_t max_us) {
+  if (max_us < min_us) {
+    std::swap(min_us, max_us);
+  }
+  if (max_us == min_us) {
+    return min_us;
+  }
+  uint64_t range = max_us - min_us;
+  if (range > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+    range = static_cast<uint64_t>(std::numeric_limits<int>::max());
+  }
+  return min_us + static_cast<uint64_t>(RandomGenerator::rand(0, static_cast<int>(range)));
+}
+
+uint64_t GetPreferredElectionTimeoutUs() {
+  return RandomInRangeUs(150000ULL, 300000ULL);
+}
+
+uint64_t GetNonPreferredGraceElectionTimeoutUs() {
+  return RandomInRangeUs(GetNonPreferredGraceElectionMinUs(),
+                         GetNonPreferredGraceElectionMaxUs());
+}
+
+uint64_t GetNonPreferredSteadyElectionTimeoutUs() {
+  return RandomInRangeUs(500000ULL, 1000000ULL);
+}
+
+bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
+  return preferred_leader_site_id != INVALID_SITEID;
+}
+
+}  // namespace
 
 // ============================================================================
 // LOG PERSISTENCE IMPLEMENTATION (Phase 1.3)
@@ -420,25 +495,22 @@ void RaftServer::OnJetpackPullCmd(const epoch_t& jepoch,
 
 // @safe - Election timeout calculation (Time::now and RandomGenerator::rand marked safe via @external)
 uint64_t RaftServer::GetElectionTimeout() {
-  uint64_t base_timeout;
   uint64_t current_time = Time::now();
-  bool in_grace_period = (current_time - startup_timestamp_) < 5000000; // 5 seconds in microseconds
+  const uint64_t grace_period_us = GetPreferredLeaderGracePeriodUs();
+  bool in_grace_period = (current_time - startup_timestamp_) < grace_period_us;
+
+  if (!IsPreferredLeaderConfigured(preferred_leader_site_id_)) {
+    // Traditional Raft behavior when no preferred leader is configured.
+    return GetNonPreferredSteadyElectionTimeoutUs();
+  }
 
   if (AmIPreferredLeader()) {
-    // Preferred replica: Short timeout (150-300ms) to win elections quickly
-    base_timeout = 150000; // 150ms
-    uint64_t jitter = RandomGenerator::rand(0, 150000);
-    return base_timeout + jitter; // 150-300ms
+    return GetPreferredElectionTimeoutUs();
   } else if (in_grace_period) {
-    // Non-preferred during grace period: Long timeout (1-2s) to allow preferred to win
-    base_timeout = 1000000; // 1s
-    uint64_t jitter = RandomGenerator::rand(0, 1000000);
-    return base_timeout + jitter; // 1-2s
+    // Startup grace timeout is tunable via env for test stability.
+    return GetNonPreferredGraceElectionTimeoutUs();
   } else {
-    // Non-preferred after grace: Medium timeout (500ms-1s) to enable failover
-    base_timeout = 500000; // 500ms
-    uint64_t jitter = RandomGenerator::rand(0, 500000);
-    return base_timeout + jitter; // 500ms-1s
+    return GetNonPreferredSteadyElectionTimeoutUs();
   }
 }
 
@@ -1009,25 +1081,31 @@ void RaftServer::HeartbeatLoop() {
       std::vector<uint64_t> matchedIndices{};
       for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
         matchedIndices.push_back(it->second);
-        Log_info("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
+        Log_debug("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
       }
-      Log_info("[COMMIT-CALC] nservers=%lu, matchedIndices.size()=%zu", nservers, matchedIndices.size());
+      Log_debug("[COMMIT-CALC] nservers=%lu, matchedIndices.size()=%zu", nservers, matchedIndices.size());
       verify(matchedIndices.size() == nservers - 1);
       std::sort(matchedIndices.begin(), matchedIndices.end());
       uint64_t newCommitIndex = matchedIndices[(nservers - 1) / 2];
-      Log_info("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
+      Log_debug("[COMMIT-CALC] newCommitIndex=%lu (median at index %lu), currentCommitIndex=%lu", newCommitIndex, (nservers - 1) / 2, commitIndex);
 
       if (newCommitIndex > lastLogIndex) {
         newCommitIndex = lastLogIndex;
       }
 
       if (newCommitIndex > commitIndex && (GetRaftInstance(newCommitIndex)->term == currentTerm)) {
+        uint64_t old_commit = commitIndex;
         Log_debug("newCommitIndex %d", newCommitIndex);
         commitIndex = newCommitIndex;
         PersistCommitIndex(commitIndex, "HeartbeatLoop: leader commit");
+#ifdef SINGLE_RAFT_INSTANCE
+        EnqueueCommittedEntries(old_commit, commitIndex);
+#endif
       }
+#ifndef SINGLE_RAFT_INSTANCE
       if (commitIndex > executeIndex)
         applyLogs();
+#endif
       term = currentTerm;
       uint64_t current_commit_index = commitIndex;
       uint64_t current_last_log_index = lastLogIndex;
@@ -1081,7 +1159,7 @@ void RaftServer::HeartbeatLoop() {
         uint64_t cmdLogTerm = 0;
 
 #ifndef RAFT_BATCH_OPTIMIZATION
-        Log_info("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
+        Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
                  site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
         if (it->second <= lastLogIndex) {
           auto curInstance = GetRaftInstance(it->second);
@@ -1090,7 +1168,7 @@ void RaftServer::HeartbeatLoop() {
           } else {
             cmd = curInstance->log_;
             cmdLogTerm = curInstance->term;
-            Log_info("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
+            Log_debug("[APPEND_SEND] site=%d sending entry %lu to follower %d cmd=%p",
                 site_id_, it->second, site_id, cmd.get());
           }
         }
@@ -1098,7 +1176,7 @@ void RaftServer::HeartbeatLoop() {
 
 #ifdef RAFT_BATCH_OPTIMIZATION
         vector<shared_ptr<TpcCommitCommand> > batch_buffer_;
-        Log_info("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
+        Log_debug("[BATCH_CHECK] site=%d follower=%d next_index=%lu min_active_slot_=%lu lastLogIndex=%lu",
                  site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
         for (int idx = std::max(it->second, min_active_slot_); idx <= lastLogIndex; idx++) {
           auto curInstance = GetRaftInstance(idx);
@@ -1267,6 +1345,10 @@ void RaftServer::HeartbeatLoop() {
                 site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
           }
         }
+
+        // Release per-response mutex lock on normal paths.
+        // Early break/continue paths above explicitly unlock before exiting.
+        mtx_.unlock();
       }
 
       // ========================================================================
@@ -1286,12 +1368,18 @@ void RaftServer::HeartbeatLoop() {
           finalCommitIndex = lastLogIndex;
         }
         if (finalCommitIndex > commitIndex && (GetRaftInstance(finalCommitIndex)->term == currentTerm)) {
+          uint64_t old_commit = commitIndex;
           Log_debug("[PHASE3-COMMIT] Advancing commitIndex %lu -> %lu", commitIndex, finalCommitIndex);
           commitIndex = finalCommitIndex;
           PersistCommitIndex(commitIndex, "HeartbeatLoop: post-response commit");
+#ifdef SINGLE_RAFT_INSTANCE
+          EnqueueCommittedEntries(old_commit, commitIndex);
+#endif
         }
+#ifndef SINGLE_RAFT_INSTANCE
         if (commitIndex > executeIndex)
           applyLogs();
+#endif
 
         // ==================================================================
         // SPECULATIVE REPLICATION: Update specCommitIndex based on memory acks
@@ -2166,17 +2254,29 @@ void RaftServer::OnAppendEntries(const slotid_t slot_id,
 
 // @safe - Removes command from log (external calls wrapped in @unsafe blocks)
 void RaftServer::removeCmd(slotid_t slot) {
+  auto it = raft_logs_.find(slot);
+  if (it == raft_logs_.end()) {
+    return;
+  }
+
+#ifdef SINGLE_RAFT_INSTANCE
+  // In SINGLE_RAFT_INSTANCE mode, committed log replay and callback execution can
+  // overlap with log cleanup. DestroyTx() here can race with callback usage and
+  // lead to shutdown/runtime crashes. We only evict the log entry.
+  raft_logs_.erase(it);
+  return;
+#else
   // @unsafe
   {
-  auto it = raft_logs_.find(slot);
-  if (it == raft_logs_.end() || !it->second || !it->second->log_)
-    return;
-  auto cmd = dynamic_pointer_cast<TpcCommitCommand>(it->second->log_);
-  if (!cmd)
-    return;
-  tx_sched_->DestroyTx(cmd->tx_id_);
+    if (it->second && it->second->log_) {
+      auto cmd = dynamic_pointer_cast<TpcCommitCommand>(it->second->log_);
+      if (cmd && tx_sched_) {
+        tx_sched_->DestroyTx(cmd->tx_id_);
+      }
+    }
   }
-  raft_logs_.erase(slot);
+  raft_logs_.erase(it);
+#endif
 }
 
 // @safe - Stores callback for later invocation

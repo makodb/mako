@@ -252,7 +252,12 @@ void add_log_without_queue(const char* data, int len, uint32_t par_id) {
 }
 
 void add_log_to_nc(const char* data, int len, uint32_t par_id, int flag) {
-    DISPATCH_VOID_RAFT_OR_PAXOS(add_log_to_nc, data, len, par_id, flag);  // @unsafe
+    auto type = janus::get_replication_type();
+    if (type == janus::ReplicationType::RAFT) {
+        raft_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
+    } else {
+        paxos_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
+    }
 }
 
 void wait_for_submit(uint32_t par_id) {
