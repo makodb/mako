@@ -258,7 +258,10 @@ Run after each major workstream and once for final sign-off.
 - [x] `./docker_build.sh ci-quick shardNoReplication`
   - Verified on 2026-04-11 in temp worktree after Docker build-script/CMake fixes; shard benchmark and result checks passed (`CI test 'shardNoReplication' completed`).
   - Scope check: completed within small-change budget (~21 LOC in `docker_build.sh` plus 1 include-path line in `CMakeLists.txt`).
-- [ ] `./docker_build.sh ci-quick simpleTransaction`
+- [x] `./docker_build.sh ci-quick simpleTransaction`
+  - Verified on 2026-04-11 in temp worktree: `CI test 'simpleTransaction' completed` with all scenario checks passing.
+  - Scope check: completed within small-change budget (<500 LOC). Required code fix was limited to example linkage cleanup (~4 line updates + 1 obsolete helper removal) to unblock Docker build path.
+  - Key finding: Docker build uncovered duplicate global `get_epoch()` symbols in example binaries (`test_rocksdb_persistence`, `test_callback_demo`, `test_partitioned_queues`, `test_stress_partitioned_queues`), causing linker failures; resolved by removing unused mock and making example-local mocks internal (`static`).
 - [ ] `./docker_build.sh ci-quick rocksdbTests`
 - [ ] `./docker_build.sh ci-quick shard1Replication`
 - [ ] `./docker_build.sh ci-quick shard2Replication`

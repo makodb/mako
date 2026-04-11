@@ -67,7 +67,7 @@ using namespace mako;
 using namespace std::chrono;
 
 // Mock function to simulate get_epoch
-int get_epoch() {
+static int get_epoch() {
     return 1;
 }
 

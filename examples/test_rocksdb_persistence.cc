@@ -38,12 +38,6 @@ using namespace std;
 using namespace mako;
 using namespace std::chrono;
 
-// Mock function to simulate get_epoch
-int get_epoch() {
-    static int epoch = 1;
-    return epoch++;
-}
-
 void test_basic_persistence() {
     cout << "\n=== Test 1: Basic Persistence ===" << endl;
 
