@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <memory>
 
 #include "misc/marshal.hpp"
 #include "reactor/epoll_wrapper.h"
@@ -21,6 +22,7 @@
 #include "load_balancer.hpp"
 #include "heartbeat.hpp"
 #include "circuit_breaker.hpp"
+#include "callbacks.hpp"
 
 namespace rrr {
 
@@ -559,6 +561,8 @@ class ClientConnection: public Pollable {
     mutable HeartbeatManager heartbeat_manager_;
     // Circuit breaker integrated into live request dispatch.
     mutable CircuitBreaker circuit_breaker_;
+    // Lifecycle callback hooks shared with Client facade.
+    std::shared_ptr<CallbackManager> callback_manager_;
 
     // Last activity timestamp for idle detection (milliseconds since epoch)
     // Updated on send/receive operations
@@ -871,8 +875,27 @@ private:
     static bool should_trip_circuit_for_error(i32 err);
     // @safe - Record one request result in the circuit breaker.
     void record_circuit_result(i32 err) const;
+    // @safe - Map system errno-style code into structured RPC error.
+    static RpcError map_system_error(i32 err);
+    // @safe - Invoke registered on_error callbacks.
+    void invoke_error_callback(i32 err, const std::string& message) const;
+    // @safe - Invoke registered on_disconnected callbacks.
+    void invoke_disconnected_callback() const;
+    // @safe - Invoke registered on_reconnecting callbacks.
+    void invoke_reconnecting_callback() const;
+    // @safe - Invoke registered on_reconnected callbacks.
+    void invoke_reconnected_callback(bool success) const;
+    // @safe - Invoke registered on_connected callbacks.
+    void invoke_connected_callback() const;
 
 public:
+    // @safe - Share callback manager with facade so pre-connect registrations persist.
+    void set_callback_manager(const std::shared_ptr<CallbackManager>& callback_manager) {
+        if (callback_manager) {
+            callback_manager_ = callback_manager;
+        }
+    }
+
 
     /**
      * Send an RPC request with a lambda for writing arguments.
@@ -1327,6 +1350,8 @@ class Client {
     rusty::Cell<HeartbeatConfig> pending_heartbeat_config_{HeartbeatConfig::disabled()};
     // Pending circuit-breaker config (applied when connection is created)
     rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_{CircuitBreakerConfig::disabled()};
+    // Shared lifecycle callback manager, wired into active ClientConnection.
+    std::shared_ptr<CallbackManager> callback_manager_{std::make_shared<CallbackManager>()};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -1493,6 +1518,36 @@ public:
      */
     // @unsafe - Attempts reconnection (calls connect which has socket operations)
     int reconnect(std::function<void(bool)> on_complete = nullptr) const;
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_connected(ConnectionCallback cb) const {
+        callback_manager_->add_on_connected(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_disconnected(ConnectionCallback cb) const {
+        callback_manager_->add_on_disconnected(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_error(ErrorCallback cb) const {
+        callback_manager_->add_on_error(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_reconnecting(ConnectionCallback cb) const {
+        callback_manager_->add_on_reconnecting(std::move(cb));
+    }
+
+    // @safe - Register lifecycle callbacks.
+    void add_on_reconnected(ReconnectCallback cb) const {
+        callback_manager_->add_on_reconnected(std::move(cb));
+    }
+
+    // @safe - Clear all lifecycle callbacks.
+    void clear_connection_callbacks() const {
+        callback_manager_->clear_all();
+    }
 
     // @safe - Pauses the connection
     void pause() const;

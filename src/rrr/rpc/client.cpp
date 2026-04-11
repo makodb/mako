@@ -119,6 +119,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
       state_machine_(),
       heartbeat_manager_(HeartbeatConfig::disabled()),
       circuit_breaker_(CircuitBreakerConfig::disabled()),
+      callback_manager_(std::make_shared<CallbackManager>()),
       pending_queue_(buffering_config_.to_queue_config()) {
 }
 
@@ -168,6 +169,7 @@ void ClientConnection::fail_pending_future(i64 xid, int err) const {
 
 // @unsafe - Closes socket and invalidates futures (call from poll thread only)
 void ClientConnection::close() {
+  ConnectionState prev_state = state_machine_.state();
   const bool was_connected = state_machine_.is_connected();
   if (was_connected) {
     // Transition to DISCONNECTING state while preserving normal lifecycle semantics.
@@ -192,6 +194,11 @@ void ClientConnection::close() {
   }
   heartbeat_manager_.reset();
   invalidate_pending_futures();
+
+  if (prev_state == ConnectionState::CONNECTED ||
+      prev_state == ConnectionState::DISCONNECTING) {
+    invoke_disconnected_callback();
+  }
 }
 
 // @safe - Mark connection as closing without closing socket
@@ -226,6 +233,7 @@ int ClientConnection::connect(const char* addr) {
   if (!state_machine_.transition_to(ConnectionState::CONNECTING)) {
     Log_error("rrr::ClientConnection: cannot connect from state %s",
               connection_state_to_string(state_machine_.state()));
+    invoke_error_callback(EINVAL, "invalid state for connect");
     return EINVAL;
   }
   string addr_str(addr);
@@ -233,6 +241,7 @@ int ClientConnection::connect(const char* addr) {
   if (idx == string::npos) {
     Log_error("rrr::ClientConnection: bad connect address: %s", addr);
     state_machine_.transition_to(ConnectionState::FAILED);
+    invoke_error_callback(EINVAL, "invalid connect address");
     return EINVAL;
   }
   // @unsafe { - string operations
@@ -276,6 +285,7 @@ int ClientConnection::connect(const char* addr) {
   auto addr_result = AddrInfo::resolve(host.c_str(), port.c_str(), &hints);
   if (addr_result.is_err()) {
     Log_error("rrr::ClientConnection: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
+    invoke_error_callback(EINVAL, "address resolution failed");
     return EINVAL;
   }
   auto addr_info = addr_result.unwrap();
@@ -308,6 +318,7 @@ int ClientConnection::connect(const char* addr) {
   if (rp == nullptr) {
     // failed to connect
     state_machine_.transition_to(ConnectionState::FAILED);
+    invoke_error_callback(ENOTCONN, "connect failed");
     return ENOTCONN;
   }
 #endif
@@ -340,11 +351,13 @@ int ClientConnection::connect(const char* addr) {
   // }
   } else {
     Log_error("rrr::ClientConnection: weak_self_ upgrade failed - connection may not have been created properly");
+    invoke_error_callback(EINVAL, "connection registration failed");
     return EINVAL;
   }
 
   // Store address for potential reconnection
   reconnect_address_ = addr;
+  invoke_connected_callback();
 
   return 0;
 }
@@ -408,9 +421,11 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
       return complete_callback(waited);
     }
   }
+  invoke_reconnecting_callback();
 
   auto complete_reconnect = [&](bool success, int result) -> int {
     reconnecting_.store(false, std::memory_order_release);
+    invoke_reconnected_callback(success);
 
     if (success) {
       Log_info("rrr::ClientConnection: reconnected to %s", reconnect_address_.c_str());
@@ -452,8 +467,7 @@ int ClientConnection::reconnect(std::function<void(bool)> on_complete) {
   // Another reconnect attempt can complete between the pre-CAS state check and
   // this thread acquiring reconnect ownership.
   if (state_machine_.is_connected()) {
-    reconnecting_.store(false, std::memory_order_release);
-    return complete_callback(0);
+    return complete_reconnect(true, 0);
   }
 
   if (!state_machine_.can_connect()) {
@@ -661,6 +675,80 @@ void ClientConnection::record_circuit_result(i32 err) const {
   }
 }
 
+// @safe - Maps errno-style errors into structured RpcError categories.
+RpcError ClientConnection::map_system_error(i32 err) {
+  switch (err) {
+    case 0:
+      return RpcError::OK;
+    case ENOTCONN:
+      return RpcError::NOT_CONNECTED;
+    case ECONNREFUSED:
+      return RpcError::CONNECTION_REFUSED;
+    case ECONNRESET:
+      return RpcError::CONNECTION_RESET;
+    case ENETUNREACH:
+      return RpcError::NETWORK_UNREACHABLE;
+    case EHOSTUNREACH:
+      return RpcError::HOST_UNREACHABLE;
+    case ECONNABORTED:
+    case EPIPE:
+      return RpcError::CONNECTION_CLOSED;
+    case EBUSY:
+      return RpcError::CIRCUIT_OPEN;
+    case ETIMEDOUT:
+      return RpcError::RESPONSE_TIMEOUT;
+    case EAGAIN:
+#if EWOULDBLOCK != EAGAIN
+    case EWOULDBLOCK:
+#endif
+      return RpcError::REQUEST_TIMEOUT;
+    case EINVAL:
+      return RpcError::INVALID_ARGUMENT;
+    default:
+      return RpcError::UNKNOWN_ERROR;
+  }
+}
+
+// @safe - Invoke callback manager error hooks.
+void ClientConnection::invoke_error_callback(i32 err, const std::string& message) const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_error(map_system_error(err), message);
+}
+
+// @safe - Invoke callback manager disconnected hooks.
+void ClientConnection::invoke_disconnected_callback() const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_disconnected();
+}
+
+// @safe - Invoke callback manager reconnecting hooks.
+void ClientConnection::invoke_reconnecting_callback() const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_reconnecting();
+}
+
+// @safe - Invoke callback manager reconnected hooks.
+void ClientConnection::invoke_reconnected_callback(bool success) const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_reconnected(success);
+}
+
+// @safe - Invoke callback manager connected hooks.
+void ClientConnection::invoke_connected_callback() const {
+  if (!callback_manager_) {
+    return;
+  }
+  callback_manager_->invoke_on_connected();
+}
+
 // @safe - Error handler - transitions to FAILED state
 void ClientConnection::handle_error() {
   ConnectionState prev_state = state_machine_.state();
@@ -670,6 +758,7 @@ void ClientConnection::handle_error() {
       reconnect_abort_.load(std::memory_order_acquire);
 
   if (!user_initiated_closing) {
+    invoke_error_callback(ECONNRESET, "connection error");
     // Force transition to FAILED state (from any state)
     state_machine_.force_state(ConnectionState::FAILED);
   }
@@ -679,6 +768,7 @@ void ClientConnection::handle_error() {
   if (user_initiated_closing) {
     return;
   }
+  invoke_disconnected_callback();
 
   // Trigger policy-driven reconnect automatically after transport failures.
   if (reconnect_policy_.auto_reconnect &&
@@ -932,6 +1022,7 @@ int Client::connect(const char* addr, bool client) const {
   {
     mut_conn.weak_self_ = conn;
   }
+  mut_conn.set_callback_manager(callback_manager_);
   mut_conn.is_client_mode_ = client;
   is_client_mode_.set(client);
 

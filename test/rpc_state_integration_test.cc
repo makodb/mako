@@ -4,6 +4,8 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -13,6 +15,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <vector>
 #include <rusty/arc.hpp>
 #include "reactor/reactor.h"
 #include "rpc/client.hpp"
@@ -570,6 +573,129 @@ TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
     after_fu->wait();
     EXPECT_EQ(after_fu->get_error_code(), 0);
 
+    client->close();
+    delete server;
+}
+
+TEST_F(StateIntegrationTest, LifecycleCallbacksFireInExpectedOrder) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+
+    enum EventCode {
+        kConnected = 1,
+        kError = 2,
+        kDisconnected = 3,
+        kReconnecting = 4,
+        kReconnectedSuccess = 5,
+        kReconnectedFailure = 6
+    };
+
+    std::array<std::atomic<int>, 64> events;
+    for (auto& event : events) {
+        event.store(0, std::memory_order_release);
+    }
+    std::atomic<size_t> event_count{0};
+
+    auto record_event = [&](int event) {
+        size_t idx = event_count.fetch_add(1, std::memory_order_acq_rel);
+        if (idx < events.size()) {
+            events[idx].store(event, std::memory_order_release);
+        }
+    };
+
+    auto has_event = [&](int event_code) {
+        size_t count = event_count.load(std::memory_order_acquire);
+        count = std::min(count, events.size());
+        for (size_t i = 0; i < count; ++i) {
+            if (events[i].load(std::memory_order_acquire) == event_code) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    client->add_on_connected([&]() { record_event(kConnected); });
+    client->add_on_disconnected([&]() { record_event(kDisconnected); });
+    client->add_on_error([&](RpcError err, const std::string&) {
+        if (err != RpcError::OK) {
+            record_event(kError);
+        }
+    });
+    client->add_on_reconnecting([&]() { record_event(kReconnecting); });
+    client->add_on_reconnected([&](bool success) {
+        record_event(success ? kReconnectedSuccess : kReconnectedFailure);
+    });
+
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return has_event(kConnected); }, milliseconds(1000)));
+
+    ReconnectPolicy reconnect_policy;
+    reconnect_policy.auto_reconnect = false;
+    client->set_reconnect_policy(reconnect_policy);
+    client->set_buffering_config(BufferingConfig::disabled());
+
+    delete server;
+    server = nullptr;
+
+    ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(5000)));
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return has_event(kError) && has_event(kDisconnected);
+    }, milliseconds(2000)));
+
+    server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box2 = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box2));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    std::atomic<bool> reconnect_done{false};
+    std::atomic<bool> reconnect_success{false};
+    ASSERT_EQ(client->reconnect([&](bool success) {
+        reconnect_success.store(success);
+        reconnect_done.store(true);
+    }), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return reconnect_done.load(); }, milliseconds(4000)));
+    ASSERT_TRUE(reconnect_success.load());
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return has_event(kReconnecting) && has_event(kReconnectedSuccess);
+    }, milliseconds(2000)));
+
+    std::vector<int> snapshot;
+    {
+        size_t count = event_count.load(std::memory_order_acquire);
+        count = std::min(count, events.size());
+        snapshot.reserve(count);
+        for (size_t i = 0; i < count; ++i) {
+            snapshot.push_back(events[i].load(std::memory_order_acquire));
+        }
+    }
+
+    auto find_after = [&](int target, size_t start) -> size_t {
+        for (size_t i = start; i < snapshot.size(); ++i) {
+            if (snapshot[i] == target) {
+                return i;
+            }
+        }
+        return std::string::npos;
+    };
+
+    size_t idx_connected = find_after(kConnected, 0);
+    ASSERT_NE(idx_connected, std::string::npos);
+    size_t idx_error = find_after(kError, idx_connected + 1);
+    ASSERT_NE(idx_error, std::string::npos);
+    size_t idx_disconnected = find_after(kDisconnected, idx_error + 1);
+    ASSERT_NE(idx_disconnected, std::string::npos);
+    size_t idx_reconnecting = find_after(kReconnecting, idx_disconnected + 1);
+    ASSERT_NE(idx_reconnecting, std::string::npos);
+    size_t idx_reconnected = find_after(kReconnectedSuccess, idx_reconnecting + 1);
+    ASSERT_NE(idx_reconnected, std::string::npos);
+
+    // Clear callbacks before async close to avoid late callback firing on stack locals.
+    client->clear_connection_callbacks();
     client->close();
     delete server;
 }
