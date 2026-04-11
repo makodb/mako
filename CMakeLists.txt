@@ -1770,7 +1770,10 @@ if(BUILD_TESTS)
     add_executable(test_rpc_docs_symbols test/rpc_docs_symbols_test.cc)
     target_include_directories(test_rpc_docs_symbols PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_rpc_docs_symbols PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_compile_definitions(test_rpc_docs_symbols PRIVATE SRPC_BOOK_PATH="${CMAKE_SOURCE_DIR}/docs/srpc-book.md")
+    target_compile_definitions(test_rpc_docs_symbols PRIVATE
+        SRPC_BOOK_PATH="${CMAKE_SOURCE_DIR}/docs/srpc-book.md"
+        SRPC_MIGRATION_GUIDE_PATH="${CMAKE_SOURCE_DIR}/docs/rpc/migration-guide.md"
+    )
     target_link_libraries(test_rpc_docs_symbols ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_rpc_docs_symbols COMMAND test_rpc_docs_symbols)
 

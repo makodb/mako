@@ -7,13 +7,7 @@
 
 namespace {
 
-std::string load_book_contents() {
-#ifdef SRPC_BOOK_PATH
-    const char* path = SRPC_BOOK_PATH;
-#else
-    const char* path = "docs/srpc-book.md";
-#endif
-
+std::string load_file_contents(const char* path) {
     std::ifstream in(path);
     if (!in.is_open()) {
         return "";
@@ -24,11 +18,23 @@ std::string load_book_contents() {
     return buf.str();
 }
 
+#ifdef SRPC_BOOK_PATH
+constexpr const char* kSrpcBookPath = SRPC_BOOK_PATH;
+#else
+constexpr const char* kSrpcBookPath = "docs/srpc-book.md";
+#endif
+
+#ifdef SRPC_MIGRATION_GUIDE_PATH
+constexpr const char* kMigrationGuidePath = SRPC_MIGRATION_GUIDE_PATH;
+#else
+constexpr const char* kMigrationGuidePath = "docs/rpc/migration-guide.md";
+#endif
+
 }  // namespace
 
 TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
-    const std::string book = load_book_contents();
-    ASSERT_FALSE(book.empty()) << "failed to read docs/srpc-book.md";
+    const std::string book = load_file_contents(kSrpcBookPath);
+    ASSERT_FALSE(book.empty()) << "failed to read " << kSrpcBookPath;
 
     const std::vector<std::string> required = {
         "LoadBalancingStrategy::ROUND_ROBIN",
@@ -103,5 +109,38 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
     for (const auto& needle : forbidden) {
         EXPECT_EQ(book.find(needle), std::string::npos)
             << "stale API symbol still present in srpc-book.md: " << needle;
+    }
+}
+
+TEST(SrpcBookApiSymbolsTest, MigrationGuideBackwardCompatibilityNotesAreCurrent) {
+    const std::string guide = load_file_contents(kMigrationGuidePath);
+    ASSERT_FALSE(guide.empty()) << "failed to read " << kMigrationGuidePath;
+
+    const std::vector<std::string> required = {
+        "## Backward Compatibility Notes (Wire/API)",
+        "kResponseHeaderExtFlag",
+        "Upgrade clients first.",
+        "Upgrade servers after client rollout is complete.",
+        "policy.initial_delay_ms",
+        "client->add_on_connected(",
+        "client->add_on_disconnected(",
+        "client->add_on_reconnected([](bool success)",
+    };
+
+    const std::vector<std::string> forbidden = {
+        "policy.base_delay_ms",
+        "client->set_on_connected(",
+        "client->set_on_disconnected(",
+        "client->set_on_reconnected(",
+    };
+
+    for (const auto& needle : required) {
+        EXPECT_NE(guide.find(needle), std::string::npos)
+            << "missing required migration-guide symbol/text: " << needle;
+    }
+
+    for (const auto& needle : forbidden) {
+        EXPECT_EQ(guide.find(needle), std::string::npos)
+            << "stale migration-guide symbol/text still present: " << needle;
     }
 }

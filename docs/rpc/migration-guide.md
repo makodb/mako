@@ -10,6 +10,44 @@ The RPC reliability enhancement adds robust connection management, automatic rec
 
 **None.** All existing APIs remain unchanged. The enhancements are purely additive.
 
+## Backward Compatibility Notes (Wire/API)
+
+### Wire protocol (response header extension)
+
+SRPC responses now support an extended header carrying `server_instance_id` for
+automatic restart detection. The extension is flagged via the high bit in the
+frame `<size>` field (`kResponseHeaderExtFlag`) and parsed by
+`response_has_extended_header()` / `response_payload_size()`.
+
+- **New clients** are backward compatible with old and new servers.
+- **Old clients** (that do not mask/parse the response-size extension flag) are
+  not guaranteed to interoperate with new servers.
+
+Recommended mixed-version rollout order:
+
+1. Upgrade clients first.
+2. Upgrade servers after client rollout is complete.
+
+Recommended rollback order:
+
+1. Roll back servers first.
+2. Roll back clients after servers are reverted.
+
+### API surface compatibility
+
+No public SRPC API signatures were removed in this reliability series, but
+several behaviors became stricter/safer:
+
+- `request_with_options()` retry/reconnect/time-budget settings are now
+  enforced at runtime (previously mostly declarative).
+- Reconnect policy (`ReconnectPolicy`) now drives real reconnect backoff/retry.
+- `ServerConnection::run_async()` executes inline callback behavior instead of
+  aborting; `content_size()` and `handle_free()` are now safe compatibility
+  paths instead of crash stubs.
+
+No source-level migration is required for existing callers, but operators
+should follow the wire upgrade order above for mixed-version deployments.
+
 ## New Dependencies
 
 ### rusty-cpp (Required)
@@ -74,7 +112,7 @@ auto client = Client::create(poll_thread);
 // Configure reconnection policy
 ReconnectPolicy policy = ReconnectPolicy::aggressive();
 policy.max_retries = 10;
-policy.base_delay_ms = 50;
+policy.initial_delay_ms = 50;
 client->set_reconnect_policy(policy);
 
 client->connect("127.0.0.1:8080");
@@ -91,16 +129,16 @@ Track connection state changes:
 auto client = Client::create(poll_thread);
 
 // Set up callbacks for connection events
-client->set_on_connected([]() {
+client->add_on_connected([]() {
     Log_info("Connected to server");
 });
 
-client->set_on_disconnected([]() {
+client->add_on_disconnected([]() {
     Log_warn("Disconnected from server");
 });
 
-client->set_on_reconnected([]() {
-    Log_info("Reconnected to server");
+client->add_on_reconnected([](bool success) {
+    Log_info("Reconnected to server (success=%d)", success ? 1 : 0);
 });
 
 client->connect("127.0.0.1:8080");
