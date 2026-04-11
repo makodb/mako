@@ -269,7 +269,10 @@ Run after each major workstream and once for final sign-off.
   - Verified on 2026-04-11 in temp worktree after adding replication-config preflight in example scripts; `CI test 'shard1Replication' completed` with throughput/replay checks passing.
   - Root cause and fix: clean Docker worktrees were missing generated `config/1leader_2followers/paxos*_shardidx*.yml` files; added `ensure_paxos_replication_configs()` in `examples/simple_transaction_rep_port_utils.sh`, wired into replication runners (`test_1shard_replication`, `test_2shard_replication`, simple variants, and 2-shard single-process replication), and added regression guard `test_rpc_replication_config_generation`.
   - Scope check: completed within small-change budget (<500 LOC), including a deterministic test portability fix in `test_rpc_state_integration_test.cc` (`socketpair` -> loopback TCP pair) required for Docker `ctest` stability.
-- [ ] `./docker_build.sh ci-quick shard2Replication`
+- [x] `./docker_build.sh ci-quick shard2Replication`
+  - Verified on 2026-04-11 in temp worktree: `CI test 'shard2Replication' completed` with both shard throughput checks and remote-abort-ratio thresholds passing.
+  - Reused the same generated-config preflight path in replication runners; clean worktree run auto-generated missing `paxos6_shardidx*.yml` before launch.
+  - Scope check: execution-only leaf completion (no additional production LOC beyond prior preflight/test hardening), well below 500 LOC.
 
 Run all RPC-focused tests in Docker build output target set:
 - [x] `test_rpc`
