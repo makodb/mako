@@ -437,7 +437,14 @@ bool ServerListener::handle_read() {
     if (clnt_socket >= 0) {
       Log_debug("server@%s got new client, fd=%d", this->addr_.c_str(), clnt_socket);
       // @unsafe - set_nonblocking
-      { verify(set_nonblocking(clnt_socket, true) == 0); }
+      {
+        if (set_nonblocking(clnt_socket, true) != 0) {
+          Log_error("server@%s failed to set nonblocking on accepted fd=%d: errno=%d (%s)",
+                    this->addr_.c_str(), clnt_socket, errno, strerror(errno));
+          ::close(clnt_socket);
+          continue;
+        }
+      }
 
       auto sconn = rusty::Arc<ServerConnection>::make(ctx_.clone(), clnt_socket);
       // @unsafe - const_cast to initialize weak_self_ (safe: we just created this object)
@@ -473,6 +480,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   size_t idx = addr.find(":");
   if (idx == string::npos) {
     Log_error("rrr::Server: bad bind address: %s", addr.c_str());
+    server_sock_ = -1;
+    return;
   }
   string host = addr.substr(0, idx);
   string port = addr.substr(idx + 1);
@@ -480,8 +489,10 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
 #ifdef USE_IPC
   struct sockaddr_un saun;
   if ((server_sock_ = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-    perror("server: socket");
-    exit(1);
+    Log_error("rrr::Server: ipc socket() failed for %s: errno=%d (%s)",
+              addr.c_str(), errno, strerror(errno));
+    server_sock_ = -1;
+    return;
   }
   saun.sun_family = AF_UNIX;
   string ipc_addr = "rsock" + port;
@@ -489,8 +500,11 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   auto len = sizeof(saun.sun_family) + strlen(saun.sun_path)+1;
   ::unlink(ipc_addr.data());
   if (::bind(server_sock_, (struct sockaddr*)&saun, len) != 0) {
-    perror("server: socket bind");
-    exit(1);
+    Log_error("rrr::Server: ipc bind() failed for %s: errno=%d (%s)",
+              addr.c_str(), errno, strerror(errno));
+    ::close(server_sock_);
+    server_sock_ = -1;
+    return;
   }
 
 #else
@@ -573,14 +587,18 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
   int listen_ret = listen(server_sock_, backlog);
   if (listen_ret != 0) {
     Log_error("rrr::Server: listen() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+    ::close(server_sock_);
+    server_sock_ = -1;
+    return;
   }
-  verify(listen_ret == 0);
 
   int nonblock_ret = set_nonblocking(server_sock_, true);
   if (nonblock_ret != 0) {
     Log_error("rrr::Server: set_nonblocking() failed on %s: errno=%d (%s)", addr.c_str(), errno, strerror(errno));
+    ::close(server_sock_);
+    server_sock_ = -1;
+    return;
   }
-  verify(nonblock_ret == 0);
 
   Log_debug("rrr::Server: started on %s", addr.c_str());
 }

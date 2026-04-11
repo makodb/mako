@@ -203,16 +203,17 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [x] Define and enforce behavior of `run_async`/`content_size`/`handle_free` in server connection API.
   - Implemented on 2026-04-11 with regression coverage in `test_rpc_extended`: behavior is now deterministic and non-crashing for normal and empty-callback paths.
 - [x] Add assertions/logs for unsupported code paths instead of hard abort in production builds.
-  - Implemented on 2026-04-11 in `ServerListener`/startup paths: listener `handle_write()` and `handle_error()` now warn instead of aborting (with safe close behavior), listener `content_size()` returns a stable value, and `getaddrinfo` failure now logs and returns startup error instead of `verify(0)` process abort.
+  - Implemented on 2026-04-11 in `ServerListener`/startup paths: listener `handle_write()` and `handle_error()` now warn instead of aborting (with safe close behavior), listener `content_size()` returns a stable value, `getaddrinfo` failure now logs and returns startup error instead of `verify(0)` process abort, and listener setup failures (`socket`/`bind`/`listen`/`set_nonblocking`) now fail startup safely instead of exiting or aborting.
 
 ### Tests TODO
 - [x] Add regression tests proving these APIs no longer crash process when called.
-  - Added on 2026-04-11 in `test_rpc_extended`: `ServerApiSafetyTest.ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerConnectionContentSizeAndHandleFreeAreSafe`, `ServerApiSafetyTest.DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerListenerUnsupportedHooksAreNonFatal`, and `ServerApiSafetyTest.ServerStartWithInvalidHostReturnsError`.
+  - Added on 2026-04-11 in `test_rpc_extended`: `ServerApiSafetyTest.ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerConnectionContentSizeAndHandleFreeAreSafe`, `ServerApiSafetyTest.DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerListenerUnsupportedHooksAreNonFatal`, `ServerApiSafetyTest.ServerStartWithInvalidHostReturnsError`, `ServerApiSafetyTest.ServerStartWithMalformedAddressReturnsError`, and `ServerApiSafetyTest.ServerStartWithNullAddressReturnsError`.
 - [x] Run existing: `test_rpc_extended`, `test_rpc`, `test_rpc_state_integration`.
   - Verified on 2026-04-11 via full RPC-focused suite run (30/30 passed, including `test_rpc_extended`, `test_rpc`, and `test_rpc_state_integration`).
 
 ### DoD
-- [ ] No unexpected aborts from exposed RPC API in production path.
+- [x] No unexpected aborts from exposed RPC API in production path.
+  - Verified on 2026-04-11 by replacing remaining production-path abort/exit listener startup branches with error returns and validating with full RPC-focused suite (30/30 passed).
 
 ## Workstream I: Align `docs/srpc-book.md` with Shipping API
 ### Doc TODO

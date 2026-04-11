@@ -194,6 +194,30 @@ TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
     poll_thread->shutdown();
 }
 
+TEST(ServerApiSafetyTest, ServerStartWithMalformedAddressReturnsError) {
+    auto poll_thread = PollThread::create();
+    {
+        Server server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        server.reg_service(std::move(service_box));
+
+        EXPECT_NE(server.start("malformed-address-without-port"), 0);
+    }
+    poll_thread->shutdown();
+}
+
+TEST(ServerApiSafetyTest, ServerStartWithNullAddressReturnsError) {
+    auto poll_thread = PollThread::create();
+    {
+        Server server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        server.reg_service(std::move(service_box));
+
+        EXPECT_NE(server.start(static_cast<const char*>(nullptr)), 0);
+    }
+    poll_thread->shutdown();
+}
+
 // Test 1: Multiple clients connecting to the same server
 TEST_F(ExtendedRPCTest, MultipleClients) {
     const int num_clients = 10;
