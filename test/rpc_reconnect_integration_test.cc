@@ -89,7 +89,7 @@ protected:
         return server;
     }
 
-    Server* start_server_with_retry(int attempts = 20, int delay_ms = 50) {
+    Server* start_server_with_retry(int attempts = 80, int delay_ms = 50) {
         for (int i = 0; i < attempts; i++) {
             auto server = start_server();
             if (server != nullptr) {
@@ -340,22 +340,44 @@ TEST_F(ReconnectIntegrationTest, AutoReconnectTriggeredAfterConnectionFailure) {
     warmup_fu->wait();
     ASSERT_EQ(warmup_fu->get_error_code(), 0);
 
-    // Simulate failure and ensure a failing request observes disconnection.
+    // Simulate failure and wait until client-side state observes disconnect.
     delete server;
-    std::this_thread::sleep_for(milliseconds(80));
-    auto failing = client->request(
-        benchmark::BenchmarkService::FAST_NOP,
-        [&](Marshal& m) { m << input; }
-    );
-    if (failing.is_ok()) {
-        failing.unwrap()->timed_wait(0.5);
+    server = nullptr;
+    ASSERT_TRUE(wait_for_condition([&]() {
+        auto state = client->connection_state();
+        return state == ConnectionState::DISCONNECTED ||
+               state == ConnectionState::FAILED ||
+               !client->connected();
+    }, milliseconds(2000)));
+
+    // Drive at least one failed request while server is down so reconnect path
+    // is deterministically exercised before restart.
+    bool observed_failure = false;
+    for (int attempt = 0; attempt < 6 && !observed_failure; ++attempt) {
+        auto failing = client->request(
+            benchmark::BenchmarkService::FAST_NOP,
+            [&](Marshal& m) { m << input; }
+        );
+        if (!failing.is_ok()) {
+            observed_failure = true;
+        } else {
+            auto failing_fu = failing.unwrap();
+            failing_fu->timed_wait(0.5);
+            observed_failure = (!client->connected()) ||
+                               (failing_fu->ready() && failing_fu->get_error_code() != 0);
+        }
+        if (!observed_failure) {
+            std::this_thread::sleep_for(milliseconds(40));
+        }
     }
+    ASSERT_TRUE(observed_failure);
 
     // Bring server back and wait for automatic reconnect.
     server = start_server_with_retry();
     ASSERT_NE(server, nullptr);
-    ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(4000)));
-    EXPECT_GE(client->metrics().reconnect_count(), 1u);
+    ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(6000)));
+    ASSERT_TRUE(wait_for_condition([&]() { return client->metrics().reconnect_count() >= 1u; },
+                                   milliseconds(1500)));
 
     auto after = client->request(
         benchmark::BenchmarkService::FAST_NOP,
