@@ -561,32 +561,44 @@ Client                           Network                          Server
 
 ## 8. RPC Client
 
-### ClientConnection
+### Client (Single Connection)
 
-A `ClientConnection` represents a single TCP connection to a remote server:
+`Client` is the public single-connection API (`ClientConnection` is an internal
+pollable implementation detail):
 
 ```cpp
-// Connect to a server
-ClientConnection conn(reactor, "10.0.1.100:8100");
+auto poll_thread = PollThread::create();
+auto client = Client::create(poll_thread.clone());
 
-// Synchronous RPC call
-Future* fu = conn.begin_request(RPC_METHOD_ID);
-*fu << arg1 << arg2;          // Marshal arguments
-fu->end_request();             // Send request
-fu->Wait();                    // Block fiber until reply
-int result;
-fu->get_reply() >> result;     // Unmarshal response
+int rc = client->connect("10.0.1.100:8100");
+if (rc != 0) {
+    // handle connect error
+}
+
+// Synchronous-style call using FutureResult
+auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
+    m << arg1 << arg2;
+});
+
+if (fu_result.is_ok()) {
+    auto fu = fu_result.unwrap();
+    fu->wait();
+    int result = 0;
+    fu->get_reply() >> result;
+}
 ```
 
 ### Async RPC
 
 ```cpp
-// Non-blocking call
-Future* fu = conn.begin_request(RPC_METHOD_ID);
-*fu << arg1;
-fu->end_request();
+auto fu_result = client->request(RPC_METHOD_ID, [&](Marshal& m) {
+    m << arg1;
+});
 // ... do other work ...
-fu->Wait();  // Block only when result needed
+if (fu_result.is_ok()) {
+    auto fu = fu_result.unwrap();
+    fu->wait();  // Block only when result is needed
+}
 ```
 
 ### ClientPool (Connection Pool)
@@ -647,31 +659,28 @@ Implement the `Service` interface to handle RPCs:
 
 ```cpp
 class MyService : public Service {
-    void __reg_to__(Server* server) override {
-        server->reg(RPC_DO_WORK, this);
+public:
+    enum : i32 { RPC_DO_WORK = 0x1001 };
+
+    int __reg_to__(Server& svr, size_t svc_index) override {
+        return svr.reg_rpc(RPC_DO_WORK, svc_index);
     }
 
-    void __dispatch__(Request* req) override {
-        switch (req->rpc_id) {
-            case RPC_DO_WORK:
-                handle_do_work(req);
-                break;
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+        if (rpc_id != RPC_DO_WORK) {
+            return;
         }
-    }
-
-    void handle_do_work(Request* req) {
-        // Unmarshal arguments
         int arg;
         req->m >> arg;
-
-        // Process
         int result = compute(arg);
 
-        // Reply
-        auto conn = req->get_connection();
-        conn->reply(req->xid, [&](Marshal& out) {
-            out << result;
-        });
+        auto sconn_opt = weak_sconn.upgrade();
+        if (sconn_opt.is_some()) {
+            auto sconn = sconn_opt.unwrap();
+            const_cast<ServerConnection&>(*sconn).reply(*req, 0, [&](Marshal& out) {
+                out << result;
+            });
+        }
     }
 };
 ```
@@ -679,17 +688,18 @@ class MyService : public Service {
 ### Server Lifecycle
 
 ```cpp
-// Create server
-Server server;
-server.add_service(new MyService());
+auto poll_thread = PollThread::create();
+Server server(rusty::Some(poll_thread.clone()));
+server.reg_service(rusty::make_box<MyService>());
 
 // Start listening
-server.start("0.0.0.0:8100");
+int rc = server.start("0.0.0.0:8100");
 
 // ... server runs ...
 
 // Graceful shutdown
-server.stop();
+server.graceful_shutdown(30000);
+poll_thread->shutdown();
 ```
 
 ### Graceful Shutdown
@@ -952,16 +962,23 @@ This produces:
 ### Generated Client Usage
 
 ```cpp
-MyServiceProxy proxy(client_connection);
+MyServiceProxy proxy(client.get());
 
 // Synchronous call
 UserInfo user;
-auto fu = proxy.async_get_user(1001);
-fu->Wait();
-fu->get_reply() >> user;
+if (proxy.get_user(1001, &user) == 0) {
+    // user populated
+}
 
-// Or with generated sync wrapper
-UserInfo user = proxy.get_user(1001);
+// Asynchronous call
+auto fu_result = proxy.async_get_user(1001);
+if (fu_result.is_ok()) {
+    auto fu = fu_result.unwrap();
+    fu->wait();
+    fu->get_reply() >> user;
+}
+
+// The generated sync wrapper returns i32 status, not the value directly.
 ```
 
 ---

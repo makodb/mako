@@ -219,7 +219,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 ### Doc TODO
 - [x] Correct all API name mismatches (keepalive, reconnect policy, buffering, callbacks, errors).
   - Updated on 2026-04-11 in `docs/srpc-book.md`: corrected keepalive fields (`idle_sec`/`interval_sec`), reconnect policy fields (`initial_delay_ms`/`jitter_enabled`), buffering fields (`max_pending`/`default_ttl_ms`), callback usage (`client.add_on_*` API), and `RpcError` symbol list to match `src/rrr/rpc` headers.
-- [ ] Remove non-existent API examples (`client.set_load_balancing`, `future.h`, etc.).
+- [x] Remove non-existent API examples (`client.set_load_balancing`, `future.h`, etc.).
+  - Updated on 2026-04-11 in `docs/srpc-book.md`: replaced stale request flow (`begin_request`/`end_request`/`Future*`), stale server lifecycle (`add_service`/`stop`), stale service interface signatures, and stale generated proxy sync-return example with shipping APIs (`Client::create` + `request`, `Server::reg_service` + `graceful_shutdown`, current `Service`/proxy method patterns).
 - [ ] Add a “Implemented vs Planned” reliability table.
 - [ ] Ensure sample code compiles against current headers.
 
@@ -227,6 +228,7 @@ Close correctness gaps between SRPC documented behavior and production behavior,
 - [ ] Add doc-snippet compile test (or CI lint) for all C++ snippets in `docs/srpc-book.md`.
 - [x] Add CI guard that fails on stale API symbols in docs.
   - Added on 2026-04-11: `test_rpc_docs_symbols` (`test/rpc_docs_symbols_test.cc`) with CMake wiring to assert required shipping symbols and reject stale names in `docs/srpc-book.md`.
+  - Extended on 2026-04-11 to cover additional stale examples (`begin_request`/`end_request`, `server.add_service`, `server.stop`, legacy service signatures, and legacy proxy usage).
   - Verified on 2026-04-11 via full RPC-focused suite run (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`), 31/31 passed.
 
 ### DoD

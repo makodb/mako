@@ -46,6 +46,10 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "UNKNOWN_RPC_ID",
         "MARSHALLING_ERROR",
         "CONNECT_TIMEOUT",
+        "client->request(",
+        "server.reg_service(",
+        "server.graceful_shutdown(",
+        "proxy.get_user(1001, &user)",
     };
 
     const std::vector<std::string> forbidden = {
@@ -69,6 +73,16 @@ TEST(SrpcBookApiSymbolsTest, ReliabilityApiNamesMatchShippingHeaders) {
         "SERVICE_ERROR",
         "HANDLER_EXCEPTION",
         "QUEUE_FULL",
+        "ClientConnection conn(reactor,",
+        "begin_request(",
+        "end_request()",
+        "Future* fu =",
+        "fu->Wait()",
+        "server.add_service(",
+        "server.stop()",
+        "__reg_to__(Server* server)",
+        "__dispatch__(Request* req)",
+        "UserInfo user = proxy.get_user(1001);",
     };
 
     for (const auto& needle : required) {
