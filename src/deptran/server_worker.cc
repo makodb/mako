@@ -344,6 +344,19 @@ void ServerWorker::ShutDown() {
   delete rpc_server_;
   rpc_server_ = nullptr;
 
+  // Stop worker poll threads during explicit shutdown so test-mode runs don't
+  // leave background reconnect/election activity alive until global destructors.
+  if (svr_poll_thread_worker_.is_some()) {
+    Log_info("Shutting down server poll thread in ServerWorker::ShutDown()");
+    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
+    svr_poll_thread_worker_ = rusty::None;
+  }
+  if (svr_hb_poll_thread_worker_g.is_some()) {
+    Log_info("Shutting down heartbeat poll thread in ServerWorker::ShutDown()");
+    svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
+    svr_hb_poll_thread_worker_g = rusty::None;
+  }
+
   // Modern C++ - smart pointer auto-cleanup
   // svr_poll_thread_worker_ automatically released by shared_ptr
 
