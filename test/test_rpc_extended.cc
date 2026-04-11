@@ -171,6 +171,29 @@ TEST(ServerApiSafetyTest, DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCall
     EXPECT_TRUE(cleanup_called);
 }
 
+TEST(ServerApiSafetyTest, ServerListenerUnsupportedHooksAreNonFatal) {
+    ServerListener listener(make_test_rpc_context(), "127.0.0.1:0");
+    ASSERT_GE(listener.fd(), 0);
+
+    EXPECT_EQ(listener.content_size(), 0u);
+    EXPECT_EQ(listener.handle_write(), PollMode::NO_CHANGE);
+
+    listener.handle_error();
+    EXPECT_TRUE(listener.is_closed());
+}
+
+TEST(ServerApiSafetyTest, ServerStartWithInvalidHostReturnsError) {
+    auto poll_thread = PollThread::create();
+    {
+        Server server(rusty::Some(poll_thread.clone()));
+        auto service_box = rusty::make_box<ExtendedTestService>();
+        server.reg_service(std::move(service_box));
+
+        EXPECT_NE(server.start("invalid host:12345"), 0);
+    }
+    poll_thread->shutdown();
+}
+
 // Test 1: Multiple clients connecting to the same server
 TEST_F(ExtendedRPCTest, MultipleClients) {
     const int num_clients = 10;

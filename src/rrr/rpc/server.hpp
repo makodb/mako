@@ -248,16 +248,13 @@ class ServerListener: public Pollable {
     return PollMode::READ;
   }
 
-  size_t content_size() override {
-    verify(0);
-    return 0;
-  }
+  size_t content_size() override;
 
-  int handle_write() override {verify(0); return PollMode::NO_CHANGE;}
+  int handle_write() override;
 
   bool handle_read() override;
 
-  void handle_error() override {verify(0);}
+  void handle_error() override;
 
   void close() override;
 

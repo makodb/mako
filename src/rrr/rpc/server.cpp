@@ -395,6 +395,28 @@ Server::~Server() noexcept {
 
 // @safe - Accepts new client connections
 // SAFETY: All unsafe operations wrapped in @unsafe blocks
+size_t ServerListener::content_size() {
+  return 0;
+}
+
+int ServerListener::handle_write() {
+  static std::atomic<bool> warned{false};
+  bool expected = false;
+  if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+    Log_warn("rrr::ServerListener::handle_write() is unsupported for READ-only listener");
+  }
+  return PollMode::NO_CHANGE;
+}
+
+void ServerListener::handle_error() {
+  static std::atomic<bool> warned{false};
+  bool expected = false;
+  if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+    Log_warn("rrr::ServerListener::handle_error() closing listener after poll error");
+  }
+  close();
+}
+
 bool ServerListener::handle_read() {
 //  fd_set fds;
 //  FD_ZERO(&fds);
@@ -485,7 +507,8 @@ ServerListener::ServerListener(rusty::Arc<RpcServiceContext> ctx, string addr)
       &hints);
   if (addr_result.is_err()) {
     Log_error("rrr::Server: getaddrinfo(): %s", gai_strerror(addr_result.unwrap_err()));
-    verify(0);  // Fatal error
+    server_sock_ = -1;
+    return;
   }
   gai_result_ = addr_result.unwrap();
 

@@ -202,11 +202,12 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Implemented on 2026-04-11 in `ServerConnection`/`DeferredReply`: `run_async()` now executes callbacks inline with explicit empty-callback error handling, `content_size()` returns live buffered byte count, and `handle_free()` is an explicit compatibility no-op (warn-once) instead of process abort.
 - [x] Define and enforce behavior of `run_async`/`content_size`/`handle_free` in server connection API.
   - Implemented on 2026-04-11 with regression coverage in `test_rpc_extended`: behavior is now deterministic and non-crashing for normal and empty-callback paths.
-- [ ] Add assertions/logs for unsupported code paths instead of hard abort in production builds.
+- [x] Add assertions/logs for unsupported code paths instead of hard abort in production builds.
+  - Implemented on 2026-04-11 in `ServerListener`/startup paths: listener `handle_write()` and `handle_error()` now warn instead of aborting (with safe close behavior), listener `content_size()` returns a stable value, and `getaddrinfo` failure now logs and returns startup error instead of `verify(0)` process abort.
 
 ### Tests TODO
 - [x] Add regression tests proving these APIs no longer crash process when called.
-  - Added on 2026-04-11 in `test_rpc_extended`: `ServerApiSafetyTest.ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerConnectionContentSizeAndHandleFreeAreSafe`, and `ServerApiSafetyTest.DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback`.
+  - Added on 2026-04-11 in `test_rpc_extended`: `ServerApiSafetyTest.ServerConnectionRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerConnectionContentSizeAndHandleFreeAreSafe`, `ServerApiSafetyTest.DeferredReplyRunAsyncExecutesInlineAndHandlesEmptyCallback`, `ServerApiSafetyTest.ServerListenerUnsupportedHooksAreNonFatal`, and `ServerApiSafetyTest.ServerStartWithInvalidHostReturnsError`.
 - [x] Run existing: `test_rpc_extended`, `test_rpc`, `test_rpc_state_integration`.
   - Verified on 2026-04-11 via full RPC-focused suite run (30/30 passed, including `test_rpc_extended`, `test_rpc`, and `test_rpc_state_integration`).
 
