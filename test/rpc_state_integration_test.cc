@@ -457,6 +457,123 @@ TEST_F(StateIntegrationTest, HeartbeatTimeoutTriggersReconnectRecovery) {
     delete server;
 }
 
+TEST_F(StateIntegrationTest, CircuitOpenFailFastThenHalfOpenRecovery) {
+    auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    auto client = Client::create(poll_thread_.as_ref().unwrap());
+
+    ReconnectPolicy reconnect_policy;
+    reconnect_policy.auto_reconnect = false;
+    client->set_reconnect_policy(reconnect_policy);
+
+    // Disable request buffering so connection failures surface immediately.
+    client->set_buffering_config(BufferingConfig::disabled());
+
+    CircuitBreakerConfig cb_config;
+    cb_config.enabled = true;
+    cb_config.failure_threshold = 1;
+    cb_config.success_threshold = 1;
+    cb_config.timeout_ms = 400;
+    client->set_circuit_breaker(cb_config);
+    HeartbeatConfig heartbeat;
+    heartbeat.enabled = true;
+    heartbeat.interval_ms = 20;
+    heartbeat.timeout_ms = 20;
+    heartbeat.max_missed = 1;
+    client->set_heartbeat(heartbeat);
+
+    ASSERT_EQ(client->connect(("127.0.0.1:" + std::to_string(test_port_)).c_str()), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return client->connected(); }, milliseconds(1000)));
+    client->set_reconnect_policy(reconnect_policy);
+    client->set_buffering_config(BufferingConfig::disabled());
+
+    std::string input = "cb-warmup";
+    auto warmup = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(warmup.is_ok());
+    auto warmup_fu = warmup.unwrap();
+    warmup_fu->wait();
+    ASSERT_EQ(warmup_fu->get_error_code(), 0);
+
+    // Drop server to generate transport failures.
+    delete server;
+    server = nullptr;
+
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return !client->connected();
+    }, milliseconds(5000)));
+
+    // First disconnected request records a transport failure in the circuit.
+    auto first_failure = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(first_failure.is_err());
+    ASSERT_EQ(first_failure.unwrap_err(), ENOTCONN);
+
+    // Circuit should now fail fast.
+    auto fail_fast = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(fail_fast.is_err());
+    ASSERT_EQ(fail_fast.unwrap_err(), EBUSY);
+
+    // Bring server back and reconnect transport.
+    server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));
+    auto service_box2 = rusty::make_box<StateTestService>();
+    server->reg_service(std::move(service_box2));
+    ASSERT_EQ(server->start(("0.0.0.0:" + std::to_string(test_port_)).c_str()), 0);
+
+    std::atomic<bool> reconnect_done{false};
+    std::atomic<bool> reconnect_success{false};
+    ASSERT_EQ(client->reconnect([&](bool success) {
+        reconnect_success.store(success);
+        reconnect_done.store(true);
+    }), 0);
+    ASSERT_TRUE(wait_for_condition([&]() { return reconnect_done.load(); }, milliseconds(4000)));
+    ASSERT_TRUE(reconnect_success.load());
+    ASSERT_TRUE(client->connected());
+
+    // Still open before timeout expires.
+    auto still_open = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(still_open.is_err());
+    EXPECT_EQ(still_open.unwrap_err(), EBUSY);
+
+    // After open timeout, one half-open probe should be allowed and succeed.
+    std::this_thread::sleep_for(milliseconds(500));
+
+    auto probe = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(probe.is_ok());
+    auto probe_fu = probe.unwrap();
+    probe_fu->wait();
+    ASSERT_EQ(probe_fu->get_error_code(), 0);
+
+    // success_threshold=1 should close the circuit for subsequent traffic.
+    auto after = client->request(
+        benchmark::BenchmarkService::FAST_NOP,
+        [&](Marshal& m) { m << input; }
+    );
+    ASSERT_TRUE(after.is_ok());
+    auto after_fu = after.unwrap();
+    after_fu->wait();
+    EXPECT_EQ(after_fu->get_error_code(), 0);
+
+    client->close();
+    delete server;
+}
+
 TEST_F(StateIntegrationTest, StateAfterServerShutdown) {
     // Start server
     auto server = new Server(rusty::Some(poll_thread_.as_ref().unwrap().clone()));

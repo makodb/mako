@@ -20,6 +20,7 @@
 #include "request_options.hpp"
 #include "load_balancer.hpp"
 #include "heartbeat.hpp"
+#include "circuit_breaker.hpp"
 
 namespace rrr {
 
@@ -556,6 +557,8 @@ class ClientConnection: public Pollable {
     rusty::Cell<KeepaliveConfig> keepalive_config_;
     // Heartbeat manager integrated into poll loop write/read lifecycle.
     mutable HeartbeatManager heartbeat_manager_;
+    // Circuit breaker integrated into live request dispatch.
+    mutable CircuitBreaker circuit_breaker_;
 
     // Last activity timestamp for idle detection (milliseconds since epoch)
     // Updated on send/receive operations
@@ -787,6 +790,17 @@ public:
     // @safe - Get current heartbeat configuration
     HeartbeatConfig heartbeat_config() const;
 
+    // @safe - Configure circuit breaker behavior
+    void set_circuit_breaker_config(const CircuitBreakerConfig& config) const;
+
+    // @safe - Get current circuit breaker configuration
+    CircuitBreakerConfig circuit_breaker_config() const;
+
+    // @safe - Get current circuit breaker state
+    CircuitState circuit_breaker_state() const {
+        return circuit_breaker_.state();
+    }
+
     /**
      * Update the last activity timestamp.
      * Called on send/receive operations to track connection activity.
@@ -853,6 +867,10 @@ private:
     void apply_keepalive_options();
     // @safe - Enqueue one internal heartbeat probe packet.
     void enqueue_heartbeat_probe() const;
+    // @safe - Whether an error should be counted as a circuit failure.
+    static bool should_trip_circuit_for_error(i32 err);
+    // @safe - Record one request result in the circuit breaker.
+    void record_circuit_result(i32 err) const;
 
 public:
 
@@ -886,6 +904,10 @@ public:
                 // Queue the request for later replay
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
+            if (!circuit_breaker_.allow_request()) {
+                return FutureResult::Err(EBUSY);
+            }
+            record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -898,7 +920,15 @@ public:
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
+            if (!circuit_breaker_.allow_request()) {
+                return FutureResult::Err(EBUSY);
+            }
+            record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
+        }
+
+        if (!circuit_breaker_.allow_request()) {
+            return FutureResult::Err(EBUSY);
         }
 
         auto fu = Future::create(xid_counter_.next(), attr);
@@ -922,6 +952,7 @@ public:
                 buffering_config_.behavior == DisconnectBehavior::QUEUE) {
                 return queue_request(rpc_id, attr, std::forward<F>(write_fn));
             }
+            record_circuit_result(ENOTCONN);
             return FutureResult::Err(ENOTCONN);
         }
 
@@ -1294,6 +1325,8 @@ class Client {
     rusty::Cell<KeepaliveConfig> pending_keepalive_config_;
     // Pending heartbeat config (applied when connection is created)
     rusty::Cell<HeartbeatConfig> pending_heartbeat_config_{HeartbeatConfig::disabled()};
+    // Pending circuit-breaker config (applied when connection is created)
+    rusty::Cell<CircuitBreakerConfig> pending_circuit_breaker_config_{CircuitBreakerConfig::disabled()};
 
 public:
     // @safe - Jetpack-specific public members (Cell for interior mutability through Arc)
@@ -1646,6 +1679,39 @@ public:
             return guard->as_ref().unwrap()->heartbeat_config();
         }
         return pending_heartbeat_config_.get();
+    }
+
+    /**
+     * Configure circuit breaker behavior.
+     * If called before connect(), the config is stored and applied at connect time.
+     * If called after connect(), the config is applied immediately.
+     */
+    // @safe - Uses Cell for interior mutability
+    void set_circuit_breaker(const CircuitBreakerConfig& config) const {
+        pending_circuit_breaker_config_.set(config);
+
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            guard->as_ref().unwrap()->set_circuit_breaker_config(config);
+        }
+    }
+
+    // @safe - Get current circuit breaker configuration
+    CircuitBreakerConfig circuit_breaker_config() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->circuit_breaker_config();
+        }
+        return pending_circuit_breaker_config_.get();
+    }
+
+    // @safe - Get current circuit breaker state
+    CircuitState circuit_breaker_state() const {
+        auto guard = connection_.borrow();
+        if (guard->is_some()) {
+            return guard->as_ref().unwrap()->circuit_breaker_state();
+        }
+        return CircuitState::CLOSED;
     }
 
     /**

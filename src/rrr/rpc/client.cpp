@@ -118,6 +118,7 @@ ClientConnection::ClientConnection(rusty::Arc<PollThread> poll_thread_worker)
       socket_(-1),
       state_machine_(),
       heartbeat_manager_(HeartbeatConfig::disabled()),
+      circuit_breaker_(CircuitBreakerConfig::disabled()),
       pending_queue_(buffering_config_.to_queue_config()) {
 }
 
@@ -545,6 +546,16 @@ HeartbeatConfig ClientConnection::heartbeat_config() const {
   return heartbeat_manager_.config();
 }
 
+// @safe - Configure circuit breaker and reset state.
+void ClientConnection::set_circuit_breaker_config(const CircuitBreakerConfig& config) const {
+  circuit_breaker_.set_config(config);
+}
+
+// @safe - Returns circuit breaker config snapshot.
+CircuitBreakerConfig ClientConnection::circuit_breaker_config() const {
+  return circuit_breaker_.config();
+}
+
 // @unsafe - Uses RequestQueue methods (not borrow-checked)
 size_t ClientConnection::replay_pending_requests() {
   size_t replayed = 0;
@@ -618,6 +629,36 @@ void ClientConnection::enqueue_heartbeat_probe() const {
   *guard << static_cast<i32>(kInternalHeartbeatRpcId);
   i32 packet_size = guard->get_and_reset_write_cnt();
   guard->write_bookmark(bmark, packet_size);
+}
+
+// @safe - Checks whether an error should contribute to circuit tripping.
+bool ClientConnection::should_trip_circuit_for_error(i32 err) {
+  switch (err) {
+    case 0:
+      return false;
+    case ENOTCONN:
+    case ECONNREFUSED:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ETIMEDOUT:
+    case EHOSTUNREACH:
+    case ENETUNREACH:
+    case EPIPE:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// @safe - Records success/failure in circuit breaker.
+void ClientConnection::record_circuit_result(i32 err) const {
+  if (err == 0) {
+    circuit_breaker_.record_success();
+    return;
+  }
+  if (should_trip_circuit_for_error(err)) {
+    circuit_breaker_.record_failure();
+  }
 }
 
 // @safe - Error handler - transitions to FAILED state
@@ -777,6 +818,7 @@ bool ClientConnection::handle_read() {
         } else {
           metrics_.record_request_failed();
         }
+        record_circuit_result(v_error_code.get());
 
         fu->notify_ready(fu);  // Pass Arc to self for callback safety
 
@@ -897,6 +939,8 @@ int Client::connect(const char* addr, bool client) const {
   mut_conn.set_keepalive(pending_keepalive_config_.get());
   // Apply pending heartbeat config before connecting
   mut_conn.set_heartbeat_config(pending_heartbeat_config_.get());
+  // Apply pending circuit-breaker config before connecting
+  mut_conn.set_circuit_breaker_config(pending_circuit_breaker_config_.get());
 
   // Call connect through mutable reference
   int result = 0;

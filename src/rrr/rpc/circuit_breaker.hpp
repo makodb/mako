@@ -144,6 +144,12 @@ public:
         : config_(config)
     {}
 
+    // @safe - Replace runtime config and reset circuit state.
+    void set_config(const CircuitBreakerConfig& config) {
+        config_ = config;
+        reset();
+    }
+
     // @safe - Copy constructor
     CircuitBreaker(const CircuitBreaker&) = default;
     CircuitBreaker& operator=(const CircuitBreaker&) = default;
