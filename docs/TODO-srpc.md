@@ -15,7 +15,8 @@ Close correctness gaps between SRPC documented behavior and production behavior,
   - Re-verified on 2026-04-11 with focused policy coverage (`test_rpc_timeout_retry`, `test_rpc_reconnect_policy`, `test_rpc_reconnect_integration`, `test_rpc_callbacks`, `test_rpc_metrics`; 5/5 passed) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`; 32/32 passed).
 - [x] Graceful drain blocks on real in-flight request count.
   - Re-verified on 2026-04-11 with focused drain coverage (`test_rpc_state_integration`, `test_rpc_graceful_shutdown`; 2/2 passed) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`; 32/32 passed).
-- [ ] SRPC docs match shipping API names and semantics.
+- [x] SRPC docs match shipping API names and semantics.
+  - Re-verified on 2026-04-11 with focused docs/API guards (`test_rpc_docs_symbols`, `test_rpc_docs_snippet_compile`; 2/2 passed) and full RPC-focused suite pass (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`; 32/32 passed).
 - [ ] All required tests (below) pass in Docker CI.
 
 ## Workstream A: Fix Client Close/Error FD Leak (P0)
