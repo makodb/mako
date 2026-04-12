@@ -1,3 +1,7 @@
+#include "procedure.h"
+#include "rcc/tx.h"
+%%
+
 namespace janus;
 
 abstract service MultiPaxos {
@@ -578,3 +582,4 @@ abstract service ConfigService {
     // Check if sharding policy is available (returns 1 if policy exists, 0 otherwise)
     defer HasShardingPolicy( | i32 has_policy);
 }
+%%

@@ -15,7 +15,7 @@ an explicit migration map that feeds leaf `3b` and leaf `3c`.
 2. Reproduced service compile fallout against temp typed `rcc_rpc.h`:
    - Probe: `#include "src/deptran/service.h"`
    - Compiler: `g++ -std=c++23 -fsyntax-only`
-   - Key first-error signatures:
+   - Historical first-error signatures (now addressed by leaf 3b.1):
      - `SimpleCommand does not name a type`
      - `parent_set_t does not name a type`
      - `Rpc*Request/Rpc*Response has no member {cmd, txn_cmds, parents, p, x}`
@@ -24,7 +24,7 @@ an explicit migration map that feeds leaf `3b` and leaf `3c`.
 
 | Subsystem | Current prep status | Typed migration meaning |
 | --- | --- | --- |
-| `service` | FAIL | Primary migration front; typed `ClassicService` surface still mismatched with in-tree service/type visibility and wrapper field assumptions. |
+| `service` | PASS | Type-visibility gate for typed `Classic` request/response structs is now unblocked; remaining work is high-traffic callsite migration. |
 | `communicator` | PASS | Header-only probe stable; keep as regression guard while callsites are migrated. |
 | `config/control` | PASS | Header-only probe stable; preserve while `rcc_rpc` service/proxy migration proceeds. |
 
@@ -32,7 +32,7 @@ an explicit migration map that feeds leaf `3b` and leaf `3c`.
 
 | Bucket | Symptom signature | Likely root cause | Representative RPCs |
 | --- | --- | --- | --- |
-| A. Type visibility | `SimpleCommand` / `parent_set_t` unknown in generated typed structs | Generated request/response structs rely on types not visible at inclusion points of `rcc_rpc.h` in service compilation units | `SimpleCmd`, `TapirFastAccept`, `CarouselFastAccept`, `RccDispatch`, `RccCommit`, `RccPreAccept`, `RccAccept`, `RccInquire` |
+| A. Type visibility | `SimpleCommand` / `parent_set_t` unknown in generated typed structs | Generated request/response structs relied on types not visible at inclusion points of `rcc_rpc.h` in service compilation units; fixed in leaf 3b.1 via typed-header preamble includes | `SimpleCmd`, `TapirFastAccept`, `CarouselFastAccept`, `RccDispatch`, `RccCommit`, `RccPreAccept`, `RccAccept`, `RccInquire` |
 | B. Typed field bridge mismatch | `Rpc*Request`/`Rpc*Response` missing expected fields (`cmd`, `txn_cmds`, `parents`, `p`, `x`) in bridge paths | Legacy-to-typed wrapper assumptions drift in generated/consuming code paths for `ClassicService` methods | Same as bucket A, especially RCC/Janus/Tapir methods |
 | C. Downstream override/callsite drift | override/callsite compile fallout after typed bridge enters service surface | Existing `ClassicServiceImpl` and proxied method usage still shaped around pointer-era signatures | `src/deptran/service.h`, `src/deptran/service.cc`, communicator/protocol callsites |
 
@@ -50,8 +50,9 @@ paths working through typed request/response APIs plus compatibility wrappers.
 | P1 | High-traffic proxy/service callsite migration to typed overloads | `src/deptran/service.cc`, `src/deptran/communicator.h`, `src/deptran/communicator.cc`, `src/deptran/rcc/commo.h`, `src/deptran/rcc/commo.cc`, `src/deptran/rcc/coord.cc` | Representative high-traffic paths compile using typed request/response calls while legacy wrappers still build. |
 
 Leaf 3b validation gates:
-- `test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep` transitions service probe from
-  expected fail to expected pass (or equivalent dedicated service-compile guard).
+- `test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep` keeps service/communicator/
+  config-control probes in all-pass state while high-traffic typed callsite
+  migration lands.
 - Existing `rcc_rpc` typed sync guard keeps passing:
   `test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`.
 - RPC-focused ctest regex suite remains green.
@@ -75,11 +76,11 @@ Leaf 3c validation gates:
 
 ## Sequencing
 
-1. Execute leaf 3b P0/P1 items first (service compile unlock + high-traffic
-   classic callsites).
-2. Only after service probes and high-traffic paths stabilize, execute leaf 3c
+1. Leaf 3b.1 (service compile unlock/type visibility) is completed.
+2. Execute remaining leaf 3b P1 items (high-traffic classic callsites).
+3. Only after service probes and high-traffic paths stabilize, execute leaf 3c
    to migrate remaining protocol surfaces and cleanup.
-3. Keep prep + sync guards as continuous drift checks while 3b/3c land.
+4. Keep prep + sync guards as continuous drift checks while 3b/3c land.
 
 ## Risks and Mitigations
 

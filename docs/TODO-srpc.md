@@ -387,7 +387,8 @@ compatibility wrappers for incremental rollout.
     - Decomposed on 2026-04-12 after LOC sizing in a temp generation probe: typed `rcc_rpc` output is large (`rcc_rpc.h` ~17,029 LOC; `rcc_rpc.py` ~2,243 LOC), so this prep leaf is split to keep handwritten changes <500 LOC and make fallout review tractable.
     - [x] Leaf 3a.1 (`rcc_rpc` inventory harness): add a reproducible typed-generation + compile-fallout inventory harness (service/communicator/config-control subsystems) and record initial findings in docs.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_prep_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`).
-      - Harness behavior: generates typed `rcc_rpc` artifacts in temp space, validates typed header marker/shape, and runs subsystem compile probes with expected prep baseline (`service` fail, `communicator` pass, `config/control` pass) while asserting service-fallout markers are present.
+      - Harness behavior: generates typed `rcc_rpc` artifacts in temp space, validates typed header marker/shape, and runs subsystem compile probes for `service`/`communicator`/`config-control`.
+      - Baseline updated on 2026-04-12 after leaf 3b.1: prep probe expectation is now all-pass (`service`, `communicator`, `config/control`).
       - Initial inventory recorded in `docs/rpc/rcc_rpc_typed_prep_inventory.md`.
     - [x] Leaf 3a.2 (`rcc_rpc` in-tree sync): land/generated-sync guard for in-tree typed `rcc_rpc` artifacts in selected mode once prep inventory is stable.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_sync_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`).
@@ -398,6 +399,13 @@ compatibility wrappers for incremental rollout.
       - Scope check: docs-only planning artifact (<500 LOC) with evidence-driven buckets from prep harness output and explicit file-level sequencing for leaf 3b (`ClassicService`/`ClassicProxy`) and leaf 3c (remaining protocol surfaces).
       - Captured migration buckets for service fallout (`SimpleCommand` / `parent_set_t` visibility, typed bridge field alignment, downstream override/callsite drift) plus leaf-specific validation gates to keep prep/sync guards active while migrations land.
   - [ ] Leaf 3b (`rcc_rpc` migration part 1): migrate high-traffic `ClassicService`/`ClassicProxy` callsites to typed request/response APIs while keeping compatibility wrappers.
+    - Decomposed on 2026-04-12 after sizing `Classic` migration scope; split into sub-leaves to keep handwritten changes under ~500 LOC while preserving typed+legacy compatibility at each step.
+    - [x] Leaf 3b.1 (`rcc_rpc` type visibility bridge): unblock typed `Classic` request/response struct compilation by injecting owner-type includes (`SimpleCommand`, `parent_set_t`) into generated `rcc_rpc` header preamble.
+      - Implemented on 2026-04-12 in `src/deptran/rcc_rpc.rpc` by adding rpcgen C++ header preamble includes (`procedure.h`, `rcc/tx.h`) via `%%` split sections.
+      - Updated prep harness expectations in `test/rpcgen_in_tree_rcc_rpc_typed_prep_test.py` to all-pass subsystem baseline and added explicit typed-header include-shape assertions.
+      - Validation on 2026-04-12: prep harness now passes with `service`/`communicator`/`config-control` all green; sync guard remains green.
+    - [ ] Leaf 3b.2 (`ClassicProxy` high-traffic callsites): migrate communicator/rcc classic high-traffic proxy callsites (`RccDispatch`/`RccPreAccept`/`RccAccept`/`RccCommit` and related fast paths) to typed request/response overloads while retaining wrapper compatibility.
+    - [ ] Leaf 3b.3 (`ClassicService` bridge alignment): migrate corresponding high-traffic `ClassicServiceImpl` typed bridge callsites and remove remaining pointer-assumption drift in part-1 surfaces.
   - [ ] Leaf 3c (`rcc_rpc` migration part 2): migrate remaining in-tree services/proxies and remove transitional shims no longer needed after typed callsites land.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
 

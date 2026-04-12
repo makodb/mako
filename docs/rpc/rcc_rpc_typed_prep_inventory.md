@@ -44,7 +44,26 @@ g++ -std=c++23 -fsyntax-only \
 | `communicator` | `src/deptran/communicator.h` | PASS | Header-level typed generation compiles in prep probe. |
 | `config/control` | `src/deptran/config_service.h`, `src/deptran/config_client.h`, `src/deptran/benchmark_control_rpc.h` | PASS | Config/control header surfaces compile in prep probe. |
 
+## Updated Baseline (2026-04-12, after leaf 3b.1)
+
+`rcc_rpc.rpc` now injects typed-header preamble includes for high-traffic
+`Classic` value types:
+
+- `#include "procedure.h"` (`SimpleCommand`)
+- `#include "rcc/tx.h"` (`parent_set_t`)
+
+Current prep harness baseline is now all-pass:
+
+| Subsystem | Probe Include Surface | Result | Notes |
+| --- | --- | --- | --- |
+| `service` | `src/deptran/service.h` | PASS | Type-visibility fallout for `SimpleCommand` / `parent_set_t` resolved in typed generated header preamble. |
+| `communicator` | `src/deptran/communicator.h` | PASS | Unchanged pass status. |
+| `config/control` | `src/deptran/config_service.h`, `src/deptran/config_client.h`, `src/deptran/benchmark_control_rpc.h` | PASS | Unchanged pass status. |
+
 ## Follow-up Mapping
 
-- `Leaf 3b` should prioritize `service` fallout resolution (`ClassicService`/`ClassicProxy` and `ClientControl` bridge callsites/signatures).
-- `Leaf 3c` should handle remaining subsystem migrations after `service` core paths stabilize.
+- `Leaf 3b` should prioritize high-traffic `ClassicService`/`ClassicProxy`
+  callsite migration to typed request/response APIs now that service header
+  type visibility is unblocked.
+- `Leaf 3c` should handle remaining subsystem migrations and transitional shim
+  cleanup after `Classic` high-traffic paths stabilize.

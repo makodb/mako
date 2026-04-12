@@ -49,6 +49,8 @@ def require_contains(text: str, needle: str) -> None:
 
 def verify_typed_header_shape(header_text: str) -> None:
     require_contains(header_text, "// rpcgen cpp mode: typed")
+    require_contains(header_text, '#include "procedure.h"')
+    require_contains(header_text, '#include "rcc/tx.h"')
     require_contains(header_text, "class ClassicService: public rrr::Service")
     require_contains(header_text, "class ClassicProxy")
     require_contains(header_text, "class ClientControlService: public rrr::Service")
@@ -111,18 +113,12 @@ def verify_results(results: list[ProbeResult]) -> None:
         details = "\n".join(mismatches)
         raise AssertionError(f"rcc_rpc typed prep inventory status drifted:\n{details}")
 
-    # Current service fallout is expected in prep stage; keep an explicit marker
-    # so we notice if the failure shifts away from rcc_rpc typed bridge issues.
+    # Service probe should compile after typed type-visibility bridge updates.
     service = next((r for r in results if r.probe.name == "service"), None)
     if service is None:
         raise AssertionError("missing service probe result")
-    if service.status != "fail":
-        raise AssertionError("service probe unexpectedly passed; update prep inventory/migration leaf")
-    service_markers = ["TxReply", "DispatchTxnTypedFuture", "marked 'override', but does not override"]
-    if not any(marker in service.stderr_full for marker in service_markers):
-        raise AssertionError(
-            "service probe failed, but expected typed-fallout markers were not found in stderr excerpt"
-        )
+    if service.status != "pass":
+        raise AssertionError("service probe failed; typed type-visibility bridge regressed")
 
 
 def print_summary(results: list[ProbeResult]) -> None:
@@ -156,7 +152,7 @@ def main() -> int:
         Probe(
             name="service",
             subsystem="service",
-            expected_status="fail",
+            expected_status="pass",
             source='#include "src/deptran/service.h"\nint main() { return 0; }\n',
         ),
         Probe(
