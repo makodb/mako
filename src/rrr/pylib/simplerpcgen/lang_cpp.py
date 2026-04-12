@@ -34,6 +34,12 @@ def typed_response_struct_name(func):
 def typed_result_type(func):
     return "rusty::Result<%s, rrr::i32>" % typed_response_struct_name(func)
 
+def typed_proxy_future_wrapper_name(func):
+    return "%sTypedFuture" % func.name
+
+def typed_proxy_future_result_type(func):
+    return "rusty::Result<%s, rrr::i32>" % typed_proxy_future_wrapper_name(func)
+
 def typed_struct_fields(args, fallback_prefix):
     fields = []
     for idx, arg in enumerate(args):
@@ -114,6 +120,67 @@ def emit_typed_proxy_sync_signature(func, async_call_params, f):
         if len(async_call_params) == 0:
             f.writeln("(void)req;")
         f.writeln("return %s::Ok(__typed_resp__);" % result_type)
+    f.writeln("}")
+
+def emit_typed_proxy_future_wrapper(func, f):
+    wrapper_name = typed_proxy_future_wrapper_name(func)
+    response_struct_name = typed_response_struct_name(func)
+    result_type = typed_result_type(func)
+    output_fields = typed_struct_fields(func.output, "out")
+
+    f.writeln("class %s {" % wrapper_name)
+    f.writeln("private:")
+    with f.indent():
+        f.writeln("rusty::Arc<rrr::Future> __fu__;")
+    f.writeln("public:")
+    with f.indent():
+        f.writeln("explicit %s(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }" % wrapper_name)
+        f.writeln("bool ready() const {")
+        with f.indent():
+            f.writeln("return __fu__->ready();")
+        f.writeln("}")
+        f.writeln("void wait() const {")
+        with f.indent():
+            f.writeln("__fu__->wait();")
+        f.writeln("}")
+        f.writeln("rrr::i32 get_error_code() const {")
+        with f.indent():
+            f.writeln("return __fu__->get_error_code();")
+        f.writeln("}")
+        f.writeln("rusty::Arc<rrr::Future> raw_future() const {")
+        with f.indent():
+            f.writeln("return __fu__;")
+        f.writeln("}")
+        f.writeln("%s resolve() const {" % result_type)
+        with f.indent():
+            f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
+            f.writeln("if (__ret__ != 0) {")
+            with f.indent():
+                f.writeln("return %s::Err(__ret__);" % result_type)
+            f.writeln("}")
+            f.writeln("%s __typed_resp__;" % response_struct_name)
+            for _, field_name in output_fields:
+                f.writeln("__fu__->get_reply() >> __typed_resp__.%s;" % field_name)
+            f.writeln("return %s::Ok(__typed_resp__);" % result_type)
+        f.writeln("}")
+    f.writeln("};")
+
+def emit_typed_proxy_async_signature(func, async_call_params, f):
+    request_struct_name = typed_request_struct_name(func)
+    wrapper_name = typed_proxy_future_wrapper_name(func)
+    result_type = typed_proxy_future_result_type(func)
+    typed_call_params = async_call_params + ["__fu_attr__"]
+
+    f.writeln("%s async_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (result_type, func.name, request_struct_name))
+    with f.indent():
+        f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(typed_call_params)))
+        f.writeln("if (__fu_result__.is_err()) {")
+        with f.indent():
+            f.writeln("return %s::Err(__fu_result__.unwrap_err());" % result_type)
+        f.writeln("}")
+        if len(async_call_params) == 0:
+            f.writeln("(void)req;")
+        f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
     f.writeln("}")
 
 def emit_service_and_proxy(service, f, rpc_table):
@@ -299,6 +366,8 @@ def emit_service_and_proxy(service, f, rpc_table):
                     sync_func_params += "%s* out_%d" % (out_arg.type, out_counter),
                     sync_out_params += "out_%d" % out_counter,
                 out_counter += 1
+            if func.attr != "raw":
+                emit_typed_proxy_future_wrapper(func, f)
             f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
             with f.indent():
                 if len(async_call_params) > 0:
@@ -310,6 +379,8 @@ def emit_service_and_proxy(service, f, rpc_table):
                 else:
                     f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
             f.writeln("}")
+            if func.attr != "raw":
+                emit_typed_proxy_async_signature(func, typed_async_call_params, f)
             f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
             with f.indent():
                 f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))

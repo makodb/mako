@@ -1016,6 +1016,10 @@ methods; in compatibility mode those overloads bridge to pointer handlers
 Generated proxies now expose typed sync overloads with the same request/response
 shape for non-raw methods; they currently run through the existing async/future
 pipeline and return `Err(i32)` on transport or RPC error codes.
+Generated proxies now also expose typed async overloads for non-raw methods:
+`async_Method(const MethodRequest&, const FutureAttr&)` returns
+`Result<MethodTypedFuture, rrr::i32>`, and `MethodTypedFuture::resolve()`
+decodes the underlying wire reply into `MethodResponse`.
 
 ### Generated Client Usage
 
@@ -1037,7 +1041,7 @@ if (fu_result.is_ok()) {
 }
 
 // The compatibility sync wrapper returns i32 status.
-// Generated typed sync request/response overloads are also available.
+// Generated typed sync and typed async request/response overloads are also available.
 ```
 
 ### Planned Typed Request/Response API (Migration Target)

@@ -331,7 +331,10 @@ compatibility wrappers for incremental rollout.
   - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: generated `*Proxy` classes now emit typed sync overloads for each non-raw method with shape `rusty::Result<MethodResponse, rrr::i32> Method(const MethodRequest& req)`.
   - Compatibility behavior in this leaf: typed sync overloads reuse existing generated async request path, preserve transport/error codes as `Err(i32)`, and decode reply payload into typed response structs on success.
   - Scope check: completed within small-change budget (<500 non-generated LOC).
-- [ ] Generate typed async client path (`Future`/task wrapper) that resolves to typed `MethodResponse` instead of manual out-params.
+- [x] Generate typed async client path (`Future`/task wrapper) that resolves to typed `MethodResponse` instead of manual out-params.
+  - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: generated `*Proxy` classes now emit per-method typed async wrappers (`<method>TypedFuture`) for each non-raw method with `resolve()` returning `rusty::Result<MethodResponse, rrr::i32>`.
+  - Generated typed async overload shape: `async_<method>(const MethodRequest& req, const rrr::FutureAttr& attr)` returns `rusty::Result<<method>TypedFuture, rrr::i32>`, delegating to legacy async request path while preserving request/transport error codes.
+  - Scope check: completed within small-change budget (<500 non-generated LOC).
 - [ ] Keep legacy pointer-style service/proxy signatures as compatibility wrappers that delegate to typed methods.
 - [ ] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
 - [ ] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
@@ -343,6 +346,7 @@ compatibility wrappers for incremental rollout.
   - Added on 2026-04-12: `test/rpcgen_typed_structs_test.py` + CTest wiring `test_rpc_rpcgen_typed_structs`. The test generates a temporary `.rpc` fixture and asserts typed struct emission for named/unnamed/empty/multi-field signatures and duplicate method names across multiple services.
   - Extended on 2026-04-12 to assert typed service signature generation and compatibility behavior (`Result<...>` method overloads for non-raw methods, plus `defer` fallback to `Err(ENOTSUP)`).
   - Extended on 2026-04-12 to assert typed proxy sync signature generation and behavior (typed overload uses async path, propagates request/transport error codes, decodes typed replies, and excludes raw handlers).
+  - Extended on 2026-04-12 to assert typed proxy async wrapper/signature generation and behavior (`<method>TypedFuture::resolve()`, typed async overload delegation to legacy async path, and raw-method exclusion).
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.

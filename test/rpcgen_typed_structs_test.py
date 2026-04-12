@@ -170,6 +170,67 @@ def verify_beta_service_block(block: str) -> None:
 def verify_alpha_proxy_block(block: str) -> None:
     assert_contains(
         block,
+        "class pingTypedFuture {\n"
+        "    private:\n"
+        "        rusty::Arc<rrr::Future> __fu__;\n"
+        "    public:\n"
+        "        explicit pingTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }\n"
+        "        bool ready() const {\n"
+        "            return __fu__->ready();\n"
+        "        }\n"
+        "        void wait() const {\n"
+        "            __fu__->wait();\n"
+        "        }\n"
+        "        rrr::i32 get_error_code() const {\n"
+        "            return __fu__->get_error_code();\n"
+        "        }\n"
+        "        rusty::Arc<rrr::Future> raw_future() const {\n"
+        "            return __fu__;\n"
+        "        }\n"
+        "        rusty::Result<pingResponse, rrr::i32> resolve() const {\n"
+        "            rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "            if (__ret__ != 0) {\n"
+        "                return rusty::Result<pingResponse, rrr::i32>::Err(__ret__);\n"
+        "            }\n"
+        "            pingResponse __typed_resp__;\n"
+        "            __fu__->get_reply() >> __typed_resp__.msg;\n"
+        "            return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "        }\n"
+        "    };",
+    )
+    assert_contains(
+        block,
+        "rusty::Result<pingTypedFuture, rrr::i32> async_ping(const pingRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
+        "        auto __fu_result__ = this->async_ping(req.id, __fu_attr__);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<pingTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        return rusty::Result<pingTypedFuture, rrr::i32>::Ok(pingTypedFuture(__fu_result__.unwrap()));\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "rusty::Result<nopTypedFuture, rrr::i32> async_nop(const nopRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
+        "        auto __fu_result__ = this->async_nop(__fu_attr__);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<nopTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        (void)req;\n"
+        "        return rusty::Result<nopTypedFuture, rrr::i32>::Ok(nopTypedFuture(__fu_result__.unwrap()));\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "rusty::Result<streamTypedFuture, rrr::i32> async_stream(const streamRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
+        "        auto __fu_result__ = this->async_stream(req.stream_id, __fu_attr__);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<streamTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        return rusty::Result<streamTypedFuture, rrr::i32>::Ok(streamTypedFuture(__fu_result__.unwrap()));\n"
+        "    }",
+    )
+    assert_contains(
+        block,
         "rusty::Result<pingResponse, rrr::i32> ping(const pingRequest& req) {\n"
         "        auto __fu_result__ = this->async_ping(req.id);\n"
         "        if (__fu_result__.is_err()) {\n"
@@ -221,9 +282,53 @@ def verify_alpha_proxy_block(block: str) -> None:
     )
     if "rusty::Result<passthroughResponse, rrr::i32> passthrough(const passthroughRequest& req)" in block:
         raise AssertionError("raw proxy handlers should not generate typed sync overloads")
+    if "class passthroughTypedFuture {" in block:
+        raise AssertionError("raw proxy handlers should not generate typed async wrappers")
+    if "rusty::Result<passthroughTypedFuture, rrr::i32> async_passthrough(const passthroughRequest& req" in block:
+        raise AssertionError("raw proxy handlers should not generate typed async signatures")
 
 
 def verify_beta_proxy_block(block: str) -> None:
+    assert_contains(
+        block,
+        "class pingTypedFuture {\n"
+        "    private:\n"
+        "        rusty::Arc<rrr::Future> __fu__;\n"
+        "    public:\n"
+        "        explicit pingTypedFuture(rusty::Arc<rrr::Future> fu): __fu__(std::move(fu)) { }\n"
+        "        bool ready() const {\n"
+        "            return __fu__->ready();\n"
+        "        }\n"
+        "        void wait() const {\n"
+        "            __fu__->wait();\n"
+        "        }\n"
+        "        rrr::i32 get_error_code() const {\n"
+        "            return __fu__->get_error_code();\n"
+        "        }\n"
+        "        rusty::Arc<rrr::Future> raw_future() const {\n"
+        "            return __fu__;\n"
+        "        }\n"
+        "        rusty::Result<pingResponse, rrr::i32> resolve() const {\n"
+        "            rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "            if (__ret__ != 0) {\n"
+        "                return rusty::Result<pingResponse, rrr::i32>::Err(__ret__);\n"
+        "            }\n"
+        "            pingResponse __typed_resp__;\n"
+        "            __fu__->get_reply() >> __typed_resp__.echoed;\n"
+        "            return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "        }\n"
+        "    };",
+    )
+    assert_contains(
+        block,
+        "rusty::Result<pingTypedFuture, rrr::i32> async_ping(const pingRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
+        "        auto __fu_result__ = this->async_ping(req.other_id, __fu_attr__);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<pingTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        return rusty::Result<pingTypedFuture, rrr::i32>::Ok(pingTypedFuture(__fu_result__.unwrap()));\n"
+        "    }",
+    )
     assert_contains(
         block,
         "rusty::Result<pingResponse, rrr::i32> ping(const pingRequest& req) {\n"
