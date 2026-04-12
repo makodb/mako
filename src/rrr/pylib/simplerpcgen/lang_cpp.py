@@ -22,10 +22,49 @@ def emit_struct(struct, f):
     f.writeln("}")
     f.writeln()
 
+def typed_struct_name(func_name, suffix):
+    return "%s%s" % (func_name, suffix)
+
+def typed_struct_fields(args, fallback_prefix):
+    fields = []
+    for idx, arg in enumerate(args):
+        if arg.name != None:
+            field_name = arg.name
+        else:
+            field_name = "%s_%d" % (fallback_prefix, idx)
+        fields += (arg.type, field_name),
+    return fields
+
+def emit_marshaled_typed_struct(struct_name, fields, f):
+    f.writeln("struct %s {" % struct_name)
+    with f.indent():
+        for field_type, field_name in fields:
+            f.writeln("%s %s;" % (field_type, field_name))
+    f.writeln("};")
+    f.writeln("friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const %s& o) {" % struct_name)
+    with f.indent():
+        for _, field_name in fields:
+            f.writeln("m << o.%s;" % field_name)
+        f.writeln("return m;")
+    f.writeln("}")
+    f.writeln("friend inline rrr::Marshal& operator >>(rrr::Marshal& m, %s& o) {" % struct_name)
+    with f.indent():
+        for _, field_name in fields:
+            f.writeln("m >> o.%s;" % field_name)
+        f.writeln("return m;")
+    f.writeln("}")
+    f.writeln()
+
 def emit_service_and_proxy(service, f, rpc_table):
     f.writeln("class %sService: public rrr::Service {" % service.name)
     f.writeln("public:")
     with f.indent():
+        f.writeln("// Typed request/response scaffolding generated from RPC signature lists.")
+        for func in service.functions:
+            request_struct_name = typed_struct_name(func.name, "Request")
+            response_struct_name = typed_struct_name(func.name, "Response")
+            emit_marshaled_typed_struct(request_struct_name, typed_struct_fields(func.input, "in"), f)
+            emit_marshaled_typed_struct(response_struct_name, typed_struct_fields(func.output, "out"), f)
         f.writeln("enum {")
         with f.indent():
             for func in service.functions:

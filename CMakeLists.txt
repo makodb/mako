@@ -1796,6 +1796,12 @@ if(BUILD_TESTS)
                 --cxx ${CMAKE_CXX_COMPILER}
                 --min-snippets 9
     )
+    add_test(
+        NAME test_rpc_rpcgen_typed_structs
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rpcgen_typed_structs_test.py
+                --repo ${CMAKE_SOURCE_DIR}
+    )
 
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)

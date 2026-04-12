@@ -320,7 +320,9 @@ to one request type + one response type per method, while preserving
 compatibility wrappers for incremental rollout.
 
 ### Code TODO
-- [ ] Extend `rpcgen` C++ codegen to synthesize `MethodRequest` and `MethodResponse` structs from existing input/output lists.
+- [x] Extend `rpcgen` C++ codegen to synthesize `MethodRequest` and `MethodResponse` structs from existing input/output lists.
+  - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: each generated `*Service` now emits per-method `MethodRequest`/`MethodResponse` nested structs (name pattern: `<method>Name + Request/Response`) with marshal/unmarshal operators, derived directly from parsed input/output argument lists (including zero-field and unnamed-arg fallback cases).
+  - Scope check: completed within small-change budget (<500 non-generated LOC).
 - [ ] Generate typed service signatures: `virtual rusty::Result<MethodResponse, rrr::i32> Method(const MethodRequest& req)`.
 - [ ] Generate typed client sync signatures returning `rusty::Result<MethodResponse, rrr::i32>`.
 - [ ] Generate typed async client path (`Future`/task wrapper) that resolves to typed `MethodResponse` instead of manual out-params.
@@ -331,7 +333,8 @@ compatibility wrappers for incremental rollout.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
 
 ### Tests TODO
-- [ ] Add rpcgen golden tests for method shapes with 0/1/N outputs to validate generated request/response struct names and signatures.
+- [x] Add rpcgen golden tests for method shapes with 0/1/N outputs to validate generated request/response struct names and signatures.
+  - Added on 2026-04-12: `test/rpcgen_typed_structs_test.py` + CTest wiring `test_rpc_rpcgen_typed_structs`. The test generates a temporary `.rpc` fixture and asserts typed struct emission for named/unnamed/empty/multi-field signatures and duplicate method names across multiple services.
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.

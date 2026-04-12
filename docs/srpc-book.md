@@ -1002,9 +1002,10 @@ python3 pylib/simplerpc/rpcgen.py my_service.rpc
 ```
 
 This produces:
-- Client proxy class with typed methods
+- Client proxy class with compatibility pointer-style sync/async methods
 - Server dispatch skeleton
 - Marshal/unmarshal code for custom structs
+- Per-method typed scaffolding structs (`MethodRequest`/`MethodResponse`) synthesized from RPC input/output lists
 
 Current generated C++ service/proxy boundaries still use out-parameters
 (`T* out`) for return values in compatibility mode.
