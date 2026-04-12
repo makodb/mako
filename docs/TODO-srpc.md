@@ -383,7 +383,7 @@ compatibility wrappers for incremental rollout.
     - [x] Leaf 2c (`network` guard): add in-tree typed compile/sync regression guard for `network.rpc` generated header + typed/legacy proxy callsite compatibility.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_network_typed_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_network_typed`); validates typed header shape, normalized rpcgen sync against `network.rpc`, and typed+legacy proxy/service compile compatibility.
       - Validation on 2026-04-12: focused guard run passed and full RPC-focused suite regex run passed (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 37/37 passed).
-  - [ ] Leaf 3a (`rcc_rpc` prep): generate typed `rcc_rpc.h` in build flow and capture compile fallout inventory by subsystem (`service`, `communicator`, config/control services).
+  - [x] Leaf 3a (`rcc_rpc` prep): generate typed `rcc_rpc.h` in build flow and capture compile fallout inventory by subsystem (`service`, `communicator`, config/control services).
     - Decomposed on 2026-04-12 after LOC sizing in a temp generation probe: typed `rcc_rpc` output is large (`rcc_rpc.h` ~17,029 LOC; `rcc_rpc.py` ~2,243 LOC), so this prep leaf is split to keep handwritten changes <500 LOC and make fallout review tractable.
     - [x] Leaf 3a.1 (`rcc_rpc` inventory harness): add a reproducible typed-generation + compile-fallout inventory harness (service/communicator/config-control subsystems) and record initial findings in docs.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_prep_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`).
@@ -393,7 +393,10 @@ compatibility wrappers for incremental rollout.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_sync_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`).
       - Guard behavior: generates typed `rcc_rpc` in in-tree layout (`src/deptran/rcc_rpc.rpc -> src/deptran/rcc_rpc.h/.py`) and direct layout, validates typed shape markers and output-size sanity, then compares normalized outputs (ignoring randomized RPC ID literals) to prevent generation drift.
       - Validation on 2026-04-12: focused guard script run passed plus full RPC-focused suite regex run passed (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 39/39 passed).
-    - [ ] Leaf 3a.3 (`rcc_rpc` fallout map): convert inventory results into an explicit subsystem migration map that feeds leaf 3b/3c callsite migrations.
+    - [x] Leaf 3a.3 (`rcc_rpc` fallout map): convert inventory results into an explicit subsystem migration map that feeds leaf 3b/3c callsite migrations.
+      - Implemented on 2026-04-12 as `docs/rpc/rcc_rpc_typed_fallout_map.md`.
+      - Scope check: docs-only planning artifact (<500 LOC) with evidence-driven buckets from prep harness output and explicit file-level sequencing for leaf 3b (`ClassicService`/`ClassicProxy`) and leaf 3c (remaining protocol surfaces).
+      - Captured migration buckets for service fallout (`SimpleCommand` / `parent_set_t` visibility, typed bridge field alignment, downstream override/callsite drift) plus leaf-specific validation gates to keep prep/sync guards active while migrations land.
   - [ ] Leaf 3b (`rcc_rpc` migration part 1): migrate high-traffic `ClassicService`/`ClassicProxy` callsites to typed request/response APIs while keeping compatibility wrappers.
   - [ ] Leaf 3c (`rcc_rpc` migration part 2): migrate remaining in-tree services/proxies and remove transitional shims no longer needed after typed callsites land.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.

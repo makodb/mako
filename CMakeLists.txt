@@ -1846,6 +1846,12 @@ if(BUILD_TESTS)
                 ${CMAKE_SOURCE_DIR}/test/rpcgen_in_tree_rcc_rpc_typed_sync_test.py
                 --repo ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME test_rpc_rcc_rpc_typed_fallout_map_doc
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rcc_rpc_typed_fallout_map_doc_test.py
+                --repo ${CMAKE_SOURCE_DIR}
+    )
 
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)

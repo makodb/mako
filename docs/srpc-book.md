@@ -1021,7 +1021,9 @@ inventory (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`) shows service-surface
 fallout while communicator/config-control header probes already compile. In-tree
 typed generation/sync drift for `rcc_rpc` is now guarded by
 `test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync` (normalized output comparison
-between in-tree and direct-layout typed generation).
+between in-tree and direct-layout typed generation). The staged migration
+breakdown for remaining `rcc_rpc` service fallout is documented in
+`docs/rpc/rcc_rpc_typed_fallout_map.md` to drive leaf 3b/3c sequencing.
 
 This produces:
 - Client proxy class with compatibility pointer-style sync/async methods
