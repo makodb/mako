@@ -154,8 +154,14 @@ TroadCommo::BroadcastPreAccept(
       ev->vec_parents_.push_back(sp);
     };
     verify(txn_id > 0);
-    auto fu_result = proxy->async_RccPreAccept(txn_id, rank, cmds, fuattr);
-    Future::safe_release(fu_result);
+    ClassicProxy::RpcRccPreAcceptRequest req;
+    req.txn_id = txn_id;
+    req.rank = rank;
+    req.cmd = cmds;
+    auto fu_result = proxy->async_RccPreAccept(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return ev;
 }
@@ -270,11 +276,15 @@ shared_ptr<QuorumEvent> TroadCommo::BroadcastAccept(parid_t par_id,
     };
     verify(cmd_id > 0);
     verify(rank == RANK_D || rank == RANK_I);
-    Future::safe_release(proxy->async_RccAccept(cmd_id,
-                                                rank,
-                                                ballot,
-                                                parents,
-                                                fuattr));
+    ClassicProxy::RpcRccAcceptRequest req;
+    req.txn_id = cmd_id;
+    req.rank = rank;
+    req.ballot = ballot;
+    req.p = parents;
+    auto fu_result = proxy->async_RccAccept(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return ev;
 }
@@ -436,7 +446,15 @@ TroadCommo::BroadcastCommit(parid_t par_id,
 //      MarshallDeputy md(graph);
 //      Future::safe_release(proxy->async_JanusCommit(cmd_id, rank, need_validation, md, fuattr));
 //    }
-  Future::safe_release(proxy->async_RccCommit(cmd_id, rank, need_validation, parents, fuattr));
+    ClassicProxy::RpcRccCommitRequest req;
+    req.id = cmd_id;
+    req.rank = rank;
+    req.need_validation = need_validation;
+    req.parents = parents;
+    auto fu_result = proxy->async_RccCommit(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return ev;
 }

@@ -1020,8 +1020,12 @@ RPC methods. Remaining staged in-tree migration is `rcc_rpc`; current prep
 inventory (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`) shows service-surface
 type visibility now unblocked across service/communicator/config-control prep
 probes after adding typed-header preamble includes for `SimpleCommand` and
-`parent_set_t` in `rcc_rpc` generation; high-traffic `Classic` callsite
-migration remains staged under leaf 3b. In-tree typed generation/sync drift for
+`parent_set_t` in `rcc_rpc` generation. High-traffic `ClassicProxy` callsites
+(`RccPreAccept`/`RccAccept`/`RccCommit`) are now migrated to typed request
+overloads in `src/deptran/troad/commo.cc` and guarded by
+`test_rpc_rcc_rpc_classic_proxy_typed_callsites`; remaining staged `rcc_rpc`
+work is `ClassicService` bridge alignment (leaf 3b.3) plus leaf 3c follow-up.
+In-tree typed generation/sync drift for
 `rcc_rpc` is guarded by `test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`
 (normalized output comparison between in-tree and direct-layout typed
 generation). The staged migration breakdown is documented in
