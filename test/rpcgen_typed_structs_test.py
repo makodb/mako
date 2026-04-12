@@ -23,8 +23,8 @@ service Beta {
 """
 
 
-def run_rpcgen(repo_root: Path, rpc_path: Path) -> None:
-    cmd = [str(repo_root / "bin/rpcgen"), "--cpp", str(rpc_path)]
+def run_rpcgen(repo_root: Path, rpc_path: Path, cpp_mode: str = "typed") -> None:
+    cmd = [str(repo_root / "bin/rpcgen"), "--cpp", "--cpp-mode", cpp_mode, str(rpc_path)]
     proc = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
     if proc.returncode != 0:
         raise RuntimeError(
@@ -591,6 +591,42 @@ def verify_beta_proxy_block(block: str) -> None:
     )
 
 
+def verify_alpha_proxy_block_compat(block: str) -> None:
+    if "// Alias typed request/response structs from the sibling Service class." in block:
+        raise AssertionError("compat mode should not emit typed proxy aliases")
+    if "class pingTypedFuture {" in block:
+        raise AssertionError("compat mode should not emit typed proxy future wrappers")
+    if "rusty::Result<RpcPingResponse, rrr::i32> ping(const RpcPingRequest& req)" in block:
+        raise AssertionError("compat mode should not emit typed proxy sync overloads")
+    if "rusty::Result<pingTypedFuture, rrr::i32> async_ping(const RpcPingRequest& req" in block:
+        raise AssertionError("compat mode should not emit typed proxy async overloads")
+
+    assert_contains(
+        block,
+        "rrr::FutureResult async_ping(const rrr::i32& id, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {\n"
+        "        return __cl__->request(AlphaService::PING, __fu_attr__, [&](rrr::Marshal& __m__) {\n"
+        "            __m__ << id;\n"
+        "        });\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "rrr::i32 ping(const rrr::i32& id, std::string* msg) {\n"
+        "        auto __fu_result__ = this->async_ping(id);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return __fu_result__.unwrap_err();  // Return error code\n"
+        "        }\n"
+        "        auto __fu__ = __fu_result__.unwrap();\n"
+        "        rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "        if (__ret__ == 0) {\n"
+        "            __fu__->get_reply() >> *msg;\n"
+        "        }\n"
+        "        // Arc auto-released\n"
+        "        return __ret__;\n"
+        "    }",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate rpcgen typed struct emission.")
     parser.add_argument("--repo", required=True, help="Repository root path")
@@ -604,12 +640,13 @@ def main() -> int:
         rpc_path = Path(tmpdir) / "typed_structs_fixture.rpc"
         rpc_path.write_text(RPC_FIXTURE, encoding="utf-8")
 
-        run_rpcgen(repo_root, rpc_path)
+        run_rpcgen(repo_root, rpc_path, cpp_mode="typed")
         header_path = rpc_path.with_suffix(".h")
         if not header_path.exists():
             raise AssertionError(f"missing generated header: {header_path}")
 
         generated = header_path.read_text(encoding="utf-8")
+        assert_contains(generated, "// rpcgen cpp mode: typed")
         alpha_block = section_between(
             generated,
             "class AlphaService: public rrr::Service {",
@@ -639,7 +676,17 @@ def main() -> int:
         if generated.count("struct RpcPingRequest {") != 2:
             raise AssertionError("expected per-service RpcPingRequest structs (one in each service)")
 
-    print("rpcgen typed request/response struct emission verified")
+        run_rpcgen(repo_root, rpc_path, cpp_mode="compat")
+        compat_generated = header_path.read_text(encoding="utf-8")
+        assert_contains(compat_generated, "// rpcgen cpp mode: compat")
+        compat_alpha_proxy_block = section_between(
+            compat_generated,
+            "class AlphaProxy {",
+            "class BetaService: public rrr::Service {",
+        )
+        verify_alpha_proxy_block_compat(compat_alpha_proxy_block)
+
+    print("rpcgen typed/compat C++ mode emission verified")
     return 0
 
 

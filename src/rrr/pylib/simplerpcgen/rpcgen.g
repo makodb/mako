@@ -111,7 +111,7 @@ def generate_rpc_table(rpc_source):
             rpc_table["%s.%s" % (service.name, func.name)] = rpc_code
     return rpc_table
 
-def rpcgen(rpc_fpath, languages):
+def rpcgen(rpc_fpath, languages, cpp_mode="typed"):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 
@@ -139,7 +139,7 @@ def rpcgen(rpc_fpath, languages):
 
     if "cpp" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".h"
-        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer)
+        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cpp_mode=cpp_mode)
 
     if "python" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".py"

@@ -999,6 +999,12 @@ The `rpcgen` tool generates client and server stubs:
 ```bash
 # Generate C++ code from .rpc definition
 python3 pylib/simplerpc/rpcgen.py my_service.rpc
+
+# Or use the repo wrapper (defaults to typed mode)
+./bin/rpcgen --cpp my_service.rpc
+
+# Compatibility-focused proxy emission mode for rollout checks
+./bin/rpcgen --cpp --cpp-mode compat my_service.rpc
 ```
 
 This produces:
@@ -1033,6 +1039,9 @@ decodes the underlying wire reply into `MethodResponse`.
 Legacy pointer-style proxy async/sync signatures remain available as compatibility
 wrappers; for non-raw methods they now build typed request structs and delegate
 to the typed async/sync overloads.
+When rpcgen is invoked with `--cpp-mode compat`, typed proxy surfaces are omitted
+and legacy proxy async/sync paths are emitted directly to support compatibility
+build variants during migration.
 
 ### Generated Client Usage
 

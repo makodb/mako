@@ -201,7 +201,15 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
     f.writeln("}")
 
-def emit_service_and_proxy(service, f, rpc_table):
+def validate_cpp_mode(cpp_mode):
+    if cpp_mode not in ("typed", "compat"):
+        raise ValueError("unsupported cpp mode: %s" % cpp_mode)
+
+
+def emit_service_and_proxy(service, f, rpc_table, cpp_mode="typed"):
+    validate_cpp_mode(cpp_mode)
+    typed_proxy_mode = cpp_mode == "typed"
+
     f.writeln("class %sService: public rrr::Service {" % service.name)
     f.writeln("public:")
     with f.indent():
@@ -396,18 +404,19 @@ def emit_service_and_proxy(service, f, rpc_table):
     f.writeln("public:")
     with f.indent():
         f.writeln("%sProxy(rrr::Client* cl): __cl__(cl) { }" % service.name)
-        f.writeln("// Alias typed request/response structs from the sibling Service class.")
-        for func in service.functions:
-            f.writeln("using %s = %sService::%s;" % (
-                typed_request_struct_name(func),
-                service.name,
-                typed_request_struct_name(func),
-            ))
-            f.writeln("using %s = %sService::%s;" % (
-                typed_response_struct_name(func),
-                service.name,
-                typed_response_struct_name(func),
-            ))
+        if typed_proxy_mode:
+            f.writeln("// Alias typed request/response structs from the sibling Service class.")
+            for func in service.functions:
+                f.writeln("using %s = %sService::%s;" % (
+                    typed_request_struct_name(func),
+                    service.name,
+                    typed_request_struct_name(func),
+                ))
+                f.writeln("using %s = %sService::%s;" % (
+                    typed_response_struct_name(func),
+                    service.name,
+                    typed_response_struct_name(func),
+                ))
         for func in service.functions:
             async_func_params = []
             async_call_params = []
@@ -415,6 +424,7 @@ def emit_service_and_proxy(service, f, rpc_table):
             sync_out_params = []
             typed_async_call_params = []
             typed_output_fields = typed_struct_fields(func.output, "out")
+            emit_typed_proxy_api = typed_proxy_mode and func.attr != "raw"
             in_counter = 0
             out_counter = 0
             for in_arg in func.input:
@@ -437,11 +447,11 @@ def emit_service_and_proxy(service, f, rpc_table):
                     sync_func_params += "%s* out_%d" % (out_arg.type, out_counter),
                     sync_out_params += "out_%d" % out_counter,
                 out_counter += 1
-            if func.attr != "raw":
+            if emit_typed_proxy_api:
                 emit_typed_proxy_future_wrapper(func, f)
             f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
             with f.indent():
-                if func.attr != "raw":
+                if emit_typed_proxy_api:
                     emit_typed_request_from_args(func, async_call_params, "__typed_req__", f)
                     f.writeln("auto __typed_fu_result__ = this->async_%s(__typed_req__, __fu_attr__);" % func.name)
                     f.writeln("if (__typed_fu_result__.is_err()) {")
@@ -452,11 +462,11 @@ def emit_service_and_proxy(service, f, rpc_table):
                 else:
                     emit_proxy_request_call(service, func, async_call_params, f)
             f.writeln("}")
-            if func.attr != "raw":
+            if emit_typed_proxy_api:
                 emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
             f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
             with f.indent():
-                if func.attr != "raw":
+                if emit_typed_proxy_api:
                     emit_typed_request_from_args(func, async_call_params, "__typed_req__", f)
                     f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
                     f.writeln("if (__typed_result__.is_err()) {")
@@ -487,13 +497,14 @@ def emit_service_and_proxy(service, f, rpc_table):
                     f.writeln("// Arc auto-released")
                     f.writeln("return __ret__;")
             f.writeln("}")
-            if func.attr != "raw":
+            if emit_typed_proxy_api:
                 emit_typed_proxy_sync_signature(func, f)
     f.writeln("};")
     f.writeln()
 
 
-def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
+def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cpp_mode="typed"):
+    validate_cpp_mode(cpp_mode)
     with open(fpath, "w") as f:
         f = SourceFile(f)
         f.writeln("#pragma once")
@@ -503,6 +514,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
         f.writeln()
         f.writeln("#include <errno.h>")
         f.writeln("#include <memory>")
+        f.writeln("// rpcgen cpp mode: %s" % cpp_mode)
         f.writeln()
         f.write(cpp_header)
         f.writeln()
@@ -515,7 +527,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
             emit_struct(struct, f)
 
         for service in rpc_source.services:
-            emit_service_and_proxy(service, f, rpc_table)
+            emit_service_and_proxy(service, f, rpc_table, cpp_mode=cpp_mode)
 
         if rpc_source.namespace != None:
             f.writeln(" ".join(["}"] * len(rpc_source.namespace)) + " // namespace " + "::".join(rpc_source.namespace))
