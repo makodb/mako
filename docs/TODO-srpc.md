@@ -321,7 +321,7 @@ compatibility wrappers for incremental rollout.
 
 ### Code TODO
 - [x] Extend `rpcgen` C++ codegen to synthesize `MethodRequest` and `MethodResponse` structs from existing input/output lists.
-  - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: each generated `*Service` now emits per-method `MethodRequest`/`MethodResponse` nested structs (name pattern: `<method>Name + Request/Response`) with marshal/unmarshal operators, derived directly from parsed input/output argument lists (including zero-field and unnamed-arg fallback cases).
+  - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: each generated `*Service` now emits per-method typed request/response nested structs (name pattern: `Rpc<MethodPascalCase>Request/Response`) with marshal/unmarshal operators, derived directly from parsed input/output argument lists (including zero-field and unnamed-arg fallback cases).
   - Scope check: completed within small-change budget (<500 non-generated LOC).
 - [x] Generate typed service signatures: `virtual rusty::Result<MethodResponse, rrr::i32> Method(const MethodRequest& req)`.
   - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: generated `*Service` classes now emit typed overloads for each non-raw method with the exact `rusty::Result<MethodResponse, rrr::i32>` + `const MethodRequest&` shape.
@@ -343,7 +343,9 @@ compatibility wrappers for incremental rollout.
   - [x] Leaf 2 (service): non-deferred legacy service pointer signatures delegate to typed service methods without breaking existing pointer-override implementations.
     - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: non-deferred generated `__<method>__wrapper__` dispatch paths now decode into `MethodRequest`, invoke typed service overloads, and map `rusty::Result<MethodResponse, rrr::i32>` to reply/error wire responses.
     - Backward compatibility behavior in this leaf: existing pointer-style service overrides continue to work through current typed default bridge implementations, while typed overrides can now return explicit RPC error codes (`Err(i32)`) in non-deferred paths.
-  - [ ] Leaf 3 (service defer): deferred legacy service compatibility wrapper path + error propagation semantics for typed `Err(i32)` outcomes.
+  - [x] Leaf 3 (service defer): deferred legacy service compatibility wrapper path + error propagation semantics for typed `Err(i32)` outcomes.
+    - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: deferred `__<method>__wrapper__` now invokes typed service overload first, maps `Ok(response)` to immediate reply, maps `Err(code != ENOTSUP)` to immediate error reply, and falls back to legacy deferred pointer-style path on `Err(ENOTSUP)`.
+    - Backward compatibility behavior in this leaf: existing deferred pointer-style handlers remain active by default through `ENOTSUP` fallback, while typed deferred overrides can return explicit immediate success/error responses.
 - [ ] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
 - [ ] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
 - [ ] Migrate in-tree generated RPC headers from `.rpc` sources (`helloworld`, `network`, `rcc_rpc`) to typed mode and update callsites.
@@ -357,6 +359,7 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert typed proxy async wrapper/signature generation and behavior (`<method>TypedFuture::resolve()`, typed async overload delegation to legacy async path, and raw-method exclusion).
   - Extended on 2026-04-12 to assert legacy proxy wrapper delegation direction (legacy async/sync signatures now marshal typed request structs and route through typed async/sync overloads for non-raw methods).
   - Extended on 2026-04-12 to assert non-deferred service dispatch wrapper generation uses typed service calls and propagates typed `Err(i32)` as RPC error replies, while keeping deferred wrapper shape unchanged.
+  - Extended on 2026-04-12 to assert deferred service dispatch wrapper typed-first behavior with explicit `Err(i32)` propagation and `ENOTSUP` fallback to legacy deferred handler path.
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.

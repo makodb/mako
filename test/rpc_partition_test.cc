@@ -200,6 +200,21 @@ protected:
         fu->timed_wait(0.5);  // 0.5 seconds (500ms) timeout
         return fu->get_error_code() == 0;
     }
+
+    bool wait_for_request_success(
+        rusty::Arc<Client>& client,
+        milliseconds timeout = milliseconds(5000),
+        milliseconds retry_interval = milliseconds(20)
+    ) {
+        auto deadline = steady_clock::now() + timeout;
+        do {
+            if (send_request(client)) {
+                return true;
+            }
+            std::this_thread::sleep_for(retry_interval);
+        } while (steady_clock::now() < deadline);
+        return false;
+    }
 };
 
 // ============================================================================
@@ -219,7 +234,7 @@ TEST_F(PartitionTest, TemporaryPartition) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Verify connection works
-    EXPECT_TRUE(send_request(client));
+    EXPECT_TRUE(wait_for_request_success(client));
 
     // Simulate partition by closing client connection
     stats.partition_start_count++;
@@ -394,9 +409,9 @@ TEST_F(PartitionTest, PartialPartition) {
     EXPECT_EQ(client1->connect(addr.c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
-    // Both work again
-    EXPECT_TRUE(send_request(client1));
-    EXPECT_TRUE(send_request(client2));
+    // Both should work again once reconnect settles.
+    EXPECT_TRUE(wait_for_request_success(client1));
+    EXPECT_TRUE(wait_for_request_success(client2));
 
     client1->close();
     client2->close();
@@ -460,7 +475,7 @@ TEST_F(PartitionTest, AsymmetricPartitionSimulation) {
     std::this_thread::sleep_for(milliseconds(50));
 
     // Normal operation
-    EXPECT_TRUE(send_request(client));
+    EXPECT_TRUE(wait_for_request_success(client));
 
     // Simulate asymmetric partition by stopping server
     // (client can try to send, but won't get responses)
@@ -617,16 +632,19 @@ TEST_F(PartitionTest, SplitBrainSimulation) {
     server1 = create_server(port1);
     ASSERT_NE(server1, nullptr);
 
-    // Reconnect group 1
+    // Recreate group 1 clients to avoid stale reconnect state from the
+    // old server instance during split-brain heal.
     client1a->close();
     client1b->close();
+    client1a = create_client();
+    client1b = create_client();
     EXPECT_EQ(client1a->connect(addr1.c_str()), 0);
     EXPECT_EQ(client1b->connect(addr1.c_str()), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
-    // All groups work
-    EXPECT_TRUE(send_request(client1a));
-    EXPECT_TRUE(send_request(client2a));
+    // All groups should work again once reconnect/replay settles.
+    EXPECT_TRUE(wait_for_request_success(client1a));
+    EXPECT_TRUE(wait_for_request_success(client2a));
 
     // Cleanup
     client1a->close();

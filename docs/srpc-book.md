@@ -1005,7 +1005,7 @@ This produces:
 - Client proxy class with compatibility pointer-style sync/async methods
 - Server dispatch skeleton
 - Marshal/unmarshal code for custom structs
-- Per-method typed scaffolding structs (`MethodRequest`/`MethodResponse`) synthesized from RPC input/output lists
+- Per-method typed scaffolding structs (`Rpc<MethodPascalCase>Request`/`Rpc<MethodPascalCase>Response`) synthesized from RPC input/output lists
 
 Current generated C++ service/proxy boundaries still use out-parameters
 (`T* out`) for return values in compatibility mode.
@@ -1016,9 +1016,14 @@ methods; in compatibility mode those overloads bridge to pointer handlers
 Generated non-deferred service dispatch wrappers now invoke the typed overloads
 and map `Err(i32)` to RPC error replies, while preserving pointer-style service
 overrides through the typed default bridge.
+For deferred methods, generated service dispatch wrappers now also try the typed
+overload first; `Err(ENOTSUP)` explicitly falls back to legacy deferred pointer
+handlers, while other `Err(i32)` results are returned as immediate RPC errors.
 Generated proxies now expose typed sync overloads with the same request/response
 shape for non-raw methods; they currently run through the existing async/future
 pipeline and return `Err(i32)` on transport or RPC error codes.
+Generated proxy classes also publish `using` aliases for those typed structs from
+their sibling service class to keep typed signatures available in proxy scope.
 Generated proxies now also expose typed async overloads for non-raw methods:
 `async_Method(const MethodRequest&, const FutureAttr&)` returns
 `Result<MethodTypedFuture, rrr::i32>`, and `MethodTypedFuture::resolve()`
