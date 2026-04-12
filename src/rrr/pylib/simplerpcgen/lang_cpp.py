@@ -89,6 +89,33 @@ def emit_typed_service_signature(func, f):
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
     f.writeln("}")
 
+def emit_typed_proxy_sync_signature(func, async_call_params, f):
+    request_struct_name = typed_request_struct_name(func)
+    response_struct_name = typed_response_struct_name(func)
+    result_type = typed_result_type(func)
+    output_fields = typed_struct_fields(func.output, "out")
+
+    f.writeln("%s %s(const %s& req) {" % (result_type, func.name, request_struct_name))
+    with f.indent():
+        f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
+        f.writeln("if (__fu_result__.is_err()) {")
+        with f.indent():
+            f.writeln("return %s::Err(__fu_result__.unwrap_err());" % result_type)
+        f.writeln("}")
+        f.writeln("auto __fu__ = __fu_result__.unwrap();")
+        f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
+        f.writeln("if (__ret__ != 0) {")
+        with f.indent():
+            f.writeln("return %s::Err(__ret__);" % result_type)
+        f.writeln("}")
+        f.writeln("%s __typed_resp__;" % response_struct_name)
+        for _, field_name in output_fields:
+            f.writeln("__fu__->get_reply() >> __typed_resp__.%s;" % field_name)
+        if len(async_call_params) == 0:
+            f.writeln("(void)req;")
+        f.writeln("return %s::Ok(__typed_resp__);" % result_type)
+    f.writeln("}")
+
 def emit_service_and_proxy(service, f, rpc_table):
     f.writeln("class %sService: public rrr::Service {" % service.name)
     f.writeln("public:")
@@ -249,6 +276,7 @@ def emit_service_and_proxy(service, f, rpc_table):
             async_call_params = []
             sync_func_params = []
             sync_out_params = []
+            typed_async_call_params = []
             in_counter = 0
             out_counter = 0
             for in_arg in func.input:
@@ -256,10 +284,12 @@ def emit_service_and_proxy(service, f, rpc_table):
                     async_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
                     async_call_params += in_arg.name,
                     sync_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
+                    typed_async_call_params += "req.%s" % in_arg.name,
                 else:
                     async_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
                     async_call_params += "in_%d" % in_counter,
                     sync_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
+                    typed_async_call_params += "req.in_%d" % in_counter,
                 in_counter += 1
             for out_arg in func.output:
                 if out_arg.name != None:
@@ -298,6 +328,8 @@ def emit_service_and_proxy(service, f, rpc_table):
                 f.writeln("// Arc auto-released")
                 f.writeln("return __ret__;")
             f.writeln("}")
+            if func.attr != "raw":
+                emit_typed_proxy_sync_signature(func, typed_async_call_params, f)
     f.writeln("};")
     f.writeln()
 

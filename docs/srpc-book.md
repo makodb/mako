@@ -1013,6 +1013,9 @@ Generated services now also expose typed virtual overloads
 (`Result<MethodResponse, rrr::i32> Method(const MethodRequest&)`) for non-raw
 methods; in compatibility mode those overloads bridge to pointer handlers
 (with `defer` methods currently returning `ENOTSUP` until typed async flow lands).
+Generated proxies now expose typed sync overloads with the same request/response
+shape for non-raw methods; they currently run through the existing async/future
+pipeline and return `Err(i32)` on transport or RPC error codes.
 
 ### Generated Client Usage
 
@@ -1033,7 +1036,8 @@ if (fu_result.is_ok()) {
     fu->get_reply() >> user;
 }
 
-// The generated sync wrapper returns i32 status, not the value directly.
+// The compatibility sync wrapper returns i32 status.
+// Generated typed sync request/response overloads are also available.
 ```
 
 ### Planned Typed Request/Response API (Migration Target)

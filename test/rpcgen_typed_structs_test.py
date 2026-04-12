@@ -167,6 +167,81 @@ def verify_beta_service_block(block: str) -> None:
         "    }",
     )
 
+def verify_alpha_proxy_block(block: str) -> None:
+    assert_contains(
+        block,
+        "rusty::Result<pingResponse, rrr::i32> ping(const pingRequest& req) {\n"
+        "        auto __fu_result__ = this->async_ping(req.id);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<pingResponse, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        auto __fu__ = __fu_result__.unwrap();\n"
+        "        rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "        if (__ret__ != 0) {\n"
+        "            return rusty::Result<pingResponse, rrr::i32>::Err(__ret__);\n"
+        "        }\n"
+        "        pingResponse __typed_resp__;\n"
+        "        __fu__->get_reply() >> __typed_resp__.msg;\n"
+        "        return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "rusty::Result<nopResponse, rrr::i32> nop(const nopRequest& req) {\n"
+        "        auto __fu_result__ = this->async_nop();\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<nopResponse, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        auto __fu__ = __fu_result__.unwrap();\n"
+        "        rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "        if (__ret__ != 0) {\n"
+        "            return rusty::Result<nopResponse, rrr::i32>::Err(__ret__);\n"
+        "        }\n"
+        "        nopResponse __typed_resp__;\n"
+        "        (void)req;\n"
+        "        return rusty::Result<nopResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "rusty::Result<streamResponse, rrr::i32> stream(const streamRequest& req) {\n"
+        "        auto __fu_result__ = this->async_stream(req.stream_id);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<streamResponse, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        auto __fu__ = __fu_result__.unwrap();\n"
+        "        rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "        if (__ret__ != 0) {\n"
+        "            return rusty::Result<streamResponse, rrr::i32>::Err(__ret__);\n"
+        "        }\n"
+        "        streamResponse __typed_resp__;\n"
+        "        __fu__->get_reply() >> __typed_resp__.sequence;\n"
+        "        return rusty::Result<streamResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    if "rusty::Result<passthroughResponse, rrr::i32> passthrough(const passthroughRequest& req)" in block:
+        raise AssertionError("raw proxy handlers should not generate typed sync overloads")
+
+
+def verify_beta_proxy_block(block: str) -> None:
+    assert_contains(
+        block,
+        "rusty::Result<pingResponse, rrr::i32> ping(const pingRequest& req) {\n"
+        "        auto __fu_result__ = this->async_ping(req.other_id);\n"
+        "        if (__fu_result__.is_err()) {\n"
+        "            return rusty::Result<pingResponse, rrr::i32>::Err(__fu_result__.unwrap_err());\n"
+        "        }\n"
+        "        auto __fu__ = __fu_result__.unwrap();\n"
+        "        rrr::i32 __ret__ = __fu__->get_error_code();\n"
+        "        if (__ret__ != 0) {\n"
+        "            return rusty::Result<pingResponse, rrr::i32>::Err(__ret__);\n"
+        "        }\n"
+        "        pingResponse __typed_resp__;\n"
+        "        __fu__->get_reply() >> __typed_resp__.echoed;\n"
+        "        return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate rpcgen typed struct emission.")
@@ -197,9 +272,21 @@ def main() -> int:
             "class BetaService: public rrr::Service {",
             "class BetaProxy {",
         )
+        alpha_proxy_block = section_between(
+            generated,
+            "class AlphaProxy {",
+            "class BetaService: public rrr::Service {",
+        )
+        beta_proxy_block = section_between(
+            generated,
+            "class BetaProxy {",
+            "} // namespace typed_structs_fixture",
+        )
 
         verify_alpha_service_block(alpha_block)
         verify_beta_service_block(beta_block)
+        verify_alpha_proxy_block(alpha_proxy_block)
+        verify_beta_proxy_block(beta_proxy_block)
 
         if generated.count("struct pingRequest {") != 2:
             raise AssertionError("expected per-service pingRequest structs (one in each service)")
