@@ -1010,6 +1010,10 @@ python3 pylib/simplerpc/rpcgen.py my_service.rpc
 # from typed(default) to compatibility-focused proxy emission.
 ```
 
+In-tree migration status (2026-04-12): `src/deptran/helloworld.h` is now
+typed-generated and guarded by `test_rpc_rpcgen_in_tree_helloworld_typed`.
+`network` and `rcc_rpc` header/callsite migration remains staged.
+
 This produces:
 - Client proxy class with compatibility pointer-style sync/async methods
 - Server dispatch skeleton

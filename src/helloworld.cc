@@ -43,23 +43,32 @@ void *nc_start_client(void *input) {
   int par_id = ((struct args*)input)->par_id;
   FutureAttr fuattr;  // fuattr
   fuattr.callback = [&] (rusty::Arc<Future> fu) {
-    i32 val;
-    fu->get_reply() >> val;
-    output_val(val);
+    HelloworldClientService::RpcTxnReadResponse response;
+    fu->get_reply() >> response;
+    output_val(response.val);
   };
-  std::vector<int64_t> ret;
-  ret.push_back(1);
-  
+  HelloworldClientProxy::RpcTxnReadRequest request;
+  request._req.push_back(1);
+
   std::cout<<"send out first req"<<std::endl;
-  nc_clients[par_id]->async_txn_read(ret, fuattr);
+  auto first_result = nc_clients[par_id]->async_txn_read(request, fuattr);
+  if (first_result.is_err()) {
+    std::cerr << "failed to send first request, err=" << first_result.unwrap_err() << std::endl;
+    return nullptr;
+  }
 
   //sleep(1); 
 
-  ret.push_back(2);
+  request._req.push_back(2);
   std::cout<<"send out second req"<<std::endl;
-  nc_clients[par_id]->async_txn_read(ret, fuattr);
+  auto second_result = nc_clients[par_id]->async_txn_read(request, fuattr);
+  if (second_result.is_err()) {
+    std::cerr << "failed to send second request, err=" << second_result.unwrap_err() << std::endl;
+    return nullptr;
+  }
 
   sleep(10);
+  return nullptr;
 }
 
 void nc_setup_client(int nkeys, int nthreads, int run) {

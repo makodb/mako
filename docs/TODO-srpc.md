@@ -335,7 +335,7 @@ compatibility wrappers for incremental rollout.
   - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: generated `*Proxy` classes now emit per-method typed async wrappers (`<method>TypedFuture`) for each non-raw method with `resolve()` returning `rusty::Result<MethodResponse, rrr::i32>`.
   - Generated typed async overload shape: `async_<method>(const MethodRequest& req, const rrr::FutureAttr& attr)` returns `rusty::Result<<method>TypedFuture, rrr::i32>`, delegating to legacy async request path while preserving request/transport error codes.
   - Scope check: completed within small-change budget (<500 non-generated LOC).
-- [ ] Keep legacy pointer-style service/proxy signatures as compatibility wrappers that delegate to typed methods.
+- [x] Keep legacy pointer-style service/proxy signatures as compatibility wrappers that delegate to typed methods.
   - Decomposed on 2026-04-12 to keep each migration leaf below ~500 LOC while preserving correctness boundaries between proxy wrappers and service dispatch behavior.
   - [x] Leaf 1 (proxy): make legacy pointer-style proxy async/sync signatures delegate to typed request/response APIs.
     - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: non-raw generated proxy `async_<method>(legacy args...)` now builds `MethodRequest` and delegates to typed async overload; non-raw legacy sync wrappers now call typed sync overloads and unpack `MethodResponse`.
@@ -346,6 +346,7 @@ compatibility wrappers for incremental rollout.
   - [x] Leaf 3 (service defer): deferred legacy service compatibility wrapper path + error propagation semantics for typed `Err(i32)` outcomes.
     - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: deferred `__<method>__wrapper__` now invokes typed service overload first, maps `Ok(response)` to immediate reply, maps `Err(code != ENOTSUP)` to immediate error reply, and falls back to legacy deferred pointer-style path on `Err(ENOTSUP)`.
     - Backward compatibility behavior in this leaf: existing deferred pointer-style handlers remain active by default through `ENOTSUP` fallback, while typed deferred overrides can return explicit immediate success/error responses.
+  - Closed on 2026-04-12 after validating generated proxy/service wrappers in `test/rpcgen_typed_structs_test.py` and full RPC-focused suite pass.
 - [x] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
   - Decomposed on 2026-04-12 to keep migration/refactor verification bounded under ~500 LOC and preserve defer callback lifetime guarantees.
   - [x] Leaf 1 (defer wrapper RAII): replace generated deferred legacy fallback pointer ownership (`new/delete`) with RAII-managed request/response lifetime handling.
@@ -364,6 +365,17 @@ compatibility wrappers for incremental rollout.
     - Implemented on 2026-04-12 in `test/rpcgen_typed_structs_test.py`: test now runs rpcgen in both `typed` and `compat` modes, checks mode markers, preserves existing typed assertions, and verifies compat proxy output excludes typed proxy APIs while keeping legacy request/reply behavior.
     - Validation on 2026-04-12: `python3 test/rpcgen_typed_structs_test.py --repo .`, `ctest --test-dir build_rpc -R '^(test_rpc_rpcgen_typed_structs|test_rpc_rpcgen_cmake_mode_wiring)$'`, and full RPC-focused suite regex run (`ctest --test-dir /home/shuai/workspace/mako/build -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`) all passed.
 - [ ] Migrate in-tree generated RPC headers from `.rpc` sources (`helloworld`, `network`, `rcc_rpc`) to typed mode and update callsites.
+  - Decomposed on 2026-04-12 after LOC/scope analysis to keep each leaf below ~500 LOC:
+    - `helloworld` typed regen is small (~140 LOC generated diff + small callsite/test updates).
+    - `network` typed regen is medium/large (~860 LOC generated diff) and needs isolated callsite follow-up.
+    - `rcc_rpc` typed regen is very large (multi-service generated surface) and requires staged migration leaves.
+  - [x] Leaf 1 (`helloworld`): regenerate `src/deptran/helloworld.h` in typed mode and update `helloworld` callsites to typed request/response usage where practical without breaking compatibility wrappers.
+    - Implemented on 2026-04-12 by regenerating `src/deptran/helloworld.h` via `bin/rpcgen --cpp --cpp-mode typed src/deptran/helloworld.rpc` and migrating `src/helloworld.cc` request callsites to typed request/response proxy overloads.
+    - Added migration guard `test/rpcgen_in_tree_helloworld_typed_test.py` (wired as `test_rpc_rpcgen_in_tree_helloworld_typed`) to validate typed header shape, normalized generator sync (ignoring randomized RPC ID literals), and typed+legacy compile compatibility.
+  - [ ] Leaf 2 (`network`): regenerate `src/deptran/network.h` in typed mode and update `network_client`/`nc_main` callsites for typed request/response usage.
+  - [ ] Leaf 3a (`rcc_rpc` prep): generate typed `rcc_rpc.h` in build flow and capture compile fallout inventory by subsystem (`service`, `communicator`, config/control services).
+  - [ ] Leaf 3b (`rcc_rpc` migration part 1): migrate high-traffic `ClassicService`/`ClassicProxy` callsites to typed request/response APIs while keeping compatibility wrappers.
+  - [ ] Leaf 3c (`rcc_rpc` migration part 2): migrate remaining in-tree services/proxies and remove transitional shims no longer needed after typed callsites land.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
 
 ### Tests TODO
@@ -377,6 +389,9 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert deferred service dispatch wrapper typed-first behavior with explicit `Err(i32)` propagation and `ENOTSUP` fallback to legacy deferred handler path.
   - Extended on 2026-04-12 to assert deferred legacy fallback wrapper generation uses RAII (`std::make_shared`) and no longer emits manual `new/delete` cleanup.
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
+  - [x] Leaf 1 (`helloworld`): add typed header migration compile guard covering generated-structure drift and typed+legacy callsite compilation.
+  - [ ] Leaf 2 (`network`): add typed header compile guard for `network` generated service/proxy APIs and callsites.
+  - [ ] Leaf 3 (`rcc_rpc`): add typed header compile guard for generated `rcc_rpc` APIs and representative in-tree callsite coverage.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
 - [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.

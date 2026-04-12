@@ -1819,6 +1819,13 @@ if(BUILD_TESTS)
                 ${CMAKE_SOURCE_DIR}/test/rpcgen_cmake_mode_wiring_test.py
                 --repo ${CMAKE_SOURCE_DIR}
     )
+    add_test(
+        NAME test_rpc_rpcgen_in_tree_helloworld_typed
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rpcgen_in_tree_helloworld_typed_test.py
+                --repo ${CMAKE_SOURCE_DIR}
+                --cxx ${CMAKE_CXX_COMPILER}
+    )
 
     # Callback System Tests (Phase 6.2)
     add_executable(test_rpc_callbacks test/rpc_callbacks_test.cc)
