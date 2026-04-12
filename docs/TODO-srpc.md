@@ -353,15 +353,16 @@ compatibility wrappers for incremental rollout.
     - Include hygiene: generated C++ output now emits `#include <memory>` so typed/deferred wrapper output compiles with `std::shared_ptr` helpers.
   - [x] Leaf 2 (tests): extend rpcgen golden checks to verify deferred wrapper output no longer emits manual `new/delete` cleanup while preserving marshal/reply behavior.
     - Implemented on 2026-04-12 in `test/rpcgen_typed_structs_test.py`: deferred wrapper golden expectations now assert `std::make_shared`/`out.get()`/RAII cleanup emission and explicitly reject generated `new`/`delete` strings in the typed-first defer fallback block.
-- [ ] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
+- [x] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
   - Decomposed on 2026-04-12 to keep rollout controls and verification under ~500 LOC per leaf.
   - [x] Leaf 1 (rpcgen mode flag): add a C++ generation mode flag (`typed` vs `compat`) and thread mode-aware C++ proxy emission behavior through rpcgen.
     - Implemented on 2026-04-12 in `bin/rpcgen`, `src/rrr/pylib/simplerpcgen/rpcgen.py`, and `src/rrr/pylib/simplerpcgen/lang_cpp.py`: added `--cpp-mode {typed,compat}` (default `typed`), threaded mode into C++ emission, and made proxy emission mode-aware (typed mode keeps typed proxy surfaces + delegation; compat mode emits legacy proxy async/sync paths without typed proxy overload classes/signatures).
     - Generated C++ now includes mode marker comments (`// rpcgen cpp mode: <mode>`) and validates unsupported modes.
-  - [ ] Leaf 2 (CMake option wiring): add a CMake cache option and pass-through to in-tree rpcgen invocation(s) so CI/builds can select mode.
+  - [x] Leaf 2 (CMake option wiring): add a CMake cache option and pass-through to in-tree rpcgen invocation(s) so CI/builds can select mode.
+    - Implemented on 2026-04-12 in `CMakeLists.txt`: added `RPCGEN_CPP_MODE` cache option (`typed`/`compat`, default `typed`) with value validation, wired `rcc_rpc` generation command to pass `--cpp-mode ${RPCGEN_CPP_MODE}`, and added a generated mode marker dependency so `rcc_rpc` regeneration responds to mode flips.
   - [x] Leaf 3 (mode regression tests): extend rpcgen golden tests to assert both typed and compat outputs and prevent accidental mode drift.
     - Implemented on 2026-04-12 in `test/rpcgen_typed_structs_test.py`: test now runs rpcgen in both `typed` and `compat` modes, checks mode markers, preserves existing typed assertions, and verifies compat proxy output excludes typed proxy APIs while keeping legacy request/reply behavior.
-    - Validation on 2026-04-12: `python3 test/rpcgen_typed_structs_test.py --repo .`, `ctest --test-dir build_rpc -R '^test_rpc_rpcgen_typed_structs$'`, and full RPC-focused suite regex run (`ctest --test-dir /home/shuai/workspace/mako/build -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`) all passed.
+    - Validation on 2026-04-12: `python3 test/rpcgen_typed_structs_test.py --repo .`, `ctest --test-dir build_rpc -R '^(test_rpc_rpcgen_typed_structs|test_rpc_rpcgen_cmake_mode_wiring)$'`, and full RPC-focused suite regex run (`ctest --test-dir /home/shuai/workspace/mako/build -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`) all passed.
 - [ ] Migrate in-tree generated RPC headers from `.rpc` sources (`helloworld`, `network`, `rcc_rpc`) to typed mode and update callsites.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
 

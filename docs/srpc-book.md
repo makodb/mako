@@ -1005,6 +1005,9 @@ python3 pylib/simplerpc/rpcgen.py my_service.rpc
 
 # Compatibility-focused proxy emission mode for rollout checks
 ./bin/rpcgen --cpp --cpp-mode compat my_service.rpc
+
+# In CMake builds, use -DRPCGEN_CPP_MODE=compat to switch in-tree rpcgen output
+# from typed(default) to compatibility-focused proxy emission.
 ```
 
 This produces:
