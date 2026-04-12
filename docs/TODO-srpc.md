@@ -384,6 +384,13 @@ compatibility wrappers for incremental rollout.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_network_typed_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_network_typed`); validates typed header shape, normalized rpcgen sync against `network.rpc`, and typed+legacy proxy/service compile compatibility.
       - Validation on 2026-04-12: focused guard run passed and full RPC-focused suite regex run passed (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 37/37 passed).
   - [ ] Leaf 3a (`rcc_rpc` prep): generate typed `rcc_rpc.h` in build flow and capture compile fallout inventory by subsystem (`service`, `communicator`, config/control services).
+    - Decomposed on 2026-04-12 after LOC sizing in a temp generation probe: typed `rcc_rpc` output is large (`rcc_rpc.h` ~17,029 LOC; `rcc_rpc.py` ~2,243 LOC), so this prep leaf is split to keep handwritten changes <500 LOC and make fallout review tractable.
+    - [x] Leaf 3a.1 (`rcc_rpc` inventory harness): add a reproducible typed-generation + compile-fallout inventory harness (service/communicator/config-control subsystems) and record initial findings in docs.
+      - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_prep_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`).
+      - Harness behavior: generates typed `rcc_rpc` artifacts in temp space, validates typed header marker/shape, and runs subsystem compile probes with expected prep baseline (`service` fail, `communicator` pass, `config/control` pass) while asserting service-fallout markers are present.
+      - Initial inventory recorded in `docs/rpc/rcc_rpc_typed_prep_inventory.md`.
+    - [ ] Leaf 3a.2 (`rcc_rpc` in-tree sync): land/generated-sync guard for in-tree typed `rcc_rpc` artifacts in selected mode once prep inventory is stable.
+    - [ ] Leaf 3a.3 (`rcc_rpc` fallout map): convert inventory results into an explicit subsystem migration map that feeds leaf 3b/3c callsite migrations.
   - [ ] Leaf 3b (`rcc_rpc` migration part 1): migrate high-traffic `ClassicService`/`ClassicProxy` callsites to typed request/response APIs while keeping compatibility wrappers.
   - [ ] Leaf 3c (`rcc_rpc` migration part 2): migrate remaining in-tree services/proxies and remove transitional shims no longer needed after typed callsites land.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
