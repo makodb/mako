@@ -373,6 +373,14 @@ compatibility wrappers for incremental rollout.
     - Implemented on 2026-04-12 by regenerating `src/deptran/helloworld.h` via `bin/rpcgen --cpp --cpp-mode typed src/deptran/helloworld.rpc` and migrating `src/helloworld.cc` request callsites to typed request/response proxy overloads.
     - Added migration guard `test/rpcgen_in_tree_helloworld_typed_test.py` (wired as `test_rpc_rpcgen_in_tree_helloworld_typed`) to validate typed header shape, normalized generator sync (ignoring randomized RPC ID literals), and typed+legacy compile compatibility.
   - [ ] Leaf 2 (`network`): regenerate `src/deptran/network.h` in typed mode and update `network_client`/`nc_main` callsites for typed request/response usage.
+    - Decomposed on 2026-04-12 because typed regeneration updates a large generated artifact (`src/deptran/network.h`, ~860 LOC diff) plus callsites; split into sub-leaves so each handwritten delta remains bounded and testable.
+    - Partial completion on 2026-04-12: leaf 2a and leaf 2c are done; leaf 2b remains.
+    - [x] Leaf 2a (`network` active path): regenerate `src/deptran/network.h` in typed mode and migrate active `src/nc_main.cc` YCSB callsites (`txn_read` / `txn_rmw`) to typed request/response proxy overloads.
+      - Implemented on 2026-04-12 by regenerating `src/deptran/network.h` via `bin/rpcgen --cpp --cpp-mode typed src/deptran/network.rpc` and switching active YCSB read/rmw callsites in `src/nc_main.cc` to `NetworkClientProxy::RpcTxnReadRequest` / `RpcTxnRmwRequest` typed sync overloads.
+    - [ ] Leaf 2b (`network` remaining paths): migrate remaining `network_client`/benchmark callsites (non-active transaction categories) to typed request/response overloads where compiled paths exist.
+    - [x] Leaf 2c (`network` guard): add in-tree typed compile/sync regression guard for `network.rpc` generated header + typed/legacy proxy callsite compatibility.
+      - Implemented on 2026-04-12 as `test/rpcgen_in_tree_network_typed_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_network_typed`); validates typed header shape, normalized rpcgen sync against `network.rpc`, and typed+legacy proxy/service compile compatibility.
+      - Validation on 2026-04-12: focused guard run passed and full RPC-focused suite regex run passed (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 37/37 passed).
   - [ ] Leaf 3a (`rcc_rpc` prep): generate typed `rcc_rpc.h` in build flow and capture compile fallout inventory by subsystem (`service`, `communicator`, config/control services).
   - [ ] Leaf 3b (`rcc_rpc` migration part 1): migrate high-traffic `ClassicService`/`ClassicProxy` callsites to typed request/response APIs while keeping compatibility wrappers.
   - [ ] Leaf 3c (`rcc_rpc` migration part 2): migrate remaining in-tree services/proxies and remove transitional shims no longer needed after typed callsites land.
@@ -390,7 +398,8 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert deferred legacy fallback wrapper generation uses RAII (`std::make_shared`) and no longer emits manual `new/delete` cleanup.
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
   - [x] Leaf 1 (`helloworld`): add typed header migration compile guard covering generated-structure drift and typed+legacy callsite compilation.
-  - [ ] Leaf 2 (`network`): add typed header compile guard for `network` generated service/proxy APIs and callsites.
+  - [x] Leaf 2 (`network`): add typed header compile guard for `network` generated service/proxy APIs and callsites.
+    - Implemented on 2026-04-12 as `test/rpcgen_in_tree_network_typed_test.py` (`test_rpc_rpcgen_in_tree_network_typed`).
   - [ ] Leaf 3 (`rcc_rpc`): add typed header compile guard for generated `rcc_rpc` APIs and representative in-tree callsite coverage.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
