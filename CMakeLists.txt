@@ -1854,6 +1854,13 @@ if(BUILD_TESTS)
                 --cxx ${CMAKE_CXX_COMPILER}
     )
     add_test(
+        NAME test_rpc_rcc_rpc_classic_service_typed_bridge
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/test/rcc_rpc_classic_service_typed_bridge_test.py
+                --repo ${CMAKE_SOURCE_DIR}
+                --cxx ${CMAKE_CXX_COMPILER}
+    )
+    add_test(
         NAME test_rpc_rcc_rpc_typed_fallout_map_doc
         COMMAND ${PYTHON3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/test/rcc_rpc_typed_fallout_map_doc_test.py

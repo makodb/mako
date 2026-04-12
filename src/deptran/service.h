@@ -173,6 +173,18 @@ class ClassicServiceImpl : public ClassicService {
   ClassicServiceImpl(TxLogServer* sched,
                      rusty::Arc<rrr::PollThread> poll_thread_worker);
 
+  rusty::Result<ClassicService::RpcRccDispatchResponse, rrr::i32>
+  RccDispatch(const ClassicService::RpcRccDispatchRequest& req) override;
+
+  rusty::Result<ClassicService::RpcRccPreAcceptResponse, rrr::i32>
+  RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req) override;
+
+  rusty::Result<ClassicService::RpcRccAcceptResponse, rrr::i32>
+  RccAccept(const ClassicService::RpcRccAcceptRequest& req) override;
+
+  rusty::Result<ClassicService::RpcRccCommitResponse, rrr::i32>
+  RccCommit(const ClassicService::RpcRccCommitRequest& req) override;
+
   void RccDispatch(const vector<SimpleCommand>& cmd,
                    int32_t* res,
                    TxnOutput* output,

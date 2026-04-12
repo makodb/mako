@@ -22,6 +22,45 @@
 
 namespace janus {
 
+namespace {
+
+ClassicService::RpcRccDispatchResponse BuildRccDispatchResponse(
+    TxLogServer* dtxn_sched, const std::vector<SimpleCommand>& cmd) {
+  auto* sched = static_cast<RccServer*>(dtxn_sched);
+  ClassicService::RpcRccDispatchResponse resp;
+  resp.md_graph.set_marshallable(std::make_shared<RccGraph>());
+  auto sp_graph = dynamic_pointer_cast<RccGraph>(resp.md_graph.sp_data_);
+  resp.res = sched->OnDispatch(cmd, &resp.output, sp_graph);
+  return resp;
+}
+
+ClassicService::RpcRccPreAcceptResponse BuildRccPreAcceptResponse(
+    TxLogServer* dtxn_sched, const ClassicService::RpcRccPreAcceptRequest& req) {
+  auto* sched = static_cast<RccServer*>(dtxn_sched);
+  ClassicService::RpcRccPreAcceptResponse resp;
+  resp.res = sched->OnPreAccept(req.txn_id, req.rank, req.cmd, resp.x);
+  return resp;
+}
+
+ClassicService::RpcRccAcceptResponse BuildRccAcceptResponse(
+    TxLogServer* dtxn_sched, const ClassicService::RpcRccAcceptRequest& req) {
+  auto* sched = static_cast<RccServer*>(dtxn_sched);
+  ClassicService::RpcRccAcceptResponse resp;
+  resp.res = sched->OnAccept(req.txn_id, req.rank, req.ballot, req.p);
+  return resp;
+}
+
+ClassicService::RpcRccCommitResponse BuildRccCommitResponse(
+    TxLogServer* dtxn_sched, const ClassicService::RpcRccCommitRequest& req) {
+  auto* sched = static_cast<RccServer*>(dtxn_sched);
+  ClassicService::RpcRccCommitResponse resp;
+  resp.res =
+      sched->OnCommit(req.id, req.rank, req.need_validation, req.parents, &resp.output);
+  return resp;
+}
+
+}  // namespace
+
 ClassicServiceImpl::ClassicServiceImpl(TxLogServer* sched,
                                        rusty::Arc<rrr::PollThread> poll_thread_worker)
     : dtxn_sched_(sched), poll_thread_worker_(poll_thread_worker) {
@@ -460,16 +499,43 @@ void ClassicServiceImpl::CarouselDecide(
   sched->OnDecide(cmd_id, decision, [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
+rusty::Result<ClassicService::RpcRccDispatchResponse, rrr::i32>
+ClassicServiceImpl::RccDispatch(const ClassicService::RpcRccDispatchRequest& req) {
+  auto resp = BuildRccDispatchResponse(dtxn_sched_, req.cmd);
+  return rusty::Result<ClassicService::RpcRccDispatchResponse, rrr::i32>::Ok(resp);
+}
+
+rusty::Result<ClassicService::RpcRccPreAcceptResponse, rrr::i32>
+ClassicServiceImpl::RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req) {
+  auto resp = BuildRccPreAcceptResponse(dtxn_sched_, req);
+  return rusty::Result<ClassicService::RpcRccPreAcceptResponse, rrr::i32>::Ok(resp);
+}
+
+rusty::Result<ClassicService::RpcRccAcceptResponse, rrr::i32>
+ClassicServiceImpl::RccAccept(const ClassicService::RpcRccAcceptRequest& req) {
+  auto resp = BuildRccAcceptResponse(dtxn_sched_, req);
+  return rusty::Result<ClassicService::RpcRccAcceptResponse, rrr::i32>::Ok(resp);
+}
+
+rusty::Result<ClassicService::RpcRccCommitResponse, rrr::i32>
+ClassicServiceImpl::RccCommit(const ClassicService::RpcRccCommitRequest& req) {
+  auto resp = BuildRccCommitResponse(dtxn_sched_, req);
+  return rusty::Result<ClassicService::RpcRccCommitResponse, rrr::i32>::Ok(resp);
+}
+
 void ClassicServiceImpl::RccDispatch(const vector<SimpleCommand>& cmd,
                                      int32_t* res,
                                      TxnOutput* output,
                                      MarshallDeputy* p_md_graph,
                                      rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(this->mtx_);
-  RccServer* sched = (RccServer*) dtxn_sched_;
-  p_md_graph->set_marshallable(std::make_shared<RccGraph>());
-  auto p = dynamic_pointer_cast<RccGraph>(p_md_graph->sp_data_);
-  *res = sched->OnDispatch(cmd, output, p);
+  ClassicService::RpcRccDispatchRequest req;
+  req.cmd = cmd;
+  auto typed_result = RccDispatch(req);
+  verify(typed_result.is_ok());
+  auto resp = typed_result.unwrap();
+  *res = resp.res;
+  *output = std::move(resp.output);
+  *p_md_graph = std::move(resp.md_graph);
   defer.reply();
 }
 
@@ -570,9 +636,16 @@ void ClassicServiceImpl::RccCommit(const cmdid_t& cmd_id,
                                    int32_t* res,
                                    TxnOutput* output,
                                    rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  auto p_sched = (RccServer*) dtxn_sched_;
-  *res = p_sched->OnCommit(cmd_id, rank, need_validation, parents, output);
+  ClassicService::RpcRccCommitRequest req;
+  req.id = cmd_id;
+  req.rank = rank;
+  req.need_validation = need_validation;
+  req.parents = parents;
+  auto typed_result = RccCommit(req);
+  verify(typed_result.is_ok());
+  auto resp = typed_result.unwrap();
+  *res = resp.res;
+  *output = std::move(resp.output);
   defer.reply();
 }
 
@@ -609,9 +682,15 @@ void ClassicServiceImpl::RccPreAccept(const cmdid_t& txnid,
                                       int32_t* res,
                                       parent_set_t* res_parents,
                                       rrr::DeferredReply defer) {
-//  std::lock_guard<std::mutex> guard(mtx_);
-  auto sched = (RccServer*) dtxn_sched_;
-  *res = sched->OnPreAccept(txnid, rank, cmds, *res_parents);
+  ClassicService::RpcRccPreAcceptRequest req;
+  req.txn_id = txnid;
+  req.rank = rank;
+  req.cmd = cmds;
+  auto typed_result = RccPreAccept(req);
+  verify(typed_result.is_ok());
+  auto resp = typed_result.unwrap();
+  *res = resp.res;
+  *res_parents = std::move(resp.x);
   defer.reply();
 }
 
@@ -653,8 +732,15 @@ void ClassicServiceImpl::RccAccept(const cmdid_t& txnid,
                                    const parent_set_t& parents,
                                    int32_t* res,
                                    rrr::DeferredReply defer) {
-  auto sched = (RccServer*) dtxn_sched_;
-  *res = sched->OnAccept(txnid, rank, ballot, parents);
+  ClassicService::RpcRccAcceptRequest req;
+  req.txn_id = txnid;
+  req.rank = rank;
+  req.ballot = ballot;
+  req.p = parents;
+  auto typed_result = RccAccept(req);
+  verify(typed_result.is_ok());
+  auto resp = typed_result.unwrap();
+  *res = resp.res;
   defer.reply();
 }
 

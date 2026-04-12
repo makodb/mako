@@ -1023,8 +1023,12 @@ probes after adding typed-header preamble includes for `SimpleCommand` and
 `parent_set_t` in `rcc_rpc` generation. High-traffic `ClassicProxy` callsites
 (`RccPreAccept`/`RccAccept`/`RccCommit`) are now migrated to typed request
 overloads in `src/deptran/troad/commo.cc` and guarded by
-`test_rpc_rcc_rpc_classic_proxy_typed_callsites`; remaining staged `rcc_rpc`
-work is `ClassicService` bridge alignment (leaf 3b.3) plus leaf 3c follow-up.
+`test_rpc_rcc_rpc_classic_proxy_typed_callsites`. Matching high-traffic
+`ClassicServiceImpl` typed bridge alignment is also in place for
+`RccDispatch`/`RccPreAccept`/`RccAccept`/`RccCommit` (guarded by
+`test_rpc_rcc_rpc_classic_service_typed_bridge`), with legacy pointer handlers
+routed through the same typed response path. Remaining staged `rcc_rpc` work is
+leaf 3c follow-up migration.
 In-tree typed generation/sync drift for
 `rcc_rpc` is guarded by `test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`
 (normalized output comparison between in-tree and direct-layout typed
