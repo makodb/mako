@@ -164,7 +164,7 @@ void RaftServiceImpl::HandleEmptyAppendEntries(const uint64_t& slot,
                                              uint64_t *followerLastLogIndex,
                                              uint64_t *followerAckType,
                                              rrr::DeferredReply defer) {
-  Log_info("RaftServiceImpl: HandleEmptyAppendEntries answering leader %d", leaderSiteId);
+  Log_debug("RaftServiceImpl: HandleEmptyAppendEntries answering leader %d", leaderSiteId);
   RaftServer* svr = GetServer();
   if (svr == nullptr) {
     // Server is killed, return failure

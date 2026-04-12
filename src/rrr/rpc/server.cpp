@@ -139,7 +139,7 @@ ServerConnection::~ServerConnection() {
 // get_shared() is now inherited from Pollable base class
 
 // @safe - Executes callback inline for API compatibility.
-int ServerConnection::run_async(const std::function<void()>& f) {
+int ServerConnection::run_async(std::function<void()> f) {
   if (!f) {
     Log_warn("rrr::ServerConnection::run_async called with empty callback");
     return EINVAL;
@@ -156,11 +156,7 @@ size_t ServerConnection::content_size() {
 
 // @safe - Explicit no-op for server connection API compatibility.
 void ServerConnection::handle_free() {
-    static std::atomic<bool> warned{false};
-    bool expected = false;
-    if (warned.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
-        Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
-    }
+    Log_warn("rrr::ServerConnection::handle_free() is a no-op on server connections");
 }
 
 // @safe - Reads requests from socket and dispatches to handlers
@@ -323,7 +319,7 @@ int ServerConnection::poll_mode() const {
 }
 
 // @safe - Executes callback inline for API compatibility.
-int DeferredReply::run_async(const std::function<void()>& f) {
+int DeferredReply::run_async(std::function<void()> f) {
     if (!f) {
         Log_warn("rrr::DeferredReply::run_async called with empty callback");
         return EINVAL;

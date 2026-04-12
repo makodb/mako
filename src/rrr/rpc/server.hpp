@@ -157,7 +157,7 @@ struct Request {
 
     // @safe - Attach request-lifetime pending counter guard once.
     void attach_pending_guard(const std::shared_ptr<std::atomic<int>>& counter) {
-        if (!pending_guard && counter) {
+        if (pending_guard == nullptr && counter != nullptr) {
             pending_guard = std::make_unique<PendingRequestGuard>(counter);
         }
     }
@@ -393,7 +393,8 @@ public:
     }
 
     // @safe - Delegates to thread pool (currently a no-op stub)
-    int run_async(const std::function<void()>& f);
+    // Takes callback by value to avoid const-propagation issues in rusty-cpp.
+    int run_async(std::function<void()> f);
 
     // @safe - Returns file descriptor
     int fd() const override {
@@ -479,7 +480,8 @@ public:
     }
 
     // @safe - Executes callback inline; returns error on empty callback.
-    int run_async(const std::function<void()>& f);
+    // Takes callback by value to avoid const-propagation issues in rusty-cpp.
+    int run_async(std::function<void()> f);
 
     // @safe - Sends reply using callback-based API
     // Can only be called once (checked by replied_ flag)
@@ -681,12 +683,14 @@ public:
 
     // @safe - Toggle dropping of internal heartbeat probe replies.
     void set_drop_heartbeat_replies(bool drop) {
-        drop_heartbeat_replies_->store(drop, std::memory_order_release);
+        // @unsafe - std::atomic::store is currently modeled as non-safe.
+        { drop_heartbeat_replies_->store(drop, std::memory_order_release); }
     }
 
     // @safe - Read drop-heartbeat toggle.
     bool drop_heartbeat_replies() const {
-        return drop_heartbeat_replies_->load(std::memory_order_acquire);
+        // @unsafe - std::atomic::load is currently modeled as non-safe.
+        { return drop_heartbeat_replies_->load(std::memory_order_acquire); }
     }
 
     /**

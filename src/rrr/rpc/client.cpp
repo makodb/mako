@@ -540,7 +540,9 @@ void ClientConnection::set_buffering_config(const BufferingConfig& config) const
 // @safe - Configure heartbeat manager and timeout callback.
 void ClientConnection::set_heartbeat_config(const HeartbeatConfig& config) const {
   heartbeat_manager_.set_config(config);
-  auto weak_conn = weak_self_;
+  WeakClientConnection weak_conn;
+  // @unsafe - Weak copy construction is currently modeled as non-safe.
+  { weak_conn = weak_self_; }
   heartbeat_manager_.set_on_timeout([weak_conn]() {
     auto conn_opt = weak_conn.upgrade();
     if (conn_opt.is_none()) {
@@ -846,7 +848,7 @@ void ClientConnection::handle_error() {
   }
 }
 
-// @unsafe - Poll-loop heartbeat tick and pending write-update handling.
+// @safe - Poll-loop heartbeat tick and pending write-update handling.
 bool ClientConnection::check_pending_write_update() const {
   if (state_machine_.is_connected() && !paused_.get()) {
     if (heartbeat_manager_.check_timeout()) {

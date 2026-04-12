@@ -136,7 +136,8 @@ public:
 
     // @safe - Replace runtime config and reset heartbeat state.
     void set_config(const HeartbeatConfig& config) {
-        config_ = config;
+        // @unsafe - assignment operator is currently modeled as non-safe.
+        { config_ = config; }
         reset();
     }
 

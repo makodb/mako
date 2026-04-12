@@ -16,23 +16,22 @@ if [ "$GDB_ENABLED" == "1" ]; then
 fi
 
 trd=${1:-6}
+export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
 binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 verification_marker="ALL VERIFICATIONS PASSED"
 log_s0_localhost="simple-shard0-localhost.log"
-log_s0_learner="simple-shard0-learner.log"
 log_s0_p2="simple-shard0-p2.log"
 log_s0_p1="simple-shard0-p1.log"
 log_s1_localhost="simple-shard1-localhost.log"
-log_s1_learner="simple-shard1-learner.log"
 log_s1_p2="simple-shard1-p2.log"
 log_s1_p1="simple-shard1-p1.log"
 PROC_MATCH="[/]simpleTransactionRep( |$)"
 PID_S0_LOCALHOST=""
-PID_S0_LEARNER=""
 PID_S0_P2=""
 PID_S0_P1=""
 PID_S1_LOCALHOST=""
-PID_S1_LEARNER=""
 PID_S1_P2=""
 PID_S1_P1=""
 CLEANUP_DONE=0
@@ -45,8 +44,8 @@ fi
 
 # Clean up old log files
 rm -f nfs_sync_*
-rm -f "$log_s0_localhost" "$log_s0_learner" "$log_s0_p2" "$log_s0_p1" \
-      "$log_s1_localhost" "$log_s1_learner" "$log_s1_p2" "$log_s1_p1"
+rm -f "$log_s0_localhost" "$log_s0_p2" "$log_s0_p1" \
+      "$log_s1_localhost" "$log_s1_p2" "$log_s1_p1"
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
@@ -56,8 +55,8 @@ pkill -9 -x dbtest 2>/dev/null || true
 pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 sleep 1
 
-for run_log in "$log_s0_localhost" "$log_s0_learner" "$log_s0_p2" "$log_s0_p1" \
-               "$log_s1_localhost" "$log_s1_learner" "$log_s1_p2" "$log_s1_p1"; do
+for run_log in "$log_s0_localhost" "$log_s0_p2" "$log_s0_p1" \
+               "$log_s1_localhost" "$log_s1_p2" "$log_s1_p1"; do
     if ! : > "$run_log"; then
         echo "Error: Cannot write log file '$run_log'."
         echo "Fix file permissions or remove stale files, then retry."
@@ -79,8 +78,8 @@ cleanup_processes() {
     CLEANUP_DONE=1
 
     # Stop any started simpleTransactionRep processes first.
-    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
-               "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
+    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
+               "${PID_S1_LOCALHOST:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
         if [ -n "$pid" ]; then
             kill "$pid" 2>/dev/null || true
         fi
@@ -88,8 +87,8 @@ cleanup_processes() {
 
     sleep 1
 
-    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
-               "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
+    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
+               "${PID_S1_LOCALHOST:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
         if [ -n "$pid" ]; then
             kill -9 "$pid" 2>/dev/null || true
         fi
@@ -100,8 +99,8 @@ cleanup_processes() {
     sleep 1
     pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 
-    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_LEARNER:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
-               "${PID_S1_LOCALHOST:-}" "${PID_S1_LEARNER:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
+    for pid in "${PID_S0_LOCALHOST:-}" "${PID_S0_P2:-}" "${PID_S0_P1:-}" \
+               "${PID_S1_LOCALHOST:-}" "${PID_S1_P2:-}" "${PID_S1_P1:-}"; do
         if [ -n "$pid" ]; then
             wait "$pid" 2>/dev/null || true
         fi
@@ -123,15 +122,11 @@ trap handle_interrupt INT TERM
 # to connect to shard 1 before shard 1 is ready
 echo "Starting shard 0 and shard 1 simultaneously with Raft..."
 
-# Start shard 0 followers first
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" learner 1 raft > "$log_s0_learner" 2>&1 &
-PID_S0_LEARNER=$!
+# Start shard 0 followers first (3 replicas total: localhost, p1, p2)
 nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" p2 1 raft > "$log_s0_p2" 2>&1 &
 PID_S0_P2=$!
 
 # Start shard 1 followers simultaneously
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" learner 1 raft > "$log_s1_learner" 2>&1 &
-PID_S1_LEARNER=$!
 nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" p2 1 raft > "$log_s1_p2" 2>&1 &
 PID_S1_P2=$!
 
@@ -164,26 +159,18 @@ timed_out=0
 
 echo "Waiting for replication verification completion (timeout: ${max_wait}s)..."
 while [ "$wait_count" -lt "$max_wait" ]; do
-    s0_learner_verified=0
     s0_p2_verified=0
     s0_p1_verified=0
-    s1_learner_verified=0
     s1_p2_verified=0
     s1_p1_verified=0
     s0_p1_replay=0
     s1_p1_replay=0
 
-    if [ -f "$log_s0_learner" ] && grep -q "$verification_marker" "$log_s0_learner" 2>/dev/null; then
-        s0_learner_verified=1
-    fi
     if [ -f "$log_s0_p2" ] && grep -q "$verification_marker" "$log_s0_p2" 2>/dev/null; then
         s0_p2_verified=1
     fi
     if [ -f "$log_s0_p1" ] && grep -q "$verification_marker" "$log_s0_p1" 2>/dev/null; then
         s0_p1_verified=1
-    fi
-    if [ -f "$log_s1_learner" ] && grep -q "$verification_marker" "$log_s1_learner" 2>/dev/null; then
-        s1_learner_verified=1
     fi
     if [ -f "$log_s1_p2" ] && grep -q "$verification_marker" "$log_s1_p2" 2>/dev/null; then
         s1_p2_verified=1
@@ -198,8 +185,8 @@ while [ "$wait_count" -lt "$max_wait" ]; do
         s1_p1_replay=1
     fi
 
-    if [ "$s0_learner_verified" -eq 1 ] && [ "$s0_p2_verified" -eq 1 ] && [ "$s0_p1_verified" -eq 1 ] && \
-       [ "$s1_learner_verified" -eq 1 ] && [ "$s1_p2_verified" -eq 1 ] && [ "$s1_p1_verified" -eq 1 ] && \
+    if [ "$s0_p2_verified" -eq 1 ] && [ "$s0_p1_verified" -eq 1 ] && \
+       [ "$s1_p2_verified" -eq 1 ] && [ "$s1_p1_verified" -eq 1 ] && \
        [ "$s0_p1_replay" -eq 1 ] && [ "$s1_p1_replay" -eq 1 ]; then
         echo "Verification markers completed after ${wait_count}s"
         benchmark_completed=1
@@ -208,42 +195,36 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 
     s0_localhost_alive=1
-    s0_learner_alive=1
     s0_p2_alive=1
     s0_p1_alive=1
     s1_localhost_alive=1
-    s1_learner_alive=1
     s1_p2_alive=1
     s1_p1_alive=1
     if ! kill -0 "$PID_S0_LOCALHOST" 2>/dev/null; then s0_localhost_alive=0; fi
-    if ! kill -0 "$PID_S0_LEARNER" 2>/dev/null; then s0_learner_alive=0; fi
     if ! kill -0 "$PID_S0_P2" 2>/dev/null; then s0_p2_alive=0; fi
     if ! kill -0 "$PID_S0_P1" 2>/dev/null; then s0_p1_alive=0; fi
     if ! kill -0 "$PID_S1_LOCALHOST" 2>/dev/null; then s1_localhost_alive=0; fi
-    if ! kill -0 "$PID_S1_LEARNER" 2>/dev/null; then s1_learner_alive=0; fi
     if ! kill -0 "$PID_S1_P2" 2>/dev/null; then s1_p2_alive=0; fi
     if ! kill -0 "$PID_S1_P1" 2>/dev/null; then s1_p1_alive=0; fi
 
-    if [ "$s0_localhost_alive" -eq 0 ] || [ "$s0_learner_alive" -eq 0 ] || [ "$s0_p2_alive" -eq 0 ] || [ "$s0_p1_alive" -eq 0 ] || \
-       [ "$s1_localhost_alive" -eq 0 ] || [ "$s1_learner_alive" -eq 0 ] || [ "$s1_p2_alive" -eq 0 ] || [ "$s1_p1_alive" -eq 0 ]; then
+    if [ "$s0_localhost_alive" -eq 0 ] || [ "$s0_p2_alive" -eq 0 ] || [ "$s0_p1_alive" -eq 0 ] || \
+       [ "$s1_localhost_alive" -eq 0 ] || [ "$s1_p2_alive" -eq 0 ] || [ "$s1_p1_alive" -eq 0 ]; then
         sleep 1
-        if [ -f "$log_s0_learner" ] && grep -q "$verification_marker" "$log_s0_learner" 2>/dev/null; then s0_learner_verified=1; fi
         if [ -f "$log_s0_p2" ] && grep -q "$verification_marker" "$log_s0_p2" 2>/dev/null; then s0_p2_verified=1; fi
         if [ -f "$log_s0_p1" ] && grep -q "$verification_marker" "$log_s0_p1" 2>/dev/null; then s0_p1_verified=1; fi
-        if [ -f "$log_s1_learner" ] && grep -q "$verification_marker" "$log_s1_learner" 2>/dev/null; then s1_learner_verified=1; fi
         if [ -f "$log_s1_p2" ] && grep -q "$verification_marker" "$log_s1_p2" 2>/dev/null; then s1_p2_verified=1; fi
         if [ -f "$log_s1_p1" ] && grep -q "$verification_marker" "$log_s1_p1" 2>/dev/null; then s1_p1_verified=1; fi
         if [ -f "$log_s0_p1" ] && grep -q "replay_batch:" "$log_s0_p1" 2>/dev/null; then s0_p1_replay=1; fi
         if [ -f "$log_s1_p1" ] && grep -q "replay_batch:" "$log_s1_p1" 2>/dev/null; then s1_p1_replay=1; fi
-        if [ "$s0_learner_verified" -eq 1 ] && [ "$s0_p2_verified" -eq 1 ] && [ "$s0_p1_verified" -eq 1 ] && \
-           [ "$s1_learner_verified" -eq 1 ] && [ "$s1_p2_verified" -eq 1 ] && [ "$s1_p1_verified" -eq 1 ] && \
+        if [ "$s0_p2_verified" -eq 1 ] && [ "$s0_p1_verified" -eq 1 ] && \
+           [ "$s1_p2_verified" -eq 1 ] && [ "$s1_p1_verified" -eq 1 ] && \
            [ "$s0_p1_replay" -eq 1 ] && [ "$s1_p1_replay" -eq 1 ]; then
             echo "Verification markers completed after ${wait_count}s (processes exited after writing results)"
             benchmark_completed=1
             sleep 1
             break
         fi
-        echo "Process exited unexpectedly before verification completion (s0_localhost=$s0_localhost_alive, s0_learner=$s0_learner_alive, s0_p2=$s0_p2_alive, s0_p1=$s0_p1_alive, s1_localhost=$s1_localhost_alive, s1_learner=$s1_learner_alive, s1_p2=$s1_p2_alive, s1_p1=$s1_p1_alive)"
+        echo "Process exited unexpectedly before verification completion (s0_localhost=$s0_localhost_alive, s0_p2=$s0_p2_alive, s0_p1=$s0_p1_alive, s1_localhost=$s1_localhost_alive, s1_p2=$s1_p2_alive, s1_p1=$s1_p1_alive)"
         process_exited_early=1
         break
     fi
@@ -251,7 +232,7 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     sleep 1
     wait_count=$((wait_count + 1))
     if [ $((wait_count % 10)) -eq 0 ]; then
-        echo "  ... waiting (${wait_count}s elapsed, s0_lrn=$s0_learner_verified, s0_p2=$s0_p2_verified, s0_p1=$s0_p1_verified, s1_lrn=$s1_learner_verified, s1_p2=$s1_p2_verified, s1_p1=$s1_p1_verified)"
+        echo "  ... waiting (${wait_count}s elapsed, s0_p2=$s0_p2_verified, s0_p1=$s0_p1_verified, s1_p2=$s1_p2_verified, s1_p1=$s1_p1_verified)"
     fi
 done
 
@@ -262,13 +243,13 @@ fi
 
 # Kill ALL processes from both shards
 echo "Stopping shards..."
-kill -TERM $PID_S0_LOCALHOST $PID_S0_LEARNER $PID_S0_P2 $PID_S0_P1 \
-     $PID_S1_LOCALHOST $PID_S1_LEARNER $PID_S1_P2 $PID_S1_P1 2>/dev/null || true
+kill -TERM $PID_S0_LOCALHOST $PID_S0_P2 $PID_S0_P1 \
+     $PID_S1_LOCALHOST $PID_S1_P2 $PID_S1_P1 2>/dev/null || true
 sleep 2
-kill -9 $PID_S0_LOCALHOST $PID_S0_LEARNER $PID_S0_P2 $PID_S0_P1 \
-     $PID_S1_LOCALHOST $PID_S1_LEARNER $PID_S1_P2 $PID_S1_P1 2>/dev/null || true
-wait $PID_S0_LOCALHOST $PID_S0_LEARNER $PID_S0_P2 $PID_S0_P1 \
-     $PID_S1_LOCALHOST $PID_S1_LEARNER $PID_S1_P2 $PID_S1_P1 2>/dev/null || true
+kill -9 $PID_S0_LOCALHOST $PID_S0_P2 $PID_S0_P1 \
+     $PID_S1_LOCALHOST $PID_S1_P2 $PID_S1_P1 2>/dev/null || true
+wait $PID_S0_LOCALHOST $PID_S0_P2 $PID_S0_P1 \
+     $PID_S1_LOCALHOST $PID_S1_P2 $PID_S1_P1 2>/dev/null || true
 
 echo ""
 echo "========================================="
@@ -327,16 +308,14 @@ done
 
 # Check follower logs for data integrity verification
 # Note: Leaders (localhost) are the source of data and may have cleanup issues,
-# so we only verify followers (learner, p1, p2) which receive replicated data
+# so we only verify followers (p1, p2) which receive replicated data
 echo ""
 echo "Checking data integrity verification in follower logs:"
 echo "-----------------"
 for shard in 0 1; do
-    for log_suffix in learner p2 p1; do
-        if [ "$shard" -eq 0 ] && [ "$log_suffix" = "learner" ]; then log="$log_s0_learner"; fi
+    for log_suffix in p2 p1; do
         if [ "$shard" -eq 0 ] && [ "$log_suffix" = "p2" ]; then log="$log_s0_p2"; fi
         if [ "$shard" -eq 0 ] && [ "$log_suffix" = "p1" ]; then log="$log_s0_p1"; fi
-        if [ "$shard" -eq 1 ] && [ "$log_suffix" = "learner" ]; then log="$log_s1_learner"; fi
         if [ "$shard" -eq 1 ] && [ "$log_suffix" = "p2" ]; then log="$log_s1_p2"; fi
         if [ "$shard" -eq 1 ] && [ "$log_suffix" = "p1" ]; then log="$log_s1_p1"; fi
 

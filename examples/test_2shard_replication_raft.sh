@@ -21,14 +21,15 @@ USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
 trd=${1:-6}
+export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
 script_name="$(basename "$0")"
 binary_path="./${BUILD_DIR:-build}/dbtest"
 SHARD0_LOCALHOST_PID=""
-SHARD0_LEARNER_PID=""
 SHARD0_P2_PID=""
 SHARD0_P1_PID=""
 SHARD1_LOCALHOST_PID=""
-SHARD1_LEARNER_PID=""
 SHARD1_P2_PID=""
 SHARD1_P1_PID=""
 CLEANUP_DONE=0
@@ -53,8 +54,8 @@ cleanup_processes() {
     CLEANUP_DONE=1
 
     # Stop started wrapper/leader processes first.
-    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
-               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
         if [ -n "$pid" ]; then
             kill "$pid" 2>/dev/null || true
         fi
@@ -75,8 +76,8 @@ cleanup_processes() {
         pkill -9 -f "local-shards2-warehouses${trd}\\.yml.*raft" 2>/dev/null || true
     fi
 
-    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_LEARNER_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
-               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_LEARNER_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
+    for pid in "${SHARD0_LOCALHOST_PID:-}" "${SHARD0_P2_PID:-}" "${SHARD0_P1_PID:-}" \
+               "${SHARD1_LOCALHOST_PID:-}" "${SHARD1_P2_PID:-}" "${SHARD1_P1_PID:-}"; do
         if [ -n "$pid" ]; then
             wait "$pid" 2>/dev/null || true
         fi
@@ -104,12 +105,10 @@ log_prefix="${script_name}_${transport}"
 # Avoid grep/xargs patterns that can match wrapper shells containing "dbtest" in argv.
 pkill -9 -x dbtest 2>/dev/null || true
 sleep 1
-# Start shard 0 in background with RAFT replication
+# Start shard 0 in background with RAFT replication (3 replicas, no learner)
 echo "Starting shard 0 with Raft..."
 nohup bash bash/shard.sh 2 0 $trd localhost 0 1 raft > ${log_prefix}_shard0-localhost.log 2>&1 &
 SHARD0_LOCALHOST_PID=$!
-nohup bash bash/shard.sh 2 0 $trd learner 0 1 raft > ${log_prefix}_shard0-learner.log 2>&1 &
-SHARD0_LEARNER_PID=$!
 nohup bash bash/shard.sh 2 0 $trd p2 0 1 raft > ${log_prefix}_shard0-p2.log 2>&1 &
 SHARD0_P2_PID=$!
 sleep 1
@@ -122,8 +121,6 @@ sleep 5
 echo "Starting shard 1 with Raft..."
 nohup bash bash/shard.sh 2 1 $trd localhost 0 1 raft > ${log_prefix}_shard1-localhost.log 2>&1 &
 SHARD1_LOCALHOST_PID=$!
-nohup bash bash/shard.sh 2 1 $trd learner 0 1 raft > ${log_prefix}_shard1-learner.log 2>&1 &
-SHARD1_LEARNER_PID=$!
 nohup bash bash/shard.sh 2 1 $trd p2 0 1 raft > ${log_prefix}_shard1-p2.log 2>&1 &
 SHARD1_P2_PID=$!
 sleep 1
@@ -246,8 +243,8 @@ fi
 
 # Final verification - reap zombie processes by explicitly waiting on child PIDs
 # This ensures zombie processes are reaped by their parent (this script)
-for pid in $SHARD0_LOCALHOST_PID $SHARD0_LEARNER_PID $SHARD0_P2_PID $SHARD0_P1_PID \
-           $SHARD1_LOCALHOST_PID $SHARD1_LEARNER_PID $SHARD1_P2_PID $SHARD1_P1_PID; do
+for pid in $SHARD0_LOCALHOST_PID $SHARD0_P2_PID $SHARD0_P1_PID \
+           $SHARD1_LOCALHOST_PID $SHARD1_P2_PID $SHARD1_P1_PID; do
     wait $pid 2>/dev/null || true
 done
 

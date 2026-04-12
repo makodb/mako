@@ -84,38 +84,46 @@ void check_current_path() {
 }
 
 void server_launch_worker(vector<Config::SiteInfo>& server_sites) {
-    auto config = Config::GetConfig();
-
     int i = 0;
-    vector<std::thread> setup_ths;
+    vector<std::thread> service_setup_ths;
     for (auto& site_info : server_sites) {
-        // Capture the index by value to avoid race condition
         int thread_index = i++;
-        // Make a copy in the loop so each thread lambda captures its own snapshot
         auto site_info_for_thread = site_info;
-        setup_ths.push_back(std::thread([site_info_for_thread, thread_index, &config]() mutable {
+        service_setup_ths.push_back(std::thread([site_info_for_thread, thread_index]() mutable {
             Log_info("launching site: %x, bind address %s",
                      site_info_for_thread.id,
                      site_info_for_thread.GetBindAddress().c_str());
             auto& worker = pxs_workers_g[thread_index];
-            // start server service FIRST so it can receive connections
             worker->SetupService();
-            // THEN setup communicator (connects to other sites)
-            // Note: there is a small race window where Next() callback could fire
-            // before commo_ is set - the Next() code must handle commo_==nullptr
+        }));
+    }
+
+    Log_info("waiting for server service setup threads.");
+    for (auto& th : service_setup_ths) {
+        th.join();
+    }
+    Log_info("done waiting for server service setup threads.");
+
+    i = 0;
+    vector<std::thread> commo_setup_ths;
+    for (auto& site_info : server_sites) {
+        int thread_index = i++;
+        auto site_info_for_thread = site_info;
+        commo_setup_ths.push_back(std::thread([site_info_for_thread, thread_index]() mutable {
+            auto& worker = pxs_workers_g[thread_index];
             worker->SetupCommo();
             worker->InitQueueRead();
             Log_info("site %d launched!", (int)site_info_for_thread.id);
         }));
     }
-    Log_info("waiting for server setup threads.");
-    for (auto& th : setup_ths) {
+
+    Log_info("waiting for server communicator setup threads.");
+    for (auto& th : commo_setup_ths) {
         th.join();
     }
-    Log_info("done waiting for server setup threads.");
+    Log_info("done waiting for server communicator setup threads.");
 
     for (auto& worker : pxs_workers_g) {
-        // start communicator after all servers are running
         // setup communication between controller script - log data collection on the run.py
         worker->SetupHeartbeat();
     }

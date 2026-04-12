@@ -898,7 +898,7 @@ private:
 public:
     // @safe - Share callback manager with facade so pre-connect registrations persist.
     void set_callback_manager(const std::shared_ptr<CallbackManager>& callback_manager) {
-        if (callback_manager) {
+        if (callback_manager != nullptr) {
             callback_manager_ = callback_manager;
         }
     }
@@ -1297,7 +1297,7 @@ public:
     // @safe - Error handler
     void handle_error() override;
 
-    // @unsafe - Check heartbeat tick and pending write update flag.
+    // @safe - Check heartbeat tick and pending write update flag.
     bool check_pending_write_update() const override;
 
     // @safe - Check if connection was closed

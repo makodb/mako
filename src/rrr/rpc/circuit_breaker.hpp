@@ -146,7 +146,8 @@ public:
 
     // @safe - Replace runtime config and reset circuit state.
     void set_config(const CircuitBreakerConfig& config) {
-        config_ = config;
+        // @unsafe - assignment operator is currently modeled as non-safe.
+        { config_ = config; }
         reset();
     }
 

@@ -798,6 +798,7 @@ target_link_libraries(txlog_core
     PUBLIC
     yaml-cpp
     pthread
+    rocksdb
     ${CMAKE_DL_LIBS}
     Python3::Python
 )

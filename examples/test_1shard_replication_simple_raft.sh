@@ -16,15 +16,16 @@ if [ "$GDB_ENABLED" == "1" ]; then
 fi
 
 trd=${1:-6}
+export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
+export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
 binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
 log_localhost="simple-shard0-localhost.log"
-log_learner="simple-shard0-learner.log"
 log_p2="simple-shard0-p2.log"
 log_p1="simple-shard0-p1.log"
 verification_marker="ALL VERIFICATIONS PASSED"
 PROC_MATCH="[/]simpleTransactionRep( |$)"
 PID_LOCALHOST=""
-PID_LEARNER=""
 PID_P2=""
 PID_P1=""
 CLEANUP_DONE=0
@@ -39,11 +40,11 @@ fi
 # Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
 pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 # Clean up old log files
-rm -f "$log_localhost" "$log_learner" "$log_p2" "$log_p1" nfs_sync_*
+rm -f "$log_localhost" "$log_p2" "$log_p1" nfs_sync_*
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-for run_log in "$log_localhost" "$log_learner" "$log_p2" "$log_p1"; do
+for run_log in "$log_localhost" "$log_p2" "$log_p1"; do
     if ! : > "$run_log"; then
         echo "Error: Cannot write log file '$run_log'."
         echo "Fix file permissions or remove stale files, then retry."
@@ -64,7 +65,7 @@ cleanup_temp_config() {
     fi
     CLEANUP_DONE=1
 
-    for pid in "${PID_LOCALHOST:-}" "${PID_LEARNER:-}" "${PID_P2:-}" "${PID_P1:-}"; do
+    for pid in "${PID_LOCALHOST:-}" "${PID_P2:-}" "${PID_P1:-}"; do
         if [ -n "$pid" ]; then
             kill "$pid" 2>/dev/null || true
         fi
@@ -72,7 +73,7 @@ cleanup_temp_config() {
 
     sleep 1
 
-    for pid in "${PID_LOCALHOST:-}" "${PID_LEARNER:-}" "${PID_P2:-}" "${PID_P1:-}"; do
+    for pid in "${PID_LOCALHOST:-}" "${PID_P2:-}" "${PID_P1:-}"; do
         if [ -n "$pid" ]; then
             kill -9 "$pid" 2>/dev/null || true
         fi
@@ -83,7 +84,7 @@ cleanup_temp_config() {
     sleep 1
     pkill -9 -f "$PROC_MATCH" 2>/dev/null || true
 
-    for pid in "${PID_LOCALHOST:-}" "${PID_LEARNER:-}" "${PID_P2:-}" "${PID_P1:-}"; do
+    for pid in "${PID_LOCALHOST:-}" "${PID_P2:-}" "${PID_P1:-}"; do
         if [ -n "$pid" ]; then
             wait "$pid" 2>/dev/null || true
         fi
@@ -101,12 +102,10 @@ handle_interrupt() {
 trap cleanup_temp_config EXIT
 trap handle_interrupt INT TERM
 
-# Start shard 0 in background with RAFT replication - capture ALL PIDs
+# Start shard 0 in background with RAFT replication (3 replicas, no learner) - capture ALL PIDs
 echo "Starting shard 0 with Raft..."
 nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" localhost 1 raft > "$log_localhost" 2>&1 &
 PID_LOCALHOST=$!
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" learner 1 raft > "$log_learner" 2>&1 &
-PID_LEARNER=$!
 nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" p2 1 raft > "$log_p2" 2>&1 &
 PID_P2=$!
 sleep 1
@@ -127,14 +126,10 @@ timed_out=0
 
 echo "Waiting for replication verification completion (timeout: ${max_wait}s)..."
 while [ "$wait_count" -lt "$max_wait" ]; do
-    learner_verified=0
     p2_verified=0
     p1_verified=0
     p1_replay=0
 
-    if [ -f "$log_learner" ] && grep -q "$verification_marker" "$log_learner" 2>/dev/null; then
-        learner_verified=1
-    fi
     if [ -f "$log_p2" ] && grep -q "$verification_marker" "$log_p2" 2>/dev/null; then
         p2_verified=1
     fi
@@ -145,7 +140,7 @@ while [ "$wait_count" -lt "$max_wait" ]; do
         p1_replay=1
     fi
 
-    if [ "$learner_verified" -eq 1 ] && [ "$p2_verified" -eq 1 ] && [ "$p1_verified" -eq 1 ] && [ "$p1_replay" -eq 1 ]; then
+    if [ "$p2_verified" -eq 1 ] && [ "$p1_verified" -eq 1 ] && [ "$p1_replay" -eq 1 ]; then
         echo "Verification markers completed after ${wait_count}s"
         benchmark_completed=1
         sleep 1
@@ -153,14 +148,10 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     fi
 
     localhost_alive=1
-    learner_alive=1
     p2_alive=1
     p1_alive=1
     if ! kill -0 "$PID_LOCALHOST" 2>/dev/null; then
         localhost_alive=0
-    fi
-    if ! kill -0 "$PID_LEARNER" 2>/dev/null; then
-        learner_alive=0
     fi
     if ! kill -0 "$PID_P2" 2>/dev/null; then
         p2_alive=0
@@ -169,11 +160,8 @@ while [ "$wait_count" -lt "$max_wait" ]; do
         p1_alive=0
     fi
 
-    if [ "$localhost_alive" -eq 0 ] || [ "$learner_alive" -eq 0 ] || [ "$p2_alive" -eq 0 ] || [ "$p1_alive" -eq 0 ]; then
+    if [ "$localhost_alive" -eq 0 ] || [ "$p2_alive" -eq 0 ] || [ "$p1_alive" -eq 0 ]; then
         sleep 1
-        if [ -f "$log_learner" ] && grep -q "$verification_marker" "$log_learner" 2>/dev/null; then
-            learner_verified=1
-        fi
         if [ -f "$log_p2" ] && grep -q "$verification_marker" "$log_p2" 2>/dev/null; then
             p2_verified=1
         fi
@@ -183,13 +171,13 @@ while [ "$wait_count" -lt "$max_wait" ]; do
         if [ -f "$log_p1" ] && grep -q "replay_batch:" "$log_p1" 2>/dev/null; then
             p1_replay=1
         fi
-        if [ "$learner_verified" -eq 1 ] && [ "$p2_verified" -eq 1 ] && [ "$p1_verified" -eq 1 ] && [ "$p1_replay" -eq 1 ]; then
+        if [ "$p2_verified" -eq 1 ] && [ "$p1_verified" -eq 1 ] && [ "$p1_replay" -eq 1 ]; then
             echo "Verification markers completed after ${wait_count}s (processes exited after writing results)"
             benchmark_completed=1
             sleep 1
             break
         fi
-        echo "Process exited unexpectedly before verification completion (localhost_alive=$localhost_alive, learner_alive=$learner_alive, p2_alive=$p2_alive, p1_alive=$p1_alive)"
+        echo "Process exited unexpectedly before verification completion (localhost_alive=$localhost_alive, p2_alive=$p2_alive, p1_alive=$p1_alive)"
         process_exited_early=1
         break
     fi
@@ -197,7 +185,7 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     sleep 1
     wait_count=$((wait_count + 1))
     if [ $((wait_count % 10)) -eq 0 ]; then
-        echo "  ... waiting (${wait_count}s elapsed, learner=$learner_verified, p2=$p2_verified, p1=$p1_verified, replay=$p1_replay)"
+        echo "  ... waiting (${wait_count}s elapsed, p2=$p2_verified, p1=$p1_verified, replay=$p1_replay)"
     fi
 done
 
@@ -264,11 +252,11 @@ fi
 
 # Check follower logs for data integrity verification
 # Note: Leaders (localhost) are the source of data and may have cleanup issues,
-# so we only verify followers (learner, p1, p2) which receive replicated data
+# so we only verify followers (p1, p2) which receive replicated data
 echo ""
 echo "Checking data integrity verification in follower logs:"
 echo "-----------------"
-for log_suffix in learner p2 p1; do
+for log_suffix in p2 p1; do
     log="simple-shard0-${log_suffix}.log"
 
     if [ ! -f "$log" ]; then

@@ -174,7 +174,7 @@ inline bool is_retryable_error(RpcError err) {
  *       }
  *   }
  */
-// @safe - Exception class for RPC errors
+// @unsafe - Inherits std::exception, which rusty-cpp does not model as @interface.
 class RpcException : public std::exception {
 private:
     RpcError code_;
@@ -206,9 +206,10 @@ public:
         build_what_message();
     }
 
-    // @safe - Get full error message
+    // @unsafe - std::string::c_str is currently modeled as non-safe.
     const char* what() const noexcept override {
-        return what_message_.c_str();
+        // @unsafe
+        { return what_message_.c_str(); }
     }
 
     // @safe - Get error code
@@ -222,6 +223,7 @@ public:
     }
 
     // @safe - Get additional message
+    // @lifetime: (&'a) -> &'a
     const std::string& message() const noexcept {
         return message_;
     }
@@ -242,14 +244,18 @@ public:
     }
 
 private:
+    // @unsafe - std::string mutation operators are currently modeled as non-safe.
     void build_what_message() {
-        what_message_ = "[";
-        what_message_ += rpc_error_category_to_string(category());
-        what_message_ += "] ";
-        what_message_ += rpc_error_to_string(code_);
-        if (!message_.empty()) {
-            what_message_ += ": ";
-            what_message_ += message_;
+        // @unsafe
+        {
+            what_message_ = "[";
+            what_message_ += rpc_error_category_to_string(category());
+            what_message_ += "] ";
+            what_message_ += rpc_error_to_string(code_);
+            if (!message_.empty()) {
+                what_message_ += ": ";
+                what_message_ += message_;
+            }
         }
     }
 };

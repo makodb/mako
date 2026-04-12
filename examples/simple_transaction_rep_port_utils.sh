@@ -55,7 +55,12 @@ ensure_paxos_replication_configs() {
 pick_simple_transaction_port_base() {
     local transport="${MAKO_TRANSPORT:-rrr}"
     local base_min=20000
-    local base_max=45000
+    # Keep RRR dynamic ports out of:
+    # 1) fixed Paxos/Raft control ports (45001+), and
+    # 2) Linux default ephemeral range (32768+), which avoids self-collisions
+    #    when worker threads open outbound TCP connections during startup.
+    # With max offset 3100, base_max=28599 keeps highest port at 31699.
+    local base_max=28599
     if [ "$transport" = "erpc" ]; then
         base_min=31000
         base_max=37899

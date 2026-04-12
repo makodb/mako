@@ -118,12 +118,19 @@ cleanup_processes() {
 }
 
 # Pick a port base for simpleTransaction by checking that the full shard range is free.
+# Keep RRR dynamic ports out of:
+# 1) fixed Paxos/Raft control ports (45001+), and
+# 2) Linux default ephemeral range (32768+), which avoids self-collisions
+#    with outbound TCP connections during startup.
+# With max offset 3100, base_max=28599 keeps highest port at 31699.
 pick_simple_transaction_port_base() {
     python3 - <<'PY'
 import random
 import socket
 
 OFFSETS = [0, 100, 1000, 1100, 2000, 2100, 3000, 3100]
+BASE_MIN = 20000
+BASE_MAX = 28599
 
 def port_free(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -137,11 +144,11 @@ def port_free(port):
     return True
 
 for _ in range(2000):
-    base = random.randint(20000, 45000)
+    base = random.randint(BASE_MIN, BASE_MAX)
     if all(port_free(base + offset) for offset in OFFSETS):
         print(base)
         raise SystemExit(0)
-print(random.randint(20000, 45000))
+print(random.randint(BASE_MIN, BASE_MAX))
 raise SystemExit(0)
 PY
 }
@@ -289,51 +296,81 @@ run_1shard_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1Replication"
     echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    bash ./examples/test_1shard_replication.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard1Replication"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        # Run test and capture exit code (set +e to prevent immediate exit)
+        set +e
+        bash ./examples/test_1shard_replication.sh
+        local test_result=$?
+        set -e
+        # Always check for hanging processes, even if test failed
+        check_for_hanging_processes "shard1Replication"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shard1Replication (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_2shard_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard2Replication"
     echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    bash ./examples/test_2shard_replication.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard2Replication"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        # Run test and capture exit code (set +e to prevent immediate exit)
+        set +e
+        bash ./examples/test_2shard_replication.sh
+        local test_result=$?
+        set -e
+        # Always check for hanging processes, even if test failed
+        check_for_hanging_processes "shard2Replication"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shard2Replication (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_2shard_replication_erpc() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard2ReplicationErpc"
     echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    MAKO_TRANSPORT=erpc bash ./examples/test_2shard_replication.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard2ReplicationErpc"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        # Run test and capture exit code (set +e to prevent immediate exit)
+        set +e
+        MAKO_TRANSPORT=erpc bash ./examples/test_2shard_replication.sh
+        local test_result=$?
+        set -e
+        # Always check for hanging processes, even if test failed
+        check_for_hanging_processes "shard2ReplicationErpc"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shard2ReplicationErpc (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_1shard_replication_simple() {

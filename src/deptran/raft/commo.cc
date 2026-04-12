@@ -53,7 +53,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
   for (auto& p : proxies) {
     if (p.first != site_id)
         continue;
-    Log_info("[RPC-SEND] Sending AppendEntries to site %d via proxy %p", site_id, p.second);
+    Log_debug("[RPC-SEND] Sending AppendEntries to site %d via proxy %p", site_id, p.second);
 		auto follower_id = p.first;
     RaftProxy* proxy;
     // @unsafe
@@ -67,7 +67,7 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
         return;
       }
       fu->get_reply() >> response->status >> response->term >> response->last_log_index >> response->ack_type;
-      Log_info("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
+      Log_debug("[APPEND_RPC] Success response from site %d: status=%lu, term=%lu, lastLogIndex=%lu, ackType=%lu",
                site_id, response->status, response->term, response->last_log_index, response->ack_type);
       response->event->set(1);
     };

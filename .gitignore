@@ -1,5 +1,6 @@
 .waf*
 /build
+/build*
 /build_*/
 /build_docker
 /dist

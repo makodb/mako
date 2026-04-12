@@ -36,13 +36,27 @@ fi
 
 # Add paxos config and --is-replicated flag only if replication is enabled
 if [ "$is_replicated" == "1" ]; then
-    # Use occ_raft.yml for Raft replication, occ_paxos.yml for Paxos
-    if [ "$replication_type" == "raft" ]; then
+    replication_type_normalized="$(echo "$replication_type" | tr '[:upper:]' '[:lower:]')"
+
+    # Pick replication-specific config files.
+    if [ "$replication_type_normalized" == "raft" ]; then
         OCC_CONFIG="config/occ_raft.yml"
+        REPLICATION_CONFIG="config/1leader_2followers/raft${trd}_shardidx${shard}.yml"
     else
         OCC_CONFIG="config/occ_paxos.yml"
+        REPLICATION_CONFIG="config/1leader_2followers/paxos${trd}_shardidx${shard}.yml"
     fi
-    CMD="$CMD -F config/1leader_2followers/paxos${trd}_shardidx${shard}.yml -F $OCC_CONFIG --is-replicated --replication=$replication_type"
+
+    if [ ! -f "$REPLICATION_CONFIG" ]; then
+        echo "Error: replication config not found: $REPLICATION_CONFIG"
+        exit 1
+    fi
+    if [ ! -f "$OCC_CONFIG" ]; then
+        echo "Error: OCC config not found: $OCC_CONFIG"
+        exit 1
+    fi
+
+    CMD="$CMD -F $REPLICATION_CONFIG -F $OCC_CONFIG --is-replicated --replication=$replication_type_normalized"
 fi
 
 # Print configuration
