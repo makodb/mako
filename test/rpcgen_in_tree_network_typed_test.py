@@ -48,6 +48,26 @@ def verify_typed_header_shape(header_text: str) -> None:
         header_text,
         "rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req",
     )
+    require_contains(
+        header_text,
+        "rusty::Result<txn_new_orderTypedFuture, rrr::i32> async_txn_new_order(const RpcTxnNewOrderRequest& req",
+    )
+    require_contains(
+        header_text,
+        "rusty::Result<txn_paymentTypedFuture, rrr::i32> async_txn_payment(const RpcTxnPaymentRequest& req",
+    )
+    require_contains(
+        header_text,
+        "rusty::Result<txn_deliveryTypedFuture, rrr::i32> async_txn_delivery(const RpcTxnDeliveryRequest& req",
+    )
+    require_contains(
+        header_text,
+        "rusty::Result<txn_order_statusTypedFuture, rrr::i32> async_txn_order_status(const RpcTxnOrderStatusRequest& req",
+    )
+    require_contains(
+        header_text,
+        "rusty::Result<txn_stock_levelTypedFuture, rrr::i32> async_txn_stock_level(const RpcTxnStockLevelRequest& req",
+    )
     if "new std::vector<rrr::i64>" in header_text or "new std::vector<int32_t>" in header_text:
         raise AssertionError("typed deferred fallback should not allocate request vectors with new")
     if "delete in_0" in header_text:
@@ -91,6 +111,12 @@ void compile_proxy_calls() {
     (void)proxy.txn_stock_level(req32);
 
     (void)proxy.async_txn_read(req64);
+    (void)proxy.async_txn_rmw(req64);
+    (void)proxy.async_txn_new_order(req32);
+    (void)proxy.async_txn_payment(req32);
+    (void)proxy.async_txn_delivery(req32);
+    (void)proxy.async_txn_order_status(req32);
+    (void)proxy.async_txn_stock_level(req32);
 
     network_client::NetworkClientProxy::RpcTxnReadRequest typed_read;
     typed_read._req = req64;
@@ -101,13 +127,45 @@ void compile_proxy_calls() {
 
     network_client::NetworkClientProxy::RpcTxnRmwRequest typed_rmw;
     typed_rmw._req = req64;
+    auto typed_rmw_async = proxy.async_txn_rmw(typed_rmw);
     auto typed_rmw_sync = proxy.txn_rmw(typed_rmw);
+    (void)typed_rmw_async;
     (void)typed_rmw_sync;
 
     network_client::NetworkClientProxy::RpcTxnNewOrderRequest typed_new_order;
     typed_new_order._req = req32;
+    auto typed_new_order_async = proxy.async_txn_new_order(typed_new_order);
     auto typed_new_order_sync = proxy.txn_new_order(typed_new_order);
+    (void)typed_new_order_async;
     (void)typed_new_order_sync;
+
+    network_client::NetworkClientProxy::RpcTxnPaymentRequest typed_payment;
+    typed_payment._req = req32;
+    auto typed_payment_async = proxy.async_txn_payment(typed_payment);
+    auto typed_payment_sync = proxy.txn_payment(typed_payment);
+    (void)typed_payment_async;
+    (void)typed_payment_sync;
+
+    network_client::NetworkClientProxy::RpcTxnDeliveryRequest typed_delivery;
+    typed_delivery._req = req32;
+    auto typed_delivery_async = proxy.async_txn_delivery(typed_delivery);
+    auto typed_delivery_sync = proxy.txn_delivery(typed_delivery);
+    (void)typed_delivery_async;
+    (void)typed_delivery_sync;
+
+    network_client::NetworkClientProxy::RpcTxnOrderStatusRequest typed_order_status;
+    typed_order_status._req = req32;
+    auto typed_order_status_async = proxy.async_txn_order_status(typed_order_status);
+    auto typed_order_status_sync = proxy.txn_order_status(typed_order_status);
+    (void)typed_order_status_async;
+    (void)typed_order_status_sync;
+
+    network_client::NetworkClientProxy::RpcTxnStockLevelRequest typed_stock_level;
+    typed_stock_level._req = req32;
+    auto typed_stock_level_async = proxy.async_txn_stock_level(typed_stock_level);
+    auto typed_stock_level_sync = proxy.txn_stock_level(typed_stock_level);
+    (void)typed_stock_level_async;
+    (void)typed_stock_level_sync;
 }
 
 int main() {

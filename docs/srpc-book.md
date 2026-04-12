@@ -1015,7 +1015,8 @@ In-tree migration status (2026-04-12): `src/deptran/helloworld.h` and
 `test_rpc_rpcgen_in_tree_helloworld_typed` and
 `test_rpc_rpcgen_in_tree_network_typed`. Active `network` YCSB callsites
 (`txn_read`/`txn_rmw` in `src/nc_main.cc`) are migrated to typed request/response
-overloads; remaining non-active `network` and `rcc_rpc` migration is staged.
+overloads, and compile guards cover typed+legacy proxy usage across all network
+RPC methods. Remaining staged in-tree migration is `rcc_rpc`.
 
 This produces:
 - Client proxy class with compatibility pointer-style sync/async methods
