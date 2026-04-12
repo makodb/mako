@@ -1019,6 +1019,8 @@ overrides through the typed default bridge.
 For deferred methods, generated service dispatch wrappers now also try the typed
 overload first; `Err(ENOTSUP)` explicitly falls back to legacy deferred pointer
 handlers, while other `Err(i32)` results are returned as immediate RPC errors.
+The generated deferred fallback bridge now keeps request/response pointer values
+under RAII ownership (`std::shared_ptr`) instead of manual `new/delete` cleanup.
 Generated proxies now expose typed sync overloads with the same request/response
 shape for non-raw methods; they currently run through the existing async/future
 pipeline and return `Err(i32)` on transport or RPC error codes.

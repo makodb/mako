@@ -254,10 +254,23 @@ def verify_alpha_service_block(block: str) -> None:
         "            return;\n"
         "        }\n"
         "        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.\n"
-        "        rrr::i32* in_0 = new rrr::i32;\n"
-        "        *in_0 = __typed_req__.stream_id;\n"
-        "        rrr::i64* out_0 = new rrr::i64;\n",
+        "        auto in_0 = std::make_shared<rrr::i32>(__typed_req__.stream_id);\n"
+        "        auto out_0 = std::make_shared<rrr::i64>();\n"
+        "        auto __marshal_reply__ = [=](rrr::Marshal& m) {\n"
+        "            m << *out_0;\n"
+        "        };\n"
+        "        auto __cleanup__ = [=] {\n"
+        "            (void)in_0;\n"
+        "            (void)out_0;\n"
+        "        };\n"
+        "        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);\n"
+        "        this->stream(*in_0, out_0.get(), std::move(__defer__));\n"
+        "    }",
     )
+    if "new rrr::i32" in block or "new rrr::i64" in block:
+        raise AssertionError("deferred legacy fallback should not allocate request/response with new")
+    if "delete in_0" in block or "delete out_0" in block:
+        raise AssertionError("deferred legacy fallback should not emit manual delete cleanup")
 
     if "virtual rusty::Result<RpcPassthroughResponse, rrr::i32> passthrough(const RpcPassthroughRequest& req)" in block:
         raise AssertionError("raw handlers should not generate typed service signatures")

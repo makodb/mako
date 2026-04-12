@@ -346,7 +346,13 @@ compatibility wrappers for incremental rollout.
   - [x] Leaf 3 (service defer): deferred legacy service compatibility wrapper path + error propagation semantics for typed `Err(i32)` outcomes.
     - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: deferred `__<method>__wrapper__` now invokes typed service overload first, maps `Ok(response)` to immediate reply, maps `Err(code != ENOTSUP)` to immediate error reply, and falls back to legacy deferred pointer-style path on `Err(ENOTSUP)`.
     - Backward compatibility behavior in this leaf: existing deferred pointer-style handlers remain active by default through `ENOTSUP` fallback, while typed deferred overrides can return explicit immediate success/error responses.
-- [ ] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
+- [x] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
+  - Decomposed on 2026-04-12 to keep migration/refactor verification bounded under ~500 LOC and preserve defer callback lifetime guarantees.
+  - [x] Leaf 1 (defer wrapper RAII): replace generated deferred legacy fallback pointer ownership (`new/delete`) with RAII-managed request/response lifetime handling.
+    - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: deferred fallback wrappers now use `std::make_shared` for legacy pointer bridge values, pass output pointers via `.get()`, and retain lifetime through deferred cleanup lambda captures (`(void)in_i; (void)out_i;`) instead of manual delete calls.
+    - Include hygiene: generated C++ output now emits `#include <memory>` so typed/deferred wrapper output compiles with `std::shared_ptr` helpers.
+  - [x] Leaf 2 (tests): extend rpcgen golden checks to verify deferred wrapper output no longer emits manual `new/delete` cleanup while preserving marshal/reply behavior.
+    - Implemented on 2026-04-12 in `test/rpcgen_typed_structs_test.py`: deferred wrapper golden expectations now assert `std::make_shared`/`out.get()`/RAII cleanup emission and explicitly reject generated `new`/`delete` strings in the typed-first defer fallback block.
 - [ ] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
 - [ ] Migrate in-tree generated RPC headers from `.rpc` sources (`helloworld`, `network`, `rcc_rpc`) to typed mode and update callsites.
 - [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
@@ -360,6 +366,7 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert legacy proxy wrapper delegation direction (legacy async/sync signatures now marshal typed request structs and route through typed async/sync overloads for non-raw methods).
   - Extended on 2026-04-12 to assert non-deferred service dispatch wrapper generation uses typed service calls and propagates typed `Err(i32)` as RPC error replies, while keeping deferred wrapper shape unchanged.
   - Extended on 2026-04-12 to assert deferred service dispatch wrapper typed-first behavior with explicit `Err(i32)` propagation and `ENOTSUP` fallback to legacy deferred handler path.
+  - Extended on 2026-04-12 to assert deferred legacy fallback wrapper generation uses RAII (`std::make_shared`) and no longer emits manual `new/delete` cleanup.
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.

@@ -327,13 +327,12 @@ def emit_service_and_proxy(service, f, rpc_table):
                     in_counter = 0
                     out_counter = 0
                     for field_type, field_name in input_fields:
-                        f.writeln("%s* in_%d = new %s;" % (field_type, in_counter, field_type))
-                        f.writeln("*in_%d = __typed_req__.%s;" % (in_counter, field_name))
+                        f.writeln("auto in_%d = std::make_shared<%s>(__typed_req__.%s);" % (in_counter, field_type, field_name))
                         invoke_with += "*in_%d" % in_counter,
                         in_counter += 1
                     for field_type, _ in output_fields:
-                        f.writeln("%s* out_%d = new %s;" % (field_type, out_counter, field_type))
-                        invoke_with += "out_%d" % out_counter,
+                        f.writeln("auto out_%d = std::make_shared<%s>();" % (out_counter, field_type))
+                        invoke_with += "out_%d.get()" % out_counter,
                         out_counter += 1
                     f.writeln("auto __marshal_reply__ = [=](rrr::Marshal& m) {");
                     with f.indent():
@@ -347,10 +346,10 @@ def emit_service_and_proxy(service, f, rpc_table):
                         in_counter = 0
                         out_counter = 0
                         for in_arg in func.input:
-                            f.writeln("delete in_%d;" % in_counter)
+                            f.writeln("(void)in_%d;" % in_counter)
                             in_counter += 1
                         for out_arg in func.output:
-                            f.writeln("delete out_%d;" % out_counter)
+                            f.writeln("(void)out_%d;" % out_counter)
                             out_counter += 1
                     f.writeln("};");
                     f.writeln("rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
@@ -503,6 +502,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
         f.writeln('#include "rrr.hpp"')
         f.writeln()
         f.writeln("#include <errno.h>")
+        f.writeln("#include <memory>")
         f.writeln()
         f.write(cpp_header)
         f.writeln()
