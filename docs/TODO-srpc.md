@@ -313,3 +313,35 @@ Run all RPC-focused tests in Docker build output target set:
   - Reproduced and fixed on 2026-04-11 in this leaf cycle: full RPC-focused suite first failed at `test_rpc_metrics` (`ConnectionMetricsIntegrationTest.CircuitCountersTrackTransitionsAndRejections`) due transient bind collision on `test_ports::get_port()` selection.
   - Fix: `ConnectionMetricsIntegrationTest::start_server()` now retries bind on fresh allocated ports (`kMaxPortBindAttempts`), eliminating flaky external-port collisions while preserving test intent.
   - Verification: reran full RPC-focused suite (`ctest -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`) and got 33/33 passed.
+
+## Next Phase: Typed Request/Response RPC API (Planned)
+This phase migrates generated C++ RPC boundaries from pointer out-parameters
+to one request type + one response type per method, while preserving
+compatibility wrappers for incremental rollout.
+
+### Code TODO
+- [ ] Extend `rpcgen` C++ codegen to synthesize `MethodRequest` and `MethodResponse` structs from existing input/output lists.
+- [ ] Generate typed service signatures: `virtual rusty::Result<MethodResponse, rrr::i32> Method(const MethodRequest& req)`.
+- [ ] Generate typed client sync signatures returning `rusty::Result<MethodResponse, rrr::i32>`.
+- [ ] Generate typed async client path (`Future`/task wrapper) that resolves to typed `MethodResponse` instead of manual out-params.
+- [ ] Keep legacy pointer-style service/proxy signatures as compatibility wrappers that delegate to typed methods.
+- [ ] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
+- [ ] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
+- [ ] Migrate in-tree generated RPC headers from `.rpc` sources (`helloworld`, `network`, `rcc_rpc`) to typed mode and update callsites.
+- [ ] Mark legacy pointer signatures as deprecated in generated headers once typed mode is validated.
+
+### Tests TODO
+- [ ] Add rpcgen golden tests for method shapes with 0/1/N outputs to validate generated request/response struct names and signatures.
+- [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
+- [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
+- [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.
+- [ ] Add regression tests for deferred handlers to prove no leaks/double-free after removing generated `new/delete` wrapper paths.
+- [ ] Add docs guard updates for typed API symbols/examples in `docs/srpc-book.md` and migration notes in `docs/rpc/migration-guide.md`.
+- [ ] Add borrow-check guard for generated typed APIs (no public `T* out` signatures in typed mode output).
+- [ ] Re-run full RPC-focused suite in both CI modes: typed-default and compatibility-wrapper mode.
+
+### DoD
+- [ ] Typed request/response API is the default generated C++ interface.
+- [ ] Legacy pointer-style API remains available only as compatibility wrappers and is explicitly deprecated.
+- [ ] Full RPC-focused tests and docs guards pass in both typed-default and compatibility CI configurations.
+- [ ] Migration guide includes rollout steps and removal criteria for legacy wrappers.

@@ -985,10 +985,10 @@ struct UserInfo {
 // Service definition
 service MyService {
     // 'defer' = dispatched to thread pool
-    defer get_user(i32 id | UserInfo& result);
+    defer get_user(i32 id | UserInfo user);
 
     // 'fast' = handled on network thread (low latency)
-    fast ping(| i32& status);
+    fast ping(| i32 status);
 };
 ```
 
@@ -1005,6 +1005,9 @@ This produces:
 - Client proxy class with typed methods
 - Server dispatch skeleton
 - Marshal/unmarshal code for custom structs
+
+Current generated C++ service/proxy boundaries still use out-parameters
+(`T* out`) for return values in compatibility mode.
 
 ### Generated Client Usage
 
@@ -1027,6 +1030,45 @@ if (fu_result.is_ok()) {
 
 // The generated sync wrapper returns i32 status, not the value directly.
 ```
+
+### Planned Typed Request/Response API (Migration Target)
+
+The target interface style is one request type plus one response type per RPC
+method. This removes raw out-parameters from the public generated API and
+matches common RPC APIs (gRPC/Thrift style).
+
+IDL ergonomics remain simple: users can still list primitive output fields in
+`.rpc`; `rpcgen` should synthesize request/response structs automatically.
+
+```cpp srpc-no-compile
+struct GetUserRequest {
+    i32 id;
+};
+
+struct GetUserResponse {
+    UserInfo user;
+};
+
+template <typename T>
+using RpcResult = rusty::Result<T, rrr::i32>;
+
+class MyServiceService: public rrr::Service {
+public:
+    // Target service boundary (no output pointers)
+    virtual RpcResult<GetUserResponse> get_user(const GetUserRequest& req) = 0;
+};
+
+class MyServiceProxy {
+public:
+    // Target client boundary
+    RpcResult<GetUserResponse> get_user(const GetUserRequest& req);
+};
+```
+
+Migration plan:
+- Keep old pointer-style generated signatures as compatibility wrappers.
+- Add typed request/response signatures in parallel.
+- Migrate callsites incrementally, then retire pointer-style APIs.
 
 ---
 
