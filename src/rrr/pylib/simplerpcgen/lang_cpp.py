@@ -311,32 +311,34 @@ def emit_service_and_proxy(service, f, rpc_table):
                     invoke_with += "std::move(__defer__)",
                     f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
                 else: # normal and fast rpc
-                    # Don't use lambda - execute directly for all methods
-                    invoke_with = []
-                    in_counter = 0
-                    out_counter = 0
-                    for in_arg in func.input:
-                        f.writeln("%s in_%d;" % (in_arg.type, in_counter))
-                        f.writeln("req->m >> in_%d;" % in_counter)
-                        invoke_with += "in_%d" % in_counter,
-                        in_counter += 1
-                    for out_arg in func.output:
-                        f.writeln("%s out_%d;" % (out_arg.type, out_counter))
-                        invoke_with += "&out_%d" % out_counter,
-                        out_counter += 1
-                    f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
+                    request_struct_name = typed_request_struct_name(func)
+                    output_fields = typed_struct_fields(func.output, "out")
+                    input_fields = typed_struct_fields(func.input, "in")
+                    f.writeln("%s __typed_req__;" % request_struct_name)
+                    for _, field_name in input_fields:
+                        f.writeln("req->m >> __typed_req__.%s;" % field_name)
+                    f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
                     f.writeln("auto sconn_opt = weak_sconn.upgrade();")
                     f.writeln("if (sconn_opt.is_some()) {")
                     with f.indent():
                         f.writeln("auto sconn = sconn_opt.unwrap();")
-                        if out_counter == 0:
-                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
-                        else:
-                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
-                            with f.indent():
-                                for i in range(out_counter):
-                                    f.writeln("m << out_%d;" % i)
-                            f.writeln("});")
+                        f.writeln("if (__typed_result__.is_err()) {")
+                        with f.indent():
+                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());")
+                        f.writeln("} else {")
+                        with f.indent():
+                            if len(output_fields) == 0:
+                                f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                f.writeln("(void)__typed_resp__;")
+                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
+                            else:
+                                f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
+                                with f.indent():
+                                    for _, field_name in output_fields:
+                                        f.writeln("m << __typed_resp__.%s;" % field_name)
+                                f.writeln("});")
+                        f.writeln("}")
                     f.writeln("}")
                     f.writeln("// req automatically cleaned up by rusty::Box")
             f.writeln("}")

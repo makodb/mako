@@ -340,7 +340,9 @@ compatibility wrappers for incremental rollout.
   - [x] Leaf 1 (proxy): make legacy pointer-style proxy async/sync signatures delegate to typed request/response APIs.
     - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: non-raw generated proxy `async_<method>(legacy args...)` now builds `MethodRequest` and delegates to typed async overload; non-raw legacy sync wrappers now call typed sync overloads and unpack `MethodResponse`.
     - Typed async overloads now issue the RPC request directly, so legacy proxy wrappers are compatibility shells over typed async/sync paths.
-  - [ ] Leaf 2 (service): non-deferred legacy service pointer signatures delegate to typed service methods without breaking existing pointer-override implementations.
+  - [x] Leaf 2 (service): non-deferred legacy service pointer signatures delegate to typed service methods without breaking existing pointer-override implementations.
+    - Implemented on 2026-04-12 in `src/rrr/pylib/simplerpcgen/lang_cpp.py`: non-deferred generated `__<method>__wrapper__` dispatch paths now decode into `MethodRequest`, invoke typed service overloads, and map `rusty::Result<MethodResponse, rrr::i32>` to reply/error wire responses.
+    - Backward compatibility behavior in this leaf: existing pointer-style service overrides continue to work through current typed default bridge implementations, while typed overrides can now return explicit RPC error codes (`Err(i32)`) in non-deferred paths.
   - [ ] Leaf 3 (service defer): deferred legacy service compatibility wrapper path + error propagation semantics for typed `Err(i32)` outcomes.
 - [ ] Remove generated wrapper heap ownership (`new/delete`) in non-raw paths; use stack/RAII request-response values.
 - [ ] Add a migration knob (`rpcgen` flag + CMake option) to build typed and legacy-compatible variants during rollout.
@@ -354,6 +356,7 @@ compatibility wrappers for incremental rollout.
   - Extended on 2026-04-12 to assert typed proxy sync signature generation and behavior (typed overload uses async path, propagates request/transport error codes, decodes typed replies, and excludes raw handlers).
   - Extended on 2026-04-12 to assert typed proxy async wrapper/signature generation and behavior (`<method>TypedFuture::resolve()`, typed async overload delegation to legacy async path, and raw-method exclusion).
   - Extended on 2026-04-12 to assert legacy proxy wrapper delegation direction (legacy async/sync signatures now marshal typed request structs and route through typed async/sync overloads for non-raw methods).
+  - Extended on 2026-04-12 to assert non-deferred service dispatch wrapper generation uses typed service calls and propagates typed `Err(i32)` as RPC error replies, while keeping deferred wrapper shape unchanged.
 - [ ] Add compile tests for generated headers in typed mode for all in-tree `.rpc` sources.
 - [ ] Add compatibility compile tests proving existing pointer-style callsites still build via wrappers.
 - [ ] Add runtime parity tests confirming identical wire behavior and reply decoding between legacy and typed-generated APIs.

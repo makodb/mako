@@ -1013,6 +1013,9 @@ Generated services now also expose typed virtual overloads
 (`Result<MethodResponse, rrr::i32> Method(const MethodRequest&)`) for non-raw
 methods; in compatibility mode those overloads bridge to pointer handlers
 (with `defer` methods currently returning `ENOTSUP` until typed async flow lands).
+Generated non-deferred service dispatch wrappers now invoke the typed overloads
+and map `Err(i32)` to RPC error replies, while preserving pointer-style service
+overrides through the typed default bridge.
 Generated proxies now expose typed sync overloads with the same request/response
 shape for non-raw methods; they currently run through the existing async/future
 pipeline and return `Err(i32)` on transport or RPC error codes.

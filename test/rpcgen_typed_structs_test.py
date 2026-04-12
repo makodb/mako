@@ -143,6 +143,97 @@ def verify_alpha_service_block(block: str) -> None:
         "        return rusty::Result<streamResponse, rrr::i32>::Err(ENOTSUP);\n"
         "    }",
     )
+    assert_contains(
+        block,
+        "void __ping__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {\n"
+        "        pingRequest __typed_req__;\n"
+        "        req->m >> __typed_req__.id;\n"
+        "        auto __typed_result__ = this->ping(__typed_req__);\n"
+        "        auto sconn_opt = weak_sconn.upgrade();\n"
+        "        if (sconn_opt.is_some()) {\n"
+        "            auto sconn = sconn_opt.unwrap();\n"
+        "            if (__typed_result__.is_err()) {\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());\n"
+        "            } else {\n"
+        "                auto __typed_resp__ = __typed_result__.unwrap();\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {\n"
+        "                    m << __typed_resp__.msg;\n"
+        "                });\n"
+        "            }\n"
+        "        }\n"
+        "        // req automatically cleaned up by rusty::Box\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "void __nop__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {\n"
+        "        nopRequest __typed_req__;\n"
+        "        auto __typed_result__ = this->nop(__typed_req__);\n"
+        "        auto sconn_opt = weak_sconn.upgrade();\n"
+        "        if (sconn_opt.is_some()) {\n"
+        "            auto sconn = sconn_opt.unwrap();\n"
+        "            if (__typed_result__.is_err()) {\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());\n"
+        "            } else {\n"
+        "                auto __typed_resp__ = __typed_result__.unwrap();\n"
+        "                (void)__typed_resp__;\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);\n"
+        "            }\n"
+        "        }\n"
+        "        // req automatically cleaned up by rusty::Box\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "void __unnamed__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {\n"
+        "        unnamedRequest __typed_req__;\n"
+        "        req->m >> __typed_req__.in_0;\n"
+        "        auto __typed_result__ = this->unnamed(__typed_req__);\n"
+        "        auto sconn_opt = weak_sconn.upgrade();\n"
+        "        if (sconn_opt.is_some()) {\n"
+        "            auto sconn = sconn_opt.unwrap();\n"
+        "            if (__typed_result__.is_err()) {\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());\n"
+        "            } else {\n"
+        "                auto __typed_resp__ = __typed_result__.unwrap();\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {\n"
+        "                    m << __typed_resp__.out_0;\n"
+        "                });\n"
+        "            }\n"
+        "        }\n"
+        "        // req automatically cleaned up by rusty::Box\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "void __multi__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {\n"
+        "        multiRequest __typed_req__;\n"
+        "        req->m >> __typed_req__.left;\n"
+        "        req->m >> __typed_req__.right;\n"
+        "        auto __typed_result__ = this->multi(__typed_req__);\n"
+        "        auto sconn_opt = weak_sconn.upgrade();\n"
+        "        if (sconn_opt.is_some()) {\n"
+        "            auto sconn = sconn_opt.unwrap();\n"
+        "            if (__typed_result__.is_err()) {\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());\n"
+        "            } else {\n"
+        "                auto __typed_resp__ = __typed_result__.unwrap();\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {\n"
+        "                    m << __typed_resp__.sum;\n"
+        "                    m << __typed_resp__.ok;\n"
+        "                });\n"
+        "            }\n"
+        "        }\n"
+        "        // req automatically cleaned up by rusty::Box\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "void __stream__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {\n"
+        "        rrr::i32* in_0 = new rrr::i32;\n"
+        "        req->m >> *in_0;\n"
+        "        rrr::i64* out_0 = new rrr::i64;\n",
+    )
 
     if "virtual rusty::Result<passthroughResponse, rrr::i32> passthrough(const passthroughRequest& req)" in block:
         raise AssertionError("raw handlers should not generate typed service signatures")
@@ -164,6 +255,27 @@ def verify_beta_service_block(block: str) -> None:
         "        pingResponse __typed_resp__;\n"
         "        this->ping(req.other_id, &__typed_resp__.echoed);\n"
         "        return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "void __ping__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {\n"
+        "        pingRequest __typed_req__;\n"
+        "        req->m >> __typed_req__.other_id;\n"
+        "        auto __typed_result__ = this->ping(__typed_req__);\n"
+        "        auto sconn_opt = weak_sconn.upgrade();\n"
+        "        if (sconn_opt.is_some()) {\n"
+        "            auto sconn = sconn_opt.unwrap();\n"
+        "            if (__typed_result__.is_err()) {\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());\n"
+        "            } else {\n"
+        "                auto __typed_resp__ = __typed_result__.unwrap();\n"
+        "                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {\n"
+        "                    m << __typed_resp__.echoed;\n"
+        "                });\n"
+        "            }\n"
+        "        }\n"
+        "        // req automatically cleaned up by rusty::Box\n"
         "    }",
     )
 
