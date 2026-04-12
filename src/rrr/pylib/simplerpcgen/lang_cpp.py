@@ -25,6 +25,15 @@ def emit_struct(struct, f):
 def typed_struct_name(func_name, suffix):
     return "%s%s" % (func_name, suffix)
 
+def typed_request_struct_name(func):
+    return typed_struct_name(func.name, "Request")
+
+def typed_response_struct_name(func):
+    return typed_struct_name(func.name, "Response")
+
+def typed_result_type(func):
+    return "rusty::Result<%s, rrr::i32>" % typed_response_struct_name(func)
+
 def typed_struct_fields(args, fallback_prefix):
     fields = []
     for idx, arg in enumerate(args):
@@ -55,14 +64,39 @@ def emit_marshaled_typed_struct(struct_name, fields, f):
     f.writeln("}")
     f.writeln()
 
+def emit_typed_service_signature(func, f):
+    request_struct_name = typed_request_struct_name(func)
+    response_struct_name = typed_response_struct_name(func)
+    result_type = typed_result_type(func)
+    input_fields = typed_struct_fields(func.input, "in")
+    output_fields = typed_struct_fields(func.output, "out")
+
+    f.writeln("virtual %s %s(const %s& req) {" % (result_type, func.name, request_struct_name))
+    with f.indent():
+        if func.attr == "defer":
+            f.writeln("(void)req;")
+            f.writeln("return %s::Err(ENOTSUP);" % result_type)
+        else:
+            f.writeln("%s __typed_resp__;" % response_struct_name)
+            invoke_with = []
+            for _, field_name in input_fields:
+                invoke_with += "req.%s" % field_name,
+            for _, field_name in output_fields:
+                invoke_with += "&__typed_resp__.%s" % field_name,
+            f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
+            if len(input_fields) == 0:
+                f.writeln("(void)req;")
+            f.writeln("return %s::Ok(__typed_resp__);" % result_type)
+    f.writeln("}")
+
 def emit_service_and_proxy(service, f, rpc_table):
     f.writeln("class %sService: public rrr::Service {" % service.name)
     f.writeln("public:")
     with f.indent():
         f.writeln("// Typed request/response scaffolding generated from RPC signature lists.")
         for func in service.functions:
-            request_struct_name = typed_struct_name(func.name, "Request")
-            response_struct_name = typed_struct_name(func.name, "Response")
+            request_struct_name = typed_request_struct_name(func)
+            response_struct_name = typed_response_struct_name(func)
             emit_marshaled_typed_struct(request_struct_name, typed_struct_fields(func.input, "in"), f)
             emit_marshaled_typed_struct(response_struct_name, typed_struct_fields(func.output, "out"), f)
         f.writeln("enum {")
@@ -100,6 +134,12 @@ def emit_service_and_proxy(service, f, rpc_table):
             f.writeln("default: break;  // Unknown RPC ID, ignore")
             f.writeln("}")
         f.writeln("}")
+        f.writeln("// typed service signatures for request/response migration")
+        f.writeln("// compatibility mode keeps pointer-style handlers as the runtime dispatch path")
+        for func in service.functions:
+            if func.attr == "raw":
+                continue
+            emit_typed_service_signature(func, f)
         f.writeln("// these RPC handler functions need to be implemented by user")
         f.writeln("// for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use")
         for func in service.functions:

@@ -13,6 +13,8 @@ service Alpha {
     nop(|);
     unnamed(i32 | i32);
     multi(i32 left, string right | i64 sum, i8 ok);
+    defer stream(i32 stream_id | i64 sequence);
+    raw passthrough();
 };
 
 service Beta {
@@ -83,11 +85,67 @@ def verify_alpha_service_block(block: str) -> None:
         "        rrr::i8 ok;\n"
         "    };",
     )
+    assert_contains(
+        block,
+        "struct streamRequest {\n"
+        "        rrr::i32 stream_id;\n"
+        "    };",
+    )
+    assert_contains(
+        block,
+        "struct streamResponse {\n"
+        "        rrr::i64 sequence;\n"
+        "    };",
+    )
 
     structs_pos = block.find("struct pingRequest")
     enum_pos = block.find("enum {")
     if structs_pos < 0 or enum_pos < 0 or structs_pos > enum_pos:
         raise AssertionError("typed structs should appear before service RPC enum")
+
+    assert_contains(
+        block,
+        "virtual rusty::Result<pingResponse, rrr::i32> ping(const pingRequest& req) {\n"
+        "        pingResponse __typed_resp__;\n"
+        "        this->ping(req.id, &__typed_resp__.msg);\n"
+        "        return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "virtual rusty::Result<nopResponse, rrr::i32> nop(const nopRequest& req) {\n"
+        "        nopResponse __typed_resp__;\n"
+        "        this->nop();\n"
+        "        (void)req;\n"
+        "        return rusty::Result<nopResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "virtual rusty::Result<unnamedResponse, rrr::i32> unnamed(const unnamedRequest& req) {\n"
+        "        unnamedResponse __typed_resp__;\n"
+        "        this->unnamed(req.in_0, &__typed_resp__.out_0);\n"
+        "        return rusty::Result<unnamedResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "virtual rusty::Result<multiResponse, rrr::i32> multi(const multiRequest& req) {\n"
+        "        multiResponse __typed_resp__;\n"
+        "        this->multi(req.left, req.right, &__typed_resp__.sum, &__typed_resp__.ok);\n"
+        "        return rusty::Result<multiResponse, rrr::i32>::Ok(__typed_resp__);\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "virtual rusty::Result<streamResponse, rrr::i32> stream(const streamRequest& req) {\n"
+        "        (void)req;\n"
+        "        return rusty::Result<streamResponse, rrr::i32>::Err(ENOTSUP);\n"
+        "    }",
+    )
+
+    if "virtual rusty::Result<passthroughResponse, rrr::i32> passthrough(const passthroughRequest& req)" in block:
+        raise AssertionError("raw handlers should not generate typed service signatures")
 
 
 def verify_beta_service_block(block: str) -> None:
@@ -98,6 +156,14 @@ def verify_beta_service_block(block: str) -> None:
         "friend inline rrr::Marshal& operator <<(rrr::Marshal& m, const pingRequest& o) {\n"
         "        m << o.other_id;\n"
         "        return m;\n"
+        "    }",
+    )
+    assert_contains(
+        block,
+        "virtual rusty::Result<pingResponse, rrr::i32> ping(const pingRequest& req) {\n"
+        "        pingResponse __typed_resp__;\n"
+        "        this->ping(req.other_id, &__typed_resp__.echoed);\n"
+        "        return rusty::Result<pingResponse, rrr::i32>::Ok(__typed_resp__);\n"
         "    }",
     )
 

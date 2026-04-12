@@ -1009,6 +1009,10 @@ This produces:
 
 Current generated C++ service/proxy boundaries still use out-parameters
 (`T* out`) for return values in compatibility mode.
+Generated services now also expose typed virtual overloads
+(`Result<MethodResponse, rrr::i32> Method(const MethodRequest&)`) for non-raw
+methods; in compatibility mode those overloads bridge to pointer handlers
+(with `defer` methods currently returning `ENOTSUP` until typed async flow lands).
 
 ### Generated Client Usage
 
