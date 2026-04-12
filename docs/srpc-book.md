@@ -1020,6 +1020,9 @@ Generated proxies now also expose typed async overloads for non-raw methods:
 `async_Method(const MethodRequest&, const FutureAttr&)` returns
 `Result<MethodTypedFuture, rrr::i32>`, and `MethodTypedFuture::resolve()`
 decodes the underlying wire reply into `MethodResponse`.
+Legacy pointer-style proxy async/sync signatures remain available as compatibility
+wrappers; for non-raw methods they now build typed request structs and delegate
+to the typed async/sync overloads.
 
 ### Generated Client Usage
 

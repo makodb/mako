@@ -95,32 +95,37 @@ def emit_typed_service_signature(func, f):
             f.writeln("return %s::Ok(__typed_resp__);" % result_type)
     f.writeln("}")
 
-def emit_typed_proxy_sync_signature(func, async_call_params, f):
+def emit_typed_proxy_sync_signature(func, f):
     request_struct_name = typed_request_struct_name(func)
-    response_struct_name = typed_response_struct_name(func)
     result_type = typed_result_type(func)
-    output_fields = typed_struct_fields(func.output, "out")
 
     f.writeln("%s %s(const %s& req) {" % (result_type, func.name, request_struct_name))
     with f.indent():
-        f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
-        f.writeln("if (__fu_result__.is_err()) {")
+        f.writeln("auto __typed_fu_result__ = this->async_%s(req);" % func.name)
+        f.writeln("if (__typed_fu_result__.is_err()) {")
         with f.indent():
-            f.writeln("return %s::Err(__fu_result__.unwrap_err());" % result_type)
+            f.writeln("return %s::Err(__typed_fu_result__.unwrap_err());" % result_type)
         f.writeln("}")
-        f.writeln("auto __fu__ = __fu_result__.unwrap();")
-        f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
-        f.writeln("if (__ret__ != 0) {")
-        with f.indent():
-            f.writeln("return %s::Err(__ret__);" % result_type)
-        f.writeln("}")
-        f.writeln("%s __typed_resp__;" % response_struct_name)
-        for _, field_name in output_fields:
-            f.writeln("__fu__->get_reply() >> __typed_resp__.%s;" % field_name)
-        if len(async_call_params) == 0:
-            f.writeln("(void)req;")
-        f.writeln("return %s::Ok(__typed_resp__);" % result_type)
+        f.writeln("return __typed_fu_result__.unwrap().resolve();")
     f.writeln("}")
+
+def emit_proxy_request_call(service, func, marshal_args, f):
+    if len(marshal_args) > 0:
+        f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
+        with f.indent():
+            for arg in marshal_args:
+                f.writeln("__m__ << %s;" % arg)
+        f.writeln("});")
+    else:
+        f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
+
+def emit_typed_request_from_args(func, input_args, request_var_name, f):
+    request_struct_name = typed_request_struct_name(func)
+    input_fields = typed_struct_fields(func.input, "in")
+
+    f.writeln("%s %s;" % (request_struct_name, request_var_name))
+    for idx, (_, field_name) in enumerate(input_fields):
+        f.writeln("%s.%s = %s;" % (request_var_name, field_name, input_args[idx]))
 
 def emit_typed_proxy_future_wrapper(func, f):
     wrapper_name = typed_proxy_future_wrapper_name(func)
@@ -165,20 +170,26 @@ def emit_typed_proxy_future_wrapper(func, f):
         f.writeln("}")
     f.writeln("};")
 
-def emit_typed_proxy_async_signature(func, async_call_params, f):
+def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
     request_struct_name = typed_request_struct_name(func)
     wrapper_name = typed_proxy_future_wrapper_name(func)
     result_type = typed_proxy_future_result_type(func)
-    typed_call_params = async_call_params + ["__fu_attr__"]
 
     f.writeln("%s async_%s(const %s& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (result_type, func.name, request_struct_name))
     with f.indent():
-        f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(typed_call_params)))
+        if len(typed_async_call_params) > 0:
+            f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
+            with f.indent():
+                for param in typed_async_call_params:
+                    f.writeln("__m__ << %s;" % param)
+            f.writeln("});")
+        else:
+            f.writeln("auto __fu_result__ = __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
         f.writeln("if (__fu_result__.is_err()) {")
         with f.indent():
             f.writeln("return %s::Err(__fu_result__.unwrap_err());" % result_type)
         f.writeln("}")
-        if len(async_call_params) == 0:
+        if len(typed_async_call_params) == 0:
             f.writeln("(void)req;")
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
     f.writeln("}")
@@ -344,6 +355,7 @@ def emit_service_and_proxy(service, f, rpc_table):
             sync_func_params = []
             sync_out_params = []
             typed_async_call_params = []
+            typed_output_fields = typed_struct_fields(func.output, "out")
             in_counter = 0
             out_counter = 0
             for in_arg in func.input:
@@ -370,37 +382,54 @@ def emit_service_and_proxy(service, f, rpc_table):
                 emit_typed_proxy_future_wrapper(func, f)
             f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
             with f.indent():
-                if len(async_call_params) > 0:
-                    f.writeln("return __cl__->request(%sService::%s, __fu_attr__, [&](rrr::Marshal& __m__) {" % (service.name, func.name.upper()))
+                if func.attr != "raw":
+                    emit_typed_request_from_args(func, async_call_params, "__typed_req__", f)
+                    f.writeln("auto __typed_fu_result__ = this->async_%s(__typed_req__, __fu_attr__);" % func.name)
+                    f.writeln("if (__typed_fu_result__.is_err()) {")
                     with f.indent():
-                        for param in async_call_params:
-                            f.writeln("__m__ << %s;" % param)
-                    f.writeln("});")
+                        f.writeln("return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());")
+                    f.writeln("}")
+                    f.writeln("return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());")
                 else:
-                    f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
+                    emit_proxy_request_call(service, func, async_call_params, f)
             f.writeln("}")
             if func.attr != "raw":
-                emit_typed_proxy_async_signature(func, typed_async_call_params, f)
+                emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
             f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
             with f.indent():
-                f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
-                f.writeln("if (__fu_result__.is_err()) {")
-                with f.indent():
-                    f.writeln("return __fu_result__.unwrap_err();  // Return error code")
-                f.writeln("}")
-                f.writeln("auto __fu__ = __fu_result__.unwrap();")
-                f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
-                if len(sync_out_params) > 0:
-                    f.writeln("if (__ret__ == 0) {")
+                if func.attr != "raw":
+                    emit_typed_request_from_args(func, async_call_params, "__typed_req__", f)
+                    f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
+                    f.writeln("if (__typed_result__.is_err()) {")
                     with f.indent():
-                        for param in sync_out_params:
-                            f.writeln("__fu__->get_reply() >> *%s;" % param)
+                        f.writeln("return __typed_result__.unwrap_err();")
                     f.writeln("}")
-                f.writeln("// Arc auto-released")
-                f.writeln("return __ret__;")
+                    f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                    if len(sync_out_params) > 0:
+                        for idx, param in enumerate(sync_out_params):
+                            f.writeln("*%s = __typed_resp__.%s;" % (param, typed_output_fields[idx][1]))
+                    else:
+                        f.writeln("(void)__typed_resp__;")
+                    f.writeln("return 0;")
+                else:
+                    f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
+                    f.writeln("if (__fu_result__.is_err()) {")
+                    with f.indent():
+                        f.writeln("return __fu_result__.unwrap_err();  // Return error code")
+                    f.writeln("}")
+                    f.writeln("auto __fu__ = __fu_result__.unwrap();")
+                    f.writeln("rrr::i32 __ret__ = __fu__->get_error_code();")
+                    if len(sync_out_params) > 0:
+                        f.writeln("if (__ret__ == 0) {")
+                        with f.indent():
+                            for param in sync_out_params:
+                                f.writeln("__fu__->get_reply() >> *%s;" % param)
+                        f.writeln("}")
+                    f.writeln("// Arc auto-released")
+                    f.writeln("return __ret__;")
             f.writeln("}")
             if func.attr != "raw":
-                emit_typed_proxy_sync_signature(func, typed_async_call_params, f)
+                emit_typed_proxy_sync_signature(func, f)
     f.writeln("};")
     f.writeln()
 
