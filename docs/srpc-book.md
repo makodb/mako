@@ -1018,7 +1018,10 @@ In-tree migration status (2026-04-12): `src/deptran/helloworld.h` and
 overloads, and compile guards cover typed+legacy proxy usage across all network
 RPC methods. Remaining staged in-tree migration is `rcc_rpc`; current prep
 inventory (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`) shows service-surface
-fallout while communicator/config-control header probes already compile.
+fallout while communicator/config-control header probes already compile. In-tree
+typed generation/sync drift for `rcc_rpc` is now guarded by
+`test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync` (normalized output comparison
+between in-tree and direct-layout typed generation).
 
 This produces:
 - Client proxy class with compatibility pointer-style sync/async methods

@@ -389,7 +389,10 @@ compatibility wrappers for incremental rollout.
       - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_prep_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`).
       - Harness behavior: generates typed `rcc_rpc` artifacts in temp space, validates typed header marker/shape, and runs subsystem compile probes with expected prep baseline (`service` fail, `communicator` pass, `config/control` pass) while asserting service-fallout markers are present.
       - Initial inventory recorded in `docs/rpc/rcc_rpc_typed_prep_inventory.md`.
-    - [ ] Leaf 3a.2 (`rcc_rpc` in-tree sync): land/generated-sync guard for in-tree typed `rcc_rpc` artifacts in selected mode once prep inventory is stable.
+    - [x] Leaf 3a.2 (`rcc_rpc` in-tree sync): land/generated-sync guard for in-tree typed `rcc_rpc` artifacts in selected mode once prep inventory is stable.
+      - Implemented on 2026-04-12 as `test/rpcgen_in_tree_rcc_rpc_typed_sync_test.py` with CTest wiring (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`).
+      - Guard behavior: generates typed `rcc_rpc` in in-tree layout (`src/deptran/rcc_rpc.rpc -> src/deptran/rcc_rpc.h/.py`) and direct layout, validates typed shape markers and output-size sanity, then compares normalized outputs (ignoring randomized RPC ID literals) to prevent generation drift.
+      - Validation on 2026-04-12: focused guard script run passed plus full RPC-focused suite regex run passed (`ctest --test-dir build_rpc --output-on-failure -R '^(test_rpc.*|test_load_balancer|test_idempotency|test_completion_tracker|rpc_chaos_test|test_erpc_integration)$'`, 39/39 passed).
     - [ ] Leaf 3a.3 (`rcc_rpc` fallout map): convert inventory results into an explicit subsystem migration map that feeds leaf 3b/3c callsite migrations.
   - [ ] Leaf 3b (`rcc_rpc` migration part 1): migrate high-traffic `ClassicService`/`ClassicProxy` callsites to typed request/response APIs while keeping compatibility wrappers.
   - [ ] Leaf 3c (`rcc_rpc` migration part 2): migrate remaining in-tree services/proxies and remove transitional shims no longer needed after typed callsites land.
