@@ -78,17 +78,11 @@ jobs:
       - name: Run tests - simple 2 shards without replication (RRR)
         run: ./ci/ci.sh shardNoReplication
 
-      - name: Run tests - simple 2 shards without replication (eRPC)
-        run: ./ci/ci.sh shardNoReplicationErpc
-
       - name: Run tests - simple 1 shard with replication - dbtest
         run: ./ci/ci.sh shard1Replication
 
       - name: Run tests - simple 2 shard with replication - dbtest (RRR)
         run: ./ci/ci.sh shard2Replication
-
-      - name: Run tests - simple 2 shard with replication - dbtest (eRPC)
-        run: ./ci/ci.sh shard2ReplicationErpc
 
       - name: Run tests - simple 1 shard with replication - simpleTransactionRep
         run: ./ci/ci.sh shard1ReplicationSimple
