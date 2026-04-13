@@ -42,7 +42,12 @@ void TroadCommo::SendDispatch(vector<TxPieceData>& cmd,
   Log_debug("dispatch to %ld", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
 //  verify(cmd.root_type_ > 0);
-  Future::safe_release(proxy->async_JanusDispatch(cmd, fuattr));
+  ClassicProxy::RpcJanusDispatchRequest req;
+  req.cmd = cmd;
+  auto fu_result = proxy->async_JanusDispatch(req, fuattr);
+  if (fu_result.is_ok()) {
+    Future::safe_release(fu_result.unwrap().raw_future());
+  }
 }
 
 void TroadCommo::SendHandoutRo(SimpleCommand& cmd,
@@ -72,7 +77,13 @@ void TroadCommo::SendInquire(parid_t pid,
   fuattr.callback = cb;
   // TODO fix.
   auto proxy = NearestProxyForPartition(pid).second;
-  Future::safe_release(proxy->async_JanusInquire(epoch, tid, fuattr));
+  ClassicProxy::RpcJanusInquireRequest req;
+  req.epoch = epoch;
+  req.txn_id = tid;
+  auto fu_result = proxy->async_JanusInquire(req, fuattr);
+  if (fu_result.is_ok()) {
+    Future::safe_release(fu_result.unwrap().raw_future());
+  }
 }
 
 
@@ -107,12 +118,25 @@ void TroadCommo::BroadcastPreAccept(
     };
     verify(txn_id > 0);
     if (skip_graph) {
-      auto fu_result = proxy->async_JanusPreAcceptWoGraph(txn_id, rank, cmds, fuattr);
-      Future::safe_release(fu_result);
+      ClassicProxy::RpcJanusPreAcceptWoGraphRequest req;
+      req.txn_id = txn_id;
+      req.rank = rank;
+      req.cmd = cmds;
+      auto fu_result = proxy->async_JanusPreAcceptWoGraph(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     } else {
       MarshallDeputy md(sp_graph);
-      auto fu_result = proxy->async_JanusPreAccept(txn_id, rank, cmds, md, fuattr);
-      Future::safe_release(fu_result);
+      ClassicProxy::RpcJanusPreAcceptRequest req;
+      req.txn_id = txn_id;
+      req.rank = rank;
+      req.cmd = cmds;
+      req.graph = md;
+      auto fu_result = proxy->async_JanusPreAccept(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     }
   }
 }
@@ -203,12 +227,25 @@ TroadCommo::BroadcastPreAccept(
     };
     verify(txn_id > 0);
     if (skip_graph) {
-      auto fu_result = proxy->async_JanusPreAcceptWoGraph(txn_id, rank, cmds, fuattr);
-      Future::safe_release(fu_result);
+      ClassicProxy::RpcJanusPreAcceptWoGraphRequest req;
+      req.txn_id = txn_id;
+      req.rank = rank;
+      req.cmd = cmds;
+      auto fu_result = proxy->async_JanusPreAcceptWoGraph(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     } else {
       MarshallDeputy md(sp_graph);
-      auto fu_result = proxy->async_JanusPreAccept(txn_id, rank, cmds, md, fuattr);
-      Future::safe_release(fu_result);
+      ClassicProxy::RpcJanusPreAcceptRequest req;
+      req.txn_id = txn_id;
+      req.rank = rank;
+      req.cmd = cmds;
+      req.graph = md;
+      auto fu_result = proxy->async_JanusPreAccept(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     }
   }
   return ev;
@@ -238,11 +275,15 @@ void TroadCommo::BroadcastAccept(parid_t par_id,
     MarshallDeputy md(graph);
     rank_t rank = RANK_D;
     verify(0);
-    Future::safe_release(proxy->async_JanusAccept(cmd_id,
-                                                  rank,
-                                                  ballot,
-                                                  md,
-                                                  fuattr));
+    ClassicProxy::RpcJanusAcceptRequest req;
+    req.txn_id = cmd_id;
+    req.rank = rank;
+    req.ballot = ballot;
+    req.graph = md;
+    auto fu_result = proxy->async_JanusAccept(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
 }
 
@@ -320,11 +361,15 @@ shared_ptr<QuorumEvent> TroadCommo::BroadcastAccept(parid_t par_id,
     MarshallDeputy md(graph);
     rank_t rank = RANK_D;
     verify(0);
-    Future::safe_release(proxy->async_JanusAccept(cmd_id,
-                                                  rank,
-                                                  ballot,
-                                                  md,
-                                                  fuattr));
+    ClassicProxy::RpcJanusAcceptRequest req;
+    req.txn_id = cmd_id;
+    req.rank = rank;
+    req.ballot = ballot;
+    req.graph = md;
+    auto fu_result = proxy->async_JanusAccept(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return ev;
 }
@@ -350,7 +395,13 @@ shared_ptr<QuorumEvent> TroadCommo::CollectValidation(txid_t txid, set<parid_t> 
       }
     };
     int rank = RANK_D;
-    Future::safe_release(proxy->async_RccInquireValidation(txid, rank, fuattr));
+    ClassicProxy::RpcRccInquireValidationRequest req;
+    req.tx_id = txid;
+    req.rank = rank;
+    auto fu_result = proxy->async_RccInquireValidation(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return ev;
 }
@@ -371,7 +422,14 @@ shared_ptr<QuorumEvent> TroadCommo::BroadcastValidation(CmdData& cmd_, int resul
 //        ev->n_voted_yes_++;
       };
       int rank = RANK_D;
-      Future::safe_release(proxy->async_RccNotifyGlobalValidation(cmd_.id_, rank, result, fuattr));
+      ClassicProxy::RpcRccNotifyGlobalValidationRequest req;
+      req.tx_id = cmd_.id_;
+      req.rank = rank;
+      req.res = result;
+      auto fu_result = proxy->async_RccNotifyGlobalValidation(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     }
   }
   return ev;
@@ -403,10 +461,25 @@ void TroadCommo::BroadcastCommit(
     };
     verify(cmd_id > 0);
     if (skip_graph) {
-      Future::safe_release(proxy->async_JanusCommitWoGraph(cmd_id, rank, need_validation, fuattr));
+      ClassicProxy::RpcJanusCommitWoGraphRequest req;
+      req.id = cmd_id;
+      req.rank = rank;
+      req.need_validation = need_validation;
+      auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     } else {
       MarshallDeputy md(graph);
-      Future::safe_release(proxy->async_JanusCommit(cmd_id, rank, need_validation, md, fuattr));
+      ClassicProxy::RpcJanusCommitRequest req;
+      req.id = cmd_id;
+      req.rank = rank;
+      req.need_validation = need_validation;
+      req.graph = md;
+      auto fu_result = proxy->async_JanusCommit(req, fuattr);
+      if (fu_result.is_ok()) {
+        Future::safe_release(fu_result.unwrap().raw_future());
+      }
     }
   }
 }

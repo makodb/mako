@@ -57,47 +57,53 @@ std::string ConfigServiceImpl::serialize_config(const PersistentConfig& config) 
 }
 
 // @unsafe - RocksDB I/O, network I/O
-void ConfigServiceImpl::GetConfig(const uint64_t& client_version,
-                                   uint64_t* current_version,
-                                   rrr::i32* has_update,
-                                   std::string* config_data,
-                                   rrr::DeferredReply defer) {
+void ConfigServiceImpl::GetConfig(
+    const ConfigServiceService::RpcGetConfigRequest& rpc_req,
+    ConfigServiceService::RpcGetConfigResponse& resp,
+    rrr::DeferredReply defer) {
     ensure_cache_valid();
 
-    *current_version = cached_version_.get();
+    resp.current_version = cached_version_.get();
 
     // Check if client already has the latest version
-    if (client_version != 0 && client_version == *current_version) {
-        *has_update = 0;
+    if (rpc_req.client_version != 0 &&
+        rpc_req.client_version == resp.current_version) {
+        resp.has_update = 0;
         // config_data left empty (default constructed)
         defer.reply();
         return;
     }
 
     // Client needs update
-    *has_update = 1;
+    resp.has_update = 1;
 
     // Copy cached data to response
     auto guard = cached_data_.lock().unwrap();
     if (guard->is_some()) {
-        *config_data = guard->as_ref().unwrap();
+        resp.config_data = guard->as_ref().unwrap();
     }
 
     defer.reply();
 }
 
 // @unsafe - RocksDB I/O
-void ConfigServiceImpl::GetConfigVersion(uint64_t* version,
-                                          rrr::DeferredReply defer) {
+void ConfigServiceImpl::GetConfigVersion(
+    const ConfigServiceService::RpcGetConfigVersionRequest& rpc_req,
+    ConfigServiceService::RpcGetConfigVersionResponse& resp,
+    rrr::DeferredReply defer) {
+    (void)rpc_req;
     // Use store's direct version lookup for efficiency
-    *version = store_.get_version();
+    resp.version = store_.get_version();
     defer.reply();
 }
 
 // @unsafe - RocksDB I/O
-void ConfigServiceImpl::HasConfig(rrr::i32* result,
-                                   rrr::DeferredReply defer) {
-    *result = store_.has_config() ? 1 : 0;
+void ConfigServiceImpl::HasConfig(
+    const ConfigServiceService::RpcHasConfigRequest& rpc_req,
+    ConfigServiceService::RpcHasConfigResponse& resp,
+    rrr::DeferredReply defer) {
+    (void)rpc_req;
+    resp.has_config = store_.has_config() ? 1 : 0;
     defer.reply();
 }
 
@@ -154,12 +160,13 @@ std::string ConfigServiceImpl::serialize_sharding_policy(const ShardingPolicySet
 }
 
 // @unsafe - RocksDB I/O
-void ConfigServiceImpl::SetShardingPolicy(const std::string& policy_data,
-                                           rrr::i32* success,
-                                           rrr::DeferredReply defer) {
+void ConfigServiceImpl::SetShardingPolicy(
+    const ConfigServiceService::RpcSetShardingPolicyRequest& rpc_req,
+    ConfigServiceService::RpcSetShardingPolicyResponse& resp,
+    rrr::DeferredReply defer) {
     // Deserialize the policy
     rrr::Marshal m;
-    m.write(policy_data.data(), policy_data.size());
+    m.write(rpc_req.policy_data.data(), rpc_req.policy_data.size());
 
     ShardingPolicySet policy;
     m >> policy;
@@ -168,56 +175,62 @@ void ConfigServiceImpl::SetShardingPolicy(const std::string& policy_data,
     if (store_.save_sharding_policy(policy)) {
         // Invalidate cache to force re-read on next request
         invalidate_sharding_cache();
-        *success = 1;
+        resp.success = 1;
     } else {
-        *success = 0;
+        resp.success = 0;
     }
 
     defer.reply();
 }
 
 // @unsafe - RocksDB I/O, network I/O
-void ConfigServiceImpl::GetShardingPolicy(const uint64_t& client_version,
-                                           uint64_t* current_version,
-                                           rrr::i32* has_update,
-                                           std::string* policy_data,
-                                           rrr::DeferredReply defer) {
+void ConfigServiceImpl::GetShardingPolicy(
+    const ConfigServiceService::RpcGetShardingPolicyRequest& rpc_req,
+    ConfigServiceService::RpcGetShardingPolicyResponse& resp,
+    rrr::DeferredReply defer) {
     ensure_sharding_cache_valid();
 
-    *current_version = cached_sharding_version_.get();
+    resp.current_version = cached_sharding_version_.get();
 
     // Check if client already has the latest version
-    if (client_version != 0 && client_version == *current_version) {
-        *has_update = 0;
+    if (rpc_req.client_version != 0 &&
+        rpc_req.client_version == resp.current_version) {
+        resp.has_update = 0;
         // policy_data left empty (default constructed)
         defer.reply();
         return;
     }
 
     // Client needs update
-    *has_update = 1;
+    resp.has_update = 1;
 
     // Copy cached data to response
     auto guard = cached_sharding_policy_.lock().unwrap();
     if (guard->is_some()) {
-        *policy_data = guard->as_ref().unwrap();
+        resp.policy_data = guard->as_ref().unwrap();
     }
 
     defer.reply();
 }
 
 // @unsafe - RocksDB I/O
-void ConfigServiceImpl::GetShardingPolicyVersion(uint64_t* version,
-                                                  rrr::DeferredReply defer) {
+void ConfigServiceImpl::GetShardingPolicyVersion(
+    const ConfigServiceService::RpcGetShardingPolicyVersionRequest& rpc_req,
+    ConfigServiceService::RpcGetShardingPolicyVersionResponse& resp,
+    rrr::DeferredReply defer) {
+    (void)rpc_req;
     // Use store's direct version lookup for efficiency
-    *version = store_.get_sharding_policy_version();
+    resp.version = store_.get_sharding_policy_version();
     defer.reply();
 }
 
 // @unsafe - RocksDB I/O
-void ConfigServiceImpl::HasShardingPolicy(rrr::i32* result,
-                                           rrr::DeferredReply defer) {
-    *result = store_.has_sharding_policy() ? 1 : 0;
+void ConfigServiceImpl::HasShardingPolicy(
+    const ConfigServiceService::RpcHasShardingPolicyRequest& rpc_req,
+    ConfigServiceService::RpcHasShardingPolicyResponse& resp,
+    rrr::DeferredReply defer) {
+    (void)rpc_req;
+    resp.has_policy = store_.has_sharding_policy() ? 1 : 0;
     defer.reply();
 }
 

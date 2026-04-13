@@ -149,6 +149,17 @@ class RaftServiceImpl : public RaftService {
     *acknowledged = false;
   }
 
+
+  // BEGIN typed-rpc-decls (RaftServiceImpl)
+  // Typed RPC interface overrides (new API).
+  void Vote(const RaftService::RpcVoteRequest& req, RaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) override;
+  void VoteDurable(const RaftService::RpcVoteDurableRequest& req, RaftService::RpcVoteDurableResponse& resp, rrr::DeferredReply defer) override;
+  void AppendEntries(const RaftService::RpcAppendEntriesRequest& req, RaftService::RpcAppendEntriesResponse& resp, rrr::DeferredReply defer) override;
+  void EmptyAppendEntries(const RaftService::RpcEmptyAppendEntriesRequest& req, RaftService::RpcEmptyAppendEntriesResponse& resp, rrr::DeferredReply defer) override;
+  void AppendEntriesDurable(const RaftService::RpcAppendEntriesDurableRequest& req, RaftService::RpcAppendEntriesDurableResponse& resp, rrr::DeferredReply defer) override;
+  void TimeoutNow(const RaftService::RpcTimeoutNowRequest& req, RaftService::RpcTimeoutNowResponse& resp, rrr::DeferredReply defer) override;
+  void NotifyRestart(const RaftService::RpcNotifyRestartRequest& req, RaftService::RpcNotifyRestartResponse& resp, rrr::DeferredReply defer) override;
+  // END typed-rpc-decls (RaftServiceImpl)
 };
 
 } // namespace janus

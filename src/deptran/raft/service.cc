@@ -13,6 +13,87 @@
 // }
 
 namespace janus {
+void RaftServiceImpl::Vote(const RaftService::RpcVoteRequest& req,
+                           RaftService::RpcVoteResponse& resp,
+                           rrr::DeferredReply defer) {
+  this->Vote(req.lst_log_idx,
+             req.lst_log_term,
+             req.site_id,
+             req.cur_term,
+             &resp.max_ballot,
+             &resp.vote_granted,
+             std::move(defer));
+}
+
+void RaftServiceImpl::VoteDurable(const RaftService::RpcVoteDurableRequest& req,
+                                  RaftService::RpcVoteDurableResponse& resp,
+                                  rrr::DeferredReply defer) {
+  this->VoteDurable(req.term, req.voter_id, &resp.acknowledged, std::move(defer));
+}
+
+void RaftServiceImpl::AppendEntries(const RaftService::RpcAppendEntriesRequest& req,
+                                    RaftService::RpcAppendEntriesResponse& resp,
+                                    rrr::DeferredReply defer) {
+  this->AppendEntries(req.slot,
+                      req.ballot,
+                      req.leaderCurrentTerm,
+                      req.leaderSiteId,
+                      req.leaderPrevLogIndex,
+                      req.leaderPrevLogTerm,
+                      req.leaderCommitIndex,
+                      req.cmd,
+                      req.leaderNextLogTerm,
+                      &resp.followerAppendOK,
+                      &resp.followerCurrentTerm,
+                      &resp.followerLastLogIndex,
+                      &resp.followerAckType,
+                      std::move(defer));
+}
+
+void RaftServiceImpl::EmptyAppendEntries(const RaftService::RpcEmptyAppendEntriesRequest& req,
+                                         RaftService::RpcEmptyAppendEntriesResponse& resp,
+                                         rrr::DeferredReply defer) {
+  this->EmptyAppendEntries(req.slot,
+                           req.ballot,
+                           req.leaderCurrentTerm,
+                           req.leaderSiteId,
+                           req.leaderPrevLogIndex,
+                           req.leaderPrevLogTerm,
+                           req.leaderCommitIndex,
+                           req.trigger_election_now,
+                           &resp.followerAppendOK,
+                           &resp.followerCurrentTerm,
+                           &resp.followerLastLogIndex,
+                           &resp.followerAckType,
+                           std::move(defer));
+}
+
+void RaftServiceImpl::AppendEntriesDurable(
+    const RaftService::RpcAppendEntriesDurableRequest& req,
+    RaftService::RpcAppendEntriesDurableResponse& resp,
+    rrr::DeferredReply defer) {
+  this->AppendEntriesDurable(req.term,
+                             req.follower_id,
+                             req.lastLogIndex,
+                             &resp.acknowledged,
+                             std::move(defer));
+}
+
+void RaftServiceImpl::TimeoutNow(const RaftService::RpcTimeoutNowRequest& req,
+                                 RaftService::RpcTimeoutNowResponse& resp,
+                                 rrr::DeferredReply defer) {
+  this->TimeoutNow(req.leaderTerm,
+                   req.leaderSiteId,
+                   &resp.followerTerm,
+                   &resp.success,
+                   std::move(defer));
+}
+
+void RaftServiceImpl::NotifyRestart(const RaftService::RpcNotifyRestartRequest& req,
+                                    RaftService::RpcNotifyRestartResponse& resp,
+                                    rrr::DeferredReply defer) {
+  this->NotifyRestart(req.restartedSiteId, &resp.acknowledged, std::move(defer));
+}
 
 // Static member definitions for service registry
 std::map<siteid_t, RaftServiceImpl*> RaftServiceImpl::service_registry_;

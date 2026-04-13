@@ -108,7 +108,7 @@ class ClientWorker {
   void Pause(locid_t locid);  // Jetpack: pause server
   void Resume(locid_t locid);  // Jetpack: resume server
   Coordinator* CreateFailCtrlCoordinator();  // Jetpack: create failover coordinator
-  void AcceptForwardedRequest(TxRequest request, TxReply* txn_reply, rrr::DeferredReply defer);
+  void AcceptForwardedRequest(TxRequest request, TxReply* txn_reply);
 
  protected:
   Coordinator* CreateCoordinator(uint16_t offset_id);

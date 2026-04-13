@@ -29,7 +29,13 @@ void MenciusCommo::BroadcastPrepare(parid_t par_id,
     auto proxy = (MenciusProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = cb;
-    Future::safe_release(proxy->async_Prepare(slot_id, ballot, fuattr));
+    MenciusProxy::RpcPrepareRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    auto f = proxy->async_Prepare(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -64,7 +70,13 @@ MenciusCommo::BroadcastPrepare(parid_t par_id,
       // e->deps[leader_id][src_coroid][follower_id].insert(coro_id);
       // TODO add max accepted value.
     };
-    Future::safe_release(proxy->async_Prepare(slot_id, ballot, fuattr));
+    MenciusProxy::RpcPrepareRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    auto f = proxy->async_Prepare(req, fuattr);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -187,10 +199,20 @@ MenciusCommo::BroadcastSuggest(parid_t par_id,
 
     // auto start_ = chrono::duration_cast<chrono::microseconds>(start-midn-hours-minutes).count();
     auto start_ = 0;
-    auto f = proxy->async_Suggest(slot_id, start_, ballot, sender, skip_commits, skip_potentials, md, fuattr);
+    MenciusProxy::RpcSuggestRequest req{};
+    req.slot = slot_id;
+    req.time = start_;
+    req.ballot = ballot;
+    req.sender = sender;
+    req.skip_commits = skip_commits;
+    req.skip_potentials = skip_potentials;
+    req.cmd = md;
+    auto f = proxy->async_Suggest(req, fuattr);
     auto end1 = chrono::system_clock::now();
     auto duration = chrono::duration_cast<chrono::microseconds>(end1-start1).count();
-    Future::safe_release(f);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -235,9 +257,15 @@ void MenciusCommo::BroadcastDecide(const parid_t par_id,
     FutureAttr fuattr;
     fuattr.callback = [](rusty::Arc<Future> fu) {};
     MarshallDeputy md(cmd);
-    auto f = proxy->async_Decide(slot_id, ballot, md, fuattr);
+    MenciusProxy::RpcDecideRequest req{};
+    req.slot = slot_id;
+    req.ballot = ballot;
+    req.cmd = md;
+    auto f = proxy->async_Decide(req, fuattr);
     //sp_quorum_event->add_dep(leader_id, p.first);
-    Future::safe_release(f);
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 

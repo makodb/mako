@@ -56,7 +56,14 @@ void CarouselCommo::BroadcastReadAndPrepare(
           fu->get_reply() >> ret >> outputs;
           callback(leader, ret, outputs);
         };
-    Future::safe_release(pair.second->async_CarouselReadAndPrepare(cmd_id, md, leader, fu2));
+    ClassicProxy::RpcCarouselReadAndPrepareRequest req;
+    req.tid = cmd_id;
+    req.cmd = md;
+    req.leader = leader;
+    auto fu_result = pair.second->async_CarouselReadAndPrepare(req, fu2);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
 }
 
@@ -69,7 +76,13 @@ void CarouselCommo::BroadcastDecide(parid_t par_id,
   auto proxy = pair_leader_proxy.second;
   FutureAttr fuattr;
   fuattr.callback = [] (rusty::Arc<Future> fu) {} ;
-  Future::safe_release(proxy->async_CarouselDecide(cmd_id, decision, fuattr));
+  ClassicProxy::RpcCarouselDecideRequest req;
+  req.cmd_id = cmd_id;
+  req.commit = decision;
+  auto fu_result = proxy->async_CarouselDecide(req, fuattr);
+  if (fu_result.is_ok()) {
+    Future::safe_release(fu_result.unwrap().raw_future());
+  }
 }
 
 } // namespace janus

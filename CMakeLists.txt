@@ -18,15 +18,6 @@ project(mako)
 # Prefer shared libraries when available for third-party dependencies.
 set(BUILD_SHARED_LIBS ON)
 
-# rpcgen C++ mode for generated in-tree RPC stubs.
-# typed: emit typed proxy surfaces + compatibility wrappers (default).
-# compat: emit compatibility-focused proxy surfaces for rollout validation.
-set(RPCGEN_CPP_MODE "typed" CACHE STRING "rpcgen C++ mode for generated in-tree RPC stubs")
-set_property(CACHE RPCGEN_CPP_MODE PROPERTY STRINGS "typed" "compat")
-if(NOT RPCGEN_CPP_MODE STREQUAL "typed" AND NOT RPCGEN_CPP_MODE STREQUAL "compat")
-  message(FATAL_ERROR "RPCGEN_CPP_MODE must be one of: typed, compat (got: ${RPCGEN_CPP_MODE})")
-endif()
-
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -680,13 +671,11 @@ endif()
 
 
 # Add rpc defined in Janus
-set(RCC_RPCGEN_CPP_MODE_FILE "${CMAKE_CURRENT_BINARY_DIR}/rcc_rpc_cpp_mode.txt")
-file(GENERATE OUTPUT "${RCC_RPCGEN_CPP_MODE_FILE}" CONTENT "${RPCGEN_CPP_MODE}\n")
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
          ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.py
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python --cpp-mode ${RPCGEN_CPP_MODE} src/deptran/rcc_rpc.rpc
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc ${RCC_RPCGEN_CPP_MODE_FILE}
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp --python src/deptran/rcc_rpc.rpc
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -1811,59 +1800,6 @@ if(BUILD_TESTS)
         NAME test_rpc_rpcgen_typed_structs
         COMMAND ${PYTHON3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/test/rpcgen_typed_structs_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-    )
-    add_test(
-        NAME test_rpc_rpcgen_cmake_mode_wiring
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_cmake_mode_wiring_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-    )
-    add_test(
-        NAME test_rpc_rpcgen_in_tree_helloworld_typed
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_in_tree_helloworld_typed_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-                --cxx ${CMAKE_CXX_COMPILER}
-    )
-    add_test(
-        NAME test_rpc_rpcgen_in_tree_network_typed
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_in_tree_network_typed_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-                --cxx ${CMAKE_CXX_COMPILER}
-    )
-    add_test(
-        NAME test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_in_tree_rcc_rpc_typed_prep_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-                --cxx ${CMAKE_CXX_COMPILER}
-    )
-    add_test(
-        NAME test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rpcgen_in_tree_rcc_rpc_typed_sync_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-    )
-    add_test(
-        NAME test_rpc_rcc_rpc_classic_proxy_typed_callsites
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rcc_rpc_classic_proxy_typed_callsites_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-                --cxx ${CMAKE_CXX_COMPILER}
-    )
-    add_test(
-        NAME test_rpc_rcc_rpc_classic_service_typed_bridge
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rcc_rpc_classic_service_typed_bridge_test.py
-                --repo ${CMAKE_SOURCE_DIR}
-                --cxx ${CMAKE_CXX_COMPILER}
-    )
-    add_test(
-        NAME test_rpc_rcc_rpc_typed_fallout_map_doc
-        COMMAND ${PYTHON3_EXECUTABLE}
-                ${CMAKE_SOURCE_DIR}/test/rcc_rpc_typed_fallout_map_doc_test.py
                 --repo ${CMAKE_SOURCE_DIR}
     )
 

@@ -353,26 +353,44 @@ class TestServiceForLB : public benchmark::BenchmarkService {
 public:
     std::atomic<int> call_count{0};
 
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         call_count++;
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override {
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
         call_count++;
-        *flag = (n > 1) ? 1 : 0;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = (req.n > 1) ? 1 : 0;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
 
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
         call_count++;
+        BenchmarkService::RpcFastVecResponse resp{};
+        (void)req;
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
     }
 
-    void sleep(const double& sec) override {
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
         call_count++;
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
 

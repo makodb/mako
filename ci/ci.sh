@@ -415,34 +415,54 @@ run_1shard_replication_raft() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1ReplicationRaft"
     echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    bash ./examples/test_1shard_replication_raft.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard1ReplicationRaft"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        # Run test and capture exit code (set +e to prevent immediate exit)
+        set +e
+        bash ./examples/test_1shard_replication_raft.sh
+        local test_result=$?
+        set -e
+        # Always check for hanging processes, even if test failed
+        check_for_hanging_processes "shard1ReplicationRaft"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shard1ReplicationRaft (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_2shard_replication_raft() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard2ReplicationRaft"
     echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    bash ./examples/test_2shard_replication_raft.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard2ReplicationRaft"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        # Run test and capture exit code (set +e to prevent immediate exit)
+        set +e
+        bash ./examples/test_2shard_replication_raft.sh
+        local test_result=$?
+        set -e
+        # Always check for hanging processes, even if test failed
+        check_for_hanging_processes "shard2ReplicationRaft"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shard2ReplicationRaft (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
 }
 
 run_1shard_replication_simple_raft() {

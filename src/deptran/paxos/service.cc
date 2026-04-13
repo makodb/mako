@@ -4,6 +4,58 @@
 #include "../paxos_worker.h"
 
 namespace janus {
+void MultiPaxosServiceImpl::Forward(const MultiPaxosService::RpcForwardRequest& req, MultiPaxosService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
+  this->Forward(req.cmd, req.dep_id, &resp.coro_id, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::Prepare(const MultiPaxosService::RpcPrepareRequest& req, MultiPaxosService::RpcPrepareResponse& resp, rrr::DeferredReply defer) {
+  this->Prepare(req.slot, req.ballot, &resp.max_ballot, &resp.coro_id, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::Accept(const MultiPaxosService::RpcAcceptRequest& req, MultiPaxosService::RpcAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->Accept(req.slot, req.time, req.ballot, req.cmd, &resp.max_ballot, &resp.coro_id, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::Decide(const MultiPaxosService::RpcDecideRequest& req, MultiPaxosService::RpcDecideResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->Decide(req.slot, req.ballot, req.cmd, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::BulkPrepare(const MultiPaxosService::RpcBulkPrepareRequest& req, MultiPaxosService::RpcBulkPrepareResponse& resp, rrr::DeferredReply defer) {
+  this->BulkPrepare(req.cmd, &resp.ballot, &resp.val, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::Heartbeat(const MultiPaxosService::RpcHeartbeatRequest& req, MultiPaxosService::RpcHeartbeatResponse& resp, rrr::DeferredReply defer) {
+  this->Heartbeat(req.cmd, &resp.ballot, &resp.val, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::BulkPrepare2(const MultiPaxosService::RpcBulkPrepare2Request& req, MultiPaxosService::RpcBulkPrepare2Response& resp, rrr::DeferredReply defer) {
+  this->BulkPrepare2(req.cmd, &resp.ballot, &resp.val, &resp.ret, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, rrr::DeferredReply defer) {
+  this->BulkAccept(req.cmd, &resp.ballot, &resp.val, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, rrr::DeferredReply defer) {
+  this->BulkDecide(req.cmd, &resp.ballot, &resp.val, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, rrr::DeferredReply defer) {
+  this->SyncLog(req.cmd, &resp.ballot, &resp.val, &resp.ret, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::SyncCommit(const MultiPaxosService::RpcSyncCommitRequest& req, MultiPaxosService::RpcSyncCommitResponse& resp, rrr::DeferredReply defer) {
+  this->SyncCommit(req.cmd, &resp.ballot, &resp.val, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::SyncNoOps(const MultiPaxosService::RpcSyncNoOpsRequest& req, MultiPaxosService::RpcSyncNoOpsResponse& resp, rrr::DeferredReply defer) {
+  this->SyncNoOps(req.cmd, &resp.ballot, &resp.val, std::move(defer));
+}
+
+void MultiPaxosServiceImpl::ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, rrr::DeferredReply defer) {
+  this->ForwardToLearnerServer(req.par_id, req.slot, req.ballot, req.cmd, &resp.ret_slot, &resp.ret_ballot, std::move(defer));
+}
 
 MultiPaxosServiceImpl::MultiPaxosServiceImpl(TxLogServer *sched)
     : sched_((PaxosServer*)sched) {

@@ -9,9 +9,11 @@ class MongodbServiceImpl: public MongodbService {
   MongodbServer* sched_;
   MongodbServiceImpl(TxLogServer* sched);
 
-  void Commit(const MarshallDeputy& md_cmd,
-              rrr::DeferredReply defer) override;
 
+  // BEGIN typed-rpc-decls (MongodbServiceImpl)
+  // Typed RPC interface overrides (new API).
+  void Commit(const MongodbService::RpcCommitRequest& req, MongodbService::RpcCommitResponse& resp, rrr::DeferredReply defer) override;
+  // END typed-rpc-decls (MongodbServiceImpl)
 };
 
 

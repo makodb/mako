@@ -66,7 +66,7 @@
 #define _ARGPAIRS(n, ...) _ARGPAIRS##n(__VA_ARGS__)
 
 #define RpcHandler(name, ...) \
-  void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) override { \
+  void name(_ARGPAIRS(__VA_ARGS__), rrr::DeferredReply defer) { \
     RaftServer* _svr = GetServer(); \
     if (_svr == nullptr || _svr->IsDisconnected()) { \
       OnDisconnected##name(_PARAMS(__VA_ARGS__)); \

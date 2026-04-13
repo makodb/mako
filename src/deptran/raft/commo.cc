@@ -75,31 +75,41 @@ RaftCommo::SendAppendEntries2(siteid_t site_id,
     if (cmd == nullptr) {
       // send a heartbeat AppendEntries
       Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld", site_id, prevLogIndex);
-      Call_Async(proxy, EmptyAppendEntries, slot_id,
-                                            ballot,
-                                            currentTerm,
-                                            leader_site_id,
-                                            prevLogIndex,
-                                            prevLogTerm,
-                                            commitIndex,
-                                            false,  // trigger_election_now (always false for SendAppendEntries2)
-                                            fuattr);
+      RaftProxy::RpcEmptyAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.trigger_election_now = false;
+      auto f = proxy->async_EmptyAppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
     } else {
       // send a regular AppendEntries
       MarshallDeputy md(cmd);
       verify(md.sp_data_ != nullptr);
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
-      Call_Async(proxy, AppendEntries, slot_id,
-                                       ballot,
-                                       currentTerm,
-                                       leader_site_id,
-                                       prevLogIndex,
-                                       prevLogTerm,
-                                       commitIndex,
-                                       md,
-                                       cmdLogTerm,
-                                       fuattr);
+      RaftProxy::RpcAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.cmd = md;
+      req.leaderNextLogTerm = cmdLogTerm;
+      auto f = proxy->async_AppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
     }
   }
   return response;
@@ -160,31 +170,41 @@ RaftCommo::SendAppendEntries(siteid_t site_id,
       // send a heartbeat AppendEntries
       Log_debug("Heartbeat AppendEntries to site %d prevLogIndex=%ld trigger_election=%d",
                 site_id, prevLogIndex, trigger_election_now);
-      Call_Async(proxy, EmptyAppendEntries, slot_id,
-                                            ballot,
-                                            currentTerm,
-                                            leader_site_id,
-                                            prevLogIndex,
-                                            prevLogTerm,
-                                            commitIndex,
-                                            trigger_election_now,
-                                            fuattr);
+      RaftProxy::RpcEmptyAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.trigger_election_now = trigger_election_now;
+      auto f = proxy->async_EmptyAppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
     } else {
       // send a regular AppendEntries
       MarshallDeputy md(cmd);
       verify(md.sp_data_ != nullptr);
 
       Log_debug("AppendEntries to site %d for log index %d", site_id, prevLogIndex + 1);
-      Call_Async(proxy, AppendEntries, slot_id,
-                                       ballot,
-                                       currentTerm,
-                                       leader_site_id,
-                                       prevLogIndex,
-                                       prevLogTerm,
-                                       commitIndex,
-                                       md,
-                                       cmdLogTerm,
-                                       fuattr);
+      RaftProxy::RpcAppendEntriesRequest req{};
+      req.slot = slot_id;
+      req.ballot = ballot;
+      req.leaderCurrentTerm = currentTerm;
+      req.leaderSiteId = leader_site_id;
+      req.leaderPrevLogIndex = prevLogIndex;
+      req.leaderPrevLogTerm = prevLogTerm;
+      req.leaderCommitIndex = commitIndex;
+      req.cmd = md;
+      req.leaderNextLogTerm = cmdLogTerm;
+      auto f = proxy->async_AppendEntries(req, fuattr);
+      _RPC_COUNT();
+      if (f.is_ok()) {
+        Future::safe_release(f.unwrap().raw_future());
+      }
     }
   }
   return res;
@@ -225,7 +245,16 @@ RaftCommo::BroadcastVote(parid_t par_id,
       // SPECULATIVE VOTING: Track which site voted yes
       e->FeedResponse(vote, term, site_id);
     };
-    Call_Async(proxy, Vote, lst_log_idx, lst_log_term, self_id, cur_term, fuattr);
+    RaftProxy::RpcVoteRequest req{};
+    req.lst_log_idx = lst_log_idx;
+    req.lst_log_term = lst_log_term;
+    req.site_id = self_id;
+    req.cur_term = cur_term;
+    auto f = proxy->async_Vote(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
   return std::move(e);
 }
@@ -294,7 +323,14 @@ void RaftCommo::SendTimeoutNow(siteid_t site_id,
              site_id, leader_term);
 
     // Send TimeoutNow RPC
-    Call_Async(proxy, TimeoutNow, leader_term, leader_site_id, fuattr);
+    RaftProxy::RpcTimeoutNowRequest req{};
+    req.leaderTerm = leader_term;
+    req.leaderSiteId = leader_site_id;
+    auto f = proxy->async_TimeoutNow(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
 
     return;  // Found and sent to target
   }
@@ -356,7 +392,14 @@ void RaftCommo::SendVoteDurable(siteid_t candidate_id,
   Log_info("[SPEC-RAFT] Sending VoteDurable to candidate %d (term=%lu, voter=%d)",
            candidate_id, term, voter_id);
 
-  Call_Async(proxy, VoteDurable, term, voter_id, fuattr);
+  RaftProxy::RpcVoteDurableRequest req{};
+  req.term = term;
+  req.voter_id = voter_id;
+  auto f = proxy->async_VoteDurable(req, fuattr);
+  _RPC_COUNT();
+  if (f.is_ok()) {
+    Future::safe_release(f.unwrap().raw_future());
+  }
 }
 
 // ============================================================================
@@ -406,7 +449,15 @@ void RaftCommo::SendAppendEntriesDurable(siteid_t leader_id,
   Log_info("[SPEC-RAFT] Sending AppendEntriesDurable to leader %d (term=%lu, follower=%d, lastIdx=%lu)",
            leader_id, term, follower_id, lastLogIndex);
 
-  Call_Async(proxy, AppendEntriesDurable, term, follower_id, lastLogIndex, fuattr);
+  RaftProxy::RpcAppendEntriesDurableRequest req{};
+  req.term = term;
+  req.follower_id = follower_id;
+  req.lastLogIndex = lastLogIndex;
+  auto f = proxy->async_AppendEntriesDurable(req, fuattr);
+  _RPC_COUNT();
+  if (f.is_ok()) {
+    Future::safe_release(f.unwrap().raw_future());
+  }
 }
 
 // ============================================================================
@@ -483,7 +534,13 @@ void RaftCommo::SendNotifyRestart(siteid_t self_id, parid_t par_id) {
     };
 
     Log_info("[NOTIFY-RESTART] Sending NotifyRestart to site %d", site_id);
-    Call_Async(proxy, NotifyRestart, self_id, fuattr);
+    RaftProxy::RpcNotifyRestartRequest req{};
+    req.restartedSiteId = self_id;
+    auto f = proxy->async_NotifyRestart(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 
@@ -551,7 +608,13 @@ void RaftCommo::RetryPendingNotifyRestart() {
     };
 
     Log_info("[NOTIFY-RESTART] Retrying NotifyRestart to site %d", site_id);
-    Call_Async(proxy, NotifyRestart, self_site_id_, fuattr);
+    RaftProxy::RpcNotifyRestartRequest req{};
+    req.restartedSiteId = self_site_id_;
+    auto f = proxy->async_NotifyRestart(req, fuattr);
+    _RPC_COUNT();
+    if (f.is_ok()) {
+      Future::safe_release(f.unwrap().raw_future());
+    }
   }
 }
 

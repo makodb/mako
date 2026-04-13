@@ -87,7 +87,7 @@ parser Rpc:
             {{ return functions }}
 
     rule service_function: {{ attr = None; abstract = False; input = []; output = [] }}
-        ["fast" {{ attr = "fast" }} | "raw" {{ attr = "raw" }} | "defer" {{ attr = "defer" }}]
+        ["prefix" {{ attr = "prefix" }} | "fast" {{ attr = "prefix" }} | "raw" {{ attr = "raw" }} | "fiber" {{ attr = "fiber" }} | "defer" {{ attr = "defer" }}]
         SYMBOL {{ forbid_reserved_names(SYMBOL) }}
         "\(" (func_arg_list {{ input = func_arg_list }}) ["\|" (func_arg_list {{ output = func_arg_list }})] "\)"
         ["=" "0" {{ abstract = True }}]
@@ -111,7 +111,7 @@ def generate_rpc_table(rpc_source):
             rpc_table["%s.%s" % (service.name, func.name)] = rpc_code
     return rpc_table
 
-def rpcgen(rpc_fpath, languages, cpp_mode="typed"):
+def rpcgen(rpc_fpath, languages):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 
@@ -139,7 +139,7 @@ def rpcgen(rpc_fpath, languages, cpp_mode="typed"):
 
     if "cpp" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".h"
-        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cpp_mode=cpp_mode)
+        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer)
 
     if "python" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".py"

@@ -77,30 +77,26 @@ def emit_marshaled_typed_struct(struct_name, fields, f):
     f.writeln("}")
     f.writeln()
 
-def emit_typed_service_signature(func, f):
+def emit_typed_service_signature(service, func, f):
     request_struct_name = typed_request_struct_name(func)
     response_struct_name = typed_response_struct_name(func)
     result_type = typed_result_type(func)
-    input_fields = typed_struct_fields(func.input, "in")
-    output_fields = typed_struct_fields(func.output, "out")
 
-    f.writeln("virtual %s %s(const %s& req) {" % (result_type, func.name, request_struct_name))
-    with f.indent():
-        if func.attr == "defer":
-            f.writeln("(void)req;")
-            f.writeln("return %s::Err(ENOTSUP);" % result_type)
-        else:
-            f.writeln("%s __typed_resp__;" % response_struct_name)
-            invoke_with = []
-            for _, field_name in input_fields:
-                invoke_with += "req.%s" % field_name,
-            for _, field_name in output_fields:
-                invoke_with += "&__typed_resp__.%s" % field_name,
-            f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
-            if len(input_fields) == 0:
-                f.writeln("(void)req;")
-            f.writeln("return %s::Ok(__typed_resp__);" % result_type)
-    f.writeln("}")
+    if func.attr == "defer":
+        f.writeln("// @safe")
+        f.writeln("virtual void %s(const %s& req, %s& resp, rrr::DeferredReply defer) = 0;" % (
+            func.name,
+            request_struct_name,
+            response_struct_name,
+        ))
+        return
+
+    f.writeln("// @safe")
+    if service.abstract or func.abstract:
+        f.writeln("virtual %s %s(const %s& req) = 0;" % (result_type, func.name, request_struct_name))
+        return
+
+    f.writeln("virtual %s %s(const %s& req);" % (result_type, func.name, request_struct_name))
 
 def emit_typed_proxy_sync_signature(func, f):
     request_struct_name = typed_request_struct_name(func)
@@ -125,14 +121,6 @@ def emit_proxy_request_call(service, func, marshal_args, f):
         f.writeln("});")
     else:
         f.writeln("return __cl__->request(%sService::%s, __fu_attr__);" % (service.name, func.name.upper()))
-
-def emit_typed_request_from_args(func, input_args, request_var_name, f):
-    request_struct_name = typed_request_struct_name(func)
-    input_fields = typed_struct_fields(func.input, "in")
-
-    f.writeln("%s %s;" % (request_struct_name, request_var_name))
-    for idx, (_, field_name) in enumerate(input_fields):
-        f.writeln("%s.%s = %s;" % (request_var_name, field_name, input_args[idx]))
 
 def emit_typed_proxy_future_wrapper(func, f):
     wrapper_name = typed_proxy_future_wrapper_name(func)
@@ -201,15 +189,7 @@ def emit_typed_proxy_async_signature(service, func, typed_async_call_params, f):
         f.writeln("return %s::Ok(%s(__fu_result__.unwrap()));" % (result_type, wrapper_name))
     f.writeln("}")
 
-def validate_cpp_mode(cpp_mode):
-    if cpp_mode not in ("typed", "compat"):
-        raise ValueError("unsupported cpp mode: %s" % cpp_mode)
-
-
-def emit_service_and_proxy(service, f, rpc_table, cpp_mode="typed"):
-    validate_cpp_mode(cpp_mode)
-    typed_proxy_mode = cpp_mode == "typed"
-
+def emit_service_and_proxy(service, f, rpc_table):
     f.writeln("class %sService: public rrr::Service {" % service.name)
     f.writeln("public:")
     with f.indent():
@@ -254,12 +234,11 @@ def emit_service_and_proxy(service, f, rpc_table, cpp_mode="typed"):
             f.writeln("default: break;  // Unknown RPC ID, ignore")
             f.writeln("}")
         f.writeln("}")
-        f.writeln("// typed service signatures for request/response migration")
-        f.writeln("// compatibility mode keeps pointer-style handlers as the runtime dispatch path")
+        f.writeln("// typed service signatures")
         for func in service.functions:
             if func.attr == "raw":
                 continue
-            emit_typed_service_signature(func, f)
+            emit_typed_service_signature(service, func, f)
         f.writeln("// these RPC handler functions need to be implemented by user")
         f.writeln("// for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use")
         for func in service.functions:
@@ -268,132 +247,110 @@ def emit_service_and_proxy(service, f, rpc_table, cpp_mode="typed"):
             else:
                 postfix = ""
             if func.attr == "raw":
+                f.writeln("// @safe")
                 f.writeln("virtual void %s(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn)%s;" % (func.name, postfix))
-            else:
-                func_args = []
-                for in_arg in func.input:
-                    if in_arg.name != None:
-                        func_args += "const %s& %s" % (in_arg.type, in_arg.name),
-                    else:
-                        func_args += "const %s&" % in_arg.type,
-                for out_arg in func.output:
-                    if out_arg.name != None:
-                        func_args += "%s* %s" % (out_arg.type, out_arg.name),
-                    else:
-                        func_args += "%s*" % out_arg.type,
-                if func.attr == "defer":
-                    func_args += "rrr::DeferredReply defer",
-                f.writeln("virtual void %s(%s)%s;" % (func.name, ", ".join(func_args), postfix))
     f.writeln("private:")
     with f.indent():
         for func in service.functions:
             if func.attr == "raw":
                 continue
+            f.writeln("// @safe")
             f.writeln("void __%s__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {" % func.name)
             with f.indent():
-                if func.attr == "defer":
-                    request_struct_name = typed_request_struct_name(func)
-                    input_fields = typed_struct_fields(func.input, "in")
-                    output_fields = typed_struct_fields(func.output, "out")
-                    f.writeln("%s __typed_req__;" % request_struct_name)
-                    for _, field_name in input_fields:
-                        f.writeln("req->m >> __typed_req__.%s;" % field_name)
-                    f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
-                    f.writeln("if (__typed_result__.is_ok()) {")
-                    with f.indent():
+                f.writeln("// @unsafe")
+                f.writeln("{")
+                with f.indent():
+                    if func.attr == "defer":
+                        request_struct_name = typed_request_struct_name(func)
+                        response_struct_name = typed_response_struct_name(func)
+                        input_fields = typed_struct_fields(func.input, "in")
+                        output_fields = typed_struct_fields(func.output, "out")
+                        f.writeln("%s __typed_req__;" % request_struct_name)
+                        for _, field_name in input_fields:
+                            f.writeln("req->m >> __typed_req__.%s;" % field_name)
+                        f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
+                        f.writeln("rrr::DeferredReply __defer__(")
+                        with f.indent():
+                            f.writeln("std::move(req),")
+                            f.writeln("weak_sconn,")
+                            f.writeln("[__typed_resp__](rrr::Marshal& m) {")
+                            with f.indent():
+                                for _, field_name in output_fields:
+                                    f.writeln("m << __typed_resp__->%s;" % field_name)
+                            f.writeln("},")
+                            f.writeln("[__typed_resp__]() mutable {")
+                            with f.indent():
+                                f.writeln("__typed_resp__.reset();")
+                            f.writeln("});")
+                        f.writeln("this->%s(__typed_req__, *__typed_resp__, std::move(__defer__));" % func.name)
+                    elif func.attr == "fiber":
+                        request_struct_name = typed_request_struct_name(func)
+                        output_fields = typed_struct_fields(func.output, "out")
+                        input_fields = typed_struct_fields(func.input, "in")
+                        f.writeln("%s __typed_req__;" % request_struct_name)
+                        for _, field_name in input_fields:
+                            f.writeln("req->m >> __typed_req__.%s;" % field_name)
+                        f.writeln("auto __fiber_req__ = std::move(req);")
+                        f.writeln("auto __fiber_weak_sconn__ = weak_sconn;")
+                        f.writeln("auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {")
+                        with f.indent():
+                            f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
+                            f.writeln("auto sconn_opt = __fiber_weak_sconn__.upgrade();")
+                            f.writeln("if (sconn_opt.is_some()) {")
+                            with f.indent():
+                                f.writeln("auto sconn = sconn_opt.unwrap();")
+                                f.writeln("if (__typed_result__.is_err()) {")
+                                with f.indent():
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, __typed_result__.unwrap_err());")
+                                f.writeln("} else {")
+                                with f.indent():
+                                    if len(output_fields) == 0:
+                                        f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                        f.writeln("(void)__typed_resp__;")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__);")
+                                    else:
+                                        f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                        f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*__fiber_req__, 0, [&](rrr::Marshal& m) {")
+                                        with f.indent():
+                                            for _, field_name in output_fields:
+                                                f.writeln("m << __typed_resp__.%s;" % field_name)
+                                        f.writeln("});")
+                                f.writeln("}")
+                            f.writeln("}")
+                        f.writeln("});")
+                        f.writeln("(void)__fiber__;")
+                    else: # normal and fast rpc
+                        request_struct_name = typed_request_struct_name(func)
+                        output_fields = typed_struct_fields(func.output, "out")
+                        input_fields = typed_struct_fields(func.input, "in")
+                        f.writeln("%s __typed_req__;" % request_struct_name)
+                        for _, field_name in input_fields:
+                            f.writeln("req->m >> __typed_req__.%s;" % field_name)
+                        f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
                         f.writeln("auto sconn_opt = weak_sconn.upgrade();")
                         f.writeln("if (sconn_opt.is_some()) {")
                         with f.indent():
                             f.writeln("auto sconn = sconn_opt.unwrap();")
-                            if len(output_fields) == 0:
-                                f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                f.writeln("(void)__typed_resp__;")
-                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
-                            else:
-                                f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
-                                with f.indent():
-                                    for _, field_name in output_fields:
-                                        f.writeln("m << __typed_resp__.%s;" % field_name)
-                                f.writeln("});")
+                            f.writeln("if (__typed_result__.is_err()) {")
+                            with f.indent():
+                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());")
+                            f.writeln("} else {")
+                            with f.indent():
+                                if len(output_fields) == 0:
+                                    f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                    f.writeln("(void)__typed_resp__;")
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
+                                else:
+                                    f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
+                                    f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
+                                    with f.indent():
+                                        for _, field_name in output_fields:
+                                            f.writeln("m << __typed_resp__.%s;" % field_name)
+                                    f.writeln("});")
+                            f.writeln("}")
                         f.writeln("}")
-                        f.writeln("return;")
-                    f.writeln("}")
-                    f.writeln("rrr::i32 __typed_err__ = __typed_result__.unwrap_err();")
-                    f.writeln("if (__typed_err__ != ENOTSUP) {")
-                    with f.indent():
-                        f.writeln("auto sconn_opt = weak_sconn.upgrade();")
-                        f.writeln("if (sconn_opt.is_some()) {")
-                        with f.indent():
-                            f.writeln("auto sconn = sconn_opt.unwrap();")
-                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);")
-                        f.writeln("}")
-                        f.writeln("return;")
-                    f.writeln("}")
-                    f.writeln("// Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.")
-                    invoke_with = []
-                    in_counter = 0
-                    out_counter = 0
-                    for field_type, field_name in input_fields:
-                        f.writeln("auto in_%d = std::make_shared<%s>(__typed_req__.%s);" % (in_counter, field_type, field_name))
-                        invoke_with += "*in_%d" % in_counter,
-                        in_counter += 1
-                    for field_type, _ in output_fields:
-                        f.writeln("auto out_%d = std::make_shared<%s>();" % (out_counter, field_type))
-                        invoke_with += "out_%d.get()" % out_counter,
-                        out_counter += 1
-                    f.writeln("auto __marshal_reply__ = [=](rrr::Marshal& m) {");
-                    with f.indent():
-                        out_counter = 0
-                        for out_arg in func.output:
-                            f.writeln("m << *out_%d;" % out_counter)
-                            out_counter += 1
-                    f.writeln("};");
-                    f.writeln("auto __cleanup__ = [=] {");
-                    with f.indent():
-                        in_counter = 0
-                        out_counter = 0
-                        for in_arg in func.input:
-                            f.writeln("(void)in_%d;" % in_counter)
-                            in_counter += 1
-                        for out_arg in func.output:
-                            f.writeln("(void)out_%d;" % out_counter)
-                            out_counter += 1
-                    f.writeln("};");
-                    f.writeln("rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);")
-                    invoke_with += "std::move(__defer__)",
-                    f.writeln("this->%s(%s);" % (func.name, ", ".join(invoke_with)))
-                else: # normal and fast rpc
-                    request_struct_name = typed_request_struct_name(func)
-                    output_fields = typed_struct_fields(func.output, "out")
-                    input_fields = typed_struct_fields(func.input, "in")
-                    f.writeln("%s __typed_req__;" % request_struct_name)
-                    for _, field_name in input_fields:
-                        f.writeln("req->m >> __typed_req__.%s;" % field_name)
-                    f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
-                    f.writeln("auto sconn_opt = weak_sconn.upgrade();")
-                    f.writeln("if (sconn_opt.is_some()) {")
-                    with f.indent():
-                        f.writeln("auto sconn = sconn_opt.unwrap();")
-                        f.writeln("if (__typed_result__.is_err()) {")
-                        with f.indent():
-                            f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_result__.unwrap_err());")
-                        f.writeln("} else {")
-                        with f.indent():
-                            if len(output_fields) == 0:
-                                f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                f.writeln("(void)__typed_resp__;")
-                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req);")
-                            else:
-                                f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                                f.writeln("const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {")
-                                with f.indent():
-                                    for _, field_name in output_fields:
-                                        f.writeln("m << __typed_resp__.%s;" % field_name)
-                                f.writeln("});")
-                        f.writeln("}")
-                    f.writeln("}")
-                    f.writeln("// req automatically cleaned up by rusty::Box")
+                        f.writeln("// req automatically cleaned up by rusty::Box")
+                f.writeln("}")
             f.writeln("}")
     f.writeln("};")
     f.writeln()
@@ -404,83 +361,57 @@ def emit_service_and_proxy(service, f, rpc_table, cpp_mode="typed"):
     f.writeln("public:")
     with f.indent():
         f.writeln("%sProxy(rrr::Client* cl): __cl__(cl) { }" % service.name)
-        if typed_proxy_mode:
-            f.writeln("// Alias typed request/response structs from the sibling Service class.")
-            for func in service.functions:
-                f.writeln("using %s = %sService::%s;" % (
-                    typed_request_struct_name(func),
-                    service.name,
-                    typed_request_struct_name(func),
-                ))
-                f.writeln("using %s = %sService::%s;" % (
-                    typed_response_struct_name(func),
-                    service.name,
-                    typed_response_struct_name(func),
-                ))
+        f.writeln("// Alias typed request/response structs from the sibling Service class.")
         for func in service.functions:
-            async_func_params = []
-            async_call_params = []
-            sync_func_params = []
-            sync_out_params = []
-            typed_async_call_params = []
-            typed_output_fields = typed_struct_fields(func.output, "out")
-            emit_typed_proxy_api = typed_proxy_mode and func.attr != "raw"
-            in_counter = 0
-            out_counter = 0
-            for in_arg in func.input:
-                if in_arg.name != None:
-                    async_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
-                    async_call_params += in_arg.name,
-                    sync_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
-                    typed_async_call_params += "req.%s" % in_arg.name,
-                else:
-                    async_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
-                    async_call_params += "in_%d" % in_counter,
-                    sync_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
-                    typed_async_call_params += "req.in_%d" % in_counter,
-                in_counter += 1
-            for out_arg in func.output:
-                if out_arg.name != None:
-                    sync_func_params += "%s* %s" % (out_arg.type, out_arg.name),
-                    sync_out_params += out_arg.name,
-                else:
-                    sync_func_params += "%s* out_%d" % (out_arg.type, out_counter),
-                    sync_out_params += "out_%d" % out_counter,
-                out_counter += 1
-            if emit_typed_proxy_api:
+            f.writeln("using %s = %sService::%s;" % (
+                typed_request_struct_name(func),
+                service.name,
+                typed_request_struct_name(func),
+            ))
+            f.writeln("using %s = %sService::%s;" % (
+                typed_response_struct_name(func),
+                service.name,
+                typed_response_struct_name(func),
+            ))
+        for func in service.functions:
+            if func.attr != "raw":
+                typed_async_call_params = []
+                for _, field_name in typed_struct_fields(func.input, "in"):
+                    typed_async_call_params += "req.%s" % field_name,
                 emit_typed_proxy_future_wrapper(func, f)
-            f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
-            with f.indent():
-                if emit_typed_proxy_api:
-                    emit_typed_request_from_args(func, async_call_params, "__typed_req__", f)
-                    f.writeln("auto __typed_fu_result__ = this->async_%s(__typed_req__, __fu_attr__);" % func.name)
-                    f.writeln("if (__typed_fu_result__.is_err()) {")
-                    with f.indent():
-                        f.writeln("return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());")
-                    f.writeln("}")
-                    f.writeln("return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());")
-                else:
-                    emit_proxy_request_call(service, func, async_call_params, f)
-            f.writeln("}")
-            if emit_typed_proxy_api:
                 emit_typed_proxy_async_signature(service, func, typed_async_call_params, f)
-            f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
-            with f.indent():
-                if emit_typed_proxy_api:
-                    emit_typed_request_from_args(func, async_call_params, "__typed_req__", f)
-                    f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
-                    f.writeln("if (__typed_result__.is_err()) {")
-                    with f.indent():
-                        f.writeln("return __typed_result__.unwrap_err();")
-                    f.writeln("}")
-                    f.writeln("auto __typed_resp__ = __typed_result__.unwrap();")
-                    if len(sync_out_params) > 0:
-                        for idx, param in enumerate(sync_out_params):
-                            f.writeln("*%s = __typed_resp__.%s;" % (param, typed_output_fields[idx][1]))
+                emit_typed_proxy_sync_signature(func, f)
+            else:
+                async_func_params = []
+                async_call_params = []
+                sync_func_params = []
+                sync_out_params = []
+                in_counter = 0
+                out_counter = 0
+                for in_arg in func.input:
+                    if in_arg.name != None:
+                        async_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
+                        async_call_params += in_arg.name,
+                        sync_func_params += "const %s& %s" % (in_arg.type, in_arg.name),
                     else:
-                        f.writeln("(void)__typed_resp__;")
-                    f.writeln("return 0;")
-                else:
+                        async_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
+                        async_call_params += "in_%d" % in_counter,
+                        sync_func_params += "const %s& in_%d" % (in_arg.type, in_counter),
+                    in_counter += 1
+                for out_arg in func.output:
+                    if out_arg.name != None:
+                        sync_func_params += "%s* %s" % (out_arg.type, out_arg.name),
+                        sync_out_params += out_arg.name,
+                    else:
+                        sync_func_params += "%s* out_%d" % (out_arg.type, out_counter),
+                        sync_out_params += "out_%d" % out_counter,
+                    out_counter += 1
+                f.writeln("rrr::FutureResult async_%s(%sconst rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {" % (func.name, ", ".join(async_func_params + [""])))
+                with f.indent():
+                    emit_proxy_request_call(service, func, async_call_params, f)
+                f.writeln("}")
+                f.writeln("rrr::i32 %s(%s) {" % (func.name, ", ".join(sync_func_params)))
+                with f.indent():
                     f.writeln("auto __fu_result__ = this->async_%s(%s);" % (func.name, ", ".join(async_call_params)))
                     f.writeln("if (__fu_result__.is_err()) {")
                     with f.indent():
@@ -496,15 +427,12 @@ def emit_service_and_proxy(service, f, rpc_table, cpp_mode="typed"):
                         f.writeln("}")
                     f.writeln("// Arc auto-released")
                     f.writeln("return __ret__;")
-            f.writeln("}")
-            if emit_typed_proxy_api:
-                emit_typed_proxy_sync_signature(func, f)
+                f.writeln("}")
     f.writeln("};")
     f.writeln()
 
 
-def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cpp_mode="typed"):
-    validate_cpp_mode(cpp_mode)
+def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer):
     with open(fpath, "w") as f:
         f = SourceFile(f)
         f.writeln("#pragma once")
@@ -514,7 +442,6 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cp
         f.writeln()
         f.writeln("#include <errno.h>")
         f.writeln("#include <memory>")
-        f.writeln("// rpcgen cpp mode: %s" % cpp_mode)
         f.writeln()
         f.write(cpp_header)
         f.writeln()
@@ -527,7 +454,7 @@ def emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cp
             emit_struct(struct, f)
 
         for service in rpc_source.services:
-            emit_service_and_proxy(service, f, rpc_table, cpp_mode=cpp_mode)
+            emit_service_and_proxy(service, f, rpc_table)
 
         if rpc_source.namespace != None:
             f.writeln(" ".join(["}"] * len(rpc_source.namespace)) + " // namespace " + "::".join(rpc_source.namespace))

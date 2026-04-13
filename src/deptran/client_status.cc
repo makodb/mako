@@ -43,6 +43,7 @@ void ClientStatus::wait_for_start(unsigned int id) const {
   *(coo_threads_[id]) = pthread_self();
 
   std::vector<rusty::Function<void()>> callbacks_to_invoke;
+  bool became_ready = false;
   {
     auto guard = sync_state_->lock().unwrap();
     guard->num_ready++;
@@ -50,10 +51,14 @@ void ClientStatus::wait_for_start(unsigned int id) const {
       guard->status = Status::READY;
       callbacks_to_invoke = std::move(guard->ready_block_defers);
       guard->ready_block_defers.clear();
+      became_ready = true;
     }
     // Wait until RUN or STOP
     guard = sync_cond_->wait_while(std::move(guard),
         [](SyncState& s) { return s.status != Status::RUN && s.status != Status::STOP; }).unwrap();
+  }
+  if (became_ready) {
+    sync_cond_->notify_all();
   }
   // Invoke callbacks outside the lock
   for (auto& cb : callbacks_to_invoke) {

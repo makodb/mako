@@ -999,77 +999,25 @@ The `rpcgen` tool generates client and server stubs:
 ```bash
 # Generate C++ code from .rpc definition
 python3 pylib/simplerpc/rpcgen.py my_service.rpc
-
-# Or use the repo wrapper (defaults to typed mode)
-./bin/rpcgen --cpp my_service.rpc
-
-# Compatibility-focused proxy emission mode for rollout checks
-./bin/rpcgen --cpp --cpp-mode compat my_service.rpc
-
-# In CMake builds, use -DRPCGEN_CPP_MODE=compat to switch in-tree rpcgen output
-# from typed(default) to compatibility-focused proxy emission.
 ```
 
-In-tree migration status (2026-04-12): `src/deptran/helloworld.h` and
-`src/deptran/network.h` are now typed-generated and guarded by
-`test_rpc_rpcgen_in_tree_helloworld_typed` and
-`test_rpc_rpcgen_in_tree_network_typed`. Active `network` YCSB callsites
-(`txn_read`/`txn_rmw` in `src/nc_main.cc`) are migrated to typed request/response
-overloads, and compile guards cover typed+legacy proxy usage across all network
-RPC methods. Remaining staged in-tree migration is `rcc_rpc`; current prep
-inventory (`test_rpc_rpcgen_in_tree_rcc_rpc_typed_prep`) shows service-surface
-type visibility now unblocked across service/communicator/config-control prep
-probes after adding typed-header preamble includes for `SimpleCommand` and
-`parent_set_t` in `rcc_rpc` generation. High-traffic `ClassicProxy` callsites
-(`RccPreAccept`/`RccAccept`/`RccCommit`) are now migrated to typed request
-overloads in `src/deptran/troad/commo.cc` and guarded by
-`test_rpc_rcc_rpc_classic_proxy_typed_callsites`. Matching high-traffic
-`ClassicServiceImpl` typed bridge alignment is also in place for
-`RccDispatch`/`RccPreAccept`/`RccAccept`/`RccCommit` (guarded by
-`test_rpc_rcc_rpc_classic_service_typed_bridge`), with legacy pointer handlers
-routed through the same typed response path. Remaining staged `rcc_rpc` work is
-leaf 3c follow-up migration.
-In-tree typed generation/sync drift for
-`rcc_rpc` is guarded by `test_rpc_rpcgen_in_tree_rcc_rpc_typed_sync`
-(normalized output comparison between in-tree and direct-layout typed
-generation). The staged migration breakdown is documented in
-`docs/rpc/rcc_rpc_typed_fallout_map.md`.
-
 This produces:
-- Client proxy class with compatibility pointer-style sync/async methods
 - Server dispatch skeleton
 - Marshal/unmarshal code for custom structs
 - Per-method typed scaffolding structs (`Rpc<MethodPascalCase>Request`/`Rpc<MethodPascalCase>Response`) synthesized from RPC input/output lists
+- Typed service signatures for non-raw methods:
+  `Result<MethodResponse, rrr::i32> Method(const MethodRequest&)`
+- Typed proxy sync/async APIs for non-raw methods:
+  `Method(const MethodRequest&)` and
+  `async_Method(const MethodRequest&, const FutureAttr&)`
 
-Current generated C++ service/proxy boundaries still use out-parameters
-(`T* out`) for return values in compatibility mode.
-Generated services now also expose typed virtual overloads
-(`Result<MethodResponse, rrr::i32> Method(const MethodRequest&)`) for non-raw
-methods; in compatibility mode those overloads bridge to pointer handlers
-(with `defer` methods currently returning `ENOTSUP` until typed async flow lands).
-Generated non-deferred service dispatch wrappers now invoke the typed overloads
-and map `Err(i32)` to RPC error replies, while preserving pointer-style service
-overrides through the typed default bridge.
-For deferred methods, generated service dispatch wrappers now also try the typed
-overload first; `Err(ENOTSUP)` explicitly falls back to legacy deferred pointer
-handlers, while other `Err(i32)` results are returned as immediate RPC errors.
-The generated deferred fallback bridge now keeps request/response pointer values
-under RAII ownership (`std::shared_ptr`) instead of manual `new/delete` cleanup.
-Generated proxies now expose typed sync overloads with the same request/response
-shape for non-raw methods; they currently run through the existing async/future
-pipeline and return `Err(i32)` on transport or RPC error codes.
-Generated proxy classes also publish `using` aliases for those typed structs from
-their sibling service class to keep typed signatures available in proxy scope.
-Generated proxies now also expose typed async overloads for non-raw methods:
-`async_Method(const MethodRequest&, const FutureAttr&)` returns
-`Result<MethodTypedFuture, rrr::i32>`, and `MethodTypedFuture::resolve()`
-decodes the underlying wire reply into `MethodResponse`.
-Legacy pointer-style proxy async/sync signatures remain available as compatibility
-wrappers; for non-raw methods they now build typed request structs and delegate
-to the typed async/sync overloads.
-When rpcgen is invoked with `--cpp-mode compat`, typed proxy surfaces are omitted
-and legacy proxy async/sync paths are emitted directly to support compatibility
-build variants during migration.
+Current codegen is typed-first for non-raw RPC methods:
+- Generated service wrappers decode `MethodRequest`, call the typed handler, and
+  map `Err(i32)` to RPC error replies.
+- Generated proxy sync/async methods use typed request/response objects end-to-end.
+- The old generated pointer-style (`T* out`) non-raw service/proxy wrappers and
+  the generated `ENOTSUP` fallback bridge have been removed.
+- `raw` handlers remain raw (`void Method(Box<Request>, WeakServerConnection)`).
 
 ### Generated Client Usage
 
@@ -1077,8 +1025,9 @@ build variants during migration.
 MyServiceProxy proxy(client.get());
 
 // Synchronous call
-UserInfo user;
-if (proxy.get_user(1001, &user) == 0) {
+UserInfo user{};
+rrr::i32 rc = proxy.get_user(1001, &user);
+if (rc == 0) {
     // user populated
 }
 
@@ -1086,22 +1035,29 @@ if (proxy.get_user(1001, &user) == 0) {
 auto fu_result = proxy.async_get_user(1001);
 if (fu_result.is_ok()) {
     auto fu = fu_result.unwrap();
-    fu->wait();
-    fu->get_reply() >> user;
+    if (fu->get_error_code() == 0) {
+        UserInfo user2{};
+        auto reply = fu->get_reply();
+        reply >> user2;
+        (void)user2;
+    } else {
+        auto err = fu->get_error_code();
+        (void)err;
+    }
+} else {
+    auto err = fu_result.unwrap_err();
+    (void)err;
 }
-
-// The compatibility sync wrapper returns i32 status.
-// Generated typed sync and typed async request/response overloads are also available.
 ```
 
-### Planned Typed Request/Response API (Migration Target)
+### Typed Request/Response API
 
-The target interface style is one request type plus one response type per RPC
-method. This removes raw out-parameters from the public generated API and
-matches common RPC APIs (gRPC/Thrift style).
+The interface style is one request type plus one response type per non-raw RPC
+method. This removes out-parameters from the generated public API and matches
+common RPC APIs (gRPC/Thrift style).
 
-IDL ergonomics remain simple: users can still list primitive output fields in
-`.rpc`; `rpcgen` should synthesize request/response structs automatically.
+IDL ergonomics remain simple: users still list primitive output fields in
+`.rpc`; `rpcgen` synthesizes request/response structs automatically.
 
 ```cpp srpc-no-compile
 struct GetUserRequest {
@@ -1117,21 +1073,16 @@ using RpcResult = rusty::Result<T, rrr::i32>;
 
 class MyServiceService: public rrr::Service {
 public:
-    // Target service boundary (no output pointers)
+    // Service boundary (no output pointers)
     virtual RpcResult<GetUserResponse> get_user(const GetUserRequest& req) = 0;
 };
 
 class MyServiceProxy {
 public:
-    // Target client boundary
+    // Client boundary
     RpcResult<GetUserResponse> get_user(const GetUserRequest& req);
 };
 ```
-
-Migration plan:
-- Keep old pointer-style generated signatures as compatibility wrappers.
-- Add typed request/response signatures in parallel.
-- Migrate callsites incrementally, then retire pointer-style APIs.
 
 ---
 

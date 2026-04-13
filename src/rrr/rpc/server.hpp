@@ -507,6 +507,27 @@ public:
         }
         // Object will be destroyed when it goes out of scope, destructor calls cleanup_()
     }
+
+    // @safe - Sends error reply (no payload) using the original request context.
+    // Can only be called once (checked by replied_ flag).
+    void reply_error(i32 error_code) {
+        if (replied_) {
+            Log_warn("DeferredReply::reply_error() called multiple times, ignoring");
+            return;
+        }
+        replied_ = true;
+
+        // @unsafe - weak pointer upgrade (safe operation, but rusty-cpp needs annotation)
+        {
+            auto sconn_opt = weak_sconn_.upgrade();
+            if (sconn_opt.is_some()) {
+                auto sconn = sconn_opt.unwrap();
+                sconn->reply(*req_, error_code);
+            } else {
+                Log_debug("Connection closed before error reply sent, dropping reply");
+            }
+        }
+    }
 };
 
 // @unsafe - Main RPC server managing connections

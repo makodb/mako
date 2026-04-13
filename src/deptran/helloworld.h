@@ -4,7 +4,6 @@
 
 #include <errno.h>
 #include <memory>
-// rpcgen cpp mode: typed
 
 
 namespace helloworld_client {
@@ -37,7 +36,7 @@ public:
     }
 
     enum {
-        TXN_READ = 0x3e197453,
+        TXN_READ = 0x18a64b98,
     };
     // Registers RPC IDs with server using service index
     // @safe
@@ -58,52 +57,30 @@ public:
         default: break;  // Unknown RPC ID, ignore
         }
     }
-    // typed service signatures for request/response migration
-    // compatibility mode keeps pointer-style handlers as the runtime dispatch path
-    virtual rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(ENOTSUP);
-    }
+    // typed service signatures
+    // @safe
+    virtual void txn_read(const RpcTxnReadRequest& req, RpcTxnReadResponse& resp, rrr::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
-    virtual void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply defer) = 0;
 private:
+    // @safe
     void __txn_read__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnReadRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_read(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, 0, [&](rrr::Marshal& m) {
-                    m << __typed_resp__.val;
+        // @unsafe
+        {
+            RpcTxnReadRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                    m << __typed_resp__->val;
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
                 });
-            }
-            return;
+            this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<rrr::i64>>(__typed_req__._req);
-        auto out_0 = std::make_shared<rrr::i32>();
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-            m << *out_0;
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-            (void)out_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_read(*in_0, out_0.get(), std::move(__defer__));
     }
 };
 
@@ -142,15 +119,6 @@ public:
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnReadRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_read(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(HelloworldClientService::TXN_READ, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -159,17 +127,6 @@ public:
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_readTypedFuture, rrr::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val) {
-        RpcTxnReadRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_read(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        *val = __typed_resp__.val;
-        return 0;
     }
     rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
         auto __typed_fu_result__ = this->async_txn_read(req);

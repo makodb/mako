@@ -38,7 +38,13 @@ MultiPaxosCommo::SendForward(parid_t par_id,
   };
 
   MarshallDeputy md(cmd);
-  Future::safe_release(leader_proxy->async_Forward(md, dep_id));
+  MultiPaxosProxy::RpcForwardRequest req;
+  req.cmd = md;
+  req.dep_id = dep_id;
+  auto f = leader_proxy->async_Forward(req, fuattr);
+  if (f.is_ok()) {
+    Future::safe_release(f.unwrap().raw_future());
+  }
 
   return e;
 }
@@ -176,12 +182,17 @@ void MultiPaxosCommo::ForwardToLearner(parid_t par_id,
         fu->get_reply() >> slot >> ballot;
         cb(slot, ballot);
         //e->FeedResponse(1);
-      };
-     MarshallDeputy md(cmd);
-     //Log_info("ForwardToLearner: SENDING to learner site_id=%d, slot=%lu", p.first, slot);
-     auto fu_result = proxy->async_ForwardToLearnerServer(par_id, slot, ballot, md, fuattr);
-     sent_count++;
-     // Arc auto-released
+	      };
+	     MarshallDeputy md(cmd);
+	     //Log_info("ForwardToLearner: SENDING to learner site_id=%d, slot=%lu", p.first, slot);
+       MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
+       req.par_id = par_id;
+       req.slot = slot;
+       req.ballot = ballot;
+       req.cmd = md;
+	     auto fu_result = proxy->async_ForwardToLearnerServer(req, fuattr);
+	     sent_count++;
+	     // Arc auto-released
 
     // auto p = proxies.at(cur_batch_idx*(Config::GetConfig()->GetPartitionSize(par_id)) + i);
     // if (Config::GetConfig()->SiteById(p.first).role!=2) continue;
@@ -318,8 +329,12 @@ MultiPaxosCommo::BroadcastHeartBeat(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto fu_result = proxy->async_Heartbeat(md, fuattr);
-    // Arc auto-released
+    MultiPaxosProxy::RpcHeartbeatRequest req;
+    req.cmd = md;
+    auto fu_result = proxy->async_Heartbeat(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -359,8 +374,12 @@ MultiPaxosCommo::BroadcastSyncLog(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto fu_result = proxy->async_SyncLog(md, fuattr);
-    // Arc auto-released
+    MultiPaxosProxy::RpcSyncLogRequest req;
+    req.cmd = md;
+    auto fu_result = proxy->async_SyncLog(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -396,8 +415,12 @@ MultiPaxosCommo::BroadcastSyncNoOps(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto fu_result = proxy->async_SyncNoOps(md, fuattr);
-    // Arc auto-released
+    MultiPaxosProxy::RpcSyncNoOpsRequest req;
+    req.cmd = md;
+    auto fu_result = proxy->async_SyncNoOps(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -470,8 +493,12 @@ MultiPaxosCommo::BroadcastBulkAccept(parid_t par_id,
     };
     verify(cmd != nullptr);
     MarshallDeputy md(cmd);
-    auto fu_result = proxy->async_BulkAccept(md, fuattr);
-    // Arc auto-released
+    MultiPaxosProxy::RpcBulkAcceptRequest req;
+    req.cmd = md;
+    auto fu_result = proxy->async_BulkAccept(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return e;
 }
@@ -505,8 +532,12 @@ MultiPaxosCommo::BroadcastBulkDecide(parid_t par_id,
       e->FeedResponse(valid);
     };
     MarshallDeputy md(cmd);
-    auto fu_result = proxy->async_BulkDecide(md, fuattr);
-    // Arc auto-released
+    MultiPaxosProxy::RpcBulkDecideRequest req;
+    req.cmd = md;
+    auto fu_result = proxy->async_BulkDecide(req, fuattr);
+    if (fu_result.is_ok()) {
+      Future::safe_release(fu_result.unwrap().raw_future());
+    }
   }
   return e;
 }

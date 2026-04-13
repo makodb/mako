@@ -86,103 +86,6 @@ public:
     ConfigServiceImpl& operator=(ConfigServiceImpl&&) = delete;
 
     // =========================================================================
-    // RPC Handlers
-    // =========================================================================
-
-    /**
-     * @brief Get full configuration with version checking.
-     *
-     * If client_version matches current version, returns has_update=0
-     * to avoid unnecessary data transfer.
-     *
-     * @param client_version Client's known config version (0 = always fetch)
-     * @param current_version [out] Current config version on server
-     * @param has_update [out] 1 if config has changed since client_version, 0 otherwise
-     * @param config_data [out] Serialized PersistentConfig (empty if no update)
-     */
-    // @unsafe - RocksDB I/O, network I/O
-    void GetConfig(const uint64_t& client_version,
-                   uint64_t* current_version,
-                   rrr::i32* has_update,
-                   std::string* config_data,
-                   rrr::DeferredReply defer) override;
-
-    /**
-     * @brief Get just the config version (lightweight check).
-     *
-     * Clients can poll this to detect config changes before fetching full config.
-     *
-     * @param version [out] Current config version on server
-     */
-    // @unsafe - RocksDB I/O
-    void GetConfigVersion(uint64_t* version,
-                          rrr::DeferredReply defer) override;
-
-    /**
-     * @brief Check if configuration is available.
-     *
-     * @param result [out] 1 if config exists in store, 0 otherwise
-     */
-    // @unsafe - RocksDB I/O
-    void HasConfig(rrr::i32* result,
-                   rrr::DeferredReply defer) override;
-
-    // =========================================================================
-    // Sharding Policy RPC Handlers
-    // =========================================================================
-
-    /**
-     * @brief Set the sharding policy.
-     *
-     * Called by the system initializer at startup to configure sharding.
-     *
-     * @param policy_data Serialized ShardingPolicySet
-     * @param success [out] 1 on success, 0 on failure
-     */
-    // @unsafe - RocksDB I/O
-    void SetShardingPolicy(const std::string& policy_data,
-                           rrr::i32* success,
-                           rrr::DeferredReply defer) override;
-
-    /**
-     * @brief Get sharding policy with version checking.
-     *
-     * If client_version matches current version, returns has_update=0
-     * to avoid unnecessary data transfer.
-     *
-     * @param client_version Client's known policy version (0 = always fetch)
-     * @param current_version [out] Current policy version on server
-     * @param has_update [out] 1 if policy has changed since client_version, 0 otherwise
-     * @param policy_data [out] Serialized ShardingPolicySet (empty if no update)
-     */
-    // @unsafe - RocksDB I/O, network I/O
-    void GetShardingPolicy(const uint64_t& client_version,
-                           uint64_t* current_version,
-                           rrr::i32* has_update,
-                           std::string* policy_data,
-                           rrr::DeferredReply defer) override;
-
-    /**
-     * @brief Get just the sharding policy version (lightweight check).
-     *
-     * Clients can poll this to detect policy changes before fetching full policy.
-     *
-     * @param version [out] Current policy version on server
-     */
-    // @unsafe - RocksDB I/O
-    void GetShardingPolicyVersion(uint64_t* version,
-                                   rrr::DeferredReply defer) override;
-
-    /**
-     * @brief Check if sharding policy is available.
-     *
-     * @param result [out] 1 if policy exists in store, 0 otherwise
-     */
-    // @unsafe - RocksDB I/O
-    void HasShardingPolicy(rrr::i32* result,
-                           rrr::DeferredReply defer) override;
-
-    // =========================================================================
     // Cache Management
     // =========================================================================
 
@@ -203,6 +106,17 @@ public:
      */
     // @safe
     void invalidate_sharding_cache();
+
+  // BEGIN typed-rpc-decls (ConfigServiceImpl)
+  // Typed RPC interface overrides (new API).
+  void GetConfig(const ConfigServiceService::RpcGetConfigRequest& req, ConfigServiceService::RpcGetConfigResponse& resp, rrr::DeferredReply defer) override;
+  void GetConfigVersion(const ConfigServiceService::RpcGetConfigVersionRequest& req, ConfigServiceService::RpcGetConfigVersionResponse& resp, rrr::DeferredReply defer) override;
+  void HasConfig(const ConfigServiceService::RpcHasConfigRequest& req, ConfigServiceService::RpcHasConfigResponse& resp, rrr::DeferredReply defer) override;
+  void SetShardingPolicy(const ConfigServiceService::RpcSetShardingPolicyRequest& req, ConfigServiceService::RpcSetShardingPolicyResponse& resp, rrr::DeferredReply defer) override;
+  void GetShardingPolicy(const ConfigServiceService::RpcGetShardingPolicyRequest& req, ConfigServiceService::RpcGetShardingPolicyResponse& resp, rrr::DeferredReply defer) override;
+  void GetShardingPolicyVersion(const ConfigServiceService::RpcGetShardingPolicyVersionRequest& req, ConfigServiceService::RpcGetShardingPolicyVersionResponse& resp, rrr::DeferredReply defer) override;
+  void HasShardingPolicy(const ConfigServiceService::RpcHasShardingPolicyRequest& req, ConfigServiceService::RpcHasShardingPolicyResponse& resp, rrr::DeferredReply defer) override;
+  // END typed-rpc-decls (ConfigServiceImpl)
 };
 
 }  // namespace janus

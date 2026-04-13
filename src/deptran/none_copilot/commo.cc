@@ -91,9 +91,14 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
 
   if (n_pending_rpc_[0] < max_pending_rpc_) {
     // if (true) {
-    auto future =
-        pair_proxies[0].second->async_Dispatch(cmd_id, di, md, fuattr);
-    Future::safe_release(future);
+    ClassicProxy::RpcDispatchRequest req0;
+    req0.tid = cmd_id;
+    req0.dep_id = di;
+    req0.cmd = md;
+    auto future = pair_proxies[0].second->async_Dispatch(req0, fuattr);
+    if (future.is_ok()) {
+      Future::safe_release(future.unwrap().raw_future());
+    }
     n_pending_rpc_[0]++;
     dispatch_quota.set(dispatch_quota.value_ - 1);
     send = true;
@@ -126,8 +131,14 @@ void CommunicatorNoneCopilot::BroadcastDispatch(shared_ptr<vector<shared_ptr<Sim
   };
 
   if (n_pending_rpc_[1] < max_pending_rpc_) {
-    Future::safe_release(
-        pair_proxies[1].second->async_Dispatch(cmd_id, di, md, fu2));
+    ClassicProxy::RpcDispatchRequest req1;
+    req1.tid = cmd_id;
+    req1.dep_id = di;
+    req1.cmd = md;
+    auto future = pair_proxies[1].second->async_Dispatch(req1, fu2);
+    if (future.is_ok()) {
+      Future::safe_release(future.unwrap().raw_future());
+    }
     n_pending_rpc_[1]++;
     dispatch_quota.set(dispatch_quota.value_ - 1);
     send = true;

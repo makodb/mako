@@ -43,7 +43,9 @@ void RccCommo::SendDispatch(vector<SimpleCommand> &cmd,
   Log_debug("dispatch to %ld", cmd[0].PartitionId());
 //  verify(cmd.type_ > 0);
 //  verify(cmd.root_type_ > 0);
-  auto fu_result = proxy->async_JanusDispatch(cmd, fuattr);
+  ClassicProxy::RpcJanusDispatchRequest req;
+  req.cmd = cmd;
+  auto fu_result = proxy->async_JanusDispatch(req, fuattr);
   // Arc auto-released
 }
 
@@ -73,7 +75,10 @@ void RccCommo::SendFinish(parid_t pid,
   // Use shared_ptr directly for MarshallDeputy
   auto sp_graph = std::make_shared<RccGraph>(*graph);
   MarshallDeputy md(sp_graph);
-  auto fu_result = proxy->async_RccFinish(tid, md, fuattr);
+  ClassicProxy::RpcRccFinishRequest req;
+  req.id = tid;
+  req.md_graph = md;
+  auto fu_result = proxy->async_RccFinish(req, fuattr);
   // Arc auto-released
 }
 
@@ -94,7 +99,10 @@ RccCommo::Inquire(parid_t pid, txnid_t tid, rank_t rank) {
   };
   fuattr.callback = cb;
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
-  auto fu_result = proxy->async_RccInquire(tid, rank, fuattr);
+  ClassicProxy::RpcRccInquireRequest req;
+  req.txn_id = tid;
+  req.rank = rank;
+  auto fu_result = proxy->async_RccInquire(req, fuattr);
   // Arc auto-released
 //  ev->wait(60*1000*1000);
 //  verify(ev->status_ != Event::TIMEOUT);
@@ -119,7 +127,10 @@ void RccCommo::SendInquire(parid_t pid,
   };
   fuattr.callback = cb;
   auto proxy = (ClassicProxy*)NearestProxyForPartition(pid).second;
-  auto fu_result = proxy->async_RccInquire(epoch, tid, fuattr);
+  ClassicProxy::RpcJanusInquireRequest req;
+  req.epoch = epoch;
+  req.txn_id = tid;
+  auto fu_result = proxy->async_JanusInquire(req, fuattr);
   // Arc auto-released
 }
 
@@ -148,13 +159,22 @@ void RccCommo::BroadcastCommit(parid_t par_id,
                       };
     verify(cmd_id > 0);
     if (skip_graph) {
-      auto fu_result = proxy->async_JanusCommitWoGraph(cmd_id, RANK_UNDEFINED, need_validation, fuattr);
+      ClassicProxy::RpcJanusCommitWoGraphRequest req;
+      req.id = cmd_id;
+      req.rank = RANK_UNDEFINED;
+      req.need_validation = need_validation;
+      auto fu_result = proxy->async_JanusCommitWoGraph(req, fuattr);
       // Arc auto-released
     } else {
       // Use shared_ptr directly for MarshallDeputy
       auto sp_graph = std::make_shared<RccGraph>(*graph);
       MarshallDeputy md(sp_graph);
-      auto fu_result = proxy->async_JanusCommit(cmd_id, RANK_UNDEFINED, need_validation, md, fuattr);
+      ClassicProxy::RpcJanusCommitRequest req;
+      req.id = cmd_id;
+      req.rank = RANK_UNDEFINED;
+      req.need_validation = need_validation;
+      req.graph = md;
+      auto fu_result = proxy->async_JanusCommit(req, fuattr);
       // Arc auto-released
     }
   }
@@ -179,7 +199,11 @@ void RccCommo::BroadcastValidation(txid_t id, set<parid_t> pars, int result) {
       };
       int rank = RANK_D;
       verify(0);
-      auto fu_result = proxy->async_RccNotifyGlobalValidation(id, rank, result, fuattr);
+      ClassicProxy::RpcRccNotifyGlobalValidationRequest req;
+      req.tx_id = id;
+      req.rank = rank;
+      req.res = result;
+      auto fu_result = proxy->async_RccNotifyGlobalValidation(req, fuattr);
       // Arc auto-released
     }
   }

@@ -26,7 +26,9 @@ public:
     std::atomic<int> delay_ms{100};
     std::atomic<bool> should_throw{false};
 
-    void fast_nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+        (void)req;
         call_count++;
         if (should_throw) {
             throw std::runtime_error("Simulated service error");
@@ -34,41 +36,70 @@ public:
         if (should_crash) {
             abort(); // Simulate crash
         }
+        BenchmarkService::RpcFastNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
     }
 
-    void nop(const std::string& input) override {
+    rusty::Result<BenchmarkService::RpcNopResponse, i32>
+    nop(const BenchmarkService::RpcNopRequest& req) override {
+        (void)req;
         call_count++;
         if (should_delay) {
             std::this_thread::sleep_for(milliseconds(delay_ms.load()));
         }
+        BenchmarkService::RpcNopResponse resp{};
+        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
     }
 
-    void fast_prime(const i32& n, i8* flag) override {
+    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
         call_count++;
         bool is_prime = true;
-        if (n <= 1) {
+        if (req.n <= 1) {
             is_prime = false;
         } else {
-            for (i32 i = 2; i * i <= n; i++) {
-                if (n % i == 0) {
+            for (i32 i = 2; i * i <= req.n; i++) {
+                if (req.n % i == 0) {
                     is_prime = false;
                     break;
                 }
             }
         }
-        *flag = is_prime ? 1 : 0;
+        BenchmarkService::RpcFastPrimeResponse resp{};
+        resp.flag = is_prime ? 1 : 0;
+        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
     }
 
-    void fast_vec(const i32& n, std::vector<i64>* v) override {
-        call_count++;
-        for (i32 i = 0; i < n; i++) {
-            v->push_back(i);
+    rusty::Result<BenchmarkService::RpcPrimeResponse, i32>
+    prime(const BenchmarkService::RpcPrimeRequest& req) override {
+        BenchmarkService::RpcFastPrimeRequest fast_req{};
+        fast_req.n = req.n;
+        auto fast_ret = fast_prime(fast_req);
+        if (fast_ret.is_err()) {
+            return rusty::Result<BenchmarkService::RpcPrimeResponse, i32>::Err(
+                fast_ret.unwrap_err());
         }
+        BenchmarkService::RpcPrimeResponse resp{};
+        resp.flag = fast_ret.unwrap().flag;
+        return rusty::Result<BenchmarkService::RpcPrimeResponse, i32>::Ok(resp);
     }
 
-    void sleep(const double& sec) override {
+    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
         call_count++;
-        std::this_thread::sleep_for(std::chrono::duration<double>(sec));
+        BenchmarkService::RpcFastVecResponse resp{};
+        for (i32 i = 0; i < req.n; i++) {
+            resp.v.push_back(i);
+        }
+        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
+    }
+
+    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
+    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+        call_count++;
+        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
+        BenchmarkService::RpcSleepResponse resp{};
+        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
     }
 };
 

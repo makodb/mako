@@ -16,10 +16,13 @@ namespace helloworld_client {
     public: 
         HelloworldClientServiceImpl() ;
         
-        void txn_read(const std::vector<rrr::i64>& _req, rrr::i32* val, rrr::DeferredReply defer) override;
-        
     public:
         int counter_read = 0;
         std::shared_ptr<Fiber> first_req {};
-    } ;
+    
+  // BEGIN typed-rpc-decls (HelloworldClientServiceImpl)
+  // Typed RPC interface overrides (new API).
+  void txn_read(const HelloworldClientService::RpcTxnReadRequest& req, HelloworldClientService::RpcTxnReadResponse& resp, rrr::DeferredReply defer) override;
+  // END typed-rpc-decls (HelloworldClientServiceImpl)
+} ;
 } // namespace helloworld_client

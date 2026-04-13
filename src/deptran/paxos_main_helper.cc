@@ -777,8 +777,9 @@ void* heartbeatBackground(void* arg) {
   // Arc::get() returns const T*, but proxy doesn't mutate client
   ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
   while (es->running) {
-    size_t connected = client_proxy->server_heart_beat();
-    if (connected==0){
+    ServerControlProxy::RpcServerHeartBeatRequest req;
+    auto connected = client_proxy->server_heart_beat(req);
+    if (connected.is_ok()){
       es->set_heartbeat_seen();
     }
     std::this_thread::sleep_for(10ms); // CAN'T run it too fast, otherwise error!
@@ -803,8 +804,9 @@ void* heartbeatBackground2(void* arg) {
   // Arc::get() returns const T*, but proxy doesn't mutate client
   ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
   while (es->running) {
-    size_t connected = client_proxy->server_heart_beat();
-    if (connected==0){
+    ServerControlProxy::RpcServerHeartBeatRequest req;
+    auto connected = client_proxy->server_heart_beat(req);
+    if (connected.is_ok()){
       es->set_heartbeat_seen();
     }
     std::this_thread::sleep_for(30ms); // for the heartbeat between 2 distant datacenters

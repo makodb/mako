@@ -30,7 +30,7 @@ class TxSnow: public RccTx {
 
   virtual void start_ro(const SimpleCommand &cmd,
                         std::map<int32_t, mdb::Value> &output,
-                        rrr::DeferredReply defer);
+                        rusty::Function<void()> done);
 
   // the start function above and this commit function only for general(write) transactions
 //  virtual void commit(

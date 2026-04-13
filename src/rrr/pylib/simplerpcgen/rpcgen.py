@@ -41,7 +41,9 @@ class RpcScanner(runtime.Scanner):
         ('"\\|"', re.compile('\\|')),
         ('"\\("', re.compile('\\(')),
         ('"defer"', re.compile('defer')),
+        ('"fiber"', re.compile('fiber')),
         ('"raw"', re.compile('raw')),
+        ('"prefix"', re.compile('prefix')),
         ('"fast"', re.compile('fast')),
         ('"service"', re.compile('service')),
         ('"abstract"', re.compile('abstract')),
@@ -208,7 +210,7 @@ class Rpc(runtime.Parser):
     def service_functions(self, _parent=None):
         _context = self.Context(_parent, self._scanner, 'service_functions', [])
         functions = []
-        while self._peek('"fast"', '"raw"', '"defer"', 'SYMBOL', '"}"', context=_context) != '"}"':
+        while self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', 'SYMBOL', '"}"', context=_context) != '"}"':
             service_function = self.service_function(_context)
             functions += service_function,
         return functions
@@ -216,14 +218,20 @@ class Rpc(runtime.Parser):
     def service_function(self, _parent=None):
         _context = self.Context(_parent, self._scanner, 'service_function', [])
         attr = None; abstract = False; input = []; output = []
-        if self._peek('"fast"', '"raw"', '"defer"', 'SYMBOL', context=_context) != 'SYMBOL':
-            _token = self._peek('"fast"', '"raw"', '"defer"', context=_context)
-            if _token == '"fast"':
+        if self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', 'SYMBOL', context=_context) != 'SYMBOL':
+            _token = self._peek('"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', context=_context)
+            if _token == '"prefix"':
+                self._scan('"prefix"', context=_context)
+                attr = "prefix"
+            elif _token == '"fast"':
                 self._scan('"fast"', context=_context)
-                attr = "fast"
+                attr = "prefix"
             elif _token == '"raw"':
                 self._scan('"raw"', context=_context)
                 attr = "raw"
+            elif _token == '"fiber"':
+                self._scan('"fiber"', context=_context)
+                attr = "fiber"
             else: # == '"defer"'
                 self._scan('"defer"', context=_context)
                 attr = "defer"
@@ -237,7 +245,7 @@ class Rpc(runtime.Parser):
             func_arg_list = self.func_arg_list(_context)
             output = func_arg_list
         self._scan('"\\)"', context=_context)
-        if self._peek('"="', '"fast"', '"raw"', '"defer"', 'SYMBOL', '"}"', context=_context) == '"="':
+        if self._peek('"="', '"prefix"', '"fast"', '"raw"', '"fiber"', '"defer"', 'SYMBOL', '"}"', context=_context) == '"="':
             self._scan('"="', context=_context)
             self._scan('"0"', context=_context)
             abstract = True
@@ -276,15 +284,57 @@ def parse(rule, text):
 
 
 
-def generate_rpc_table(rpc_source):
+def load_existing_rpc_codes(header_fpath):
+    if not os.path.exists(header_fpath):
+        return {}
+
+    codes = {}
+    current_service = None
+    in_enum = False
+
+    with open(header_fpath) as f:
+        for raw_line in f:
+            line = raw_line.rstrip("\n")
+            m_service = re.match(r'^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)Service\s*:\s*public\s+rrr::Service\s*\{', line)
+            if m_service:
+                current_service = m_service.group(1)
+                in_enum = False
+                continue
+            if current_service is None:
+                continue
+            if not in_enum:
+                if re.match(r'^\s*enum\s*\{\s*$', line):
+                    in_enum = True
+                continue
+            if re.match(r'^\s*};\s*$', line):
+                in_enum = False
+                continue
+            m_enum = re.match(r'^\s*([A-Z0-9_]+)\s*=\s*(0x[0-9a-fA-F]+)\s*,\s*$', line)
+            if m_enum:
+                key = "%s.%s" % (current_service, m_enum.group(1))
+                codes[key] = int(m_enum.group(2), 16)
+    return codes
+
+def generate_rpc_table(rpc_source, existing_codes=None):
+    if existing_codes is None:
+        existing_codes = {}
+
     rpc_table = {}
+    used_codes = set(existing_codes.values())
     for service in rpc_source.services:
         for func in service.functions:
-            rpc_code = random.randint(0x10000000, 0x70000000)
+            existing_key = "%s.%s" % (service.name, func.name.upper())
+            if existing_key in existing_codes:
+                rpc_code = existing_codes[existing_key]
+            else:
+                rpc_code = random.randint(0x10000000, 0x70000000)
+                while rpc_code in used_codes:
+                    rpc_code = random.randint(0x10000000, 0x70000000)
             rpc_table["%s.%s" % (service.name, func.name)] = rpc_code
+            used_codes.add(rpc_code)
     return rpc_table
 
-def rpcgen(rpc_fpath, languages, cpp_mode="typed"):
+def rpcgen(rpc_fpath, languages):
     with open(rpc_fpath) as f:
         rpc_src = f.read()
 
@@ -308,11 +358,13 @@ def rpcgen(rpc_fpath, languages, cpp_mode="typed"):
         src = '\n'.join(rpc_src_lines)
 
     rpc_source = parse("rpc_source", src)
-    rpc_table = generate_rpc_table(rpc_source) # service.func = rpc_code
+    header_fpath = os.path.splitext(rpc_fpath)[0] + ".h"
+    existing_codes = load_existing_rpc_codes(header_fpath)
+    rpc_table = generate_rpc_table(rpc_source, existing_codes) # service.func = rpc_code
 
     if "cpp" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".h"
-        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer, cpp_mode=cpp_mode)
+        emit_rpc_source_cpp(rpc_source, rpc_table, fpath, cpp_header, cpp_footer)
 
     if "python" in languages:
         fpath = os.path.splitext(rpc_fpath)[0] + ".py"

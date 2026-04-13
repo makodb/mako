@@ -171,8 +171,12 @@ CommunicatorRule::BroadcastRuleSpeculativeExecute(shared_ptr<vector<shared_ptr<S
     gettimeofday(&tp, NULL);
     sp_vpd->time_sent_from_client_ = tp.tv_sec * 1000 + tp.tv_usec / 1000.0;
     
-    auto future = proxy->async_RuleSpeculativeExecute(md, fuattr);
-    Future::safe_release(future);
+    ClassicProxy::RpcRuleSpeculativeExecuteRequest req{};
+    req.md = md;
+    auto future = proxy->async_RuleSpeculativeExecute(req, fuattr);
+    if (future.is_ok()) {
+      Future::safe_release(future.unwrap().raw_future());
+    }
   }
 
   e->wait();
@@ -259,8 +263,14 @@ void CommunicatorRule::BroadcastDispatch(
 
   for (auto pair_leader_proxy: pair_leader_proxies) {
     auto proxy = pair_leader_proxy.second;
-    auto future = proxy->async_Dispatch(cmd_id, di, md, fuattr);
-    Future::safe_release(future);
+    ClassicProxy::RpcDispatchRequest req;
+    req.tid = cmd_id;
+    req.dep_id = di;
+    req.cmd = md;
+    auto future = proxy->async_Dispatch(req, fuattr);
+    if (future.is_ok()) {
+      Future::safe_release(future.unwrap().raw_future());
+    }
   }
   
 }

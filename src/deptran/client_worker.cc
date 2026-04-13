@@ -403,9 +403,12 @@ void ClientWorker::Work() {
 }
 
 void ClientWorker::AcceptForwardedRequest(TxRequest request,
-                                          TxReply* txn_reply,
-                                          rrr::DeferredReply defer) {
+                                          TxReply* txn_reply) {
   const char* f = __FUNCTION__;
+
+  std::mutex done_mu;
+  std::condition_variable done_cv;
+  bool done = false;
 
   Coordinator* coo = nullptr;
   while (coo == nullptr) {
@@ -413,12 +416,21 @@ void ClientWorker::AcceptForwardedRequest(TxRequest request,
   }
   coo->forward_status_ = PROCESS_FORWARD_REQUEST;
 
-  request.callback_ = [this, coo, txn_reply, defer = std::move(defer)](TxReply& reply) mutable {
-    ForwardRequestDone(coo, txn_reply, [defer = std::move(defer)]() mutable { defer.reply(); }, reply);
-  };
+  request.callback_ =
+      [this, coo, txn_reply, &done_mu, &done_cv, &done](TxReply& reply) mutable {
+        ForwardRequestDone(coo, txn_reply, []() {}, reply);
+        {
+          std::lock_guard<std::mutex> guard(done_mu);
+          done = true;
+        }
+        done_cv.notify_one();
+      };
   Log_debug("%s: running forwarded request at site %d", f, my_site_.id);
   coo->concurrent = n_concurrent_;
   coo->DoTxAsync(request);
+
+  std::unique_lock<std::mutex> guard(done_mu);
+  done_cv.wait(guard, [&done] { return done; });
 }
 
 void ClientWorker::FailoverPreprocess(Coordinator* coo) {

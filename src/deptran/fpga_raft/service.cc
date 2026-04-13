@@ -11,66 +11,114 @@ FpgaRaftServiceImpl::FpgaRaftServiceImpl(TxLogServer *sched)
 	srand(curr_time.tv_nsec);
 }
 
+void FpgaRaftServiceImpl::Heartbeat(const FpgaRaftService::RpcHeartbeatRequest& req, FpgaRaftService::RpcHeartbeatResponse& resp, rrr::DeferredReply defer) {
+  this->Heartbeat(req.leaderPrevLogIndex, req.dep_id, &resp.followerPrevLogIndex, std::move(defer));
+}
+
+void FpgaRaftServiceImpl::Forward(const FpgaRaftService::RpcForwardRequest& req, FpgaRaftService::RpcForwardResponse& resp, rrr::DeferredReply defer) {
+  this->Forward(req.cmd, &resp.cmt_idx, std::move(defer));
+}
+
+void FpgaRaftServiceImpl::Vote(const FpgaRaftService::RpcVoteRequest& req, FpgaRaftService::RpcVoteResponse& resp, rrr::DeferredReply defer) {
+  this->Vote(req.lst_log_idx, req.lst_log_term, req.par_id, req.cur_term, &resp.max_ballot, &resp.vote_granted, std::move(defer));
+}
+
+void FpgaRaftServiceImpl::Vote2FPGA(const FpgaRaftService::RpcVote2FPGARequest& req, FpgaRaftService::RpcVote2FPGAResponse& resp, rrr::DeferredReply defer) {
+  this->Vote2FPGA(req.lst_log_idx, req.lst_log_term, req.par_id, req.cur_term, &resp.max_ballot, &resp.vote_granted, std::move(defer));
+}
+
+void FpgaRaftServiceImpl::AppendEntries2(const FpgaRaftService::RpcAppendEntries2Request& req, FpgaRaftService::RpcAppendEntries2Response& resp, rrr::DeferredReply defer) {
+  this->AppendEntries2(req.slot, req.ballot, req.leaderCurrentTerm, req.leaderPrevLogIndex, req.leaderPrevLogTerm, req.leaderCommitIndex, req.dep_id, req.cmd, &resp.followerAppendOK, &resp.followerCurrentTerm, &resp.followerLastLogIndex, std::move(defer));
+}
+
+void FpgaRaftServiceImpl::AppendEntries(const FpgaRaftService::RpcAppendEntriesRequest& req, FpgaRaftService::RpcAppendEntriesResponse& resp, rrr::DeferredReply defer) {
+  this->AppendEntries(req.slot, req.ballot, req.leaderCurrentTerm, req.leaderPrevLogIndex, req.leaderPrevLogTerm, req.leaderCommitIndex, req.dep_id, req.cmd, &resp.followerAppendOK, &resp.followerCurrentTerm, &resp.followerLastLogIndex, std::move(defer));
+}
+
+void FpgaRaftServiceImpl::Decide(const FpgaRaftService::RpcDecideRequest& req, FpgaRaftService::RpcDecideResponse& resp, rrr::DeferredReply defer) {
+  (void)resp;
+  this->Decide(req.slot, req.ballot, req.dep_id, req.cmd, std::move(defer));
+}
+
 void FpgaRaftServiceImpl::Heartbeat(const uint64_t& leaderPrevLogIndex,
-																		const DepId& dep_id,
-																		uint64_t* followerPrevLogIndex,
-																		rrr::DeferredReply defer) {
-	//Log_info("received heartbeat");
-	*followerPrevLogIndex = sched_->lastLogIndex;
-	defer.reply();
+                                    const DepId& dep_id,
+                                    uint64_t* followerPrevLogIndex,
+                                    rrr::DeferredReply defer) {
+  (void)leaderPrevLogIndex;
+  (void)dep_id;
+  verify(sched_ != nullptr);
+  *followerPrevLogIndex = sched_->lastLogIndex;
+  defer.reply();
 }
 
 void FpgaRaftServiceImpl::Forward(const MarshallDeputy& cmd,
-                                    uint64_t* cmt_idx, 
-                                    rrr::DeferredReply defer) {
-   verify(sched_ != nullptr);
-   sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_, cmt_idx,
-                      [defer = std::move(defer)]() mutable { defer.reply(); });
-
+                                  uint64_t* cmt_idx,
+                                  rrr::DeferredReply defer) {
+  verify(sched_ != nullptr);
+  sched_->OnForward(const_cast<MarshallDeputy&>(cmd).sp_data_,
+                    cmt_idx,
+                    [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void FpgaRaftServiceImpl::Vote(const uint64_t& lst_log_idx,
-                                    const ballot_t& lst_log_term,
-                                    const parid_t& can_id,
-                                    const ballot_t& can_term,
-                                    ballot_t* reply_term,
-                                    bool_t *vote_granted,
-                                    rrr::DeferredReply defer) {
+                               const ballot_t& lst_log_term,
+                               const parid_t& par_id,
+                               const ballot_t& cur_term,
+                               ballot_t* max_ballot,
+                               bool_t* vote_granted,
+                               rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  sched_->OnVote(lst_log_idx,lst_log_term, can_id, can_term,
-                    reply_term, vote_granted,
-                    [defer = std::move(defer)]() mutable { defer.reply(); });
+  sched_->OnVote(lst_log_idx,
+                 lst_log_term,
+                 par_id,
+                 cur_term,
+                 max_ballot,
+                 vote_granted,
+                 [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void FpgaRaftServiceImpl::Vote2FPGA(const uint64_t& lst_log_idx,
                                     const ballot_t& lst_log_term,
-                                    const parid_t& can_id,
-                                    const ballot_t& can_term,
-                                    ballot_t* reply_term,
-                                    bool_t *vote_granted,
+                                    const parid_t& par_id,
+                                    const ballot_t& cur_term,
+                                    ballot_t* max_ballot,
+                                    bool_t* vote_granted,
                                     rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-  sched_->OnVote2FPGA(lst_log_idx,lst_log_term, can_id, can_term,
-                    reply_term, vote_granted,
-                    [defer = std::move(defer)]() mutable { defer.reply(); });
+  sched_->OnVote2FPGA(lst_log_idx,
+                      lst_log_term,
+                      par_id,
+                      cur_term,
+                      max_ballot,
+                      vote_granted,
+                      [defer = std::move(defer)]() mutable { defer.reply(); });
 }
 
 void FpgaRaftServiceImpl::AppendEntries2(const uint64_t& slot,
-                                        const ballot_t& ballot,
-                                        const uint64_t& leaderCurrentTerm,
-                                        const uint64_t& leaderPrevLogIndex,
-                                        const uint64_t& leaderPrevLogTerm,
-                                        const uint64_t& leaderCommitIndex,
-																				const DepId& dep_id,
-                                        const MarshallDeputy& md_cmd,
-                                        uint64_t *followerAppendOK,
-                                        uint64_t *followerCurrentTerm,
-                                        uint64_t *followerLastLogIndex,
-                                        rrr::DeferredReply defer) {
-	verify(sched_ != nullptr);
-	*followerAppendOK = 1;
-	defer.reply();
-
+                                         const ballot_t& ballot,
+                                         const uint64_t& leaderCurrentTerm,
+                                         const uint64_t& leaderPrevLogIndex,
+                                         const uint64_t& leaderPrevLogTerm,
+                                         const uint64_t& leaderCommitIndex,
+                                         const DepId& dep_id,
+                                         const MarshallDeputy& cmd,
+                                         uint64_t* followerAppendOK,
+                                         uint64_t* followerCurrentTerm,
+                                         uint64_t* followerLastLogIndex,
+                                         rrr::DeferredReply defer) {
+  (void)slot;
+  (void)ballot;
+  (void)leaderCurrentTerm;
+  (void)leaderPrevLogIndex;
+  (void)leaderPrevLogTerm;
+  (void)leaderCommitIndex;
+  (void)dep_id;
+  (void)cmd;
+  verify(sched_ != nullptr);
+  *followerAppendOK = 1;
+  *followerCurrentTerm = 0;
+  *followerLastLogIndex = sched_->lastLogIndex;
+  defer.reply();
 }
 
 void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
@@ -79,62 +127,55 @@ void FpgaRaftServiceImpl::AppendEntries(const uint64_t& slot,
                                         const uint64_t& leaderPrevLogIndex,
                                         const uint64_t& leaderPrevLogTerm,
                                         const uint64_t& leaderCommitIndex,
-																				const DepId& dep_id,
-                                        const MarshallDeputy& md_cmd,
-                                        uint64_t *followerAppendOK,
-                                        uint64_t *followerCurrentTerm,
-                                        uint64_t *followerLastLogIndex,
+                                        const DepId& dep_id,
+                                        const MarshallDeputy& cmd,
+                                        uint64_t* followerAppendOK,
+                                        uint64_t* followerCurrentTerm,
+                                        uint64_t* followerLastLogIndex,
                                         rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-	//Log_info("CreateRunning2");
-
-
-	/*if (ballot == 1000000000 || leaderPrevLogIndex + 1 < sched_->lastLogIndex) {
-		*followerAppendOK = 1;
-		*followerCurrentTerm = leaderCurrentTerm;
-		*followerLastLogIndex = sched_->lastLogIndex + 1;
-		/*for (int i = 0; i < 1000000; i++) {
-			for (int j = 0; j < 1000; j++) {
-				Log_info("wow: %d %d", leaderPrevLogIndex, sched_->lastLogIndex);
-			}
-		}
-		defer.reply();
-		return;
-	}*/
-
-
-  Fiber::create_run([&] () {
-    sched_->OnAppendEntries(slot,
-                            ballot,
-                            leaderCurrentTerm,
-                            leaderPrevLogIndex,
-                            leaderPrevLogTerm,
-                            leaderCommitIndex,
-														dep_id,
-                            const_cast<MarshallDeputy&>(md_cmd).sp_data_,
-                            followerAppendOK,
-                            followerCurrentTerm,
-                            followerLastLogIndex,
-                            [defer = std::move(defer)]() mutable { defer.reply(); });
-
+  Fiber::create_run([this,
+                     slot,
+                     ballot,
+                     leaderCurrentTerm,
+                     leaderPrevLogIndex,
+                     leaderPrevLogTerm,
+                     leaderCommitIndex,
+                     dep_id,
+                     cmd,
+                     followerAppendOK,
+                     followerCurrentTerm,
+                     followerLastLogIndex,
+                     defer = std::move(defer)]() mutable {
+    sched_->OnAppendEntries(
+        slot,
+        ballot,
+        leaderCurrentTerm,
+        leaderPrevLogIndex,
+        leaderPrevLogTerm,
+        leaderCommitIndex,
+        dep_id,
+        const_cast<MarshallDeputy&>(cmd).sp_data_,
+        followerAppendOK,
+        followerCurrentTerm,
+        followerLastLogIndex,
+        [defer = std::move(defer)]() mutable { defer.reply(); });
   });
-	
 }
 
 void FpgaRaftServiceImpl::Decide(const uint64_t& slot,
-                                   const ballot_t& ballot,
-																	 const DepId& dep_id,
-                                   const MarshallDeputy& md_cmd,
-                                   rrr::DeferredReply defer) {
+                                 const ballot_t& ballot,
+                                 const DepId& dep_id,
+                                 const MarshallDeputy& cmd,
+                                 rrr::DeferredReply defer) {
   verify(sched_ != nullptr);
-	//Log_info("Deciding with string: %s and id: %d", dep_id.str.c_str(), dep_id.id);
-  Fiber::create_run([&] () {
+  (void)dep_id;
+  Fiber::create_run([this, slot, ballot, cmd, defer = std::move(defer)]() mutable {
     sched_->OnCommit(slot,
                      ballot,
-                     const_cast<MarshallDeputy&>(md_cmd).sp_data_);
+                     const_cast<MarshallDeputy&>(cmd).sp_data_);
     defer.reply();
   });
 }
-
 
 } // namespace janus;

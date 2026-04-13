@@ -39,13 +39,22 @@ void ServerControlServiceImpl::do_shutdown() {
   status_->set_shutdown();
 }
 
-void ServerControlServiceImpl::server_shutdown(rrr::DeferredReply defer) {
+void ServerControlServiceImpl::server_shutdown(
+    const ServerControlService::RpcServerShutdownRequest& rpc_req,
+    ServerControlService::RpcServerShutdownResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  (void)rpc_resp;
   do_shutdown();
   defer.reply();
 }
 
-void ServerControlServiceImpl::server_ready(rrr::i32 *res, rrr::DeferredReply defer) {
-  *res = status_->is_ready() ? 1 : 0;
+void ServerControlServiceImpl::server_ready(
+    const ServerControlService::RpcServerReadyRequest& rpc_req,
+    ServerControlService::RpcServerReadyResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  rpc_resp.res = status_->is_ready() ? 1 : 0;
   defer.reply();
 }
 
@@ -54,14 +63,24 @@ void ServerControlServiceImpl::do_statistics(const char *key,
   StatsRegistry::instance().do_statistics(key, value_delta);
 }
 
-void ServerControlServiceImpl::server_heart_beat(rrr::DeferredReply defer) {
+void ServerControlServiceImpl::server_heart_beat(
+    const ServerControlService::RpcServerHeartBeatRequest& rpc_req,
+    ServerControlService::RpcServerHeartBeatResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  (void)rpc_resp;
   if (!sig_handler_set_)
     set_sig_handler();
   alarm(timeout_);
   defer.reply();
 }
 
-void ServerControlServiceImpl::server_heart_beat_with_data(ServerResponse *res, rrr::DeferredReply defer) {
+void ServerControlServiceImpl::server_heart_beat_with_data(
+    const ServerControlService::RpcServerHeartBeatWithDataRequest& rpc_req,
+    ServerControlService::RpcServerHeartBeatWithDataResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  ServerResponse *res = &rpc_resp.res;
   res->cpu_util = rrr::CPUInfo::cpu_stat()[0];
 
   // Get recorder from StatsRegistry
@@ -164,13 +183,23 @@ ClientControlServiceImpl::~ClientControlServiceImpl() {
   // ClientStatus is managed by Arc, nothing to do here
 }
 
-void ClientControlServiceImpl::client_shutdown(rrr::DeferredReply defer) {
+void ClientControlServiceImpl::client_shutdown(
+    const ClientControlService::RpcClientShutdownRequest& rpc_req,
+    ClientControlService::RpcClientShutdownResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  (void)rpc_resp;
   Log_info("Shutdown Client Control Service");
   status_->set_status(ClientStatus::Status::STOP);
   defer.reply();
 }
 
-void ClientControlServiceImpl::client_force_stop(rrr::DeferredReply defer) {
+void ClientControlServiceImpl::client_force_stop(
+    const ClientControlService::RpcClientForceStopRequest& rpc_req,
+    ClientControlService::RpcClientForceStopResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  (void)rpc_resp;
   unsigned int num_threads = status_->num_threads();
   pthread_t** coo_threads = status_->coo_threads();
   for (unsigned int i = 0; i < num_threads; i++) {
@@ -181,38 +210,55 @@ void ClientControlServiceImpl::client_force_stop(rrr::DeferredReply defer) {
   defer.reply();
 }
 
-void ClientControlServiceImpl::client_response(const DepId& dep_id, ClientResponse *res, rrr::DeferredReply defer) {
-  res->is_finish = status_->collect_response(res) ? 1 : 0;
+void ClientControlServiceImpl::client_response(
+    const ClientControlService::RpcClientResponseRequest& rpc_req,
+    ClientControlService::RpcClientResponseResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req.dep_id;
+  rpc_resp.res.is_finish = status_->collect_response(&rpc_resp.res) ? 1 : 0;
 #ifdef LOG_LEVEL_AS_DEBUG
-  LogClientResponse(res);
+  LogClientResponse(&rpc_resp.res);
 #endif
   defer.reply();
 }
 
-void ClientControlServiceImpl::client_ready_block(rrr::i32 *res,
-                                                  rrr::DeferredReply defer) {
-  *res = 1;
-  auto status = status_->get_status();
-  if (status == ClientStatus::Status::READY) {
-    defer.reply();
-  } else {
-    // Store callback for later reply
-    status_->add_ready_block_defer([defer = std::move(defer)]() mutable { defer.reply(); });
+void ClientControlServiceImpl::client_ready_block(
+    const ClientControlService::RpcClientReadyBlockRequest& rpc_req,
+    ClientControlService::RpcClientReadyBlockResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  rpc_resp.res = 1;
+  if (status_->get_status() != ClientStatus::Status::READY) {
+    status_->wait_until_ready_or_stop();
   }
-}
-
-void ClientControlServiceImpl::client_ready(rrr::i32 *res, rrr::DeferredReply defer) {
-  *res = (status_->get_status() == ClientStatus::Status::READY) ? 1 : 0;
   defer.reply();
 }
 
-void ClientControlServiceImpl::client_start(rrr::DeferredReply defer) {
+void ClientControlServiceImpl::client_ready(
+    const ClientControlService::RpcClientReadyRequest& rpc_req,
+    ClientControlService::RpcClientReadyResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  rpc_resp.res = (status_->get_status() == ClientStatus::Status::READY) ? 1 : 0;
+  defer.reply();
+}
+
+void ClientControlServiceImpl::client_start(
+    const ClientControlService::RpcClientStartRequest& rpc_req,
+    ClientControlService::RpcClientStartResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  (void)rpc_resp;
   status_->set_status_run_and_start_timer();
   defer.reply();
 }
 
-void ClientControlServiceImpl::client_get_txn_names(std::map<i32, std::string> *txn_names, rrr::DeferredReply defer) {
-  *txn_names = status_->txn_names();
+void ClientControlServiceImpl::client_get_txn_names(
+    const ClientControlService::RpcClientGetTxnNamesRequest& rpc_req,
+    ClientControlService::RpcClientGetTxnNamesResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  (void)rpc_req;
+  rpc_resp.txn_names = status_->txn_names();
   defer.reply();
 }
 
@@ -262,7 +308,10 @@ void ClientControlServiceImpl::LogClientResponse(ClientResponse *res) {
 }
 
 void ClientControlServiceImpl::DispatchTxn(
-    const TxDispatchRequest& req, TxReply* txn_reply, rrr::DeferredReply defer) {
+    const ClientControlService::RpcDispatchTxnRequest& rpc_req,
+    ClientControlService::RpcDispatchTxnResponse& rpc_resp,
+    rrr::DeferredReply defer) {
+  const TxDispatchRequest& req = rpc_req.req;
   // TODO: fix -- we dont need to do this everytime.
   std::vector<ClientWorker*> locale0_workers;
   for (auto& worker : client_workers_g) {
@@ -282,6 +331,7 @@ void ClientControlServiceImpl::DispatchTxn(
   }
   request.n_try_ = 0;
   request.tx_type_ = req.tx_type;
-  worker->AcceptForwardedRequest(std::move(request), txn_reply, std::move(defer));
+  worker->AcceptForwardedRequest(std::move(request), &rpc_resp.result);
+  defer.reply();
 }
 }

@@ -298,16 +298,13 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
           done.fetch_add(1);
         };  // Arc auto-released
         // t.lap_nano();
-        auto _req = nc_generate_read(par_id);
+        vector<int64_t> _req = nc_generate_read(par_id);
         // Future::safe_release(nc_clients[par_id]->async_txn_read(_req, fuattr));
-        NetworkClientProxy::RpcTxnReadRequest typed_req;
-        typed_req._req = _req;
+        NetworkClientProxy::RpcTxnReadRequest req;
+        req._req = _req;
         t.lap_nano();
-        auto typed_result = nc_clients[par_id]->txn_read(typed_req);
+        nc_clients[par_id]->txn_read(req);
         nano_t += t.lap_nano();
-        if (typed_result.is_err()) {
-          std::cerr << "txn_read failed, err=" << typed_result.unwrap_err() << std::endl;
-        }
         usleep(1000*1);
     } else {
         FutureAttr fuattr;  // fuattr
@@ -315,20 +312,17 @@ void *nc_start_client_ycsb(void *input) { // benchmark implementation in the cli
           done.fetch_add(1);
         };  // Arc auto-released
         
-        auto _req = nc_generate_rmw(par_id);
+        vector<int64_t> _req = nc_generate_rmw(par_id);
         
         // t.lap_nano();
         // Future::safe_release(nc_clients[par_id]->async_txn_rmw(_req, fuattr));
         // nano_t += t.lap_nano();
-        NetworkClientProxy::RpcTxnRmwRequest typed_req;
-        typed_req._req = _req;
+        NetworkClientProxy::RpcTxnRmwRequest req;
+        req._req = _req;
 
         t.lap_nano();
-        auto typed_result = nc_clients[par_id]->txn_rmw(typed_req);
+        nc_clients[par_id]->txn_rmw(req);
         nano_t += t.lap_nano();
-        if (typed_result.is_err()) {
-          std::cerr << "txn_rmw failed, err=" << typed_result.unwrap_err() << std::endl;
-        }
     }
 
     // if (t_counter%10==0){

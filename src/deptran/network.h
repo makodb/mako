@@ -4,7 +4,6 @@
 
 #include <errno.h>
 #include <memory>
-// rpcgen cpp mode: typed
 
 
 namespace network_client {
@@ -160,13 +159,13 @@ public:
     }
 
     enum {
-        TXN_RMW = 0x3a86068a,
-        TXN_READ = 0x3866e915,
-        TXN_NEW_ORDER = 0x218fbbb7,
-        TXN_PAYMENT = 0x11b115fe,
-        TXN_DELIVERY = 0x3113bb46,
-        TXN_ORDER_STATUS = 0x1458fbdb,
-        TXN_STOCK_LEVEL = 0x3c0f0f33,
+        TXN_RMW = 0x12f0019b,
+        TXN_READ = 0x2faf244f,
+        TXN_NEW_ORDER = 0x5f68b108,
+        TXN_PAYMENT = 0x25014c57,
+        TXN_DELIVERY = 0x6bec7f91,
+        TXN_ORDER_STATUS = 0x3b137366,
+        TXN_STOCK_LEVEL = 0x36be00a9,
     };
     // Registers RPC IDs with server using service index
     // @safe
@@ -217,276 +216,149 @@ public:
         default: break;  // Unknown RPC ID, ignore
         }
     }
-    // typed service signatures for request/response migration
-    // compatibility mode keeps pointer-style handlers as the runtime dispatch path
-    virtual rusty::Result<RpcTxnRmwResponse, rrr::i32> txn_rmw(const RpcTxnRmwRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnRmwResponse, rrr::i32>::Err(ENOTSUP);
-    }
-    virtual rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnReadResponse, rrr::i32>::Err(ENOTSUP);
-    }
-    virtual rusty::Result<RpcTxnNewOrderResponse, rrr::i32> txn_new_order(const RpcTxnNewOrderRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnNewOrderResponse, rrr::i32>::Err(ENOTSUP);
-    }
-    virtual rusty::Result<RpcTxnPaymentResponse, rrr::i32> txn_payment(const RpcTxnPaymentRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Err(ENOTSUP);
-    }
-    virtual rusty::Result<RpcTxnDeliveryResponse, rrr::i32> txn_delivery(const RpcTxnDeliveryRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnDeliveryResponse, rrr::i32>::Err(ENOTSUP);
-    }
-    virtual rusty::Result<RpcTxnOrderStatusResponse, rrr::i32> txn_order_status(const RpcTxnOrderStatusRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnOrderStatusResponse, rrr::i32>::Err(ENOTSUP);
-    }
-    virtual rusty::Result<RpcTxnStockLevelResponse, rrr::i32> txn_stock_level(const RpcTxnStockLevelRequest& req) {
-        (void)req;
-        return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Err(ENOTSUP);
-    }
+    // typed service signatures
+    // @safe
+    virtual void txn_rmw(const RpcTxnRmwRequest& req, RpcTxnRmwResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void txn_read(const RpcTxnReadRequest& req, RpcTxnReadResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void txn_new_order(const RpcTxnNewOrderRequest& req, RpcTxnNewOrderResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void txn_payment(const RpcTxnPaymentRequest& req, RpcTxnPaymentResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void txn_delivery(const RpcTxnDeliveryRequest& req, RpcTxnDeliveryResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void txn_order_status(const RpcTxnOrderStatusRequest& req, RpcTxnOrderStatusResponse& resp, rrr::DeferredReply defer) = 0;
+    // @safe
+    virtual void txn_stock_level(const RpcTxnStockLevelRequest& req, RpcTxnStockLevelResponse& resp, rrr::DeferredReply defer) = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
-    virtual void txn_rmw(const std::vector<rrr::i64>& _req, rrr::DeferredReply defer) = 0;
-    virtual void txn_read(const std::vector<rrr::i64>& _req, rrr::DeferredReply defer) = 0;
-    virtual void txn_new_order(const std::vector<int32_t>& _req, rrr::DeferredReply defer) = 0;
-    virtual void txn_payment(const std::vector<int32_t>& _req, rrr::DeferredReply defer) = 0;
-    virtual void txn_delivery(const std::vector<int32_t>& _req, rrr::DeferredReply defer) = 0;
-    virtual void txn_order_status(const std::vector<int32_t>& _req, rrr::DeferredReply defer) = 0;
-    virtual void txn_stock_level(const std::vector<int32_t>& _req, rrr::DeferredReply defer) = 0;
 private:
+    // @safe
     void __txn_rmw__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnRmwRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_rmw(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnRmwRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnRmwResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_rmw(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<rrr::i64>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_rmw(*in_0, std::move(__defer__));
     }
+    // @safe
     void __txn_read__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnReadRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_read(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnReadRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnReadResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_read(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<rrr::i64>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_read(*in_0, std::move(__defer__));
     }
+    // @safe
     void __txn_new_order__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnNewOrderRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_new_order(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnNewOrderRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnNewOrderResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_new_order(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<int32_t>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_new_order(*in_0, std::move(__defer__));
     }
+    // @safe
     void __txn_payment__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnPaymentRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_payment(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnPaymentRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnPaymentResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_payment(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<int32_t>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_payment(*in_0, std::move(__defer__));
     }
+    // @safe
     void __txn_delivery__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnDeliveryRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_delivery(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnDeliveryRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnDeliveryResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_delivery(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<int32_t>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_delivery(*in_0, std::move(__defer__));
     }
+    // @safe
     void __txn_order_status__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnOrderStatusRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_order_status(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnOrderStatusRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnOrderStatusResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_order_status(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<int32_t>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_order_status(*in_0, std::move(__defer__));
     }
+    // @safe
     void __txn_stock_level__wrapper__(rusty::Box<rrr::Request> req, rrr::WeakServerConnection weak_sconn) {
-        RpcTxnStockLevelRequest __typed_req__;
-        req->m >> __typed_req__._req;
-        auto __typed_result__ = this->txn_stock_level(__typed_req__);
-        if (__typed_result__.is_ok()) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                auto __typed_resp__ = __typed_result__.unwrap();
-                (void)__typed_resp__;
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req);
-            }
-            return;
+        // @unsafe
+        {
+            RpcTxnStockLevelRequest __typed_req__;
+            req->m >> __typed_req__._req;
+            auto __typed_resp__ = std::make_shared<RpcTxnStockLevelResponse>();
+            rrr::DeferredReply __defer__(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__](rrr::Marshal& m) {
+                },
+                [__typed_resp__]() mutable {
+                    __typed_resp__.reset();
+                });
+            this->txn_stock_level(__typed_req__, *__typed_resp__, std::move(__defer__));
         }
-        rrr::i32 __typed_err__ = __typed_result__.unwrap_err();
-        if (__typed_err__ != ENOTSUP) {
-            auto sconn_opt = weak_sconn.upgrade();
-            if (sconn_opt.is_some()) {
-                auto sconn = sconn_opt.unwrap();
-                const_cast<rrr::ServerConnection&>(*sconn).reply(*req, __typed_err__);
-            }
-            return;
-        }
-        // Typed defer path is currently optional; ENOTSUP falls back to legacy deferred handler.
-        auto in_0 = std::make_shared<std::vector<int32_t>>(__typed_req__._req);
-        auto __marshal_reply__ = [=](rrr::Marshal& m) {
-        };
-        auto __cleanup__ = [=] {
-            (void)in_0;
-        };
-        rrr::DeferredReply __defer__(std::move(req), weak_sconn, __marshal_reply__, __cleanup__);
-        this->txn_stock_level(*in_0, std::move(__defer__));
     }
 };
 
@@ -536,15 +408,6 @@ public:
             return rusty::Result<RpcTxnRmwResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_rmw(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnRmwRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_rmw(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_rmwTypedFuture, rrr::i32> async_txn_rmw(const RpcTxnRmwRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_RMW, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -553,17 +416,6 @@ public:
             return rusty::Result<txn_rmwTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_rmwTypedFuture, rrr::i32>::Ok(txn_rmwTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_rmw(const std::vector<rrr::i64>& _req) {
-        RpcTxnRmwRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_rmw(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnRmwResponse, rrr::i32> txn_rmw(const RpcTxnRmwRequest& req) {
         auto __typed_fu_result__ = this->async_txn_rmw(req);
@@ -598,15 +450,6 @@ public:
             return rusty::Result<RpcTxnReadResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_read(const std::vector<rrr::i64>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnReadRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_read(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_readTypedFuture, rrr::i32> async_txn_read(const RpcTxnReadRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_READ, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -615,17 +458,6 @@ public:
             return rusty::Result<txn_readTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_readTypedFuture, rrr::i32>::Ok(txn_readTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_read(const std::vector<rrr::i64>& _req) {
-        RpcTxnReadRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_read(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnReadResponse, rrr::i32> txn_read(const RpcTxnReadRequest& req) {
         auto __typed_fu_result__ = this->async_txn_read(req);
@@ -660,15 +492,6 @@ public:
             return rusty::Result<RpcTxnNewOrderResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_new_order(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnNewOrderRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_new_order(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_new_orderTypedFuture, rrr::i32> async_txn_new_order(const RpcTxnNewOrderRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_NEW_ORDER, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -677,17 +500,6 @@ public:
             return rusty::Result<txn_new_orderTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_new_orderTypedFuture, rrr::i32>::Ok(txn_new_orderTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_new_order(const std::vector<int32_t>& _req) {
-        RpcTxnNewOrderRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_new_order(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnNewOrderResponse, rrr::i32> txn_new_order(const RpcTxnNewOrderRequest& req) {
         auto __typed_fu_result__ = this->async_txn_new_order(req);
@@ -722,15 +534,6 @@ public:
             return rusty::Result<RpcTxnPaymentResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_payment(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnPaymentRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_payment(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_paymentTypedFuture, rrr::i32> async_txn_payment(const RpcTxnPaymentRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_PAYMENT, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -739,17 +542,6 @@ public:
             return rusty::Result<txn_paymentTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_paymentTypedFuture, rrr::i32>::Ok(txn_paymentTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_payment(const std::vector<int32_t>& _req) {
-        RpcTxnPaymentRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_payment(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnPaymentResponse, rrr::i32> txn_payment(const RpcTxnPaymentRequest& req) {
         auto __typed_fu_result__ = this->async_txn_payment(req);
@@ -784,15 +576,6 @@ public:
             return rusty::Result<RpcTxnDeliveryResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_delivery(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnDeliveryRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_delivery(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_deliveryTypedFuture, rrr::i32> async_txn_delivery(const RpcTxnDeliveryRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_DELIVERY, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -801,17 +584,6 @@ public:
             return rusty::Result<txn_deliveryTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_deliveryTypedFuture, rrr::i32>::Ok(txn_deliveryTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_delivery(const std::vector<int32_t>& _req) {
-        RpcTxnDeliveryRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_delivery(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnDeliveryResponse, rrr::i32> txn_delivery(const RpcTxnDeliveryRequest& req) {
         auto __typed_fu_result__ = this->async_txn_delivery(req);
@@ -846,15 +618,6 @@ public:
             return rusty::Result<RpcTxnOrderStatusResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_order_status(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnOrderStatusRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_order_status(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_order_statusTypedFuture, rrr::i32> async_txn_order_status(const RpcTxnOrderStatusRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_ORDER_STATUS, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -863,17 +626,6 @@ public:
             return rusty::Result<txn_order_statusTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_order_statusTypedFuture, rrr::i32>::Ok(txn_order_statusTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_order_status(const std::vector<int32_t>& _req) {
-        RpcTxnOrderStatusRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_order_status(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnOrderStatusResponse, rrr::i32> txn_order_status(const RpcTxnOrderStatusRequest& req) {
         auto __typed_fu_result__ = this->async_txn_order_status(req);
@@ -908,15 +660,6 @@ public:
             return rusty::Result<RpcTxnStockLevelResponse, rrr::i32>::Ok(__typed_resp__);
         }
     };
-    rrr::FutureResult async_txn_stock_level(const std::vector<int32_t>& _req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
-        RpcTxnStockLevelRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_fu_result__ = this->async_txn_stock_level(__typed_req__, __fu_attr__);
-        if (__typed_fu_result__.is_err()) {
-            return rrr::FutureResult::Err(__typed_fu_result__.unwrap_err());
-        }
-        return rrr::FutureResult::Ok(__typed_fu_result__.unwrap().raw_future());
-    }
     rusty::Result<txn_stock_levelTypedFuture, rrr::i32> async_txn_stock_level(const RpcTxnStockLevelRequest& req, const rrr::FutureAttr& __fu_attr__ = rrr::FutureAttr()) {
         auto __fu_result__ = __cl__->request(NetworkClientService::TXN_STOCK_LEVEL, __fu_attr__, [&](rrr::Marshal& __m__) {
             __m__ << req._req;
@@ -925,17 +668,6 @@ public:
             return rusty::Result<txn_stock_levelTypedFuture, rrr::i32>::Err(__fu_result__.unwrap_err());
         }
         return rusty::Result<txn_stock_levelTypedFuture, rrr::i32>::Ok(txn_stock_levelTypedFuture(__fu_result__.unwrap()));
-    }
-    rrr::i32 txn_stock_level(const std::vector<int32_t>& _req) {
-        RpcTxnStockLevelRequest __typed_req__;
-        __typed_req__._req = _req;
-        auto __typed_result__ = this->txn_stock_level(__typed_req__);
-        if (__typed_result__.is_err()) {
-            return __typed_result__.unwrap_err();
-        }
-        auto __typed_resp__ = __typed_result__.unwrap();
-        (void)__typed_resp__;
-        return 0;
     }
     rusty::Result<RpcTxnStockLevelResponse, rrr::i32> txn_stock_level(const RpcTxnStockLevelRequest& req) {
         auto __typed_fu_result__ = this->async_txn_stock_level(req);

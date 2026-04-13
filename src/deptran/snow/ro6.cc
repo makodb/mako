@@ -111,7 +111,8 @@ void TxSnow::kiss(mdb::Row *r, int col, bool immediate) {
 
 void TxSnow::start_ro(const SimpleCommand &cmd,
                        map<int32_t, Value> &output,
-                       rrr::DeferredReply defer) {
+                       rusty::Function<void()> done) {
+  (void)done;
 //    RCCDTxn::start_ro(header, input, output, defer);
 
 //  conflict_txns_.clear();

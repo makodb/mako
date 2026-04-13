@@ -45,7 +45,10 @@ void TapirCommo::BroadcastFastAccept(parid_t par_id,
       fu->get_reply() >> res;
       cb(res);
     };
-    auto fu_result = proxy->async_TapirFastAccept(cmd_id, cmds, fuattr);
+    ClassicProxy::RpcTapirFastAcceptRequest req;
+    req.cmd_id = cmd_id;
+    req.txn_cmds = cmds;
+    auto fu_result = proxy->async_TapirFastAccept(req, fuattr);
     // Arc auto-released
   }
 }
@@ -58,7 +61,10 @@ void TapirCommo::BroadcastDecide(parid_t par_id,
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = [] (rusty::Arc<Future> fu) {} ;
-    auto fu_result = proxy->async_TapirDecide(cmd_id, decision, fuattr);
+    ClassicProxy::RpcTapirDecideRequest req;
+    req.cmd_id = cmd_id;
+    req.commit = decision;
+    auto fu_result = proxy->async_TapirDecide(req, fuattr);
     // Arc auto-released
   }
 }
@@ -73,10 +79,11 @@ void TapirCommo::BroadcastAccept(parid_t par_id,
     auto proxy = (ClassicProxy*) p.second;
     FutureAttr fuattr;
     fuattr.callback = callback;
-    auto fu_result = proxy->async_TapirAccept(cmd_id,
-                                              ballot,
-                                              decision,
-                                              fuattr);
+    ClassicProxy::RpcTapirAcceptRequest req;
+    req.cmd_id = cmd_id;
+    req.ballot = ballot;
+    req.decision = decision;
+    auto fu_result = proxy->async_TapirAccept(req, fuattr);
     // Arc auto-released
   }
 }

@@ -189,7 +189,7 @@ int PaxosWorker::Next(int slot_id, shared_ptr<Marshallable> cmd) {
 
 void PaxosWorker::SetupService() {
   std::string bind_addr = site_info_->GetBindAddress();
-  svr_poll_thread_worker_ = PollThread::create();
+  svr_poll_thread_worker_ = rusty::Some(PollThread::create());
 
   uint32_t num_threads = 1;
   thread_pool_g = new base::ThreadPool(num_threads);
