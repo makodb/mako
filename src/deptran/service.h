@@ -40,16 +40,16 @@ class ClassicServiceImpl : public ClassicService {
     return dtxn_sched_;
   }
 
-  void rpc_null(rusty::Function<void()> done);
+  void rpc_null(rrr::DeferredReply done);
 
 	void ReElect(bool_t* success,
-							 rusty::Function<void()> done);
+							 rrr::DeferredReply done);
 
   void RuleSpeculativeExecute(const MarshallDeputy& md,
                               bool_t* accepted,
                               int32_t* result,
                               bool_t* is_leader,
-                              rusty::Function<void()> done);
+                              rrr::DeferredReply done);
 
   void Dispatch(const i64& cmd_id,
 								const DepId& dep_id,
@@ -58,24 +58,24 @@ class ClassicServiceImpl : public ClassicService {
                 TxnOutput* output,
                 uint64_t* coro_id,
                 MarshallDeputy* view_data,
-                rusty::Function<void()> done);
+                rrr::DeferredReply done);
 
   void FailoverPauseSocketOut(rrr::i32* res,
-                              rusty::Function<void()> done);
+                              rrr::DeferredReply done);
 
   void FailoverResumeSocketOut(rrr::i32* res,
-                               rusty::Function<void()> done);
+                               rrr::DeferredReply done);
 
   void IsLeader(const locid_t& can_id,
                  bool_t* is_leader,
-                 rusty::Function<void()> done);
+                 rrr::DeferredReply done);
 
   void IsFPGALeader(const locid_t& can_id,
                  bool_t* is_leader,
-                 rusty::Function<void()> done);
+                 rrr::DeferredReply done);
 
   void SimpleCmd (const SimpleCommand& cmd, 
-                      i32* res, rusty::Function<void()> done);
+                      i32* res, rrr::DeferredReply done);
 
   void Prepare(const i64& tid,
                const std::vector<i32>& sids,
@@ -83,7 +83,7 @@ class ClassicServiceImpl : public ClassicService {
                i32* res,
 							 bool_t* slow,
                uint64_t* coro_id,
-               rusty::Function<void()> done);
+               rrr::DeferredReply done);
 
   void Commit(const i64& tid,
               const DepId& dep_id,
@@ -92,7 +92,7 @@ class ClassicServiceImpl : public ClassicService {
               uint64_t* coro_id,
 	        		Profiling* profile,
               MarshallDeputy* view_data,
-              rusty::Function<void()> done);
+              rrr::DeferredReply done);
 
   void Abort(const i64& tid,
              const DepId& dep_id,
@@ -101,48 +101,48 @@ class ClassicServiceImpl : public ClassicService {
              uint64_t* coro_id,
 	        	 Profiling* profile,
              MarshallDeputy* view_data,
-             rusty::Function<void()> done);
+             rrr::DeferredReply done);
 
   void EarlyAbort(const i64& tid,
                   i32* res,
-                  rusty::Function<void()> done);
+                  rrr::DeferredReply done);
 
   void UpgradeEpoch(const uint32_t& curr_epoch,
                     int32_t* res,
-                    rusty::Function<void()> done);
+                    rrr::DeferredReply done);
 
   void TruncateEpoch(const uint32_t& old_epoch,
-                     rusty::Function<void()> done);
+                     rrr::DeferredReply done);
 
   void TapirAccept(const txid_t& cmd_id,
                    const ballot_t& ballot,
                    const int32_t& decision,
-                   rusty::Function<void()> done);
+                   rrr::DeferredReply done);
   void TapirFastAccept(const txid_t& cmd_id,
                        const vector<SimpleCommand>& txn_cmds,
                        rrr::i32* res,
-                       rusty::Function<void()> done);
+                       rrr::DeferredReply done);
   void TapirDecide(const txid_t& cmd_id,
                    const rrr::i32& decision,
-                   rusty::Function<void()> done);
+                   rrr::DeferredReply done);
 
   void CarouselReadAndPrepare(const i64& cmd_id, const MarshallDeputy& cmd,
       const bool_t& leader, int32_t* res, TxnOutput* output,
-      rusty::Function<void()> done);
+      rrr::DeferredReply done);
   void CarouselAccept(const txid_t& cmd_id, const ballot_t& ballot,
-      const int32_t& decision, rusty::Function<void()> done);
+      const int32_t& decision, rrr::DeferredReply done);
   void CarouselFastAccept(const txid_t& cmd_id, const vector<SimpleCommand>& txn_cmds,
-      rrr::i32* res, rusty::Function<void()> done);
+      rrr::i32* res, rrr::DeferredReply done);
   void CarouselDecide(
-      const txid_t& cmd_id, const rrr::i32& decision, rusty::Function<void()> done);
+      const txid_t& cmd_id, const rrr::i32& decision, rrr::DeferredReply done);
 
   void MsgString(const string& arg,
                  string* ret,
-                 rusty::Function<void()> done);
+                 rrr::DeferredReply done);
 
   void MsgMarshall(const MarshallDeputy& arg,
                    MarshallDeputy* ret,
-                   rusty::Function<void()> done);
+                   rrr::DeferredReply done);
 
 #ifdef PIECE_COUNT
   typedef struct piece_count_key_t{
@@ -173,37 +173,25 @@ class ClassicServiceImpl : public ClassicService {
   ClassicServiceImpl(TxLogServer* sched,
                      rusty::Arc<rrr::PollThread> poll_thread_worker);
 
-  rusty::Result<ClassicService::RpcRccDispatchResponse, rrr::i32>
-  RccDispatch(const ClassicService::RpcRccDispatchRequest& req) override;
-
-  rusty::Result<ClassicService::RpcRccPreAcceptResponse, rrr::i32>
-  RccPreAccept(const ClassicService::RpcRccPreAcceptRequest& req) override;
-
-  rusty::Result<ClassicService::RpcRccAcceptResponse, rrr::i32>
-  RccAccept(const ClassicService::RpcRccAcceptRequest& req) override;
-
-  rusty::Result<ClassicService::RpcRccCommitResponse, rrr::i32>
-  RccCommit(const ClassicService::RpcRccCommitRequest& req) override;
-
   void RccDispatch(const vector<SimpleCommand>& cmd,
                    int32_t* res,
                    TxnOutput* output,
                    MarshallDeputy* p_md_graph,
-                   rusty::Function<void()> done);
+                   rrr::DeferredReply done);
 
   void RccPreAccept(const txid_t& txnid,
                     const rank_t& rank,
                     const vector<SimpleCommand>& cmd,
                     int32_t* res,
                     parent_set_t* parents,
-                    rusty::Function<void()> done);
+                    rrr::DeferredReply done);
 
   void RccAccept(const txid_t& txnid,
                  const rank_t& rank,
                  const ballot_t& ballot,
                  const parent_set_t& parents,
                  int32_t* res,
-                 rusty::Function<void()> done);
+                 rrr::DeferredReply done);
 
   void RccCommit(const txid_t& cmd_id,
                  const rank_t& rank,
@@ -211,30 +199,30 @@ class ClassicServiceImpl : public ClassicService {
                  const parent_set_t& parents,
                  int32_t* res,
                  TxnOutput* output,
-                 rusty::Function<void()> done);
+                 rrr::DeferredReply done);
 
   void RccFinish(const txid_t& cmd_id,
                  const MarshallDeputy& md_graph,
                  TxnOutput* output,
-                 rusty::Function<void()> done);
+                 rrr::DeferredReply done);
 
   void RccInquire(const txid_t& tid,
                   const int32_t& rank,
                   map<txid_t, parent_set_t>*,
-                  rusty::Function<void()> done);
+                  rrr::DeferredReply done);
 
   void RccDispatchRo(const SimpleCommand& cmd,
                      map<int32_t, Value>* output,
-                     rusty::Function<void()> done);
+                     rrr::DeferredReply done);
 
-  void RccInquireValidation(const txid_t& txid, const int32_t& rank, int32_t* ret, rusty::Function<void()> done);
-  void RccNotifyGlobalValidation(const txid_t& txid, const int32_t& rank, const int32_t& res, rusty::Function<void()> done);
+  void RccInquireValidation(const txid_t& txid, const int32_t& rank, int32_t* ret, rrr::DeferredReply done);
+  void RccNotifyGlobalValidation(const txid_t& txid, const int32_t& rank, const int32_t& res, rrr::DeferredReply done);
 
   void JanusDispatch(const vector<SimpleCommand>& cmd,
                      int32_t* p_res,
                      TxnOutput* p_output,
                      MarshallDeputy* p_md_res_graph,
-                     rusty::Function<void()> done);
+                     rrr::DeferredReply done);
 
   void JanusCommit(const txid_t& cmd_id,
                    const rank_t& rank,
@@ -242,19 +230,19 @@ class ClassicServiceImpl : public ClassicService {
                    const MarshallDeputy& graph,
                    int32_t* res,
                    TxnOutput* output,
-                   rusty::Function<void()> done);
+                   rrr::DeferredReply done);
 
   void JanusCommitWoGraph(const txid_t& cmd_id,
                           const rank_t& rank,
                           const int32_t& need_validation,
                           int32_t* res,
                           TxnOutput* output,
-                          rusty::Function<void()> done);
+                          rrr::DeferredReply done);
 
   void JanusInquire(const epoch_t& epoch,
                     const txid_t& tid,
                     MarshallDeputy* p_md_graph,
-                    rusty::Function<void()> done);
+                    rrr::DeferredReply done);
 
   void JanusPreAccept(const txid_t& txnid,
                       const rank_t& rank,
@@ -262,41 +250,41 @@ class ClassicServiceImpl : public ClassicService {
                       const MarshallDeputy& md_graph,
                       int32_t* res,
                       MarshallDeputy* p_md_res_graph,
-                      rusty::Function<void()> done);
+                      rrr::DeferredReply done);
 
   void JanusPreAcceptWoGraph(const txid_t& txnid,
                              const rank_t& rank,
                              const vector<SimpleCommand>& cmd,
                              int32_t* res,
                              MarshallDeputy* res_graph,
-                             rusty::Function<void()> done);
+                             rrr::DeferredReply done);
 
   void JanusAccept(const txid_t& txnid,
                    const rank_t& rank,
                    const ballot_t& ballot,
                    const MarshallDeputy& md_graph,
                    int32_t* res,
-                   rusty::Function<void()> done);
+                   rrr::DeferredReply done);
 
   void PreAcceptFebruus(const txid_t& tx_id,
                         int32_t* res,
                         uint64_t* timestamp,
-                        rusty::Function<void()> done);
+                        rrr::DeferredReply done);
 
   void AcceptFebruus(const txid_t& tx_id,
                      const ballot_t& ballot,
                      const uint64_t& timestamp,
                      int32_t* res,
-                     rusty::Function<void()> done);
+                     rrr::DeferredReply done);
 
   void CommitFebruus(const txid_t& tx_id,
                      const uint64_t& timestamp,
-                     int32_t* res, rusty::Function<void()> done);
+                     int32_t* res, rrr::DeferredReply done);
   
   void JetpackBeginRecovery(const MarshallDeputy& old_view, 
                             const MarshallDeputy& new_view, 
                             const epoch_t& new_view_id, 
-                            rusty::Function<void()> done);
+                            rrr::DeferredReply done);
   
   void JetpackPullIdSet(const epoch_t& jepoch,
                         const epoch_t& oepoch,
@@ -306,7 +294,7 @@ class ClassicServiceImpl : public ClassicService {
                         MarshallDeputy* reply_old_view,
                         MarshallDeputy* reply_new_view,
                         MarshallDeputy* id_set,
-                        rusty::Function<void()> done);
+                        rrr::DeferredReply done);
 
   void JetpackPullCmd(const epoch_t& jepoch,
                       const epoch_t& oepoch,
@@ -317,14 +305,14 @@ class ClassicServiceImpl : public ClassicService {
                       MarshallDeputy* reply_old_view,
                       MarshallDeputy* reply_new_view,
                       MarshallDeputy* cmd_batch,
-                      rusty::Function<void()> done);
+                      rrr::DeferredReply done);
  
   void JetpackRecordCmd(const epoch_t& jepoch,
                         const epoch_t& oepoch,
                         const int32_t& sid,
                         const int32_t& rid,
                         const MarshallDeputy& cmd_batch, 
-                        rusty::Function<void()> done);
+                        rrr::DeferredReply done);
  
   void JetpackPrepare(const epoch_t& jepoch,
                       const epoch_t& oepoch,
@@ -338,7 +326,7 @@ class ClassicServiceImpl : public ClassicService {
                       ballot_t* accepted_ballot,
                       int32_t* replied_sid,
                       int32_t* replied_set_size,
-                      rusty::Function<void()> done);
+                      rrr::DeferredReply done);
  
   void JetpackAccept(const epoch_t& jepoch,
                      const epoch_t& oepoch,
@@ -351,13 +339,13 @@ class ClassicServiceImpl : public ClassicService {
                      MarshallDeputy* reply_old_view,
                      MarshallDeputy* reply_new_view,
                      ballot_t* reply_max_seen_ballot,
-                     rusty::Function<void()> done);
+                     rrr::DeferredReply done);
  
   void JetpackCommit(const epoch_t& jepoch,
                      const epoch_t& oepoch, 
                      const int32_t& sid, 
                      const int32_t& set_size, 
-                     rusty::Function<void()> done);
+                     rrr::DeferredReply done);
  
   void JetpackPullRecSetIns(const epoch_t& jepoch,
                             const epoch_t& oepoch,
@@ -369,10 +357,10 @@ class ClassicServiceImpl : public ClassicService {
                             MarshallDeputy* reply_old_view,
                             MarshallDeputy* reply_new_view,
                             MarshallDeputy* cmd,
-                            rusty::Function<void()> done);
+                            rrr::DeferredReply done);
 
   void JetpackFinishRecovery(const epoch_t& oepoch,
-                             rusty::Function<void()> done);
+                             rrr::DeferredReply done);
 
  protected:
   void RegisterStats();
