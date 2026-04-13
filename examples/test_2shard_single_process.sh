@@ -75,6 +75,10 @@ path=$(pwd)/src/mako
 # Build the command for 2-shard single process mode (no replication)
 # Key: -L 0,1 specifies running shards 0 and 1 in the same process
 CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $path/config/local-shards2-warehouses$trd.yml -P localhost -L 0,1"
+THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
+if [ -n "$THROTTLE_ARGS" ]; then
+    CMD="$CMD$THROTTLE_ARGS"
+fi
 
 echo ""
 echo "Configuration:"
@@ -83,6 +87,11 @@ echo "  Number of threads: $trd"
 echo "  Local shards:      0,1 (single process mode)"
 echo "  Replication:       disabled"
 echo "  Config file:       $path/config/local-shards2-warehouses$trd.yml"
+if [ -n "${MAKO_CPU_LIMIT:-}" ]; then
+    echo "  CPU throttle:      ${MAKO_CPU_LIMIT}% (cycle=${MAKO_THROTTLE_CYCLE_MS:-default}ms)"
+else
+    echo "  CPU throttle:      disabled"
+fi
 echo "  Log file:          $log_file"
 echo ""
 echo "Command: $CMD"

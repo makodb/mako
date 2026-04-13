@@ -14,24 +14,38 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: self-hosted
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
         build_type: [Release]
-        run_number: [1, 2]
+        run_number: [1]
     env:
       RUN_INDEX: ${{ matrix.run_number }}     # 1, 2, or 3 (per matrix job)
       RUN_NUM: ${{ github.run_number }}       # monotonically increasing per workflow
       RUN_ID: ${{ github.run_id }}            # unique per workflow run
       MAKO_NO_GDB: "1"                        # Disable GDB for CI (breaks output parsing)
+      CI_MAKE_JOBS: "4"                       # Keep compile CPU usage low on shared runners
+      MAKO_CPU_LIMIT: "5"                     # CPU throttling for dbtest workers
+      MAKO_THROTTLE_CYCLE_MS: "100"           # Throttle duty-cycle period (ms)
+      MAKO_MAX_WAIT_SECONDS: "180"            # Allow slower throttled runs to finish
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
+
+      - name: Install system dependencies
+        run: bash ./apt_packages.sh
+
+      - name: Install Rust toolchain
+        run: |
+          bash ./install_rustc.sh
+          echo "$HOME/.local-rust/bin" >> "$GITHUB_PATH"
+          "$HOME/.local-rust/bin/rustc" --version
+          "$HOME/.local-rust/bin/cargo" --version
 
       - name: Environments
         run: |
@@ -42,6 +56,9 @@ jobs:
           echo "RUN_NUMBER=${{ matrix.run_number }}"
           echo "RUN_NUM=${{ github.run_number }}"
           echo "RUN_ID=${{ github.run_id }}"
+          echo "CI_MAKE_JOBS=${CI_MAKE_JOBS}"
+          echo "MAKO_CPU_LIMIT=${MAKO_CPU_LIMIT}"
+          echo "MAKO_THROTTLE_CYCLE_MS=${MAKO_THROTTLE_CYCLE_MS}"
 
       - name: Compile
         run: ./ci/ci.sh compile

@@ -81,6 +81,44 @@ fi
 ulimit -n "$target_nofile" 2>/dev/null || true
 current_nofile=$(ulimit -n 2>/dev/null || echo "unknown")
 
+max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
+if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
+    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
+    max_wait=120
+fi
+
+follower_ready_timeout="${MAKO_FOLLOWER_READY_TIMEOUT_SEC:-60}"
+if ! [[ "$follower_ready_timeout" =~ ^[0-9]+$ ]] || [ "$follower_ready_timeout" -le 0 ]; then
+    echo "Warning: MAKO_FOLLOWER_READY_TIMEOUT_SEC='${follower_ready_timeout}' is invalid; using default 60s"
+    follower_ready_timeout=60
+fi
+
+leader_startup_timeout="${MAKO_STARTUP_TIMEOUT_SEC:-$((max_wait + 60))}"
+if ! [[ "$leader_startup_timeout" =~ ^[0-9]+$ ]] || [ "$leader_startup_timeout" -le 0 ]; then
+    echo "Warning: MAKO_STARTUP_TIMEOUT_SEC='${leader_startup_timeout}' is invalid; using default $((max_wait + 60))s"
+    leader_startup_timeout=$((max_wait + 60))
+fi
+
+wait_for_log_pattern() {
+    local log_file="$1"
+    local pattern="$2"
+    local label="$3"
+    local timeout_sec="$4"
+    local waited=0
+
+    while [ "$waited" -lt "$timeout_sec" ]; do
+        if [ -f "$log_file" ] && grep -q "$pattern" "$log_file" 2>/dev/null; then
+            echo "  Ready: $label (${waited}s)"
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    echo "  X Timeout waiting for $label marker '$pattern' in $log_file after ${timeout_sec}s"
+    return 1
+}
+
 cleanup_processes() {
     if [ "$CLEANUP_DONE" -eq 1 ]; then
         return
@@ -140,6 +178,14 @@ echo "  Local shards:      0,1 (single leader process)"
 echo "  Replication:       enabled (Paxos)"
 echo "  Processes:         7 total (1 combined leader + 6 followers)"
 echo "  Open files limit:  $current_nofile"
+if [ -n "${MAKO_CPU_LIMIT:-}" ]; then
+    echo "  CPU throttle:      ${MAKO_CPU_LIMIT}% (cycle=${MAKO_THROTTLE_CYCLE_MS:-default}ms)"
+else
+    echo "  CPU throttle:      disabled"
+fi
+echo "  Follower ready TO: ${follower_ready_timeout}s"
+echo "  Leader startup TO: ${leader_startup_timeout}s"
+echo "  Benchmark wait TO: ${max_wait}s"
 echo ""
 
 # Start follower processes for both shards first
@@ -167,7 +213,27 @@ SHARD0_P1_PID=$!
 nohup bash bash/shard.sh 2 1 $trd p1 0 1 > ${log_prefix}_shard1-p1.log 2>&1 &
 SHARD1_P1_PID=$!
 
-sleep 3
+echo "Waiting for follower processes to reach ready state (timeout: ${follower_ready_timeout}s)..."
+follower_ready_pattern="waiting for server communicator setup threads."
+follower_ready_failed=0
+wait_for_log_pattern "${log_prefix}_shard0-learner.log" "$follower_ready_pattern" "shard0 learner" "$follower_ready_timeout" || follower_ready_failed=1
+wait_for_log_pattern "${log_prefix}_shard0-p2.log" "$follower_ready_pattern" "shard0 p2" "$follower_ready_timeout" || follower_ready_failed=1
+wait_for_log_pattern "${log_prefix}_shard0-p1.log" "$follower_ready_pattern" "shard0 p1" "$follower_ready_timeout" || follower_ready_failed=1
+wait_for_log_pattern "${log_prefix}_shard1-learner.log" "$follower_ready_pattern" "shard1 learner" "$follower_ready_timeout" || follower_ready_failed=1
+wait_for_log_pattern "${log_prefix}_shard1-p2.log" "$follower_ready_pattern" "shard1 p2" "$follower_ready_timeout" || follower_ready_failed=1
+wait_for_log_pattern "${log_prefix}_shard1-p1.log" "$follower_ready_pattern" "shard1 p1" "$follower_ready_timeout" || follower_ready_failed=1
+
+if [ "$follower_ready_failed" -eq 1 ]; then
+    echo "Error: one or more followers did not reach ready state"
+    echo "Follower log tails:"
+    tail -n 20 "${log_prefix}_shard0-learner.log" 2>/dev/null || true
+    tail -n 20 "${log_prefix}_shard0-p2.log" 2>/dev/null || true
+    tail -n 20 "${log_prefix}_shard0-p1.log" 2>/dev/null || true
+    tail -n 20 "${log_prefix}_shard1-learner.log" 2>/dev/null || true
+    tail -n 20 "${log_prefix}_shard1-p2.log" 2>/dev/null || true
+    tail -n 20 "${log_prefix}_shard1-p1.log" 2>/dev/null || true
+    exit 1
+fi
 
 # Start the combined leader process for both shards
 # Key: -L 0,1 runs both shards in single process
@@ -175,7 +241,11 @@ sleep 3
 echo "Starting combined leader process for shards 0 and 1..."
 log_file="${log_prefix}_leader.log"
 
-CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated"
+CMD="./${BUILD_DIR:-build}/dbtest --num-threads $trd --shard-config $config_path -F config/1leader_2followers/paxos${trd}_shardidx0.yml -F config/1leader_2followers/paxos${trd}_shardidx1.yml -F config/occ_paxos.yml -P localhost -L 0,1 --is-replicated --startup-timeout-sec $leader_startup_timeout"
+THROTTLE_ARGS="$(mako_dbtest_throttle_args)" || exit 1
+if [ -n "$THROTTLE_ARGS" ]; then
+    CMD="$CMD$THROTTLE_ARGS"
+fi
 
 echo "Command: $CMD"
 echo ""
@@ -185,11 +255,6 @@ LEADER_PID=$!
 
 # Wait for benchmark to complete
 echo "Waiting for benchmark to complete..."
-max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
-if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
-    echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
-    max_wait=120
-fi
 wait_count=0
 leader_exited_early=0
 benchmark_completed=0
