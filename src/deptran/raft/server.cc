@@ -1267,6 +1267,7 @@ void RaftServer::HeartbeatLoop() {
                 site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
           }
         }
+        mtx_.unlock();
       }
 
       // ========================================================================
