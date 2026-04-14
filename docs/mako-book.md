@@ -259,13 +259,35 @@ All config changes are regular transactions on shard 0:
 4. ConfigWatcher on other shards detects the version bump, fetches the new config.
 5. Shard router updates routing table.
 
+### Data Partitioning
+
+The Configuration Manager is the authority on how the key space is divided among shards. Two strategies are supported:
+
+**Hash-based** (default): `shard_id = hash(key) % shard_count`. Even distribution, no range queries across shards.
+
+**Range-based**: Each shard owns a contiguous key range `[range_start, range_end)`. Supports efficient range scans. Stored as `shard/<id>/range_start` and `shard/<id>/range_end` in the config table.
+
+Every node caches the shard map via `ClusterConfig::GetShardForKey()` for routing.
+
+### Resharding (2PC-Style)
+
+Adding, removing, or splitting shards uses a **two-phase commit** protocol where shard 0 acts as coordinator:
+
+**PREPARE**: Record the resharding intent in the config table (e.g., `shard/<id>/status = "adding"` or `"draining"`). Source shard enters dual-write or read-only mode. Data migration begins.
+
+**COMMIT**: After migration is verified complete, update the config (new shard becomes `active`, or removed shard is deleted). Increment `__version__`.
+
+**CLEANUP**: ConfigWatchers detect the version change, all nodes update routing. Old shard shuts down (for remove) or source exits dual-write (for split).
+
+The resharding state is stored in config keys (`reshard/phase`, `reshard/type`, etc.), so the protocol is crash-recoverable — shard 0 can resume or abort in-progress resharding on restart.
+
 ### Consistency Guarantees
 
 - **Config writes**: Serializable (regular transactions on shard 0, replicated via Raft).
 - **Config reads**: Linearizable from shard 0 leader, or eventually-consistent from watchers (bounded by poll interval).
 - **Version monotonicity**: Watchers only apply configs with strictly higher versions.
 
-For the full design document, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
+For the full design document including resharding protocol details, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
 
 ---
 

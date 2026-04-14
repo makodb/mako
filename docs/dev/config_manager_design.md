@@ -67,6 +67,12 @@ All configuration is stored in a reserved table named `__mako_config__`. This ta
 | `node/<site>/addr` | `string` | Network address of a node: `"10.0.1.100:8100"`. |
 | `node/<site>/status` | `string` | Node status: `alive`, `dead`, `decommissioning`. |
 | `node/<site>/last_heartbeat` | `uint64` | Timestamp of last heartbeat from this node. |
+| `reshard/active` | `bool` | Whether a resharding operation is in progress. |
+| `reshard/type` | `string` | Resharding type: `add`, `remove`, `split`. |
+| `reshard/source_shard` | `uint32` | Source shard ID (for split/remove). |
+| `reshard/target_shard` | `uint32` | Target/new shard ID. |
+| `reshard/phase` | `string` | Current phase: `prepare`, `migrating`, `committed`. |
+| `reshard/split_key` | `string` | Split point key (for range split). |
 
 ### Example Config State
 
@@ -121,11 +127,29 @@ public:
 
     // --- Write operations (must go to shard 0 leader) ---
 
-    // Add a new shard to the cluster
-    Status AddShard(uint32_t shard_id, const vector<string>& replicas);
+    // Get the shard responsible for a given key
+    Status GetShardForKey(const string& key, uint32_t* shard_id);
 
-    // Remove a shard from the cluster
-    Status RemoveShard(uint32_t shard_id);
+    // Get the key range for a shard (range-based sharding)
+    Status GetShardRange(uint32_t shard_id, string* range_start, string* range_end);
+
+    // --- Write operations (must go to shard 0 leader) ---
+
+    // Add a new shard (2PC-style: PREPARE -> migrate -> COMMIT)
+    Status PrepareAddShard(uint32_t shard_id, const vector<string>& replicas,
+                           const string& range_start, const string& range_end);
+    Status CommitAddShard(uint32_t shard_id);
+    Status AbortAddShard(uint32_t shard_id);
+
+    // Remove a shard (2PC-style: PREPARE -> drain -> COMMIT)
+    Status PrepareRemoveShard(uint32_t shard_id, uint32_t target_shard_id);
+    Status CommitRemoveShard(uint32_t shard_id);
+    Status AbortRemoveShard(uint32_t shard_id);
+
+    // Split a shard's key range at a given key
+    Status PrepareSplitShard(uint32_t source_shard_id, uint32_t new_shard_id,
+                             const string& split_key, const vector<string>& new_replicas);
+    Status CommitSplitShard(uint32_t source_shard_id, uint32_t new_shard_id);
 
     // Update replicas for a shard (add/remove replica)
     Status SetShardReplicas(uint32_t shard_id, const vector<string>& replicas);
@@ -297,28 +321,235 @@ Admin/Node                    Shard 0 Leader              Shard 0 Followers
 - **Config writes**: Serializable (regular Mako transactions on shard 0).
 - **Version monotonicity**: `__version__` is incremented atomically with every config change. Watchers only apply configs with higher versions.
 
+## Data Partitioning
+
+The Configuration Manager is the authority on how the key space is divided among shards. It stores the **shard map** — the mapping from key ranges to shard IDs — and all nodes consult this map for routing.
+
+### Partitioning Strategies
+
+Mako supports two partitioning strategies, stored in `sharding/policy`:
+
+**Hash-based partitioning** (default):
+```
+shard_id = hash(key) % shard_count
+```
+- Even distribution regardless of key patterns.
+- No range queries across shards (each key is independent).
+- Resharding requires moving data when shard count changes.
+
+**Range-based partitioning**:
+```
+shard_id = lookup(key, range_map)
+```
+- Each shard owns a contiguous key range: `[range_start, range_end)`.
+- Supports efficient range scans within a shard.
+- Can develop hot spots if key distribution is skewed.
+- Resharding is a range split/merge — no full data shuffle.
+
+### Shard Map (Range-Based)
+
+For range-based sharding, the shard map is stored as per-shard range boundaries:
+
+| Key | Value | Example |
+|-----|-------|---------|
+| `shard/<id>/range_start` | Lower bound (inclusive) | `""` (empty = min key) |
+| `shard/<id>/range_end` | Upper bound (exclusive) | `"m"` |
+
+Example 3-shard range map:
+```
+shard/0/range_start = ""     shard/0/range_end = "h"     (keys "" to "g...")
+shard/1/range_start = "h"    shard/1/range_end = "p"     (keys "h" to "o...")
+shard/2/range_start = "p"    shard/2/range_end = ""      (keys "p" to max, "" = unbounded)
+```
+
+**Invariants enforced by ConfigManager:**
+1. Ranges are contiguous — no gaps between shards.
+2. Ranges are non-overlapping — every key maps to exactly one shard.
+3. The union of all ranges covers the entire key space.
+
+### Shard Map (Hash-Based)
+
+For hash-based sharding, no per-shard ranges are stored. The shard map is implicit:
+```
+shard_id = murmur3(key) % shard_count
+```
+The `shard_count` and `sharding/policy` keys fully determine the mapping.
+
+### Key Routing
+
+Every node caches the shard map in `ClusterConfig`. The routing function:
+
+```cpp
+uint32_t ClusterConfig::GetShardForKey(const string& key) const {
+    if (sharding_policy.type == "hash") {
+        return murmur3_hash(key) % shard_count;
+    } else {  // range
+        for (auto& [id, info] : shards) {
+            if (key >= info.range_start &&
+                (info.range_end.empty() || key < info.range_end)) {
+                return id;
+            }
+        }
+    }
+}
+```
+
+Clients and coordinators call this before every transaction to determine which shard(s) to contact.
+
+---
+
+## Resharding Protocol (2PC-Style)
+
+Resharding — adding, removing, or splitting shards — is a distributed operation that must be coordinated carefully to avoid data loss or inconsistency. Mako uses a **two-phase commit (2PC) style** protocol where the Configuration Manager on shard 0 acts as the coordinator.
+
+### Overview
+
+The resharding protocol has three stages, each recorded as a config change on shard 0:
+
+```
+PREPARE  -->  COMMIT  -->  CLEANUP
+```
+
+Shard 0 drives the protocol. Each stage is a transaction on shard 0, so the resharding state is durable and recoverable after crashes.
+
+### AddShard (Shard Split)
+
+Adds a new shard by splitting a key range from an existing shard.
+
+```
+                Shard 0               Source Shard        New Shard
+                (coordinator)         (donor)             (receiver)
+                    |                      |                   |
+  PREPARE:          |                      |                   |
+    1. Write:       |                      |                   |
+       shard/<new>/status = "adding"       |                   |
+       shard/<new>/replicas = [...]        |                   |
+       shard/<new>/range_start = split_key |                   |
+       shard/<new>/range_end = old_end     |                   |
+       shard/<src>/range_end = split_key   |  (shrink source)  |
+       __version__++                       |                   |
+                    |                      |                   |
+    2. Notify:      |--- PrepareAddShard ->|                   |
+       Source shard |   (stop accepting    |                   |
+       enters       |    keys >= split_key)|                   |
+       dual-write   |                      |                   |
+       mode         |--- StartShard -------|------------------>|
+                    |                      |   (begin accepting|
+                    |                      |    keys in range) |
+                    |                      |                   |
+    3. Migrate:     |                      |--- stream keys -->|
+       Source sends  |                      |   >= split_key    |
+       existing data|                      |                   |
+       to new shard |                      |                   |
+                    |                      |                   |
+  COMMIT:           |                      |                   |
+    4. Verify:      |<-- MigrationDone ----|                   |
+                    |<-- Ready ------------|-------------------|
+    5. Write:       |                      |                   |
+       shard/<new>/status = "active"       |                   |
+       __version__++                       |                   |
+                    |                      |                   |
+    6. Notify:      |--- CommitAddShard -->|                   |
+       Source stops  |   (stop dual-write, |                   |
+       dual-write   |    reject keys       |                   |
+                    |    >= split_key)     |                   |
+                    |                      |                   |
+  CLEANUP:          |                      |                   |
+    7. Router       |  ConfigWatchers pick up new version      |
+       updates      |  All nodes route to new shard            |
+```
+
+**Key safety properties:**
+- During PREPARE, the source shard enters **dual-write mode**: it accepts writes in the migrating range and forwards them to the new shard. This ensures no writes are lost during migration.
+- The new shard only becomes `active` after migration is verified complete.
+- If the coordinator (shard 0) crashes during PREPARE, on recovery it sees `status="adding"` and can resume or abort.
+- If the coordinator crashes during COMMIT, on recovery it sees the committed state and proceeds to CLEANUP.
+
+### RemoveShard (Shard Merge / Drain)
+
+Removes a shard by draining its data to another shard.
+
+```
+                Shard 0               Draining Shard      Target Shard
+                (coordinator)         (donor)             (receiver)
+                    |                      |                   |
+  PREPARE:          |                      |                   |
+    1. Write:       |                      |                   |
+       shard/<drain>/status = "draining"   |                   |
+       __version__++                       |                   |
+                    |                      |                   |
+    2. Notify:      |--- PrepareDrain ---->|                   |
+       Draining     |   (reject new writes,|                   |
+       shard stops  |    serve reads only) |                   |
+       new writes   |                      |                   |
+       Router stops |--- ExpandRange ------|------------------>|
+       sending new  |   (target accepts    |                   |
+       requests     |    draining range)   |                   |
+                    |                      |                   |
+    3. Migrate:     |                      |--- stream all --->|
+       Drain all    |                      |   remaining keys  |
+       data to      |                      |                   |
+       target       |                      |                   |
+                    |                      |                   |
+  COMMIT:           |                      |                   |
+    4. Verify:      |<-- DrainComplete ----|                   |
+                    |<-- Ready ------------|-------------------|
+    5. Write:       |                      |                   |
+       shard/<drain>/status = "removed"    |                   |
+       shard/<target>/range adjusted       |                   |
+       shard_count--                       |                   |
+       __version__++                       |                   |
+                    |                      |                   |
+  CLEANUP:          |                      |                   |
+    6. Shutdown:    |--- Shutdown -------->|                   |
+       Draining     |  (process exits)     |                   |
+       shard stops  |                      |                   |
+    7. Delete:      |                      |                   |
+       Remove shard/<drain>/* keys         |                   |
+```
+
+**Key safety properties:**
+- The draining shard stops accepting new writes immediately in PREPARE. Reads continue until shutdown.
+- The target shard expands its range to cover the draining shard's keys before migration starts.
+- Data migration streams all keys from the draining shard to the target.
+- The shard is only removed from the config after migration is verified complete.
+
+### Resharding for Hash-Based Partitioning
+
+Hash-based resharding (changing `shard_count`) requires a full data shuffle since every key's shard assignment changes. The protocol:
+
+```
+PREPARE:
+  1. Write new shard_count to shard/pending_shard_count.
+  2. All shards enter dual-routing mode: accept writes for both old and new hash assignments.
+  3. Migrate: each shard scans its data, sends keys whose new hash maps to a different shard.
+
+COMMIT:
+  4. All migrations verified complete.
+  5. Write shard_count = pending_shard_count, delete pending_shard_count.
+  6. All shards switch to new hash routing.
+
+CLEANUP:
+  7. Each shard deletes keys that no longer belong to it.
+```
+
+This is expensive (full data shuffle) and should be avoided if possible. Range-based sharding is preferred for workloads that may need resharding.
+
+### Crash Recovery During Resharding
+
+Since resharding state is stored as config entries on shard 0, the protocol is recoverable:
+
+| Crash Point | Shard 0 State on Recovery | Action |
+|-------------|--------------------------|--------|
+| During PREPARE | `status = "adding"` or `"draining"` | Resume migration or abort (set status back to previous) |
+| During COMMIT | `status = "active"` or `"removed"` | Proceed to CLEANUP |
+| During CLEANUP | Config committed, nodes updating | Nodes re-fetch config and converge |
+
+The coordinator (shard 0 leader) checks for in-progress resharding operations on startup and resumes or aborts them.
+
+---
+
 ## Config Change Operations
-
-### AddShard
-
-```
-1. Admin calls ConfigManager::AddShard(shard_id, replicas)
-2. ConfigManager begins transaction on shard 0
-3. Writes: shard/<id>/replicas, shard/<id>/status="adding", shard_count++, __version__++
-4. Commits transaction (replicated via Raft)
-5. New shard nodes bootstrap from shard 0, begin accepting data
-6. Once caught up, admin calls SetShardStatus(shard_id, "active")
-```
-
-### RemoveShard
-
-```
-1. Admin calls ConfigManager::RemoveShard(shard_id)
-2. ConfigManager sets shard/<id>/status="draining"
-3. Shard router stops sending new requests to this shard
-4. Existing data migrated to other shards (if range-based) or dropped (if hash-based with resharding)
-5. Once drained, ConfigManager deletes shard/<id>/* keys, decrements shard_count
-```
 
 ### AddReplica / RemoveReplica
 
@@ -352,5 +583,9 @@ See `docs/TODO-raft.md` and the Mako TODO for task breakdown. Key phases:
 1. **Phase 1**: Create `__mako_config__` table on shard 0, implement `ConfigManager` read/write methods.
 2. **Phase 2**: Implement `ConfigWatcher` polling on non-master shards.
 3. **Phase 3**: Implement bootstrap protocol (first boot from YAML, subsequent from shard 0).
-4. **Phase 4**: Wire shard router to use dynamic config instead of static YAML.
-5. **Phase 5**: Implement AddShard/RemoveShard operations and admin CLI.
+4. **Phase 4**: Wire shard router to use dynamic config and `GetShardForKey()` instead of static YAML.
+5. **Phase 5**: Implement range-based shard map management (range_start/range_end, invariant enforcement).
+6. **Phase 6**: Implement 2PC-style resharding protocol (PrepareAddShard/CommitAddShard, PrepareSplitShard/CommitSplitShard, PrepareRemoveShard/CommitRemoveShard).
+7. **Phase 7**: Implement data migration streaming between shards (dual-write mode, key streaming, verification).
+8. **Phase 8**: Implement crash recovery for in-progress resharding operations.
+9. **Phase 9**: Admin CLI for resharding operations and cluster management.
