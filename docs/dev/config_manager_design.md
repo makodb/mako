@@ -561,6 +561,110 @@ The coordinator (shard 0 leader) checks for in-progress resharding operations on
 5. Raft membership change initiated on the target shard (see Raft TODO)
 ```
 
+## Speculation Recovery and Epoch Management
+
+A critical responsibility of the Configuration Manager is orchestrating **epoch-based speculation recovery** when a shard leader fails. This is the protocol described in Section 5.2 of the Mako paper (OSDI'25).
+
+### The Problem
+
+Mako speculatively executes transactions before replication completes. When a shard leader fails, some speculative transactions may be lost (not yet replicated). The system must:
+1. Detect the failure and elect a new leader for the failed shard.
+2. Determine which transactions were replicated and which were lost.
+3. Close the old epoch so that healthy shards can finalize their watermarks.
+4. Prevent unbounded cascading aborts of dependent transactions.
+
+### Epochs
+
+Mako groups Paxos log entries into **epochs**. An epoch is a period during which a particular leader is active. The CM maintains the current epoch number for each shard.
+
+- Each shard's Paxos streams use the epoch number to group log entries.
+- When a leader fails, the CM **advances the epoch** and broadcasts the increment to all shards.
+- Healthy shards also advance their epoch on receiving the CM broadcast — this is how the entire cluster learns about the failure, even shards that weren't directly affected.
+
+### Recovery Protocol
+
+When the CM detects a shard leader failure:
+
+```
+CM                          Failed Shard            Healthy Shards
+ |                          (new leader)                |
+ |  1. Detect failure           |                       |
+ |  2. Trigger leader election  |                       |
+ |  3. Advance epoch number     |                       |
+ |                              |                       |
+ |--- Broadcast new epoch ----->|                       |
+ |--- Broadcast new epoch --------------------------->  |
+ |                              |                       |
+ |                   4. Close old epoch:                 |
+ |                      - Retrieve replicated entries    |
+ |                        from peers                     |
+ |                      - Re-commit recovered entries    |
+ |                      - No-op unrecoverable entries    |
+ |                      - Replicate INF shard clock      |
+ |                        (signals epoch closure)        |
+ |                              |                       |
+ |                              |          5. Healthy shards:
+ |                              |             - Finish speculative
+ |                              |               execution for old epoch
+ |                              |             - Replicate INF entries
+ |                              |             - Declare old epoch closed
+ |                              |                       |
+ |                   6. Compute finalized shard watermark|
+ |                      (min shard clock across streams) |
+ |                              |                       |
+ |                   7. Exchange finalized watermarks     |
+ |                      to form Finalized Vector         |
+ |                      Watermark (FVW)                  |
+ |                              |                       |
+ |                   8. Rollback: any speculative txns    |
+ |                      below FVW that aren't replicated |
+ |                      are rolled back; txns above FVW  |
+ |                      depend on lost txns and are also |
+ |                      rolled back transitively         |
+```
+
+### Step-by-Step Details
+
+**Step 1-3: Failure detection and epoch advance.** The CM detects the failure (via heartbeat timeout or Raft/Paxos leader election), triggers a new leader election for the failed shard, and advances the epoch number. The CM broadcasts the new epoch to all shards.
+
+**Step 4: Close old epoch on failed shard.** The newly elected leader retrieves all replicated log entries from the previous epoch from its peers (the surviving replicas). It re-commits any recovered entries and issues **no-ops** for any entries that are not recoverable (entries after the no-op will be ignored). This "closes" the old epoch — no more entries can be added to it. The ending entry has an **INF shard clock value**, indicating: (1) this is the maximum clock, (2) there are no more transactions in this epoch on this shard, and (3) all previous transactions have been successfully replicated without lost dependencies. When INF is replicated, the leader considers the old epoch closed and declares its finalized shard watermark as INF.
+
+**Step 5: Close old epoch on healthy shards.** Healthy shards finish speculative execution and certification of all transactions in the old epoch, then replicate a special **INF ending entry** into all Paxos streams. When the INF entry is replicated, the healthy shard's old epoch is closed.
+
+**Step 6: Compute finalized shard watermark.** Once the old epoch is closed on a shard, its **finalized shard watermark** can be computed by choosing the minimum shard clock of all its streams. Note that INF is the minimum shard clock of all streams, so the finalized shard watermark is the same for both recovered and healthy shards.
+
+**Step 7: Exchange finalized watermarks.** Each shard computes its finalized watermark, then broadcasts it to all other shards. All shards exchange their finalized watermarks to form the **Finalized Vector Watermark (FVW)** — a consistent global cutoff across all shards.
+
+**Step 8: Rollback.** For any transactions on healthy shards that are below the FVW but were not replicated (marked as speculative), they are **rolled back** because they could have depended transitively or directly on a lost transaction from the failed shard. After rollback, all shards advance to the new epoch and resume normal operation.
+
+### Key Properties
+
+- **No unbounded cascading aborts**: The FVW provides a clean cutoff. Only transactions in the old epoch that depended on lost transactions are rolled back — not all speculative transactions.
+- **Healthy shards are minimally affected**: They simply close the old epoch, replicate INF, and roll back affected transactions. Transactions on healthy shards that don't depend on the failed shard are unaffected.
+- **CM is replicated**: The CM itself is replicated (it is shard 0), so it is considered always available.
+- **Epoch-based grouping**: Using epochs to group log entries is a classic consensus approach — the CM is not introducing new algorithmic complexity in each consensus instance, just coordinating the epoch transitions.
+
+### CM's Responsibilities for Recovery
+
+| Responsibility | Config Key Used |
+|----------------|----------------|
+| Detect shard leader failure | `node/<site>/status`, heartbeat monitoring |
+| Trigger leader election | `shard/<id>/replicas` (candidate list) |
+| Record new leader | `shard/<id>/leader` |
+| Advance epoch | `shard/<id>/epoch` (new key) |
+| Broadcast epoch to all shards | ConfigWatcher poll detects `__version__` change |
+| Track epoch closure status | `shard/<id>/epoch_status` (`open`, `closing`, `closed`) |
+
+### Additional Config Keys for Epoch Management
+
+| Key Pattern | Value Type | Description |
+|-------------|-----------|-------------|
+| `shard/<id>/epoch` | `uint64` | Current epoch number for this shard |
+| `shard/<id>/epoch_status` | `string` | `open`, `closing`, `closed` |
+| `shard/<id>/prev_leader` | `string` | Previous leader (for recovery reference) |
+
+---
+
 ## Relation to Existing Config Infrastructure
 
 The existing `ConfigStore`/`ConfigService` in `src/deptran/` was a prototype using a standalone RocksDB instance. The master shard design supersedes it:

@@ -281,13 +281,25 @@ Adding, removing, or splitting shards uses a **two-phase commit** protocol where
 
 The resharding state is stored in config keys (`reshard/phase`, `reshard/type`, etc.), so the protocol is crash-recoverable — shard 0 can resume or abort in-progress resharding on restart.
 
+### Speculation Recovery (Epoch-Based)
+
+The CM orchestrates recovery when a shard leader fails mid-speculation (Section 5.2 of the Mako paper). Mako groups Paxos log entries into **epochs** — each epoch corresponds to a leader's tenure. When the CM detects a leader failure:
+
+1. **Advance epoch**: CM increments the epoch number and broadcasts to all shards.
+2. **Close old epoch on failed shard**: New leader retrieves replicated entries from peers, re-commits them, and issues no-ops for unrecoverable entries. Replicates an **INF shard clock** to signal epoch closure.
+3. **Close old epoch on healthy shards**: Healthy shards finish old-epoch work and replicate their own INF entries.
+4. **Finalized Vector Watermark (FVW)**: Each shard computes its finalized shard watermark (min clock across streams), then all shards exchange watermarks to form a consistent global cutoff.
+5. **Rollback**: Speculative transactions below FVW that depended on lost transactions are rolled back. Unaffected transactions on healthy shards proceed normally.
+
+This ensures no unbounded cascading aborts — only transactions that transitively depend on lost entries from the failed shard are rolled back.
+
 ### Consistency Guarantees
 
 - **Config writes**: Serializable (regular transactions on shard 0, replicated via Raft).
 - **Config reads**: Linearizable from shard 0 leader, or eventually-consistent from watchers (bounded by poll interval).
 - **Version monotonicity**: Watchers only apply configs with strictly higher versions.
 
-For the full design document including resharding protocol details, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
+For the full design document including resharding and speculation recovery details, see [docs/dev/config_manager_design.md](dev/config_manager_design.md).
 
 ---
 
