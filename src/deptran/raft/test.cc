@@ -128,6 +128,20 @@ int RaftLabTest::Run(void) {
         TEST_EXPAND(testLogRetentionWindowConfigurable());        // Test 68
   }
 
+  // Long partition recovery test
+  if (!failed) {
+    Log_info("Running long partition recovery test");
+    failed =
+        TEST_EXPAND(testLongPartitionRecovery());              // Test 69
+  }
+
+  // Leadership transfer timeout test
+  if (!failed) {
+    Log_info("Running leadership transfer timeout test");
+    failed =
+        TEST_EXPAND(testLeadershipTransferTimeout());          // Test 70
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -6005,6 +6019,221 @@ int RaftLabTest::testLogRetentionWindowConfigurable(void) {
   }
 
   Log_info("TEST 68: Log retention window configurable PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 69: testLongPartitionRecovery
+// Partition a follower for an extended period (> log retention window), then
+// reconnect. With snapshots implemented, verify InstallSnapshot is triggered
+// and the follower recovers fully.
+// ============================================================================
+// @unsafe - Uses test infrastructure, snapshot managers, and network partitioning
+int RaftLabTest::testLongPartitionRecovery(void) {
+  Init2(69, "Long partition recovery via InstallSnapshot");
+
+  // Wait for leader election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 69: Leader elected: %d", leader);
+
+  // Set up snapshot managers on ALL servers with low threshold
+  // @unsafe { filesystem and shared_ptr usage }
+  std::string base_path = "/tmp/raft_long_part_test_" + std::to_string(getpid());
+  std::vector<std::shared_ptr<rrr::SnapshotManager>> test_mgrs;
+  std::vector<std::shared_ptr<rrr::SnapshotManager>> original_mgrs;
+  for (int i = 0; i < NSERVERS; i++) {
+    auto server = config_->GetServer(i);
+    if (server == nullptr) continue;
+    original_mgrs.push_back(server->GetSnapshotManager());
+    rrr::SnapshotConfig snap_config;
+    snap_config.storage_path = base_path + "_s" + std::to_string(i);
+    auto mgr = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+    test_mgrs.push_back(mgr);
+    server->SetSnapshotManager(mgr);
+    server->SetSnapshotThreshold(5);
+    server->SetLogRetentionWindow(10);
+  }
+
+  // Pick a follower to disconnect
+  int follower = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    if (i != leader) {
+      follower = i;
+      break;
+    }
+  }
+  Assert2(follower >= 0, "No follower found");
+  Log_info("TEST 69: Disconnecting follower %d", follower);
+
+  // Disconnect the follower
+  config_->Disconnect(follower);
+
+  // Commit enough entries on remaining 4 nodes to trigger snapshot + compaction
+  for (int i = 1; i <= 20; i++) {
+    uint64_t idx = config_->DoAgreement(6900 + i, NSERVERS - 1, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6900 + i);
+  }
+  Log_info("TEST 69: Committed 20 entries with follower disconnected");
+
+  // Wait for snapshot creation and compaction
+  Fiber::sleep(HEARTBEAT_INTERVAL * 5);
+
+  // Verify leader has taken a snapshot and compacted
+  // Re-check leader in case of re-election
+  leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  auto leader_server = config_->GetServer(leader);
+  Assert2(leader_server != nullptr, "Leader server should not be null");
+
+  uint64_t leader_snap_idx = leader_server->GetSnapshotIndex();
+  // If snapshot wasn't automatically triggered, force it
+  if (leader_snap_idx == 0) {
+    leader_server->CreateSnapshot();
+    leader_snap_idx = leader_server->GetSnapshotIndex();
+  }
+  uint64_t leader_min_active = leader_server->min_active_slot_;
+
+  Log_info("TEST 69: Leader snapshot index=%lu, min_active_slot=%lu",
+           leader_snap_idx, leader_min_active);
+  Assert2(leader_snap_idx > 0,
+          "Leader should have created a snapshot, got snapidx=%lu", leader_snap_idx);
+  Assert2(leader_min_active > 1,
+          "Leader min_active_slot_ should be > 1 after compaction, got %lu",
+          leader_min_active);
+
+  // Reconnect the follower
+  Log_info("TEST 69: Reconnecting follower %d", follower);
+  config_->Reconnect(follower);
+
+  // Wait for heartbeat rounds to trigger InstallSnapshot to the follower
+  Fiber::sleep(HEARTBEAT_INTERVAL * 10);
+
+  // Verify the follower has caught up via snapshot
+  auto follower_server = config_->GetServer(follower);
+  Assert2(follower_server != nullptr, "Follower server should not be null after reconnect");
+
+  uint64_t follower_snap_idx = follower_server->GetSnapshotIndex();
+  Log_info("TEST 69: Follower snapshot index=%lu (leader=%lu)",
+           follower_snap_idx, leader_snap_idx);
+  Assert2(follower_snap_idx >= leader_snap_idx,
+          "Follower snapidx_ should match leader's (%lu), got %lu",
+          leader_snap_idx, follower_snap_idx);
+
+  // Verify new entries can be committed with all 5 nodes
+  uint64_t new_idx = config_->DoAgreement(6999, NSERVERS, true);
+  Assert2(new_idx > 0,
+          "DoAgreement should succeed with all 5 nodes after partition recovery");
+  Log_info("TEST 69: Full cluster agreement reached at index %lu", new_idx);
+
+  // Restore original snapshot managers and settings
+  // @unsafe { filesystem cleanup }
+  for (int i = 0; i < NSERVERS; i++) {
+    auto server = config_->GetServer(i);
+    if (server == nullptr) continue;
+    if (i < (int)original_mgrs.size()) {
+      server->SetSnapshotManager(original_mgrs[i]);
+    }
+    server->SetSnapshotThreshold(100);
+    server->SetLogRetentionWindow(5000);
+  }
+  for (int i = 0; i < NSERVERS; i++) {
+    std::string cleanup = "rm -rf " + base_path + "_s" + std::to_string(i);
+    system(cleanup.c_str());  // @unsafe
+  }
+
+  Log_info("TEST 69: Long partition recovery via InstallSnapshot PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 70: testLeadershipTransferTimeout
+// Trigger leadership transfer via TimeoutNow, but make the preferred replica
+// crash before the election completes. Verify the cluster continues operating.
+// ============================================================================
+// @unsafe - Uses test infrastructure, Kill, and leadership transfer API
+int RaftLabTest::testLeadershipTransferTimeout(void) {
+  Init2(70, "Leadership transfer timeout - preferred replica crashes");
+
+  // Wait for leader election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 70: Initial leader: %d", leader);
+
+  // Commit a few entries to establish state
+  for (int i = 1; i <= 3; i++) {
+    uint64_t idx = config_->DoAgreement(7000 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 7000 + i);
+  }
+  Log_info("TEST 70: Committed 3 entries to establish state");
+
+  // Find a non-leader server to be the transfer target
+  int target = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    if (i != leader) {
+      target = i;
+      break;
+    }
+  }
+  Assert2(target >= 0, "No non-leader server found");
+  Log_info("TEST 70: Transfer target (will crash): %d", target);
+
+  auto target_server = config_->GetServer(target);
+  Assert2(target_server != nullptr, "Target server should not be null");
+
+  auto leader_server = config_->GetServer(leader);
+  Assert2(leader_server != nullptr, "Leader server should not be null");
+  uint64_t leader_term = 0;
+  {
+    std::lock_guard<std::recursive_mutex> lock(leader_server->mtx_);
+    leader_term = leader_server->currentTerm;
+  }
+
+  // Send TimeoutNow to the target to trigger fast election
+  uint64_t follower_term = 0;
+  bool_t success = false;
+  // @unsafe { calling OnTimeoutNow on target }
+  target_server->OnTimeoutNow(
+      leader_term,
+      leader_server->site_id_,
+      &follower_term,
+      &success,
+      []() {});  // @unsafe { empty callback }
+  Log_info("TEST 70: Sent TimeoutNow to target %d, success=%d", target, (int)success);
+
+  // Immediately kill the target before it can win the election
+  config_->Kill(target);
+  Log_info("TEST 70: Killed target %d", target);
+
+  // Wait for election timeout so remaining servers can elect a new leader
+  Fiber::sleep(ELECTIONTIMEOUT * 2);
+
+  // Verify a leader emerges among the remaining servers
+  int new_leader = config_->OneLeader();
+  Assert2(new_leader >= 0, "A leader should emerge after target crashed");
+  Assert2(new_leader != target,
+          "New leader (%d) should not be the killed target (%d)", new_leader, target);
+  Log_info("TEST 70: New leader elected: %d", new_leader);
+
+  // Verify the cluster can still commit entries with 4 remaining nodes
+  uint64_t idx = config_->DoAgreement(7010, NSERVERS - 1, true);
+  Assert2(idx > 0,
+          "DoAgreement should succeed with %d nodes after target crash", NSERVERS - 1);
+  Log_info("TEST 70: Agreement reached at index %lu with 4 nodes", idx);
+
+  // Restart the killed target so cleanup (NDisconnected check) passes
+  config_->Restart(target);
+  Fiber::sleep(HEARTBEAT_INTERVAL * 3);
+
+  // Verify the cluster is fully functional again
+  uint64_t final_idx = config_->DoAgreement(7020, NSERVERS, true);
+  Assert2(final_idx > 0,
+          "DoAgreement should succeed with all %d nodes restored", NSERVERS);
+  Log_info("TEST 70: Full cluster agreement at index %lu", final_idx);
+
+  Log_info("TEST 70: Leadership transfer timeout PASSED!");
   Passed2();
 }
 

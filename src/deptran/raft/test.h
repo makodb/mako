@@ -221,6 +221,12 @@ class RaftLabTest {
   // Test runtime-configurable log retention window
   int testLogRetentionWindowConfigurable(void);
 
+  // Test long partition recovery via InstallSnapshot
+  int testLongPartitionRecovery(void);
+
+  // Test leadership transfer timeout (preferred replica crashes before winning)
+  int testLeadershipTransferTimeout(void);
+
   void wait(uint64_t microseconds);
 
 };
