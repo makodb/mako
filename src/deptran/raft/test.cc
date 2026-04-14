@@ -162,7 +162,8 @@ int RaftLabTest::Run(void) {
     failed =
         TEST_EXPAND(testAddServerBasic())                      // Test 73
         || TEST_EXPAND(testRemoveServerBasic())                // Test 74
-        || TEST_EXPAND(testRejectDuplicateConfigChange());     // Test 75
+        || TEST_EXPAND(testRejectDuplicateConfigChange())      // Test 75
+        || TEST_EXPAND(testNewServerCatchUp());               // Test 76
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -6709,6 +6710,219 @@ int RaftLabTest::testRejectDuplicateConfigChange(void) {
   server->config_change_pending_ = false;
 
   Log_info("TEST 75: Reject duplicate config change PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 76: testNewServerCatchUp
+// ============================================================================
+// Verify that AddServer adds a new server as a learner (not directly to
+// current_config_), and that CheckAndPromoteLearners promotes the learner
+// to full member once its match_index_ is within catchup_threshold_.
+// @unsafe - Accesses internal server state via friend class
+int RaftLabTest::testNewServerCatchUp(void) {
+  Init2(76, "New server catch-up (learner tracking and promotion)");
+
+  // Wait for election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 76: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Commit some entries so the log is non-empty
+  uint64_t idx1 = config_->DoAgreement(7601, NSERVERS, true);
+  Assert2(idx1 > 0, "First agreement should succeed");
+  uint64_t idx2 = config_->DoAgreement(7602, NSERVERS, true);
+  Assert2(idx2 > 0, "Second agreement should succeed");
+  Log_info("TEST 76: Committed entries at indices %lu and %lu", idx1, idx2);
+
+  // 2. Record initial state
+  size_t initial_config_size = server->GetCurrentConfig().size();
+  Assert2(initial_config_size == NSERVERS,
+          "Initial config size should be %d, got %zu", NSERVERS, initial_config_size);
+  Assert2(server->GetLearners().empty(),
+          "No learners initially");
+  Log_info("TEST 76: Initial config size=%zu, learners=%zu",
+           initial_config_size, server->GetLearners().size());
+
+  // 3. Add a fake server as learner via direct manipulation (simulating OnAddServer)
+  siteid_t new_server_id = 8888;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    // Verify not already present
+    Assert2(server->current_config_.count(new_server_id) == 0,
+            "New server should not already be in config");
+    Assert2(server->learners_.count(new_server_id) == 0,
+            "New server should not already be a learner");
+
+    // Add as learner (mimicking what OnAddServer now does)
+    server->learners_.insert(new_server_id);
+    server->config_change_pending_ = true;
+    server->pending_config_index_ = server->lastLogIndex;
+
+    // Initialize replication state
+    server->next_index_[new_server_id] = server->lastLogIndex + 1;
+    server->match_index_[new_server_id] = 0;
+  }
+  Log_info("TEST 76: Added server %d as learner", new_server_id);
+
+  // 4. Verify the server is in learners_ but NOT in current_config_
+  Assert2(server->IsLearner(new_server_id),
+          "New server should be a learner");
+  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+          "New server should NOT be in current_config_ yet");
+  Assert2(server->GetCurrentConfig().size() == initial_config_size,
+          "Config size should be unchanged while server is learner");
+  Assert2(server->config_change_pending_,
+          "config_change_pending_ should be true");
+  Log_info("TEST 76: Verified learner state - learner=%d, in_config=%d",
+           server->IsLearner(new_server_id),
+           (int)(server->GetCurrentConfig().count(new_server_id) > 0));
+
+  // 5. Quorum should NOT include the learner
+  size_t quorum_with_learner = server->GetQuorumSize();
+  Assert2(quorum_with_learner == (initial_config_size / 2 + 1),
+          "Quorum should not change while server is learner: expected %zu, got %zu",
+          initial_config_size / 2 + 1, quorum_with_learner);
+  Log_info("TEST 76: Quorum unchanged at %zu (learner not counted)", quorum_with_learner);
+
+  // 6. CheckAndPromoteLearners should NOT promote yet (match_index_ = 0, far behind)
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->CheckAndPromoteLearners();
+  }
+  Assert2(server->IsLearner(new_server_id),
+          "Learner should NOT be promoted yet (match_index=0, far behind)");
+  Assert2(server->GetCurrentConfig().count(new_server_id) == 0,
+          "Learner should NOT be in config yet");
+  Log_info("TEST 76: Correctly not promoted when far behind");
+
+  // 7. Simulate catch-up: set match_index_ close to lastLogIndex
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    // Set match_index to be within threshold
+    uint64_t leader_last = server->lastLogIndex;
+    Assert2(leader_last > 0, "Leader should have log entries");
+    server->match_index_[new_server_id] = leader_last;  // Fully caught up
+    Log_info("TEST 76: Set match_index[%d] = %lu (lastLogIndex=%lu)",
+             new_server_id, leader_last, leader_last);
+  }
+
+  // 8. Now CheckAndPromoteLearners should promote the learner
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->CheckAndPromoteLearners();
+  }
+
+  // 9. Verify promotion: moved from learners_ to current_config_
+  Assert2(!server->IsLearner(new_server_id),
+          "Server should no longer be a learner after promotion");
+  Assert2(server->GetCurrentConfig().count(new_server_id) > 0,
+          "Server should be in current_config_ after promotion");
+  Assert2(server->GetCurrentConfig().size() == initial_config_size + 1,
+          "Config size should have grown by 1 after promotion");
+  Assert2(!server->config_change_pending_,
+          "config_change_pending_ should be false after promotion");
+  Log_info("TEST 76: Promoted! config_size=%zu, quorum=%zu",
+           server->GetCurrentConfig().size(), server->GetQuorumSize());
+
+  // 10. Verify quorum updated after promotion
+  size_t new_quorum = server->GetQuorumSize();
+  Assert2(new_quorum == (initial_config_size + 1) / 2 + 1,
+          "Quorum should update after promotion: expected %zu, got %zu",
+          (initial_config_size + 1) / 2 + 1, new_quorum);
+  Log_info("TEST 76: Quorum updated to %zu", new_quorum);
+
+  // 11. Test threshold behavior: add another learner, set it just within threshold
+  siteid_t new_server_id2 = 9999;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.insert(new_server_id2);
+    server->config_change_pending_ = true;
+    server->next_index_[new_server_id2] = server->lastLogIndex + 1;
+    // Set match_index just at the threshold boundary
+    uint64_t threshold = server->catchup_threshold_;
+    uint64_t leader_last = server->lastLogIndex;
+    if (leader_last > threshold) {
+      server->match_index_[new_server_id2] = leader_last - threshold;  // Exactly at threshold
+    } else {
+      server->match_index_[new_server_id2] = 0;  // Close enough for small logs
+    }
+    Log_info("TEST 76: Added second learner %d, match_index=%lu, threshold=%lu, lastLogIndex=%lu",
+             new_server_id2, server->match_index_[new_server_id2], threshold, leader_last);
+  }
+
+  // Should promote since within threshold
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->CheckAndPromoteLearners();
+  }
+  Assert2(!server->IsLearner(new_server_id2),
+          "Second learner should be promoted (at threshold boundary)");
+  Assert2(server->GetCurrentConfig().count(new_server_id2) > 0,
+          "Second learner should be in current_config_ after promotion");
+  Log_info("TEST 76: Second learner promoted at threshold boundary");
+
+  // 12. Test that learner far beyond threshold is NOT promoted
+  siteid_t new_server_id3 = 7777;
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->learners_.insert(new_server_id3);
+    server->config_change_pending_ = true;
+    server->next_index_[new_server_id3] = server->lastLogIndex + 1;
+    // Commit more entries to make the gap large
+    // We just set match_index far behind
+    uint64_t threshold = server->catchup_threshold_;
+    uint64_t leader_last = server->lastLogIndex;
+    if (leader_last > threshold + 10) {
+      server->match_index_[new_server_id3] = leader_last - threshold - 10;  // Beyond threshold
+    } else {
+      // If log is too short, skip this sub-test
+      server->match_index_[new_server_id3] = 0;
+    }
+    Log_info("TEST 76: Added third learner %d, match_index=%lu, threshold=%lu, lastLogIndex=%lu",
+             new_server_id3, server->match_index_[new_server_id3], threshold, leader_last);
+  }
+
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    uint64_t threshold = server->catchup_threshold_;
+    uint64_t leader_last = server->lastLogIndex;
+    // Only check if the gap is actually beyond threshold
+    if (leader_last > threshold + 10) {
+      server->CheckAndPromoteLearners();
+      Assert2(server->IsLearner(new_server_id3),
+              "Third learner should NOT be promoted (beyond threshold)");
+      Log_info("TEST 76: Third learner correctly not promoted (beyond threshold)");
+    } else {
+      Log_info("TEST 76: Skipping beyond-threshold sub-test (log too short)");
+    }
+  }
+
+  // Cleanup: remove fake servers from config to avoid breaking subsequent operations
+  {
+    std::lock_guard<std::recursive_mutex> lock(server->mtx_);
+    server->current_config_.erase(new_server_id);
+    server->current_config_.erase(new_server_id2);
+    server->learners_.erase(new_server_id3);
+    server->match_index_.erase(new_server_id);
+    server->match_index_.erase(new_server_id2);
+    server->match_index_.erase(new_server_id3);
+    server->next_index_.erase(new_server_id);
+    server->next_index_.erase(new_server_id2);
+    server->next_index_.erase(new_server_id3);
+    server->config_change_pending_ = false;
+  }
+
+  // Verify cluster still works
+  uint64_t idx3 = config_->DoAgreement(7603, NSERVERS, true);
+  Assert2(idx3 > 0, "DoAgreement should succeed after cleanup");
+  Log_info("TEST 76: Agreement reached at index %lu after cleanup", idx3);
+
+  Log_info("TEST 76: New server catch-up PASSED!");
   Passed2();
 }
 

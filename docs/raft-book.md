@@ -1055,6 +1055,8 @@ The Raft implementation supports single-server membership changes via `AddServer
 std::set<siteid_t> current_config_;      // Active replica set
 bool config_change_pending_ = false;     // True when a config entry is in-flight
 uint64_t pending_config_index_ = 0;      // Log index of pending config entry
+std::set<siteid_t> learners_;            // Servers being caught up (not yet in quorum)
+uint64_t catchup_threshold_ = 100;       // Entries within lastLogIndex to consider "caught up"
 ```
 
 `current_config_` is initialized from `Config::SitesByPartitionId()` during `Setup()`. All quorum calculations use `GetQuorumSize()` (which returns `current_config_.size() / 2 + 1`) instead of the static `Config::GetConfig()->GetPartitionSize()`.
@@ -1063,10 +1065,11 @@ uint64_t pending_config_index_ = 0;      // Log index of pending config entry
 
 Both RPCs are leader-only. Non-leaders return `success=false` with `leader_hint` set to the last known leader's site ID.
 
-**AddServer(term, new_server_id, new_server_addr)**: Adds a server to the configuration. Rejects if:
+**AddServer(term, new_server_id, new_server_addr)**: Adds a server to the configuration. The server is first added as a **learner** (receives log entries but does not count towards quorum). Once caught up, it is automatically promoted to a full member. Rejects if:
 - This server is not the leader
 - A config change is already pending (`config_change_pending_ == true`)
 - The server is already in `current_config_`
+- The server is already a learner (`learners_`)
 
 **RemoveServer(term, server_id)**: Removes a server from the configuration. Rejects if:
 - This server is not the leader
@@ -1074,20 +1077,37 @@ Both RPCs are leader-only. Non-leaders return `success=false` with `leader_hint`
 - The server is not in `current_config_`
 - Removing would leave zero servers (minimum cluster size is 1)
 
+### New Server Catch-Up (Learner Protocol)
+
+When `AddServer` is called, the new server is added as a **learner** rather than immediately joining the quorum. This prevents a slow/empty server from blocking commits.
+
+**Lifecycle:**
+1. `OnAddServer` inserts the server into `learners_` (not `current_config_`).
+2. The server is added to `next_index_` and `match_index_` so `HeartbeatLoop` sends it `AppendEntries` RPCs.
+3. Learners are **excluded** from the commit index median calculation -- they don't count towards quorum.
+4. Each heartbeat round, `CheckAndPromoteLearners()` checks if any learner's `match_index_` is within `catchup_threshold_` of the leader's `lastLogIndex`.
+5. When caught up, `PromoteLearner()` moves the server from `learners_` to `current_config_` and clears `config_change_pending_`.
+
+**Key properties:**
+- Learners receive the same replication traffic as full members (via `HeartbeatLoop`).
+- The quorum size (`GetQuorumSize()`) is based only on `current_config_`, not `learners_`.
+- The `catchup_threshold_` (default 100 entries) is configurable per server.
+- `IsLearner(id)` and `GetLearners()` provide read-only access to learner state.
+
 ### Current Limitations
 
 The current implementation applies configuration changes directly in memory rather than through Raft log entries. This means:
 - Config changes are not replicated to followers
 - Config changes do not survive leader failure
-- No server catch-up (new servers are not brought up to date before joining)
 
-These limitations will be addressed in future work when log-based configuration entries and server catch-up are implemented. See `docs/dev/raft_membership_change_design.md` for the full protocol design.
+See `docs/dev/raft_membership_change_design.md` for the full protocol design.
 
 ### Tests
 
 - **Test 73** (`testAddServerBasic`): Verifies initial config size, adds a server, checks config grows and quorum updates.
 - **Test 74** (`testRemoveServerBasic`): Adds then removes a server, verifies config shrinks and quorum updates.
 - **Test 75** (`testRejectDuplicateConfigChange`): Verifies `config_change_pending_` blocks concurrent changes, and non-leaders reject config change requests.
+- **Test 76** (`testNewServerCatchUp`): Verifies the learner catch-up lifecycle -- server added as learner (not in quorum), not promoted when far behind, promoted when within threshold, quorum updates correctly, threshold boundary behavior.
 
 ---
 

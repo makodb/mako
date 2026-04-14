@@ -246,6 +246,9 @@ class RaftLabTest {
   // Test that duplicate config changes are rejected when one is pending
   int testRejectDuplicateConfigChange(void);
 
+  // Test new server catch-up: learner tracking and promotion
+  int testNewServerCatchUp(void);
+
   void wait(uint64_t microseconds);
 
 };

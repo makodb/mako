@@ -1071,9 +1071,9 @@ void RaftServer::setIsLeader(bool isLeader) {
             Log_debug("loc_id_=%d match_index_[%d]=%d, next_index_[%d]=%d", loc_id_, p.first, match_index_[p.first], p.first, next_index_[p.first]);
           }
         }
-        // matchedIndex and nextIndex should have indices for all servers except self
-        verify(match_index_.size() == current_config_.size() - 1);
-        verify(next_index_.size() == current_config_.size() - 1);
+        // matchedIndex and nextIndex should have indices for all servers + learners except self
+        verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
+        verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
       }
     }
   }
@@ -1320,9 +1320,9 @@ void RaftServer::HeartbeatLoop() {
       // set nextIndex = 1
       next_index_[p.first] = 1;
     }
-    // matchedIndex and nextIndex should have indices for all servers except self
-    verify(match_index_.size() == current_config_.size() - 1);
-    verify(next_index_.size() == current_config_.size() - 1);
+    // matchedIndex and nextIndex should have indices for all servers + learners except self
+    verify(match_index_.size() == current_config_.size() + learners_.size() - 1);
+    verify(next_index_.size() == current_config_.size() + learners_.size() - 1);
   // }
 
   Log_debug("heartbeat loop init from site: %d", site_id_);
@@ -1358,6 +1358,8 @@ void RaftServer::HeartbeatLoop() {
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         std::vector<uint64_t> matchedIndices{};
         for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
+          // Exclude learners from quorum calculation
+          if (learners_.count(it->first) > 0) continue;
           matchedIndices.push_back(it->second);
           Log_debug("[COMMIT-CALC] match_index_[%d] = %lu", it->first, it->second);
         }
@@ -1684,6 +1686,8 @@ void RaftServer::HeartbeatLoop() {
         std::lock_guard<std::recursive_mutex> lock(mtx_);
         std::vector<uint64_t> finalMatchedIndices{};
         for (auto it = match_index_.begin(); it != match_index_.end(); it++) {
+          // Exclude learners from quorum calculation
+          if (learners_.count(it->first) > 0) continue;
           finalMatchedIndices.push_back(it->second);
         }
         std::sort(finalMatchedIndices.begin(), finalMatchedIndices.end());
@@ -1704,6 +1708,11 @@ void RaftServer::HeartbeatLoop() {
         if (commitIndex > executeIndex)
           applyLogs();
 #endif
+
+        // ==================================================================
+        // LEARNER CATCH-UP: Check if any learners are caught up and promote
+        // ==================================================================
+        CheckAndPromoteLearners();
 
         // ==================================================================
         // SPECULATIVE REPLICATION: Update specCommitIndex based on memory acks
@@ -3470,7 +3479,7 @@ void RaftServer::OnAddServer(const uint64_t term,
     return;
   }
 
-  // Check if server is already in config
+  // Check if server is already in config or is already a learner
   if (current_config_.count(static_cast<siteid_t>(new_server_id)) > 0) {
     // @unsafe
     {
@@ -3483,15 +3492,34 @@ void RaftServer::OnAddServer(const uint64_t term,
     return;
   }
 
-  // TODO: In the future, this should append a configuration change entry to the
-  // Raft log and only take effect when committed. For now, we apply the change
-  // directly in memory. Server catch-up (bringing new server up to date) is also
-  // deferred to a future task.
+  if (learners_.count(static_cast<siteid_t>(new_server_id)) > 0) {
+    // @unsafe
+    {
+      *success = false;
+      *error_msg = "server already a learner (catch-up in progress)";
+    }
+    Log_info("[RAFT-CONFIG] AddServer rejected: server %lu already a learner (site %d)",
+             new_server_id, site_id_);
+    defer.reply();
+    return;
+  }
 
-  // Apply config change immediately
-  current_config_.insert(static_cast<siteid_t>(new_server_id));
+  // Add server as a learner first. It will receive log entries via HeartbeatLoop
+  // (through next_index_/match_index_) but will NOT count towards quorum.
+  // Once caught up (match_index_ within catchup_threshold_ of lastLogIndex),
+  // CheckAndPromoteLearners() will promote it to a full member.
+  auto sid = static_cast<siteid_t>(new_server_id);
+  learners_.insert(sid);
   config_change_pending_ = true;
   pending_config_index_ = lastLogIndex;  // Track where this change happened
+
+  // Initialize replication state so HeartbeatLoop sends entries to this learner
+  if (next_index_.find(sid) == next_index_.end()) {
+    next_index_[sid] = lastLogIndex + 1;
+  }
+  if (match_index_.find(sid) == match_index_.end()) {
+    match_index_[sid] = 0;
+  }
 
   // @unsafe
   {
@@ -3499,10 +3527,46 @@ void RaftServer::OnAddServer(const uint64_t term,
     *error_msg = "";
   }
 
-  Log_info("[RAFT-CONFIG] AddServer: added server %lu to config (site %d), new config size=%zu, quorum=%zu",
-           new_server_id, site_id_, current_config_.size(), GetQuorumSize());
+  Log_info("[RAFT-CONFIG] AddServer: added server %lu as learner (site %d), "
+           "learners=%zu, config_size=%zu, next_index=%lu",
+           new_server_id, site_id_, learners_.size(),
+           current_config_.size(), next_index_[sid]);
 
   defer.reply();
+}
+
+// @unsafe - Modifies config state, logs output
+void RaftServer::PromoteLearner(siteid_t id) {
+  // Must be called with mtx_ held
+  learners_.erase(id);
+  current_config_.insert(id);
+  config_change_pending_ = false;
+  Log_info("[RAFT-CONFIG] Promoted learner %d to full member "
+           "(config size=%zu, quorum=%zu, learners=%zu)",
+           id, current_config_.size(), GetQuorumSize(), learners_.size());
+}
+
+// @unsafe - Reads match_index_, calls PromoteLearner
+void RaftServer::CheckAndPromoteLearners() {
+  // Must be called with mtx_ held
+  if (learners_.empty()) {
+    return;
+  }
+
+  std::vector<siteid_t> to_promote;
+  for (auto learner_id : learners_) {
+    auto it = match_index_.find(learner_id);
+    if (it != match_index_.end() && lastLogIndex > 0) {
+      // Learner is caught up if within catchup_threshold_ of leader's log
+      if (it->second >= lastLogIndex ||
+          (lastLogIndex - it->second) <= catchup_threshold_) {
+        to_promote.push_back(learner_id);
+      }
+    }
+  }
+  for (auto id : to_promote) {
+    PromoteLearner(id);
+  }
 }
 
 // @unsafe - Modifies config state

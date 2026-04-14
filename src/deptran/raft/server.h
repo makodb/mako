@@ -276,6 +276,17 @@ class RaftServer : public TxLogServer {
   bool config_change_pending_ = false;         // True when a config entry is in-flight
   uint64_t pending_config_index_ = 0;          // Log index of pending config entry
 
+  // ============================================================================
+  // LEARNER / NEW SERVER CATCH-UP TRACKING
+  // ============================================================================
+  // Servers being caught up before joining the quorum. Learners receive log
+  // entries via HeartbeatLoop (they are added to next_index_/match_index_)
+  // but do NOT count towards quorum for commit index calculation.
+  // Once a learner's match_index_ is within catchup_threshold_ of the
+  // leader's lastLogIndex, it is promoted to a full member in current_config_.
+  std::set<siteid_t> learners_;               // Servers being caught up (not yet in quorum)
+  uint64_t catchup_threshold_ = 100;          // Entries within lastLogIndex to consider "caught up"
+
   // @safe - simple comparison of member fields
   bool AmIPreferredLeader() const {
     // @unsafe
@@ -939,13 +950,38 @@ class RaftServer : public TxLogServer {
   const std::set<siteid_t>& GetCurrentConfig() const;
 
   /**
+   * Check if a server is a learner (being caught up, not yet in quorum).
+   */
+  // @safe - Read-only lookup
+  bool IsLearner(siteid_t id) const { return learners_.count(id) > 0; }
+
+  /**
+   * Get the current set of learners.
+   */
+  // @unsafe - returns reference to internal state (no @lifetime annotation)
+  const std::set<siteid_t>& GetLearners() const { return learners_; }
+
+  /**
+   * Promote a learner to full member in current_config_.
+   * Removes from learners_, inserts into current_config_, clears pending flag.
+   */
+  // @unsafe - Modifies config state
+  void PromoteLearner(siteid_t id);
+
+  /**
+   * Check if any learners are caught up and promote them to full members.
+   * Called from HeartbeatLoop after commit index calculation.
+   */
+  // @unsafe - Calls PromoteLearner which modifies config state
+  void CheckAndPromoteLearners();
+
+  /**
    * AddServer RPC Handler - Membership Change Protocol
    *
    * Adds a new server to the cluster configuration. Only the leader can
    * process this request. Rejects if a config change is already pending.
-   * For now, applies the config change immediately in memory.
-   * TODO: Make this log-based (append config entry to Raft log) when
-   * server catch-up is implemented.
+   * The server is first added as a learner (receives log entries but does not
+   * count for quorum). Once caught up, it is promoted to full member.
    *
    * @param term - Client's known term
    * @param new_server_id - Site ID of the server to add
@@ -968,9 +1004,6 @@ class RaftServer : public TxLogServer {
    * Removes a server from the cluster configuration. Only the leader can
    * process this request. Rejects if a config change is already pending,
    * or if this would remove the last server.
-   * For now, applies the config change immediately in memory.
-   * TODO: Make this log-based (append config entry to Raft log) when
-   * server catch-up is implemented.
    *
    * @param term - Client's known term
    * @param server_id - Site ID of the server to remove
