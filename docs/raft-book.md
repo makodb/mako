@@ -758,6 +758,23 @@ For multi-shard deployments:
 - `config/1leader_2followers/raft2_shardidx0.yml` (2 replicas, shard 0)
 - `config/1leader_2followers/raft6_shardidx0.yml` (6 replicas, shard 0)
 
+### Environment Variable Overrides
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAKO_RAFT_HEARTBEAT_INTERVAL_US` | `5000` (prod) / `100000` (test) | Heartbeat interval in microseconds. Overrides the compile-time default at `Setup()` time. Also controls the election-timeout sleep range (`2x`--`4x` the interval). |
+| `MAKO_RAFT_PERSISTENCE` | (unset) | Set to `1` or `true` to enable log persistence |
+| `MAKO_RAFT_ASYNC_PERSISTENCE` | (unset) | Set to `1` or `true` for async disk persistence |
+| `MAKO_RAFT_PERSISTENCE_PATH` | `/tmp` | Base directory for persistence files |
+| `MAKO_RAFT_SNAPSHOTS` | (unset) | Set to `1` to enable snapshot manager |
+| `MAKO_RAFT_SNAPSHOT_PATH` | `/tmp` | Base directory for snapshot files |
+
+The heartbeat interval can also be changed at runtime via the C++ API:
+```cpp
+server->SetHeartbeatInterval(10000);  // 10ms
+uint64_t current = server->GetHeartbeatInterval();
+```
+
 ---
 
 ## 15. Build System

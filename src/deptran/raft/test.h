@@ -215,6 +215,9 @@ class RaftLabTest {
   // Test InitializeSnapshotManager only advances indices, never goes backwards
   int testSnapshotRecoveryFieldAdvancement(void);
 
+  // Test runtime-configurable heartbeat interval
+  int testHeartbeatIntervalConfigurable(void);
+
   void wait(uint64_t microseconds);
 
 };

@@ -906,6 +906,16 @@ void RaftServer::Setup() {
     Log_info("[RAFT-PERSISTENCE] Disabled (set MAKO_RAFT_PERSISTENCE=1 to enable)");
   }
 
+  // ========== HEARTBEAT INTERVAL (runtime override) ==========
+  // @unsafe { std::getenv and Log_info are not borrow-checked }
+  {
+    const char* hb_str = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US");
+    if (hb_str && hb_str[0] != '\0') {
+      heartbeat_interval_us_ = std::stoull(hb_str);
+      Log_info("[RAFT] Heartbeat interval set to %lu us from env", heartbeat_interval_us_);
+    }
+  }
+
   // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
   InitializeSnapshotManager();
 
@@ -1276,7 +1286,7 @@ void RaftServer::HeartbeatLoop() {
         ready_for_replication_ = Reactor::create_sp_event<IntEvent>();
         ready_for_replication_->set(0);
       }
-      ready_for_replication_->wait(HEARTBEAT_INTERVAL);
+      ready_for_replication_->wait(heartbeat_interval_us_);
       {
         std::lock_guard<std::recursive_mutex> lock(ready_for_replication_mtx_);
         ready_for_replication_ = nullptr;
@@ -2149,7 +2159,7 @@ void RaftServer::StartElectionTimer() {
       uint64_t election_timeout = GetElectionTimeout();
 
       // Sleep for a portion of the timeout before checking
-      Fiber::sleep(RandomGenerator::rand(HEARTBEAT_INTERVAL * 2, HEARTBEAT_INTERVAL * 4));
+      Fiber::sleep(RandomGenerator::rand(heartbeat_interval_us_ * 2, heartbeat_interval_us_ * 4));
 
       // Retry NotifyRestart for any PENDING peers
       // This handles the case where a peer was partitioned when we restarted

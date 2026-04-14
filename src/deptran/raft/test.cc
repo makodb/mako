@@ -114,6 +114,13 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testSnapshotRecoveryFieldAdvancement());   // Test 66
   }
 
+  // Heartbeat interval configurability test
+  if (!failed) {
+    Log_info("Running heartbeat interval configurability test");
+    failed =
+        TEST_EXPAND(testHeartbeatIntervalConfigurable());         // Test 67
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -5861,6 +5868,66 @@ int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
   rmdir(snap_path.c_str());
 
   Log_info("TEST 66: Snapshot recovery field advancement PASSED!");
+  Passed2();
+}
+
+// @unsafe - test harness, accesses server internals
+int RaftLabTest::testHeartbeatIntervalConfigurable(void) {
+  Init2(67, "Heartbeat interval runtime-configurable");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 67: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // 1. Verify default interval equals HEARTBEAT_INTERVAL
+  uint64_t default_interval = server->GetHeartbeatInterval();
+  Assert2(default_interval == HEARTBEAT_INTERVAL,
+          "Default heartbeat interval should be %d, got %lu",
+          HEARTBEAT_INTERVAL, default_interval);
+  Log_info("TEST 67: Default heartbeat interval verified: %lu us", default_interval);
+
+  // 2. Set interval to a new value via SetHeartbeatInterval()
+  uint64_t new_interval = 200000;  // 200ms
+  server->SetHeartbeatInterval(new_interval);
+
+  // 3. Verify GetHeartbeatInterval() returns the new value
+  uint64_t retrieved = server->GetHeartbeatInterval();
+  Assert2(retrieved == new_interval,
+          "Heartbeat interval should be %lu after set, got %lu",
+          new_interval, retrieved);
+  Log_info("TEST 67: Heartbeat interval updated to %lu us", retrieved);
+
+  // 4. Set on all servers and verify
+  for (int i = 0; i < NSERVERS; i++) {
+    auto s = config_->GetServer(i);
+    if (s != nullptr) {
+      s->SetHeartbeatInterval(150000);
+      Assert2(s->GetHeartbeatInterval() == 150000,
+              "Server %d heartbeat interval should be 150000, got %lu",
+              i, s->GetHeartbeatInterval());
+    }
+  }
+  Log_info("TEST 67: All servers updated to 150000 us");
+
+  // 5. Verify the cluster still works (commit an entry)
+  uint64_t idx = config_->DoAgreement(6700, NSERVERS, true);
+  Assert2(idx > 0, "DoAgreement should succeed after changing heartbeat interval");
+  Log_info("TEST 67: Agreement reached at index %lu with modified interval", idx);
+
+  // 6. Restore original interval
+  for (int i = 0; i < NSERVERS; i++) {
+    auto s = config_->GetServer(i);
+    if (s != nullptr) {
+      s->SetHeartbeatInterval(HEARTBEAT_INTERVAL);
+    }
+  }
+
+  Log_info("TEST 67: Heartbeat interval configurable PASSED!");
   Passed2();
 }
 

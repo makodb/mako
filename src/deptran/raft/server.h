@@ -184,6 +184,7 @@ class RaftServer : public TxLogServer {
   bool looping_ = false;
   bool heartbeat_ = true;
   bool heartbeat_setup_ = false;
+  uint64_t heartbeat_interval_us_ = HEARTBEAT_INTERVAL;  // Runtime-configurable heartbeat interval (microseconds)
 	enum { STOPPED, RUNNING } status_;
 	std::function<void(bool)> leader_change_cb_{};
 
@@ -557,6 +558,12 @@ class RaftServer : public TxLogServer {
       *term = currentTerm;
     }
   }
+
+  // @safe - returns POD field
+  uint64_t GetHeartbeatInterval() const { return heartbeat_interval_us_; }
+
+  // @safe - sets POD field
+  void SetHeartbeatInterval(uint64_t micros) { heartbeat_interval_us_ = micros; }
 
   // @safe - external calls marked @external, output pointer writes in @unsafe blocks
   void SetLocalAppend(shared_ptr<Marshallable>& cmd, uint64_t* term, uint64_t* index, slotid_t slot_id = -1, ballot_t ballot = 1 ){
