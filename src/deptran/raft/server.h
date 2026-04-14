@@ -122,6 +122,9 @@ class RaftServer : public TxLogServer {
   // ============================================================================
   std::shared_ptr<rrr::SnapshotManager> snapshot_manager_;  // Optional snapshot manager
 
+  // @unsafe - Initializes snapshot manager from environment config
+  void InitializeSnapshotManager();
+
   // Metadata keys for LogStorage persistence
   static constexpr const char* META_TERM = "currentTerm";
   static constexpr const char* META_VOTE_FOR = "vote_for";
@@ -720,6 +723,27 @@ class RaftServer : public TxLogServer {
   std::shared_ptr<rrr::SnapshotManager> GetSnapshotManager() const {
     return snapshot_manager_;
   }
+
+  /**
+   * Check if a snapshot is available.
+   * @return true if a snapshot exists in the snapshot manager
+   */
+  // @safe - read-only query
+  bool HasSnapshot() const;
+
+  /**
+   * Get the last log index included in the most recent snapshot.
+   * @return Last included index, or 0 if no snapshot exists
+   */
+  // @safe - returns POD field
+  uint64_t GetSnapshotIndex() const;
+
+  /**
+   * Get the term of the last log entry included in the most recent snapshot.
+   * @return Last included term, or 0 if no snapshot exists
+   */
+  // @safe - returns POD field
+  uint64_t GetSnapshotTerm() const;
 
   /**
    * Compact log entries up to the given index (Phase 3.4).

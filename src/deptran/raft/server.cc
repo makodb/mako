@@ -4,6 +4,7 @@
 #include "frame.h"
 #include "coordinator.h"
 #include "../classic/tpc_command.h"
+#include "rpc/file_snapshot_manager.hpp"
 #include <limits>
 
 // @external: {
@@ -339,6 +340,73 @@ size_t RaftServer::GetUncommittedCount() const {
     return lastLogIndex - commitIndex;
   }
   return 0;
+}
+
+// @unsafe - Initializes SnapshotManager from environment config
+void RaftServer::InitializeSnapshotManager() {
+  const char* snapshot_flag = std::getenv("MAKO_RAFT_SNAPSHOTS");  // @unsafe
+  bool should_enable = (snapshot_flag &&
+                       (strcmp(snapshot_flag, "1") == 0 ||
+                        strcmp(snapshot_flag, "true") == 0));
+
+  if (!should_enable) {
+    Log_info("[RAFT-SNAPSHOT] Snapshots disabled for site %d (set MAKO_RAFT_SNAPSHOTS=1 to enable)",
+             site_id_);
+    return;
+  }
+
+  // Build snapshot config
+  rrr::SnapshotConfig snap_config;
+  // @unsafe { getenv is not borrow-checked }
+  const char* custom_path = std::getenv("MAKO_RAFT_SNAPSHOT_PATH");
+  if (custom_path && custom_path[0] != '\0') {
+    snap_config.storage_path = std::string(custom_path) + "/raft_snap_" +
+                               std::to_string(site_id_) + "_partition_" +
+                               std::to_string(partition_id_);
+  } else {
+    snap_config = rrr::SnapshotConfig::for_replica(partition_id_, loc_id_);
+  }
+
+  // Check for custom snapshot interval
+  const char* interval_str = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL");  // @unsafe
+  if (interval_str && interval_str[0] != '\0') {
+    snap_config.snapshot_interval = std::stoull(interval_str);
+  }
+
+  // Create the FileSnapshotManager
+  auto manager = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  SetSnapshotManager(manager);
+
+  // If a snapshot exists, load its metadata into snapidx_/snapterm_
+  auto latest = manager->GetLatestSnapshot();
+  if (latest.is_some()) {
+    auto meta = latest.unwrap();
+    snapidx_ = meta.last_included_index;
+    snapterm_ = meta.last_included_term;
+    Log_info("[RAFT-SNAPSHOT] Loaded snapshot metadata: index=%lu term=%lu size=%zu",
+             snapidx_, snapterm_, meta.size_bytes);
+  }
+
+  Log_info("[RAFT-SNAPSHOT] Initialized for site %d partition %d: path=%s interval=%zu",
+           site_id_, partition_id_, snap_config.storage_path.c_str(),
+           snap_config.snapshot_interval);
+}
+
+// @safe - Returns true if a snapshot is available
+bool RaftServer::HasSnapshot() const {
+  if (!snapshot_manager_) return false;
+  auto latest = snapshot_manager_->GetLatestSnapshot();
+  return latest.is_some();
+}
+
+// @safe - Returns the last snapshotted log index
+uint64_t RaftServer::GetSnapshotIndex() const {
+  return snapidx_;
+}
+
+// @safe - Returns the term of the last snapshotted log entry
+uint64_t RaftServer::GetSnapshotTerm() const {
+  return snapterm_;
 }
 
 // @safe - Log compaction (storage operations wrapped in @unsafe blocks)
@@ -698,6 +766,9 @@ void RaftServer::Setup() {
   } else {
     Log_info("[RAFT-PERSISTENCE] Disabled (set MAKO_RAFT_PERSISTENCE=1 to enable)");
   }
+
+  // ========== INITIALIZE SNAPSHOT MANAGER (Phase 3.1) ==========
+  InitializeSnapshotManager();
 
 #ifdef RAFT_TEST_CORO
   if (heartbeat_) {

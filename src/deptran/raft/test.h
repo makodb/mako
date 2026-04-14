@@ -139,6 +139,26 @@ class RaftLabTest {
   // Test transition to secured via durable quorum after spec quorum lost due to restarts
   int testSecuredViaDurableAfterSpecLoss(void);
 
+  // ===========================================================================
+  // PHASE 3.1: Snapshot Data Format and Metadata Tests
+  // ===========================================================================
+  // Unit tests for snapshot infrastructure (no cluster needed)
+
+  // Test SnapshotMetadata creation and field access
+  int testSnapshotMetadataCreation(void);
+
+  // Test Snapshot creation with data (serialize/deserialize round-trip)
+  int testSnapshotFormatRoundTrip(void);
+
+  // Test SnapshotManager save/load round-trip via FileSnapshotManager
+  int testSnapshotManagerSaveLoad(void);
+
+  // Test snapshot metadata persistence and listing
+  int testSnapshotManagerListing(void);
+
+  // Test snapshot_manager_ wiring in RaftServer
+  int testSnapshotManagerWiring(void);
+
   void wait(uint64_t microseconds);
 
 };

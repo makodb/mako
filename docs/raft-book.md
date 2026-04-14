@@ -17,13 +17,14 @@ A comprehensive developer guide for the Raft consensus implementation in Mako.
 9. [Leadership Transfer](#9-leadership-transfer)
 10. [Mako Integration](#10-mako-integration)
 11. [Log Persistence](#11-log-persistence)
-12. [RPC Communication Layer](#12-rpc-communication-layer)
-13. [Configuration](#13-configuration)
-14. [Build System](#14-build-system)
-15. [Testing](#15-testing)
-16. [Failure Scenarios and Recovery](#16-failure-scenarios-and-recovery)
-17. [Known Issues and Workarounds](#17-known-issues-and-workarounds)
-18. [Debugging](#18-debugging)
+12. [Snapshotting and Log Compaction](#12-snapshotting-and-log-compaction)
+13. [RPC Communication Layer](#13-rpc-communication-layer)
+14. [Configuration](#14-configuration)
+15. [Build System](#15-build-system)
+16. [Testing](#16-testing)
+17. [Failure Scenarios and Recovery](#17-failure-scenarios-and-recovery)
+18. [Known Issues and Workarounds](#18-known-issues-and-workarounds)
+19. [Debugging](#19-debugging)
 
 ---
 
@@ -530,7 +531,67 @@ The destructor joins all async threads to ensure clean shutdown.
 
 ---
 
-## 12. RPC Communication Layer
+## 12. Snapshotting and Log Compaction
+
+Raft logs grow unboundedly without compaction. Snapshotting captures the state machine at a given log index/term, then discards log entries before that point.
+
+### Configuration
+
+```bash
+MAKO_RAFT_SNAPSHOTS=1                # Enable snapshot support
+MAKO_RAFT_SNAPSHOT_PATH=/var/raft    # Custom snapshot storage path
+MAKO_RAFT_SNAPSHOT_INTERVAL=10000    # Entries between snapshots (default: 10000)
+```
+
+### Storage Architecture
+
+Three layers in `src/rrr/rpc/`:
+
+| Layer | File | Purpose |
+|-------|------|---------|
+| `SnapshotManager` | `snapshot_manager.hpp` | Abstract interface for snapshot CRUD |
+| `FileSnapshotManager` | `file_snapshot_manager.hpp` | File-based implementation with retention policy |
+| `SnapshotFormat` | `snapshot_format.hpp` | Binary serialization with CRC32 checksums |
+
+### Binary Wire Format
+
+```
+Magic (4B) | Version (4B) | Header Size (4B) | Data Size (8B) |
+Compression (1B) | Checksum Type (1B) | Last Index (8B) | Last Term (8B) |
+Timestamp (8B) | Header CRC (4B) | Padding (2B) | Data... | Data CRC (4B)
+```
+
+- **Magic**: `0x504E4153` ("SNAP" in little-endian)
+- **CRC32 checksums** on both header and data for corruption detection
+- **52-byte fixed header** (8-byte aligned)
+- File naming: `snapshot_<index>_<term>.snap` with `.tmp` suffix during writes (atomic rename on finalize)
+
+### RaftServer Integration
+
+The `snapshot_manager_` field in `RaftServer` is initialized during `Setup()` when `MAKO_RAFT_SNAPSHOTS=1`:
+
+```cpp
+void SetSnapshotManager(shared_ptr<SnapshotManager> manager);
+shared_ptr<SnapshotManager> GetSnapshotManager() const;
+bool HasSnapshot() const;          // Check if any snapshot exists
+uint64_t GetSnapshotIndex() const; // Last snapshotted log index (snapidx_)
+uint64_t GetSnapshotTerm() const;  // Term of last snapshotted entry (snapterm_)
+size_t CompactLog(uint64_t up_to_index); // Discard entries before index
+```
+
+On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_` are loaded from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
+
+### Planned Features
+
+- **CreateSnapshot**: Called from `applyLogs()` when `executeIndex - snapidx_ > SNAPSHOT_THRESHOLD`
+- **InstallSnapshot RPC**: Leader sends snapshot to lagging followers when `next_index_[follower] < min_active_slot_`
+- **Recovery**: On startup, load snapshot state before replaying log entries
+
+See `docs/dev/raft_snapshot_design.md` for the full design document.
+
+---
+
+## 13. RPC Communication Layer
 
 ### RaftCommo
 
@@ -566,7 +627,7 @@ RaftCommo maintains `rpc_par_proxies_[partition_id][replica_id]` for each peer. 
 
 ---
 
-## 13. Configuration
+## 14. Configuration
 
 ### YAML Configuration
 
@@ -622,7 +683,7 @@ For multi-shard deployments:
 
 ---
 
-## 14. Build System
+## 15. Build System
 
 ### Build Targets
 
@@ -655,7 +716,7 @@ For multi-shard deployments:
 
 ---
 
-## 15. Testing
+## 16. Testing
 
 ### CI Tests
 
@@ -738,7 +799,7 @@ make -j32
 
 ---
 
-## 16. Failure Scenarios and Recovery
+## 17. Failure Scenarios and Recovery
 
 ### Leader Crash During Replication
 
@@ -787,7 +848,7 @@ Result: Safe — entry 5 only discarded if leader was isolated
 
 ---
 
-## 17. Known Issues and Workarounds
+## 18. Known Issues and Workarounds
 
 ### Non-Leader Log Drop
 
@@ -817,7 +878,7 @@ Result: Safe — entry 5 only discarded if leader was isolated
 
 ---
 
-## 18. Debugging
+## 19. Debugging
 
 ### Log Prefixes
 
@@ -830,6 +891,7 @@ Result: Safe — entry 5 only discarded if leader was isolated
 | `[SPEC-RAFT]` | Speculative voting/commit events |
 | `[TIMER_RESET]` | Election timeout resets |
 | `[RAFT-PERSISTENCE]` | Persistence operations |
+| `[RAFT-SNAPSHOT]` | Snapshot operations |
 | `[SPEC-INVARIANTS]` | Invariant violations |
 | `[RAFT-ADD-LOG]` | Log submission to Raft |
 
@@ -839,6 +901,9 @@ Result: Safe — entry 5 only discarded if leader was isolated
 MAKO_RAFT_PERSISTENCE=1          # Enable persistence
 MAKO_RAFT_ASYNC_PERSISTENCE=1    # Async persistence
 MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
+MAKO_RAFT_SNAPSHOTS=1            # Enable snapshots
+MAKO_RAFT_SNAPSHOT_PATH=/tmp     # Snapshot storage path
+MAKO_RAFT_SNAPSHOT_INTERVAL=10000 # Entries between snapshots
 MAKO_DISABLE_JETPACK=1           # Disable Jetpack recovery
 ```
 

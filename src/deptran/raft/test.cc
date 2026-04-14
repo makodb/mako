@@ -4,6 +4,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include "rpc/snapshot_manager.hpp"
+#include "rpc/snapshot_format.hpp"
+#include "rpc/file_snapshot_manager.hpp"
 
 namespace janus {
 
@@ -55,6 +58,18 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testSequentialPartitionsPlusRestart()) // Test 17
         || TEST_EXPAND(testMultipleRestartsPlusPartition()) // Test 18
         || TEST_EXPAND(testFigure8CrashRecovery());        // Test 19
+  }
+
+  // Snapshot data format and metadata tests (Phase 3.1)
+  // These are unit tests that don't require persistence
+  if (!failed) {
+    Log_info("Running SNAPSHOT data format tests (Phase 3.1)");
+    failed =
+        TEST_EXPAND(testSnapshotMetadataCreation())         // Test 50
+        || TEST_EXPAND(testSnapshotFormatRoundTrip())       // Test 51
+        || TEST_EXPAND(testSnapshotManagerSaveLoad())       // Test 52
+        || TEST_EXPAND(testSnapshotManagerListing())         // Test 53
+        || TEST_EXPAND(testSnapshotManagerWiring());         // Test 54
   }
 
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
@@ -4386,6 +4401,271 @@ int RaftLabTest::testSecuredViaDurableAfterSpecLoss(void) {
 
   Log_info("[SECURED-VIA-DURABLE-TEST] System operational after restarts - test PASSED!");
 
+  Passed2();
+}
+
+// ===========================================================================
+// PHASE 3.1: Snapshot Data Format and Metadata Tests
+// ===========================================================================
+
+int RaftLabTest::testSnapshotMetadataCreation(void) {
+  Init2(50, "Snapshot metadata creation and field access");
+
+  // Test default construction
+  rrr::SnapshotMetadata meta;
+  Assert2(meta.last_included_index == 0,
+          "Default last_included_index should be 0, got %lu", meta.last_included_index);
+  Assert2(meta.last_included_term == 0,
+          "Default last_included_term should be 0, got %lu", meta.last_included_term);
+  Assert2(meta.size_bytes == 0,
+          "Default size_bytes should be 0, got %zu", meta.size_bytes);
+  Assert2(!meta.is_valid(),
+          "Default metadata should not be valid");
+
+  // Test with assigned values
+  meta.last_included_index = 42;
+  meta.last_included_term = 3;
+  meta.size_bytes = 1024;
+  meta.timestamp_ms = 1234567890;
+  Assert2(meta.is_valid(),
+          "Metadata with index > 0 should be valid");
+  Assert2(meta.last_included_index == 42,
+          "last_included_index should be 42, got %lu", meta.last_included_index);
+  Assert2(meta.last_included_term == 3,
+          "last_included_term should be 3, got %lu", meta.last_included_term);
+
+  // Test to_string
+  auto str = meta.to_string();
+  Assert2(str.find("42") != std::string::npos,
+          "to_string should contain index 42");
+  Assert2(str.find("1024") != std::string::npos,
+          "to_string should contain size 1024");
+
+  Log_info("[SNAPSHOT-META-TEST] SnapshotMetadata creation and access PASSED");
+  Passed2();
+}
+
+int RaftLabTest::testSnapshotFormatRoundTrip(void) {
+  Init2(51, "Snapshot format serialize/deserialize round-trip");
+
+  // Create test data
+  std::string test_data = "hello snapshot world! This is state machine data.";
+  uint64_t test_index = 100;
+  uint64_t test_term = 5;
+
+  // Serialize
+  std::string serialized;
+  bool ok = rrr::SnapshotFormat::Serialize(test_index, test_term,
+                                            test_data.data(), test_data.size(),
+                                            &serialized);
+  Assert2(ok, "Serialize should succeed");
+  Assert2(serialized.size() > sizeof(rrr::SnapshotHeader),
+          "Serialized data should be larger than header");
+
+  // Verify header
+  rrr::SnapshotHeader header;
+  ok = rrr::SnapshotFormat::GetHeader(serialized.data(), serialized.size(), &header);
+  Assert2(ok, "GetHeader should succeed");
+  Assert2(header.last_index == test_index,
+          "Header last_index should be %lu, got %lu", test_index, header.last_index);
+  Assert2(header.last_term == test_term,
+          "Header last_term should be %lu, got %lu", test_term, header.last_term);
+  Assert2(header.data_size == test_data.size(),
+          "Header data_size should be %zu, got %lu", test_data.size(), header.data_size);
+
+  // Deserialize
+  uint64_t out_index, out_term;
+  std::string out_data;
+  ok = rrr::SnapshotFormat::Deserialize(serialized.data(), serialized.size(),
+                                         &out_index, &out_term, &out_data);
+  Assert2(ok, "Deserialize should succeed");
+  Assert2(out_index == test_index,
+          "Deserialized index should be %lu, got %lu", test_index, out_index);
+  Assert2(out_term == test_term,
+          "Deserialized term should be %lu, got %lu", test_term, out_term);
+  Assert2(out_data == test_data,
+          "Deserialized data should match original");
+
+  // Test with empty data
+  std::string empty_serialized;
+  ok = rrr::SnapshotFormat::Serialize(1, 1, nullptr, 0, &empty_serialized);
+  Assert2(ok, "Serialize with empty data should succeed");
+  ok = rrr::SnapshotFormat::Deserialize(empty_serialized.data(), empty_serialized.size(),
+                                         &out_index, &out_term, &out_data);
+  Assert2(ok, "Deserialize empty data should succeed");
+  Assert2(out_data.empty(), "Empty snapshot data should deserialize to empty string");
+
+  // Test corruption detection
+  std::string corrupted = serialized;
+  corrupted[sizeof(rrr::SnapshotHeader) + 5] ^= 0xFF;  // Flip a data byte
+  ok = rrr::SnapshotFormat::Deserialize(corrupted.data(), corrupted.size(),
+                                         &out_index, &out_term, &out_data);
+  Assert2(!ok, "Deserialize of corrupted data should fail");
+
+  Log_info("[SNAPSHOT-FORMAT-TEST] Serialize/deserialize round-trip PASSED");
+  Passed2();
+}
+
+int RaftLabTest::testSnapshotManagerSaveLoad(void) {
+  Init2(52, "SnapshotManager save/load round-trip");
+
+  // Create a temporary directory for test snapshots
+  std::string test_path = "/tmp/raft_snapshot_test_" + std::to_string(getpid());
+
+  rrr::SnapshotConfig config;
+  config.storage_path = test_path;
+  config.max_snapshots = 5;
+
+  rrr::FileSnapshotManager mgr(config);
+
+  // Initially no snapshots
+  Assert2(!mgr.HasSnapshotAtOrAfter(1), "Should have no snapshots initially");
+  auto latest = mgr.GetLatestSnapshot();
+  Assert2(latest.is_none(), "Latest should be None initially");
+
+  // Save a snapshot
+  std::string data1 = "state machine data at index 10";
+  bool ok = mgr.TakeSnapshot(10, 2, data1.data(), data1.size());
+  Assert2(ok, "TakeSnapshot should succeed");
+
+  // Verify snapshot exists
+  Assert2(mgr.HasSnapshotAtOrAfter(1), "Should have snapshot after save");
+  Assert2(mgr.HasSnapshotAtOrAfter(10), "Should have snapshot at index 10");
+  Assert2(!mgr.HasSnapshotAtOrAfter(11), "Should not have snapshot at index 11");
+
+  // Load and verify
+  rrr::SnapshotMetadata loaded_meta;
+  std::string loaded_data;
+  ok = mgr.LoadLatestSnapshot(&loaded_meta, &loaded_data);
+  Assert2(ok, "LoadLatestSnapshot should succeed");
+  Assert2(loaded_meta.last_included_index == 10,
+          "Loaded index should be 10, got %lu", loaded_meta.last_included_index);
+  Assert2(loaded_meta.last_included_term == 2,
+          "Loaded term should be 2, got %lu", loaded_meta.last_included_term);
+  Assert2(loaded_data == data1,
+          "Loaded data should match saved data");
+
+  // Save another snapshot
+  std::string data2 = "state machine data at index 25";
+  ok = mgr.TakeSnapshot(25, 3, data2.data(), data2.size());
+  Assert2(ok, "Second TakeSnapshot should succeed");
+
+  // Latest should now be the newer one
+  ok = mgr.LoadLatestSnapshot(&loaded_meta, &loaded_data);
+  Assert2(ok, "LoadLatestSnapshot after second save should succeed");
+  Assert2(loaded_meta.last_included_index == 25,
+          "Latest should be index 25, got %lu", loaded_meta.last_included_index);
+  Assert2(loaded_data == data2,
+          "Latest data should be the second snapshot");
+
+  // Clean up
+  mgr.DeleteAllSnapshots();
+  rmdir(test_path.c_str());
+
+  Log_info("[SNAPSHOT-MGR-TEST] Save/load round-trip PASSED");
+  Passed2();
+}
+
+int RaftLabTest::testSnapshotManagerListing(void) {
+  Init2(53, "SnapshotManager listing and pruning");
+
+  std::string test_path = "/tmp/raft_snapshot_list_test_" + std::to_string(getpid());
+
+  rrr::SnapshotConfig config;
+  config.storage_path = test_path;
+  config.max_snapshots = 3;
+
+  rrr::FileSnapshotManager mgr(config);
+
+  // Create multiple snapshots
+  for (uint64_t i = 1; i <= 5; i++) {
+    std::string data = "data_" + std::to_string(i * 10);
+    bool ok = mgr.TakeSnapshot(i * 10, i, data.data(), data.size());
+    Assert2(ok, "TakeSnapshot %lu should succeed", i * 10);
+  }
+
+  // List snapshots - retention policy should have pruned oldest
+  auto snapshots = mgr.ListSnapshots();
+  Assert2(snapshots.size() <= 3,
+          "Should have at most 3 snapshots (retention policy), got %zu", snapshots.size());
+
+  // Newest should be first (sorted by index descending)
+  if (!snapshots.empty()) {
+    Assert2(snapshots[0].last_included_index == 50,
+            "Newest snapshot should be index 50, got %lu",
+            snapshots[0].last_included_index);
+  }
+
+  // Prune: keep only snapshots at or after index 40
+  size_t pruned = mgr.PruneSnapshots(40);
+  Log_info("[SNAPSHOT-LIST-TEST] Pruned %zu snapshots", pruned);
+
+  // Verify remaining snapshots
+  snapshots = mgr.ListSnapshots();
+  for (const auto& snap : snapshots) {
+    Assert2(snap.last_included_index >= 40,
+            "After prune, snapshot index %lu should be >= 40",
+            snap.last_included_index);
+  }
+
+  // Delete all and verify empty
+  mgr.DeleteAllSnapshots();
+  snapshots = mgr.ListSnapshots();
+  Assert2(snapshots.empty(), "Should have no snapshots after DeleteAll");
+
+  rmdir(test_path.c_str());
+
+  Log_info("[SNAPSHOT-LIST-TEST] Listing and pruning PASSED");
+  Passed2();
+}
+
+int RaftLabTest::testSnapshotManagerWiring(void) {
+  Init2(54, "SnapshotManager wiring in RaftServer");
+
+  // Wait for a leader
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+
+  // Get the leader's server
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // By default (no MAKO_RAFT_SNAPSHOTS env), snapshot_manager_ should be null
+  // But SetSnapshotManager/GetSnapshotManager API should work
+  auto existing = server->GetSnapshotManager();
+  // Might be null if MAKO_RAFT_SNAPSHOTS not set - that's fine
+
+  // Test SetSnapshotManager with a temporary manager
+  std::string test_path = "/tmp/raft_snap_wiring_test_" + std::to_string(getpid());
+  rrr::SnapshotConfig config;
+  config.storage_path = test_path;
+  auto test_mgr = std::make_shared<rrr::FileSnapshotManager>(config);
+
+  server->SetSnapshotManager(test_mgr);
+  Assert2(server->GetSnapshotManager() != nullptr,
+          "GetSnapshotManager should return non-null after SetSnapshotManager");
+  Assert2(server->GetSnapshotManager().get() == test_mgr.get(),
+          "GetSnapshotManager should return the same manager we set");
+
+  // Test HasSnapshot - should be false since we haven't saved anything
+  Assert2(!server->HasSnapshot(),
+          "HasSnapshot should be false with empty manager");
+
+  // Test GetSnapshotIndex/Term defaults
+  Assert2(server->GetSnapshotIndex() == 0,
+          "GetSnapshotIndex should be 0 by default, got %lu", server->GetSnapshotIndex());
+  Assert2(server->GetSnapshotTerm() == 0,
+          "GetSnapshotTerm should be 0 by default, got %lu", server->GetSnapshotTerm());
+
+  // Restore original manager (or null)
+  server->SetSnapshotManager(existing);
+
+  // Clean up
+  test_mgr->DeleteAllSnapshots();
+  rmdir(test_path.c_str());
+
+  Log_info("[SNAPSHOT-WIRING-TEST] Wiring in RaftServer PASSED");
   Passed2();
 }
 
