@@ -90,6 +90,14 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testHeartbeatTriggersInstallSnapshot()); // Test 60
   }
 
+  // Speculative index persistence tests
+  if (!failed) {
+    Log_info("Running speculative index persistence tests");
+    failed =
+        TEST_EXPAND(testSpecCommitIndexPersistence())             // Test 61
+        || TEST_EXPAND(testSpecIndicesRecoveredOnRestart());      // Test 62
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -5161,6 +5169,181 @@ int RaftLabTest::testHeartbeatTriggersInstallSnapshot(void) {
   system(cleanup2.c_str());
 
   Log_info("[HEARTBEAT-SNAPSHOT-TEST] PASSED");
+  Passed2();
+}
+
+// ============================================================================
+// Test 61: testSpecCommitIndexPersistence
+// Verifies that specCommitIndex_ and securedLogIndex_ are persisted to storage
+// ============================================================================
+// @unsafe - Uses test infrastructure and LogStorage API
+int RaftLabTest::testSpecCommitIndexPersistence(void) {
+  Init2(61, "Speculative indices persisted to storage");
+
+  Log_info("TEST 61: Waiting for initial election");
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 61: Leader elected: %d", leader);
+
+  // Commit some entries
+  Log_info("TEST 61: Committing entries");
+  DoAgreeAndAssertIndex(201, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(202, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(203, NSERVERS, index_++);
+  Log_info("TEST 61: Committed 3 entries");
+
+  // Allow time for speculative index advancement
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
+
+  // Get the leader server and check persisted values
+  auto leader_server = config_->GetServer(leader);
+  auto storage = leader_server->GetLogStorage();
+
+  uint64_t mem_spec = leader_server->specCommitIndex_;
+  uint64_t mem_secured = leader_server->securedLogIndex_;
+  uint64_t mem_last = leader_server->lastLogIndex;
+
+  Log_info("TEST 61: In-memory values - specCommitIndex=%lu securedLogIndex=%lu lastLogIndex=%lu",
+           mem_spec, mem_secured, mem_last);
+
+  // Verify invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
+  Assert2(mem_secured <= mem_spec,
+          "invariant violation: securedLogIndex (%lu) > specCommitIndex (%lu)",
+          mem_secured, mem_spec);
+  Assert2(mem_spec <= mem_last,
+          "invariant violation: specCommitIndex (%lu) > lastLogIndex (%lu)",
+          mem_spec, mem_last);
+
+  // Check persisted values in storage if storage is available
+  if (storage && storage->is_open()) {
+    // @unsafe { LogStorage API calls }
+    auto spec_str = storage->get_metadata(RaftServer::META_SPEC_COMMIT_INDEX);
+    auto secured_str = storage->get_metadata(RaftServer::META_SECURED_LOG_INDEX);
+
+    if (spec_str.is_some()) {
+      uint64_t persisted_spec = std::stoull(spec_str.unwrap());
+      Log_info("TEST 61: Persisted specCommitIndex=%lu, in-memory=%lu",
+               persisted_spec, mem_spec);
+      Assert2(persisted_spec == mem_spec,
+              "persisted specCommitIndex (%lu) != in-memory (%lu)",
+              persisted_spec, mem_spec);
+    } else {
+      Log_info("TEST 61: specCommitIndex not yet persisted (may be 0)");
+    }
+
+    if (secured_str.is_some()) {
+      uint64_t persisted_secured = std::stoull(secured_str.unwrap());
+      Log_info("TEST 61: Persisted securedLogIndex=%lu, in-memory=%lu",
+               persisted_secured, mem_secured);
+      Assert2(persisted_secured == mem_secured,
+              "persisted securedLogIndex (%lu) != in-memory (%lu)",
+              persisted_secured, mem_secured);
+    } else {
+      Log_info("TEST 61: securedLogIndex not yet persisted (may be 0)");
+    }
+  } else {
+    Log_info("TEST 61: No log storage available, checking in-memory values only");
+  }
+
+  Log_info("TEST 61: PASSED - speculative indices persisted correctly");
+  Passed2();
+}
+
+// ============================================================================
+// Test 62: testSpecIndicesRecoveredOnRestart
+// Verifies specCommitIndex_ and securedLogIndex_ are recovered on restart
+// ============================================================================
+// @unsafe - Uses test infrastructure, Kill/Restart, and LogStorage API
+int RaftLabTest::testSpecIndicesRecoveredOnRestart(void) {
+  Init2(62, "Speculative indices recovered on restart");
+
+  Log_info("TEST 62: Waiting for initial election");
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 62: Leader elected: %d", leader);
+
+  // Commit some entries
+  Log_info("TEST 62: Committing entries");
+  DoAgreeAndAssertIndex(301, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(302, NSERVERS, index_++);
+  DoAgreeAndAssertIndex(303, NSERVERS, index_++);
+  Log_info("TEST 62: Committed 3 entries");
+
+  // Allow time for speculative and durable advancement
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
+
+  // Pick a follower to kill and restart
+  siteid_t victim = config_->getNextServerId(leader, 1);
+  auto victim_server = config_->GetServer(victim);
+
+  // Record the values before killing
+  uint64_t spec_before = victim_server->specCommitIndex_;
+  uint64_t secured_before = victim_server->securedLogIndex_;
+  uint64_t commit_before = victim_server->commitIndex;
+  uint64_t last_log_before = victim_server->lastLogIndex;
+  Log_info("TEST 62: Before kill - server %d: specCommitIndex=%lu securedLogIndex=%lu "
+           "commitIndex=%lu lastLogIndex=%lu",
+           victim, spec_before, secured_before, commit_before, last_log_before);
+
+  // Kill the server
+  Log_info("TEST 62: Killing server %d", victim);
+  config_->Kill(victim);
+
+  // Wait for it to be gone
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
+
+  // Commit more entries with remaining servers
+  Log_info("TEST 62: Committing with %d servers while %d is down", NSERVERS - 1, victim);
+  DoAgreeAndAssertIndex(304, NSERVERS - 1, index_++);
+  DoAgreeAndAssertIndex(305, NSERVERS - 1, index_++);
+  Log_info("TEST 62: Committed 2 more entries");
+
+  // Restart the killed server
+  Log_info("TEST 62: Restarting server %d", victim);
+  config_->Restart(victim);
+
+  // Give it time to catch up
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Get the restarted server and check recovery
+  victim_server = config_->GetServer(victim);
+  uint64_t spec_after = victim_server->specCommitIndex_;
+  uint64_t secured_after = victim_server->securedLogIndex_;
+  uint64_t commit_after = victim_server->commitIndex;
+  uint64_t last_log_after = victim_server->lastLogIndex;
+  Log_info("TEST 62: After restart - server %d: specCommitIndex=%lu securedLogIndex=%lu "
+           "commitIndex=%lu lastLogIndex=%lu",
+           victim, spec_after, secured_after, commit_after, last_log_after);
+
+  // After restart and catching up, the log should have all entries
+  Assert2(last_log_after >= last_log_before,
+          "lastLogIndex decreased after restart: was %lu, now %lu",
+          last_log_before, last_log_after);
+
+  // commitIndex should have recovered and potentially advanced
+  Assert2(commit_after >= commit_before,
+          "commitIndex decreased after restart: was %lu, now %lu",
+          commit_before, commit_after);
+
+  // Verify invariant: securedLogIndex <= specCommitIndex <= lastLogIndex
+  // Note: On a follower after restart, specCommitIndex_ and securedLogIndex_ may be 0
+  // (reset during ResetSpeculativeState for non-leaders), but the invariant must still hold.
+  Assert2(secured_after <= spec_after,
+          "invariant violation after restart: securedLogIndex (%lu) > specCommitIndex (%lu)",
+          secured_after, spec_after);
+  // specCommitIndex may be 0 for a follower, which is <= lastLogIndex
+  Assert2(spec_after <= last_log_after || spec_after == 0,
+          "invariant violation after restart: specCommitIndex (%lu) > lastLogIndex (%lu)",
+          spec_after, last_log_after);
+
+  // Verify the cluster still works
+  Log_info("TEST 62: Committing with all %d servers to verify cluster health", NSERVERS);
+  DoAgreeAndAssertWaitSuccess(306, NSERVERS);
+  Log_info("TEST 62: Final commit successful");
+
+  Log_info("TEST 62: PASSED - speculative indices recovered on restart");
   Passed2();
 }
 

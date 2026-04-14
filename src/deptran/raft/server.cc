@@ -187,7 +187,25 @@ void RaftServer::PersistCommitIndexToLogStorage() {
   // @unsafe
   {
   log_storage_->set_metadata(META_COMMIT_INDEX, std::to_string(commitIndex));
+  // Also persist speculative indices alongside commitIndex
+  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(specCommitIndex_));
+  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(securedLogIndex_));
   // Note: Don't sync for commitIndex - it can be recovered from logs
+  }
+}
+
+// @unsafe - Uses LogStorage API
+// @safe - Persists specCommitIndex_ and securedLogIndex_ to storage
+void RaftServer::PersistSpeculativeIndicesToLogStorage() {
+  if (!log_storage_ || !log_storage_->is_open()) {
+    return;
+  }
+
+  // @unsafe
+  {
+  log_storage_->set_metadata(META_SPEC_COMMIT_INDEX, std::to_string(specCommitIndex_));
+  log_storage_->set_metadata(META_SECURED_LOG_INDEX, std::to_string(securedLogIndex_));
+  // Note: Don't sync - these can be recovered conservatively from logs
   }
 }
 
@@ -263,6 +281,20 @@ bool RaftServer::RecoverFromStorage() {
   if (commit_opt.is_some()) {
     commitIndex = std::stoull(commit_opt.unwrap());
   }
+
+  // Recover specCommitIndex
+  auto spec_str = log_storage_->get_metadata(META_SPEC_COMMIT_INDEX);
+  if (spec_str.is_some()) {
+    specCommitIndex_ = std::stoull(spec_str.unwrap());
+    Log_info("Recovered specCommitIndex=%lu", specCommitIndex_);
+  }
+
+  // Recover securedLogIndex
+  auto secured_str = log_storage_->get_metadata(META_SECURED_LOG_INDEX);
+  if (secured_str.is_some()) {
+    securedLogIndex_ = std::stoull(secured_str.unwrap());
+    Log_info("Recovered securedLogIndex=%lu", securedLogIndex_);
+  }
   }
 
   // Recover lastLogIndex
@@ -281,8 +313,23 @@ bool RaftServer::RecoverFromStorage() {
     }
   }
 
-  Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu commitIndex=%lu entries=%zu",
-           site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex, raft_logs_.size());
+  // Clamp speculative indices to maintain invariant:
+  // securedLogIndex_ <= specCommitIndex_ <= lastLogIndex
+  if (specCommitIndex_ > lastLogIndex) {
+    Log_warn("[RAFT-RECOVERY] Clamping specCommitIndex %lu -> %lu (lastLogIndex)",
+             specCommitIndex_, lastLogIndex);
+    specCommitIndex_ = lastLogIndex;
+  }
+  if (securedLogIndex_ > specCommitIndex_) {
+    Log_warn("[RAFT-RECOVERY] Clamping securedLogIndex %lu -> %lu (specCommitIndex)",
+             securedLogIndex_, specCommitIndex_);
+    securedLogIndex_ = specCommitIndex_;
+  }
+
+  Log_info("[RAFT-RECOVERY] Site %d: Recovered term=%lu vote_for=%d lastLogIndex=%lu "
+           "commitIndex=%lu specCommitIndex=%lu securedLogIndex=%lu entries=%zu",
+           site_id_, currentTerm, vote_for_, lastLogIndex, commitIndex,
+           specCommitIndex_, securedLogIndex_, raft_logs_.size());
 
   return true;
 }
@@ -1609,6 +1656,9 @@ void RaftServer::HeartbeatLoop() {
                    site_id_, specCommitIndex_, newSpecCommitIndex);
           specCommitIndex_ = newSpecCommitIndex;
 
+          // Persist updated speculative indices
+          PersistSpeculativeIndicesToLogStorage();
+
           // Phase 5.3: Notify clients with SPECULATIVE status for newly committed entries
           if (lastSpecNotifiedIndex_ < newSpecCommitIndex) {
             uint64_t notifyFrom = std::max(lastSpecNotifiedIndex_, oldSpecCommitIndex);
@@ -1782,6 +1832,9 @@ bool RaftServer::RequestVote() {
     // Reset commit indices
     specCommitIndex_ = commitIndex;
     securedLogIndex_ = commitIndex;
+
+    // Persist updated speculative indices
+    PersistSpeculativeIndicesToLogStorage();
 
     // Clear ack tracking maps for new term
     memoryAcks_.clear();
@@ -2040,6 +2093,9 @@ void RaftServer::OnAppendEntriesDurable(const ballot_t& term,
       Log_info("[SPEC-RAFT] Site %d: Advancing securedLogIndex %lu -> %lu",
                site_id_, securedLogIndex_, newSecuredIndex);
       securedLogIndex_ = newSecuredIndex;
+
+      // Persist updated speculative indices
+      PersistSpeculativeIndicesToLogStorage();
 
       // Phase 5.3: Notify clients with DURABLE status for newly secured entries
       if (lastDurableNotifiedIndex_ < newSecuredIndex) {
@@ -3019,6 +3075,9 @@ void RaftServer::ResetSpeculativeState() {
     Log_info("[SPEC-RAFT] Site %d: Cleared speculative state (stepped down)",
              site_id_);
   }
+
+  // Persist the updated speculative indices
+  PersistSpeculativeIndicesToLogStorage();
 
   // Clear ack tracking maps
   memoryAcks_.clear();

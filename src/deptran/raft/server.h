@@ -135,9 +135,13 @@ class RaftServer : public TxLogServer {
   static constexpr const char* META_TERM = "currentTerm";
   static constexpr const char* META_VOTE_FOR = "vote_for";
   static constexpr const char* META_COMMIT_INDEX = "commitIndex";
+  static constexpr const char* META_SPEC_COMMIT_INDEX = "specCommitIndex";
+  static constexpr const char* META_SECURED_LOG_INDEX = "securedLogIndex";
 
   // @safe - LogStorage-based persistence helper methods (external LogStorage API calls wrapped in @unsafe blocks)
   void PersistTermAndVoteToLogStorage();
+  // @safe - Persists specCommitIndex and securedLogIndex to storage
+  void PersistSpeculativeIndicesToLogStorage();
   // @safe - Persists vote_for only to storage
   void PersistVoteToLogStorage();
   // @safe - Persists commitIndex to storage

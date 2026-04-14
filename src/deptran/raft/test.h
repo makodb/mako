@@ -185,6 +185,16 @@ class RaftLabTest {
   // Test HeartbeatLoop triggers InstallSnapshot for lagging followers
   int testHeartbeatTriggersInstallSnapshot(void);
 
+  // ===========================================================================
+  // SPECULATIVE INDEX PERSISTENCE TESTS
+  // ===========================================================================
+
+  // Test that specCommitIndex and securedLogIndex are persisted to storage
+  int testSpecCommitIndexPersistence(void);
+
+  // Test that speculative indices are recovered correctly on restart
+  int testSpecIndicesRecoveredOnRestart(void);
+
   void wait(uint64_t microseconds);
 
 };

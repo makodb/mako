@@ -504,6 +504,18 @@ MAKO_RAFT_PERSISTENCE_PATH=/var/raft # Storage path (default: /tmp)
 | `vote_for_` | CRITICAL | Before responding to RequestVote |
 | Log entries | CRITICAL | After appending (sync or async) |
 | `commitIndex` | HIGH | After advancing |
+| `specCommitIndex_` | HIGH | After speculative commit index advances, on leadership transitions |
+| `securedLogIndex_` | HIGH | After secured log index advances, on leadership transitions |
+
+### Metadata Keys
+
+| Key | Constant | Value |
+|-----|----------|-------|
+| `"currentTerm"` | `META_TERM` | Current term number |
+| `"vote_for"` | `META_VOTE_FOR` | Voted-for candidate (site ID) |
+| `"commitIndex"` | `META_COMMIT_INDEX` | Highest committed log index |
+| `"specCommitIndex"` | `META_SPEC_COMMIT_INDEX` | Highest speculatively committed log index |
+| `"securedLogIndex"` | `META_SECURED_LOG_INDEX` | Highest durably committed log index |
 
 ### Integration Points
 
@@ -511,6 +523,14 @@ MAKO_RAFT_PERSISTENCE_PATH=/var/raft # Storage path (default: /tmp)
 2. **OnAppendEntries**: `PersistLogEntries()` after appending
 3. **SetLocalAppend**: `PersistLogEntry()` after leader appends
 4. **Constructor**: `RecoverFromStorage()` on restart
+5. **specCommitIndex advancement**: `PersistSpeculativeIndicesToLogStorage()` after memory ack quorum
+6. **securedLogIndex advancement**: `PersistSpeculativeIndicesToLogStorage()` after durable ack quorum
+7. **ResetSpeculativeState**: `PersistSpeculativeIndicesToLogStorage()` on leadership transitions
+8. **PersistCommitIndexToLogStorage**: Also persists speculative indices alongside commitIndex
+
+### Recovery Invariant
+
+On recovery, the system enforces: `securedLogIndex_ <= specCommitIndex_ <= lastLogIndex`. If persisted values violate this (e.g., due to log truncation), they are clamped to valid values with a warning log.
 
 ### Async Persistence
 
