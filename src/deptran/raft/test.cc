@@ -181,6 +181,15 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testReplicatedDBCommandBatchMarshal()); // Test 84
   }
 
+  // ReplicatedDB integration tests (require running Raft cluster)
+  if (!failed) {
+    Log_info("Running ReplicatedDB integration tests");
+    failed =
+        TEST_EXPAND(testReplicatedDBPutGet())         // Test 85
+        || TEST_EXPAND(testReplicatedDBDelete())      // Test 86
+        || TEST_EXPAND(testReplicatedDBReplication()); // Test 87
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -7600,6 +7609,283 @@ int RaftLabTest::testReplicatedDBCommandBatchMarshal(void) {
   }
 
   Log_info("TEST 84: ReplicatedDBCommand BATCH marshal round-trip PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 85: testReplicatedDBPutGet
+// ============================================================================
+// Create ReplicatedDB on leader, Put a key, Get it back from local RocksDB.
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testReplicatedDBPutGet(void) {
+  Init2(85, "ReplicatedDB Put/Get on leader");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  // Create ReplicatedDB with a temp path
+  std::string db_path = "/tmp/raft_test_repldb_85_" + std::to_string(leader);
+
+  // Clean up any leftover DB from previous runs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  // Register apply callback and create ReplicatedDB
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register the apply callback on the server
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put a key-value pair (goes through Raft)
+  bool put_ok = rdb->Put("hello", "world");
+  Assert2(put_ok, "Put should succeed on leader");
+
+  // Get the value back from local RocksDB
+  // The apply callback should have written it
+  std::string value;
+  bool get_ok = rdb->Get("hello", &value);
+  Assert2(get_ok, "Get should find the key");
+  Assert2(value == "world", "Get value should be 'world', got '%s'", value.c_str());
+
+  // Test Get for non-existent key
+  std::string value2;
+  bool get_ok2 = rdb->Get("nonexistent", &value2);
+  Assert2(!get_ok2, "Get should return false for non-existent key");
+
+  // Test overwrite
+  bool put_ok2 = rdb->Put("hello", "updated");
+  Assert2(put_ok2, "Put overwrite should succeed");
+
+  std::string value3;
+  bool get_ok3 = rdb->Get("hello", &value3);
+  Assert2(get_ok3, "Get after overwrite should succeed");
+  Assert2(value3 == "updated", "Value should be 'updated', got '%s'", value3.c_str());
+
+  // Verify last applied index advanced
+  Assert2(rdb->GetLastAppliedIndex() > 0, "Last applied index should be > 0");
+
+  // Restore the original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 85: ReplicatedDB Put/Get on leader PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 86: testReplicatedDBDelete
+// ============================================================================
+// Put a key, Delete it, verify Get returns not-found.
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testReplicatedDBDelete(void) {
+  Init2(86, "ReplicatedDB Delete");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* svr = config_->GetServer(leader);
+  Assert2(svr != nullptr, "Leader server is null");
+
+  std::string db_path = "/tmp/raft_test_repldb_86_" + std::to_string(leader);
+
+  // Clean up
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  auto rdb = std::make_unique<ReplicatedDB>(svr, db_path);
+  Assert2(rdb->IsOpen(), "ReplicatedDB should be open");
+
+  // Register apply callback
+  // @unsafe { RegLearnerAction }
+  svr->RegLearnerAction([&rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put a key
+  bool put_ok = rdb->Put("to_delete", "some_value");
+  Assert2(put_ok, "Put should succeed");
+
+  // Verify it exists
+  std::string value;
+  bool get_ok = rdb->Get("to_delete", &value);
+  Assert2(get_ok, "Get should find the key after Put");
+  Assert2(value == "some_value", "Value should be 'some_value'");
+
+  // Delete the key
+  bool del_ok = rdb->Delete("to_delete");
+  Assert2(del_ok, "Delete should succeed");
+
+  // Verify it's gone
+  std::string value2;
+  bool get_ok2 = rdb->Get("to_delete", &value2);
+  Assert2(!get_ok2, "Get should return false after Delete");
+
+  // Restore the original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup
+  rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, db_path.c_str(), &err);
+    if (err) rocksdb_free(err);
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 86: ReplicatedDB Delete PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 87: testReplicatedDBReplication
+// ============================================================================
+// Put on leader, verify a follower's ReplicatedDB also has the value via
+// the apply callback (data replicated through Raft).
+// @unsafe - Uses ReplicatedDB which wraps RocksDB and Raft
+int RaftLabTest::testReplicatedDBReplication(void) {
+  Init2(87, "ReplicatedDB replication to follower");
+
+  // Wait for election
+  // @unsafe { Fiber::sleep }
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  int leader = config_->OneLeader();
+  Assert2(leader >= 0, "No leader elected");
+
+  auto* leader_svr = config_->GetServer(leader);
+  Assert2(leader_svr != nullptr, "Leader server is null");
+
+  // Find a follower
+  siteid_t follower = -1;
+  for (int i = 0; i < NSERVERS; i++) {
+    siteid_t sid = config_->getServerIdByIndex(i);
+    if (static_cast<int>(sid) != leader) {
+      follower = sid;
+      break;
+    }
+  }
+  Assert2(follower != static_cast<siteid_t>(-1), "No follower found");
+
+  auto* follower_svr = config_->GetServer(follower);
+  Assert2(follower_svr != nullptr, "Follower server is null");
+
+  std::string leader_db_path = "/tmp/raft_test_repldb_87_leader_" + std::to_string(leader);
+  std::string follower_db_path = "/tmp/raft_test_repldb_87_follower_" + std::to_string(follower);
+
+  // Clean up previous DBs
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  // Create ReplicatedDB instances for both leader and follower
+  auto leader_rdb = std::make_unique<ReplicatedDB>(leader_svr, leader_db_path);
+  auto follower_rdb = std::make_unique<ReplicatedDB>(follower_svr, follower_db_path);
+  Assert2(leader_rdb->IsOpen(), "Leader ReplicatedDB should be open");
+  Assert2(follower_rdb->IsOpen(), "Follower ReplicatedDB should be open");
+
+  // Register apply callbacks on both
+  // @unsafe { RegLearnerAction }
+  leader_svr->RegLearnerAction([&leader_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    leader_rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+  follower_svr->RegLearnerAction([&follower_rdb](int slot, shared_ptr<Marshallable> cmd) -> int {
+    follower_rdb->ApplyEntry(slot, cmd);
+    return 0;
+  });
+
+  // Put on leader
+  bool put_ok = leader_rdb->Put("replicated_key", "replicated_value");
+  Assert2(put_ok, "Put on leader should succeed");
+
+  // Wait for replication to follower
+  // The Raft heartbeat will replicate the entry and the apply callback will fire
+  bool found = false;
+  for (int attempt = 0; attempt < 50; attempt++) {
+    std::string value;
+    if (follower_rdb->Get("replicated_key", &value)) {
+      Assert2(value == "replicated_value",
+              "Follower value should be 'replicated_value', got '%s'", value.c_str());
+      found = true;
+      break;
+    }
+    // @unsafe { usleep }
+    usleep(100000);  // 100ms
+  }
+  Assert2(found, "Follower should eventually have the replicated key");
+
+  // Verify leader also has it
+  std::string leader_value;
+  bool leader_get = leader_rdb->Get("replicated_key", &leader_value);
+  Assert2(leader_get, "Leader should have the key");
+  Assert2(leader_value == "replicated_value", "Leader value should match");
+
+  // Restore the original learner action
+  config_->SetLearnerAction();
+
+  // Cleanup
+  leader_rdb.reset();
+  follower_rdb.reset();
+  // @unsafe { RocksDB C API }
+  {
+    rocksdb_options_t* opts = rocksdb_options_create();
+    char* err = nullptr;
+    rocksdb_destroy_db(opts, leader_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_destroy_db(opts, follower_db_path.c_str(), &err);
+    if (err) { rocksdb_free(err); err = nullptr; }
+    rocksdb_options_destroy(opts);
+  }
+
+  Log_info("TEST 87: ReplicatedDB replication to follower PASSED!");
   Passed2();
 }
 

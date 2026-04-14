@@ -846,7 +846,10 @@ file(GLOB RAFT_BORROW_SRC
 # - test.cc: Test harness that depends on testconf.h
 # NOTE: raft_main_helper.cc is also excluded because it includes third-party headers
 # (YAML, etc.) that generate 1000+ false positive violations from header code.
+#   - replicated_db.cc: includes <rocksdb/c.h> third-party header that generates
+#     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
+list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})

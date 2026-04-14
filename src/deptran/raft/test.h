@@ -278,6 +278,20 @@ class RaftLabTest {
   // Test BATCH command marshal/unmarshal round-trip
   int testReplicatedDBCommandBatchMarshal(void);
 
+  // ===========================================================================
+  // REPLICATED DB INTEGRATION TESTS
+  // ===========================================================================
+  // Integration tests requiring a running Raft cluster + RocksDB
+
+  // Test Put on leader, Get from leader's local RocksDB
+  int testReplicatedDBPutGet(void);
+
+  // Test Put then Delete, verify Get returns not-found
+  int testReplicatedDBDelete(void);
+
+  // Test that apply callback replicates data to follower's RocksDB
+  int testReplicatedDBReplication(void);
+
   void wait(uint64_t microseconds);
 
 };
