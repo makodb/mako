@@ -163,8 +163,12 @@ The following features are planned:
    RPC, callback updates next_index_/match_index_ or steps down on higher term.
    Test 60 (testHeartbeatTriggersInstallSnapshot) covers this integration.
 
-2. **Recovery** (Phase 3.5): On startup, check for snapshots before replaying log entries.
-   Load snapshot state, set `executeIndex`/`commitIndex` to snapshot index, then replay.
+2. ~~**Recovery** (Phase 3.5)~~: **DONE**. In `InitializeSnapshotManager()`, after loading
+   snapshot metadata (`snapidx_`/`snapterm_`), advances `executeIndex`, `commitIndex`,
+   `lastLogIndex`, and `min_active_slot_` to at least the snapshot index. Uses `>` checks
+   to only advance values (never go backwards), since `RecoverFromStorage()` runs first.
+   Tests 65 (testSnapshotRecoveryOnStartup) and 66 (testSnapshotRecoveryFieldAdvancement)
+   cover this.
 
 ## RustyCpp Compliance
 

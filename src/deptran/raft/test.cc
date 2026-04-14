@@ -106,6 +106,14 @@ int RaftLabTest::Run(void) {
         || TEST_EXPAND(testNoRollbackOnHigherTerm());            // Test 64
   }
 
+  // Snapshot recovery on startup tests
+  if (!failed) {
+    Log_info("Running snapshot recovery on startup tests");
+    failed =
+        TEST_EXPAND(testSnapshotRecoveryOnStartup())              // Test 65
+        || TEST_EXPAND(testSnapshotRecoveryFieldAdvancement());   // Test 66
+  }
+
   // Speculative/notify/integration/stress/notification/relaxed-invariant tests
   // remain intentionally disabled in this runner for now.
   if (failed) {
@@ -5602,6 +5610,257 @@ int RaftLabTest::testNoRollbackOnHigherTerm(void) {
   Assert2(new_leader >= 0, "Should have leader after test");
 
   Log_info("[ROLLBACK-HIGHERTERM] HigherTerm no-rollback test PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 65: testSnapshotRecoveryOnStartup
+// ============================================================================
+// @unsafe - Uses test infrastructure, Kill/Restart, snapshot manager API
+/**
+ * Verify that a server with a snapshot recovers executeIndex, commitIndex,
+ * lastLogIndex, and min_active_slot_ correctly on restart.
+ *
+ * Scenario:
+ * 1. Start 5-node cluster, elect leader
+ * 2. Set up snapshot manager on a follower with low threshold
+ * 3. Commit entries, manually trigger CreateSnapshot on the follower
+ * 4. Kill the follower, restart it (snapshot manager re-initialized)
+ * 5. Verify state reflects snapshot: executeIndex >= snapidx_, etc.
+ * 6. Verify cluster can still make progress
+ */
+int RaftLabTest::testSnapshotRecoveryOnStartup(void) {
+  Init2(65, "Snapshot recovery on startup");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 65: Leader elected: %d", leader);
+
+  // Pick a follower
+  siteid_t follower_id = config_->getNextServerId(leader, 1);
+  auto follower_server = config_->GetServer(follower_id);
+  Assert2(follower_server != nullptr, "Follower server should not be null");
+
+  // Build the snapshot path that InitializeSnapshotManager() will construct on restart.
+  // It uses: MAKO_RAFT_SNAPSHOT_PATH + "/raft_snap_" + site_id + "_partition_" + partition_id
+  std::string base_path = "/tmp/raft_snap_recovery_test_65_" + std::to_string(getpid());
+  std::string full_snap_path = base_path + "/raft_snap_" +
+                               std::to_string(follower_server->site_id_) + "_partition_" +
+                               std::to_string(follower_server->partition_id_);
+
+  // Set up snapshot manager on the follower using the same path
+  rrr::SnapshotConfig snap_config;
+  snap_config.storage_path = full_snap_path;
+  auto snap_mgr = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  follower_server->SetSnapshotManager(snap_mgr);
+  follower_server->SetSnapshotThreshold(3);
+
+  // Commit entries
+  Log_info("TEST 65: Committing 8 entries");
+  for (int i = 1; i <= 8; i++) {
+    uint64_t idx = config_->DoAgreement(6500 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6500 + i);
+  }
+
+  // Wait for apply + snapshot creation
+  Fiber::sleep(2000000);
+
+  // Verify snapshot was created on follower
+  uint64_t snap_idx = follower_server->GetSnapshotIndex();
+  uint64_t snap_term = follower_server->GetSnapshotTerm();
+  Log_info("TEST 65: Follower %d snapshot: index=%lu term=%lu", follower_id, snap_idx, snap_term);
+  Assert2(snap_idx > 0, "Snapshot should have been created on follower, got index=%lu", snap_idx);
+
+  // Record pre-kill state
+  uint64_t exec_before = follower_server->executeIndex;
+  uint64_t commit_before = follower_server->commitIndex;
+  uint64_t last_log_before = follower_server->lastLogIndex;
+  Log_info("TEST 65: Before kill - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu min_active_slot_=%lu",
+           exec_before, commit_before, last_log_before, follower_server->min_active_slot_);
+
+  // Kill the follower
+  Log_info("TEST 65: Killing follower %d", follower_id);
+  config_->Kill(follower_id);
+  Fiber::sleep(ELECTIONTIMEOUT / 2);
+
+  // Set MAKO_RAFT_SNAPSHOTS and MAKO_RAFT_SNAPSHOT_PATH env vars so
+  // InitializeSnapshotManager() finds the existing snapshot on restart
+  setenv("MAKO_RAFT_SNAPSHOTS", "1", 1);  // @unsafe
+  setenv("MAKO_RAFT_SNAPSHOT_PATH", base_path.c_str(), 1);  // @unsafe
+
+  // Restart the follower - Setup() will call InitializeSnapshotManager()
+  Log_info("TEST 65: Restarting follower %d", follower_id);
+  config_->Restart(follower_id);
+  Fiber::sleep(ELECTIONTIMEOUT);
+
+  // Unset env vars
+  unsetenv("MAKO_RAFT_SNAPSHOTS");  // @unsafe
+  unsetenv("MAKO_RAFT_SNAPSHOT_PATH");  // @unsafe
+
+  // Get restarted server
+  follower_server = config_->GetServer(follower_id);
+  Assert2(follower_server != nullptr, "Restarted server should not be null");
+
+  uint64_t exec_after = follower_server->executeIndex;
+  uint64_t commit_after = follower_server->commitIndex;
+  uint64_t last_log_after = follower_server->lastLogIndex;
+  uint64_t min_slot_after = follower_server->min_active_slot_;
+  uint64_t snap_idx_after = follower_server->GetSnapshotIndex();
+
+  Log_info("TEST 65: After restart - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu "
+           "min_active_slot_=%lu snapidx=%lu",
+           exec_after, commit_after, last_log_after, min_slot_after, snap_idx_after);
+
+  // Verify state reflects snapshot
+  Assert2(exec_after >= snap_idx,
+          "executeIndex (%lu) should be >= snapshot index (%lu)", exec_after, snap_idx);
+  Assert2(commit_after >= snap_idx,
+          "commitIndex (%lu) should be >= snapshot index (%lu)", commit_after, snap_idx);
+  Assert2(last_log_after >= snap_idx,
+          "lastLogIndex (%lu) should be >= snapshot index (%lu)", last_log_after, snap_idx);
+  Assert2(min_slot_after >= snap_idx + 1,
+          "min_active_slot_ (%lu) should be >= snapshot index + 1 (%lu)",
+          min_slot_after, snap_idx + 1);
+
+  // Verify cluster can still make progress
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int new_leader = config_->OneLeader();
+  if (new_leader < 0) {
+    Fiber::sleep(ELECTIONTIMEOUT);
+    new_leader = config_->OneLeader();
+  }
+  Assert2(new_leader >= 0, "Should have leader after restart");
+
+  // Clean up snapshot files
+  snap_mgr->DeleteAllSnapshots();
+  // @unsafe { rmdir is not borrow-checked }
+  rmdir(full_snap_path.c_str());
+  rmdir(base_path.c_str());
+
+  Log_info("TEST 65: Snapshot recovery on startup PASSED!");
+  Passed2();
+}
+
+// ============================================================================
+// Test 66: testSnapshotRecoveryFieldAdvancement
+// ============================================================================
+// @unsafe - Uses test infrastructure, snapshot manager API
+/**
+ * Verify that InitializeSnapshotManager() only advances indices, never
+ * goes backwards. If log recovery already set higher values, snapshot
+ * recovery should not overwrite them.
+ *
+ * Scenario:
+ * 1. Start cluster, elect leader
+ * 2. Set up snapshot manager on a server, commit entries, create snapshot
+ * 3. Record snapidx_
+ * 4. Commit more entries so executeIndex/commitIndex are ahead of snapshot
+ * 5. Call InitializeSnapshotManager() again (simulating re-init)
+ * 6. Verify indices were NOT set backwards
+ */
+int RaftLabTest::testSnapshotRecoveryFieldAdvancement(void) {
+  Init2(66, "Snapshot recovery field advancement");
+
+  // Wait for initial election
+  Fiber::sleep(ELECTIONTIMEOUT);
+  int leader = config_->OneLeader();
+  AssertOneLeader(leader);
+  Log_info("TEST 66: Leader elected: %d", leader);
+
+  auto server = config_->GetServer(leader);
+  Assert2(server != nullptr, "Server should not be null");
+
+  // Set up snapshot manager
+  std::string snap_path = "/tmp/raft_snap_advancement_test_66_" + std::to_string(getpid());
+  rrr::SnapshotConfig snap_config;
+  snap_config.storage_path = snap_path;
+  auto snap_mgr = std::make_shared<rrr::FileSnapshotManager>(snap_config);
+  auto original_mgr = server->GetSnapshotManager();
+  server->SetSnapshotManager(snap_mgr);
+  server->SetSnapshotThreshold(3);
+
+  // Commit initial entries to trigger snapshot
+  Log_info("TEST 66: Committing initial entries");
+  for (int i = 1; i <= 6; i++) {
+    uint64_t idx = config_->DoAgreement(6600 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6600 + i);
+  }
+
+  // Wait for snapshot creation
+  Fiber::sleep(2000000);
+
+  uint64_t snap_idx = server->GetSnapshotIndex();
+  Log_info("TEST 66: Snapshot created at index %lu", snap_idx);
+  Assert2(snap_idx > 0, "Snapshot should have been created");
+
+  // Commit MORE entries so that executeIndex/commitIndex are ahead of snapshot
+  Log_info("TEST 66: Committing additional entries beyond snapshot");
+  for (int i = 1; i <= 5; i++) {
+    uint64_t idx = config_->DoAgreement(6610 + i, NSERVERS, true);
+    Assert2(idx > 0, "DoAgreement failed for cmd %d", 6610 + i);
+  }
+
+  // Wait for apply
+  Fiber::sleep(1000000);
+
+  // Record current values (should be ahead of snapshot)
+  uint64_t exec_before = server->executeIndex;
+  uint64_t commit_before = server->commitIndex;
+  uint64_t last_log_before = server->lastLogIndex;
+  uint64_t min_slot_before = server->min_active_slot_;
+  Log_info("TEST 66: Before re-init - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu "
+           "min_active_slot_=%lu snap_idx=%lu",
+           exec_before, commit_before, last_log_before, min_slot_before, snap_idx);
+
+  Assert2(exec_before > snap_idx,
+          "executeIndex (%lu) should be > snapshot index (%lu) after more commits",
+          exec_before, snap_idx);
+  Assert2(commit_before > snap_idx,
+          "commitIndex (%lu) should be > snapshot index (%lu) after more commits",
+          commit_before, snap_idx);
+
+  // Set env vars and call InitializeSnapshotManager() again
+  setenv("MAKO_RAFT_SNAPSHOTS", "1", 1);  // @unsafe
+  setenv("MAKO_RAFT_SNAPSHOT_PATH", ("/tmp/raft_snap_advancement_test_66_" + std::to_string(getpid())).c_str(), 1);  // @unsafe
+  server->InitializeSnapshotManager();
+  unsetenv("MAKO_RAFT_SNAPSHOTS");  // @unsafe
+  unsetenv("MAKO_RAFT_SNAPSHOT_PATH");  // @unsafe
+
+  // Verify indices were NOT set backwards
+  uint64_t exec_after = server->executeIndex;
+  uint64_t commit_after = server->commitIndex;
+  uint64_t last_log_after = server->lastLogIndex;
+  uint64_t min_slot_after = server->min_active_slot_;
+  Log_info("TEST 66: After re-init - executeIndex=%lu commitIndex=%lu lastLogIndex=%lu "
+           "min_active_slot_=%lu",
+           exec_after, commit_after, last_log_after, min_slot_after);
+
+  Assert2(exec_after >= exec_before,
+          "executeIndex went backwards: was %lu, now %lu", exec_before, exec_after);
+  Assert2(commit_after >= commit_before,
+          "commitIndex went backwards: was %lu, now %lu", commit_before, commit_after);
+  Assert2(last_log_after >= last_log_before,
+          "lastLogIndex went backwards: was %lu, now %lu", last_log_before, last_log_after);
+  Assert2(min_slot_after >= min_slot_before,
+          "min_active_slot_ went backwards: was %lu, now %lu", min_slot_before, min_slot_after);
+
+  // Also verify they're still >= snapshot values
+  Assert2(exec_after >= snap_idx,
+          "executeIndex (%lu) should be >= snapshot (%lu)", exec_after, snap_idx);
+  Assert2(commit_after >= snap_idx,
+          "commitIndex (%lu) should be >= snapshot (%lu)", commit_after, snap_idx);
+  Assert2(min_slot_after >= snap_idx + 1,
+          "min_active_slot_ (%lu) should be >= snapshot+1 (%lu)", min_slot_after, snap_idx + 1);
+
+  // Restore original manager and clean up
+  server->SetSnapshotManager(original_mgr);
+  snap_mgr->DeleteAllSnapshots();
+  // @unsafe { rmdir is not borrow-checked }
+  rmdir(snap_path.c_str());
+
+  Log_info("TEST 66: Snapshot recovery field advancement PASSED!");
   Passed2();
 }
 

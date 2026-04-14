@@ -613,6 +613,17 @@ size_t CompactLog(uint64_t up_to_index); // Discard entries before index
 
 On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_` are loaded from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
 
+### Snapshot Recovery on Startup
+
+After loading snapshot metadata, `InitializeSnapshotManager()` advances the server's state to reflect the snapshot. Since `InitializeSnapshotManager()` runs after `RecoverFromStorage()` in `Setup()`, log-recovered values may already be set. The recovery logic only advances values (using `>` checks), never goes backwards:
+
+- `executeIndex` is set to `max(executeIndex, snapidx_)` -- the snapshot represents already-applied state
+- `commitIndex` is set to `max(commitIndex, snapidx_)` and persisted via `PersistCommitIndexToLogStorage()`
+- `lastLogIndex` is set to `max(lastLogIndex, snapidx_)` -- entries up to the snapshot are implicitly part of the log
+- `min_active_slot_` is set to `max(min_active_slot_, snapidx_ + 1)` -- entries at or before the snapshot index have been compacted
+
+This ensures a server that restarts with a snapshot but no log entries does not start with `executeIndex=0` and `commitIndex=0`, which would cause it to re-request already-applied entries.
+
 ### CreateSnapshot
 
 `CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes a state marker, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
@@ -650,7 +661,7 @@ After the follower installs the snapshot and responds, subsequent heartbeats res
 
 ### Planned Features
 
-- **Recovery**: On startup, load snapshot state before replaying log entries
+- ~~**Recovery**: On startup, load snapshot state before replaying log entries~~ (Implemented: see "Snapshot Recovery on Startup" above)
 
 See `docs/dev/raft_snapshot_design.md` for the full design document.
 

@@ -435,6 +435,29 @@ void RaftServer::InitializeSnapshotManager() {
              snapidx_, snapterm_, meta.size_bytes);
   }
 
+  // @safe - Recover server state from snapshot metadata
+  // InitializeSnapshotManager() runs AFTER RecoverFromStorage() in Setup(),
+  // so log-recovered values may already be set. Only advance, never go backwards.
+  if (snapidx_ > 0) {
+    if (snapidx_ > executeIndex) {
+      executeIndex = snapidx_;
+      Log_info("[RAFT-SNAPSHOT] Recovery: set executeIndex=%lu from snapshot", executeIndex);
+    }
+    if (snapidx_ > commitIndex) {
+      commitIndex = snapidx_;
+      PersistCommitIndexToLogStorage();
+      Log_info("[RAFT-SNAPSHOT] Recovery: set commitIndex=%lu from snapshot", commitIndex);
+    }
+    if (snapidx_ > lastLogIndex) {
+      lastLogIndex = snapidx_;
+      Log_info("[RAFT-SNAPSHOT] Recovery: set lastLogIndex=%lu from snapshot", lastLogIndex);
+    }
+    if (snapidx_ + 1 > min_active_slot_) {
+      min_active_slot_ = snapidx_ + 1;
+      Log_info("[RAFT-SNAPSHOT] Recovery: set min_active_slot_=%lu from snapshot", min_active_slot_);
+    }
+  }
+
   Log_info("[RAFT-SNAPSHOT] Initialized for site %d partition %d: path=%s interval=%zu",
            site_id_, partition_id_, snap_config.storage_path.c_str(),
            snap_config.snapshot_interval);

@@ -205,6 +205,16 @@ class RaftLabTest {
   // Test that HigherTerm step-down does not send rollback notifications
   int testNoRollbackOnHigherTerm(void);
 
+  // ===========================================================================
+  // PHASE 3.4: Snapshot Recovery on Startup Tests
+  // ===========================================================================
+
+  // Test snapshot recovery updates executeIndex/commitIndex/min_active_slot_ on restart
+  int testSnapshotRecoveryOnStartup(void);
+
+  // Test InitializeSnapshotManager only advances indices, never goes backwards
+  int testSnapshotRecoveryFieldAdvancement(void);
+
   void wait(uint64_t microseconds);
 
 };
